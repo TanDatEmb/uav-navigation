@@ -152,7 +152,13 @@ namespace types {
  * @param[out] covmsg Output array.
  */
 template <class T, std::size_t SIZE>
-void CovarianceToArray(const T& cov, std::array<float, SIZE>& covmsg);
+void CovarianceToArray(const T& cov, std::array<float, SIZE>& covmsg) {
+    static_assert(T::RowsAtCompileTime == 3 && T::ColsAtCompileTime == 3,
+                  "CovarianceToArray requires a 3x3 matrix");
+    for (std::size_t i = 0; i < 9; ++i) {
+        covmsg[i] = static_cast<float>(cov.data()[i]);
+    }
+}
 
 /**
  * @brief Convert upper right triangular of a covariance matrix to float[n] array.
@@ -162,7 +168,16 @@ void CovarianceToArray(const T& cov, std::array<float, SIZE>& covmsg);
  * @param[out] covmsg Output array.
  */
 template <class T, std::size_t ARR_SIZE>
-void CovarianceUrtToArray(const T& covmap, std::array<float, ARR_SIZE>& covmsg);
+void CovarianceUrtToArray(const T& covmap, std::array<float, ARR_SIZE>& covmsg) {
+    static_assert(T::RowsAtCompileTime == 3 && T::ColsAtCompileTime == 3,
+                  "CovarianceUrtToArray requires a 3x3 matrix");
+    covmsg[0] = static_cast<float>(covmap(0, 0));
+    covmsg[1] = static_cast<float>(covmap(0, 1));
+    covmsg[2] = static_cast<float>(covmap(0, 2));
+    covmsg[3] = static_cast<float>(covmap(1, 1));
+    covmsg[4] = static_cast<float>(covmap(1, 2));
+    covmsg[5] = static_cast<float>(covmap(2, 2));
+}
 
 /**
  * @brief Convert float[n] array (upper right triangular of covariance) to full matrix.
@@ -172,7 +187,20 @@ void CovarianceUrtToArray(const T& covmap, std::array<float, ARR_SIZE>& covmsg);
  * @param[out] covmat Output covariance matrix.
  */
 template <class T, std::size_t ARR_SIZE>
-void ArrayUrtToCovarianceMatrix(const std::array<float, ARR_SIZE>& covmsg, T& covmat);
+void ArrayUrtToCovarianceMatrix(const std::array<float, ARR_SIZE>& covmsg, T& covmat) {
+    static_assert(T::RowsAtCompileTime == 3 && T::ColsAtCompileTime == 3,
+                  "ArrayUrtToCovarianceMatrix requires a 3x3 matrix");
+    covmat.setZero();
+    covmat(0, 0) = static_cast<double>(covmsg[0]);
+    covmat(0, 1) = static_cast<double>(covmsg[1]);
+    covmat(0, 2) = static_cast<double>(covmsg[2]);
+    covmat(1, 0) = static_cast<double>(covmsg[1]);
+    covmat(1, 1) = static_cast<double>(covmsg[3]);
+    covmat(1, 2) = static_cast<double>(covmsg[4]);
+    covmat(2, 0) = static_cast<double>(covmsg[2]);
+    covmat(2, 1) = static_cast<double>(covmsg[4]);
+    covmat(2, 2) = static_cast<double>(covmsg[5]);
+}
 
 }  // namespace types
 }  // namespace utils
@@ -249,6 +277,64 @@ inline geometry_msgs::msg::Vector3 NedToEnu(const geometry_msgs::msg::Vector3& n
     msg.y = enu.y();
     msg.z = enu.z();
     return msg;
+}
+
+/**
+ * @brief Convert a quaternion from aircraft (FRD) to base_link (FLU).
+ *
+ * Passive frame rotation: the physical orientation is unchanged, only its
+ * coordinate expression switches from the PX4 aircraft frame to the ROS
+ * base_link frame.
+ */
+inline Eigen::Quaterniond QuaternionAircraftToBaselink(const Eigen::Quaterniond& q_aircraft) {
+    const Eigen::Quaterniond q_rot = AircraftBaselinkQuaternion();
+    return q_rot * q_aircraft * q_rot.conjugate();
+}
+
+/**
+ * @brief Convert a quaternion from base_link (FLU) to aircraft (FRD).
+ */
+inline Eigen::Quaterniond QuaternionBaselinkToAircraft(const Eigen::Quaterniond& q_baselink) {
+    const Eigen::Quaterniond q_rot = AircraftBaselinkQuaternion();
+    return q_rot * q_baselink * q_rot.conjugate();
+}
+
+/**
+ * @brief Convert a 3D vector from aircraft (FRD) to base_link (FLU).
+ */
+inline Eigen::Vector3d AircraftToBaselink(const Eigen::Vector3d& v_aircraft) {
+    const Eigen::Matrix3d C = AircraftBaselinkQuaternion().toRotationMatrix();
+    return C * v_aircraft;
+}
+
+/**
+ * @brief Convert a 3D vector from base_link (FLU) to aircraft (FRD).
+ */
+inline Eigen::Vector3d BaselinkToAircraft(const Eigen::Vector3d& v_baselink) {
+    const Eigen::Matrix3d C = AircraftBaselinkQuaternion().toRotationMatrix();
+    return C.transpose() * v_baselink;
+}
+
+/**
+ * @brief Convert orientation from PX4 convention to ROS convention.
+ *
+ * PX4 convention: orientation of aircraft (FRD) frame w.r.t. NED.
+ * ROS convention: orientation of base_link (FLU) frame w.r.t. ENU.
+ *
+ * Composition: aircraft→NED → NED→ENU → base_link→aircraft (inverse).
+ */
+inline Eigen::Quaterniond Px4ToRosOrientation(const Eigen::Quaterniond& q_px4) {
+    return QuaternionBaselinkToAircraft(QuaternionNedToEnu(q_px4));
+}
+
+/**
+ * @brief Convert orientation from ROS convention to PX4 convention.
+ *
+ * ROS convention: orientation of base_link (FLU) frame w.r.t. ENU.
+ * PX4 convention: orientation of aircraft (FRD) frame w.r.t. NED.
+ */
+inline Eigen::Quaterniond RosToPx4Orientation(const Eigen::Quaterniond& q_ros) {
+    return QuaternionEnuToNed(QuaternionAircraftToBaselink(q_ros));
 }
 
 }  // namespace px4_ros_com::frame_transforms
