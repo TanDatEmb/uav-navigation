@@ -13,10 +13,15 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(px4_common REQUIRED)
+find_package(px4_ros_com REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(px4_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+# find_package(PCL REQUIRED)
+# find_package(pcl_conversions REQUIRED)
 
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE
@@ -26,13 +31,65 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME} INTERFACE
     px4_common
+    px4_ros_com
     rclcpp
     geometry_msgs
     nav_msgs
     sensor_msgs
+    px4_msgs
 )
 
-install(TARGETS ${PROJECT_NAME}
+# Add executable for ned_transform_node
+add_executable(ned_transform_node
+    src/ned_transform_node.cpp
+    src/ned_transform_node_main.cpp
+)
+target_include_directories(ned_transform_node PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(ned_transform_node
+    ${PROJECT_NAME}
+)
+ament_target_dependencies(ned_transform_node
+    px4_common
+    px4_ros_com
+    rclcpp
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    px4_msgs
+)
+
+# Voxel map manager node executable
+add_executable(voxmap_manager_node
+    src/voxmap_manager_node.cpp
+    src/voxmap_manager_node_main.cpp
+)
+target_include_directories(voxmap_manager_node PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(voxmap_manager_node
+    Eigen3::Eigen
+    # ${PCL_LIBRARIES}
+)
+ament_target_dependencies(voxmap_manager_node
+    px4_common
+    px4_msgs
+    px4_ros_com
+    rclcpp
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    tf2_ros
+    # pcl_conversions
+)
+# target_compile_definitions(voxmap_manager_node PRIVATE
+#     COMPOSED_BUILD=0
+# )
+
+install(TARGETS ${PROJECT_NAME} ned_transform_node voxmap_manager_node
     EXPORT export_${PROJECT_NAME}
 )
 
@@ -41,7 +98,7 @@ install(DIRECTORY include/
 )
 
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_common Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs)
+ament_export_dependencies(px4_common px4_ros_com Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs px4_msgs tf2_ros)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
