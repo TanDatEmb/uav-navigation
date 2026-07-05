@@ -50,6 +50,29 @@
 - plotting / telemetry export helpers
 - bag recording workflow
 
+## Time Synchronization
+
+- **Adopted strategy**: PX4 Scenario A — ROS 2 nodes use the ROS 2 clock
+  (`rclcpp::Clock`, `this->now()`, `header.stamp`). The MicroXRCE-DDS agent
+  is responsible for translating between PX4 wall-clock (`timestamp_sample`)
+  and ROS 2 time when crossing the PX4↔ROS 2 boundary.
+- **Consequence**: We do **not** maintain a manual `px4_to_ros_offset`
+  inside this workspace. Any node that publishes to PX4 (`vehicle_visual_odometry`,
+  `trajectory_setpoint`, etc.) must set `timestamp` and `timestamp_sample`
+  from the same ROS 2 clock source as the rest of the pipeline.
+- **Exception**: If SITL real-time factor (RTF) deviates significantly from
+  1.0 or if agent sync is proven unreliable, revisit the legacy manual-offset
+  approach captured in `reviews/review_timestamp_sync.md`.
+
+## Frame Tree
+
+- `map_ned` — local North-East-Down world frame (PX4 default).
+- `camera_init` — FAST-LIO2 initialization frame (legacy).
+- `odom` / `base_link` — ROS REP-103 body frame, Forward-Left-Up.
+- `aircraft` — PX4 body frame, Forward-Right-Down.
+- Transforms are implemented in `px4_common::math` and exposed in
+  `px4_ros_com::frame_transforms`.
+
 ## Data Flow
 
 ```
@@ -100,7 +123,13 @@ uav-navigation/
 - [x] `px4_common`: shared types, math, transforms, parameter helpers, tests.
 - [x] `px4_mapping`: `VoxelHashMap`, `VoxelPool`, tests.
 - [x] `px4_navigation`: `LocalPlanGrid`, `VirtualScan`, `AStarPlanner`, tests.
-- [ ] `px4_ros_com`: frame transform header scaffold; bridge nodes pending.
+- [x] `px4_ros_com`: self-developed bridge/transforms package scaffold (`frame_transforms.hpp` + tests).
+- [ ] `px4_ros_com`: aircraft↔baselink and ECEF helpers.
+- [ ] `px4_mapping`: FAST-LIO2 / odometry node, NED bridge.
+- [ ] `px4_navigation`: B-spline optimizer, controller, state machine.
 - [ ] `px4_visualization`: not yet populated.
+- [ ] `px4_ros_com`: executable bridge/offboard/health-watcher nodes.
 
-This document is a living draft. Frame tree and message definitions will be added when the remaining packages land.
+This document is a living draft. Detailed frame tree and message definitions are
+now in place; remaining package-specific sections will be added as nodes land.
+

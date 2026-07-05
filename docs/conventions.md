@@ -49,6 +49,58 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
 
 ## Frame Conventions
 
+- **NED** (`map_ned`): North-East-Down, PX4 local world frame.
+  - X: North positive, Y: East positive, Z: Down positive.
+- **ENU**: East-North-Up, ROS default world frame.
+  - Conversion from ENU to NED point: `(x, y, z) → (y, x, -z)`.
+  - Conversion from NED to ENU point: `(x, y, z) → (y, x, -z)` (involution).
+- **Aircraft body frame** (`aircraft`, FRD): Forward-Right-Down, PX4 body frame.
+- **Base link body frame** (`base_link`, FLU): Forward-Left-Up, ROS REP-103 body frame.
+- **FRD↔FLU rotation**: `diag(1, -1, -1)` applied as a passive frame rotation.
+- Every transform function name must state source and destination frames
+  unambiguously (e.g. `EnuToNed`, `QuaternionAircraftToBaselink`).
+
+## Quaternion Conventions
+
+- **Eigen internal storage**: `q.coeffs()` returns `[x, y, z, w]`.
+- **Eigen constructor**: `Eigen::Quaterniond(w, x, y, z)`.
+- **PX4 storage**: arrays are `[w, x, y, z]`.
+- **Conversion helpers**:
+  - `EigenQuatToArray()` → `[w, x, y, z]`.
+  - `ArrayToEigenQuat()` expects `[w, x, y, z]`.
+- **Euler angles**: ZYX intrinsic sequence (yaw, pitch, roll) unless
+  explicitly documented otherwise.
+- **Transform direction**: all frame transforms are **passive** (rotate the
+  coordinate frame, not the vector), implemented as
+  `q_rotation * q * q_rotation.conjugate()` for quaternions.
+
+## Time Conventions
+
+- **Single clock source**: ROS 2 clock (`rclcpp::Clock`, `this->now()`,
+  `header.stamp`).
+- **PX4 boundary**: MicroXRCE-DDS agent translates `timestamp_sample`
+  (PX4 wall-clock microseconds) into ROS 2 time. Do not maintain a manual
+  offset inside nodes unless agent sync is proven unreliable.
+- **Internal messages**: use `std::chrono::nanoseconds` or `rclcpp::Time`.
+  Avoid mixing `double seconds` and `int64_t nanoseconds` in the same buffer.
+- **Pose buffers**: enforce strict monotonic timestamps and track
+  non-monotonic / overflow / miss counters for diagnostics.
+
+## Logging and Monitoring Conventions
+
+- Use `RCLCPP_INFO/WARN/ERROR` in C++ nodes; prefer `RCLCPP_*_THROTTLE` for
+  high-frequency messages.
+- Log lifecycle events (node start, parameter load, mode transitions) at
+  `INFO`.
+- Log recoverable faults at `WARN` with a counter if they repeat.
+- Log safety-critical or unrecoverable faults at `ERROR`.
+- Never run a node in silence: every executable must emit at least one
+  startup log line and publish a periodic health/status topic.
+- Python tooling (`recorder.py`, `visualize.py`) keeps CSV schemas stable
+  or documents breaking changes explicitly.
+
+## Frame Conventions
+
 Frame conventions will be documented in `docs/architecture.md` once finalized. Every transform must have a named, versioned convention.
 
 ## Formatting and Linting
