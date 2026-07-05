@@ -83,8 +83,3 @@ TEST_F(VoxelHashMapTest, ImplementsVoxMapManagerInterface) {
     EXPECT_EQ(map_.FramesDropped(), 0U);
     EXPECT_TRUE(map_.GetExtrinsicTranslation().isApprox(Eigen::Vector3d::Zero()));
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

@@ -36,8 +36,3 @@ TEST(VoxelTypesTest, EvictRadiusCoversPlanningRange) {
     EXPECT_GT(kEvictRadiusM, 15.0);
     EXPECT_LT(kEvictRadiusM, kMaxRayLengthM);
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

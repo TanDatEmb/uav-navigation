@@ -61,8 +61,3 @@ TEST(VoxelMapInterfaceTest, DroppedFramesCounterIsMutable) {
     stub.dropped_ = 42U;
     EXPECT_EQ(stub.FramesDropped(), 42U);
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

@@ -17,7 +17,7 @@
 #include <px4_common/math/grid.hpp>
 #include <px4_common/types.hpp>
 
-#include "px4_mapping/voxel.hpp"
+#include <px4_mapping/voxel.hpp>
 
 namespace px4_mapping {
 

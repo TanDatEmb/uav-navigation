@@ -171,8 +171,3 @@ TEST_F(VirtualScanTest, AngleBinning) {
     EXPECT_NEAR(distances[south_bin], 5.0, 0.1);
     EXPECT_NEAR(distances[west_bin], 5.0, 0.1);
 }
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

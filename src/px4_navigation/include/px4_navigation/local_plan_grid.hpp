@@ -2,7 +2,7 @@
 #define PX4_NAVIGATION_LOCAL_PLAN_GRID_HPP_
 
 #include <Eigen/Dense>
-#include <cstring>
+#include <cstdint>
 #include <vector>
 
 #include <px4_common/mapping/voxel_types.hpp>
@@ -58,9 +58,13 @@ class LocalPlanGrid {
     void markFree(const Eigen::Vector3d& position);
 
     /**
-     * @brief Inflate obstacles in the XY plane with a configurable radius.
+     * @brief Inflate obstacles with a configurable 3D spherical radius.
      *
-     * @param inflation_radius_voxels Inflation radius in voxels
+     * Occupied voxels are expanded into a sphere of the given radius in voxel
+     * units. Out-of-bounds inflation is clipped. The radius is stored as the
+     * member default for future resets.
+     *
+     * @param inflation_radius_voxels Inflation radius in voxels.
      */
     void inflateObstacles(int inflation_radius_voxels);
 

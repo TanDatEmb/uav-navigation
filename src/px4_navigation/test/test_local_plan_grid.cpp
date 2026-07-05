@@ -74,16 +74,22 @@ TEST_F(LocalPlanGridTest, InflateObstacles) {
     // Check that the center point is occupied
     EXPECT_TRUE(grid_.isOccupied(0.0, 0.0, 0.0));
 
-    // Check that neighboring points in XY plane are also occupied (inflated)
-    EXPECT_TRUE(grid_.isOccupied(1.0, 0.0, 0.0));   // Right
-    EXPECT_TRUE(grid_.isOccupied(-1.0, 0.0, 0.0));  // Left
-    EXPECT_TRUE(grid_.isOccupied(0.0, 1.0, 0.0));   // Forward
-    EXPECT_TRUE(grid_.isOccupied(0.0, -1.0, 0.0));  // Backward
-    // With square inflation, diagonal points should also be occupied with radius 1
-    EXPECT_TRUE(grid_.isOccupied(1.0, 1.0, 0.0));    // Diagonal
-    EXPECT_TRUE(grid_.isOccupied(-1.0, 1.0, 0.0));   // Diagonal
-    EXPECT_TRUE(grid_.isOccupied(1.0, -1.0, 0.0));   // Diagonal
-    EXPECT_TRUE(grid_.isOccupied(-1.0, -1.0, 0.0));  // Diagonal
+    // Check that neighboring points within the spherical inflation radius are
+    // also occupied.
+    EXPECT_TRUE(grid_.isOccupied(1.0, 0.0, 0.0));   // +X
+    EXPECT_TRUE(grid_.isOccupied(-1.0, 0.0, 0.0));  // -X
+    EXPECT_TRUE(grid_.isOccupied(0.0, 1.0, 0.0));   // +Y
+    EXPECT_TRUE(grid_.isOccupied(0.0, -1.0, 0.0));  // -Y
+    EXPECT_TRUE(grid_.isOccupied(0.0, 0.0, 1.0));   // +Z
+    EXPECT_TRUE(grid_.isOccupied(0.0, 0.0, -1.0));  // -Z
+
+    // Diagonal points at distance sqrt(2) or sqrt(3) should NOT be occupied
+    // with a radius-1 spherical kernel.
+    EXPECT_FALSE(grid_.isOccupied(1.0, 1.0, 0.0));    // Distance sqrt(2)
+    EXPECT_FALSE(grid_.isOccupied(-1.0, 1.0, 0.0));   // Distance sqrt(2)
+    EXPECT_FALSE(grid_.isOccupied(1.0, -1.0, 0.0));   // Distance sqrt(2)
+    EXPECT_FALSE(grid_.isOccupied(-1.0, -1.0, 0.0));  // Distance sqrt(2)
+    EXPECT_FALSE(grid_.isOccupied(1.0, 1.0, 1.0));    // Distance sqrt(3)
 }
 
 // Test world to index round trip conversion
@@ -117,8 +123,3 @@ TEST_F(LocalPlanGridTest, OutOfBounds) {
 }
 
 }  // namespace
-
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

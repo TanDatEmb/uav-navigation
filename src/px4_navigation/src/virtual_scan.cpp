@@ -1,6 +1,7 @@
 #include <px4_navigation/virtual_scan.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace px4_navigation {
@@ -12,17 +13,6 @@ VirtualScan::VirtualScan()
       vehicle_radius_sq_(kDefaultVehicleRadius * kDefaultVehicleRadius),
       max_range_sq_(kDefaultMaxRange * kDefaultMaxRange) {
     scan_ranges_.resize(kNumBins, static_cast<float>(max_range_));
-
-    // Reserve space in the cached scan
-    if (!cached_scan_) {
-        cached_scan_ = std::make_shared<sensor_msgs::msg::LaserScan>();
-        cached_scan_->ranges.resize(kNumBins);
-        cached_scan_->angle_min = -px4_common::math::kPi;
-        cached_scan_->angle_max = px4_common::math::kPi;
-        cached_scan_->angle_increment = angle_increment_;
-        cached_scan_->range_min = 0.1f;
-        cached_scan_->range_max = static_cast<float>(max_range_);
-    }
 }
 
 void VirtualScan::reset(double angle_resolution, double max_range, double vehicle_radius) {
@@ -33,16 +23,10 @@ void VirtualScan::reset(double angle_resolution, double max_range, double vehicl
     max_range_sq_ = max_range * max_range;
 
     scan_ranges_.assign(kNumBins, static_cast<float>(max_range_));
-
-    // Update cached scan parameters
-    if (cached_scan_) {
-        cached_scan_->angle_increment = angle_increment_;
-        cached_scan_->range_max = static_cast<float>(max_range_);
-    }
 }
 
-void VirtualScan::update(const std::vector<px4_common::PointLivox>& occupied_points,
-                         const px4_common::DroneStateNed& drone_state, double height_above,
+void VirtualScan::update(const std::vector<px4_common::PointLivox> &occupied_points,
+                         const px4_common::DroneStateNed &drone_state, double height_above,
                          double height_below) {
     // Reset all bins to max range, indicates no obstacle
     std::fill(scan_ranges_.begin(), scan_ranges_.end(), static_cast<float>(max_range_));
@@ -54,7 +38,7 @@ void VirtualScan::update(const std::vector<px4_common::PointLivox>& occupied_poi
     const double z_lo = drone_state.position.z() - height_above;
     const double z_hi = drone_state.position.z() + height_below;
 
-    for (const auto& pt : occupied_points) {
+    for (const auto &pt : occupied_points) {
         // Skip points outside altitude band
         if (pt.z < z_lo || pt.z > z_hi)
             continue;
@@ -86,12 +70,6 @@ void VirtualScan::update(const std::vector<px4_common::PointLivox>& occupied_poi
         float dist_f = static_cast<float>(dist);
         if (dist_f < scan_ranges_[bin])
             scan_ranges_[bin] = dist_f;
-    }
-
-    // Update cached scan if needed
-    if (cached_scan_) {
-        cached_scan_->ranges = scan_ranges_;
-        cached_scan_->range_max = static_cast<float>(max_range_);
     }
 }
 

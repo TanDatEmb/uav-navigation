@@ -103,8 +103,3 @@ TEST(TransformsTest, QuaternionToEulerOutputOverload) {
     EXPECT_NEAR(pitch, 0.2, 1e-9);
     EXPECT_NEAR(yaw, 0.3, 1e-9);
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

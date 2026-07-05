@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(px4_navigation)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -17,7 +21,8 @@ find_package(sensor_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
     src/local_plan_grid.cpp
-    src/virtual_scan.cpp)
+    src/virtual_scan.cpp
+    src/a_star_planner.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -55,6 +60,8 @@ if(BUILD_TESTING)
     target_link_libraries(test_local_plan_grid ${PROJECT_NAME})
     ament_add_gtest(test_virtual_scan test/test_virtual_scan.cpp)
     target_link_libraries(test_virtual_scan ${PROJECT_NAME})
+    ament_add_gtest(test_a_star_planner test/test_a_star_planner.cpp)
+    target_link_libraries(test_a_star_planner ${PROJECT_NAME})
 endif()
 
 ament_package()

@@ -49,8 +49,3 @@ TEST(GridTest, PositionInMap) {
     EXPECT_TRUE(IsPositionInMap(Eigen::Vector3d(5.0, 5.0, 2.0), origin, size, kResolution));
     EXPECT_FALSE(IsPositionInMap(Eigen::Vector3d(10.5, 5.0, 2.0), origin, size, kResolution));
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

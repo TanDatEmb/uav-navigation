@@ -24,14 +24,21 @@ class VirtualScan {
     /// Number of angular bins (360 degrees at 1 degree resolution)
     static constexpr int kNumBins = 360;
 
-    /// Default maximum scan range in meters
+    /// Default maximum scan range in metres
     static constexpr double kDefaultMaxRange = 15.0;
 
-    /// Default vehicle safety radius in meters
+    /// Default vehicle safety radius in metres
     static constexpr double kDefaultVehicleRadius = 0.5;
 
-    /// Reserve size for point buffer to avoid frequent allocations
-    static constexpr size_t kBufferReserve = 50000;
+    /// Maximum scan range in metres
+    double max_range() const {
+        return max_range_;
+    }
+
+    /// Vehicle safety radius in metres
+    double vehicle_radius() const {
+        return vehicle_radius_;
+    }
 
     /**
      * @brief Construct a new VirtualScan object.
@@ -86,9 +93,6 @@ class VirtualScan {
     }
 
    private:
-    /// Cached laser scan message
-    sensor_msgs::msg::LaserScan::SharedPtr cached_scan_;
-
     /// Vector of scan ranges (distances)
     std::vector<float> scan_ranges_;
 

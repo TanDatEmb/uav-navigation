@@ -48,8 +48,3 @@ TEST(VoxelPoolTest, ReusedVoxelIsInitialized) {
     EXPECT_FALSE(reused->is_occupied);
     EXPECT_EQ(reused->occupied_list_index, -1);
 }
-
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
