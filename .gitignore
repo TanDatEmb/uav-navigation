@@ -1,0 +1,58 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+.colcon/
+.rosinstall.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# C++
+*.o
+*.so
+*.a
+*.d
+*.exe
+*.out
+*.app
+*.log
+*.swp
+*.swo
+*~
+.vs/
+.vscode/
+.idea/
+
+# Gazebo / simulation
+*.sdf.bak
+*.world.bak
+.world_save/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+.env
+*.local.yaml
+*.local.yml
+*.local.launch.py
+
+# Bag files
+*.db3
+*.mcap
+rosbag2*
+
+# clangd / compile_commands
+compile_commands.json
+.cache/
+
+# Ignore only untracked submodules content if needed; submodule metadata is tracked.
+# px4_msgs content is managed by git submodule.
