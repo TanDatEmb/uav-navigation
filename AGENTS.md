@@ -31,13 +31,16 @@ It is the successor to the legacy `Mapping_and_Navigation_for_PX4_UAV` prototype
 
 ## Repository Layout
 
+Standard ROS 2 workspace structure:
+
 ```
-px4_msgs/            # upstream PX4 uORB message definitions (submodule)
-px4_common/          # shared math, geometry, parameter helpers
-px4_mapping/         # odometry, local map
-px4_navigation/      # planner, controller, state machine
-px4_ros_com/         # ROS 2 ↔ PX4 bridge, transforms
-px4_visualization/   # RViz, plotting, bag helpers
+src/
+  px4_msgs/            # upstream PX4 uORB message definitions (submodule)
+  px4_common/          # shared math, geometry, parameter helpers
+  px4_mapping/         # odometry, local map
+  px4_navigation/      # planner, controller, state machine
+  px4_ros_com/         # ROS 2 ↔ PX4 bridge, transforms
+  px4_visualization/   # RViz, plotting, bag helpers
 config/              # global YAML parameters
 launch/              # top-level launch files
 docs/                # architecture, conventions

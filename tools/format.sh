@@ -6,7 +6,7 @@ cd "${WORKSPACE_DIR}"
 
 echo "[format] Running clang-format on C++ sources (skipping px4_msgs submodule)..."
 find . \
-    -path './px4_msgs' -prune -o \
+    -path './src/px4_msgs' -prune -o \
     -path './build' -prune -o \
     -path './install' -prune -o \
     -path './log' -prune -o \

@@ -16,6 +16,7 @@ echo "[build] Building uav-navigation workspace (safe: workers=1, jobs=1)..."
 GZ_VERSION="${GZ_VERSION:-harmonic}" \
 MAKEFLAGS=-j1 \
 colcon build \
+    --base-paths src \
     --parallel-workers 1 \
     --executor sequential \
     --event-handlers console_direct+ \

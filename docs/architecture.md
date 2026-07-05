@@ -73,6 +73,26 @@ PX4 uORB
 3. **Global YAML** in `config/` for cross-package orchestration.
 4. **Runtime overrides** via launch arguments or `ros2 param set`.
 
+## Repository Layout
+
+Standard ROS 2 workspace:
+
+```
+uav-navigation/
+├── src/
+│   ├── px4_msgs/            # upstream PX4 uORB message definitions (submodule)
+│   ├── px4_common/          # shared math, geometry, transforms
+│   ├── px4_mapping/         # odometry, local voxel map
+│   ├── px4_navigation/      # planner, controller, state machine
+│   ├── px4_ros_com/         # ROS 2 ↔ PX4 bridge, TF publishers
+│   └── px4_visualization/   # RViz, plotting, bag helpers
+├── config/                  # global runtime parameters
+├── launch/                  # top-level orchestration
+├── docs/                    # conventions and architecture
+├── tests/                   # integration tests
+└── tools/                   # build, format, simulation scripts
+```
+
 ## Status
 
 This document is a living draft. Frame tree and message definitions will be added when the first packages land.

@@ -26,18 +26,22 @@ LiDAR + IMU / depth / stereo
 
 ## Repository Layout
 
+Standard ROS 2 workspace structure:
+
 ```
-px4_msgs/            # upstream PX4 message definitions (submodule)
-px4_common/          # shared math, geometry, transforms, parameter helpers
-px4_mapping/         # FAST-LIO2-style odometry + local occupancy map
-px4_navigation/      # local planning, trajectory generation, control
-px4_ros_com/         # DDS bridge, TF, offboard helpers
-px4_visualization/   # RViz, plotting, bag helpers
-config/              # global runtime parameters
-launch/              # top-level orchestration launch files
-docs/                # conventions, frame definitions, architecture
-tools/               # helper scripts
-tests/               # integration tests
+uav-navigation/
+├── src/
+│   ├── px4_msgs/            # upstream PX4 uORB message definitions (submodule)
+│   ├── px4_common/          # shared math, geometry, transforms, parameter helpers
+│   ├── px4_mapping/         # FAST-LIO2-style odometry + local occupancy map
+│   ├── px4_navigation/      # local planning, trajectory generation, control
+│   ├── px4_ros_com/         # DDS bridge, TF, offboard helpers
+│   └── px4_visualization/   # RViz, plotting, bag helpers
+├── config/                  # global runtime parameters
+├── launch/                  # top-level orchestration launch files
+├── docs/                    # conventions, frame definitions, architecture
+├── tests/                   # integration tests
+└── tools/                   # helper scripts
 ```
 
 ## Conventions
@@ -54,6 +58,13 @@ Highlights:
 - Single setpoint publish per control cycle.
 
 ## Build
+
+```bash
+cd /home/letandat/Dev/uav-navigation
+colcon build --symlink-install
+```
+
+Or use the safe build helper:
 
 ```bash
 cd /home/letandat/Dev/uav-navigation
