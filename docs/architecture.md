@@ -38,9 +38,11 @@
 
 ### `px4_ros_com`
 
-- ROS 2 ↔ PX4 uORB DDS bridge
-- frame transform publishing
-- offboard mode manager / health watcher
+- **Self-developed** PX4 ↔ ROS 2 bridge and transform helpers.
+- Do NOT submodule upstream `PX4/px4_ros_com`; it is ROS 1 legacy and poorly maintained for ROS 2 Jazzy.
+- Frame transform publishing (NED↔ENU, body↔baselink).
+- Offboard mode manager / health watcher.
+- ROS 2 message conversion utilities on top of `px4_common` math.
 
 ### `px4_visualization`
 
@@ -95,4 +97,10 @@ uav-navigation/
 
 ## Status
 
-This document is a living draft. Frame tree and message definitions will be added when the first packages land.
+- [x] `px4_common`: shared types, math, transforms, parameter helpers, tests.
+- [x] `px4_mapping`: `VoxelHashMap`, `VoxelPool`, tests.
+- [x] `px4_navigation`: `LocalPlanGrid`, `VirtualScan`, `AStarPlanner`, tests.
+- [ ] `px4_ros_com`: frame transform header scaffold; bridge nodes pending.
+- [ ] `px4_visualization`: not yet populated.
+
+This document is a living draft. Frame tree and message definitions will be added when the remaining packages land.
