@@ -11,9 +11,9 @@ class AStarPlannerTest : public ::testing::Test {
    protected:
     void SetUp() override {
         // Initialize grid with 1m resolution
-        grid_.reset(Eigen::Vector3i(20, 20, 10), Eigen::Vector3d(-10.0, -10.0, -5.0), 1.0);
+        grid_.Reset(Eigen::Vector3i(20, 20, 10), Eigen::Vector3d(-10.0, -10.0, -5.0), 1.0);
         // Inflate obstacles with radius of 1 voxel
-        grid_.inflateObstacles(1);
+        grid_.InflateObstacles(1);
 
         // Initialize start and goal positions
         start_.position = Eigen::Vector3d(0.0, 0.0, 0.0);
@@ -64,11 +64,11 @@ TEST_F(AStarPlannerTest, FullyBlockedGrid) {
     for (int x = -9; x <= 9; x++) {
         for (int y = -9; y <= 9; y++) {
             for (int z = -4; z <= 4; z++) {
-                grid_.markOccupied(Eigen::Vector3d(x, y, z));
+                grid_.MarkOccupied(Eigen::Vector3d(x, y, z));
             }
         }
     }
-    grid_.inflateObstacles(1);  // Inflate obstacles
+    grid_.InflateObstacles(1);  // Inflate obstacles
 
     // Plan path in fully blocked grid
     auto result = planner_.Plan(grid_, start_, goal_);
@@ -83,8 +83,8 @@ TEST_F(AStarPlannerTest, FullyBlockedGrid) {
 // Test that planner finds a detour around a single obstacle
 TEST_F(AStarPlannerTest, SingleObstacleDetour) {
     // Add a single obstacle in the direct path
-    grid_.markOccupied(Eigen::Vector3d(4.0, 4.0, 0.0));
-    grid_.inflateObstacles(1);  // Inflate obstacles
+    grid_.MarkOccupied(Eigen::Vector3d(4.0, 4.0, 0.0));
+    grid_.InflateObstacles(1);  // Inflate obstacles
 
     // Plan path
     auto result = planner_.Plan(grid_, start_, goal_);
@@ -117,9 +117,9 @@ TEST_F(AStarPlannerTest, PathStaysInBounds) {
     EXPECT_FALSE(result.path.empty());
 
     // All path points should be within grid bounds
-    const Eigen::Vector3d& origin = grid_.origin();
-    const Eigen::Vector3i& size = grid_.size();
-    const double resolution = grid_.resolution();
+    const Eigen::Vector3d& origin = grid_.Origin();
+    const Eigen::Vector3i& size = grid_.Size();
+    const double resolution = grid_.Resolution();
 
     double min_x = origin.x();
     double max_x = origin.x() + size.x() * resolution;
@@ -141,8 +141,8 @@ TEST_F(AStarPlannerTest, PathStaysInBounds) {
 // Test that planner handles start position inside obstacle
 TEST_F(AStarPlannerTest, StartInObstacle) {
     // Block start position
-    grid_.markOccupied(start_.position);
-    grid_.inflateObstacles(1);  // Inflate obstacles
+    grid_.MarkOccupied(start_.position);
+    grid_.InflateObstacles(1);  // Inflate obstacles
 
     // Plan path
     auto result = planner_.Plan(grid_, start_, goal_);
@@ -159,8 +159,8 @@ TEST_F(AStarPlannerTest, StartInObstacle) {
 // Test that planner handles goal position inside obstacle
 TEST_F(AStarPlannerTest, GoalInObstacle) {
     // Block goal position
-    grid_.markOccupied(goal_.position);
-    grid_.inflateObstacles(1);  // Inflate obstacles
+    grid_.MarkOccupied(goal_.position);
+    grid_.InflateObstacles(1);  // Inflate obstacles
 
     // Plan path
     auto result = planner_.Plan(grid_, start_, goal_);

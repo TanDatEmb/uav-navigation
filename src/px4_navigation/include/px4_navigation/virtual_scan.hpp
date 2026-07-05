@@ -31,12 +31,12 @@ class VirtualScan {
     static constexpr double kDefaultVehicleRadius = 0.5;
 
     /// Maximum scan range in metres
-    double max_range() const {
+    double MaxRange() const {
         return max_range_;
     }
 
     /// Vehicle safety radius in metres
-    double vehicle_radius() const {
+    double VehicleRadius() const {
         return vehicle_radius_;
     }
 
@@ -52,7 +52,7 @@ class VirtualScan {
      * @param max_range Maximum range in meters
      * @param vehicle_radius Vehicle safety radius in meters
      */
-    void reset(double angle_resolution = px4_common::math::kPi / 180.0,  // 1 degree
+    void Reset(double angle_resolution = px4_common::math::kPi / 180.0,  // 1 degree
                double max_range = kDefaultMaxRange, double vehicle_radius = kDefaultVehicleRadius);
 
     /**
@@ -63,7 +63,7 @@ class VirtualScan {
      * @param height_above Include points up to X meters above drone
      * @param height_below Include points up to X meters below drone
      */
-    void update(const std::vector<px4_common::PointLivox>& occupied_points,
+    void Update(const std::vector<px4_common::PointLivox>& occupied_points,
                 const px4_common::DroneStateNed& drone_state, double height_above = 2.0,
                 double height_below = 1.0);
 
@@ -72,7 +72,7 @@ class VirtualScan {
      *
      * @return const std::vector<float>& Vector of distances in meters
      */
-    const std::vector<float>& get_obstacle_distances() const {
+    const std::vector<float>& ObstacleDistances() const {
         return scan_ranges_;
     }
 
@@ -81,14 +81,14 @@ class VirtualScan {
      *
      * @return std::vector<double> Vector of bearings in radians [-π, π]
      */
-    std::vector<double> get_obstacle_bearings() const;
+    std::vector<double> ObstacleBearings() const;
 
     /**
      * @brief Get the angle increment between bins.
      *
      * @return double Angle increment in radians
      */
-    double get_angle_increment() const {
+    double AngleIncrement() const {
         return angle_increment_;
     }
 

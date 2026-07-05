@@ -41,21 +41,21 @@ class LocalPlanGrid {
      * @param origin Origin of the grid in world coordinates (NED frame)
      * @param resolution Grid resolution in metres per voxel
      */
-    void reset(const Eigen::Vector3i& size, const Eigen::Vector3d& origin, double resolution);
+    void Reset(const Eigen::Vector3i& size, const Eigen::Vector3d& origin, double resolution);
 
     /**
      * @brief Mark a voxel as occupied at the given world position.
      *
      * @param position World position in NED frame (metres)
      */
-    void markOccupied(const Eigen::Vector3d& position);
+    void MarkOccupied(const Eigen::Vector3d& position);
 
     /**
      * @brief Mark a voxel as free at the given world position.
      *
      * @param position World position in NED frame (metres)
      */
-    void markFree(const Eigen::Vector3d& position);
+    void MarkFree(const Eigen::Vector3d& position);
 
     /**
      * @brief Inflate obstacles with a configurable 3D spherical radius.
@@ -66,7 +66,7 @@ class LocalPlanGrid {
      *
      * @param inflation_radius_voxels Inflation radius in voxels.
      */
-    void inflateObstacles(int inflation_radius_voxels);
+    void InflateObstacles(int inflation_radius_voxels);
 
     /**
      * @brief Check if a world position is free.
@@ -76,7 +76,7 @@ class LocalPlanGrid {
      * @param z Z coordinate in NED frame (metres)
      * @return true if the position is free, false otherwise
      */
-    bool isFree(double x, double y, double z) const;
+    bool IsFree(double x, double y, double z) const;
 
     /**
      * @brief Check if a world position is occupied.
@@ -86,13 +86,13 @@ class LocalPlanGrid {
      * @param z Z coordinate in NED frame (metres)
      * @return true if the position is occupied, false otherwise
      */
-    bool isOccupied(double x, double y, double z) const;
+    bool IsOccupied(double x, double y, double z) const;
 
     /**
      * @brief Get the grid resolution in metres per voxel.
      * @return Grid resolution
      */
-    double resolution() const {
+    double Resolution() const {
         return resolution_;
     }
 
@@ -100,7 +100,7 @@ class LocalPlanGrid {
      * @brief Get the grid origin in world coordinates.
      * @return Grid origin in NED frame
      */
-    const Eigen::Vector3d& origin() const {
+    const Eigen::Vector3d& Origin() const {
         return origin_;
     }
 
@@ -108,7 +108,7 @@ class LocalPlanGrid {
      * @brief Get the grid size in voxels.
      * @return Grid size [size_x, size_y, size_z]
      */
-    const Eigen::Vector3i& size() const {
+    const Eigen::Vector3i& Size() const {
         return size_;
     }
 

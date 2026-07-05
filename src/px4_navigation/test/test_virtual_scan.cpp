@@ -23,9 +23,9 @@ class VirtualScanTest : public ::testing::Test {
 TEST_F(VirtualScanTest, EmptyInputReturnsClearScan) {
     std::vector<PointLivox> empty_points;
 
-    virtual_scan_->update(empty_points, drone_state_);
+    virtual_scan_->Update(empty_points, drone_state_);
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
+    const auto& distances = virtual_scan_->ObstacleDistances();
 
     // All distances should be at max range
     for (const auto& distance : distances) {
@@ -42,12 +42,12 @@ TEST_F(VirtualScanTest, SingleObstacleAtKnownBearing) {
     point.z = -5.0;  // Same altitude as drone
     points.push_back(point);
 
-    virtual_scan_->update(points, drone_state_);
+    virtual_scan_->Update(points, drone_state_);
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
+    const auto& distances = virtual_scan_->ObstacleDistances();
 
     // Find the bin corresponding to 0 degrees (north)
-    int north_bin = static_cast<int>((0.0 + M_PI) / virtual_scan_->get_angle_increment());
+    int north_bin = static_cast<int>((0.0 + M_PI) / virtual_scan_->AngleIncrement());
 
     // The distance should be 5m (minus vehicle radius for safety)
     EXPECT_NEAR(distances[north_bin], 5.0, 0.1);
@@ -55,7 +55,7 @@ TEST_F(VirtualScanTest, SingleObstacleAtKnownBearing) {
 
 // Test max range truncation
 TEST_F(VirtualScanTest, MaxRangeTruncation) {
-    virtual_scan_->reset(M_PI / 180.0, 10.0, 0.5);  // 10m max range
+    virtual_scan_->Reset(M_PI / 180.0, 10.0, 0.5);  // 10m max range
 
     std::vector<PointLivox> points;
     PointLivox point;
@@ -64,9 +64,9 @@ TEST_F(VirtualScanTest, MaxRangeTruncation) {
     point.z = -5.0;
     points.push_back(point);
 
-    virtual_scan_->update(points, drone_state_);
+    virtual_scan_->Update(points, drone_state_);
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
+    const auto& distances = virtual_scan_->ObstacleDistances();
 
     // All distances should be at max range since the point is beyond range
     for (const auto& distance : distances) {
@@ -76,7 +76,7 @@ TEST_F(VirtualScanTest, MaxRangeTruncation) {
 
 // Test vehicle radius filtering
 TEST_F(VirtualScanTest, VehicleRadiusFiltering) {
-    virtual_scan_->reset(M_PI / 180.0, 15.0, 1.0);  // 1m vehicle radius
+    virtual_scan_->Reset(M_PI / 180.0, 15.0, 1.0);  // 1m vehicle radius
 
     std::vector<PointLivox> points;
     PointLivox point;
@@ -85,9 +85,9 @@ TEST_F(VirtualScanTest, VehicleRadiusFiltering) {
     point.z = -5.0;
     points.push_back(point);
 
-    virtual_scan_->update(points, drone_state_);
+    virtual_scan_->Update(points, drone_state_);
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
+    const auto& distances = virtual_scan_->ObstacleDistances();
 
     // All distances should be at max range since the point is within vehicle radius
     for (const auto& distance : distances) {
@@ -113,9 +113,9 @@ TEST_F(VirtualScanTest, HeightFiltering) {
     point_below.z = -3.5;  // 1.5m below drone (beyond height_below=1.0)
     points.push_back(point_below);
 
-    virtual_scan_->update(points, drone_state_, 2.0, 1.0);  // height_above=2.0, height_below=1.0
+    virtual_scan_->Update(points, drone_state_, 2.0, 1.0);  // height_above=2.0, height_below=1.0
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
+    const auto& distances = virtual_scan_->ObstacleDistances();
 
     // All distances should be at max range since both points are outside height band
     for (const auto& distance : distances) {
@@ -152,10 +152,10 @@ TEST_F(VirtualScanTest, AngleBinning) {
     point_west.z = -5.0;
     points.push_back(point_west);
 
-    virtual_scan_->update(points, drone_state_);
+    virtual_scan_->Update(points, drone_state_);
 
-    const auto& distances = virtual_scan_->get_obstacle_distances();
-    double angle_increment = virtual_scan_->get_angle_increment();
+    const auto& distances = virtual_scan_->ObstacleDistances();
+    double angle_increment = virtual_scan_->AngleIncrement();
 
     // Check bins for cardinal directions
     int north_bin = static_cast<int>((0.0 + M_PI) / angle_increment);

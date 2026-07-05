@@ -5,7 +5,7 @@
 
 namespace px4_navigation {
 
-void LocalPlanGrid::reset(const Eigen::Vector3i &size, const Eigen::Vector3d &origin,
+void LocalPlanGrid::Reset(const Eigen::Vector3i &size, const Eigen::Vector3d &origin,
                           double resolution) {
     size_ = size;
     origin_ = origin;
@@ -15,7 +15,7 @@ void LocalPlanGrid::reset(const Eigen::Vector3i &size, const Eigen::Vector3d &or
     grid_.assign(total_cells, 0);
 }
 
-void LocalPlanGrid::markOccupied(const Eigen::Vector3d &position) {
+void LocalPlanGrid::MarkOccupied(const Eigen::Vector3d &position) {
     const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
     if (!px4_common::math::IsIndexInBounds(index, size_)) {
         return;
@@ -25,7 +25,7 @@ void LocalPlanGrid::markOccupied(const Eigen::Vector3d &position) {
     grid_[address] = 1;
 }
 
-void LocalPlanGrid::markFree(const Eigen::Vector3d &position) {
+void LocalPlanGrid::MarkFree(const Eigen::Vector3d &position) {
     const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
     if (!px4_common::math::IsIndexInBounds(index, size_)) {
         return;
@@ -35,7 +35,7 @@ void LocalPlanGrid::markFree(const Eigen::Vector3d &position) {
     grid_[address] = 0;
 }
 
-void LocalPlanGrid::inflateObstacles(int inflation_radius_voxels) {
+void LocalPlanGrid::InflateObstacles(int inflation_radius_voxels) {
     if (inflation_radius_voxels <= 0) {
         return;
     }
@@ -80,7 +80,7 @@ void LocalPlanGrid::inflateObstacles(int inflation_radius_voxels) {
     }
 }
 
-bool LocalPlanGrid::isFree(double x, double y, double z) const {
+bool LocalPlanGrid::IsFree(double x, double y, double z) const {
     const Eigen::Vector3d position(x, y, z);
     const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
 
@@ -92,7 +92,7 @@ bool LocalPlanGrid::isFree(double x, double y, double z) const {
     return grid_[address] == 0;
 }
 
-bool LocalPlanGrid::isOccupied(double x, double y, double z) const {
+bool LocalPlanGrid::IsOccupied(double x, double y, double z) const {
     const Eigen::Vector3d position(x, y, z);
     const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
 

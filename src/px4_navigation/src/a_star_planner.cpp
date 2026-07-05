@@ -52,7 +52,7 @@ AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
     Node* final_node = nullptr;
 
     // Calculate planning parameters
-    const double voxel_res = grid.resolution();
+    const double voxel_res = grid.Resolution();
     const double inv_res = 1.0 / voxel_res;
     const double horizon_voxels = kPlanningHorizonM * inv_res;
     const double horizon_voxels_sq = horizon_voxels * horizon_voxels;
@@ -174,18 +174,18 @@ AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
 
 Eigen::Vector3i AStarPlanner::WorldToGrid(const LocalPlanGrid& grid,
                                           const Eigen::Vector3d& world) const {
-    return px4_common::math::WorldToIndex(world, grid.origin(), grid.resolution());
+    return px4_common::math::WorldToIndex(world, grid.Origin(), grid.Resolution());
 }
 
 Eigen::Vector3d AStarPlanner::GridToWorld(const LocalPlanGrid& grid,
                                           const Eigen::Vector3i& idx) const {
-    return px4_common::math::IndexToWorld(idx, grid.origin(), grid.resolution());
+    return px4_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
 }
 
 bool AStarPlanner::IsBlocked(const LocalPlanGrid& grid, const Eigen::Vector3i& idx) const {
     const Eigen::Vector3d world_pos =
-        px4_common::math::IndexToWorld(idx, grid.origin(), grid.resolution());
-    return !grid.isFree(world_pos.x(), world_pos.y(), world_pos.z());
+        px4_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
+    return !grid.IsFree(world_pos.x(), world_pos.y(), world_pos.z());
 }
 
 bool AStarPlanner::AdjustStartIfBlocked(const LocalPlanGrid& grid, Eigen::Vector3i& start_idx,
@@ -225,7 +225,7 @@ bool AStarPlanner::AdjustGoalIfBlocked(const LocalPlanGrid& grid, const Eigen::V
         }
 
         // Pull back along approach direction
-        const double voxel_res = grid.resolution();
+        const double voxel_res = grid.Resolution();
         int margin_voxels = static_cast<int>(kGoalSafetyMarginM / voxel_res);
         bool found = false;
 

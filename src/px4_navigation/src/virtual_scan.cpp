@@ -15,7 +15,7 @@ VirtualScan::VirtualScan()
     scan_ranges_.resize(kNumBins, static_cast<float>(max_range_));
 }
 
-void VirtualScan::reset(double angle_resolution, double max_range, double vehicle_radius) {
+void VirtualScan::Reset(double angle_resolution, double max_range, double vehicle_radius) {
     angle_increment_ = angle_resolution;
     max_range_ = max_range;
     vehicle_radius_ = vehicle_radius;
@@ -25,7 +25,7 @@ void VirtualScan::reset(double angle_resolution, double max_range, double vehicl
     scan_ranges_.assign(kNumBins, static_cast<float>(max_range_));
 }
 
-void VirtualScan::update(const std::vector<px4_common::PointLivox> &occupied_points,
+void VirtualScan::Update(const std::vector<px4_common::PointLivox> &occupied_points,
                          const px4_common::DroneStateNed &drone_state, double height_above,
                          double height_below) {
     // Reset all bins to max range, indicates no obstacle
@@ -73,7 +73,7 @@ void VirtualScan::update(const std::vector<px4_common::PointLivox> &occupied_poi
     }
 }
 
-std::vector<double> VirtualScan::get_obstacle_bearings() const {
+std::vector<double> VirtualScan::ObstacleBearings() const {
     std::vector<double> bearings;
     bearings.reserve(kNumBins);
 
