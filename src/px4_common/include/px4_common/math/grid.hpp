@@ -1,8 +1,8 @@
 #ifndef PX4_COMMON_MATH_GRID_HPP_
 #define PX4_COMMON_MATH_GRID_HPP_
 
-#include <math.h>
 #include <Eigen/Dense>
+#include <cmath>
 
 namespace px4_common::math {
 

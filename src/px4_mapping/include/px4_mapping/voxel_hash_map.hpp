@@ -111,16 +111,27 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
     /**
      * @brief Return occupied voxels changed in the most recent Update().
      *
-     * @note This must be called immediately after Update() from the same
-     *       callback context; it reads internal buffers without locking.
+     * This method acquires the map mutex for a short copy of the internal
+     * new/kept buffers. The buffers are then converted to world points without
+     * holding the lock to avoid blocking concurrent raycasting.
+     *
      * @param[out] out Vector filled with occupied voxel centres.
      */
     void GetChangedPoints(std::vector<px4_common::PointLivox> &out) {
-        out.clear();
-        out.reserve(new_voxels_.size() + kept_voxels_.size());
+        std::vector<Voxel *> new_snap;
+        std::vector<Voxel *> keep_snap;
 
-        AppendOccupiedVoxelPoints(new_voxels_, out);
-        AppendOccupiedVoxelPoints(kept_voxels_, out);
+        {
+            std::lock_guard<std::mutex> lock(map_mutex_);
+            new_snap = new_voxels_;
+            keep_snap = kept_voxels_;
+        }
+
+        out.clear();
+        out.reserve(new_snap.size() + keep_snap.size());
+
+        AppendOccupiedVoxelPoints(new_snap, out);
+        AppendOccupiedVoxelPoints(keep_snap, out);
     }
 
     /**

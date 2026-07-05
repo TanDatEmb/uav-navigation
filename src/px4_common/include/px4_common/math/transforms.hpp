@@ -1,11 +1,13 @@
 #ifndef PX4_COMMON_MATH_TRANSFORMS_HPP_
 #define PX4_COMMON_MATH_TRANSFORMS_HPP_
 
-#include <math.h>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <cmath>
 
 namespace px4_common::math {
+
+inline constexpr double kPi = 3.14159265358979323846;
 
 /**
  * @brief Convert a 3D point from ENU (ROS default) to NED (PX4 default).
@@ -146,7 +148,10 @@ inline Eigen::Quaterniond QuaternionEnuToNed(const Eigen::Quaterniond &q_enu) no
  * @return The same physical orientation expressed with respect to the ENU frame.
  */
 inline Eigen::Quaterniond QuaternionNedToEnu(const Eigen::Quaterniond &q_ned) noexcept {
-    return QuaternionEnuToNed(q_ned).conjugate();
+    // ENU↔NED is a 180° rotation about the (1,1,0) axis, which is an involution:
+    // R_enu_to_ned = R_ned_to_enu and q_rot is its own inverse. Therefore the
+    // forward and inverse frame transforms are the same sandwich operation.
+    return QuaternionEnuToNed(q_ned);
 }
 
 /**
@@ -167,7 +172,7 @@ inline Eigen::Quaterniond Slerp(const Eigen::Quaterniond &q0, const Eigen::Quate
  * @return Angle in radians.
  */
 inline constexpr double Deg2Rad(double deg) noexcept {
-    return deg * (M_PI / 180.0);
+    return deg * (kPi / 180.0);
 }
 
 /**
@@ -176,7 +181,7 @@ inline constexpr double Deg2Rad(double deg) noexcept {
  * @return Angle in degrees.
  */
 inline constexpr double Rad2Deg(double rad) noexcept {
-    return rad * (180.0 / M_PI);
+    return rad * (180.0 / kPi);
 }
 
 }  // namespace px4_common::math

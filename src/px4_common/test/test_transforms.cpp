@@ -77,6 +77,33 @@ TEST(TransformsTest, Deg2RadAndRad2DegAreInverses) {
     EXPECT_NEAR(Rad2Deg(Deg2Rad(kTestAngleDeg)), kTestAngleDeg, 1e-9);
 }
 
+TEST(TransformsTest, QuaternionNedToEnuRoundTripWithNonTrivialOrientation) {
+    const Eigen::Vector3d euler_enu(Deg2Rad(15.0), Deg2Rad(-25.0), Deg2Rad(45.0));
+    const Eigen::Quaterniond q_enu = EulerToQuaternion(euler_enu);
+    const Eigen::Quaterniond q_ned = QuaternionEnuToNed(q_enu);
+    const Eigen::Quaterniond q_recovered = QuaternionNedToEnu(q_ned);
+
+    EXPECT_TRUE(q_recovered.isApprox(q_enu) || q_recovered.coeffs().isApprox(-q_enu.coeffs()));
+}
+
+TEST(TransformsTest, EulerToQuaternionOverload) {
+    const Eigen::Quaterniond q0 = EulerToQuaternion(Deg2Rad(10.0), Deg2Rad(20.0), Deg2Rad(30.0));
+    const Eigen::Quaterniond q1 =
+        EulerToQuaternion(Eigen::Vector3d(Deg2Rad(10.0), Deg2Rad(20.0), Deg2Rad(30.0)));
+    EXPECT_TRUE(q0.isApprox(q1) || q0.coeffs().isApprox(-q1.coeffs()));
+}
+
+TEST(TransformsTest, QuaternionToEulerOutputOverload) {
+    const Eigen::Quaterniond q = EulerToQuaternion(0.1, 0.2, 0.3);
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    QuaternionToEuler(q, roll, pitch, yaw);
+    EXPECT_NEAR(roll, 0.1, 1e-9);
+    EXPECT_NEAR(pitch, 0.2, 1e-9);
+    EXPECT_NEAR(yaw, 0.3, 1e-9);
+}
+
 int main(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

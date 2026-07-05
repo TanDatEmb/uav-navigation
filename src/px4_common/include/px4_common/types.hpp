@@ -1,9 +1,9 @@
 #ifndef PX4_COMMON_TYPES_HPP_
 #define PX4_COMMON_TYPES_HPP_
 
-#include <math.h>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>

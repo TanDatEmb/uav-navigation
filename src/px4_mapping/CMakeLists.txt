@@ -17,7 +17,7 @@ find_package(sensor_msgs REQUIRED)
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME} INTERFACE
@@ -27,6 +27,17 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     nav_msgs
     sensor_msgs
 )
+
+install(TARGETS ${PROJECT_NAME}
+    EXPORT export_${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+    DESTINATION include
+)
+
+ament_export_targets(export_${PROJECT_NAME})
+ament_export_dependencies(px4_common Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
