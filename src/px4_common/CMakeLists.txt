@@ -10,13 +10,29 @@ find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 
-add_library(${PROJECT_NAME} INTERFACE)
-target_include_directories(${PROJECT_NAME} INTERFACE
+# Header-only library with a single translation unit so ament can export and
+# install the headers correctly for downstream packages.
+add_library(${PROJECT_NAME} src/px4_common.cpp)
+target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+    $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
-ament_target_dependencies(${PROJECT_NAME} INTERFACE geometry_msgs rclcpp)
+target_link_libraries(${PROJECT_NAME} PUBLIC Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME} PUBLIC geometry_msgs rclcpp)
+
+install(TARGETS ${PROJECT_NAME}
+    EXPORT export_${PROJECT_NAME}
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/
+    DESTINATION include
+)
+
+ament_export_targets(export_${PROJECT_NAME})
+ament_export_dependencies(Eigen3 geometry_msgs rclcpp)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)

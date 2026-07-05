@@ -6,18 +6,34 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_gtest REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(px4_common REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
-set(THIS_PACKAGE_INCLUDE_DEPENDS
+add_library(${PROJECT_NAME} INTERFACE)
+target_include_directories(${PROJECT_NAME} INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME} INTERFACE
     px4_common
     rclcpp
     geometry_msgs
     nav_msgs
     sensor_msgs
 )
+
+if(BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_add_gtest(test_voxel_pool test/test_voxel_pool.cpp)
+    target_link_libraries(test_voxel_pool ${PROJECT_NAME})
+    ament_add_gtest(test_voxel_hash_map test/test_voxel_hash_map.cpp)
+    target_link_libraries(test_voxel_hash_map ${PROJECT_NAME})
+endif()
 
 ament_package()
