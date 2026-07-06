@@ -168,6 +168,7 @@ BGEOF
 make_bg "obstacle-pub" 14 << BGEOF
 ros2 run px4_navigation obstacle_distance_publisher_node \
   --ros-args \
+  --params-file "${WS_DIR}/src/px4_navigation/config/obstacle_distance_publisher.yaml" \
   -p use_sim_time:=true \
   -p input_cloud_topic:=/lidar_360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \

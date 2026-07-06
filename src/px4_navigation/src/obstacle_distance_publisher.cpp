@@ -56,9 +56,10 @@ ObstacleDistancePublisher::ObstacleDistancePublisher(const rclcpp::NodeOptions& 
         std::bind(&ObstacleDistancePublisher::VehicleOdomCallback, this,
                   std::placeholders::_1));
 
-    // Publisher for obstacle distance to PX4.
+    // Publisher for obstacle distance to PX4. Use reliable QoS to match
+    // PX4 uXRCE-DDS subscription expectations.
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
-        obstacle_distance_topic_, px4_qos);
+        obstacle_distance_topic_, rclcpp::QoS(20).reliable());
 
     // Publish timer.
     const auto period_ns = static_cast<int64_t>(1e9 / publish_rate_hz_);
