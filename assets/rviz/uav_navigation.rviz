@@ -107,8 +107,8 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 20
+      Class: rviz_default_plugins/TopDownOrtho
+      Distance: 30
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.06
         Stereo Focal Distance: 1
@@ -123,10 +123,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.785
+      Pitch: 0
       Target Frame: lidar_sensor_link
-      Value: Orbit (rviz)
-      Yaw: 0.785
+      Value: TopDownOrtho (rviz)
+      Yaw: 0
 Window Geometry:
   Displays:
     collapsed: false

@@ -192,16 +192,18 @@ BGEOF
 fi
 
 # ── RViz2 (optional) ────────────────────────────────────────────────────────
-if command -v rviz2 >/dev/null 2>&1; then
+RVIZ2_BIN="/opt/ros/${ROS_DISTRO}/bin/rviz2"
+if [[ -x "${RVIZ2_BIN}" ]]; then
 # Publish static TF frames so RViz can display the point cloud properly.
 make_bg "static-tf" 18 << BGEOF
 ros2 run tf2_ros static_transform_publisher \
-  0 0 0 0 0 0 \
-  lidar_sensor_link x500_lidar_360_0/lidar_sensor_link/lidar
+  --x 0 --y 0 --z 0 --roll 0 --pitch 0 --yaw 0 \
+  --frame-id lidar_sensor_link \
+  --child-frame-id x500_lidar_360_0/lidar_sensor_link/lidar
 BGEOF
 
 make_bg "rviz" 20 << BGEOF
-rviz2 -d "${WS_DIR}/assets/rviz/uav_navigation.rviz" 2>&1
+"${RVIZ2_BIN}" -d "${WS_DIR}/assets/rviz/uav_navigation.rviz" 2>&1
 BGEOF
 else
     echo "  [skip] rviz2 not installed. Install: sudo apt install ros-${ROS_DISTRO}-rviz2"
