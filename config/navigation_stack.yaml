@@ -25,9 +25,9 @@ px4_navigation:
   obstacle_distance_publisher:
     ros__parameters:
       publish_rate_hz: 20.0
-      min_distance_cm: 30
-      max_distance_cm: 1500
-      height_band_m: 2.0
+      min_distance_cm: 10
+      max_distance_cm: 4000
+      height_band_m: 3.0
       stale_timeout_ms: 400
       input_cloud_topic: "/lidar_360/points"
       vehicle_odom_topic: "/fmu/out/vehicle_odometry"

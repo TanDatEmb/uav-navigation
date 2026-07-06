@@ -164,6 +164,11 @@ ros2 run ros_gz_bridge parameter_bridge \
   --ros-args -r "${GZ_LIDAR_POINTS}:=/lidar_360/points"
 BGEOF
 
+# ── obstacle_distance visualizer node ─────────────────────────────────────
+make_bg "obstacle-viz" 16 << BGEOF
+ros2 run px4_navigation obstacle_distance_visualizer_node --ros-args -p use_sim_time:=true
+BGEOF
+
 # ── obstacle_distance_publisher_node ──────────────────────────────────────
 make_bg "obstacle-pub" 14 << BGEOF
 ros2 run px4_navigation obstacle_distance_publisher_node \
@@ -194,12 +199,17 @@ fi
 # ── RViz2 (optional) ────────────────────────────────────────────────────────
 RVIZ2_BIN="/opt/ros/${ROS_DISTRO}/bin/rviz2"
 if [[ -x "${RVIZ2_BIN}" ]]; then
-# Publish static TF frames so RViz can display the point cloud properly.
+# Publish static TF frames so RViz can display the point cloud and markers properly.
 make_bg "static-tf" 18 << BGEOF
 ros2 run tf2_ros static_transform_publisher \
   --x 0 --y 0 --z 0 --roll 0 --pitch 0 --yaw 0 \
   --frame-id lidar_sensor_link \
   --child-frame-id x500_lidar_360_0/lidar_sensor_link/lidar
+
+ros2 run tf2_ros static_transform_publisher \
+  --x 0 --y 0 --z 0 --roll 0 --pitch 0 --yaw 0 \
+  --frame-id map_ned \
+  --child-frame-id base_link
 BGEOF
 
 make_bg "rviz" 20 << BGEOF

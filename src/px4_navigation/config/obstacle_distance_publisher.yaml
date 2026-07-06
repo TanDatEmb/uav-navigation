@@ -8,15 +8,18 @@ obstacle_distance_publisher:
     # reduces latency.
     publish_rate_hz: 20.0
 
-    # Distance range in centimetres. PX4 CP uses these to interpret the
-    # distances array. Values > max_distance are treated as "no obstacle".
-    min_distance_cm: 30        # 0.3 m — ignore self-reflections
-    max_distance_cm: 1500      # 15 m — match LiDAR max range
+    # Distance range in centimetres. Match the Livox Mid-360 blind zone
+    # (0.1 m) and detection range (40 m). Values > max_distance are treated
+    # as "no obstacle".
+    min_distance_cm: 10        # 0.1 m — Livox close-proximity blind zone
+    max_distance_cm: 4000      # 40 m — Livox max detection range
 
     # Height band (metres). Only points within +/- this value of the drone's
-    # altitude are included in the horizontal scan. This approximates the
-    # drone's physical height.
-    height_band_m: 2.0
+    # altitude are included in the horizontal scan. Must cover the Livox
+    # Mid-360 vertical FOV at the CP keep-out distance (e.g. at 2.5 m,
+    # +52° gives ~2.0 m above the drone). 3.0 m keeps nearby obstacles while
+    # avoiding ground/ceiling clutter.
+    height_band_m: 3.0
 
     # Stale timeout (ms). If no point cloud arrives within this window, all
     # bins are set to UINT16_MAX (unknown) to clear PX4's obstacle map.

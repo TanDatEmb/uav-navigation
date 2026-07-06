@@ -19,6 +19,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
     src/local_plan_grid.cpp
@@ -60,6 +61,25 @@ install(TARGETS obstacle_distance_publisher_node
     DESTINATION lib/${PROJECT_NAME}
 )
 
+# ── Obstacle distance visualizer node ───────────────────────────
+add_executable(obstacle_distance_visualizer_node
+    src/obstacle_distance_visualizer.cpp
+    src/obstacle_distance_visualizer_main.cpp)
+target_include_directories(obstacle_distance_visualizer_node PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(obstacle_distance_visualizer_node PRIVATE
+    ${PROJECT_NAME}
+    Eigen3::Eigen
+    px4_common::px4_common
+    rclcpp::rclcpp
+    px4_msgs::px4_msgs
+    visualization_msgs::visualization_msgs
+)
+install(TARGETS obstacle_distance_visualizer_node
+    DESTINATION lib/${PROJECT_NAME}
+)
+
 install(TARGETS ${PROJECT_NAME}
     EXPORT export_${PROJECT_NAME}
     ARCHIVE DESTINATION lib
@@ -78,7 +98,7 @@ install(DIRECTORY config/
 )
 
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_common px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs)
+ament_export_dependencies(px4_common px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs visualization_msgs)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
