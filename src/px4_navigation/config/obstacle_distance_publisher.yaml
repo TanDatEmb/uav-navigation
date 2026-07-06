@@ -4,9 +4,9 @@
 
 obstacle_distance_publisher:
   ros__parameters:
-    # Publish rate (Hz). PX4 CP timeout is 500 ms, so >= 2 Hz is required.
-    # 10 Hz is a good balance between responsiveness and CPU load.
-    publish_rate_hz: 10.0
+    # Publish rate (Hz). PX4 CP timeout is 500 ms; 20 Hz gives margin and
+    # reduces latency.
+    publish_rate_hz: 20.0
 
     # Distance range in centimetres. PX4 CP uses these to interpret the
     # distances array. Values > max_distance are treated as "no obstacle".

@@ -190,6 +190,15 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
 BGEOF
 fi
 
+# ── RViz2 (optional) ────────────────────────────────────────────────────────
+if command -v rviz2 >/dev/null 2>&1; then
+make_bg "rviz" 22 << BGEOF
+rviz2 -d "${WS_DIR}/assets/rviz/uav_navigation.rviz" 2>&1
+BGEOF
+else
+    echo "  [skip] rviz2 not installed. Install: sudo apt install ros-${ROS_DISTRO}-rviz2"
+fi
+
 # ════════════════════════════════════════════════════════════════════════════
 # PX4 SITL — this also spawns the Gazebo world + drone model
 # (always launches Gazebo GUI)

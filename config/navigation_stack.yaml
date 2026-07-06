@@ -24,12 +24,12 @@ px4_navigation:
   # Obstacle distance publisher for PX4 Collision Prevention.
   obstacle_distance_publisher:
     ros__parameters:
-      publish_rate_hz: 10.0
+      publish_rate_hz: 20.0
       min_distance_cm: 30
       max_distance_cm: 1500
       height_band_m: 2.0
       stale_timeout_ms: 400
-      input_cloud_topic: "/livox_processed_ned"
+      input_cloud_topic: "/lidar_360/points"
       vehicle_odom_topic: "/fmu/out/vehicle_odometry"
       obstacle_distance_topic: "/fmu/in/obstacle_distance"
       frame: 12  # MAV_FRAME_BODY_FRD

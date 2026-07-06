@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Obstacle course world for Collision Prevention testing.
+
+  Layout (top-down, ENU frame, units in metres):
+    - 4 walls forming a corridor (open ends on North and South)
+    - 3 pillars scattered inside/around the corridor
+    - Ground plane at z=0
+    - All obstacles are 15 m tall
+
+  The drone starts at origin (0, 0, 0.24) and can fly through the corridor
+  to test CP stopping behaviour from multiple approach angles.
+-->
+<sdf version="1.9">
+  <world name="obstacle_course">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <!-- Corridor wall East: runs North-South at x=8, from y=-10 to y=10 -->
+    <model name="wall_east">
+      <pose>8 0 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 15</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 15</size></box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.3 0.3 1</ambient>
+            <diffuse>0.6 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Corridor wall West: runs North-South at x=-8, from y=-10 to y=10 -->
+    <model name="wall_west">
+      <pose>-8 0 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.5 20 15</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.5 20 15</size></box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.6 1</ambient>
+            <diffuse>0.3 0.3 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Pillar 1: directly in front of spawn (North ~5m) -->
+    <model name="pillar_1">
+      <pose>5 0 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.0</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.0</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.6 0.2 1</ambient>
+            <diffuse>0.8 0.6 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Pillar 2: to the right (East ~3m, North ~3m) -->
+    <model name="pillar_2">
+      <pose>3 3 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.8</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.8</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.6 0.2 1</ambient>
+            <diffuse>0.8 0.6 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Pillar 3: behind-left (West ~3m, South ~4m) -->
+    <model name="pillar_3">
+      <pose>-3 -4 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>0.8</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>0.8</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.6 0.2 1</ambient>
+            <diffuse>0.8 0.6 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Back wall: closes the corridor on the South side -->
+    <model name="wall_south">
+      <pose>0 -10 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>16.5 0.5 15</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>16.5 0.5 15</size></box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.6 0.3 1</ambient>
+            <diffuse>0.3 0.6 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
