@@ -38,7 +38,11 @@ pkill -KILL -f "obstacle_distance_publisher" 2>/dev/null || true
 pkill -KILL -f "parameter_bridge" 2>/dev/null || true
 pkill -KILL -f "px4_sitl_default/bin/px4" 2>/dev/null || true
 pkill -KILL -f "gz sim" 2>/dev/null || true
+pkill -KILL -f "rviz2" 2>/dev/null || true
 pkill -KILL -f "MicroXRCEAgent" 2>/dev/null || true
+
+# Also kill xterm windows if still alive
+pkill -KILL -f "xterm.*uav-nav" 2>/dev/null || true
 
 # ── 3. Free XRCE UDP port ──────────────────────────────────────────────────
 if command -v fuser >/dev/null 2>&1; then

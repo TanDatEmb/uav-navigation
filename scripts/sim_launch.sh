@@ -193,7 +193,14 @@ fi
 
 # ── RViz2 (optional) ────────────────────────────────────────────────────────
 if command -v rviz2 >/dev/null 2>&1; then
-make_bg "rviz" 22 << BGEOF
+# Publish static TF frames so RViz can display the point cloud properly.
+make_bg "static-tf" 18 << BGEOF
+ros2 run tf2_ros static_transform_publisher \
+  0 0 0 0 0 0 \
+  lidar_sensor_link x500_lidar_360_0/lidar_sensor_link/lidar
+BGEOF
+
+make_bg "rviz" 20 << BGEOF
 rviz2 -d "${WS_DIR}/assets/rviz/uav_navigation.rviz" 2>&1
 BGEOF
 else
