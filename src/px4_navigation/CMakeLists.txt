@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(px4_common REQUIRED)
+find_package(px4_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -37,6 +38,26 @@ ament_target_dependencies(${PROJECT_NAME} PUBLIC
     geometry_msgs
     nav_msgs
     trajectory_msgs
+    sensor_msgs
+)
+
+# ── Obstacle distance publisher node ────────────────────────────
+add_executable(obstacle_distance_publisher_node
+    src/obstacle_distance_publisher.cpp
+    src/obstacle_distance_publisher_main.cpp)
+target_include_directories(obstacle_distance_publisher_node PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(obstacle_distance_publisher_node PRIVATE
+    ${PROJECT_NAME}
+    Eigen3::Eigen
+    px4_common::px4_common
+    rclcpp::rclcpp
+    sensor_msgs::sensor_msgs
+    px4_msgs::px4_msgs
+)
+install(TARGETS obstacle_distance_publisher_node
+    DESTINATION lib/${PROJECT_NAME}
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -51,8 +72,13 @@ install(DIRECTORY include/
     DESTINATION include
 )
 
+# Install config files so launch can find them via get_package_share_directory.
+install(DIRECTORY config/
+    DESTINATION share/${PROJECT_NAME}/config
+)
+
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_common Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs)
+ament_export_dependencies(px4_common px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)

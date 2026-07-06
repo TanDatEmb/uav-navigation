@@ -1,0 +1,23 @@
+# ros_gz_bridge parameter file for uav-navigation SITL.
+#
+# Bridges Gazebo Transport topics to ROS 2 topics.
+#
+# Usage:
+#   ros2 run ros_gz_bridge parameter_bridge \
+#     --ros-args --params-file config/ros_gz_bridge.yaml
+
+ros_gz_bridge:
+  ros__parameters:
+    bridges:
+      # Gazebo gpu_lidar publishes PointCloud2 on GZ transport.
+      # Bridge to ROS 2 sensor_msgs/PointCloud2 for obstacle_distance_publisher.
+      - topic: "/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/points"
+        ros_type: "sensor_msgs/msg/PointCloud2"
+        gz_type: "gz.msgs.PointCloud2"
+        ros_topic: "/lidar_360/points"
+
+      # Bridge LaserScan for debugging.
+      - topic: "/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/scan"
+        ros_type: "sensor_msgs/msg/LaserScan"
+        gz_type: "gz.msgs.LaserScan"
+        ros_topic: "/lidar_360/scan"
