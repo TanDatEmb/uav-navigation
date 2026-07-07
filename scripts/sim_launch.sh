@@ -5,7 +5,8 @@
 # Starts a complete SITL stack:
 #   BG  – MicroXRCE-DDS Agent        (PX4 ↔ ROS 2 bridge)
 #   BG  – ros_gz_bridge                (LiDAR PointCloud2 from Gazebo → ROS 2)
-#   BG  – obstacle_distance_publisher  (PointCloud2 → ObstacleDistance for PX4 CP)
+#   BG  – livox_mid360_processor      (PointCloud2 → 2.5D grid → ObstacleDistance for PX4 CP)
+#   BG  – obstacle_distance_visualizer (RViz markers from ObstacleDistance)
 #   BG  – rosbag2 record               (optional, set SKIP_BAG=1 to disable)
 #   WIN – PX4 SITL console             (also launches Gazebo via gz_bridge)
 #
@@ -155,6 +156,8 @@ MicroXRCEAgent udp4 -p ${XRCE_PORT}
 BGEOF
 
 # ── ros_gz_bridge (LiDAR PointCloud2 → ROS 2) ─────────────────────────────
+# Gazebo Harmonic gpu_lidar publishes PointCloud2 on:
+#   /world/.../model/.../link/lidar_sensor_link/sensor/lidar/scan/points
 GZ_LIDAR_POINTS="/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/scan/points"
 make_bg "gz-bridge" 10 << BGEOF
 export GZ_IP=127.0.0.1
@@ -169,15 +172,17 @@ make_bg "obstacle-viz" 16 << BGEOF
 ros2 run px4_navigation obstacle_distance_visualizer_node --ros-args -p use_sim_time:=true
 BGEOF
 
-# ── obstacle_distance_publisher_node ──────────────────────────────────────
-make_bg "obstacle-pub" 14 << BGEOF
-ros2 run px4_navigation obstacle_distance_publisher_node \
+# ── livox_mid360_processor_node ─────────────────────────────────────────────
+make_bg "livox-proc" 14 << BGEOF
+ros2 run px4_navigation livox_mid360_processor_node \
   --ros-args \
-  --params-file "${WS_DIR}/src/px4_navigation/config/obstacle_distance_publisher.yaml" \
+  --params-file "${WS_DIR}/src/px4_navigation/config/livox_mid360_processor.yaml" \
   -p use_sim_time:=true \
   -p input_cloud_topic:=/lidar_360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \
-  -p obstacle_distance_topic:=/fmu/in/obstacle_distance
+  -p obstacle_distance_topic:=/fmu/in/obstacle_distance \
+  -p grid_markers_topic:=/livox/grid_2d5/markers \
+  -p min_distance_cloud_topic:=/livox/grid_2d5/min_distance
 BGEOF
 
 # ── rosbag2 (optional) ────────────────────────────────────────────────────
@@ -189,6 +194,8 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   --include-unpublished-topics \
   --topics \
   /lidar_360/points \
+  /livox/grid_2d5/markers \
+  /livox/grid_2d5/min_distance \
   /fmu/in/obstacle_distance \
   /fmu/out/vehicle_odometry \
   /fmu/out/vehicle_local_position_v1 \
@@ -236,13 +243,51 @@ export PX4_GZ_WORLDS="${PX4_GZ_WORLDS}"
 export GZ_SIM_RESOURCE_PATH="${PX4_GZ_MODELS}:${PX4_GZ_WORLDS}:\${GZ_SIM_RESOURCE_PATH:-}"
 export GZ_IP=127.0.0.1
 
-# Always run Gazebo with GUI on this desktop machine
-unset HEADLESS 2>/dev/null || true
-echo "Gazebo GUI enabled"
+# Configure PX4 Gazebo GUI mode based on GZ_GUI.
+if [[ "${GZ_GUI}" == "1" ]]; then
+    export HEADLESS=""
+    echo "Gazebo GUI enabled (HEADLESS cleared)"
+else
+    export HEADLESS=1
+    echo "Gazebo GUI disabled (HEADLESS=1)"
+fi
 
 cd "${PX4_BUILD}/rootfs"
 "${PX4_BIN}" -d
 WINEOF
+
+# ── Ensure Gazebo GUI client is running ────────────────────────────────────
+# PX4's px4-rc.gzsim only spawns the GUI client when it starts a fresh world.
+# If a world is already running (e.g. from a previous session), the GUI is not
+# reopened. We therefore launch a dedicated GUI client here when requested.
+if [[ "${GZ_GUI}" == "1" ]]; then
+make_bg "gz-gui" 20 << BGEOF
+export GZ_SIM_RESOURCE_PATH="${PX4_GZ_MODELS}:${PX4_GZ_WORLDS}:\${GZ_SIM_RESOURCE_PATH:-}"
+export GZ_IP=127.0.0.1
+
+# Wait for the Gazebo server world to appear
+WORLD_NAME=""
+for i in \$(seq 1 30); do
+    WORLD_NAME=\$(gz topic -l 2>/dev/null | grep -m 1 -e "^/world/.*/clock" | sed 's/\/world\///g; s/\/clock//g')
+    [[ -n "\${WORLD_NAME}" ]] && break
+    sleep 1
+done
+
+if [[ -z "\${WORLD_NAME}" ]]; then
+    echo "WARNING: Gazebo world not detected, skipping GUI client launch" >&2
+    exit 0
+fi
+
+# Avoid duplicate GUI clients. Gazebo Harmonic's process name is 'ruby',
+# so we match the full command line instead of the process name.
+if pgrep -a -f "^gz sim -g" >/dev/null 2>&1; then
+    echo "Gazebo GUI client already running"
+else
+    echo "Starting Gazebo GUI client for world: \${WORLD_NAME}"
+    gz sim -g &
+fi
+BGEOF
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────
 echo ""
@@ -250,19 +295,19 @@ echo "============================================================"
 echo "  uav-navigation SITL launched"
 echo "  Session : ${SESSION_ID}"
 echo "  Log dir : ${LOG_DIR}/"
-echo "  GUI     : 1 (always)"
+echo "  GUI     : ${GZ_GUI}"
 echo ""
 echo "  Background logs:"
 echo "    xrce-dds     : ${LOG_DIR}/bg_xrce-dds-agent.log"
 echo "    gz-bridge    : ${LOG_DIR}/bg_gz-bridge.log"
-echo "    obstacle-pub : ${LOG_DIR}/bg_obstacle-pub.log"
+echo "    livox-proc   : ${LOG_DIR}/bg_livox-proc.log"
 if [[ "${SKIP_BAG}" != "1" ]]; then
     echo "    rosbag       : ${LOG_DIR}/bg_rosbag.log → rosbag/flight_data/"
 fi
 echo ""
 echo "Quick commands:"
 echo "  tail -f ${LOG_DIR}/win_px4-sitl.log          # Watch PX4"
-echo "  tail -f ${LOG_DIR}/bg_obstacle-pub.log        # Watch publisher"
+echo "  tail -f ${LOG_DIR}/bg_livox-proc.log        # Watch publisher"
 echo "  ros2 topic echo /fmu/in/obstacle_distance      # Verify CP data"
 echo "  gz topic -l                                    # List Gazebo topics"
 echo ""

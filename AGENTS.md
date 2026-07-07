@@ -55,8 +55,13 @@ cd /home/letandat/Dev/uav-navigation
 ./tools/build.sh
 ```
 
-## Commit Policy
+## Commit Policy — highest priority rule
 
-- Do **not** commit without explicit approval.
+- **NEVER commit without explicit human approval.** This is the highest-priority
+  working rule for this repository. No exceptions.
+- Do **not** assume a bug is fixed and commit on your own. The fix must be
+  reviewed and explicitly approved first.
+- Do **not** mark functionality as "working" before the human has verified it.
 - Keep commits small and focused on one concern.
 - Use English commit messages.
+- If in doubt, ask before committing.

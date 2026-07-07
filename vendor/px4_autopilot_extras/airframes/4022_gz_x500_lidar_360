@@ -1,0 +1,51 @@
+#! /bin/sh
+#
+# @name Gazebo x500 LiDAR 360
+#
+# @type Quadrotor
+#
+# @maintainer CTUAV
+#
+# x500 quadrotor with 360-degree LiDAR for obstacle sensing and collision prevention testing.
+#
+
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=x500_lidar_360}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=obstacle_course}
+
+. ${R}etc/init.d-posix/airframes/4001_gz_x500
+
+# Collision Prevention parameters (PX4 v1.17)
+#
+# Tuning notes for smooth avoidance in SITL:
+#   CP_DIST: keep larger than stopping distance at max horizontal speed.
+#   CP_DELAY: account for sensor + bridge + control latency (~50 ms).
+#   CP_GO_NO_DATA: 0 = stop safely if data is lost.
+#   CP_GUIDE_ANG: how aggressively CP pushes setpoint sideways (radians).
+
+# Minimum distance CP tries to maintain from obstacles.
+# 2.5 m gives the x500 enough room to decelerate from ~5 m/s.
+param set-default CP_DIST 2.5
+
+# Estimated data latency (seconds). Increase if the drone brakes too late.
+param set-default CP_DELAY 0.05
+
+# Safe behaviour: stop if obstacle data is lost/stale.
+param set-default CP_GO_NO_DATA 0
+
+# Guide angle: start gentle (0.3 rad ~ 17 deg), tune up if avoidance is too passive.
+param set-default CP_GUIDE_ANG 0.3
+
+# Maximum horizontal speed in Position mode — limit so CP has time to react.
+param set-default MPC_XY_VEL_MAX 5.0
+
+# Maximum horizontal acceleration — lower = smoother braking.
+param set-default MPC_ACC_HOR_MAX 3.0
+
+# Horizontal jerk limit — lower = less aggressive attitude changes.
+param set-default MPC_JERK_MAX 5.0
+
+# Position-mode horizontal P gain — slightly lower = smoother tracking.
+param set-default MPC_XY_P 0.8
+
+# Smooth velocity trajectory.
+param set-default MPC_XY_TRAJ_P 0.3

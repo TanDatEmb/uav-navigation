@@ -1,0 +1,12 @@
+diff --git a/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt b/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
+index 4cf43413f6..0ca589c370 100644
+--- a/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
++++ b/ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
+@@ -88,6 +88,7 @@ px4_add_romfs_files(
+ 	4019_gz_x500_gimbal
+ 	4020_gz_tiltrotor
+ 	4021_gz_x500_flow
++	4022_gz_x500_lidar_360
+ 
+ 	6011_gazebo-classic_typhoon_h480
+ 	6011_gazebo-classic_typhoon_h480.post

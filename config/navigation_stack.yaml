@@ -21,18 +21,53 @@ px4_navigation:
     vehicle_radius_m: 0.35
     safety_margin_m: 0.5
 
-  # Obstacle distance publisher for PX4 Collision Prevention.
-  obstacle_distance_publisher:
+  # Livox MID-360 processor for PX4 Collision Prevention.
+  livox_mid360_processor:
     ros__parameters:
+      # Spherical grid resolution.
+      yaw_bins: 72
+      pitch_bins: 28
+      min_pitch_deg: -7.0
+      max_pitch_deg: 52.0
+
+      # Reported distance range (m). Match Livox Mid-360 blind zone and max range.
+      min_distance_m: 0.1
+      max_distance_m: 40.0
+
+      # Points closer than this radius to the sensor origin are ignored so the
+      # UAV frame / propellers / landing gear do not produce false obstacles.
+      body_exclusion_radius_m: 0.30
+
+      # Publish rate (Hz). Must stay well below PX4 CP timeout (500 ms).
       publish_rate_hz: 20.0
-      min_distance_cm: 10
-      max_distance_cm: 4000
-      height_band_m: 3.0
+
+      # Stale timeout (ms). If no cloud arrives within this window, clear the map.
       stale_timeout_ms: 400
+
+      # Coordinate frame of the input point cloud.
+      cloud_frame: "sensor"
+
+      # Topics.
       input_cloud_topic: "/lidar_360/points"
       vehicle_odom_topic: "/fmu/out/vehicle_odometry"
       obstacle_distance_topic: "/fmu/in/obstacle_distance"
+      grid_markers_topic: "/livox/grid_2d5/markers"
+      min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
+
+      # Debug publishers. Disable to reduce bandwidth when not needed.
+      publish_grid_markers: true
+      publish_min_distance_cloud: true
+
+  # Obstacle distance visualizer for PX4 Collision Prevention debug.
+  obstacle_distance_visualizer:
+    ros__parameters:
+      publish_rate_hz: 20.0
+      obstacle_distance_topic: "/fmu/in/obstacle_distance"
+      markers_topic: "/obstacle_distance/markers"
+      scale_min_m: 0.1
+      scale_max_m: 20.0
       frame: 12  # MAV_FRAME_BODY_FRD
+      sensor_orientation: 0  # MAV_SENSOR_ORIENTATION_NONE
 
 px4_ros_com:
   ros__parameters:

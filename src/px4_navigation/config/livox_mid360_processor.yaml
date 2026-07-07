@@ -1,0 +1,67 @@
+# Configuration for the livox_mid360_processor node.
+# Converts a Livox MID-360 style PointCloud2 into a 2.5D spherical grid and
+# publishes obstacle data for PX4 CP plus debug topics for RViz.
+#
+# Sensor reference: Livox MID-360
+#   Horizontal FOV : 360 deg
+#   Vertical FOV   : -7 deg .. +52 deg (59 deg total, asymmetric)
+#   Range          : 0.1 m .. 40 m (@ 10 % reflectivity)
+#   Frame rate     : 10 Hz
+#   Point rate     : ~200 k points/s (first return)
+#
+# The Gazebo lidar_mid360 model is configured with:
+#   horizontal : 720 samples -> 0.5 deg resolution
+#   vertical   : 28 samples  -> ~2.1 deg resolution over -7 deg .. +52 deg
+
+livox_mid360_processor:
+  ros__parameters:
+    # Spherical grid resolution.
+    # yaw_bins = 72 gives 5 degrees per bin, matching px4_msgs/ObstacleDistance.
+    yaw_bins: 72
+
+    # Vertical bins must match the simulated sensor ray count and FOV.
+    pitch_bins: 28
+    min_pitch_deg: -7.0
+    max_pitch_deg: 52.0
+
+    # Reported distance range (m). Match Livox Mid-360 blind zone and max range.
+    min_distance_m: 0.1
+    max_distance_m: 40.0
+
+    # Points closer than this radius to the sensor origin are ignored so the
+    # UAV frame / propellers / landing gear do not produce false obstacles.
+    # x500 propeller disk radius is ~0.25 m, landing gear struts extend a
+    # bit further. Use 0.35 m to suppress false obstacles from the airframe
+    # without creating an excessive near-field dead zone.
+    body_exclusion_radius_m: 0.35
+
+    # Publish rate (Hz). Must stay well below PX4 CP timeout (500 ms).
+    publish_rate_hz: 20.0
+
+    # Stale timeout (ms). If no cloud arrives within this window, clear the map.
+    stale_timeout_ms: 400
+
+    # Coordinate frame of the input point cloud.
+    #   "sensor"     : cloud is already in PX4 body FRD frame (x=FWD, y=RIGHT, z=DOWN).
+    #   "sensor_flu" : cloud is in ROS/Gazebo conventional FLU frame (x=FWD, y=LEFT, z=UP).
+    #                  The processor converts FLU -> FRD internally.
+    #   "ned"        : cloud is in map_ned world frame (e.g. ned_transform_node output).
+    cloud_frame: "sensor_flu"
+
+    # Ground-plane filter. In body FRD, z is down. Points with z > 0 are
+    # below the sensor horizontal plane and are treated as ground returns.
+    # Disable this if you need negative-pitch coverage (e.g. landing aids).
+    filter_ground_points: true
+
+    # Topics.
+    input_cloud_topic: "/lidar_360/points"
+    vehicle_odom_topic: "/fmu/out/vehicle_odometry"
+    obstacle_distance_topic: "/fmu/in/obstacle_distance"
+    grid_markers_topic: "/livox/grid_2d5/markers"
+    min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
+
+    # Debug publishers. Disable to reduce bandwidth when not needed.
+    publish_grid_markers: true
+    publish_min_distance_cloud: true
+
+    # use_sim_time should be set via command line for SITL.

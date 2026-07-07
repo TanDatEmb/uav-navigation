@@ -47,12 +47,19 @@ test:
 	@colcon test-result --verbose
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SITL simulation (always with Gazebo GUI)
+# SITL simulation
 #   Requires: PX4 built at ~/Dev/Autopilot (make px4_sitl_default)
 #   Requires: MicroXRCEAgent on PATH
+#
+#   make sim          # SITL with Gazebo GUI (default)
+#   make sim-headless # SITL without Gazebo GUI
+#   GZ_GUI=0 make sim # same as make sim-headless
 # ─────────────────────────────────────────────────────────────────────────────
 sim:
 	@GZ_GUI=1 bash scripts/sim_launch.sh
+
+sim-headless:
+	@GZ_GUI=0 bash scripts/sim_launch.sh
 
 sim-stop:
 	@bash scripts/sim_stop.sh

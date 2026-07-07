@@ -1,65 +1,119 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sim_stop.sh — Stop all uav-navigation SITL processes (fast, clean)
+# sim_stop.sh — Stop all uav-navigation SITL processes
 #
-# Kills: xterm windows, PX4 SITL, Gazebo, ros_gz_bridge, obstacle publisher,
-#        MicroXRCEAgent, rosbag2 — all at once, no sequential sleep loops.
+# Strategy:
+#   1. Collect PIDs recorded in every session directory under log/sim/.
+#   2. Recursively kill each recorded PID and all of its descendants.
+#   3. Kill well-known orphan processes by exact process name / command line,
+#      using patterns that do not match a normal shell running this script.
+#   4. SIGTERM first, then SIGKILL for survivors.
 # =============================================================================
 set -uo pipefail
 
 WS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${WS_DIR}/log/sim/latest"
+LOG_DIR="${WS_DIR}/log/sim"
+MY_PID="$$"
 
 echo "Stopping uav-navigation SITL processes..."
 
-# ── 1. Kill xterm windows (tagged [uav-nav]) ────────────────────────────────
-# This is the main fix: old script didn't kill xterm windows.
-xterm_pids=$(pgrep -f "xterm.*uav-nav" 2>/dev/null || true)
-if [[ -n "${xterm_pids}" ]]; then
-    echo "  kill: xterm windows (PIDs: ${xterm_pids})"
-    echo "${xterm_pids}" | xargs kill -9 2>/dev/null || true
+# ── Recursive kill helper ───────────────────────────────────────────────────
+# Kill children first so the parent does not respawn them before we get there.
+kill_tree() {
+    local pid="$1"
+    local sig="$2"
+    [[ -z "${pid}" ]] && return 0
+    [[ "${pid}" == "${MY_PID}" ]] && return 0
+    for child in $(pgrep -P "${pid}" 2>/dev/null || true); do
+        kill_tree "${child}" "${sig}"
+    done
+    kill -"${sig}" "${pid}" 2>/dev/null || true
+}
+
+# ── 1. Collect PIDs from all session directories ────────────────────────────
+PIDS=()
+if [[ -d "${LOG_DIR}" ]]; then
+    for pidfile in "${LOG_DIR}"/*/bg_*.pid "${LOG_DIR}"/*/win_*.pid; do
+        [[ -f "${pidfile}" ]] || continue
+        pid=$(cat "${pidfile}" 2>/dev/null | tr -d '[:space:]')
+        [[ -n "${pid}" ]] && PIDS+=("${pid}")
+    done
 fi
 
-# ── 2. Kill all SITL processes by pattern — all at once ─────────────────────
-# SIGINT first (graceful for rosbag flush), then SIGKILL after 1s.
-pkill -INT -f "ros2 bag record" 2>/dev/null || true
-pkill -INT -f "obstacle_distance_publisher" 2>/dev/null || true
-pkill -INT -f "parameter_bridge" 2>/dev/null || true
-pkill -INT -f "px4_sitl_default/bin/px4" 2>/dev/null || true
-pkill -INT -f "gz sim" 2>/dev/null || true
-pkill -INT -f "MicroXRCEAgent" 2>/dev/null || true
+# ── 2. Add well-known orphan processes ───────────────────────────────────────
+# Exact process-name matches (comm field). These never match a shell running
+# this script.
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node livox_mid360_processor_node static_transform_publisher xterm; do
+    for pid in $(pgrep -x "${name}" 2>/dev/null || true); do
+        [[ "${pid}" == "${MY_PID}" ]] && continue
+        [[ -n "${pid}" ]] && PIDS+=("${pid}")
+    done
+done
 
-# Brief wait for graceful shutdown
-sleep 1
+# ros2 bag record runs under a Python interpreter, so we match its cmdline.
+# The command line of this shell does not contain "ros2 bag record".
+for pid in $(pgrep -f "ros2 bag record" 2>/dev/null || true); do
+    [[ "${pid}" == "${MY_PID}" ]] && continue
+    [[ -n "${pid}" ]] && PIDS+=("${pid}")
+done
 
-# Force kill survivors
-pkill -KILL -f "ros2 bag record" 2>/dev/null || true
-pkill -KILL -f "obstacle_distance_publisher" 2>/dev/null || true
-pkill -KILL -f "parameter_bridge" 2>/dev/null || true
-pkill -KILL -f "px4_sitl_default/bin/px4" 2>/dev/null || true
-pkill -KILL -f "gz sim" 2>/dev/null || true
-pkill -KILL -f "rviz2" 2>/dev/null || true
-pkill -KILL -f "MicroXRCEAgent" 2>/dev/null || true
+# Gazebo Harmonic server / GUI client. The gz binary is wrapped by Ruby,
+# so its process name is "ruby" and its cmdline starts with "gz sim".
+for pid in $(pgrep -f "^gz sim" 2>/dev/null || true); do
+    [[ "${pid}" == "${MY_PID}" ]] && continue
+    [[ -n "${pid}" ]] && PIDS+=("${pid}")
+done
 
-# Also kill xterm windows if still alive
-pkill -KILL -f "xterm.*uav-nav" 2>/dev/null || true
+# ── 3. Deduplicate and kill ─────────────────────────────────────────────────
+if [[ ${#PIDS[@]} -gt 0 ]]; then
+    UNIQUE_PIDS=$(printf '%s\n' "${PIDS[@]}" | sort -u | grep -v '^$')
+    if [[ -z "${UNIQUE_PIDS}" ]]; then
+        echo "  No processes found."
+    else
+        pid_count=$(echo "${UNIQUE_PIDS}" | wc -l | tr -d '[:space:]')
+        echo "  Killing ${pid_count} recorded/orphan process tree(s)"
+        while IFS= read -r pid; do
+            kill_tree "${pid}" "TERM"
+        done <<< "${UNIQUE_PIDS}"
 
-# ── 3. Free XRCE UDP port ──────────────────────────────────────────────────
+        sleep 1
+
+        ALIVE=()
+        while IFS= read -r pid; do
+            [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null && ALIVE+=("${pid}")
+        done <<< "${UNIQUE_PIDS}"
+
+        if [[ ${#ALIVE[@]} -gt 0 ]]; then
+            echo "  SIGKILL survivors: ${ALIVE[*]}"
+            for pid in "${ALIVE[@]}"; do
+                kill_tree "${pid}" "KILL"
+            done
+        fi
+    fi
+else
+    echo "  No processes found."
+fi
+
+# ── 4. Free XRCE UDP port ───────────────────────────────────────────────────
 if command -v fuser >/dev/null 2>&1; then
     fuser -k 8888/udp 2>/dev/null || true
 fi
 
-# ── 4. Verify clean (exclude this script/grep from count) ───────────────────
+# ── 5. Verify clean ─────────────────────────────────────────────────────────
 sleep 0.5
-remaining=$(pgrep -f "px4_sitl_default/bin/px4|gz sim|MicroXRCEAgent|obstacle_distance_publisher|parameter_bridge|uav-nav" 2>/dev/null | grep -v "$$" | wc -l || echo 0)
-remaining=$(echo "${remaining}" | tr -d '[:space:]')
+remaining=0
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node livox_mid360_processor_node static_transform_publisher xterm; do
+    count=$(pgrep -x "${name}" 2>/dev/null | wc -l)
+    remaining=$((remaining + count))
+done
+remaining=$((remaining + $(pgrep -f "^gz sim" 2>/dev/null | wc -l)))
+remaining=$((remaining + $(pgrep -f "ros2 bag record" 2>/dev/null | wc -l)))
 
 echo ""
 echo "=========================================="
-if [[ "${remaining:-0}" -eq 0 ]]; then
+if [[ "${remaining}" -eq 0 ]]; then
     echo "  All processes terminated cleanly"
 else
     echo "  WARNING: ${remaining} process(es) still running"
-    echo "  Try: pkill -9 -f 'px4|gz sim|MicroXRCE'"
 fi
 echo "=========================================="
