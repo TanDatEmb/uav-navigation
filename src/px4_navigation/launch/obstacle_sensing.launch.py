@@ -2,10 +2,8 @@
 Launch file for the obstacle sensing stack (Phase 1).
 
 Brings up the livox_mid360_processor_node, which converts a Livox MID-360
-style PointCloud2 stream into a 2.5D spherical grid and then publishes:
-  - /fmu/in/obstacle_distance      : 72-bin message for PX4 Collision Prevention
-  - /livox/grid_2d5/markers        : RViz debug MarkerArray
-  - /livox/grid_2d5/min_distance   : RViz debug PointCloud2
+style PointCloud2 stream into a 2.5D spherical grid and publishes:
+  - /fmu/in/obstacle_distance : 72-bin message for PX4 Collision Prevention
 
 Future phases will add voxmap_manager_node, collision_avoidance_node, etc.
 """
@@ -38,7 +36,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'cloud_frame',
-            default_value='sensor',
+            default_value='sensor_flu',
             description='Coordinate frame of the input point cloud: sensor (body FRD) or ned'),
 
         # Livox MID-360 processor — converts PointCloud2 to PX4 ObstacleDistance.
@@ -58,7 +56,5 @@ def generate_launch_description():
                 ('/lidar_360/points', '/lidar_360/points'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/in/obstacle_distance', '/fmu/in/obstacle_distance'),
-                ('/livox/grid_2d5/markers', '/livox/grid_2d5/markers'),
-                ('/livox/grid_2d5/min_distance', '/livox/grid_2d5/min_distance'),
             ]),
     ])

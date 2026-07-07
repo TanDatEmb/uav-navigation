@@ -1,4 +1,4 @@
-// Copyright 2026 CTUAV. All rights reserved.
+// Copyright 2026 TanDatEmb.
 //
 // Implementation of the Livox MID-360 processor node.
 //
@@ -12,10 +12,7 @@
 //        - Map to a yaw x pitch spherical grid cell.
 //        - Keep the minimum horizontal distance per cell.
 //   4. Per yaw column, take the minimum distance across all pitch rows.
-//   5. Publish:
-//        - px4_msgs::ObstacleDistance to /fmu/in/obstacle_distance
-//        - debug MarkerArray to /livox/grid_2d5/markers
-//        - debug PointCloud2 to /livox/grid_2d5/min_distance
+//   5. Publish px4_msgs::ObstacleDistance to /fmu/in/obstacle_distance.
 
 #include "px4_navigation/livox_mid360_processor.hpp"
 
@@ -28,7 +25,6 @@
 
 #include <px4_common/math/transforms.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <visualization_msgs/msg/marker.hpp>
 
 namespace px4_navigation {
 
@@ -53,16 +49,6 @@ LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
 
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
         obstacle_distance_topic_, rclcpp::QoS(20).reliable());
-
-    if (publish_grid_markers_) {
-        pub_grid_markers_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            grid_markers_topic_, rclcpp::QoS(20).reliable());
-    }
-
-    if (publish_min_distance_cloud_) {
-        pub_min_distance_cloud_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
-            min_distance_cloud_topic_, rclcpp::QoS(20).reliable());
-    }
 
     const auto period_ns = static_cast<int64_t>(1e9 / publish_rate_hz_);
     publish_timer_ = this->create_wall_timer(
@@ -100,15 +86,9 @@ void LivoxMid360Processor::LoadParameters() {
         this->declare_parameter("vehicle_odom_topic", std::string("/fmu/out/vehicle_odometry"));
     obstacle_distance_topic_ =
         this->declare_parameter("obstacle_distance_topic", std::string("/fmu/in/obstacle_distance"));
-    grid_markers_topic_ =
-        this->declare_parameter("grid_markers_topic", std::string("/livox/grid_2d5/markers"));
-    min_distance_cloud_topic_ = this->declare_parameter(
-        "min_distance_cloud_topic", std::string("/livox/grid_2d5/min_distance"));
 
     cloud_frame_ = this->declare_parameter("cloud_frame", std::string("sensor_flu"));
     filter_ground_points_ = this->declare_parameter("filter_ground_points", true);
-    publish_grid_markers_ = this->declare_parameter("publish_grid_markers", true);
-    publish_min_distance_cloud_ = this->declare_parameter("publish_min_distance_cloud", true);
 
     // Validation.
     if (yaw_bins_ <= 0 || yaw_bins_ > 360) {
@@ -227,7 +207,6 @@ void LivoxMid360Processor::TimerCallback() {
         ComputeMinDistances(min_distances);
 
         std::copy(min_distances.begin(), min_distances.end(), obstacle_msg.distances.begin());
-        PublishDebugOutputs(min_distances);
     }
 
     pub_obstacle_distance_->publish(obstacle_msg);
@@ -246,7 +225,6 @@ void LivoxMid360Processor::BuildSphericalGrid(
     for (auto& row : grid_) {
         for (auto& cell : row) {
             cell.min_distance_cm = kNoObstacle;
-            cell.point_count = 0;
         }
     }
 
@@ -347,7 +325,6 @@ void LivoxMid360Processor::BuildSphericalGrid(
         if (dist_cm < cell.min_distance_cm) {
             cell.min_distance_cm = dist_cm;
         }
-        ++cell.point_count;
     }
 }
 
@@ -369,118 +346,5 @@ void LivoxMid360Processor::ComputeMinDistances(
     }
 }
 
-void LivoxMid360Processor::PublishDebugOutputs(
-    const std::array<uint16_t, 72>& min_distances) {
-    const auto now = this->now();
-
-    // 1. MarkerArray of the full 2.5D grid.
-    if (publish_grid_markers_ && pub_grid_markers_) {
-        auto markers = visualization_msgs::msg::MarkerArray();
-        markers.markers.reserve(static_cast<size_t>(yaw_bins_ * pitch_bins_) + 1);
-
-        // Delete previous markers.
-        {
-            auto delete_all = visualization_msgs::msg::Marker();
-            delete_all.header.frame_id = "lidar_sensor_link";
-            delete_all.header.stamp = now;
-            delete_all.action = visualization_msgs::msg::Marker::DELETEALL;
-            delete_all.ns = "livox_grid_2d5";
-            markers.markers.push_back(delete_all);
-        }
-
-        const double yaw_bin_size_rad = 2.0 * px4_common::math::kPi / yaw_bins_;
-        const double pitch_bin_size_rad = (max_pitch_rad_ - min_pitch_rad_) / pitch_bins_;
-
-        int marker_id = 1;
-        for (int yaw_bin = 0; yaw_bin < yaw_bins_; ++yaw_bin) {
-            for (int pitch_bin = 0; pitch_bin < pitch_bins_; ++pitch_bin) {
-                const uint16_t dist_cm =
-                    grid_[static_cast<size_t>(yaw_bin)][static_cast<size_t>(pitch_bin)]
-                        .min_distance_cm;
-                if (dist_cm == kNoObstacle || dist_cm == 0) {
-                    continue;
-                }
-
-                const double dist_m = static_cast<double>(dist_cm) / 100.0;
-                const double yaw_center = (yaw_bin + 0.5) * yaw_bin_size_rad;
-                const double pitch_center =
-                    min_pitch_rad_ + (pitch_bin + 0.5) * pitch_bin_size_rad;
-
-                auto marker = visualization_msgs::msg::Marker();
-                marker.header.frame_id = "lidar_sensor_link";
-                marker.header.stamp = now;
-                marker.ns = "livox_grid_2d5";
-                marker.id = marker_id++;
-                marker.type = visualization_msgs::msg::Marker::SPHERE;
-                marker.action = visualization_msgs::msg::Marker::ADD;
-
-                marker.pose.position.x = dist_m * std::cos(pitch_center) * std::cos(yaw_center);
-                marker.pose.position.y = dist_m * std::cos(pitch_center) * std::sin(yaw_center);
-                marker.pose.position.z = dist_m * std::sin(pitch_center);
-                marker.pose.orientation.w = 1.0;
-                marker.pose.orientation.x = 0.0;
-                marker.pose.orientation.y = 0.0;
-                marker.pose.orientation.z = 0.0;
-
-                // Scale by angular size at the reported distance.
-                const double angular_width = yaw_bin_size_rad;
-                const double angular_height = pitch_bin_size_rad;
-                marker.scale.x = 2.0 * dist_m * std::tan(angular_width / 2.0);
-                marker.scale.y = 2.0 * dist_m * std::tan(angular_width / 2.0);
-                marker.scale.z = 2.0 * dist_m * std::tan(angular_height / 2.0);
-
-                // Color by distance: red (close) -> green (far), clamped at 5 m.
-                const float ratio = static_cast<float>(std::min(dist_m, 5.0) / 5.0);
-                marker.color.r = 1.0f - ratio;
-                marker.color.g = ratio;
-                marker.color.b = 0.0f;
-                marker.color.a = 0.6f;
-
-                marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-                markers.markers.push_back(marker);
-            }
-        }
-
-        pub_grid_markers_->publish(markers);
-    }
-
-    // 2. PointCloud2 of the per-column minimum distances.
-    if (publish_min_distance_cloud_ && pub_min_distance_cloud_) {
-        auto cloud = sensor_msgs::msg::PointCloud2();
-        cloud.header.frame_id = "lidar_sensor_link";
-        cloud.header.stamp = now;
-        cloud.height = 1;
-        cloud.width = static_cast<uint32_t>(yaw_bins_);
-
-        sensor_msgs::PointCloud2Modifier mod(cloud);
-        mod.setPointCloud2Fields(4, "x", 1, sensor_msgs::msg::PointField::FLOAT32, "y", 1,
-                                 sensor_msgs::msg::PointField::FLOAT32, "z", 1,
-                                 sensor_msgs::msg::PointField::FLOAT32, "distance", 1,
-                                 sensor_msgs::msg::PointField::FLOAT32);
-        mod.resize(static_cast<size_t>(yaw_bins_));
-
-        sensor_msgs::PointCloud2Iterator<float> it_x(cloud, "x");
-        sensor_msgs::PointCloud2Iterator<float> it_y(cloud, "y");
-        sensor_msgs::PointCloud2Iterator<float> it_z(cloud, "z");
-        sensor_msgs::PointCloud2Iterator<float> it_d(cloud, "distance");
-
-        const double yaw_bin_size_rad = 2.0 * px4_common::math::kPi / yaw_bins_;
-
-        for (int yaw_bin = 0; yaw_bin < yaw_bins_; ++yaw_bin, ++it_x, ++it_y, ++it_z, ++it_d) {
-            const uint16_t dist_cm = min_distances[static_cast<size_t>(yaw_bin)];
-            const float dist_m =
-                (dist_cm == kNoObstacle) ? std::numeric_limits<float>::quiet_NaN()
-                                         : static_cast<float>(dist_cm) / 100.0f;
-            const double yaw_center = (yaw_bin + 0.5) * yaw_bin_size_rad;
-
-            *it_x = dist_m * std::cos(yaw_center);
-            *it_y = dist_m * std::sin(yaw_center);
-            *it_z = 0.0f;
-            *it_d = dist_m;
-        }
-
-        pub_min_distance_cloud_->publish(cloud);
-    }
-}
 
 }  // namespace px4_navigation

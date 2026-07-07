@@ -1,12 +1,10 @@
-// Copyright 2026 CTUAV. All rights reserved.
+// Copyright 2026 TanDatEmb.
 
 #include "px4_navigation/obstacle_distance_visualizer.hpp"
 
-#include <array>
 #include <cmath>
 #include <limits>
 
-#include <geometry_msgs/msg/point.hpp>
 #include <px4_common/math/transforms.hpp>
 #include <px4_msgs/msg/obstacle_distance.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
@@ -18,14 +16,25 @@ namespace px4_navigation {
 namespace {
 
 // Distance -> danger color (RGBA). Three clear levels; no smooth gradient.
-std::array<float, 4> ColorFromDistance(float dist_m) {
+std_msgs::msg::ColorRGBA ColorFromDistance(float dist_m) {
+    std_msgs::msg::ColorRGBA color;
     if (dist_m < 3.0f) {
-        return {1.0f, 0.0f, 0.0f, 0.9f};  // red: danger
+        color.r = 1.0f;
+        color.g = 0.0f;
+        color.b = 0.0f;
+        color.a = 0.9f;  // red: danger
+    } else if (dist_m < 8.0f) {
+        color.r = 1.0f;
+        color.g = 0.5f;
+        color.b = 0.0f;
+        color.a = 0.8f;  // orange: warning
+    } else {
+        color.r = 0.0f;
+        color.g = 0.5f;
+        color.b = 1.0f;
+        color.a = 0.7f;  // light blue: safe
     }
-    if (dist_m < 8.0f) {
-        return {1.0f, 0.5f, 0.0f, 0.8f};  // orange: warning
-    }
-    return {0.0f, 0.5f, 1.0f, 0.7f};      // light blue: safe
+    return color;
 }
 
 }  // namespace
@@ -53,6 +62,7 @@ ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions
 
 void ObstacleDistanceVisualizer::ObstacleDistanceCallback(
     const px4_msgs::msg::ObstacleDistance::SharedPtr msg) {
+    std::lock_guard<std::mutex> lock(distances_mutex_);
     for (int i = 0; i < kNumBins; ++i) {
         distances_[i] = msg->distances[i];
     }
@@ -60,7 +70,15 @@ void ObstacleDistanceVisualizer::ObstacleDistanceCallback(
 }
 
 void ObstacleDistanceVisualizer::PublishMarkers() {
-    if (!obstacle_valid_) {
+    std::array<uint16_t, kNumBins> distances_copy;
+    bool valid = false;
+    {
+        std::lock_guard<std::mutex> lock(distances_mutex_);
+        distances_copy = distances_;
+        valid = obstacle_valid_;
+    }
+
+    if (!valid) {
         return;
     }
 
@@ -91,7 +109,7 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
     constexpr float kMaxDrawDistance = 5.0f;
 
     for (int i = 0; i < kNumBins; ++i) {
-        const uint16_t dist_cm = distances_[i];
+        const uint16_t dist_cm = distances_copy[i];
         if (dist_cm == 0 || dist_cm >= kNoObstacle) {
             continue;
         }
@@ -119,12 +137,7 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
         p1.y = static_cast<float>(dy);
         p1.z = 0.0f;
 
-        const auto rgba = ColorFromDistance(dist_m);
-        std_msgs::msg::ColorRGBA color;
-        color.r = rgba[0];
-        color.g = rgba[1];
-        color.b = rgba[2];
-        color.a = rgba[3];
+        const auto color = ColorFromDistance(dist_m);
 
         lines.points.push_back(p0);
         lines.points.push_back(p1);
@@ -134,7 +147,6 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
 
     msg.markers.push_back(lines);
     pub_markers_->publish(msg);
-    ++sequence_;
 }
 
 }  // namespace px4_navigation

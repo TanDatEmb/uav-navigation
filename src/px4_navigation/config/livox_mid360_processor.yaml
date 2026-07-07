@@ -1,6 +1,6 @@
 # Configuration for the livox_mid360_processor node.
 # Converts a Livox MID-360 style PointCloud2 into a 2.5D spherical grid and
-# publishes obstacle data for PX4 CP plus debug topics for RViz.
+# publishes a 72-bin obstacle distance message for PX4 Collision Prevention.
 #
 # Sensor reference: Livox MID-360
 #   Horizontal FOV : 360 deg
@@ -57,11 +57,5 @@ livox_mid360_processor:
     input_cloud_topic: "/lidar_360/points"
     vehicle_odom_topic: "/fmu/out/vehicle_odometry"
     obstacle_distance_topic: "/fmu/in/obstacle_distance"
-    grid_markers_topic: "/livox/grid_2d5/markers"
-    min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
-
-    # Debug publishers. Disable to reduce bandwidth when not needed.
-    publish_grid_markers: false
-    publish_min_distance_cloud: true
 
     # use_sim_time should be set via command line for SITL.

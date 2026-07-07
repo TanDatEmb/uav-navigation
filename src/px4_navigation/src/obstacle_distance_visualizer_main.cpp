@@ -1,4 +1,4 @@
-// Copyright 2026 CTUAV. All rights reserved.
+// Copyright 2026 TanDatEmb.
 //
 // Main entry point for the obstacle distance visualizer node.
 

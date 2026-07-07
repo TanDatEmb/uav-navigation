@@ -1,18 +1,15 @@
-// Copyright 2026 CTUAV. All rights reserved.
+// Copyright 2026 TanDatEmb.
 //
 // Livox MID-360 processor node for PX4 Collision Prevention.
 //
 // Converts a 2.5D point cloud into a spherical yaw x pitch grid, applies
-// a body-exclusion filter, and produces:
-//   - /fmu/in/obstacle_distance      : 72-bin horizontal obstacle distance for PX4 CP
-//   - /livox/grid_2d5/markers        : MarkerArray debug visualization
-//   - /livox/grid_2d5/min_distance   : PointCloud2 of the per-column min distances
+// a body-exclusion filter, and produces /fmu/in/obstacle_distance:
+// a 72-bin horizontal obstacle distance message for PX4 Collision Prevention.
 
 #ifndef PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
 #define PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -27,7 +24,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
 
 namespace px4_navigation {
 
@@ -51,7 +47,6 @@ class LivoxMid360Processor : public rclcpp::Node {
  private:
   struct GridCell {
     uint16_t min_distance_cm = kNoObstacle;
-    uint32_t point_count = 0;
   };
 
   void LoadParameters();
@@ -61,7 +56,6 @@ class LivoxMid360Processor : public rclcpp::Node {
 
   void BuildSphericalGrid(const std::vector<Eigen::Vector3f>& cloud);
   void ComputeMinDistances(std::array<uint16_t, 72>& min_distances) const;
-  void PublishDebugOutputs(const std::array<uint16_t, 72>& min_distances);
 
   // Subscriptions
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
@@ -69,8 +63,6 @@ class LivoxMid360Processor : public rclcpp::Node {
 
   // Publishers
   rclcpp::Publisher<px4_msgs::msg::ObstacleDistance>::SharedPtr pub_obstacle_distance_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_grid_markers_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_min_distance_cloud_;
 
   // Timer
   rclcpp::TimerBase::SharedPtr publish_timer_;
@@ -100,16 +92,12 @@ class LivoxMid360Processor : public rclcpp::Node {
   std::string input_cloud_topic_;
   std::string vehicle_odom_topic_;
   std::string obstacle_distance_topic_;
-  std::string grid_markers_topic_;
-  std::string min_distance_cloud_topic_;
   // Coordinate frame of the input point cloud.
   //   "sensor"     : already in PX4 body FRD (x=FWD, y=RIGHT, z=DOWN).
   //   "sensor_flu" : ROS/Gazebo FLU (x=FWD, y=LEFT, z=UP); converted to FRD.
   //   "ned"        : map_ned world frame; rotated to body FRD using yaw.
   std::string cloud_frame_;
   bool filter_ground_points_ = true;
-  bool publish_grid_markers_ = true;
-  bool publish_min_distance_cloud_ = true;
 
   // Statistics
   uint64_t clouds_received_ = 0;

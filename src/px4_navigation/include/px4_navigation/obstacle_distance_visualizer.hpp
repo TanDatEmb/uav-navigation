@@ -1,4 +1,4 @@
-// Copyright 2026 CTUAV. All rights reserved.
+// Copyright 2026 TanDatEmb.
 //
 // ObstacleDistance visualizer — converts /fmu/in/obstacle_distance into
 // visualization_msgs/MarkerArray for RViz.
@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include <px4_msgs/msg/obstacle_distance.hpp>
@@ -38,8 +39,7 @@ class ObstacleDistanceVisualizer : public rclcpp::Node {
 
     std::array<uint16_t, kNumBins> distances_{};
     bool obstacle_valid_{false};
-
-    uint64_t sequence_{0};
+    std::mutex distances_mutex_;
 };
 
 }  // namespace px4_navigation

@@ -70,8 +70,6 @@ target_include_directories(obstacle_distance_visualizer_node PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 target_link_libraries(obstacle_distance_visualizer_node PRIVATE
-    ${PROJECT_NAME}
-    Eigen3::Eigen
     px4_common::px4_common
     rclcpp::rclcpp
     px4_msgs::px4_msgs
