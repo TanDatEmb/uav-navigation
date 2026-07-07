@@ -61,7 +61,7 @@ livox_mid360_processor:
     min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
 
     # Debug publishers. Disable to reduce bandwidth when not needed.
-    publish_grid_markers: true
+    publish_grid_markers: false
     publish_min_distance_cloud: true
 
     # use_sim_time should be set via command line for SITL.

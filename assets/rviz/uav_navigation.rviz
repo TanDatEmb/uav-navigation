@@ -47,7 +47,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /obstacle_distance/markers
       Value: true
-    - Alpha: 0.6
+    - Alpha: 0.5
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 40
@@ -56,19 +56,19 @@ Visualization Manager:
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
+      Color: 200; 200; 200
       Color Transformer: AxisColor
-      Decay Time: 0.1
+      Decay Time: 0
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Min Color: 0; 0; 0
+      Min Color: 100; 100; 100
       Name: LiDAR360
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 1
-      Size (m): 0.01
-      Style: Points
+      Size (m): 0.03
+      Style: Flat Squares
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -80,7 +80,7 @@ Visualization Manager:
       Use rainbow: true
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Livox Grid 2.5D
       Topic:
         Depth: 5
@@ -242,6 +242,26 @@ Visualization Manager:
         Target Frame: lidar_sensor_link
         Value: FrontView (rviz)
         Yaw: 0
+      - Class: rviz_default_plugins/TopDownOrtho
+        Distance: 30
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.06
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05
+        Invert Z Axis: false
+        Name: BEV Forward
+        Near Clip Distance: 0.01
+        Pitch: 1.5707963267948966
+        Target Frame: lidar_sensor_link
+        Value: TopDownOrtho (rviz)
+        Yaw: -1.5707963267948966
 Window Geometry:
   Displays:
     collapsed: false

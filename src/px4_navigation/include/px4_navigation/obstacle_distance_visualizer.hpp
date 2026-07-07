@@ -3,8 +3,8 @@
 // ObstacleDistance visualizer — converts /fmu/in/obstacle_distance into
 // visualization_msgs/MarkerArray for RViz.
 //
-// Publishes 72 arrow markers (one per bin) around the UAV in body FRD
-// frame. Arrow length = reported distance, color = red (close) → green (far).
+// Publishes 72 bounded line segments around the UAV in body FRD
+// frame. Line length is clamped to a max distance and colored by danger level.
 
 #ifndef PX4_NAVIGATION_OBSTACLE_DISTANCE_VISUALIZER_HPP_
 #define PX4_NAVIGATION_OBSTACLE_DISTANCE_VISUALIZER_HPP_

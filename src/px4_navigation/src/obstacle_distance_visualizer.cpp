@@ -2,14 +2,33 @@
 
 #include "px4_navigation/obstacle_distance_visualizer.hpp"
 
+#include <array>
 #include <cmath>
+#include <limits>
 
+#include <geometry_msgs/msg/point.hpp>
 #include <px4_common/math/transforms.hpp>
 #include <px4_msgs/msg/obstacle_distance.hpp>
+#include <std_msgs/msg/color_rgba.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 namespace px4_navigation {
+
+namespace {
+
+// Distance -> danger color (RGBA). Three clear levels; no smooth gradient.
+std::array<float, 4> ColorFromDistance(float dist_m) {
+    if (dist_m < 3.0f) {
+        return {1.0f, 0.0f, 0.0f, 0.9f};  // red: danger
+    }
+    if (dist_m < 8.0f) {
+        return {1.0f, 0.5f, 0.0f, 0.8f};  // orange: warning
+    }
+    return {0.0f, 0.5f, 1.0f, 0.7f};      // light blue: safe
+}
+
+}  // namespace
 
 ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions& options)
     : rclcpp::Node("obstacle_distance_visualizer", options) {
@@ -28,7 +47,7 @@ ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions
         std::bind(&ObstacleDistanceVisualizer::PublishMarkers, this));
 
     RCLCPP_INFO(this->get_logger(),
-                "obstacle_distance_visualizer started: publishing %d arrow markers",
+                "obstacle_distance_visualizer started: publishing %d bounded line markers",
                 kNumBins);
 }
 
@@ -46,7 +65,7 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
     }
 
     auto msg = visualization_msgs::msg::MarkerArray();
-    msg.markers.reserve(kNumBins + 1);
+    msg.markers.reserve(2);
 
     // Delete previous markers.
     {
@@ -58,60 +77,62 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
         msg.markers.push_back(delete_all);
     }
 
+    // Bounded line-list: one thin line per bin from UAV to obstacle.
+    auto lines = visualization_msgs::msg::Marker();
+    lines.header.frame_id = "lidar_sensor_link";
+    lines.header.stamp = this->now();
+    lines.ns = "obstacle_distance";
+    lines.id = 1;
+    lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+    lines.action = visualization_msgs::msg::Marker::ADD;
+    lines.pose.orientation.w = 1.0;
+    lines.scale.x = 0.04;  // line width
+
+    constexpr float kMaxDrawDistance = 5.0f;
+
     for (int i = 0; i < kNumBins; ++i) {
         const uint16_t dist_cm = distances_[i];
         if (dist_cm == 0 || dist_cm >= kNoObstacle) {
-            continue;  // no obstacle / unknown
+            continue;
         }
 
-        const double dist_m = static_cast<double>(dist_cm) / 100.0;
+        const float dist_m = static_cast<float>(dist_cm) / 100.0f;
+        const float draw_dist = std::min(dist_m, kMaxDrawDistance);
 
-        // Bin angle in body FRD: 0 = forward, positive = clockwise (right).
-        // i=0 → -180° (behind), i=36 → 0° (forward), i=54 → +90° (right).
-        const double angle_rad =
-            px4_common::math::Deg2Rad(static_cast<double>(i) * kIncrementDeg);
+        // PX4 ObstacleDistance convention:
+        //   - bin 0 = forward
+        //   - positive increment = clockwise (right)
+        // In lidar_sensor_link (FLU x=FWD, y=LEFT, z=UP), clockwise from forward
+        // maps to x = +cos(theta), y = -sin(theta).
+        const double theta_deg = static_cast<double>(i) * kIncrementDeg;
+        const double theta_rad = px4_common::math::Deg2Rad(theta_deg);
+        const double dx = static_cast<double>(draw_dist) * std::cos(theta_rad);
+        const double dy = -static_cast<double>(draw_dist) * std::sin(theta_rad);
 
-        // Direction in body FRD (frame_id is lidar_sensor_link, no rotation needed).
-        const double dx = std::cos(angle_rad);
-        const double dy = std::sin(angle_rad);
+        geometry_msgs::msg::Point p0;
+        p0.x = 0.0f;
+        p0.y = 0.0f;
+        p0.z = 0.0f;
 
-        auto marker = visualization_msgs::msg::Marker();
-        marker.header.frame_id = "lidar_sensor_link";
-        marker.header.stamp = this->now();
-        marker.ns = "obstacle_distance";
-        marker.id = i + 1;
-        marker.type = visualization_msgs::msg::Marker::ARROW;
-        marker.action = visualization_msgs::msg::Marker::ADD;
+        geometry_msgs::msg::Point p1;
+        p1.x = static_cast<float>(dx);
+        p1.y = static_cast<float>(dy);
+        p1.z = 0.0f;
 
-        // Obstacle distances are body-relative; start at sensor origin.
-        marker.pose.position.x = 0.0;
-        marker.pose.position.y = 0.0;
-        marker.pose.position.z = 0.0;
+        const auto rgba = ColorFromDistance(dist_m);
+        std_msgs::msg::ColorRGBA color;
+        color.r = rgba[0];
+        color.g = rgba[1];
+        color.b = rgba[2];
+        color.a = rgba[3];
 
-        // Orientation: arrow points in direction (dx, dy, 0).
-        const double half_angle = std::atan2(dy, dx) / 2.0;
-        marker.pose.orientation.w = std::cos(half_angle);
-        marker.pose.orientation.x = 0.0;
-        marker.pose.orientation.y = 0.0;
-        marker.pose.orientation.z = std::sin(half_angle);
-
-        // Arrow length = distance.
-        marker.scale.x = dist_m;  // shaft length
-        marker.scale.y = 0.05;    // shaft width
-        marker.scale.z = 0.05;    // head width
-
-        // Color by distance: red (close) → green (far), clamped at 5 m.
-        const float ratio = static_cast<float>(
-            std::min(dist_m, 5.0) / 5.0);
-        marker.color.r = 1.0f - ratio;
-        marker.color.g = ratio;
-        marker.color.b = 0.0f;
-        marker.color.a = 0.8f;
-
-        marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-        msg.markers.push_back(marker);
+        lines.points.push_back(p0);
+        lines.points.push_back(p1);
+        lines.colors.push_back(color);
+        lines.colors.push_back(color);
     }
 
+    msg.markers.push_back(lines);
     pub_markers_->publish(msg);
     ++sequence_;
 }
