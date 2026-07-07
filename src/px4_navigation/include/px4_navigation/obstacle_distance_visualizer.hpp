@@ -15,7 +15,6 @@
 #include <string>
 
 #include <px4_msgs/msg/obstacle_distance.hpp>
-#include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -31,19 +30,14 @@ class ObstacleDistanceVisualizer : public rclcpp::Node {
 
    private:
     void ObstacleDistanceCallback(const px4_msgs::msg::ObstacleDistance::SharedPtr msg);
-    void VehicleOdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg);
     void PublishMarkers();
 
     rclcpp::Subscription<px4_msgs::msg::ObstacleDistance>::SharedPtr sub_obstacle_;
-    rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr sub_odom_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_markers_;
     rclcpp::TimerBase::SharedPtr timer_;
 
     std::array<uint16_t, kNumBins> distances_{};
     bool obstacle_valid_{false};
-
-    double vehicle_yaw_{0.0};
-    bool odom_valid_{false};
 
     uint64_t sequence_{0};
 };

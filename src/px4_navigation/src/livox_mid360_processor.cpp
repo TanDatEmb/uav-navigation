@@ -391,7 +391,7 @@ void LivoxMid360Processor::PublishDebugOutputs(
         const double yaw_bin_size_rad = 2.0 * px4_common::math::kPi / yaw_bins_;
         const double pitch_bin_size_rad = (max_pitch_rad_ - min_pitch_rad_) / pitch_bins_;
 
-        int marker_id = 0;
+        int marker_id = 1;
         for (int yaw_bin = 0; yaw_bin < yaw_bins_; ++yaw_bin) {
             for (int pitch_bin = 0; pitch_bin < pitch_bins_; ++pitch_bin) {
                 const uint16_t dist_cm =

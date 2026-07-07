@@ -35,7 +35,7 @@ Visualization Manager:
         Z: 0
       Plane: XY
       Plane Cell Count: 40
-      Reference Frame: ""
+      Reference Frame: lidar_sensor_link
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -47,7 +47,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /obstacle_distance/markers
       Value: true
-    - Alpha: 0.9
+    - Alpha: 0.6
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 40
@@ -58,7 +58,7 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
       Color Transformer: AxisColor
-      Decay Time: 0.3
+      Decay Time: 0.1
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
@@ -66,9 +66,9 @@ Visualization Manager:
       Name: LiDAR360
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 2
-      Size (m): 0.03
-      Style: Flat Squares
+      Size (Pixels): 1
+      Size (m): 0.01
+      Style: Points
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -89,7 +89,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /livox/grid_2d5/markers
       Value: true
-    - Alpha: 1
+    - Alpha: 0.7
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 40
@@ -100,7 +100,7 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 235; 59
       Color Transformer: FlatColor
-      Decay Time: 0
+      Decay Time: 0.1
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
@@ -108,9 +108,9 @@ Visualization Manager:
       Name: Livox Min Distance
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 4
-      Size (m): 0.08
-      Style: Spheres
+      Size (Pixels): 1
+      Size (m): 0.02
+      Style: Flat Squares
       Topic:
         Depth: 5
         Durability Policy: Volatile

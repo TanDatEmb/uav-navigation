@@ -4,12 +4,8 @@
 
 #include <cmath>
 
-#include <Eigen/Dense>
-#include <Eigen/Geometry>
-
 #include <px4_common/math/transforms.hpp>
 #include <px4_msgs/msg/obstacle_distance.hpp>
-#include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -22,11 +18,6 @@ ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions
     sub_obstacle_ = this->create_subscription<px4_msgs::msg::ObstacleDistance>(
         "/fmu/in/obstacle_distance", px4_qos,
         std::bind(&ObstacleDistanceVisualizer::ObstacleDistanceCallback, this,
-                  std::placeholders::_1));
-
-    sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
-        "/fmu/out/vehicle_odometry", px4_qos,
-        std::bind(&ObstacleDistanceVisualizer::VehicleOdomCallback, this,
                   std::placeholders::_1));
 
     pub_markers_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -49,15 +40,8 @@ void ObstacleDistanceVisualizer::ObstacleDistanceCallback(
     obstacle_valid_ = true;
 }
 
-void ObstacleDistanceVisualizer::VehicleOdomCallback(
-    const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-    const Eigen::Quaterniond q(msg->q[0], msg->q[1], msg->q[2], msg->q[3]);
-    vehicle_yaw_ = px4_common::math::QuaternionGetYaw(q);
-    odom_valid_ = true;
-}
-
 void ObstacleDistanceVisualizer::PublishMarkers() {
-    if (!obstacle_valid_ || !odom_valid_) {
+    if (!obstacle_valid_) {
         return;
     }
 
@@ -67,15 +51,12 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
     // Delete previous markers.
     {
         auto delete_all = visualization_msgs::msg::Marker();
-        delete_all.header.frame_id = "map_ned";
+        delete_all.header.frame_id = "lidar_sensor_link";
         delete_all.header.stamp = this->now();
         delete_all.action = visualization_msgs::msg::Marker::DELETEALL;
         delete_all.ns = "obstacle_distance";
         msg.markers.push_back(delete_all);
     }
-
-    const double yaw_cos = std::cos(vehicle_yaw_);
-    const double yaw_sin = std::sin(vehicle_yaw_);
 
     for (int i = 0; i < kNumBins; ++i) {
         const uint16_t dist_cm = distances_[i];
@@ -90,23 +71,19 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
         const double angle_rad =
             px4_common::math::Deg2Rad(static_cast<double>(i) * kIncrementDeg);
 
-        // Direction in body FRD.
-        const double bx = std::cos(angle_rad);
-        const double by = std::sin(angle_rad);
-
-        // Rotate body FRD → NED world.
-        const double dx = yaw_cos * bx - yaw_sin * by;
-        const double dy = yaw_sin * bx + yaw_cos * by;
+        // Direction in body FRD (frame_id is lidar_sensor_link, no rotation needed).
+        const double dx = std::cos(angle_rad);
+        const double dy = std::sin(angle_rad);
 
         auto marker = visualization_msgs::msg::Marker();
-        marker.header.frame_id = "map_ned";
+        marker.header.frame_id = "lidar_sensor_link";
         marker.header.stamp = this->now();
         marker.ns = "obstacle_distance";
-        marker.id = i;
+        marker.id = i + 1;
         marker.type = visualization_msgs::msg::Marker::ARROW;
         marker.action = visualization_msgs::msg::Marker::ADD;
 
-        // Start at drone origin (we don't have exact drone position; use origin).
+        // Obstacle distances are body-relative; start at sensor origin.
         marker.pose.position.x = 0.0;
         marker.pose.position.y = 0.0;
         marker.pose.position.z = 0.0;
