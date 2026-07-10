@@ -6,7 +6,6 @@
 #ifndef PX4_MAPPING_NED_TRANSFORM_NODE_HPP_
 #define PX4_MAPPING_NED_TRANSFORM_NODE_HPP_
 
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -96,6 +95,8 @@ class NedTransformNode : public rclcpp::Node {
     bool use_px4_odom_;
     bool publish_visual_odometry_to_px4_;
     bool visual_odom_align_to_px4_;
+    bool visual_odom_align_full_6dof_;
+    std::string visual_odom_alignment_mode_;
     int visual_odom_quality_;
     std::array<double, 3> visual_odom_position_variance_;
     std::array<double, 3> visual_odom_orientation_variance_;
@@ -105,6 +106,18 @@ class NedTransformNode : public rclcpp::Node {
     Eigen::Vector3d visual_align_translation_;
     Eigen::Quaterniond visual_align_rotation_;
     bool visual_alignment_ready_;
+
+    // PX4 timestamp offset: one-time init, guarded by px4_offset_mutex_.
+    // Replaces the previous static atomic pair so the offset is owned by the
+    // node instance and protected by a single mutex (matches repo convention).
+    std::mutex px4_offset_mutex_;
+    bool px4_offset_init_{false};
+    int64_t px4_to_ros_offset_ns_{0};
+    uint64_t px4_offset_init_dropped_early_{0};
+
+    // Diagnostic counters for runtime stability monitoring.
+    uint64_t lio_pose_lookup_miss_{0};
+    uint64_t px4_pose_lookup_miss_{0};
 
     // Statistics
     uint64_t frame_count_;

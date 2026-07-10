@@ -33,15 +33,15 @@ std::string ParamValueToString(const T &value) {
  * @return Current parameter value.
  */
 template <typename T>
-T LoadParam(rclcpp::Node *node, const std::string &name, const T &default_value,
+T LoadParam(rclcpp::Node &node, const std::string &name, const T &default_value,
             const std::string &description = "") {
     rcl_interfaces::msg::ParameterDescriptor descriptor;
     descriptor.description = description;
-    node->declare_parameter(name, default_value, descriptor);
+    node.declare_parameter(name, default_value, descriptor);
 
     T value = default_value;
-    if (!node->get_parameter(name, value)) {
-        RCLCPP_WARN(node->get_logger(), "Parameter '%s' not found, using default %s", name.c_str(),
+    if (!node.get_parameter(name, value)) {
+        RCLCPP_WARN(node.get_logger(), "Parameter '%s' not found, using default %s", name.c_str(),
                     detail::ParamValueToString(default_value).c_str());
         value = default_value;
     }

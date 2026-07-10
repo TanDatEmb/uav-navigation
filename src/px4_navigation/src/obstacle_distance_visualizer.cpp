@@ -51,9 +51,8 @@ ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions
     pub_markers_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
         "/obstacle_distance/markers", rclcpp::QoS(20).reliable());
 
-    timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&ObstacleDistanceVisualizer::PublishMarkers, this));
+    timer_ = this->create_wall_timer(std::chrono::milliseconds(100),
+                                     std::bind(&ObstacleDistanceVisualizer::PublishMarkers, this));
 
     RCLCPP_INFO(this->get_logger(),
                 "obstacle_distance_visualizer started: publishing %d bounded line markers",

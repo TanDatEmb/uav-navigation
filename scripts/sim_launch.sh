@@ -31,6 +31,14 @@ ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 XRCE_PORT="${XRCE_PORT:-8888}"
 SKIP_BAG="${SKIP_BAG:-0}"
 GZ_GUI="${GZ_GUI:-0}"
+# Map input source for voxmap_manager_node.
+# Production: px4_full (per Topic Contract in docs/architecture.md).
+# Debug only: lio_world (frame=camera_init, NOT for quality assessment).
+MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-px4_full}"
+if [[ "${MAP_INPUT_SOURCE}" != "px4_full" && "${MAP_INPUT_SOURCE}" != "lio_world" ]]; then
+    echo "ERROR: MAP_INPUT_SOURCE='${MAP_INPUT_SOURCE}' invalid. Use 'px4_full' or 'lio_world'." >&2
+    exit 1
+fi
 
 # ── PX4 paths ──────────────────────────────────────────────────────────────
 PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
@@ -61,6 +69,13 @@ if [[ -n "${DISPLAY:-}" ]] && command -v xdpyinfo >/dev/null 2>&1; then
         HAS_DISPLAY=1
     fi
 fi
+
+# ── Pre-launch stale node cleanup ─────────────────────────────────────────
+# Previous sessions may leave node executables running even after sim_stop,
+# which causes duplicate publishers and misleading QoS discovery warnings.
+for stale_name in ned_transform_node fast_lio2_node voxmap_manager_node; do
+    pkill -9 -f "${stale_name}" 2>/dev/null || true
+done
 
 # ── Session logging ────────────────────────────────────────────────────────
 SESSION_ID="$(date +%Y%m%d_%H%M%S)"
@@ -155,21 +170,64 @@ make_bg "xrce-dds-agent" 0 << BGEOF
 MicroXRCEAgent udp4 -p ${XRCE_PORT}
 BGEOF
 
-# ── ros_gz_bridge (LiDAR PointCloud2 → ROS 2) ─────────────────────────────
+# ── ros_gz_bridge (LiDAR PointCloud2 + sim /clock → ROS 2) ───────────────
 # Gazebo Harmonic gpu_lidar publishes PointCloud2 on:
 #   /world/.../model/.../link/lidar_sensor_link/sensor/lidar/scan/points
 GZ_LIDAR_POINTS="/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/scan/points"
+GZ_WORLD_CLOCK="/world/obstacle_course/clock"
 make_bg "gz-bridge" 10 << BGEOF
 export GZ_IP=127.0.0.1
 export GZ_SIM_RESOURCE_PATH="${PX4_GZ_MODELS}:${PX4_GZ_WORLDS}:\${GZ_SIM_RESOURCE_PATH:-}"
 ros2 run ros_gz_bridge parameter_bridge \
   "${GZ_LIDAR_POINTS}@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked" \
-  --ros-args -r "${GZ_LIDAR_POINTS}:=/lidar_360/points"
+  "${GZ_WORLD_CLOCK}@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
+  --ros-args \
+  -r "${GZ_LIDAR_POINTS}:=/lidar_360/points" \
+  -r "${GZ_WORLD_CLOCK}:=/clock"
 BGEOF
 
 # ── obstacle_distance visualizer node ─────────────────────────────────────
 make_bg "obstacle-viz" 16 << BGEOF
 ros2 run px4_navigation obstacle_distance_visualizer_node --ros-args -p use_sim_time:=true
+BGEOF
+
+# ── FAST-LIO2 adapter (core contract topics) ──────────────────────────────
+make_bg "fast-lio2" 13 << BGEOF
+ros2 run px4_mapping fast_lio2_node \
+    --ros-args \
+    --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
+    -p use_sim_time:=true \
+    -p input_cloud_topic:=/lidar_360/points \
+    -p px4_odom_topic:=/fmu/out/vehicle_odometry \
+    -p vehicle_imu_topic:=/fmu/out/vehicle_imu \
+    -p use_imu_fusion:=false \
+    -p output_cloud_topic:=/livox_processed \
+    -p output_odom_topic:=/odometry
+BGEOF
+
+# ── NED transform node (FAST-LIO2 camera_init → map_ned) ────────────────────
+make_bg "ned-transform" 14 << BGEOF
+ros2 run px4_mapping ned_transform_node \
+  --ros-args \
+  --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
+  -p use_sim_time:=true \
+  -p input_cloud_topic:=/livox_processed \
+  -p output_cloud_topic:=/livox_processed_ned \
+  -p lio_odom_topic:=/odometry \
+  -p px4_odom_topic:=/fmu/out/vehicle_odometry \
+  -p publish_visual_odometry_to_px4:=true \
+  -p visual_odom_topic:=/fmu/in/vehicle_visual_odometry
+BGEOF
+
+# ── Voxel map manager node (sparse global map in map_ned) ───────────────────
+make_bg "voxmap-manager" 16 << BGEOF
+ros2 run px4_mapping voxmap_manager_node \
+  --ros-args \
+  --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
+  -p use_sim_time:=true \
+  -p cloud_topic:=/livox_processed_ned \
+  -p lio_odom_topic:=/odometry \
+  -p input_source:=${MAP_INPUT_SOURCE}
 BGEOF
 
 # ── livox_mid360_processor_node ─────────────────────────────────────────────
@@ -191,15 +249,24 @@ make_bg "rosbag" 20 << BGEOF
 mkdir -p "${LOG_DIR}/rosbag"
 ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   --max-cache-size 40000000 \
+    --qos-profile-overrides-path "${WS_DIR}/config/rosbag_qos_overrides.yaml" \
   --include-unpublished-topics \
   --topics \
   /lidar_360/points \
   /livox/grid_2d5/markers \
   /livox/grid_2d5/min_distance \
+    /local_virtual_scan \
+  /livox_processed \
+  /livox_processed_ned \
+  /livox_map \
   /fmu/in/obstacle_distance \
+  /fmu/in/vehicle_visual_odometry \
   /fmu/out/vehicle_odometry \
+  /fmu/out/vehicle_local_position \
   /fmu/out/vehicle_local_position_v1 \
-  /fmu/out/vehicle_status_v1
+  /fmu/out/vehicle_status \
+  /fmu/out/vehicle_status_v1 \
+  /odometry
 BGEOF
 fi
 
@@ -293,13 +360,15 @@ fi
 echo ""
 echo "============================================================"
 echo "  uav-navigation SITL launched"
-echo "  Session : ${SESSION_ID}"
-echo "  Log dir : ${LOG_DIR}/"
-echo "  GUI     : ${GZ_GUI}"
+echo "  Session      : ${SESSION_ID}"
+echo "  Log dir      : ${LOG_DIR}/"
+echo "  GUI          : ${GZ_GUI}"
+echo "  Map mode     : ${MAP_INPUT_SOURCE}"
 echo ""
 echo "  Background logs:"
 echo "    xrce-dds     : ${LOG_DIR}/bg_xrce-dds-agent.log"
 echo "    gz-bridge    : ${LOG_DIR}/bg_gz-bridge.log"
+echo "    fast-lio2    : ${LOG_DIR}/bg_fast-lio2.log"
 echo "    livox-proc   : ${LOG_DIR}/bg_livox-proc.log"
 if [[ "${SKIP_BAG}" != "1" ]]; then
     echo "    rosbag       : ${LOG_DIR}/bg_rosbag.log → rosbag/flight_data/"

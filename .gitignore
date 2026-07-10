@@ -5,6 +5,25 @@ log/
 .colcon/
 .rosinstall.bak
 
+# Local-only test/build artifacts (never tracked)
+compile_commands.json
+build_*.log
+test_results/
+*.gtest.xml
+*.gtest_output
+
+# SITL runtime output (reproducible via scripts/sim_launch.sh)
+log/sim/session_*/
+log/sim/latest
+*.mcap
+*.db3
+*.bag
+
+# Local review notes from ongoing development (kept on local only)
+reviews/draft/
+reviews/local/
+*.review.md
+
 # Python
 __pycache__/
 *.py[cod]
@@ -22,13 +41,18 @@ __pycache__/
 *.exe
 *.out
 *.app
-*.log
 *.swp
 *.swo
 *~
 .vs/
 .vscode/
 .idea/
+
+# Backup / temp
+*.bak
+*.tmp
+*.orig
+*.rej
 
 # Gazebo / simulation
 *.sdf.bak

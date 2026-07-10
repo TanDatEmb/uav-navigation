@@ -1,0 +1,14 @@
+# rosbag2 QoS overrides for topics that are advertised as best_effort.
+# This avoids incompatible QoS warnings and zero-message recordings.
+
+/fmu/out/vehicle_odometry:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 20
+
+/fmu/in/vehicle_visual_odometry:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 20

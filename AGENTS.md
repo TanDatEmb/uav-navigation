@@ -40,13 +40,15 @@ src/
   px4_mapping/         # odometry, local map
   px4_navigation/      # planner, controller, state machine
   px4_ros_com/         # ROS 2 ↔ PX4 bridge, transforms
-  px4_visualization/   # RViz, plotting, bag helpers
 config/              # global YAML parameters
 launch/              # top-level launch files
 docs/                # architecture, conventions
 tools/               # helper scripts
 tests/               # integration tests
 ```
+
+> Note (2026-07-08): `px4_visualization` was removed. Visualization helpers will
+> live in `px4_ros_com` or as external RViz/Foxglove configs when needed.
 
 ## Build
 

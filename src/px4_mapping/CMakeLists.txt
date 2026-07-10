@@ -61,20 +61,38 @@ ament_target_dependencies(ned_transform_node
     px4_msgs
 )
 
-# Voxel map manager node executable
-add_executable(voxmap_manager_node
-    src/voxmap_manager_node.cpp
-    src/voxmap_manager_node_main.cpp
+# FAST-LIO2 adapter node
+add_executable(fast_lio2_node
+    src/fast_lio2_node.cpp
+    src/fast_lio2_node_main.cpp
 )
-target_include_directories(voxmap_manager_node PUBLIC
+target_include_directories(fast_lio2_node PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(voxmap_manager_node
-    Eigen3::Eigen
-    # ${PCL_LIBRARIES}
+target_link_libraries(fast_lio2_node
+    ${PROJECT_NAME}
 )
-ament_target_dependencies(voxmap_manager_node
+ament_target_dependencies(fast_lio2_node
+    px4_common
+    rclcpp
+    nav_msgs
+    sensor_msgs
+    px4_msgs
+)
+
+# Voxel map manager core library (shared with tests and the node executable)
+add_library(voxmap_manager_core STATIC
+    src/voxmap_manager_node.cpp
+)
+target_include_directories(voxmap_manager_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(voxmap_manager_core
+    Eigen3::Eigen
+)
+ament_target_dependencies(voxmap_manager_core
     px4_common
     px4_msgs
     px4_ros_com
@@ -83,18 +101,41 @@ ament_target_dependencies(voxmap_manager_node
     nav_msgs
     sensor_msgs
     tf2_ros
-    # pcl_conversions
 )
-# target_compile_definitions(voxmap_manager_node PRIVATE
-#     COMPOSED_BUILD=0
-# )
 
-install(TARGETS ${PROJECT_NAME} ned_transform_node voxmap_manager_node
+# Voxel map manager node executable
+add_executable(voxmap_manager_node
+    src/voxmap_manager_node_main.cpp
+)
+target_include_directories(voxmap_manager_node PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(voxmap_manager_node
+    voxmap_manager_core
+)
+
+install(TARGETS voxmap_manager_core
     EXPORT export_${PROJECT_NAME}
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+)
+
+install(TARGETS ${PROJECT_NAME} fast_lio2_node ned_transform_node voxmap_manager_node
+    EXPORT export_${PROJECT_NAME}
+    RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/
     DESTINATION include
+)
+
+install(DIRECTORY config/
+    DESTINATION share/${PROJECT_NAME}/config
+)
+
+install(DIRECTORY launch/
+    DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ament_export_targets(export_${PROJECT_NAME})
@@ -106,6 +147,8 @@ if(BUILD_TESTING)
     target_link_libraries(test_voxel_pool ${PROJECT_NAME})
     ament_add_gtest(test_voxel_hash_map test/test_voxel_hash_map.cpp)
     target_link_libraries(test_voxel_hash_map ${PROJECT_NAME})
+    ament_add_gtest(test_voxmap_manager_node test/test_voxmap_manager_node.cpp)
+    target_link_libraries(test_voxmap_manager_node ${PROJECT_NAME} voxmap_manager_core)
 endif()
 
 ament_package()

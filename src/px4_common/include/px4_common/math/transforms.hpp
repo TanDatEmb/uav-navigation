@@ -155,6 +155,78 @@ inline Eigen::Quaterniond QuaternionNedToEnu(const Eigen::Quaterniond &q_ned) no
 }
 
 /**
+ * @brief Rotation matrix corresponding to aircraft (FRD) → base_link (FLU).
+ *
+ * Forward-Right-Down and Forward-Left-Up share the same Forward axis. The
+ * transform is a 180° rotation about the common X axis, which flips both
+ * the Y and Z coordinates.
+ *
+ * @return 3×3 orthonormal rotation matrix.
+ */
+inline Eigen::Matrix3d AircraftToBaselinkRotation() noexcept {
+    // clang-format off
+    return (Eigen::Matrix3d() <<
+        1.0,  0.0,  0.0,
+        0.0, -1.0,  0.0,
+        0.0,  0.0, -1.0).finished();
+    // clang-format on
+}
+
+/**
+ * @brief Rotation matrix corresponding to base_link (FLU) → aircraft (FRD).
+ * @return 3×3 orthonormal rotation matrix.
+ */
+inline Eigen::Matrix3d BaselinkToAircraftRotation() noexcept {
+    return AircraftToBaselinkRotation().transpose();
+}
+
+/**
+ * @brief Convert a 3D point from aircraft (FRD) to base_link (FLU).
+ * @param aircraft Point expressed in Forward-Right-Down.
+ * @return Point expressed in Forward-Left-Up.
+ */
+inline Eigen::Vector3d AircraftToBaselink(const Eigen::Vector3d &aircraft) noexcept {
+    return Eigen::Vector3d(aircraft.x(), -aircraft.y(), -aircraft.z());
+}
+
+/**
+ * @brief Convert a 3D point from base_link (FLU) to aircraft (FRD).
+ * @param baselink Point expressed in Forward-Left-Up.
+ * @return Point expressed in Forward-Right-Down.
+ */
+inline Eigen::Vector3d BaselinkToAircraft(const Eigen::Vector3d &baselink) noexcept {
+    return Eigen::Vector3d(baselink.x(), -baselink.y(), -baselink.z());
+}
+
+/**
+ * @brief Rotate a quaternion from aircraft (FRD) to base_link (FLU) frame.
+ *
+ * This is a passive rotation of the reference frame. The physical orientation
+ * does not change; only its coordinate expression switches from FRD to FLU.
+ *
+ * @param q_aircraft Orientation expressed with respect to the aircraft frame.
+ * @return The same physical orientation expressed with respect to base_link.
+ */
+inline Eigen::Quaterniond QuaternionAircraftToBaselink(
+    const Eigen::Quaterniond &q_aircraft) noexcept {
+    const Eigen::Quaterniond q_rotation(Eigen::AngleAxisd(kPi, Eigen::Vector3d::UnitX()));
+    return q_rotation * q_aircraft * q_rotation.conjugate();
+}
+
+/**
+ * @brief Rotate a quaternion from base_link (FLU) to aircraft (FRD) frame.
+ * @param q_baselink Orientation expressed with respect to the base_link frame.
+ * @return The same physical orientation expressed with respect to aircraft.
+ */
+inline Eigen::Quaterniond QuaternionBaselinkToAircraft(
+    const Eigen::Quaterniond &q_baselink) noexcept {
+    // The FRD↔FLU transform is a 180° rotation about X, which is an involution:
+    // q_rot is its own inverse. Therefore the forward and inverse frame
+    // transforms use the same sandwich operation.
+    return QuaternionAircraftToBaselink(q_baselink);
+}
+
+/**
  * @brief Spherical linear interpolation between two quaternions.
  * @param q0 Start quaternion, must be unit length.
  * @param q1 End quaternion, must be unit length.

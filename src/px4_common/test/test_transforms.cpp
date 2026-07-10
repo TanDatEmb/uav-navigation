@@ -2,12 +2,18 @@
 
 #include <px4_common/math/transforms.hpp>
 
+using px4_common::math::AircraftToBaselink;
+using px4_common::math::AircraftToBaselinkRotation;
+using px4_common::math::BaselinkToAircraft;
+using px4_common::math::BaselinkToAircraftRotation;
 using px4_common::math::Deg2Rad;
 using px4_common::math::EnuToNed;
 using px4_common::math::EnuToNedRotation;
 using px4_common::math::EulerToQuaternion;
 using px4_common::math::NedToEnu;
 using px4_common::math::NedToEnuRotation;
+using px4_common::math::QuaternionAircraftToBaselink;
+using px4_common::math::QuaternionBaselinkToAircraft;
 using px4_common::math::QuaternionEnuToNed;
 using px4_common::math::QuaternionGetYaw;
 using px4_common::math::QuaternionNedToEnu;
@@ -102,4 +108,59 @@ TEST(TransformsTest, QuaternionToEulerOutputOverload) {
     EXPECT_NEAR(roll, 0.1, 1e-9);
     EXPECT_NEAR(pitch, 0.2, 1e-9);
     EXPECT_NEAR(yaw, 0.3, 1e-9);
+}
+
+TEST(TransformsTest, AircraftToBaselinkVectorYFlip) {
+    // FRD right vector (0,1,0) maps to FLU left vector (0,-1,0).
+    const Eigen::Vector3d v_aircraft(0.0, 1.0, 0.0);
+    const Eigen::Vector3d v_baselink = AircraftToBaselink(v_aircraft);
+    EXPECT_NEAR(v_baselink.x(), 0.0, 1e-12);
+    EXPECT_NEAR(v_baselink.y(), -1.0, 1e-12);
+    EXPECT_NEAR(v_baselink.z(), 0.0, 1e-12);
+}
+
+TEST(TransformsTest, AircraftBaselinkVectorRoundTrip) {
+    const Eigen::Vector3d v_in(1.0, -2.0, 3.0);
+    const Eigen::Vector3d v_out = BaselinkToAircraft(AircraftToBaselink(v_in));
+    EXPECT_NEAR(v_out.x(), v_in.x(), 1e-12);
+    EXPECT_NEAR(v_out.y(), v_in.y(), 1e-12);
+    EXPECT_NEAR(v_out.z(), v_in.z(), 1e-12);
+}
+
+TEST(TransformsTest, AircraftBaselinkRotationMatricesAreConsistent) {
+    const Eigen::Matrix3d r_aircraft_to_baselink = AircraftToBaselinkRotation();
+    const Eigen::Matrix3d r_baselink_to_aircraft = BaselinkToAircraftRotation();
+
+    const Eigen::Matrix3d identity_from_product = r_aircraft_to_baselink * r_baselink_to_aircraft;
+    EXPECT_TRUE(identity_from_product.isApprox(Eigen::Matrix3d::Identity()));
+
+    const Eigen::Matrix3d identity_from_square = r_aircraft_to_baselink * r_aircraft_to_baselink;
+    EXPECT_TRUE(identity_from_square.isApprox(Eigen::Matrix3d::Identity()));
+}
+
+TEST(TransformsTest, QuaternionAircraftToBaselinkRoll) {
+    // Roll around the common Forward (X) axis is preserved between FRD and FLU.
+    const Eigen::Quaterniond q_aircraft = EulerToQuaternion(Deg2Rad(90.0), 0.0, 0.0);
+    const Eigen::Quaterniond q_baselink = QuaternionAircraftToBaselink(q_aircraft);
+    const Eigen::Vector3d euler = QuaternionToEuler(q_baselink);
+    EXPECT_NEAR(euler.x(), Deg2Rad(90.0), 1e-12);
+    EXPECT_NEAR(euler.y(), 0.0, 1e-12);
+    EXPECT_NEAR(euler.z(), 0.0, 1e-12);
+}
+
+TEST(TransformsTest, QuaternionAircraftToBaselinkPitch) {
+    // Pitch in FRD (Forward -> Down) becomes negative pitch in FLU (Forward -> Up).
+    const Eigen::Quaterniond q_aircraft = EulerToQuaternion(0.0, Deg2Rad(45.0), 0.0);
+    const Eigen::Quaterniond q_baselink = QuaternionAircraftToBaselink(q_aircraft);
+    const Eigen::Vector3d euler = QuaternionToEuler(q_baselink);
+    EXPECT_NEAR(euler.x(), 0.0, 1e-12);
+    EXPECT_NEAR(euler.y(), Deg2Rad(-45.0), 1e-12);
+    EXPECT_NEAR(euler.z(), 0.0, 1e-12);
+}
+
+TEST(TransformsTest, QuaternionAircraftBaselinkRoundTrip) {
+    const Eigen::Quaterniond q_in = EulerToQuaternion(0.1, -0.2, 0.7);
+    const Eigen::Quaterniond q_out =
+        QuaternionBaselinkToAircraft(QuaternionAircraftToBaselink(q_in));
+    EXPECT_NEAR(std::abs(q_in.dot(q_out)), 1.0, 1e-12);
 }

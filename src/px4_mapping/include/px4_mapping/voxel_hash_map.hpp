@@ -47,7 +47,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
           extrinsic_translation_(Eigen::Vector3d::Zero()) {
         map_table_.max_load_factor(0.8f);
         map_table_.reserve(px4_common::mapping::kMaxVoxels * 1.5);
-        occupied_list_.reserve(30000U);
+        occupied_list_.reserve(px4_common::mapping::kMaxVoxels);
     }
 
     ~VoxelHashMap() override {
@@ -111,27 +111,36 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
     /**
      * @brief Return occupied voxels changed in the most recent Update().
      *
-     * This method acquires the map mutex for a short copy of the internal
-     * new/kept buffers. The buffers are then converted to world points without
-     * holding the lock to avoid blocking concurrent raycasting.
+     * The internal new/kept voxel buffers are converted to world points while
+     * holding the map mutex. Only the resulting point snapshot is released
+     * before returning, so callers never hold dangling voxel pointers.
      *
      * @param[out] out Vector filled with occupied voxel centres.
      */
     void GetChangedPoints(std::vector<px4_common::PointLivox> &out) {
-        std::vector<Voxel *> new_snap;
-        std::vector<Voxel *> keep_snap;
+        std::vector<px4_common::PointLivox> new_snap;
+        std::vector<px4_common::PointLivox> keep_snap;
 
         {
             std::lock_guard<std::mutex> lock(map_mutex_);
-            new_snap = new_voxels_;
-            keep_snap = kept_voxels_;
+            new_snap.reserve(new_voxels_.size());
+            keep_snap.reserve(kept_voxels_.size());
+            for (const Voxel *voxel : new_voxels_) {
+                if (voxel->is_occupied) {
+                    new_snap.push_back(VoxelToPoint(const_cast<Voxel *>(voxel)));
+                }
+            }
+            for (const Voxel *voxel : kept_voxels_) {
+                if (voxel->is_occupied) {
+                    keep_snap.push_back(VoxelToPoint(const_cast<Voxel *>(voxel)));
+                }
+            }
         }
 
         out.clear();
         out.reserve(new_snap.size() + keep_snap.size());
-
-        AppendOccupiedVoxelPoints(new_snap, out);
-        AppendOccupiedVoxelPoints(keep_snap, out);
+        out.insert(out.end(), new_snap.begin(), new_snap.end());
+        out.insert(out.end(), keep_snap.begin(), keep_snap.end());
     }
 
     /**
@@ -203,6 +212,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
                     occupied_count_--;
                     RemoveFromOccupiedList(current);
                 }
+                RemoveFromFrameBuffers(current);
                 map_table_.erase(current->index);
                 DetachNode(current);
                 pool_.Deallocate(current);
@@ -299,18 +309,24 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         return point;
     }
 
-    void AppendOccupiedVoxelPoints(const std::vector<Voxel *> &voxels,
-                                   std::vector<px4_common::PointLivox> &out) {
-        for (const Voxel *voxel : voxels) {
-            if (voxel->is_occupied) {
-                out.push_back(VoxelToPoint(const_cast<Voxel *>(voxel)));
-            }
-        }
-    }
-
     void AddToOccupiedList(Voxel *voxel) {
+        if (voxel == nullptr || voxel->occupied_list_index >= 0) {
+            return;
+        }
         voxel->occupied_list_index = static_cast<int>(occupied_list_.size());
         occupied_list_.push_back(voxel);
+    }
+
+    void RemoveFromFrameBuffers(Voxel *voxel) {
+        if (voxel == nullptr) {
+            return;
+        }
+        new_voxels_.erase(
+            std::remove(new_voxels_.begin(), new_voxels_.end(), voxel),
+            new_voxels_.end());
+        kept_voxels_.erase(
+            std::remove(kept_voxels_.begin(), kept_voxels_.end(), voxel),
+            kept_voxels_.end());
     }
 
     void RemoveFromOccupiedList(Voxel *voxel) {
@@ -538,6 +554,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
             RemoveFromOccupiedList(temp);
         }
 
+        RemoveFromFrameBuffers(temp);
         map_table_.erase(temp->index);
 
         if (tail_->prev != nullptr) {

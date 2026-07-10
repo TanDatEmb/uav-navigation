@@ -1,0 +1,112 @@
+# Default parameters for px4_mapping nodes.
+# Override via command line or a top-level launch file.
+
+fast_lio2:
+  ros__parameters:
+    # Input LiDAR cloud in sensor FLU frame (Gazebo bridge output).
+    input_cloud_topic: "/lidar_360/points"
+
+    # Input PX4 odometry in map_ned.
+    px4_odom_topic: "/fmu/out/vehicle_odometry"
+
+    # Input PX4 IMU integration topic.
+    vehicle_imu_topic: "/fmu/out/vehicle_imu"
+
+    # FAST-LIO2-compatible outputs.
+    output_cloud_topic: "/livox_processed"
+    output_odom_topic: "/odometry"
+
+    # Output frame contract expected by ned_transform_node.
+    output_frame_id: "camera_init"
+    output_child_frame_id: "base_link"
+
+    # Preprocessing adapted from reference preprocess:
+    # - point decimation (take 1/N)
+    # - blind-zone filtering
+    point_filter_num: 3
+    blind_m: 0.5
+
+    # Enable incremental IMU propagation between PX4 odometry updates.
+    # Note: requires /fmu/out/vehicle_imu to be published by the PX4 DDS client.
+    use_imu_fusion: false
+
+ned_transform:
+  ros__parameters:
+    # Input: FAST-LIO2 world-frame point cloud in camera_init/ENU frame.
+    input_cloud_topic: "/livox_processed"
+
+    # Output: point cloud transformed to PX4 map_ned frame.
+    output_cloud_topic: "/livox_processed_ned"
+
+    # Input: FAST-LIO2 odometry in camera_init frame.
+    lio_odom_topic: "/odometry"
+
+    # Input: PX4 vehicle odometry in map_ned frame.
+    px4_odom_topic: "/fmu/out/vehicle_odometry"
+
+    # Whether to use PX4 odometry for visual-inertial alignment.
+    use_px4_odom: true
+
+    # Optional external vision publisher to PX4 EKF2.
+    publish_visual_odometry_to_px4: false
+    visual_odom_topic: "/fmu/in/vehicle_visual_odometry"
+
+    # Align LIO origin to PX4 EKF origin on startup.
+    visual_odom_align_to_px4: true
+
+    # Alignment strategy:
+    # - translation_only: keep axes, only align origin offset
+    # - yaw_translation: align heading + origin
+    # - full_6dof: align full SE(3)
+    visual_odom_alignment_mode: "translation_only"
+
+    # Use full 6-DOF alignment (true) or only yaw (false).
+    visual_odom_align_full_6dof: false
+
+    # External vision variance (position [m^2], orientation [rad^2]).
+    visual_odom_position_variance: [0.04, 0.04, 0.09]
+    visual_odom_orientation_variance: [0.25, 0.25, 0.05]
+
+    # External vision quality indicator (0-100).
+    visual_odom_quality: 100
+
+voxmap_manager:
+  ros__parameters:
+    # Input: point cloud in map_ned frame.
+    cloud_topic: "/livox_processed_ned"
+
+    # Input: FAST-LIO2 odometry in camera_init frame.
+    lio_odom_topic: "/odometry"
+
+    # Input source mode:
+    #   "lio_world"  : cloud already in map_ned, only LIO odometry used.
+    #   "px4_only"   : use PX4 odometry as sensor origin (legacy fallback).
+    #   "px4_full"   : cloud in aircraft frame with full PX4 pose.
+    #   "fast_lio2_deskew" : deskewed cloud from FAST-LIO2.
+    input_source: "lio_world"
+
+    # Publish the sparse occupied voxel map for RViz / downstream nodes.
+    publish_local_map: true
+
+    # Lidar-to-IMU extrinsic translation in metres (sensor frame w.r.t. IMU).
+    extrinsic_T: [-0.011, -0.02329, 0.04412]
+
+    # Readiness gate: require this many consecutive frames and occupied voxels.
+    ready_min_frames: 5
+    ready_min_occupied: 1000
+
+    # Optional alignment gate before marking map ready.
+    require_alignment_gate: false
+    aligned_min_seconds: 5.0
+    aligned_max_velocity: 0.05
+    aligned_lio_covariance_max: 0.01
+    aligned_max_seconds_to_capture: 30.0
+    aligned_timeout_action: "hold_indefinitely"
+
+    # Logging interval (frames) and timeout (seconds).
+    log_interval: 1
+    timeout_seconds: 3600.0
+    log_path: ""
+
+    # Use LIO pose buffer for scan-time origin lookup.
+    use_lio_buffer: true

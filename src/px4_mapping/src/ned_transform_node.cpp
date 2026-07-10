@@ -25,10 +25,38 @@
 #include <px4_common/frame_constants.hpp>
 #include <px4_common/math/transforms.hpp>
 #include <px4_common/time/pose_buffer.hpp>
-#include <px4_ros_com/frame_transforms.hpp>
 #include <px4_ros_com/topic_helpers.hpp>
 
 namespace px4_mapping {
+
+namespace {
+
+Eigen::Matrix3d LioWorldToNedMatrix() {
+    return (Eigen::Matrix3d() <<
+            0.0, 1.0, 0.0,
+            1.0, 0.0, 0.0,
+            0.0, 0.0, -1.0)
+        .finished();
+}
+
+Eigen::Vector3d LioPositionToNed(const Eigen::Vector3d& p_lio) {
+    return LioWorldToNedMatrix() * p_lio;
+}
+
+Eigen::Quaterniond LioOrientationToNed(const Eigen::Quaterniond& q_lio) {
+    static const Eigen::Matrix3d kCFrdFlu =
+        (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
+
+    const Eigen::Matrix3d r_ned_frd =
+        LioWorldToNedMatrix() * q_lio.normalized().toRotationMatrix() * kCFrdFlu;
+    return Eigen::Quaterniond(r_ned_frd).normalized();
+}
+
+bool IsValidAlignmentMode(const std::string& mode) {
+    return mode == "translation_only" || mode == "yaw_translation" || mode == "full_6dof";
+}
+
+}  // namespace
 
 NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
     : rclcpp::Node("ned_transform_node", options),
@@ -81,10 +109,17 @@ NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
         },
         compute_subscription_options);
 
-    // Create publishers
-    pub_livox_ned_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 20);
+    // Create publishers.
+    // /livox_processed_ned is an internal pipeline topic consumed by the
+    // voxmap_manager and recorded by rosbag2 (which subscribes with the
+    // default reliable QoS). Use reliable to stay consistent with the
+    // fast_lio2 publisher pattern and avoid QoS incompatibility.
+    const auto ned_cloud_qos = rclcpp::QoS(20).reliable();
+    pub_livox_ned_ =
+        this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, ned_cloud_qos);
 
     if (publish_visual_odometry_to_px4_) {
+        // /fmu/in/* topics are best_effort in PX4 (per px4_ros_com convention).
         pub_visual_odom_ =
             this->create_publisher<px4_msgs::msg::VehicleOdometry>(visual_odom_topic_, px4_qos);
     }
@@ -109,6 +144,8 @@ void NedTransformNode::LoadParameters() {
     this->declare_parameter<bool>("publish_visual_odometry_to_px4", false);
     this->declare_parameter<std::string>("visual_odom_topic", "/fmu/in/vehicle_visual_odometry");
     this->declare_parameter<bool>("visual_odom_align_to_px4", true);
+    this->declare_parameter<std::string>("visual_odom_alignment_mode", "translation_only");
+    this->declare_parameter<bool>("visual_odom_align_full_6dof", false);
     this->declare_parameter<std::vector<double>>("visual_odom_position_variance",
                                                  {0.04, 0.04, 0.09});
     this->declare_parameter<std::vector<double>>("visual_odom_orientation_variance",
@@ -120,10 +157,33 @@ void NedTransformNode::LoadParameters() {
     lio_odom_topic_ = this->get_parameter("lio_odom_topic").as_string();
     px4_odom_topic_ = this->get_parameter("px4_odom_topic").as_string();
     use_px4_odom_ = this->get_parameter("use_px4_odom").as_bool();
+    if (!use_px4_odom_) {
+        RCLCPP_FATAL(this->get_logger(),
+                     "use_px4_odom=false is not supported. The static (x,y,z)->(y,x,-z) "
+                     "shortcut assumes camera_init is ENU and ignores the SE(3) alignment "
+                     "between LIO world and PX4 NED. Provide PX4 odometry or implement a "
+                     "calibrated T_map_ned_camera_init transform instead.");
+        throw std::runtime_error("use_px4_odom=false is not supported");
+    }
     publish_visual_odometry_to_px4_ =
         this->get_parameter("publish_visual_odometry_to_px4").as_bool();
     visual_odom_topic_ = this->get_parameter("visual_odom_topic").as_string();
     visual_odom_align_to_px4_ = this->get_parameter("visual_odom_align_to_px4").as_bool();
+    visual_odom_alignment_mode_ = this->get_parameter("visual_odom_alignment_mode").as_string();
+    visual_odom_align_full_6dof_ = this->get_parameter("visual_odom_align_full_6dof").as_bool();
+
+    if (!IsValidAlignmentMode(visual_odom_alignment_mode_)) {
+        RCLCPP_WARN(this->get_logger(),
+                    "Invalid visual_odom_alignment_mode='%s', fallback to translation_only",
+                    visual_odom_alignment_mode_.c_str());
+        visual_odom_alignment_mode_ = "translation_only";
+    }
+    if (visual_odom_align_full_6dof_ && visual_odom_alignment_mode_ != "full_6dof") {
+        RCLCPP_WARN(this->get_logger(),
+                    "visual_odom_align_full_6dof=true overrides visual_odom_alignment_mode='%s'",
+                    visual_odom_alignment_mode_.c_str());
+        visual_odom_alignment_mode_ = "full_6dof";
+    }
 
     // Load variance parameters
     auto position_variance = this->get_parameter("visual_odom_position_variance").as_double_array();
@@ -197,8 +257,39 @@ void NedTransformNode::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr 
 }
 
 void NedTransformNode::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-    // Convert timestamp to nanoseconds
-    const int64_t t_ns = static_cast<int64_t>(msg->timestamp_sample);
+    // PX4 uORB timestamp_sample is wall-clock microseconds. Convert into ROS
+    // time domain using a one-time offset captured after /clock is valid.
+    const int64_t px4_wall_ns = static_cast<int64_t>(msg->timestamp_sample) * 1000LL;
+
+    {
+        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
+        if (!px4_offset_init_) {
+            const int64_t now_ns = this->now().nanoseconds();
+            constexpr int64_t kMinValidSimTimeNs = 1'000'000'000LL;
+            if (now_ns < kMinValidSimTimeNs) {
+                ++px4_offset_init_dropped_early_;
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                     "[NED] PX4 offset init waiting for /clock "
+                                     "(dropped_early=%lu)",
+                                     static_cast<unsigned long>(px4_offset_init_dropped_early_));
+                return;
+            }
+
+            px4_to_ros_offset_ns_ = now_ns - px4_wall_ns;
+            px4_offset_init_ = true;
+
+            RCLCPP_INFO(this->get_logger(),
+                        "[NED] PX4 timestamp offset captured at sim_time=%.3f: %.3fs "
+                        "(wall-clock to ROS time)",
+                        now_ns * 1e-9, (now_ns - px4_wall_ns) * 1e-9);
+        }
+    }
+
+    int64_t t_ns;
+    {
+        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
+        t_ns = px4_wall_ns + px4_to_ros_offset_ns_;
+    }
 
     // Create pose sample
     px4_common::time::PoseSample sample;
@@ -208,7 +299,8 @@ void NedTransformNode::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::Sha
                                       static_cast<double>(msg->position[2]));
     sample.orientation =
         Eigen::Quaterniond(static_cast<double>(msg->q[0]), static_cast<double>(msg->q[1]),
-                           static_cast<double>(msg->q[2]), static_cast<double>(msg->q[3]));
+                           static_cast<double>(msg->q[2]), static_cast<double>(msg->q[3]))
+            .normalized();
 
     // Add to buffer
     px4_pose_buffer_.Push(sample);
@@ -264,60 +356,73 @@ bool NedTransformNode::TransformPointCloud(
     const uint8_t* in_data = input_cloud->data.data();
     const uint32_t step = input_cloud->point_step;
 
-    if (!use_px4_odom_) {
-        // Just apply static ENU -> NED transform: (x, y, z) -> (y, x, -z)
-        for (size_t i = 0; i < n; ++i, ++it_ox, ++it_oy, ++it_oz, ++it_oi) {
-            const uint8_t* p = in_data + i * step;
-            float x = *reinterpret_cast<const float*>(p + off_x);
-            float y = *reinterpret_cast<const float*>(p + off_y);
-            float z = *reinterpret_cast<const float*>(p + off_z);
+    // use_px4_odom_ must be true (enforced in LoadParameters). We need PX4
+    // odometry to know the SE(3) pose of the baselink in map_ned so that the
+    // camera_init -> map_ned transform can be composed per-scan.
+    px4_common::time::PoseSample lio_sample, px4_sample;
+    if (!lio_pose_buffer_.Lookup(scan_t_ns, lio_sample)) {
+        ++lio_pose_lookup_miss_;
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "LIO pose interpolation failed for scan at time %ld ns "
+                             "(miss=%lu)",
+                             scan_t_ns,
+                             static_cast<unsigned long>(lio_pose_lookup_miss_));
+        return false;
+    }
 
-            *it_ox = y;
-            *it_oy = x;
-            *it_oz = -z;
-            *it_oi = has_intensity ? *reinterpret_cast<const float*>(p + off_i) : 0.0f;
-        }
-    } else {
-        // Get interpolated poses
-        px4_common::time::PoseSample lio_sample, px4_sample;
-        if (!lio_pose_buffer_.Lookup(scan_t_ns, lio_sample)) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "LIO pose interpolation failed for scan at time %ld ns",
-                                 scan_t_ns);
-            return false;
-        }
+    if (!px4_pose_buffer_.Lookup(scan_t_ns, px4_sample)) {
+        ++px4_pose_lookup_miss_;
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "PX4 pose interpolation failed for scan at time %ld ns "
+                             "(miss=%lu)",
+                             scan_t_ns,
+                             static_cast<unsigned long>(px4_pose_lookup_miss_));
+        return false;
+    }
 
-        if (!px4_pose_buffer_.Lookup(scan_t_ns, px4_sample)) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "PX4 pose interpolation failed for scan at time %ld ns",
-                                 scan_t_ns);
-            return false;
-        }
+    // Compose the combined transform.
+    //
+    // Coordinate frames:
+    //   camera_init : FAST-LIO2 world frame at power-on (ENU-like, ROS convention).
+    //   body_lio      : IMU/sensor body frame used by FAST-LIO2 (Forward-Left-Up).
+    //   body_px4      : PX4 body frame (Forward-Right-Down).
+    //   map_ned       : PX4 local world frame (North-East-Down).
+    //
+    // Inputs:
+    //   p_camera_init : point from /livox_processed (already in camera_init world).
+    //   T_camera_init_body_lio = (R_lio, t_lio) from FAST-LIO2 odometry.
+    //   T_map_ned_body_px4     = (R_px4, t_px4) from PX4 VehicleOdometry.
+    //
+    // Chain:
+    //   p_body_lio  = R_lio^T * (p_camera_init - t_lio)
+    //   p_body_px4  = C_FRD_FLU * p_body_lio       (FLU -> FRD reflection)
+    //   p_map_ned   = R_px4 * p_body_px4 + t_px4
+    //
+    // The FRD_FLU reflection comes from Gazebo/sim convention: the processed
+    // Livox cloud reaches this node in a ROS body-FLU-like representation, while
+    // PX4 expects body-FRD. If the upstream cloud frame ever changes, this
+    // constant must be revisited.
+    static const Eigen::Matrix3d C_FRD_FLU =
+        (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
 
-        // Compose the combined transform
-        // p_ned = R_ned_frd * C * R_lio^T * (p_camera_init - t_lio) + t_px4
-        static const Eigen::Matrix3d C_FRD_FLU =
-            (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
+    const Eigen::Matrix3d R_lio_T = lio_sample.orientation.toRotationMatrix().transpose();
+    const Eigen::Matrix3d R_total =
+        px4_sample.orientation.toRotationMatrix() * C_FRD_FLU * R_lio_T;
 
-        const Eigen::Matrix3d R_lio_T = lio_sample.orientation.toRotationMatrix().transpose();
-        const Eigen::Matrix3d R_total =
-            px4_sample.orientation.toRotationMatrix() * C_FRD_FLU * R_lio_T;
+    for (size_t i = 0; i < n; ++i, ++it_ox, ++it_oy, ++it_oz, ++it_oi) {
+        const uint8_t* p = in_data + i * step;
+        float x = *reinterpret_cast<const float*>(p + off_x);
+        float y = *reinterpret_cast<const float*>(p + off_y);
+        float z = *reinterpret_cast<const float*>(p + off_z);
 
-        for (size_t i = 0; i < n; ++i, ++it_ox, ++it_oy, ++it_oz, ++it_oi) {
-            const uint8_t* p = in_data + i * step;
-            float x = *reinterpret_cast<const float*>(p + off_x);
-            float y = *reinterpret_cast<const float*>(p + off_y);
-            float z = *reinterpret_cast<const float*>(p + off_z);
+        Eigen::Vector3d p_ci(x, y, z);
+        Eigen::Vector3d p_rel = p_ci - lio_sample.position;
+        Eigen::Vector3d p_ned = R_total * p_rel + px4_sample.position;
 
-            Eigen::Vector3d p_ci(x, y, z);
-            Eigen::Vector3d p_rel = p_ci - lio_sample.position;
-            Eigen::Vector3d p_ned = R_total * p_rel + px4_sample.position;
-
-            *it_ox = static_cast<float>(p_ned.x());
-            *it_oy = static_cast<float>(p_ned.y());
-            *it_oz = static_cast<float>(p_ned.z());
-            *it_oi = has_intensity ? *reinterpret_cast<const float*>(p + off_i) : 0.0f;
-        }
+        *it_ox = static_cast<float>(p_ned.x());
+        *it_oy = static_cast<float>(p_ned.y());
+        *it_oz = static_cast<float>(p_ned.z());
+        *it_oi = has_intensity ? *reinterpret_cast<const float*>(p + off_i) : 0.0f;
     }
 
     return true;
@@ -330,32 +435,53 @@ void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample&
 
     std::lock_guard<std::mutex> lock(visual_odom_mutex_);
 
-    // Convert LIO position and orientation to NED
-    Eigen::Vector3d p_raw = px4_common::math::EnuToNed(lio_sample.position);
-    Eigen::Quaterniond q_raw =
-        px4_ros_com::frame_transforms::QuaternionEnuToNed(lio_sample.orientation);
+    // Convert LIO pose from camera_init world + FLU body convention into
+    // PX4 map_ned + FRD body convention.
+    px4_common::time::PoseSample lio_in_ned;
+    lio_in_ned.t_ns = lio_sample.t_ns;
+    lio_in_ned.position = LioPositionToNed(lio_sample.position);
+    lio_in_ned.orientation = LioOrientationToNed(lio_sample.orientation);
 
     if (visual_odom_align_to_px4_ && !visual_alignment_ready_) {
         // Get interpolated PX4 pose for alignment
         px4_common::time::PoseSample px4_sample;
-        if (!px4_pose_buffer_.Lookup(lio_sample.t_ns, px4_sample)) {
+        if (!px4_pose_buffer_.Lookup(lio_in_ned.t_ns, px4_sample)) {
             return;
         }
 
-        // Calculate alignment transform
-        const double yaw_delta = px4_common::math::QuaternionGetYaw(px4_sample.orientation) -
-                                 px4_common::math::QuaternionGetYaw(q_raw);
+        if (visual_odom_alignment_mode_ == "full_6dof") {
+            // Full SE(3) alignment: T_map_ned_camera_init = T_map_ned_body *
+            // T_body_camera_init. T_body_camera_init is the inverse of the LIO
+            // pose expressed in NED (p_raw/q_raw).
+            visual_align_rotation_ = px4_sample.orientation *
+                                     lio_in_ned.orientation.inverse();
+            visual_align_translation_ =
+                px4_sample.position - visual_align_rotation_ * lio_in_ned.position;
+        } else if (visual_odom_alignment_mode_ == "yaw_translation") {
+            // Yaw + translation alignment for world frames where roll/pitch are
+            // already gravity-aligned but heading differs.
+            const double yaw_delta =
+                px4_common::math::QuaternionGetYaw(px4_sample.orientation) -
+                px4_common::math::QuaternionGetYaw(lio_in_ned.orientation);
 
-        visual_align_rotation_ =
-            Eigen::Quaterniond(Eigen::AngleAxisd(yaw_delta, Eigen::Vector3d::UnitZ()));
-        visual_align_translation_ = px4_sample.position - visual_align_rotation_ * p_raw;
+            visual_align_rotation_ =
+                Eigen::Quaterniond(Eigen::AngleAxisd(yaw_delta, Eigen::Vector3d::UnitZ()));
+            visual_align_translation_ =
+                px4_sample.position - visual_align_rotation_ * lio_in_ned.position;
+        } else {
+            // Translation-only alignment for stacks where the LIO world already
+            // matches PX4 axes but uses a local origin.
+            visual_align_rotation_ = Eigen::Quaterniond::Identity();
+            visual_align_translation_ = px4_sample.position - lio_in_ned.position;
+        }
+
         visual_alignment_ready_ = true;
 
-        RCLCPP_INFO(
-            this->get_logger(),
-            "[NED] FAST-LIO2 EV alignment captured: yaw_delta=%.3f rad, offset=(%.3f, %.3f, %.3f)",
-            yaw_delta, visual_align_translation_.x(), visual_align_translation_.y(),
-            visual_align_translation_.z());
+        RCLCPP_INFO(this->get_logger(),
+                    "[NED] FAST-LIO2 EV alignment captured (%s): offset=(%.3f, %.3f, %.3f)",
+                    visual_odom_alignment_mode_.c_str(),
+                    visual_align_translation_.x(), visual_align_translation_.y(),
+                    visual_align_translation_.z());
     }
 
     if (visual_odom_align_to_px4_ && !visual_alignment_ready_) {
@@ -364,15 +490,37 @@ void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample&
 
     // Apply alignment if needed
     const Eigen::Vector3d p_ev = visual_alignment_ready_
-                                     ? visual_align_rotation_ * p_raw + visual_align_translation_
-                                     : p_raw;
+                                     ? visual_align_rotation_ * lio_in_ned.position +
+                                           visual_align_translation_
+                                     : lio_in_ned.position;
     const Eigen::Quaterniond q_ev =
-        (visual_alignment_ready_ ? visual_align_rotation_ * q_raw : q_raw).normalized();
+        (visual_alignment_ready_ ? visual_align_rotation_ * lio_in_ned.orientation
+                                 : lio_in_ned.orientation)
+            .normalized();
 
-    // Convert timestamp to microseconds for PX4
-    const uint64_t sample_px4_us =
-        static_cast<uint64_t>(static_cast<double>(lio_sample.t_ns) / 1000.0);
-    const uint64_t now_px4_us = static_cast<uint64_t>(this->now().nanoseconds() / 1000.0);
+    const int64_t now_ros_ns = this->now().nanoseconds();
+    int64_t px4_offset_ns;
+    {
+        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
+        if (!px4_offset_init_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "[NED] Skip EV publish until PX4 timestamp offset is ready");
+            return;
+        }
+        px4_offset_ns = px4_to_ros_offset_ns_;
+    }
+
+    // Convert ROS sim timestamps to PX4 wall-clock domain expected by uORB.
+    const int64_t sample_px4_ns = lio_sample.t_ns - px4_offset_ns;
+    const int64_t now_px4_ns = now_ros_ns - px4_offset_ns;
+    if (sample_px4_ns <= 0 || now_px4_ns <= 0) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[NED] Skip EV publish due to invalid PX4 timestamp conversion");
+        return;
+    }
+
+    const uint64_t sample_px4_us = static_cast<uint64_t>(sample_px4_ns / 1000LL);
+    const uint64_t now_px4_us = static_cast<uint64_t>(now_px4_ns / 1000LL);
 
     // Create and populate the message
     px4_msgs::msg::VehicleOdometry ev_msg;
@@ -394,6 +542,9 @@ void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample&
         ev_msg.velocity[i] = nan;
         ev_msg.angular_velocity[i] = nan;
         ev_msg.velocity_variance[i] = nan;
+    }
+
+    for (int i = 0; i < 3; ++i) {
         ev_msg.position_variance[i] = static_cast<float>(visual_odom_position_variance_[i]);
         ev_msg.orientation_variance[i] = static_cast<float>(visual_odom_orientation_variance_[i]);
     }

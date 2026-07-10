@@ -37,6 +37,7 @@
 #include <px4_common/frame_constants.hpp>
 #include <px4_common/mapping/voxel_map_interface.hpp>
 #include <px4_common/time/pose_buffer.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <px4_ros_com/frame_transforms.hpp>
@@ -67,6 +68,8 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     // ROS 2 interfaces
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
     rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr sub_odom_;
+    rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr sub_status_;
+    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr sub_local_pos_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_lio_odom_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_map_;
     rclcpp::TimerBase::SharedPtr timeout_timer_;
@@ -112,15 +115,22 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     // Lidar-to-IMU extrinsic
     Eigen::Vector3d T_lidar_in_imu_{Eigen::Vector3d::Zero()};
 
-    // Layer 3 health signals
-    std::atomic<bool> ready_{false};
+    // Layer 3 health signals (see IsReady() for the boolean expression)
+    // ready_consecutive_frames_ is reset on timeout/fault and incremented while
+    // coverage and data freshness hold.
     std::atomic<std::uint64_t> frames_dropped_{0};
     std::uint64_t frames_dropped_at_last_log_{0};
 
-    // Coverage-based readiness gate state
+    // Coverage-based readiness gate configuration and runtime state
     int ready_min_frames_{5};
     int ready_min_occupied_{1000};
-    int ready_consecutive_frames_{0};
+    std::atomic<int> ready_consecutive_frames_{0};
+    std::atomic<bool> data_fresh_{false};
+    std::atomic<bool> coverage_ok_{false};
+
+    // Fatal fault flag set on timestamp-domain contamination or other
+    // unrecoverable conditions. Once true IsReady() stays false.
+    std::atomic<bool> fatal_fault_{false};
 
     // LIO subscription monitor
     std::string lio_odom_topic_{"/odometry"};
@@ -134,8 +144,12 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     // Rollback knob
     bool use_lio_buffer_{true};
 
-    // Alignment gate parameters
-    bool require_alignment_gate_{true};
+    // Alignment gate: when enabled, the node waits for the drone to be armed,
+    // nearly stationary, EKF position valid, and LIO covariance small before
+    // marking the map as ready. The gate is disabled by default for backwards
+    // compatibility with existing SITL pipelines; set require_alignment_gate=true
+    // to enforce it in production flights.
+    bool require_alignment_gate_{false};
     double aligned_min_seconds_{5.0};
     double aligned_max_velocity_{0.05};
     double aligned_lio_covariance_max_{0.01};
@@ -149,14 +163,17 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     std::atomic<double> drone_speed_{0.0};
     std::atomic<bool> ekf_pose_valid_{false};
 
-    // PX4 wall-clock to ROS sim_time offset
-    std::atomic<int64_t> px4_to_ros_offset_ns_{0};
-    std::atomic<bool> px4_offset_initialized_{false};
+    // PX4 wall-clock to ROS sim_time offset.
+    // Previously declared as atomics; replaced with a single mutex-guarded pair
+    // to match the rest of the codebase and avoid duplicate state per instance.
+    std::mutex px4_offset_mutex_;
+    bool px4_offset_initialized_{false};
+    int64_t px4_to_ros_offset_ns_{0};
+    uint64_t px4_offset_init_dropped_early_{0};
     std::atomic<double> lio_covariance_trace_{1e9};
     rclcpp::Time alignment_start_time_;
     rclcpp::Time aligned_streak_start_;
     bool alignment_warned_{false};
-    rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr sub_status_;
     rclcpp::TimerBase::SharedPtr alignment_timer_;
 
     // PointCloud2 field cache
@@ -184,6 +201,8 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     // Callbacks
     void cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg);
     void odomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg);
+    void vehicleStatusCallback(const px4_msgs::msg::VehicleStatus::SharedPtr msg);
+    void vehicleLocalPositionCallback(const px4_msgs::msg::VehicleLocalPosition::SharedPtr msg);
     void lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void timeoutCallback();
     void alignmentTick();

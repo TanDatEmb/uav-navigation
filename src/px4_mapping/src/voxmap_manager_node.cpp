@@ -44,6 +44,7 @@
 #include <px4_common/time/pose_buffer.hpp>
 #include <px4_common/types.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <px4_ros_com/frame_transforms.hpp>
@@ -75,7 +76,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     this->declare_parameter<int>("ready_min_occupied", 1000);
     this->declare_parameter<std::string>("lio_odom_topic", "/odometry");
     this->declare_parameter<bool>("use_lio_buffer", true);
-    this->declare_parameter<bool>("require_alignment_gate", true);
+    this->declare_parameter<bool>("require_alignment_gate", false);
     this->declare_parameter<double>("aligned_min_seconds", 5.0);
     this->declare_parameter<double>("aligned_max_velocity", 0.05);
     this->declare_parameter<double>("aligned_lio_covariance_max", 0.01);
@@ -113,12 +114,15 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     aligned_max_seconds_to_capture_ =
         this->get_parameter("aligned_max_seconds_to_capture").as_double();
     aligned_timeout_action_ = this->get_parameter("aligned_timeout_action").as_string();
-    RCLCPP_INFO(this->get_logger(),
-                "Alignment gate: %s, min=%.1fs, vel<%.2fm/s, cov<%.3fm^2, capture_timeout=%.0fs, "
-                "timeout_action=%s",
-                require_alignment_gate_ ? "ENABLED" : "DISABLED", aligned_min_seconds_,
-                aligned_max_velocity_, aligned_lio_covariance_max_, aligned_max_seconds_to_capture_,
-                aligned_timeout_action_.c_str());
+
+    if (require_alignment_gate_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "Alignment gate: ENABLED (timeout_action=%s)",
+                    aligned_timeout_action_.c_str());
+    } else {
+        RCLCPP_INFO(this->get_logger(),
+                    "Alignment gate: DISABLED");
+    }
     RCLCPP_INFO(this->get_logger(),
                 "Readiness gate, requires %d consecutive frames AND %d occupied voxels",
                 ready_min_frames_, ready_min_occupied_);
@@ -174,21 +178,37 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                 // Translate PX4 timestamp_sample (wall-clock via MicroXRCEAgent
                 // CLOCK_REALTIME after UXRCE_DDS_SYNCT) into the ROS time domain
                 const int64_t px4_wall_ns = static_cast<int64_t>(msg->timestamp_sample) * 1000LL;
-                if (!px4_offset_initialized_.load(std::memory_order_acquire)) {
-                    const int64_t now_ns = this->now().nanoseconds();
-                    // /clock topic may not have reached this node yet
-                    if (now_ns < 1'000'000'000LL)
-                        return;
-                    px4_to_ros_offset_ns_.store(now_ns - px4_wall_ns, std::memory_order_release);
-                    px4_offset_initialized_.store(true, std::memory_order_release);
-                    RCLCPP_INFO(this->get_logger(),
-                                "PX4 timestamp offset captured at sim_time=%.3f: %.3fs "
-                                "(wall-clock to ROS time)",
-                                now_ns * 1e-9, (now_ns - px4_wall_ns) * 1e-9);
+                {
+                    std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
+                    if (!px4_offset_initialized_) {
+                        const int64_t now_ns = this->now().nanoseconds();
+                        // /clock topic may not have reached this node yet
+                        if (now_ns < 1'000'000'000LL) {
+                            ++px4_offset_init_dropped_early_;
+                            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                                 "[VoxMap] PX4 offset init waiting for /clock "
+                                                 "(dropped_early=%lu)",
+                                                 static_cast<unsigned long>(
+                                                     px4_offset_init_dropped_early_));
+                            return;
+                        }
+                        px4_to_ros_offset_ns_ = now_ns - px4_wall_ns;
+                        px4_offset_initialized_ = true;
+                        RCLCPP_INFO(this->get_logger(),
+                                    "PX4 timestamp offset captured at sim_time=%.3f: %.3fs "
+                                    "(wall-clock to ROS time)",
+                                    now_ns * 1e-9, (now_ns - px4_wall_ns) * 1e-9);
+                    }
+                }
+
+                int64_t offset_ns;
+                {
+                    std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
+                    offset_ns = px4_to_ros_offset_ns_;
                 }
 
                 px4_common::time::PoseSample sample;
-                sample.t_ns = px4_wall_ns + px4_to_ros_offset_ns_.load(std::memory_order_acquire);
+                sample.t_ns = px4_wall_ns + offset_ns;
                 sample.position =
                     Eigen::Vector3d(msg->position[0], msg->position[1], msg->position[2]);
                 sample.orientation =
@@ -203,6 +223,15 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                 px4_buf_.Push(sample);
             },
             io_opts);
+
+        // Alignment gate inputs: arming state and EKF position/velocity validity
+        sub_status_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(
+            "/fmu/out/vehicle_status", rclcpp::QoS(5).best_effort(),
+            std::bind(&VoxMapManagerNode::vehicleStatusCallback, this, _1), io_opts);
+
+        sub_local_pos_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(
+            "/fmu/out/vehicle_local_position", rclcpp::QoS(5).best_effort(),
+            std::bind(&VoxMapManagerNode::vehicleLocalPositionCallback, this, _1), io_opts);
     }
 
     // === Publishers ===
@@ -215,12 +244,13 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                                              std::bind(&VoxMapManagerNode::timeoutCallback, this),
                                              compute_cb_group_);
 
-    // Alignment monitor runs at 10 Hz
+    // Alignment monitor runs at 10 Hz on the IO callback group so that
+    // long-running cloud raycasting in the compute group cannot starve it.
     if (require_alignment_gate_ && !lio_world_input_) {
         alignment_start_time_ = this->now();
         alignment_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(100), std::bind(&VoxMapManagerNode::alignmentTick, this),
-            compute_cb_group_);
+            io_cb_group_);
     } else {
         // Gate disabled or lio_world mode
         alignment_captured_.store(true, std::memory_order_release);
@@ -277,9 +307,16 @@ void VoxMapManagerNode::GetOccupiedPointsInRadius(const Eigen::Vector3d& center,
 }
 
 bool VoxMapManagerNode::IsReady() const noexcept {
-    // Require both map coverage and sustained pose-source alignment
-    return ready_.load(std::memory_order_acquire) &&
-           alignment_captured_.load(std::memory_order_acquire);
+    // Explicit boolean expression: fresh data + coverage + sustained frames +
+    // no fatal fault + alignment captured. This replaces the previous one-way
+    // ready_ latch so that readiness drops when data goes stale or the map
+    // becomes sparse (e.g. flying into open space).
+    const bool fresh = data_fresh_.load(std::memory_order_acquire);
+    const bool coverage = coverage_ok_.load(std::memory_order_acquire);
+    const bool sustained = ready_consecutive_frames_.load(std::memory_order_acquire) >= ready_min_frames_;
+    const bool no_fault = !fatal_fault_.load(std::memory_order_acquire);
+    const bool aligned = alignment_captured_.load(std::memory_order_acquire);
+    return fresh && coverage && sustained && no_fault && aligned;
 }
 
 std::uint64_t VoxMapManagerNode::FramesDropped() const noexcept {
@@ -340,7 +377,10 @@ void VoxMapManagerNode::writeSummary() {
     printf("\n============ VOXMAP SUMMARY ============\n");
     printf("Total Frames:      %lu\n", frame_count_);
     printf("Frames Dropped:    %lu\n", frames_dropped_.load(std::memory_order_relaxed));
-    printf("Final Ready State: %s\n", ready_.load(std::memory_order_relaxed) ? "true" : "false");
+    printf("Final Ready State: %s\n", IsReady() ? "true" : "false");
+    if (fatal_fault_.load(std::memory_order_relaxed)) {
+        printf("FATAL FAULT: timestamp-domain contamination or unrecoverable error occurred\n");
+    }
     if (frame_count_ > 0) {
         double mean_total = total_process_time_ms_ / frame_count_;
         double mean_update = total_update_time_ms_ / frame_count_;
@@ -357,7 +397,9 @@ void VoxMapManagerNode::writeSummary() {
     timeoutCallback, clear map if no lidar data arrived recently
    ===================================================================== */
 void VoxMapManagerNode::timeoutCallback() {
-    double elapsed = (this->now() - last_data_time_).seconds();
+    const double elapsed = (this->now() - last_data_time_).seconds();
+    const bool fresh = elapsed < timeout_seconds_;
+    data_fresh_.store(fresh, std::memory_order_release);
 
     if (elapsed > timeout_seconds_ && !map_cleared_) {
         printf("[VoxMap] TIMEOUT: Clearing map after %.1fs\n", elapsed);
@@ -378,8 +420,8 @@ void VoxMapManagerNode::timeoutCallback() {
         pub_map_->publish(empty_msg);
 
         map_cleared_ = true;
-        ready_.store(false, std::memory_order_release);
-        ready_consecutive_frames_ = 0;
+        coverage_ok_.store(false, std::memory_order_release);
+        ready_consecutive_frames_.store(0, std::memory_order_release);
     }
 }
 
@@ -432,6 +474,29 @@ void VoxMapManagerNode::alignmentTick() {
 }
 
 /* =====================================================================
+    vehicleStatusCallback, arming state for the alignment gate
+   ===================================================================== */
+void VoxMapManagerNode::vehicleStatusCallback(
+    const px4_msgs::msg::VehicleStatus::SharedPtr msg) {
+    armed_.store(msg->arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED,
+                 std::memory_order_release);
+}
+
+/* =====================================================================
+    vehicleLocalPositionCallback, EKF validity + speed for the alignment gate
+   ===================================================================== */
+void VoxMapManagerNode::vehicleLocalPositionCallback(
+    const px4_msgs::msg::VehicleLocalPosition::SharedPtr msg) {
+    const bool ekf_ok = msg->xy_valid && msg->z_valid;
+    ekf_pose_valid_.store(ekf_ok, std::memory_order_release);
+
+    const double vx = static_cast<double>(msg->vx);
+    const double vy = static_cast<double>(msg->vy);
+    const double vz = static_cast<double>(msg->vz);
+    drone_speed_.store(std::sqrt(vx * vx + vy * vy + vz * vz), std::memory_order_release);
+}
+
+/* =====================================================================
     lioOdomCallback, always-on LIO pose handler
    ===================================================================== */
 void VoxMapManagerNode::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -440,20 +505,26 @@ void VoxMapManagerNode::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr
     }
     lio_samples_received_++;
 
-    // Wall-clock contamination guard
+    // Wall-clock contamination guard. Only active when the node is explicitly
+    // using simulation time and a /clock source is present (clock not stuck at 0).
     if (this->get_parameter("use_sim_time").as_bool() && lio_samples_received_ > 20) {
-        const rclcpp::Time stamp(msg->header.stamp);
         const rclcpp::Time clock_now = this->now();
-        const double age_ms = (clock_now - stamp).seconds() * 1000.0;
-        if (std::abs(age_ms) > 5000.0) {
-            RCLCPP_FATAL(this->get_logger(),
-                         "LIO /odometry stamp domain mismatch, stamp=%d.%09u, "
-                         "clock_now=%.3f, age=%.1fms, likely wall-clock contamination "
-                         "under use_sim_time=true",
-                         msg->header.stamp.sec, msg->header.stamp.nanosec, clock_now.seconds(),
-                         age_ms);
-            rclcpp::shutdown();
-            return;
+        if (clock_now.nanoseconds() > 1'000'000'000LL) {
+            const rclcpp::Time stamp(msg->header.stamp);
+            const double age_ms = (clock_now - stamp).seconds() * 1000.0;
+            if (std::abs(age_ms) > 5000.0) {
+                RCLCPP_FATAL(this->get_logger(),
+                             "LIO /odometry stamp domain mismatch, stamp=%d.%09u, "
+                             "clock_now=%.3f, age=%.1fms, likely wall-clock contamination "
+                             "under use_sim_time=true",
+                             msg->header.stamp.sec, msg->header.stamp.nanosec, clock_now.seconds(),
+                             age_ms);
+                fatal_fault_.store(true, std::memory_order_release);
+                RCLCPP_FATAL(this->get_logger(),
+                             "Fatal fault set: LIO /odometry stamp domain mismatch. "
+                             "Node will report IsReady()=false until restart.");
+                return;
+            }
         }
     }
 
@@ -694,19 +765,24 @@ void VoxMapManagerNode::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr m
 
     auto t1 = std::chrono::high_resolution_clock::now();
 
-    // Coverage-based readiness gate
-    if (!ready_.load(std::memory_order_relaxed)) {
-        const size_t occ = voxel_map_.OccupiedCount();
-        if (occ >= static_cast<size_t>(ready_min_occupied_)) {
-            ready_consecutive_frames_++;
-            if (ready_consecutive_frames_ >= ready_min_frames_) {
-                ready_.store(true, std::memory_order_release);
-                RCLCPP_INFO(this->get_logger(), "VoxMap ready, %d frames with %zu occupied voxels",
-                            ready_consecutive_frames_, occ);
-            }
-        } else {
-            ready_consecutive_frames_ = 0;
+    // Coverage-based readiness gate: explicit condition update every frame.
+    // readiness is recomputed on demand in IsReady() as the conjunction of
+    // data_fresh_, coverage_ok_, sustained consecutive frames, no fatal fault,
+    // and alignment_captured_. This avoids the previous one-way latch bug where
+    // the node stayed ready after flying into open space.
+    data_fresh_.store(true, std::memory_order_release);
+    const size_t occ = voxel_map_.OccupiedCount();
+    const bool coverage = occ >= static_cast<size_t>(ready_min_occupied_);
+    coverage_ok_.store(coverage, std::memory_order_release);
+
+    if (coverage) {
+        const int prev = ready_consecutive_frames_.fetch_add(1, std::memory_order_acq_rel);
+        if (prev + 1 == ready_min_frames_) {
+            RCLCPP_INFO(this->get_logger(), "VoxMap ready, %d frames with %zu occupied voxels",
+                        prev + 1, occ);
         }
+    } else {
+        ready_consecutive_frames_.store(0, std::memory_order_release);
     }
 
     // Publish changed voxels

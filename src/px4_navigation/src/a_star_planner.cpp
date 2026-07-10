@@ -32,8 +32,10 @@ AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
         return result;
     }
 
-    // Pre-allocate node pool
-    node_pool_.resize(kMaxIterations + 100);
+    // Pre-allocate node pool. Each expanded node can push up to 26 neighbors,
+    // so reserve enough capacity for the worst-case branch factor over the
+    // iteration budget plus a small margin.
+    node_pool_.resize(26 * kMaxIterations + 100);
     pool_idx_ = 0;
 
     // Initialize open set priority queue and best_g map
@@ -77,9 +79,10 @@ AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
         Node* current = open.top();
         open.pop();
 
-        // Skip if we've already found a better path to this node
+        // Skip if we've already found a strictly better path to this node.
+        // Stale queue entries from sub-optimal pushes are dropped here.
         auto bg = best_g_.find(current->idx);
-        if (bg != best_g_.end() && current->g > bg->second + 1e-6) {
+        if (bg != best_g_.end() && current->g > bg->second + 1e-9) {
             continue;
         }
 
@@ -192,23 +195,34 @@ bool AStarPlanner::AdjustStartIfBlocked(const LocalPlanGrid& grid, Eigen::Vector
                                         std::ostringstream& debug) const {
     // Check if start position is blocked
     if (IsBlocked(grid, start_idx)) {
-        // Search for a nearby free position
-        bool found = false;
-        for (int r = 1; r <= 15 && !found; ++r) {
-            for (int dz = -r; dz <= r && !found; ++dz) {
-                for (int dy = -r; dy <= r && !found; ++dy) {
-                    for (int dx = -r; dx <= r && !found; ++dx) {
-                        Eigen::Vector3i nbr = start_idx + Eigen::Vector3i(dx, dy, dz);
-                        if (!IsBlocked(grid, nbr)) {
-                            start_idx = nbr;
-                            found = true;
-                            debug << " | Start adjusted";
-                        }
+        // Collect all nearby free positions and choose the closest one to the
+        // original start so that the adjusted start minimizes position error.
+        std::vector<std::pair<Eigen::Vector3i, int>> candidates;
+        constexpr int kMaxSearchRadius = 15;
+        for (int dz = -kMaxSearchRadius; dz <= kMaxSearchRadius; ++dz) {
+            for (int dy = -kMaxSearchRadius; dy <= kMaxSearchRadius; ++dy) {
+                for (int dx = -kMaxSearchRadius; dx <= kMaxSearchRadius; ++dx) {
+                    if (dx == 0 && dy == 0 && dz == 0) {
+                        continue;
+                    }
+                    const Eigen::Vector3i nbr = start_idx + Eigen::Vector3i(dx, dy, dz);
+                    if (!IsBlocked(grid, nbr)) {
+                        const int dist_sq = dx * dx + dy * dy + dz * dz;
+                        candidates.emplace_back(nbr, dist_sq);
                     }
                 }
             }
         }
-        return found;
+
+        if (!candidates.empty()) {
+            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+                return a.second < b.second;
+            });
+            start_idx = candidates.front().first;
+            debug << " | Start adjusted";
+            return true;
+        }
+        return false;
     }
     return true;
 }

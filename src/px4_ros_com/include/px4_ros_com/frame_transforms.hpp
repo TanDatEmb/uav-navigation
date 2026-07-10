@@ -221,10 +221,11 @@ inline Eigen::Quaterniond NedEnuQuaternion() {
 /**
  * @brief Static quaternion for aircraft (FRD) <-> base_link (FLU) transform.
  * +PI rotation around X transforms from FRD to FLU.
+ *
+ * Delegates to px4_common::math to keep the core math in one place.
  */
 inline Eigen::Quaterniond AircraftBaselinkQuaternion() {
-    return Eigen::AngleAxisd(px4_common::math::kPi, Eigen::Vector3d::UnitX()) *
-           Eigen::Quaterniond::Identity();
+    return px4_common::math::QuaternionAircraftToBaselink(Eigen::Quaterniond::Identity());
 }
 
 /**
@@ -285,34 +286,32 @@ inline geometry_msgs::msg::Vector3 NedToEnu(const geometry_msgs::msg::Vector3& n
  * Passive frame rotation: the physical orientation is unchanged, only its
  * coordinate expression switches from the PX4 aircraft frame to the ROS
  * base_link frame.
+ *
+ * Delegates to px4_common::math to keep the core math in one place.
  */
 inline Eigen::Quaterniond QuaternionAircraftToBaselink(const Eigen::Quaterniond& q_aircraft) {
-    const Eigen::Quaterniond q_rot = AircraftBaselinkQuaternion();
-    return q_rot * q_aircraft * q_rot.conjugate();
+    return px4_common::math::QuaternionAircraftToBaselink(q_aircraft);
 }
 
 /**
  * @brief Convert a quaternion from base_link (FLU) to aircraft (FRD).
  */
 inline Eigen::Quaterniond QuaternionBaselinkToAircraft(const Eigen::Quaterniond& q_baselink) {
-    const Eigen::Quaterniond q_rot = AircraftBaselinkQuaternion();
-    return q_rot * q_baselink * q_rot.conjugate();
+    return px4_common::math::QuaternionBaselinkToAircraft(q_baselink);
 }
 
 /**
  * @brief Convert a 3D vector from aircraft (FRD) to base_link (FLU).
  */
 inline Eigen::Vector3d AircraftToBaselink(const Eigen::Vector3d& v_aircraft) {
-    const Eigen::Matrix3d C = AircraftBaselinkQuaternion().toRotationMatrix();
-    return C * v_aircraft;
+    return px4_common::math::AircraftToBaselink(v_aircraft);
 }
 
 /**
  * @brief Convert a 3D vector from base_link (FLU) to aircraft (FRD).
  */
 inline Eigen::Vector3d BaselinkToAircraft(const Eigen::Vector3d& v_baselink) {
-    const Eigen::Matrix3d C = AircraftBaselinkQuaternion().toRotationMatrix();
-    return C.transpose() * v_baselink;
+    return px4_common::math::BaselinkToAircraft(v_baselink);
 }
 
 /**

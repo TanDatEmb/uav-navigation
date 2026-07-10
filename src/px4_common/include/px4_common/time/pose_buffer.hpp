@@ -78,16 +78,20 @@ class PoseBuffer {
             lookup_miss_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
-        if (t_ns < buffer_.front().t_ns || t_ns > buffer_.back().t_ns) {
-            lookup_miss_count_.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
 
         auto hi = std::lower_bound(buffer_.begin(), buffer_.end(), t_ns,
                                    [](const PoseSample& s, int64_t t) {
                                        return s.t_ns < t;
                                    });
-        if (hi == buffer_.end() || hi->t_ns == t_ns || hi == buffer_.begin()) {
+        if (hi == buffer_.end()) {
+            out = buffer_.back();
+            return true;
+        }
+        if (hi == buffer_.begin()) {
+            out = buffer_.front();
+            return true;
+        }
+        if (hi->t_ns == t_ns) {
             out = *hi;
             return true;
         }
@@ -140,7 +144,8 @@ class PoseBuffer {
 
    private:
     void TrimFront(int64_t newest_t_ns) {
-        const int64_t cutoff = newest_t_ns - window_.count();
+        const int64_t cutoff =
+            newest_t_ns >= window_.count() ? newest_t_ns - window_.count() : 0;
         while (!buffer_.empty() && buffer_.front().t_ns < cutoff) {
             buffer_.pop_front();
         }

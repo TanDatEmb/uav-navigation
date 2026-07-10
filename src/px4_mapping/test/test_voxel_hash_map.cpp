@@ -78,6 +78,52 @@ TEST_F(VoxelHashMapTest, EvictDistantRemovesFarVoxels) {
     EXPECT_EQ(map_.OccupiedCount(), 0U);
 }
 
+TEST_F(VoxelHashMapTest, GetChangedPointsReturnsOccupiedVoxels) {
+    std::vector<PointLivox> points;
+    for (int i = 0; i < 10; ++i) {
+        PointLivox p;
+        p.x = 1.0f + static_cast<float>(i) * 0.05f;
+        p.y = 0.0f;
+        p.z = 0.0f;
+        p.intensity = 100.0f;
+        points.push_back(p);
+    }
+
+    map_.Update(points, Eigen::Vector3d::Zero());
+
+    std::vector<PointLivox> changed;
+    map_.GetChangedPoints(changed);
+
+    EXPECT_FALSE(changed.empty());
+    EXPECT_EQ(changed.size(), map_.OccupiedCount());
+}
+
+TEST_F(VoxelHashMapTest, GetChangedPointsAfterEvictDoesNotCrash) {
+    std::vector<PointLivox> points;
+    PointLivox point;
+    point.x = 2.0;
+    point.y = 0.0;
+    point.z = 0.0;
+    point.intensity = 100.0f;
+    points.push_back(point);
+
+    map_.Update(points, Eigen::Vector3d::Zero());
+    ASSERT_EQ(map_.OccupiedCount(), 1U);
+
+    // Evict all voxels far from the drone.
+    const std::size_t evicted = map_.EvictDistant(Eigen::Vector3d(100.0, 0.0, 0.0));
+    EXPECT_EQ(map_.Size(), 0U) << "Size after evict";
+    EXPECT_EQ(map_.OccupiedCount(), 0U) << "OccupiedCount after evict";
+    EXPECT_GT(evicted, 0U) << "Expected at least one voxel evicted";
+
+    // Calling GetChangedPoints after eviction must not access deallocated
+    // voxels. Previously GetChangedPoints held Voxel* pointers outside the
+    // lock, so concurrent eviction could use-after-free.
+    std::vector<PointLivox> changed;
+    map_.GetChangedPoints(changed);
+    EXPECT_TRUE(changed.empty()) << "changed size=" << changed.size();
+}
+
 TEST_F(VoxelHashMapTest, ImplementsVoxMapManagerInterface) {
     EXPECT_DOUBLE_EQ(map_.GetResolution(), px4_common::mapping::kDefaultVoxelResolutionM);
     EXPECT_EQ(map_.FramesDropped(), 0U);

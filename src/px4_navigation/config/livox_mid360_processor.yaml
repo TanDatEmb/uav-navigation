@@ -58,4 +58,9 @@ livox_mid360_processor:
     vehicle_odom_topic: "/fmu/out/vehicle_odometry"
     obstacle_distance_topic: "/fmu/in/obstacle_distance"
 
+    # Publish a local virtual scan for local planning/diagnostics (M4).
+    publish_local_virtual_scan: true
+    local_virtual_scan_topic: "/local_virtual_scan"
+    local_virtual_scan_frame_id: "aircraft"
+
     # use_sim_time should be set via command line for SITL.

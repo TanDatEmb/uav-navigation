@@ -52,6 +52,8 @@ if(BUILD_TESTING)
     target_link_libraries(test_voxel_map_interface ${PROJECT_NAME})
     ament_add_gtest(test_pose_buffer test/test_pose_buffer.cpp)
     target_link_libraries(test_pose_buffer ${PROJECT_NAME})
+    ament_add_gtest(test_parameter_loader test/test_parameter_loader.cpp)
+    target_link_libraries(test_parameter_loader ${PROJECT_NAME})
 endif()
 
 ament_package()

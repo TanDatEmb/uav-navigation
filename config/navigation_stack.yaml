@@ -8,10 +8,48 @@
 
 px4_mapping:
   ros__parameters:
-    # Placeholder for FAST-LIO2 / local map parameters.
-    map_frame: "map"
+    # Canonical frame names used across the stack.
+    map_frame: "map_ned"
     body_frame: "base_link"
     lidar_frame: "lidar"
+
+  # NED transform node: converts FAST-LIO2 camera_init/ENU data to map_ned.
+  ned_transform:
+    ros__parameters:
+      input_cloud_topic: "/livox_processed"
+      output_cloud_topic: "/livox_processed_ned"
+      lio_odom_topic: "/odometry"
+      px4_odom_topic: "/fmu/out/vehicle_odometry"
+      use_px4_odom: true
+      publish_visual_odometry_to_px4: false
+      visual_odom_topic: "/fmu/in/vehicle_visual_odometry"
+      visual_odom_align_to_px4: true
+      visual_odom_alignment_mode: "translation_only"
+      visual_odom_align_full_6dof: false
+      visual_odom_position_variance: [0.04, 0.04, 0.09]
+      visual_odom_orientation_variance: [0.25, 0.25, 0.05]
+      visual_odom_quality: 100
+
+  # Voxel map manager node: builds the sparse global map in map_ned.
+  voxmap_manager:
+    ros__parameters:
+      cloud_topic: "/livox_processed_ned"
+      lio_odom_topic: "/odometry"
+      input_source: "lio_world"
+      publish_local_map: true
+      extrinsic_T: [-0.011, -0.02329, 0.04412]
+      ready_min_frames: 5
+      ready_min_occupied: 1000
+      require_alignment_gate: false
+      aligned_min_seconds: 5.0
+      aligned_max_velocity: 0.05
+      aligned_lio_covariance_max: 0.01
+      aligned_max_seconds_to_capture: 30.0
+      aligned_timeout_action: "hold_indefinitely"
+      log_interval: 1
+      timeout_seconds: 3600.0
+      log_path: ""
+      use_lio_buffer: true
 
 px4_navigation:
   ros__parameters:
@@ -45,7 +83,10 @@ px4_navigation:
       stale_timeout_ms: 400
 
       # Coordinate frame of the input point cloud.
-      cloud_frame: "sensor"
+      #   "sensor"     : cloud is already in PX4 body FRD frame.
+      #   "sensor_flu" : cloud is in ROS/Gazebo conventional FLU frame.
+      #   "ned"        : cloud is in map_ned world frame.
+      cloud_frame: "sensor_flu"
 
       # Topics.
       input_cloud_topic: "/lidar_360/points"

@@ -35,8 +35,7 @@ uav-navigation/
 │   ├── px4_common/          # shared math, geometry, transforms, parameter helpers
 │   ├── px4_mapping/         # FAST-LIO2-style odometry + local occupancy map
 │   ├── px4_navigation/      # local planning, trajectory generation, control
-│   ├── px4_ros_com/         # DDS bridge, TF, offboard helpers
-│   └── px4_visualization/   # RViz, plotting, bag helpers
+│   └── px4_ros_com/         # DDS bridge, TF, offboard helpers
 ├── config/                  # global runtime parameters
 ├── launch/                  # top-level orchestration launch files
 ├── docs/                    # conventions, frame definitions, architecture
