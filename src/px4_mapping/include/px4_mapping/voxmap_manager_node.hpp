@@ -214,6 +214,8 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     void publishMap();
 };
 
+using VoxelMapNode = VoxMapManagerNode;
+
 // Factory for composed pipeline
 std::shared_ptr<rclcpp::Node> get_voxmap_node(
     const rclcpp::NodeOptions& options,

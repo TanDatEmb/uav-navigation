@@ -98,6 +98,8 @@ class FastLio2Node : public rclcpp::Node {
     px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
 };
 
+  using CloudPreprocessorNode = FastLio2Node;
+
 }  // namespace px4_mapping
 
 #endif  // PX4_MAPPING_FAST_LIO2_NODE_HPP_

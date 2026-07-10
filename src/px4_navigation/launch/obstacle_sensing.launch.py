@@ -42,7 +42,7 @@ def generate_launch_description():
         # Livox MID-360 processor — converts PointCloud2 to PX4 ObstacleDistance.
         Node(
             package='px4_navigation',
-            executable='livox_mid360_processor_node',
+            executable='obstacle_perception_node',
             name='obstacle_perception',
             parameters=[
                 config_file,

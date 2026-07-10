@@ -43,7 +43,7 @@ fi
 # ── 2. Add well-known orphan processes ───────────────────────────────────────
 # Exact process-name matches (comm field). These never match a shell running
 # this script.
-for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node livox_mid360_processor_node static_transform_publisher fast_lio2_node ned_transform_node voxmap_manager_node xterm; do
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node obstacle_perception_node livox_mid360_processor_node static_transform_publisher cloud_preprocessor_node fast_lio2_node world_bridge_node ned_transform_node voxel_map_node voxmap_manager_node xterm; do
     for pid in $(pgrep -x "${name}" 2>/dev/null || true); do
         [[ "${pid}" == "${MY_PID}" ]] && continue
         [[ -n "${pid}" ]] && PIDS+=("${pid}")
@@ -102,7 +102,7 @@ fi
 # ── 5. Verify clean ─────────────────────────────────────────────────────────
 sleep 0.5
 remaining=0
-for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node livox_mid360_processor_node static_transform_publisher fast_lio2_node ned_transform_node voxmap_manager_node xterm; do
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node obstacle_perception_node livox_mid360_processor_node static_transform_publisher cloud_preprocessor_node fast_lio2_node world_bridge_node ned_transform_node voxel_map_node voxmap_manager_node xterm; do
     count=$(pgrep -x "${name}" 2>/dev/null | wc -l)
     remaining=$((remaining + count))
 done

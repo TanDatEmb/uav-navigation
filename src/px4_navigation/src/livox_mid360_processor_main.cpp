@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
 
     rclcpp::NodeOptions options;
-    auto node = std::make_shared<px4_navigation::LivoxMid360Processor>(options);
+    auto node = std::make_shared<px4_navigation::ObstaclePerceptionNode>(options);
 
     rclcpp::spin(node);
     rclcpp::shutdown();

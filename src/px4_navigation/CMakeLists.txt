@@ -44,14 +44,14 @@ ament_target_dependencies(${PROJECT_NAME} PUBLIC
     sensor_msgs
 )
 
-# ── Livox MID-360 processor node ───────────────────────────────────────────
-add_executable(livox_mid360_processor_node
+# ── Obstacle perception node ───────────────────────────────────────────────
+add_executable(obstacle_perception_node
     src/livox_mid360_processor.cpp
     src/livox_mid360_processor_main.cpp)
-target_include_directories(livox_mid360_processor_node PRIVATE
+target_include_directories(obstacle_perception_node PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-target_link_libraries(livox_mid360_processor_node PRIVATE
+target_link_libraries(obstacle_perception_node PRIVATE
     ${PROJECT_NAME}
     Eigen3::Eigen
     px4_common::px4_common
@@ -60,7 +60,7 @@ target_link_libraries(livox_mid360_processor_node PRIVATE
     px4_msgs::px4_msgs
     visualization_msgs::visualization_msgs
 )
-install(TARGETS livox_mid360_processor_node
+install(TARGETS obstacle_perception_node
     DESTINATION lib/${PROJECT_NAME}
 )
 
