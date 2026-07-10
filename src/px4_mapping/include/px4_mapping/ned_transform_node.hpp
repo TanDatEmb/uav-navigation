@@ -93,6 +93,7 @@ class NedTransformNode : public rclcpp::Node {
     std::string lio_odom_topic_;
     std::string px4_odom_topic_;
     std::string visual_odom_topic_;
+    bool use_px4_odom_;
     bool publish_visual_odometry_to_px4_;
     bool visual_odom_align_to_px4_;
     bool visual_odom_align_full_6dof_;
@@ -117,8 +118,6 @@ class NedTransformNode : public rclcpp::Node {
     // Shared timestamp-domain adapter for PX4->ROS conversion.
     px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
 };
-
-using WorldBridgeNode = NedTransformNode;
 
 }  // namespace px4_mapping
 

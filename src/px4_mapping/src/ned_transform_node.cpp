@@ -142,7 +142,7 @@ void NedTransformNode::LoadParameters() {
     use_px4_odom_desc.description =
         "Require PX4 odometry for camera_init->map_ned SE(3) composition.";
     use_px4_odom_desc.additional_constraints =
-        "Deprecated: false is automatically overridden to true.";
+        "Must be true. Legacy static shortcut was removed.";
 
     rcl_interfaces::msg::ParameterDescriptor alignment_mode_desc;
     alignment_mode_desc.description =
@@ -172,11 +172,14 @@ void NedTransformNode::LoadParameters() {
     output_cloud_topic_ = this->get_parameter("output_cloud_topic").as_string();
     lio_odom_topic_ = this->get_parameter("lio_odom_topic").as_string();
     px4_odom_topic_ = this->get_parameter("px4_odom_topic").as_string();
-    const bool requested_use_px4_odom = this->get_parameter("use_px4_odom").as_bool();
-    if (!requested_use_px4_odom) {
-        RCLCPP_WARN(this->get_logger(),
-                    "use_px4_odom=false is deprecated and ignored. Forcing PX4 odometry "
-                    "because world_bridge requires full SE(3) camera_init->map_ned alignment.");
+    use_px4_odom_ = this->get_parameter("use_px4_odom").as_bool();
+    if (!use_px4_odom_) {
+        RCLCPP_FATAL(this->get_logger(),
+                     "use_px4_odom=false is not supported. The static (x,y,z)->(y,x,-z) "
+                     "shortcut assumes camera_init is ENU and ignores the SE(3) alignment "
+                     "between LIO world and PX4 NED. Provide PX4 odometry or implement a "
+                     "calibrated T_map_ned_camera_init transform instead.");
+        throw std::runtime_error("use_px4_odom=false is not supported");
     }
     publish_visual_odometry_to_px4_ =
         this->get_parameter("publish_visual_odometry_to_px4").as_bool();
@@ -350,8 +353,9 @@ bool NedTransformNode::TransformPointCloud(
     const uint8_t* in_data = input_cloud->data.data();
     const uint32_t step = input_cloud->point_step;
 
-    // Compose camera_init -> map_ned at scan time using the synchronized
-    // LIO and PX4 pose buffers.
+    // use_px4_odom_ must be true (enforced in LoadParameters). We need PX4
+    // odometry to know the SE(3) pose of the baselink in map_ned so that the
+    // camera_init -> map_ned transform can be composed per-scan.
     px4_common::time::PoseSample lio_sample, px4_sample;
     if (!lio_pose_buffer_.Lookup(scan_t_ns, lio_sample)) {
         ++lio_pose_lookup_miss_;

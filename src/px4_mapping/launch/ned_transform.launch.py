@@ -37,7 +37,7 @@ def generate_launch_description():
 
         Node(
             package='px4_mapping',
-            executable='world_bridge_node',
+            executable='ned_transform_node',
             name='world_bridge',
             parameters=[
                 config_file,

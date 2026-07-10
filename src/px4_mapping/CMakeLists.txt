@@ -39,19 +39,19 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     px4_msgs
 )
 
-# Add executable for world_bridge_node
-add_executable(world_bridge_node
+# Add executable for ned_transform_node
+add_executable(ned_transform_node
     src/ned_transform_node.cpp
     src/ned_transform_node_main.cpp
 )
-target_include_directories(world_bridge_node PUBLIC
+target_include_directories(ned_transform_node PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(world_bridge_node
+target_link_libraries(ned_transform_node
     ${PROJECT_NAME}
 )
-ament_target_dependencies(world_bridge_node
+ament_target_dependencies(ned_transform_node
     px4_common
     px4_ros_com
     rclcpp
@@ -61,19 +61,19 @@ ament_target_dependencies(world_bridge_node
     px4_msgs
 )
 
-# Cloud preprocessor node
-add_executable(cloud_preprocessor_node
+# FAST-LIO2 adapter node
+add_executable(fast_lio2_node
     src/fast_lio2_node.cpp
     src/fast_lio2_node_main.cpp
 )
-target_include_directories(cloud_preprocessor_node PUBLIC
+target_include_directories(fast_lio2_node PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(cloud_preprocessor_node
+target_link_libraries(fast_lio2_node
     ${PROJECT_NAME}
 )
-ament_target_dependencies(cloud_preprocessor_node
+ament_target_dependencies(fast_lio2_node
     px4_common
     rclcpp
     nav_msgs
@@ -103,15 +103,15 @@ ament_target_dependencies(voxmap_manager_core
     tf2_ros
 )
 
-# Voxel map node executable
-add_executable(voxel_map_node
+# Voxel map manager node executable
+add_executable(voxmap_manager_node
     src/voxmap_manager_node_main.cpp
 )
-target_include_directories(voxel_map_node PUBLIC
+target_include_directories(voxmap_manager_node PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(voxel_map_node
+target_link_libraries(voxmap_manager_node
     voxmap_manager_core
 )
 
@@ -121,7 +121,7 @@ install(TARGETS voxmap_manager_core
     LIBRARY DESTINATION lib
 )
 
-install(TARGETS ${PROJECT_NAME} cloud_preprocessor_node world_bridge_node voxel_map_node
+install(TARGETS ${PROJECT_NAME} fast_lio2_node ned_transform_node voxmap_manager_node
     EXPORT export_${PROJECT_NAME}
     RUNTIME DESTINATION lib/${PROJECT_NAME}
 )

@@ -32,7 +32,7 @@ def generate_launch_description():
 
         Node(
             package='px4_mapping',
-            executable='cloud_preprocessor_node',
+            executable='fast_lio2_node',
             name='cloud_preprocessor',
             parameters=[
                 config_file,

@@ -37,7 +37,7 @@ def generate_launch_description():
 
         Node(
             package='px4_mapping',
-            executable='voxel_map_node',
+            executable='voxmap_manager_node',
             name='voxel_map',
             parameters=[
                 config_file,

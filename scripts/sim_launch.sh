@@ -75,9 +75,7 @@ fi
 # ── Pre-launch stale node cleanup ─────────────────────────────────────────
 # Previous sessions may leave node executables running even after sim_stop,
 # which causes duplicate publishers and misleading QoS discovery warnings.
-for stale_name in world_bridge_node cloud_preprocessor_node voxel_map_node \
-          ned_transform_node fast_lio2_node voxmap_manager_node \
-          obstacle_perception_node livox_mid360_processor_node; do
+for stale_name in ned_transform_node fast_lio2_node voxmap_manager_node; do
     pkill -9 -f "${stale_name}" 2>/dev/null || true
 done
 
@@ -201,7 +199,7 @@ fi
 
 # ── FAST-LIO2 adapter (core contract topics) ──────────────────────────────
 make_bg "fast-lio2" 13 << BGEOF
-ros2 run px4_mapping cloud_preprocessor_node \
+ros2 run px4_mapping fast_lio2_node \
     --ros-args \
         -r __node:=cloud_preprocessor \
     --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
@@ -216,7 +214,7 @@ BGEOF
 
 # ── world_bridge node (L1 camera_init → map_ned world cloud) ──────────────
 make_bg "ned-transform" 14 << BGEOF
-ros2 run px4_mapping world_bridge_node \
+ros2 run px4_mapping ned_transform_node \
   --ros-args \
     -r __node:=world_bridge \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
@@ -231,7 +229,7 @@ BGEOF
 
 # ── voxel_map node (sparse global map in map_ned) ─────────────────────────
 make_bg "voxmap-manager" 16 << BGEOF
-ros2 run px4_mapping voxel_map_node \
+ros2 run px4_mapping voxmap_manager_node \
   --ros-args \
     -r __node:=voxel_map \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
@@ -244,7 +242,7 @@ BGEOF
 
 # ── obstacle_perception node ───────────────────────────────────────────────
 make_bg "livox-proc" 14 << BGEOF
-ros2 run px4_navigation obstacle_perception_node \
+ros2 run px4_navigation livox_mid360_processor_node \
   --ros-args \
     -r __node:=obstacle_perception \
   --params-file "${WS_DIR}/src/px4_navigation/config/livox_mid360_processor.yaml" \

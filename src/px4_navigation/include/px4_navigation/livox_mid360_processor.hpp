@@ -115,8 +115,6 @@ class LivoxMid360Processor : public rclcpp::Node {
     uint64_t stale_clears_ = 0;
 };
 
-using ObstaclePerceptionNode = LivoxMid360Processor;
-
 }  // namespace px4_navigation
 
 #endif  // PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
