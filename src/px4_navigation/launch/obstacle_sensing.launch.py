@@ -5,7 +5,7 @@ Brings up the obstacle_perception_node, which converts a Livox MID-360
 style PointCloud2 stream into a 2.5D spherical grid and publishes:
   - /fmu/in/obstacle_distance : 72-bin message for PX4 Collision Prevention
 
-Future phases will add voxel_map, collision_avoidance_node, etc.
+Future phases will add global_mapper, collision_avoidance_node, etc.
 """
 
 import os
@@ -22,7 +22,7 @@ def generate_launch_description():
     config_file = os.path.join(
         get_package_share_directory('px4_navigation'),
         'config',
-        'livox_mid360_processor.yaml'
+        'obstacle_perception.yaml'
     )
 
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -42,7 +42,7 @@ def generate_launch_description():
         # Livox MID-360 processor — converts PointCloud2 to PX4 ObstacleDistance.
         Node(
             package='px4_navigation',
-            executable='livox_mid360_processor_node',
+            executable='obstacle_perception',
             name='obstacle_perception',
             parameters=[
                 config_file,

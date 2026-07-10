@@ -13,12 +13,12 @@
 #include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <px4_common/mapping/voxel_map_interface.hpp>
-#include <px4_mapping/voxmap_manager_node.hpp>
+#include <px4_mapping/global_mapper.hpp>
 
 using px4_common::mapping::IVoxMapManager;
-using px4_mapping::get_voxmap_node;
+using px4_mapping::get_global_mapper_node;
 
-class VoxMapManagerNodeTest : public ::testing::Test {
+class GlobalMapperTest : public ::testing::Test {
    protected:
     void SetUp() override {
         // Each test gets a fresh node with default parameters.
@@ -28,18 +28,18 @@ class VoxMapManagerNodeTest : public ::testing::Test {
         node_options_.append_parameter_override("timeout_seconds", 0.2);
         node_options_.append_parameter_override("use_sim_time", false);
 
-        node_ = get_voxmap_node(node_options_, iface_);
+        node_ = get_global_mapper_node(node_options_, iface_);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/world/cloud", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             "/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
             "/fmu/out/vehicle_odometry", 20);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/livox/l1/odometry", 5);
+        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
 
     void TearDown() override {
@@ -138,12 +138,12 @@ class VoxMapManagerNodeTest : public ::testing::Test {
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_lio_odom_;
 };
 
-TEST_F(VoxMapManagerNodeTest, InitiallyNotReady) {
+TEST_F(GlobalMapperTest, InitiallyNotReady) {
     EXPECT_FALSE(iface_->IsReady());
     EXPECT_EQ(iface_->FramesDropped(), 0U);
 }
 
-TEST_F(VoxMapManagerNodeTest, BecomesReadyAfterSufficientOccupiedFrames) {
+TEST_F(GlobalMapperTest, BecomesReadyAfterSufficientOccupiedFrames) {
     // Publish enough points over enough consecutive frames to satisfy both
     // the occupancy and consecutive-frame requirements.
     for (int i = 0; i < 5; ++i) {
@@ -155,7 +155,7 @@ TEST_F(VoxMapManagerNodeTest, BecomesReadyAfterSufficientOccupiedFrames) {
     EXPECT_TRUE(iface_->IsReady()) << "Node should be ready after 5 frames of dense data";
 }
 
-TEST_F(VoxMapManagerNodeTest, DropsReadyWhenDataStops) {
+TEST_F(GlobalMapperTest, DropsReadyWhenDataStops) {
     // Make the node ready first.
     for (int i = 0; i < 5; ++i) {
         PublishPx4Odom();
@@ -172,7 +172,7 @@ TEST_F(VoxMapManagerNodeTest, DropsReadyWhenDataStops) {
 
 // Fixture that enables the alignment gate with short thresholds so the gate
 // can be exercised quickly in unit tests.
-class VoxMapManagerNodeAlignmentTest : public VoxMapManagerNodeTest {
+class GlobalMapperAlignmentTest : public GlobalMapperTest {
    protected:
     void SetUp() override {
         node_options_ = rclcpp::NodeOptions();
@@ -185,22 +185,22 @@ class VoxMapManagerNodeAlignmentTest : public VoxMapManagerNodeTest {
         node_options_.append_parameter_override("aligned_max_velocity", 0.1);
         node_options_.append_parameter_override("aligned_lio_covariance_max", 1.0);
 
-        node_ = get_voxmap_node(node_options_, iface_);
+        node_ = get_global_mapper_node(node_options_, iface_);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/world/cloud", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             "/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
             "/fmu/out/vehicle_odometry", 20);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/livox/l1/odometry", 5);
+        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
 };
 
-TEST_F(VoxMapManagerNodeAlignmentTest, GateBlocksReadyUntilConditionsMet) {
+TEST_F(GlobalMapperAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     // Without alignment inputs the gate stays open for occupancy but alignment
     // is not captured, so IsReady() must remain false even with dense clouds.
     for (int i = 0; i < 5; ++i) {
@@ -228,7 +228,7 @@ TEST_F(VoxMapManagerNodeAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     EXPECT_TRUE(became_ready) << "Ready should become true after alignment conditions hold";
 }
 
-TEST_F(VoxMapManagerNodeAlignmentTest, GateBlockedWhenMoving) {
+TEST_F(GlobalMapperAlignmentTest, GateBlockedWhenMoving) {
     // Arm + valid EKF but moving too fast -> gate should not capture.
     PublishAlignment(true, true, 1.0, 0.001);
     for (int i = 0; i < 5; ++i) {

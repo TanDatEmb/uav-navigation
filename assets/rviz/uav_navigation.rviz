@@ -45,7 +45,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /obstacle_distance/markers
+        Value: /visualization/obstacle_markers
       Value: true
     - Alpha: 0.5
       Autocompute Intensity Bounds: true

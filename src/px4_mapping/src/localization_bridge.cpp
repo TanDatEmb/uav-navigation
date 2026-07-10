@@ -1,9 +1,9 @@
 // Copyright 2026 CTUAV. All rights reserved.
 //
-// Implementation of NED transform node for converting FAST-LIO2 point clouds
-// from camera_init frame to map_ned frame for PX4 integration.
+// Implementation of localization bridge node for converting camera_init
+// point clouds to map_ned for PX4 integration.
 
-#include "px4_mapping/ned_transform_node.hpp"
+#include "px4_mapping/localization_bridge.hpp"
 
 #include <algorithm>
 #include <array>
@@ -60,8 +60,8 @@ bool IsValidAlignmentMode(const std::string& mode) {
 
 }  // namespace
 
-NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("world_bridge_node", options),
+LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
+    : rclcpp::Node("localization_bridge", options),
       lio_pose_buffer_(500, std::chrono::nanoseconds(5'000'000'000LL)),
       px4_pose_buffer_(500, std::chrono::nanoseconds(5'000'000'000LL)),
       visual_align_translation_(Eigen::Vector3d::Zero()),
@@ -104,20 +104,20 @@ NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
     // === L1 world-frame cloud (camera_init, 10 Hz) ===
     auto cloud_qos = rclcpp::SensorDataQoS();
     cloud_qos.keep_last(50);
-    sub_livox_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+    sub_localization_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         input_cloud_topic_, cloud_qos,
         [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-            this->LivoxCloudCallback(msg);
+            this->LocalizationCloudCallback(msg);
         },
         compute_subscription_options);
 
     // Create publishers.
-    // /livox/world/cloud is an internal pipeline topic consumed by the
-    // voxmap_manager and recorded by rosbag2 (which subscribes with the
+    // /world/cloud is an internal pipeline topic consumed by the
+    // global_mapper and recorded by rosbag2 (which subscribes with the
     // default reliable QoS). Use reliable to stay consistent with the
-    // fast_lio2 publisher pattern and avoid QoS incompatibility.
+    // lidar_odometry publisher pattern and avoid QoS incompatibility.
     const auto ned_cloud_qos = rclcpp::QoS(20).reliable();
-    pub_livox_ned_ =
+    pub_world_cloud_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, ned_cloud_qos);
 
     if (publish_visual_odometry_to_px4_) {
@@ -131,12 +131,13 @@ NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
                 output_cloud_topic_.c_str());
 
     if (publish_visual_odometry_to_px4_) {
-        RCLCPP_INFO(this->get_logger(), "[NED] FAST-LIO2 external vision publisher enabled: %s",
+        RCLCPP_INFO(this->get_logger(),
+                    "[localization_bridge] external vision publisher enabled: %s",
                     visual_odom_topic_.c_str());
     }
 }
 
-void NedTransformNode::LoadParameters() {
+void LocalizationBridge::LoadParameters() {
     rcl_interfaces::msg::ParameterDescriptor use_px4_odom_desc;
     use_px4_odom_desc.read_only = true;
     use_px4_odom_desc.description =
@@ -151,9 +152,9 @@ void NedTransformNode::LoadParameters() {
         "One of: translation_only, yaw_translation, full_6dof.";
 
     // Declare and load parameters
-    this->declare_parameter<std::string>("input_cloud_topic", "/livox/l1/cloud");
-    this->declare_parameter<std::string>("output_cloud_topic", "/livox/world/cloud");
-    this->declare_parameter<std::string>("lio_odom_topic", "/livox/l1/odometry");
+    this->declare_parameter<std::string>("input_cloud_topic", "/localization/cloud");
+    this->declare_parameter<std::string>("output_cloud_topic", "/world/cloud");
+    this->declare_parameter<std::string>("lio_odom_topic", "/localization/odometry");
     this->declare_parameter<std::string>("px4_odom_topic", "/fmu/out/vehicle_odometry");
     this->declare_parameter<bool>("use_px4_odom", true, use_px4_odom_desc);
     this->declare_parameter<bool>("publish_visual_odometry_to_px4", false);
@@ -219,7 +220,8 @@ void NedTransformNode::LoadParameters() {
                                     static_cast<int64_t>(-1), static_cast<int64_t>(100)));
 }
 
-void NedTransformNode::LivoxCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+void LocalizationBridge::LocalizationCloudCallback(
+    const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     const size_t n = msg->width * msg->height;
     if (n == 0) {
         return;
@@ -236,7 +238,7 @@ void NedTransformNode::LivoxCloudCallback(const sensor_msgs::msg::PointCloud2::S
     const auto t_after_transform = std::chrono::steady_clock::now();
 
     // Publish the transformed cloud
-    pub_livox_ned_->publish(output_cloud);
+    pub_world_cloud_->publish(output_cloud);
 
     const auto t_after_publish = std::chrono::steady_clock::now();
 
@@ -251,7 +253,7 @@ void NedTransformNode::LivoxCloudCallback(const sensor_msgs::msg::PointCloud2::S
     }
 }
 
-void NedTransformNode::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+void LocalizationBridge::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     // Convert timestamp to nanoseconds
     const int64_t t_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1'000'000'000LL +
                          static_cast<int64_t>(msg->header.stamp.nanosec);
@@ -272,7 +274,7 @@ void NedTransformNode::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr 
     lio_pose_buffer_.Push(sample);
 }
 
-void NedTransformNode::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
+void LocalizationBridge::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     // MicroXRCE-DDS time sync is the single boundary policy in this repo:
     // timestamp_sample is already in ROS clock domain (microseconds).
     const int64_t now_ns = this->now().nanoseconds();
@@ -303,7 +305,7 @@ void NedTransformNode::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::Sha
     px4_pose_buffer_.Push(sample);
 }
 
-bool NedTransformNode::TransformPointCloud(
+bool LocalizationBridge::TransformPointCloud(
     const sensor_msgs::msg::PointCloud2::SharedPtr& input_cloud,
     sensor_msgs::msg::PointCloud2& output_cloud) {
     const size_t n = input_cloud->width * input_cloud->height;
@@ -380,14 +382,14 @@ bool NedTransformNode::TransformPointCloud(
     // Compose the combined transform.
     //
     // Coordinate frames:
-    //   camera_init : FAST-LIO2 world frame at power-on (ENU-like, ROS convention).
-    //   body_lio      : IMU/sensor body frame used by FAST-LIO2 (Forward-Left-Up).
+    //   camera_init : localization world frame at initialization (ENU-like).
+    //   body_lio    : IMU/sensor body frame (Forward-Left-Up).
     //   body_px4      : PX4 body frame (Forward-Right-Down).
     //   map_ned       : PX4 local world frame (North-East-Down).
     //
     // Inputs:
-    //   p_camera_init : point from /livox/l1/cloud (already in camera_init world).
-    //   T_camera_init_body_lio = (R_lio, t_lio) from FAST-LIO2 odometry.
+    //   p_camera_init : point from /localization/cloud (already in camera_init world).
+    //   T_camera_init_body_lio = (R_lio, t_lio) from localization odometry.
     //   T_map_ned_body_px4     = (R_px4, t_px4) from PX4 VehicleOdometry.
     //
     // Chain:
@@ -425,7 +427,7 @@ bool NedTransformNode::TransformPointCloud(
     return true;
 }
 
-void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample& lio_sample) {
+void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSample& lio_sample) {
     if (!publish_visual_odometry_to_px4_ || !pub_visual_odom_) {
         return;
     }
@@ -475,7 +477,7 @@ void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample&
         visual_alignment_ready_ = true;
 
         RCLCPP_INFO(this->get_logger(),
-                    "[NED] FAST-LIO2 EV alignment captured (%s): offset=(%.3f, %.3f, %.3f)",
+                "[localization_bridge] EV alignment captured (%s): offset=(%.3f, %.3f, %.3f)",
                     visual_odom_alignment_mode_.c_str(),
                     visual_align_translation_.x(), visual_align_translation_.y(),
                     visual_align_translation_.z());

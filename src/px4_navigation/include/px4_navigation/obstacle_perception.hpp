@@ -6,8 +6,8 @@
 // a body-exclusion filter, and produces /fmu/in/obstacle_distance:
 // a 72-bin horizontal obstacle distance message for PX4 Collision Prevention.
 
-#ifndef PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
-#define PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
+#ifndef PX4_NAVIGATION_OBSTACLE_PERCEPTION_HPP_
+#define PX4_NAVIGATION_OBSTACLE_PERCEPTION_HPP_
 
 #include <array>
 #include <cstdint>
@@ -28,7 +28,7 @@
 
 namespace px4_navigation {
 
-class LivoxMid360Processor : public rclcpp::Node {
+class ObstaclePerception : public rclcpp::Node {
    public:
     static constexpr int kDefaultYawBins = 72;
     static constexpr int kDefaultPitchBins = 28;
@@ -43,7 +43,7 @@ class LivoxMid360Processor : public rclcpp::Node {
     static constexpr uint8_t kSensorTypeLaser = 0;
     static constexpr uint16_t kNoObstacle = 65535;  // UINT16_MAX
 
-    explicit LivoxMid360Processor(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+    explicit ObstaclePerception(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
    private:
     struct GridCell {
@@ -117,4 +117,4 @@ class LivoxMid360Processor : public rclcpp::Node {
 
 }  // namespace px4_navigation
 
-#endif  // PX4_NAVIGATION_LIVOX_MID360_PROCESSOR_HPP_
+#endif  // PX4_NAVIGATION_OBSTACLE_PERCEPTION_HPP_

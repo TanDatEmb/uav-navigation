@@ -33,7 +33,7 @@ uav-navigation/
 ├── src/
 │   ├── px4_msgs/            # upstream PX4 uORB message definitions (submodule)
 │   ├── px4_common/          # shared math, geometry, transforms, parameter helpers
-│   ├── px4_mapping/         # FAST-LIO2-style odometry + local occupancy map
+│   ├── px4_mapping/         # LiDAR odometry + global mapping bridge
 │   ├── px4_navigation/      # local planning, trajectory generation, control
 │   └── px4_ros_com/         # DDS bridge, TF, offboard helpers
 ├── config/                  # global runtime parameters

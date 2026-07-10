@@ -34,7 +34,7 @@ Hệ thống có 5 đầu ra chính. Tên gọi cố định, không dùng “ma
 
 | Tên chính thức       | Topic (nếu có)                    | Loại                | Mục đích                                           |
 | -------------------- | --------------------------------- | ------------------- | -------------------------------------------------- |
-| Map global 3D        | `/livox_map`                      | PointCloud2 3D      | Toàn bộ voxel map, visualize, recorder.            |
+| Map global 3D        | `/mapping/global`                      | PointCloud2 3D      | Toàn bộ voxel map, visualize, recorder.            |
 | Map local 3D         | (chưa có executable)              | 3D ring buffer      | Bản rút gọn theo khoảng cách, dùng cho planner 3D. |
 | Distance bin 2D      | `/fmu/in/obstacle_distance`       | 72 bin, body FRD    | PX4 Collision Prevention.                          |
 | Virtual scan 1D      | `/local_virtual_scan`             | LaserScan 72 beam   | Perception 1D debug, không phải map.               |
@@ -106,7 +106,7 @@ uav-navigation/
 
 | Thành phần                 | Quy tắc                                                  | Ví dụ                                               |
 | -------------------------- | -------------------------------------------------------- | --------------------------------------------------- |
-| Class / struct             | `PascalCase`                                             | `LocalPlanGrid`, `LivoxMid360Processor`             |
+| Class / struct             | `PascalCase`                                             | `LocalPlanGrid`, `ObstaclePerception`             |
 | Method / function          | `PascalCase` (đã resolve conflict, theo ROS 2/PX4 style) | `Reset()`, `MarkOccupied()`, `BuildSphericalGrid()` |
 | Member variable            | `snake_case_`                                            | `grid_`, `cloud_points_`                            |
 | Local variable / parameter | `snake_case`                                             | `yaw_bin`, `dist_horiz_m`                           |
@@ -251,7 +251,7 @@ inline constexpr char kAircraft[] = "aircraft";
 | Phase | Mục tiêu                                                                                           | Trạng thái tóm tắt                                                    |
 | ----- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | **0** | Foundation: transforms, pose buffer, frame constants, logging policy                               | Đang tiến hành — phải đóng trước khi mở rộng sang navigation nâng cao |
-| **1** | Mapping: `fast_lio2_node`, `ned_transform_node`, `voxmap_manager_node`, Livox Mid-360 optimization | Trọng tâm chính hiện tại                                              |
+| **1** | Mapping: `lidar_odometry`, `localization_bridge`, `global_mapper`, Livox Mid-360 optimization | Trọng tâm chính hiện tại                                              |
 | **2** | Navigation nâng cao: B-spline, `navigation3d_controller_node`, state machine                       | Tạm hoãn theo scope lock                                              |
 | **3** | PX4 bridge mở rộng: offboard mode manager, health watcher, TF publishers, top-level launch         | Tạm hoãn, chỉ giữ mức cần thiết cho mapping + odom                    |
 | **4** | Visualization & recording mở rộng                                                                  | Tạm hoãn, chỉ giữ tooling tối thiểu phục vụ đánh giá SLAM/map/odom    |

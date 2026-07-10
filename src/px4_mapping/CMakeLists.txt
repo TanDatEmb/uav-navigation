@@ -39,19 +39,19 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     px4_msgs
 )
 
-# Add executable for ned_transform_node
-add_executable(ned_transform_node
-    src/ned_transform_node.cpp
-    src/ned_transform_node_main.cpp
+# Localization bridge executable
+add_executable(localization_bridge
+    src/localization_bridge.cpp
+    src/localization_bridge_main.cpp
 )
-target_include_directories(ned_transform_node PUBLIC
+target_include_directories(localization_bridge PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(ned_transform_node
+target_link_libraries(localization_bridge
     ${PROJECT_NAME}
 )
-ament_target_dependencies(ned_transform_node
+ament_target_dependencies(localization_bridge
     px4_common
     px4_ros_com
     rclcpp
@@ -61,19 +61,19 @@ ament_target_dependencies(ned_transform_node
     px4_msgs
 )
 
-# FAST-LIO2 adapter node
-add_executable(fast_lio2_node
-    src/fast_lio2_node.cpp
-    src/fast_lio2_node_main.cpp
+# LiDAR odometry executable
+add_executable(lidar_odometry
+    src/lidar_odometry.cpp
+    src/lidar_odometry_main.cpp
 )
-target_include_directories(fast_lio2_node PUBLIC
+target_include_directories(lidar_odometry PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(fast_lio2_node
+target_link_libraries(lidar_odometry
     ${PROJECT_NAME}
 )
-ament_target_dependencies(fast_lio2_node
+ament_target_dependencies(lidar_odometry
     px4_common
     rclcpp
     nav_msgs
@@ -81,18 +81,18 @@ ament_target_dependencies(fast_lio2_node
     px4_msgs
 )
 
-# Voxel map manager core library (shared with tests and the node executable)
-add_library(voxmap_manager_core STATIC
-    src/voxmap_manager_node.cpp
+# Global mapper core library (shared with tests and the node executable)
+add_library(global_mapper_core STATIC
+    src/global_mapper.cpp
 )
-target_include_directories(voxmap_manager_core PUBLIC
+target_include_directories(global_mapper_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(voxmap_manager_core
+target_link_libraries(global_mapper_core
     Eigen3::Eigen
 )
-ament_target_dependencies(voxmap_manager_core
+ament_target_dependencies(global_mapper_core
     px4_common
     px4_msgs
     px4_ros_com
@@ -103,25 +103,25 @@ ament_target_dependencies(voxmap_manager_core
     tf2_ros
 )
 
-# Voxel map manager node executable
-add_executable(voxmap_manager_node
-    src/voxmap_manager_node_main.cpp
+# Global mapper node executable
+add_executable(global_mapper
+    src/global_mapper_main.cpp
 )
-target_include_directories(voxmap_manager_node PUBLIC
+target_include_directories(global_mapper PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(voxmap_manager_node
-    voxmap_manager_core
+target_link_libraries(global_mapper
+    global_mapper_core
 )
 
-install(TARGETS voxmap_manager_core
+install(TARGETS global_mapper_core
     EXPORT export_${PROJECT_NAME}
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
 
-install(TARGETS ${PROJECT_NAME} fast_lio2_node ned_transform_node voxmap_manager_node
+install(TARGETS ${PROJECT_NAME} lidar_odometry localization_bridge global_mapper
     EXPORT export_${PROJECT_NAME}
     RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
@@ -147,8 +147,8 @@ if(BUILD_TESTING)
     target_link_libraries(test_voxel_pool ${PROJECT_NAME})
     ament_add_gtest(test_voxel_hash_map test/test_voxel_hash_map.cpp)
     target_link_libraries(test_voxel_hash_map ${PROJECT_NAME})
-    ament_add_gtest(test_voxmap_manager_node test/test_voxmap_manager_node.cpp)
-    target_link_libraries(test_voxmap_manager_node ${PROJECT_NAME} voxmap_manager_core)
+    ament_add_gtest(test_global_mapper test/test_global_mapper.cpp)
+    target_link_libraries(test_global_mapper ${PROJECT_NAME} global_mapper_core)
 endif()
 
 ament_package()

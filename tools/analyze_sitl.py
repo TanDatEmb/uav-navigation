@@ -4,10 +4,10 @@
 This tool reads the latest rosbag under log/sim/latest/rosbag/flight_data and
 produces a concise report for Phase 1 milestones:
 
-  M1 - Collision Prevention: /fmu/in/obstacle_distance rate and validity
-    M2 - NED transform: /livox/world/cloud (fallback: /livox_processed_ned)
-    M3 - Global map: /livox/map/global (fallback: /livox_map)
-    M4 - Local planning: /livox/perception/scan_1d (fallback: /local_virtual_scan)
+    M1 - Collision Prevention: /fmu/in/obstacle_distance rate and validity
+        M2 - NED transform: /world/cloud
+        M3 - Global map: /mapping/global
+        M4 - Local planning: /perception/scan_1d
   M5 - Visual odometry: /fmu/in/vehicle_visual_odometry vs /fmu/out/vehicle_odometry RMSE
 
 Usage:
@@ -455,25 +455,19 @@ def main() -> int:
     report["milestones"]["M1_collision_prevention"] = analyze_obstacle_distance(m1_messages)
     report["milestones"]["M1_collision_prevention"]["topic"] = "/fmu/in/obstacle_distance"
 
-    # M2 - NED transform (canonical + legacy fallback)
-    m2_topic, m2_messages = select_topic(
-        messages, ["/livox/world/cloud", "/livox_processed_ned"]
-    )
+    # M2 - NED transform
+    m2_topic, m2_messages = select_topic(messages, ["/world/cloud"])
     report["milestones"]["M2_ned_transform"] = analyze_cloud(
         m2_messages, expected_frame="map_ned"
     )
     report["milestones"]["M2_ned_transform"]["topic"] = m2_topic
 
-    # M3 - Global voxel map (canonical + legacy fallback)
-    m3_topic, m3_messages = select_topic(
-        messages, ["/livox/map/global", "/livox_map"]
-    )
+    # M3 - Global map
+    m3_topic, m3_messages = select_topic(messages, ["/mapping/global"])
     report["milestones"]["M3_global_map"] = analyze_voxel_map(m3_messages, m3_topic)
 
-    # M4 - Local virtual scan (canonical + legacy fallback)
-    m4_topic, m4_messages = select_topic(
-        messages, ["/livox/perception/scan_1d", "/local_virtual_scan"]
-    )
+    # M4 - Local virtual scan
+    m4_topic, m4_messages = select_topic(messages, ["/perception/scan_1d"])
     report["milestones"]["M4_local_virtual_scan"] = analyze_laserscan(
         m4_messages, expected_frame="aircraft"
     )

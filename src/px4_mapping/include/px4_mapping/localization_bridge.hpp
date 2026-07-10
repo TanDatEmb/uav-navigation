@@ -1,10 +1,10 @@
 // Copyright 2026 CTUAV. All rights reserved.
 //
-// NED transform node for converting FAST-LIO2 point clouds from camera_init
-// frame to map_ned frame for PX4 integration.
+// Localization bridge node for converting camera_init point clouds to map_ned
+// and bridging visual odometry into PX4.
 
-#ifndef PX4_MAPPING_NED_TRANSFORM_NODE_HPP_
-#define PX4_MAPPING_NED_TRANSFORM_NODE_HPP_
+#ifndef PX4_MAPPING_LOCALIZATION_BRIDGE_HPP_
+#define PX4_MAPPING_LOCALIZATION_BRIDGE_HPP_
 
 #include <memory>
 #include <mutex>
@@ -23,43 +23,43 @@
 namespace px4_mapping {
 
 /**
- * @brief Node for transforming point clouds from FAST-LIO2 camera_init frame to PX4 map_ned frame.
+ * @brief Node for transforming localization point clouds from camera_init frame to PX4 map_ned frame.
  *
  * Subscribes to:
- * - /livox/l1/cloud (sensor_msgs/PointCloud2, camera_init/ENU frame)
- * - /livox/l1/odometry (nav_msgs/Odometry, camera_init frame)
+ * - /localization/cloud (sensor_msgs/PointCloud2, camera_init/ENU frame)
+ * - /localization/odometry (nav_msgs/Odometry, camera_init frame)
  * - /fmu/out/vehicle_odometry (px4_msgs/VehicleOdometry, NED frame)
  *
  * Publishes:
- * - /livox/world/cloud (sensor_msgs/PointCloud2, map_ned frame)
+ * - /world/cloud (sensor_msgs/PointCloud2, map_ned frame)
  * - /fmu/in/vehicle_visual_odometry (px4_msgs/VehicleOdometry, optional)
  */
-class NedTransformNode : public rclcpp::Node {
+class LocalizationBridge : public rclcpp::Node {
    public:
     /**
      * @brief Constructor.
      * @param options Node options.
      */
-    explicit NedTransformNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+    explicit LocalizationBridge(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
     /// Deleted copy constructor.
-    NedTransformNode(const NedTransformNode&) = delete;
+    LocalizationBridge(const LocalizationBridge&) = delete;
 
     /// Deleted copy assignment operator.
-    NedTransformNode& operator=(const NedTransformNode&) = delete;
+    LocalizationBridge& operator=(const LocalizationBridge&) = delete;
 
     /// Deleted move constructor.
-    NedTransformNode(NedTransformNode&&) = delete;
+    LocalizationBridge(LocalizationBridge&&) = delete;
 
     /// Deleted move assignment operator.
-    NedTransformNode& operator=(NedTransformNode&&) = delete;
+    LocalizationBridge& operator=(LocalizationBridge&&) = delete;
 
     /// Destructor.
-    ~NedTransformNode() override = default;
+    ~LocalizationBridge() override = default;
 
    private:
     // Callback functions
-    void LivoxCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+    void LocalizationCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
     void LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg);
 
@@ -73,10 +73,10 @@ class NedTransformNode : public rclcpp::Node {
     void LoadParameters();
 
     // Publishers and subscribers
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_livox_cloud_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_localization_cloud_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_lio_odom_;
     rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr sub_px4_odom_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_livox_ned_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_world_cloud_;
     rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr pub_visual_odom_;
 
     // Callback groups
@@ -121,4 +121,4 @@ class NedTransformNode : public rclcpp::Node {
 
 }  // namespace px4_mapping
 
-#endif  // PX4_MAPPING_NED_TRANSFORM_NODE_HPP_
+#endif  // PX4_MAPPING_LOCALIZATION_BRIDGE_HPP_

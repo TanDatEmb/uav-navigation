@@ -33,7 +33,7 @@ XRCE_PORT="${XRCE_PORT:-8888}"
 SKIP_BAG="${SKIP_BAG:-0}"
 GZ_GUI="${GZ_GUI:-0}"
 ENABLE_OBSTACLE_VIZ="${ENABLE_OBSTACLE_VIZ:-0}"
-# Map input source for voxel_map node.
+# Map input source for global_mapper node.
 # Production: px4_full (per Topic Contract in docs/architecture.md).
 # Debug only: lio_world (frame=camera_init, NOT for quality assessment).
 MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-px4_full}"
@@ -75,7 +75,7 @@ fi
 # ── Pre-launch stale node cleanup ─────────────────────────────────────────
 # Previous sessions may leave node executables running even after sim_stop,
 # which causes duplicate publishers and misleading QoS discovery warnings.
-for stale_name in ned_transform_node fast_lio2_node voxmap_manager_node; do
+for stale_name in localization_bridge lidar_odometry global_mapper; do
     pkill -9 -f "${stale_name}" 2>/dev/null || true
 done
 
@@ -197,62 +197,62 @@ else
     echo "  [skip] obstacle-viz disabled by default (set ENABLE_OBSTACLE_VIZ=1 to enable)"
 fi
 
-# ── FAST-LIO2 adapter (core contract topics) ──────────────────────────────
-make_bg "fast-lio2" 13 << BGEOF
-ros2 run px4_mapping fast_lio2_node \
+# ── lidar_odometry node (core localization contract topics) ───────────────
+make_bg "lidar-odometry" 13 << BGEOF
+ros2 run px4_mapping lidar_odometry \
     --ros-args \
-        -r __node:=cloud_preprocessor \
+        -r __node:=lidar_odometry \
     --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
     -p use_sim_time:=true \
     -p input_cloud_topic:=/lidar_360/points \
     -p px4_odom_topic:=/fmu/out/vehicle_odometry \
     -p vehicle_imu_topic:=/fmu/out/vehicle_imu \
     -p use_imu_fusion:=false \
-        -p output_cloud_topic:=/livox/l1/cloud \
-        -p output_odom_topic:=/livox/l1/odometry
+        -p output_cloud_topic:=/localization/cloud \
+        -p output_odom_topic:=/localization/odometry
 BGEOF
 
-# ── world_bridge node (L1 camera_init → map_ned world cloud) ──────────────
-make_bg "ned-transform" 14 << BGEOF
-ros2 run px4_mapping ned_transform_node \
+# ── localization_bridge node (camera_init → map_ned world cloud) ──────────
+make_bg "localization-bridge" 14 << BGEOF
+ros2 run px4_mapping localization_bridge \
   --ros-args \
-    -r __node:=world_bridge \
+    -r __node:=localization_bridge \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
-    -p input_cloud_topic:=/livox/l1/cloud \
-    -p output_cloud_topic:=/livox/world/cloud \
-    -p lio_odom_topic:=/livox/l1/odometry \
+    -p input_cloud_topic:=/localization/cloud \
+    -p output_cloud_topic:=/world/cloud \
+    -p lio_odom_topic:=/localization/odometry \
   -p px4_odom_topic:=/fmu/out/vehicle_odometry \
   -p publish_visual_odometry_to_px4:=true \
   -p visual_odom_topic:=/fmu/in/vehicle_visual_odometry
 BGEOF
 
-# ── voxel_map node (sparse global map in map_ned) ─────────────────────────
-make_bg "voxmap-manager" 16 << BGEOF
-ros2 run px4_mapping voxmap_manager_node \
+# ── global_mapper node (sparse global map in map_ned) ─────────────────────
+make_bg "global-mapper" 16 << BGEOF
+ros2 run px4_mapping global_mapper \
   --ros-args \
-    -r __node:=voxel_map \
+    -r __node:=global_mapper \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
-    -p cloud_topic:=/livox/world/cloud \
-    -p map_topic:=/livox/map/global \
-    -p lio_odom_topic:=/livox/l1/odometry \
+    -p cloud_topic:=/world/cloud \
+    -p map_topic:=/mapping/global \
+    -p lio_odom_topic:=/localization/odometry \
   -p input_source:=${MAP_INPUT_SOURCE}
 BGEOF
 
 # ── obstacle_perception node ───────────────────────────────────────────────
-make_bg "livox-proc" 14 << BGEOF
-ros2 run px4_navigation livox_mid360_processor_node \
+make_bg "obstacle-perception" 14 << BGEOF
+ros2 run px4_navigation obstacle_perception \
   --ros-args \
     -r __node:=obstacle_perception \
-  --params-file "${WS_DIR}/src/px4_navigation/config/livox_mid360_processor.yaml" \
+  --params-file "${WS_DIR}/src/px4_navigation/config/obstacle_perception.yaml" \
   -p use_sim_time:=true \
   -p input_cloud_topic:=/lidar_360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \
   -p obstacle_distance_topic:=/fmu/in/obstacle_distance \
-    -p local_virtual_scan_topic:=/livox/perception/scan_1d \
-  -p grid_markers_topic:=/livox/grid_2d5/markers \
-  -p min_distance_cloud_topic:=/livox/grid_2d5/min_distance
+    -p local_virtual_scan_topic:=/perception/scan_1d \
+  -p grid_markers_topic:=/visualization/grid_2d5/markers \
+  -p min_distance_cloud_topic:=/visualization/grid_2d5/min_distance
 BGEOF
 
 # ── rosbag2 (optional) ────────────────────────────────────────────────────
@@ -265,17 +265,13 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   --include-unpublished-topics \
   --topics \
   /lidar_360/points \
-  /livox/grid_2d5/markers \
-  /livox/grid_2d5/min_distance \
-    /livox/perception/scan_1d \
-    /livox/l1/cloud \
-    /livox/l1/odometry \
-    /livox/world/cloud \
-    /livox/map/global \
-    /local_virtual_scan \
-    /livox_processed \
-    /livox_processed_ned \
-    /livox_map \
+  /visualization/grid_2d5/markers \
+  /visualization/grid_2d5/min_distance \
+    /perception/scan_1d \
+    /localization/cloud \
+    /localization/odometry \
+    /world/cloud \
+    /mapping/global \
   /fmu/in/obstacle_distance \
   /fmu/in/vehicle_visual_odometry \
   /fmu/out/vehicle_odometry \
@@ -385,15 +381,17 @@ echo ""
 echo "  Background logs:"
 echo "    xrce-dds     : ${LOG_DIR}/bg_xrce-dds-agent.log"
 echo "    gz-bridge    : ${LOG_DIR}/bg_gz-bridge.log"
-echo "    fast-lio2    : ${LOG_DIR}/bg_fast-lio2.log"
-echo "    livox-proc   : ${LOG_DIR}/bg_livox-proc.log"
+echo "    lidar-odom   : ${LOG_DIR}/bg_lidar-odometry.log"
+echo "    localization : ${LOG_DIR}/bg_localization-bridge.log"
+echo "    global-map   : ${LOG_DIR}/bg_global-mapper.log"
+echo "    obstacle     : ${LOG_DIR}/bg_obstacle-perception.log"
 if [[ "${SKIP_BAG}" != "1" ]]; then
     echo "    rosbag       : ${LOG_DIR}/bg_rosbag.log → rosbag/flight_data/"
 fi
 echo ""
 echo "Quick commands:"
 echo "  tail -f ${LOG_DIR}/win_px4-sitl.log          # Watch PX4"
-echo "  tail -f ${LOG_DIR}/bg_livox-proc.log        # Watch publisher"
+echo "  tail -f ${LOG_DIR}/bg_obstacle-perception.log # Watch obstacle perception"
 echo "  ros2 topic echo /fmu/in/obstacle_distance      # Verify CP data"
 echo "  gz topic -l                                    # List Gazebo topics"
 echo ""

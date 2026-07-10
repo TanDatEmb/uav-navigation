@@ -2,9 +2,9 @@
 Launch file for the full mapping pipeline (Phase 1).
 
 Brings up:
-    - cloud_preprocessor : lidar + px4 odom -> /livox/l1/cloud + /livox/l1/odometry
-    - world_bridge : camera_init/ENU cloud -> /livox/world/cloud
-    - voxel_map : world cloud -> sparse global voxel map
+    - lidar_odometry : lidar + px4 odom -> /localization/cloud + /localization/odometry
+    - localization_bridge : camera_init/ENU cloud -> /world/cloud
+    - global_mapper : world cloud -> sparse global voxel map
 """
 
 import os
@@ -23,7 +23,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     publish_visual_odometry = LaunchConfiguration('publish_visual_odometry_to_px4')
     input_source = LaunchConfiguration('input_source')
-    enable_fast_lio2 = LaunchConfiguration('enable_fast_lio2')
+    enable_lidar_odometry = LaunchConfiguration('enable_lidar_odometry')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -39,26 +39,26 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'input_source',
             default_value='px4_full',
-            description='Cloud source for voxel_map node'),
+            description='Cloud source for global_mapper node'),
 
         DeclareLaunchArgument(
-            'enable_fast_lio2',
+            'enable_lidar_odometry',
             default_value='true',
-            description='Run cloud preprocessor to provide /livox/l1/cloud and /livox/l1/odometry'),
+            description='Run lidar_odometry to provide /localization/cloud and /localization/odometry'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(pkg_px4_mapping, 'launch', 'fast_lio2.launch.py')
+                os.path.join(pkg_px4_mapping, 'launch', 'lidar_odometry.launch.py')
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,
             }.items(),
-            condition=IfCondition(enable_fast_lio2)
+            condition=IfCondition(enable_lidar_odometry)
         ),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(pkg_px4_mapping, 'launch', 'ned_transform.launch.py')
+                os.path.join(pkg_px4_mapping, 'launch', 'localization_bridge.launch.py')
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,
@@ -68,7 +68,7 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(pkg_px4_mapping, 'launch', 'voxmap_manager.launch.py')
+                os.path.join(pkg_px4_mapping, 'launch', 'global_mapper.launch.py')
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,

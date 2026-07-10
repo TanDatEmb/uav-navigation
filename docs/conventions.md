@@ -13,20 +13,20 @@
 Primary reference: ROS 2 C++ Style Guide.
 Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
 
-| Item | Rule |
-|------|------|
-| Classes / structs | `PascalCase` |
-| Functions / methods | `snake_case()` |
-| Member variables | `snake_case_` |
-| Local variables | `snake_case` |
-| Parameters | `snake_case` |
-| Namespaces | `snake_case` |
-| File names | `snake_case.cpp`, `snake_case.hpp` |
-| `constexpr` constants | `kPascalCase` (PX4 preferred) |
-| `#define` constants | `SCREAMING_SNAKE_CASE` |
-| Indentation | 4 spaces |
-| Braces | attach (K&R) |
-| Line length | ≤ 100 characters |
+| Item                  | Rule                               |
+| --------------------- | ---------------------------------- |
+| Classes / structs     | `PascalCase`                       |
+| Functions / methods   | `snake_case()`                     |
+| Member variables      | `snake_case_`                      |
+| Local variables       | `snake_case`                       |
+| Parameters            | `snake_case`                       |
+| Namespaces            | `snake_case`                       |
+| File names            | `snake_case.cpp`, `snake_case.hpp` |
+| `constexpr` constants | `kPascalCase` (PX4 preferred)      |
+| `#define` constants   | `SCREAMING_SNAKE_CASE`             |
+| Indentation           | 4 spaces                           |
+| Braces                | attach (K&R)                       |
+| Line length           | ≤ 100 characters                   |
 
 ## Comments and Documentation
 

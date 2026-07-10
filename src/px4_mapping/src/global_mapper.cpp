@@ -1,7 +1,7 @@
 /* =========================================================================
-    voxmap_manager_node.cpp, Layer 2 ROS 2 node wrapping VoxelHashMap
+    global_mapper.cpp, Layer 2 ROS 2 node wrapping VoxelHashMap
 
-    1. VoxMapManagerNode
+    1. GlobalMapper
     - Subscribes world cloud and PX4 VehicleOdometry
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
@@ -9,11 +9,11 @@
     - Publishes global map topic for RViz and Layer 3 ring buffer (intra-process)
 
     2. Factory
-       - get_voxmap_node returns Node and IVoxMapManager interface
+       - get_global_mapper_node returns Node and IVoxMapManager interface
        - Composed pipeline uses single instance for both roles
    ========================================================================= */
 
-#include "px4_mapping/voxmap_manager_node.hpp"
+#include "px4_mapping/global_mapper.hpp"
 
 #include <sys/stat.h>
 #include <algorithm>
@@ -57,8 +57,8 @@ using std::placeholders::_1;
 
 namespace px4_mapping {
 
-VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
-    : Node("voxel_map_node", options),
+GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
+    : Node("global_mapper", options),
       voxel_map_(),
       lio_buf_(px4_common::time::PoseBuffer::kDefaultMaxSamples,
                px4_common::time::PoseBuffer::kDefaultWindow),
@@ -69,14 +69,14 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     this->declare_parameter<int>("log_interval", 1);
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
-    this->declare_parameter<std::string>("cloud_topic", "/livox/world/cloud");
-    this->declare_parameter<std::string>("map_topic", "/livox/map/global");
+    this->declare_parameter<std::string>("cloud_topic", "/world/cloud");
+    this->declare_parameter<std::string>("map_topic", "/mapping/global");
     this->declare_parameter<std::string>("input_source", "px4_full");
     this->declare_parameter<std::vector<double>>("extrinsic_T",
                                                  std::vector<double>{-0.011, -0.02329, 0.04412});
     this->declare_parameter<int>("ready_min_frames", 5);
     this->declare_parameter<int>("ready_min_occupied", 1000);
-    this->declare_parameter<std::string>("lio_odom_topic", "/livox/l1/odometry");
+    this->declare_parameter<std::string>("lio_odom_topic", "/localization/odometry");
     this->declare_parameter<bool>("use_lio_buffer", true);
     this->declare_parameter<bool>("require_alignment_gate", false);
     this->declare_parameter<double>("aligned_min_seconds", 5.0);
@@ -130,14 +130,14 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                 "Readiness gate, requires %d consecutive frames AND %d occupied voxels",
                 ready_min_frames_, ready_min_occupied_);
 
-    deskewed_input_ = (input_source_ == "fast_lio2_deskew");
+    deskewed_input_ = (input_source_ == "localization_deskew");
     full_pose_input_ = (input_source_ == "px4_full");
     lio_world_input_ = (input_source_ == "lio_world");
 
     if (!deskewed_input_ && !full_pose_input_ && !lio_world_input_ && input_source_ != "px4_only") {
         RCLCPP_FATAL(this->get_logger(),
                      "Unknown input_source: '%s'. Valid: px4_only, px4_full, "
-                     "fast_lio2_deskew, lio_world",
+                     "localization_deskew, lio_world",
                      input_source_.c_str());
         throw std::runtime_error("Invalid input_source parameter");
     }
@@ -163,12 +163,12 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
 
     // Subscribe point cloud input according to the selected pipeline mode.
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        cloud_topic_, qos_sensor, std::bind(&VoxMapManagerNode::cloudCallback, this, _1),
+        cloud_topic_, qos_sensor, std::bind(&GlobalMapper::cloudCallback, this, _1),
         compute_opts);
 
     // Sensor origin source depends on input_source
     sub_lio_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        lio_odom_topic_, rclcpp::QoS(20), std::bind(&VoxMapManagerNode::lioOdomCallback, this, _1),
+        lio_odom_topic_, rclcpp::QoS(20), std::bind(&GlobalMapper::lioOdomCallback, this, _1),
         io_opts);
 
     if (!lio_world_input_) {
@@ -212,11 +212,11 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
         // Alignment gate inputs: arming state and EKF position/velocity validity
         sub_status_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(
             "/fmu/out/vehicle_status", rclcpp::QoS(5).best_effort(),
-            std::bind(&VoxMapManagerNode::vehicleStatusCallback, this, _1), io_opts);
+            std::bind(&GlobalMapper::vehicleStatusCallback, this, _1), io_opts);
 
         sub_local_pos_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", rclcpp::QoS(5).best_effort(),
-            std::bind(&VoxMapManagerNode::vehicleLocalPositionCallback, this, _1), io_opts);
+            std::bind(&GlobalMapper::vehicleLocalPositionCallback, this, _1), io_opts);
     }
 
     // === Publishers ===
@@ -226,7 +226,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     last_data_time_ = this->now();
 
     timeout_timer_ = this->create_wall_timer(std::chrono::seconds(1),
-                                             std::bind(&VoxMapManagerNode::timeoutCallback, this),
+                                             std::bind(&GlobalMapper::timeoutCallback, this),
                                              compute_cb_group_);
 
     // Alignment monitor runs at 10 Hz on the IO callback group so that
@@ -234,7 +234,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     if (require_alignment_gate_ && !lio_world_input_) {
         alignment_start_time_ = this->now();
         alignment_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100), std::bind(&VoxMapManagerNode::alignmentTick, this),
+            std::chrono::milliseconds(100), std::bind(&GlobalMapper::alignmentTick, this),
             io_cb_group_);
     } else {
         // Gate disabled or lio_world mode
@@ -272,26 +272,26 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                     px4_common::mapping::kMaxFrameAge);
     }
 
-    RCLCPP_INFO(this->get_logger(), "VoxMapManagerNode initialized");
+    RCLCPP_INFO(this->get_logger(), "GlobalMapper initialized");
 }
 
-VoxMapManagerNode::~VoxMapManagerNode() {
+GlobalMapper::~GlobalMapper() {
     writeSummary();
     saveGlobalMap();
     printf("\n[VoxMap] Node shutting down\n");
 }
 
 // === IVoxMapManager interface ===
-double VoxMapManagerNode::GetResolution() const {
+double GlobalMapper::GetResolution() const {
     return voxel_map_.GetResolution();
 }
 
-void VoxMapManagerNode::GetOccupiedPointsInRadius(const Eigen::Vector3d& center, double radius,
+void GlobalMapper::GetOccupiedPointsInRadius(const Eigen::Vector3d& center, double radius,
                                                   std::vector<Eigen::Vector3d>& out) {
     voxel_map_.GetOccupiedPointsInRadius(center, radius, out);
 }
 
-bool VoxMapManagerNode::IsReady() const noexcept {
+bool GlobalMapper::IsReady() const noexcept {
     // Explicit boolean expression: fresh data + coverage + sustained frames +
     // no fatal fault + alignment captured. This replaces the previous one-way
     // ready_ latch so that readiness drops when data goes stale or the map
@@ -304,18 +304,18 @@ bool VoxMapManagerNode::IsReady() const noexcept {
     return fresh && coverage && sustained && no_fault && aligned;
 }
 
-std::uint64_t VoxMapManagerNode::FramesDropped() const noexcept {
+std::uint64_t GlobalMapper::FramesDropped() const noexcept {
     return frames_dropped_.load(std::memory_order_relaxed);
 }
 
-Eigen::Vector3d VoxMapManagerNode::GetExtrinsicTranslation() const noexcept {
+Eigen::Vector3d GlobalMapper::GetExtrinsicTranslation() const noexcept {
     return T_lidar_in_imu_;
 }
 
 /* =====================================================================
     saveGlobalMap, dump entire occupied map to PCD and PLY on shutdown
    ===================================================================== */
-void VoxMapManagerNode::saveGlobalMap() {
+void GlobalMapper::saveGlobalMap() {
     // Simplified implementation without PCL
     printf("\n[VoxMap] Global map saving not implemented (PCL not available)\n");
 }
@@ -324,7 +324,7 @@ void VoxMapManagerNode::saveGlobalMap() {
     initLogging, open CSV timing log file in log_path_
    ===================================================================== */
 /* Helper: create directory tree recursively (like mkdir -p) */
-void VoxMapManagerNode::mkdirRecursive(const std::string& path) {
+void GlobalMapper::mkdirRecursive(const std::string& path) {
     std::string acc;
     for (size_t i = 0; i < path.size(); ++i) {
         acc += path[i];
@@ -334,7 +334,7 @@ void VoxMapManagerNode::mkdirRecursive(const std::string& path) {
     }
 }
 
-void VoxMapManagerNode::initLogging() {
+void GlobalMapper::initLogging() {
     if (log_path_.empty()) {
         log_path_ = "./src/Log/mapping";
     }
@@ -347,7 +347,8 @@ void VoxMapManagerNode::initLogging() {
     localtime_r(&time_t, &tm_buf);
 
     std::ostringstream oss;
-    oss << log_path_ << "/voxmap_" << std::put_time(&tm_buf, "%Y%m%d_%H%M%S") << ".log";
+    oss << log_path_ << "/global_mapper_" << std::put_time(&tm_buf, "%Y%m%d_%H%M%S")
+        << ".log";
     // Not storing log_filename_ as member since we're not using it in this implementation
 
     // For simplicity, we're not implementing full logging as in the original
@@ -357,7 +358,7 @@ void VoxMapManagerNode::initLogging() {
 /* =====================================================================
     writeSummary, append aggregate timing stats to log file on shutdown
    ===================================================================== */
-void VoxMapManagerNode::writeSummary() {
+void GlobalMapper::writeSummary() {
     // Simplified summary - in a real implementation you would write to a log file
     printf("\n============ VOXMAP SUMMARY ============\n");
     printf("Total Frames:      %lu\n", frame_count_);
@@ -381,7 +382,7 @@ void VoxMapManagerNode::writeSummary() {
 /* =====================================================================
     timeoutCallback, clear map if no lidar data arrived recently
    ===================================================================== */
-void VoxMapManagerNode::timeoutCallback() {
+void GlobalMapper::timeoutCallback() {
     const double elapsed = (this->now() - last_data_time_).seconds();
     const bool fresh = elapsed < timeout_seconds_;
     data_fresh_.store(fresh, std::memory_order_release);
@@ -413,7 +414,7 @@ void VoxMapManagerNode::timeoutCallback() {
 /* =====================================================================
     alignmentTick, 10 Hz check of the alignment gate conditions
    ===================================================================== */
-void VoxMapManagerNode::alignmentTick() {
+void GlobalMapper::alignmentTick() {
     if (alignment_captured_.load(std::memory_order_acquire)) {
         return;
     }
@@ -461,7 +462,7 @@ void VoxMapManagerNode::alignmentTick() {
 /* =====================================================================
     vehicleStatusCallback, arming state for the alignment gate
    ===================================================================== */
-void VoxMapManagerNode::vehicleStatusCallback(
+void GlobalMapper::vehicleStatusCallback(
     const px4_msgs::msg::VehicleStatus::SharedPtr msg) {
     armed_.store(msg->arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED,
                  std::memory_order_release);
@@ -470,7 +471,7 @@ void VoxMapManagerNode::vehicleStatusCallback(
 /* =====================================================================
     vehicleLocalPositionCallback, EKF validity + speed for the alignment gate
    ===================================================================== */
-void VoxMapManagerNode::vehicleLocalPositionCallback(
+void GlobalMapper::vehicleLocalPositionCallback(
     const px4_msgs::msg::VehicleLocalPosition::SharedPtr msg) {
     const bool ekf_ok = msg->xy_valid && msg->z_valid;
     ekf_pose_valid_.store(ekf_ok, std::memory_order_release);
@@ -484,7 +485,7 @@ void VoxMapManagerNode::vehicleLocalPositionCallback(
 /* =====================================================================
     lioOdomCallback, always-on LIO pose handler
    ===================================================================== */
-void VoxMapManagerNode::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+void GlobalMapper::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     if (lio_samples_received_ == 0) {
         lio_first_sample_time_ = this->now();
     }
@@ -563,7 +564,7 @@ void VoxMapManagerNode::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr
 /* =====================================================================
     hasField, helper to check PointCloud2 for a named field
    ===================================================================== */
-bool VoxMapManagerNode::hasField(const sensor_msgs::msg::PointCloud2& msg,
+bool GlobalMapper::hasField(const sensor_msgs::msg::PointCloud2& msg,
                                  const std::string& name) {
     for (const auto& field : msg.fields) {
         if (field.name == name)
@@ -575,7 +576,7 @@ bool VoxMapManagerNode::hasField(const sensor_msgs::msg::PointCloud2& msg,
 /* =====================================================================
     cloudCallback, main raycasting pipeline
    ===================================================================== */
-void VoxMapManagerNode::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
+void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     last_data_time_ = this->now();
     last_frame_id_ = msg->header.frame_id;
 
@@ -882,10 +883,10 @@ void VoxMapManagerNode::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr m
 }
 
 // Factory function for composed pipeline
-std::shared_ptr<rclcpp::Node> get_voxmap_node(
+std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
     std::shared_ptr<px4_common::mapping::IVoxMapManager>& out_iface) {
-    auto mgr = std::make_shared<VoxMapManagerNode>(options);
+    auto mgr = std::make_shared<GlobalMapper>(options);
     out_iface = mgr;
     return mgr;
 }

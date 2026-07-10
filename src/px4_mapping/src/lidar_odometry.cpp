@@ -1,4 +1,4 @@
-#include <px4_mapping/fast_lio2_node.hpp>
+#include <px4_mapping/lidar_odometry.hpp>
 
 #include <algorithm>
 #include <array>
@@ -29,8 +29,8 @@ inline Eigen::Quaterniond SmallAngleQuaternion(const Eigen::Vector3d &delta_angl
 
 }  // namespace
 
-FastLio2Node::FastLio2Node(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("cloud_preprocessor_node", options) {
+LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
+    : rclcpp::Node("lidar_odometry", options) {
     LoadParameters();
 
     const auto sensor_qos = rclcpp::SensorDataQoS();
@@ -39,29 +39,29 @@ FastLio2Node::FastLio2Node(const rclcpp::NodeOptions &options)
 
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         input_cloud_topic_, sensor_qos,
-        std::bind(&FastLio2Node::CloudCallback, this, std::placeholders::_1));
+        std::bind(&LidarOdometry::CloudCallback, this, std::placeholders::_1));
 
     sub_px4_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
         px4_odom_topic_, px4_qos,
-        std::bind(&FastLio2Node::Px4OdomCallback, this, std::placeholders::_1));
+        std::bind(&LidarOdometry::Px4OdomCallback, this, std::placeholders::_1));
 
     sub_vehicle_imu_ = this->create_subscription<px4_msgs::msg::VehicleImu>(
         vehicle_imu_topic_, px4_qos,
-        std::bind(&FastLio2Node::VehicleImuCallback, this, std::placeholders::_1));
+        std::bind(&LidarOdometry::VehicleImuCallback, this, std::placeholders::_1));
 
     pub_processed_cloud_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, lio_pub_qos);
     pub_lio_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(output_odom_topic_, lio_pub_qos);
 
     RCLCPP_INFO(this->get_logger(),
-                "cloud_preprocessor started: in_cloud=%s px4_odom=%s imu=%s out_cloud=%s out_odom=%s "
+                "lidar_odometry started: in_cloud=%s px4_odom=%s imu=%s out_cloud=%s out_odom=%s "
                 "point_filter_num=%d blind=%.2f",
                 input_cloud_topic_.c_str(), px4_odom_topic_.c_str(), vehicle_imu_topic_.c_str(),
                 output_cloud_topic_.c_str(), output_odom_topic_.c_str(), point_filter_num_,
                 blind_m_);
 }
 
-void FastLio2Node::LoadParameters() {
+void LidarOdometry::LoadParameters() {
     using px4_common::utils::LoadParam;
 
     input_cloud_topic_ =
@@ -74,10 +74,10 @@ void FastLio2Node::LoadParameters() {
         LoadParam(*this, "vehicle_imu_topic", std::string("/fmu/out/vehicle_imu"),
                   "Input PX4 vehicle IMU topic for incremental propagation.");
     output_cloud_topic_ =
-        LoadParam(*this, "output_cloud_topic", std::string("/livox/l1/cloud"),
+        LoadParam(*this, "output_cloud_topic", std::string("/localization/cloud"),
                   "Output processed cloud in camera_init frame.");
     output_odom_topic_ =
-        LoadParam(*this, "output_odom_topic", std::string("/livox/l1/odometry"),
+        LoadParam(*this, "output_odom_topic", std::string("/localization/odometry"),
                   "Output odometry in camera_init frame.");
     output_frame_id_ =
         LoadParam(*this, "output_frame_id", std::string("camera_init"),
@@ -93,7 +93,7 @@ void FastLio2Node::LoadParameters() {
     use_imu_fusion_ = LoadParam(*this, "use_imu_fusion", true,
                                 "Use PX4 VehicleImu delta-angle/delta-velocity to propagate odometry between PX4 odom updates.");
 
-    // Default pose/twist covariance for /odometry. Until FAST-LIO2 publishes
+    // Default pose/twist covariance for /odometry. Until localization
     // a real covariance, expose sensible values so downstream consumers
     // (RViz, navigation planner) do not treat LIO as "infinite trust" and so
     // that EKF2 can weight the EV pose against other sensors.
@@ -130,14 +130,14 @@ void FastLio2Node::LoadParameters() {
     }
 }
 
-void FastLio2Node::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
+void LidarOdometry::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     OdomSample sample;
     const int64_t now_ns = this->now().nanoseconds();
     const int64_t sample_t_ns =
         px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
     if (sample_t_ns <= 0) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[cloud_preprocessor] PX4 odometry timestamp_sample invalid (%lu), fallback to now()",
+                             "[lidar_odometry] PX4 odometry timestamp_sample invalid (%lu), fallback to now()",
                              static_cast<unsigned long>(msg->timestamp_sample));
         sample.stamp = this->now();
     } else {
@@ -145,7 +145,7 @@ void FastLio2Node::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedP
             !px4_ros_com::time::IsWithinTimestampDomainGuard(sample_t_ns, now_ns)) {
             RCLCPP_ERROR_THROTTLE(
                 this->get_logger(), *this->get_clock(), 5000,
-                "[cloud_preprocessor] PX4 odometry timestamp outside ROS domain guard "
+                "[lidar_odometry] PX4 odometry timestamp outside ROS domain guard "
                 "(stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
                 sample_t_ns, now_ns);
             return;
@@ -174,12 +174,12 @@ void FastLio2Node::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedP
         origin_orientation_enu_ = px4_common::math::QuaternionNedToEnu(sample.orientation_ned);
         origin_initialized_ = true;
         RCLCPP_INFO(this->get_logger(),
-                    "cloud_preprocessor origin initialized at NED (%.3f, %.3f, %.3f)",
+                    "lidar_odometry origin initialized at NED (%.3f, %.3f, %.3f)",
                     origin_position_ned_.x(), origin_position_ned_.y(), origin_position_ned_.z());
     }
 }
 
-void FastLio2Node::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPtr msg) {
+void LidarOdometry::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPtr msg) {
     if (!use_imu_fusion_) {
         return;
     }
@@ -216,7 +216,7 @@ void FastLio2Node::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPtr
     fused_odom_.valid = true;
 }
 
-void FastLio2Node::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+void LidarOdometry::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     OdomSample odom_sample;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -239,7 +239,7 @@ void FastLio2Node::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr 
     PublishLioOdometry(odom_sample, out_cloud.header.stamp);
 }
 
-bool FastLio2Node::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &input,
+bool LidarOdometry::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &input,
                                        sensor_msgs::msg::PointCloud2 &output,
                                        const OdomSample &odom_sample) {
     const double blind_sq = blind_m_ * blind_m_;
@@ -312,7 +312,7 @@ bool FastLio2Node::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &inpu
     return true;
 }
 
-void FastLio2Node::PublishLioOdometry(const OdomSample &odom_sample, const rclcpp::Time &stamp) {
+void LidarOdometry::PublishLioOdometry(const OdomSample &odom_sample, const rclcpp::Time &stamp) {
     nav_msgs::msg::Odometry msg;
     msg.header.stamp = stamp;
     msg.header.frame_id = output_frame_id_;

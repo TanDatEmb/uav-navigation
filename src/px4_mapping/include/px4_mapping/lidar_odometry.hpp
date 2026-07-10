@@ -1,5 +1,5 @@
-#ifndef PX4_MAPPING_FAST_LIO2_NODE_HPP_
-#define PX4_MAPPING_FAST_LIO2_NODE_HPP_
+#ifndef PX4_MAPPING_LIDAR_ODOMETRY_HPP_
+#define PX4_MAPPING_LIDAR_ODOMETRY_HPP_
 
 #include <mutex>
 #include <string>
@@ -19,20 +19,20 @@
 namespace px4_mapping {
 
 /**
- * @brief FAST-LIO2 style adapter for mapping pipeline integration.
+ * @brief LiDAR odometry adapter for mapping pipeline integration.
  *
- * This node extracts the I/O contract used by FAST-LIO2:
+ * This node exposes the localization I/O contract:
  *   - Input: LiDAR cloud in sensor FLU + PX4 odometry in map_ned.
- *   - Output: /livox/l1/cloud (camera_init ENU-like frame) and
- *             /livox/l1/odometry (nav_msgs/Odometry in camera_init).
+ *   - Output: /localization/cloud (camera_init ENU-like frame) and
+ *             /localization/odometry (nav_msgs/Odometry in camera_init).
  *
  * It keeps the relevant preprocessing behavior from the reference project
  * (point decimation + blind-zone filtering), while remaining dependency-light
  * for incremental integration.
  */
-class FastLio2Node : public rclcpp::Node {
+class LidarOdometry : public rclcpp::Node {
    public:
-     explicit FastLio2Node(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+     explicit LidarOdometry(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
    private:
     struct OdomSample {
@@ -100,4 +100,4 @@ class FastLio2Node : public rclcpp::Node {
 
 }  // namespace px4_mapping
 
-#endif  // PX4_MAPPING_FAST_LIO2_NODE_HPP_
+#endif  // PX4_MAPPING_LIDAR_ODOMETRY_HPP_

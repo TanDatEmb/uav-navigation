@@ -24,15 +24,15 @@
 
 ### `px4_mapping`
 
-- LiDAR/IMU odometry (IESKF / FAST-LIO2 successor)
+- LiDAR/IMU odometry (IESKF / localization frontend successor)
 - local occupancy / voxel map
 - sensor simulation handlers
 - NED bridge to PX4 EKF2 if required
 
 ### `px4_navigation`
 
-- `livox_mid360_processor_node`: 2D distance bin (PX4 Collision Prevention) + 1D virtual scan.
-- Thư viện: `LocalPlanGrid` (dense 3D grid cho A*), `AStarPlanner` (3D A* trên LocalPlanGrid), `VirtualScan` (1D perception 360 bin, khác với livox_mid360_virtual_scan).
+- `obstacle_perception`: 2D distance bin (PX4 Collision Prevention) + 1D virtual scan.
+- Thư viện: `LocalPlanGrid` (dense 3D grid cho A*), `AStarPlanner` (3D A* trên LocalPlanGrid), `VirtualScan` (1D perception 360 bin, khác với obstacle_perception_virtual_scan).
 - Ngoài scope lock hiện tại: B-spline optimizer, navigation controller đầy đủ, state machine, map local 3D executable.
 
 ### `px4_ros_com`
@@ -58,12 +58,12 @@
   `trajectory_setpoint`, etc.) must set `timestamp` and `timestamp_sample`
   from the same ROS 2 clock source as the rest of the pipeline.
 - **Guardrail**: Runtime checks must fail fast when PX4 stamps are outside a
-        sane ROS-time guard window, instead of introducing a second timestamp policy.
+  sane ROS-time guard window, instead of introducing a second timestamp policy.
 
 ## Frame Tree
 
 - `map_ned` — local North-East-Down world frame (PX4 default).
-- `camera_init` — FAST-LIO2 initialization frame (legacy).
+- `camera_init` — localization frontend initialization frame (legacy).
 - `odom` / `base_link` — ROS REP-103 body frame, Forward-Left-Up.
 - `aircraft` — PX4 body frame, Forward-Right-Down.
 - Transforms are implemented in `px4_common::math` and exposed in
@@ -75,15 +75,15 @@ Hệ thống có 5 đầu ra chính. Mỗi đầu ra có tên, frame, producer, 
 
 | Tên chính thức           | Tên cũ (legacy)              | Topic                             | Producer                      | Loại                                            | Mục đích                                                                                                                                                            |
 | ------------------------ | ---------------------------- | --------------------------------- | ----------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Map global 3D            | VoxelHashMap, IVoxMapManager | `/livox_map`                      | `voxmap_manager_node`         | PointCloud2 3D, frame `map_ned` (production)    | Toàn bộ voxel map quanh UAV, dùng cho visualize, recorder, và làm đầu vào cho map local 3D.                                                                         |
+| Map global 3D            | VoxelHashMap, IVoxMapManager | `/mapping/global`                      | `global_mapper`         | PointCloud2 3D, frame `map_ned` (production)    | Toàn bộ voxel map quanh UAV, dùng cho visualize, recorder, và làm đầu vào cho map local 3D.                                                                         |
 | Map local 3D             | LocalGridMap (ring buffer)   | chưa có topic executable          | **chưa có executable node**   | 3D occupancy ring buffer (capacity ~50K points) | Bản rút gọn của map global quanh UAV, có eviction theo khoảng cách, cung cấp dữ liệu cho planner 3D. **Hiện chỉ có class ở mức thư viện, chưa có node executable.** |
-| Distance bin 2D (PX4 CP) | ObstacleDistance             | `/fmu/in/obstacle_distance`       | `livox_mid360_processor_node` | 72 bin, body FRD                                | Dữ liệu cho PX4 Collision Prevention, 2D.                                                                                                                           |
-| Virtual scan 1D          | VirtualScan (perception)     | `/local_virtual_scan`             | `livox_mid360_processor_node` | LaserScan 72 beam, frame `aircraft`             | Perception 1D phục vụ debug/RViz, **không phải map**.                                                                                                               |
-| Visual Odometry (EV)     | vehicle_visual_odometry      | `/fmu/in/vehicle_visual_odometry` | `ned_transform_node`          | PX4 VehicleOdometry                             | Odometry chính xác từ FAST-LIO2 (Lio + IMU + IEKF) gửi cho PX4 EKF2 để correct drift của PX4 odom nội bộ.                                                           |
+| Distance bin 2D (PX4 CP) | ObstacleDistance             | `/fmu/in/obstacle_distance`       | `obstacle_perception` | 72 bin, body FRD                                | Dữ liệu cho PX4 Collision Prevention, 2D.                                                                                                                           |
+| Virtual scan 1D          | VirtualScan (perception)     | `/local_virtual_scan`             | `obstacle_perception` | LaserScan 72 beam, frame `aircraft`             | Perception 1D phục vụ debug/RViz, **không phải map**.                                                                                                               |
+| Visual Odometry (EV)     | vehicle_visual_odometry      | `/fmu/in/vehicle_visual_odometry` | `localization_bridge`          | PX4 VehicleOdometry                             | Odometry chính xác từ localization frontend (Lio + IMU + IEKF) gửi cho PX4 EKF2 để correct drift của PX4 odom nội bộ.                                                           |
 
 **Quy tắc đặt tên (cố định):**
 
-1. **Map global 3D** = `/livox_map` toàn scene.
+1. **Map global 3D** = `/mapping/global` toàn scene.
 2. **Map local 3D** = bản rút gọn theo khoảng cách quanh UAV, dùng cho planner 3D, **chưa tồn tại executable** trong repo hiện tại.
 3. **Distance bin 2D** = `/fmu/in/obstacle_distance` cho PX4 CP, **không phải map**.
 4. **Virtual scan 1D** = `/local_virtual_scan`, perception 1D, **không phải map**.
@@ -95,13 +95,13 @@ Mỗi topic cốt lõi dưới đây phải giữ đúng frame_id và clock doma
 
 | Topic                             | Producer                      | Frame (production)                          | Frame (debug)         | Clock domain          | QoS         | Ghi chú                                                                                                   |
 | --------------------------------- | ----------------------------- | ------------------------------------------- | --------------------- | --------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
-| `/livox_processed`                | `fast_lio2_node`              | `camera_init`                               | `camera_init`         | ROS 2 time (sim_time) | reliable    | Cloud sau preprocess L1.                                                                                  |
-| `/odometry`                       | `fast_lio2_node`              | `camera_init` (parent), `base_link` (child) | giống production      | ROS 2 time            | reliable    | Odom trong world của L1.                                                                                  |
-| `/livox_processed_ned`            | `ned_transform_node`          | `map_ned`                                   | `map_ned`             | ROS 2 time            | reliable    | Hardcode `map_ned`, không phụ thuộc mode.                                                                 |
-| `/livox_map`                      | `voxmap_manager_node`         | `map_ned` (production)                      | `camera_init` (debug) | ROS 2 time            | reliable    | Production dùng `input_source=px4_full`; debug có thể dùng `lio_world` nhưng không dùng để đánh giá cuối. |
-| `/fmu/in/obstacle_distance`       | `livox_mid360_processor_node` | n/a (message frame)                         | n/a                   | ROS 2 time            | reliable    | 72 bin cho PX4 CP.                                                                                        |
-| `/local_virtual_scan`             | `livox_mid360_processor_node` | `aircraft`                                  | `aircraft`            | ROS 2 time            | reliable    | 72 beam LaserScan, frame FRD.                                                                             |
-| `/fmu/in/vehicle_visual_odometry` | `ned_transform_node`          | n/a (PX4 EV message)                        | n/a                   | ROS 2 time            | best_effort | EV cho PX4 EKF2.                                                                                          |
+| `/localization/cloud`                | `lidar_odometry`              | `camera_init`                               | `camera_init`         | ROS 2 time (sim_time) | reliable    | Cloud sau preprocess L1.                                                                                  |
+| `/odometry`                       | `lidar_odometry`              | `camera_init` (parent), `base_link` (child) | giống production      | ROS 2 time            | reliable    | Odom trong world của L1.                                                                                  |
+| `/world/cloud`            | `localization_bridge`          | `map_ned`                                   | `map_ned`             | ROS 2 time            | reliable    | Hardcode `map_ned`, không phụ thuộc mode.                                                                 |
+| `/mapping/global`                      | `global_mapper`         | `map_ned` (production)                      | `camera_init` (debug) | ROS 2 time            | reliable    | Production dùng `input_source=px4_full`; debug có thể dùng `lio_world` nhưng không dùng để đánh giá cuối. |
+| `/fmu/in/obstacle_distance`       | `obstacle_perception` | n/a (message frame)                         | n/a                   | ROS 2 time            | reliable    | 72 bin cho PX4 CP.                                                                                        |
+| `/local_virtual_scan`             | `obstacle_perception` | `aircraft`                                  | `aircraft`            | ROS 2 time            | reliable    | 72 beam LaserScan, frame FRD.                                                                             |
+| `/fmu/in/vehicle_visual_odometry` | `localization_bridge`          | n/a (PX4 EV message)                        | n/a                   | ROS 2 time            | best_effort | EV cho PX4 EKF2.                                                                                          |
 
 ### Chính sách chung
 
@@ -115,13 +115,13 @@ Mỗi topic cốt lõi dưới đây phải giữ đúng frame_id và clock doma
 ```text
 sensors (LiDAR, IMU, camera, GPS if available)
         ↓
-px4_mapping (L1 fast_lio2 + L2 voxmap_manager)
+px4_mapping (L1 lidar_odometry + L2 global_mapper)
         ↓
-Map global 3D (/livox_map) + odometry (/odometry) + EV (/fmu/in/vehicle_visual_odometry)
+Map global 3D (/mapping/global) + odometry (/odometry) + EV (/fmu/in/vehicle_visual_odometry)
         ↓
 px4_navigation
-  ├── livox_mid360_processor_node → Distance bin 2D (/fmu/in/obstacle_distance) + Virtual scan 1D (/local_virtual_scan)
-  └── (tương lai) local_map_node → Map local 3D từ /livox_map + /odometry
+  ├── obstacle_perception → Distance bin 2D (/fmu/in/obstacle_distance) + Virtual scan 1D (/local_virtual_scan)
+  └── (tương lai) local_map_node → Map local 3D từ /mapping/global + /odometry
         ↓
 Planner 3D (A* + B-spline) + State machine
         ↓
@@ -135,7 +135,7 @@ PX4 uORB
 **Trạng thái hiện tại (2026-07-09):**
 
 1. `px4_mapping`: L1 + L2 + EV đang chạy, đã verify trong SITL.
-2. `px4_navigation` hiện có: livox_mid360_processor_node (2D CP + 1D virtual scan), thư viện `LocalPlanGrid` / `VirtualScan` / `AStarPlanner` (chưa có executable).
+2. `px4_navigation` hiện có: obstacle_perception (2D CP + 1D virtual scan), thư viện `LocalPlanGrid` / `VirtualScan` / `AStarPlanner` (chưa có executable).
 3. **Map local 3D executable: chưa có**, sẽ thuộc phạm vi Phase sau, không nằm trong scope lock hiện tại.
 4. `px4_ros_com` executable bridge/offboard/health watcher: chưa có, chỉ có header-only helpers.
 
@@ -170,15 +170,15 @@ uav-navigation/
 **Đã chạy được trong SITL (verified bằng analyzer):**
 
 - [x] `px4_common`: math, transforms, parameter helpers, tests.
-- [x] `px4_mapping::fast_lio2_node`: cloud preprocess + odom output.
-- [x] `px4_mapping::ned_transform_node`: NED bridge, EV publisher.
-- [x] `px4_mapping::voxmap_manager_node`: **Map global 3D** ở production mode `px4_full`.
-- [x] `px4_navigation::livox_mid360_processor_node`: **Distance bin 2D** (PX4 CP) + **Virtual scan 1D** (debug).
+- [x] `px4_mapping::lidar_odometry`: cloud preprocess + odom output.
+- [x] `px4_mapping::localization_bridge`: NED bridge, EV publisher.
+- [x] `px4_mapping::global_mapper`: **Map global 3D** ở production mode `px4_full`.
+- [x] `px4_navigation::obstacle_perception`: **Distance bin 2D** (PX4 CP) + **Virtual scan 1D** (debug).
 - [x] `px4_ros_com` (header-only helpers): frame_transforms, topic_helpers, tests.
 
 **Có ở mức thư viện, CHƯA có executable node:**
 
-- [ ] `px4_navigation::LocalPlanGrid` / `AStarPlanner` / `VirtualScan` (perception, khác với livox_mid360_virtual_scan).
+- [ ] `px4_navigation::LocalPlanGrid` / `AStarPlanner` / `VirtualScan` (perception, khác với obstacle_perception_virtual_scan).
 - [ ] `px4_navigation::LocalGridMap` ring buffer (legacy) — **Map local 3D executable chưa có**.
 
 **Chưa làm, ngoài scope lock hiện tại:**

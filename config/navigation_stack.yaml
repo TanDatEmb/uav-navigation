@@ -14,11 +14,11 @@ px4_mapping:
     lidar_frame: "lidar"
 
   # World bridge node: converts L1 camera_init data to map_ned.
-  world_bridge:
+  localization_bridge:
     ros__parameters:
-      input_cloud_topic: "/livox/l1/cloud"
-      output_cloud_topic: "/livox/world/cloud"
-      lio_odom_topic: "/livox/l1/odometry"
+      input_cloud_topic: "/localization/cloud"
+      output_cloud_topic: "/world/cloud"
+      lio_odom_topic: "/localization/odometry"
       px4_odom_topic: "/fmu/out/vehicle_odometry"
       use_px4_odom: true
       publish_visual_odometry_to_px4: false
@@ -31,11 +31,11 @@ px4_mapping:
       visual_odom_quality: 100
 
   # Voxel map node: builds the sparse global map in map_ned.
-  voxel_map:
+  global_mapper:
     ros__parameters:
-      cloud_topic: "/livox/world/cloud"
-      map_topic: "/livox/map/global"
-      lio_odom_topic: "/livox/l1/odometry"
+      cloud_topic: "/world/cloud"
+      map_topic: "/mapping/global"
+      lio_odom_topic: "/localization/odometry"
       input_source: "px4_full"
       publish_local_map: true
       extrinsic_T: [-0.011, -0.02329, 0.04412]
@@ -93,9 +93,9 @@ px4_navigation:
       input_cloud_topic: "/lidar_360/points"
       vehicle_odom_topic: "/fmu/out/vehicle_odometry"
       obstacle_distance_topic: "/fmu/in/obstacle_distance"
-      local_virtual_scan_topic: "/livox/perception/scan_1d"
-      grid_markers_topic: "/livox/grid_2d5/markers"
-      min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
+      local_virtual_scan_topic: "/perception/scan_1d"
+      grid_markers_topic: "/visualization/grid_2d5/markers"
+      min_distance_cloud_topic: "/visualization/grid_2d5/min_distance"
 
       # Debug publishers. Disable to reduce bandwidth when not needed.
       publish_grid_markers: true
@@ -106,7 +106,7 @@ px4_navigation:
     ros__parameters:
       publish_rate_hz: 20.0
       obstacle_distance_topic: "/fmu/in/obstacle_distance"
-      markers_topic: "/obstacle_distance/markers"
+      markers_topic: "/visualization/obstacle_markers"
       scale_min_m: 0.1
       scale_max_m: 20.0
       frame: 12 # MAV_FRAME_BODY_FRD

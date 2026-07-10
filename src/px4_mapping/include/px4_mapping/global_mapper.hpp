@@ -1,20 +1,20 @@
 /* =========================================================================
-    voxmap_manager_node.hpp, Layer 2 ROS 2 node wrapping VoxelHashMap
+    global_mapper.hpp, Layer 2 ROS 2 node wrapping VoxelHashMap
 
-    1. VoxMapManagerNode
-       - Subscribes raw lidar /livox/lidar and PX4 VehicleOdometry
+    1. GlobalMapper
+    - Subscribes localization cloud and PX4 VehicleOdometry
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
        - Runs distance based eviction timer to bound map memory
     - Publishes global map topic for RViz and Layer 3 ring buffer
 
     2. Factory
-       - get_voxmap_node returns Node and IVoxMapManager interface
+       - get_global_mapper_node returns Node and IVoxMapManager interface
        - Composed pipeline uses single instance for both roles
    ========================================================================= */
 
-#ifndef PX4_MAPPING_VOXMAP_MANAGER_NODE_HPP_
-#define PX4_MAPPING_VOXMAP_MANAGER_NODE_HPP_
+#ifndef PX4_MAPPING_GLOBAL_MAPPER_HPP_
+#define PX4_MAPPING_GLOBAL_MAPPER_HPP_
 
 #include <atomic>
 #include <memory>
@@ -48,11 +48,11 @@
 
 namespace px4_mapping {
 
-class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxMapManager {
+class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapManager {
    public:
-    explicit VoxMapManagerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+    explicit GlobalMapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
-    ~VoxMapManagerNode() override;
+    ~GlobalMapper() override;
 
     // IVoxMapManager interface implementation
     double GetResolution() const override;
@@ -88,8 +88,8 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     int log_interval_{1};
     double timeout_seconds_{3600.0};
     std::string log_path_;
-    std::string cloud_topic_{"/livox/world/cloud"};
-    std::string map_topic_{"/livox/map/global"};
+    std::string cloud_topic_{"/world/cloud"};
+    std::string map_topic_{"/mapping/global"};
     std::string input_source_{"px4_full"};
     bool deskewed_input_{false};
     bool full_pose_input_{false};
@@ -135,7 +135,7 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     std::atomic<bool> fatal_fault_{false};
 
     // LIO subscription monitor
-    std::string lio_odom_topic_{"/livox/l1/odometry"};
+    std::string lio_odom_topic_{"/localization/odometry"};
     std::size_t lio_samples_received_{0};
     rclcpp::Time lio_first_sample_time_;
 
@@ -215,10 +215,10 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
 };
 
 // Factory for composed pipeline
-std::shared_ptr<rclcpp::Node> get_voxmap_node(
+std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
     std::shared_ptr<px4_common::mapping::IVoxMapManager>& out_iface);
 
 }  // namespace px4_mapping
 
-#endif  // PX4_MAPPING_VOXMAP_MANAGER_NODE_HPP_
+#endif  // PX4_MAPPING_GLOBAL_MAPPER_HPP_

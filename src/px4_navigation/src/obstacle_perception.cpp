@@ -14,7 +14,7 @@
 //   4. Per yaw column, take the minimum distance across all pitch rows.
 //   5. Publish px4_msgs::ObstacleDistance to /fmu/in/obstacle_distance.
 
-#include "px4_navigation/livox_mid360_processor.hpp"
+#include "px4_navigation/obstacle_perception.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,8 +29,8 @@
 
 namespace px4_navigation {
 
-LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("obstacle_perception_node", options) {
+ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
+    : rclcpp::Node("obstacle_perception", options) {
     LoadParameters();
 
     // Allocate spherical grid.
@@ -42,11 +42,11 @@ LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
 
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         input_cloud_topic_, rclcpp::SensorDataQoS(),
-        std::bind(&LivoxMid360Processor::CloudCallback, this, std::placeholders::_1));
+        std::bind(&ObstaclePerception::CloudCallback, this, std::placeholders::_1));
 
     sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
         vehicle_odom_topic_, px4_qos,
-        std::bind(&LivoxMid360Processor::OdomCallback, this, std::placeholders::_1));
+        std::bind(&ObstaclePerception::OdomCallback, this, std::placeholders::_1));
 
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
         obstacle_distance_topic_, rclcpp::QoS(20).reliable());
@@ -58,7 +58,7 @@ LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
 
     const auto period_ns = static_cast<int64_t>(1e9 / publish_rate_hz_);
     publish_timer_ = this->create_wall_timer(std::chrono::nanoseconds(period_ns),
-                                             std::bind(&LivoxMid360Processor::TimerCallback, this));
+                                             std::bind(&ObstaclePerception::TimerCallback, this));
 
     RCLCPP_INFO(this->get_logger(),
                 "obstacle_perception started: cloud_frame='%s' yaw_bins=%d "
@@ -71,7 +71,7 @@ LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
                 publish_local_virtual_scan_ ? local_virtual_scan_topic_.c_str() : "disabled");
 }
 
-void LivoxMid360Processor::LoadParameters() {
+void ObstaclePerception::LoadParameters() {
     yaw_bins_ = this->declare_parameter("yaw_bins", kDefaultYawBins);
     pitch_bins_ = this->declare_parameter("pitch_bins", kDefaultPitchBins);
     const double min_pitch_deg = this->declare_parameter("min_pitch_deg", kDefaultMinPitchDeg);
@@ -94,7 +94,7 @@ void LivoxMid360Processor::LoadParameters() {
                                                        std::string("/fmu/in/obstacle_distance"));
     this->declare_parameter("publish_local_virtual_scan", true);
     this->get_parameter("publish_local_virtual_scan", publish_local_virtual_scan_);
-    this->declare_parameter("local_virtual_scan_topic", std::string("/livox/perception/scan_1d"));
+    this->declare_parameter("local_virtual_scan_topic", std::string("/perception/scan_1d"));
     this->get_parameter("local_virtual_scan_topic", local_virtual_scan_topic_);
     this->declare_parameter("local_virtual_scan_frame_id", std::string("aircraft"));
     this->get_parameter("local_virtual_scan_frame_id", local_virtual_scan_frame_id_);
@@ -136,7 +136,7 @@ void LivoxMid360Processor::LoadParameters() {
     }
 }
 
-void LivoxMid360Processor::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+void ObstaclePerception::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     std::vector<Eigen::Vector3f> points;
     points.reserve(static_cast<size_t>(msg->width * msg->height));
 
@@ -160,7 +160,7 @@ void LivoxMid360Processor::CloudCallback(const sensor_msgs::msg::PointCloud2::Sh
     ++clouds_received_;
 }
 
-void LivoxMid360Processor::OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
+void ObstaclePerception::OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     const Eigen::Quaterniond q(static_cast<double>(msg->q[0]), static_cast<double>(msg->q[1]),
                                static_cast<double>(msg->q[2]), static_cast<double>(msg->q[3]));
     const double yaw = px4_common::math::QuaternionGetYaw(q);
@@ -173,7 +173,7 @@ void LivoxMid360Processor::OdomCallback(const px4_msgs::msg::VehicleOdometry::Sh
     odom_received_ = true;
 }
 
-void LivoxMid360Processor::TimerCallback() {
+void ObstaclePerception::TimerCallback() {
     std::vector<Eigen::Vector3f> cloud;
     bool have_cloud = false;
     bool have_odom = false;
@@ -276,7 +276,7 @@ void LivoxMid360Processor::TimerCallback() {
         static_cast<unsigned long>(clouds_received_), static_cast<unsigned long>(stale_clears_));
 }
 
-void LivoxMid360Processor::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& cloud) {
+void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& cloud) {
     // Reset grid.
     for (auto& row : grid_) {
         for (auto& cell : row) {
@@ -388,7 +388,7 @@ void LivoxMid360Processor::BuildSphericalGrid(const std::vector<Eigen::Vector3f>
     }
 }
 
-void LivoxMid360Processor::ComputeMinDistances(std::array<uint16_t, 72>& min_distances) const {
+void ObstaclePerception::ComputeMinDistances(std::array<uint16_t, 72>& min_distances) const {
     std::fill(min_distances.begin(), min_distances.end(), kNoObstacle);
 
     const int yaw_limit = std::min(yaw_bins_, 72);

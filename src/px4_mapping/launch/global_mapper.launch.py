@@ -1,8 +1,8 @@
 """
-Launch file for the NED transform node.
+Launch file for the voxel map manager node.
 
-Transforms FAST-LIO2 point clouds from the camera_init/ENU frame to the
-PX4 map_ned frame. Optionally publishes external vision odometry to PX4.
+Builds a sparse global occupancy map in the PX4 map_ned frame from a
+NED point cloud and odometry sources.
 """
 
 import os
@@ -22,7 +22,7 @@ def generate_launch_description():
     )
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    publish_visual_odometry = LaunchConfiguration('publish_visual_odometry_to_px4')
+    input_source = LaunchConfiguration('input_source')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -31,27 +31,28 @@ def generate_launch_description():
             description='Use simulation clock if true'),
 
         DeclareLaunchArgument(
-            'publish_visual_odometry_to_px4',
-            default_value='false',
-            description='Publish external vision odometry to PX4'),
+            'input_source',
+            default_value='px4_full',
+            description='Cloud source: lio_world, px4_only, px4_full, localization_deskew'),
 
         Node(
             package='px4_mapping',
-            executable='ned_transform_node',
-            name='world_bridge',
+            executable='global_mapper',
+            name='global_mapper',
             parameters=[
                 config_file,
                 {
                     'use_sim_time': use_sim_time,
-                    'publish_visual_odometry_to_px4': publish_visual_odometry,
+                    'input_source': input_source,
                 }
             ],
             output='screen',
             remappings=[
-                ('/livox/l1/cloud', '/livox/l1/cloud'),
-                ('/livox/world/cloud', '/livox/world/cloud'),
-                ('/livox/l1/odometry', '/livox/l1/odometry'),
+                ('/world/cloud', '/world/cloud'),
+                ('/mapping/global', '/mapping/global'),
+                ('/localization/odometry', '/localization/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
-                ('/fmu/in/vehicle_visual_odometry', '/fmu/in/vehicle_visual_odometry'),
+                ('/fmu/out/vehicle_status', '/fmu/out/vehicle_status'),
+                ('/fmu/out/vehicle_local_position', '/fmu/out/vehicle_local_position'),
             ]),
     ])

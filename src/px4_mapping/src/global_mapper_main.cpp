@@ -4,12 +4,12 @@
 
 #include <memory>
 
-#include "px4_mapping/voxmap_manager_node.hpp"
+#include "px4_mapping/global_mapper.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char* argv[]) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<px4_mapping::VoxMapManagerNode>());
+    rclcpp::spin(std::make_shared<px4_mapping::GlobalMapper>());
     rclcpp::shutdown();
     return 0;
 }
