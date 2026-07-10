@@ -74,6 +74,10 @@ class LivoxMid360Processor : public rclcpp::Node {
     std::vector<Eigen::Vector3f> cloud_points_;
     rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
     std::chrono::steady_clock::time_point last_cloud_arrival_time_;
+    uint64_t latest_cloud_seq_ = 0;
+    uint64_t last_processed_cloud_seq_ = 0;
+    std::array<uint16_t, 72> last_min_distances_{};
+    bool last_min_distances_valid_ = false;
     bool cloud_received_ = false;
     bool odom_received_ = false;
     double vehicle_yaw_ = 0.0;

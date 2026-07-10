@@ -24,12 +24,13 @@
 #include <string>
 
 #include <px4_common/math/transforms.hpp>
+#include <px4_ros_com/time_sync.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 namespace px4_navigation {
 
 LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("livox_mid360_processor", options) {
+    : rclcpp::Node("obstacle_perception_node", options) {
     LoadParameters();
 
     // Allocate spherical grid.
@@ -60,7 +61,7 @@ LivoxMid360Processor::LivoxMid360Processor(const rclcpp::NodeOptions& options)
                                              std::bind(&LivoxMid360Processor::TimerCallback, this));
 
     RCLCPP_INFO(this->get_logger(),
-                "livox_mid360_processor started: cloud_frame='%s' yaw_bins=%d "
+                "obstacle_perception started: cloud_frame='%s' yaw_bins=%d "
                 "pitch_bins=%d pitch=[%.1f, %.1f] deg range=[%.2f, %.2f] m "
                 "body_exclusion=%.2f m rate=%.1f Hz local_scan=%s",
                 cloud_frame_.c_str(), yaw_bins_, pitch_bins_,
@@ -93,7 +94,7 @@ void LivoxMid360Processor::LoadParameters() {
                                                        std::string("/fmu/in/obstacle_distance"));
     this->declare_parameter("publish_local_virtual_scan", true);
     this->get_parameter("publish_local_virtual_scan", publish_local_virtual_scan_);
-    this->declare_parameter("local_virtual_scan_topic", std::string("/local_virtual_scan"));
+    this->declare_parameter("local_virtual_scan_topic", std::string("/livox/perception/scan_1d"));
     this->get_parameter("local_virtual_scan_topic", local_virtual_scan_topic_);
     this->declare_parameter("local_virtual_scan_frame_id", std::string("aircraft"));
     this->get_parameter("local_virtual_scan_frame_id", local_virtual_scan_frame_id_);
@@ -153,6 +154,7 @@ void LivoxMid360Processor::CloudCallback(const sensor_msgs::msg::PointCloud2::Sh
         cloud_points_ = std::move(points);
         last_cloud_time_ = rclcpp::Time(msg->header.stamp, this->get_clock()->get_clock_type());
         last_cloud_arrival_time_ = std::chrono::steady_clock::now();
+        ++latest_cloud_seq_;
         cloud_received_ = true;
     }
     ++clouds_received_;
@@ -175,13 +177,20 @@ void LivoxMid360Processor::TimerCallback() {
     std::vector<Eigen::Vector3f> cloud;
     bool have_cloud = false;
     bool have_odom = false;
+    bool reuse_last_scan = false;
+    uint64_t cloud_seq = 0;
     std::chrono::steady_clock::time_point cloud_arrival;
 
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         have_cloud = cloud_received_;
         have_odom = odom_received_;
-        cloud = cloud_points_;
+        cloud_seq = latest_cloud_seq_;
+        reuse_last_scan = (cloud_frame_ != "ned") && last_min_distances_valid_ &&
+                          (cloud_seq == last_processed_cloud_seq_);
+        if (!reuse_last_scan) {
+            cloud = cloud_points_;
+        }
         cloud_arrival = last_cloud_arrival_time_;
     }
 
@@ -193,7 +202,7 @@ void LivoxMid360Processor::TimerCallback() {
     }
 
     auto obstacle_msg = px4_msgs::msg::ObstacleDistance();
-    obstacle_msg.timestamp = this->now().nanoseconds() / 1000;  // microseconds
+    obstacle_msg.timestamp = px4_ros_com::time::RosTimeToPx4Microseconds(this->now());
     obstacle_msg.frame = kFrameBodyFrd;
     obstacle_msg.sensor_type = kSensorTypeLaser;
     obstacle_msg.increment = 360.0f / static_cast<float>(yaw_bins_);
@@ -206,14 +215,28 @@ void LivoxMid360Processor::TimerCallback() {
 
     if (is_stale || !have_cloud || !have_odom) {
         if (is_stale) {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            last_min_distances_valid_ = false;
+        }
+        if (is_stale) {
             ++stale_clears_;
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                                  "Point cloud stale > %d ms, clearing obstacle map",
                                  stale_timeout_ms_);
         }
+    } else if (reuse_last_scan) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        min_distances = last_min_distances_;
     } else {
         BuildSphericalGrid(cloud);
         ComputeMinDistances(min_distances);
+
+        if (cloud_frame_ != "ned") {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            last_min_distances_ = min_distances;
+            last_min_distances_valid_ = true;
+            last_processed_cloud_seq_ = cloud_seq;
+        }
     }
 
     std::copy(min_distances.begin(), min_distances.end(), obstacle_msg.distances.begin());

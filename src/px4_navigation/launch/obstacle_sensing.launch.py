@@ -1,11 +1,11 @@
 """
 Launch file for the obstacle sensing stack (Phase 1).
 
-Brings up the livox_mid360_processor_node, which converts a Livox MID-360
+Brings up the obstacle_perception_node, which converts a Livox MID-360
 style PointCloud2 stream into a 2.5D spherical grid and publishes:
   - /fmu/in/obstacle_distance : 72-bin message for PX4 Collision Prevention
 
-Future phases will add voxmap_manager_node, collision_avoidance_node, etc.
+Future phases will add voxel_map, collision_avoidance_node, etc.
 """
 
 import os
@@ -43,7 +43,7 @@ def generate_launch_description():
         Node(
             package='px4_navigation',
             executable='livox_mid360_processor_node',
-            name='livox_mid360_processor',
+            name='obstacle_perception',
             parameters=[
                 config_file,
                 {

@@ -1,9 +1,9 @@
 """
 Launch file for the FAST-LIO2 adapter.
 
-This node publishes the FAST-LIO2-compatible contract topics:
-    - /livox_processed (camera_init frame)
-    - /odometry (nav_msgs/Odometry in camera_init frame)
+This node publishes Layer-1 contract topics:
+    - /livox/l1/cloud (camera_init frame)
+    - /livox/l1/odometry (nav_msgs/Odometry in camera_init frame)
 """
 
 import os
@@ -33,7 +33,7 @@ def generate_launch_description():
         Node(
             package='px4_mapping',
             executable='fast_lio2_node',
-            name='fast_lio2',
+            name='cloud_preprocessor',
             parameters=[
                 config_file,
                 {
@@ -44,7 +44,7 @@ def generate_launch_description():
             remappings=[
                 ('/lidar_360/points', '/lidar_360/points'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
-                ('/livox_processed', '/livox_processed'),
-                ('/odometry', '/odometry'),
+                ('/livox/l1/cloud', '/livox/l1/cloud'),
+                ('/livox/l1/odometry', '/livox/l1/odometry'),
             ]),
     ])

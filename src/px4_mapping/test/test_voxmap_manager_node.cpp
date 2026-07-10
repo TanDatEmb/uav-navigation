@@ -9,6 +9,7 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <px4_common/mapping/voxel_map_interface.hpp>
@@ -31,12 +32,14 @@ class VoxMapManagerNodeTest : public ::testing::Test {
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/lidar", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/world/cloud", 20);
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             "/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/odometry", 5);
+        pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
+            "/fmu/out/vehicle_odometry", 20);
+        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/livox/l1/odometry", 5);
     }
 
     void TearDown() override {
@@ -105,6 +108,23 @@ class VoxMapManagerNodeTest : public ::testing::Test {
         lio_odom.pose.covariance[7] = lio_cov_trace / 3.0;
         lio_odom.pose.covariance[14] = lio_cov_trace / 3.0;
         pub_lio_odom_->publish(lio_odom);
+
+        PublishPx4Odom();
+    }
+
+    void PublishPx4Odom(double x = 0.0, double y = 0.0, double z = 0.0) {
+        px4_msgs::msg::VehicleOdometry px4_odom;
+        const uint64_t now_us = static_cast<uint64_t>(node_->now().nanoseconds() / 1000LL);
+        px4_odom.timestamp = now_us;
+        px4_odom.timestamp_sample = now_us;
+        px4_odom.position[0] = static_cast<float>(x);
+        px4_odom.position[1] = static_cast<float>(y);
+        px4_odom.position[2] = static_cast<float>(z);
+        px4_odom.q[0] = 1.0f;
+        px4_odom.q[1] = 0.0f;
+        px4_odom.q[2] = 0.0f;
+        px4_odom.q[3] = 0.0f;
+        pub_px4_odom_->publish(px4_odom);
     }
 
     rclcpp::NodeOptions node_options_;
@@ -114,6 +134,7 @@ class VoxMapManagerNodeTest : public ::testing::Test {
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_;
     rclcpp::Publisher<px4_msgs::msg::VehicleStatus>::SharedPtr pub_status_;
     rclcpp::Publisher<px4_msgs::msg::VehicleLocalPosition>::SharedPtr pub_local_pos_;
+    rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr pub_px4_odom_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_lio_odom_;
 };
 
@@ -126,6 +147,7 @@ TEST_F(VoxMapManagerNodeTest, BecomesReadyAfterSufficientOccupiedFrames) {
     // Publish enough points over enough consecutive frames to satisfy both
     // the occupancy and consecutive-frame requirements.
     for (int i = 0; i < 5; ++i) {
+        PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -136,6 +158,7 @@ TEST_F(VoxMapManagerNodeTest, BecomesReadyAfterSufficientOccupiedFrames) {
 TEST_F(VoxMapManagerNodeTest, DropsReadyWhenDataStops) {
     // Make the node ready first.
     for (int i = 0; i < 5; ++i) {
+        PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -166,12 +189,14 @@ class VoxMapManagerNodeAlignmentTest : public VoxMapManagerNodeTest {
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/lidar", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/livox/world/cloud", 20);
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             "/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/odometry", 5);
+        pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
+            "/fmu/out/vehicle_odometry", 20);
+        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/livox/l1/odometry", 5);
     }
 };
 
@@ -179,6 +204,7 @@ TEST_F(VoxMapManagerNodeAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     // Without alignment inputs the gate stays open for occupancy but alignment
     // is not captured, so IsReady() must remain false even with dense clouds.
     for (int i = 0; i < 5; ++i) {
+        PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -190,6 +216,7 @@ TEST_F(VoxMapManagerNodeAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     bool became_ready = false;
     for (int i = 0; i < 30; ++i) {
         PublishAlignment(true, true, 0.0, 0.001);
+        PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
         if (iface_->IsReady()) {
@@ -205,6 +232,7 @@ TEST_F(VoxMapManagerNodeAlignmentTest, GateBlockedWhenMoving) {
     // Arm + valid EKF but moving too fast -> gate should not capture.
     PublishAlignment(true, true, 1.0, 0.001);
     for (int i = 0; i < 5; ++i) {
+        PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }

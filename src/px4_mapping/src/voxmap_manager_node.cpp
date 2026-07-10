@@ -2,11 +2,11 @@
     voxmap_manager_node.cpp, Layer 2 ROS 2 node wrapping VoxelHashMap
 
     1. VoxMapManagerNode
-       - Subscribes raw lidar /livox/lidar and PX4 VehicleOdometry
+    - Subscribes world cloud and PX4 VehicleOdometry
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
        - Runs distance based eviction timer to bound map memory
-       - Publishes /livox_map for RViz and Layer 3 ring buffer (intra-process)
+    - Publishes global map topic for RViz and Layer 3 ring buffer (intra-process)
 
     2. Factory
        - get_voxmap_node returns Node and IVoxMapManager interface
@@ -48,6 +48,7 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <px4_ros_com/frame_transforms.hpp>
+#include <px4_ros_com/time_sync.hpp>
 #include <px4_ros_com/topic_helpers.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
@@ -57,7 +58,7 @@ using std::placeholders::_1;
 namespace px4_mapping {
 
 VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
-    : Node("vox_map_manager", options),
+    : Node("voxel_map_node", options),
       voxel_map_(),
       lio_buf_(px4_common::time::PoseBuffer::kDefaultMaxSamples,
                px4_common::time::PoseBuffer::kDefaultWindow),
@@ -68,13 +69,14 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     this->declare_parameter<int>("log_interval", 1);
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
-    this->declare_parameter<std::string>("cloud_topic", "/livox/lidar");
-    this->declare_parameter<std::string>("input_source", "px4_only");
+    this->declare_parameter<std::string>("cloud_topic", "/livox/world/cloud");
+    this->declare_parameter<std::string>("map_topic", "/livox/map/global");
+    this->declare_parameter<std::string>("input_source", "px4_full");
     this->declare_parameter<std::vector<double>>("extrinsic_T",
                                                  std::vector<double>{-0.011, -0.02329, 0.04412});
     this->declare_parameter<int>("ready_min_frames", 5);
     this->declare_parameter<int>("ready_min_occupied", 1000);
-    this->declare_parameter<std::string>("lio_odom_topic", "/odometry");
+    this->declare_parameter<std::string>("lio_odom_topic", "/livox/l1/odometry");
     this->declare_parameter<bool>("use_lio_buffer", true);
     this->declare_parameter<bool>("require_alignment_gate", false);
     this->declare_parameter<double>("aligned_min_seconds", 5.0);
@@ -88,6 +90,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     timeout_seconds_ = this->get_parameter("timeout_seconds").as_double();
     log_path_ = this->get_parameter("log_path").as_string();
     cloud_topic_ = this->get_parameter("cloud_topic").as_string();
+    map_topic_ = this->get_parameter("map_topic").as_string();
     input_source_ = this->get_parameter("input_source").as_string();
 
     auto extrinsic_T_vec = this->get_parameter("extrinsic_T").as_double_array();
@@ -139,8 +142,8 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
         throw std::runtime_error("Invalid input_source parameter");
     }
 
-    RCLCPP_INFO(this->get_logger(), "Input source: %s (topic=%s)", input_source_.c_str(),
-                cloud_topic_.c_str());
+    RCLCPP_INFO(this->get_logger(), "Input source: %s (cloud_topic=%s map_topic=%s)",
+                input_source_.c_str(), cloud_topic_.c_str(), map_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "Log Interval: every %d frames", log_interval_);
     RCLCPP_INFO(this->get_logger(), "Timeout: %.1f seconds", timeout_seconds_);
 
@@ -158,7 +161,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     auto qos_sensor = rclcpp::SensorDataQoS();
     qos_sensor.keep_last(50);
 
-    // Subscribe lidar cloud (raw /livox/lidar or Layer 1 deskewed NED)
+    // Subscribe point cloud input according to the selected pipeline mode.
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         cloud_topic_, qos_sensor, std::bind(&VoxMapManagerNode::cloudCallback, this, _1),
         compute_opts);
@@ -175,40 +178,22 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
                 "/fmu/out/vehicle_odometry"),
             rclcpp::QoS(20).best_effort(),
             [this](px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-                // Translate PX4 timestamp_sample (wall-clock via MicroXRCEAgent
-                // CLOCK_REALTIME after UXRCE_DDS_SYNCT) into the ROS time domain
-                const int64_t px4_wall_ns = static_cast<int64_t>(msg->timestamp_sample) * 1000LL;
-                {
-                    std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
-                    if (!px4_offset_initialized_) {
-                        const int64_t now_ns = this->now().nanoseconds();
-                        // /clock topic may not have reached this node yet
-                        if (now_ns < 1'000'000'000LL) {
-                            ++px4_offset_init_dropped_early_;
-                            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                                                 "[VoxMap] PX4 offset init waiting for /clock "
-                                                 "(dropped_early=%lu)",
-                                                 static_cast<unsigned long>(
-                                                     px4_offset_init_dropped_early_));
-                            return;
-                        }
-                        px4_to_ros_offset_ns_ = now_ns - px4_wall_ns;
-                        px4_offset_initialized_ = true;
-                        RCLCPP_INFO(this->get_logger(),
-                                    "PX4 timestamp offset captured at sim_time=%.3f: %.3fs "
-                                    "(wall-clock to ROS time)",
-                                    now_ns * 1e-9, (now_ns - px4_wall_ns) * 1e-9);
-                    }
-                }
+                const int64_t now_ns = this->now().nanoseconds();
+                const int64_t sample_t_ns =
+                    px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
 
-                int64_t offset_ns;
-                {
-                    std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
-                    offset_ns = px4_to_ros_offset_ns_;
+                if (now_ns > 1'000'000'000LL &&
+                    !px4_ros_com::time::IsWithinTimestampDomainGuard(sample_t_ns, now_ns)) {
+                    RCLCPP_ERROR_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 5000,
+                        "[VoxMap] PX4 odometry timestamp_sample outside ROS domain guard "
+                        "(stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
+                        sample_t_ns, now_ns);
+                    return;
                 }
 
                 px4_common::time::PoseSample sample;
-                sample.t_ns = px4_wall_ns + offset_ns;
+                sample.t_ns = sample_t_ns;
                 sample.position =
                     Eigen::Vector3d(msg->position[0], msg->position[1], msg->position[2]);
                 sample.orientation =
@@ -235,7 +220,7 @@ VoxMapManagerNode::VoxMapManagerNode(const rclcpp::NodeOptions& options)
     }
 
     // === Publishers ===
-    pub_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/livox_map", 20);
+    pub_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic_, 20);
 
     // === Timers ===
     last_data_time_ = this->now();

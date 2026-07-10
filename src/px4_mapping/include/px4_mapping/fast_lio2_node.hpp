@@ -14,6 +14,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <px4_ros_com/time_sync.hpp>
+
 namespace px4_mapping {
 
 /**
@@ -21,8 +23,8 @@ namespace px4_mapping {
  *
  * This node extracts the I/O contract used by FAST-LIO2:
  *   - Input: LiDAR cloud in sensor FLU + PX4 odometry in map_ned.
- *   - Output: /livox_processed (camera_init ENU-like frame) and
- *             /odometry (nav_msgs/Odometry in camera_init).
+ *   - Output: /livox/l1/cloud (camera_init ENU-like frame) and
+ *             /livox/l1/odometry (nav_msgs/Odometry in camera_init).
  *
  * It keeps the relevant preprocessing behavior from the reference project
  * (point decimation + blind-zone filtering), while remaining dependency-light
@@ -70,7 +72,8 @@ class FastLio2Node : public rclcpp::Node {
     double blind_m_{0.5};
     bool use_imu_fusion_{true};
 
-    // LIO pose/pose-covariance published to /odometry. The covariance is used
+    // LIO pose/pose-covariance published to the configured L1 odometry topic.
+    // The covariance is used
     // by downstream consumers (RViz, navigation planner) to weight observations.
     // These values represent a healthy LIO pose in our SITL setup and are the
     // same defaults used by the legacy code path.
@@ -92,6 +95,7 @@ class FastLio2Node : public rclcpp::Node {
     rclcpp::Time last_publish_stamp_{0, 0, RCL_ROS_TIME};
     Eigen::Vector3d last_publish_position_ned_{Eigen::Vector3d::Zero()};
     bool last_publish_valid_{false};
+    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
 };
 
 }  // namespace px4_mapping

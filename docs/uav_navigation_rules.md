@@ -32,13 +32,13 @@
 
 Hệ thống có 5 đầu ra chính. Tên gọi cố định, không dùng “map local” chung chung.
 
-| Tên chính thức | Topic (nếu có) | Loại | Mục đích |
-| --- | --- | --- | --- |
-| Map global 3D | `/livox_map` | PointCloud2 3D | Toàn bộ voxel map, visualize, recorder. |
-| Map local 3D | (chưa có executable) | 3D ring buffer | Bản rút gọn theo khoảng cách, dùng cho planner 3D. |
-| Distance bin 2D | `/fmu/in/obstacle_distance` | 72 bin, body FRD | PX4 Collision Prevention. |
-| Virtual scan 1D | `/local_virtual_scan` | LaserScan 72 beam | Perception 1D debug, không phải map. |
-| Visual Odometry (EV) | `/fmu/in/vehicle_visual_odometry` | PX4 VehicleOdometry | Odometry cho PX4 EKF2. |
+| Tên chính thức       | Topic (nếu có)                    | Loại                | Mục đích                                           |
+| -------------------- | --------------------------------- | ------------------- | -------------------------------------------------- |
+| Map global 3D        | `/livox_map`                      | PointCloud2 3D      | Toàn bộ voxel map, visualize, recorder.            |
+| Map local 3D         | (chưa có executable)              | 3D ring buffer      | Bản rút gọn theo khoảng cách, dùng cho planner 3D. |
+| Distance bin 2D      | `/fmu/in/obstacle_distance`       | 72 bin, body FRD    | PX4 Collision Prevention.                          |
+| Virtual scan 1D      | `/local_virtual_scan`             | LaserScan 72 beam   | Perception 1D debug, không phải map.               |
+| Visual Odometry (EV) | `/fmu/in/vehicle_visual_odometry` | PX4 VehicleOdometry | Odometry cho PX4 EKF2.                             |
 
 **Quy tắc dùng tên:**
 
@@ -73,12 +73,12 @@ uav-navigation/
 
 ### Quy tắc package
 
-| Loại package | CMake target | Cài đặt bắt buộc |
-| --- | --- | --- |
-| Header-only (`px4_common`, `px4_mapping`) | `INTERFACE` | `install(TARGETS ...)`, `install(DIRECTORY include/ ...)`, `ament_export_targets`, `ament_export_dependencies` |
-| Compiled library (`px4_navigation`) | `SHARED` | `install(TARGETS ... ARCHIVE/LIBRARY/RUNTIME)`, `install(DIRECTORY include/ ...)`, exports |
-| Executable node | `add_executable` | `install(TARGETS ... DESTINATION lib/${PROJECT_NAME})` |
-| Python package | `ament_python_install_package` | Không commit `__pycache__/` hoặc `*.pyc` |
+| Loại package                              | CMake target                   | Cài đặt bắt buộc                                                                                               |
+| ----------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Header-only (`px4_common`, `px4_mapping`) | `INTERFACE`                    | `install(TARGETS ...)`, `install(DIRECTORY include/ ...)`, `ament_export_targets`, `ament_export_dependencies` |
+| Compiled library (`px4_navigation`)       | `SHARED`                       | `install(TARGETS ... ARCHIVE/LIBRARY/RUNTIME)`, `install(DIRECTORY include/ ...)`, exports                     |
+| Executable node                           | `add_executable`               | `install(TARGETS ... DESTINATION lib/${PROJECT_NAME})`                                                         |
+| Python package                            | `ament_python_install_package` | Không commit `__pycache__/` hoặc `*.pyc`                                                                       |
 
 - `buildtool_depend` phải là `ament_cmake` (không `ament_cmake_ros`) trừ khi thực sự cần.
 - `px4_msgs` phải là Git submodule, không dùng installed package lung tung.
@@ -104,19 +104,19 @@ uav-navigation/
 
 ## 3. Coding style
 
-| Thành phần | Quy tắc | Ví dụ |
-| --- | --- | --- |
-| Class / struct | `PascalCase` | `LocalPlanGrid`, `LivoxMid360Processor` |
-| Method / function | `PascalCase` (đã resolve conflict, theo ROS 2/PX4 style) | `Reset()`, `MarkOccupied()`, `BuildSphericalGrid()` |
-| Member variable | `snake_case_` | `grid_`, `cloud_points_` |
-| Local variable / parameter | `snake_case` | `yaw_bin`, `dist_horiz_m` |
-| Namespace | `snake_case` | `px4_common::math` |
-| File name | `snake_case.cpp/.hpp` | `local_plan_grid.cpp` |
-| `constexpr` | `kPascalCase` | `kDefaultYawBins`, `kNoObstacle` |
-| `#define` | `SCREAMING_SNAKE_CASE` — hạn chế dùng | — |
-| Indent | 4 spaces | — |
-| Braces | attach (K&R) | — |
-| Line length | ≤ 100 ký tự | — |
+| Thành phần                 | Quy tắc                                                  | Ví dụ                                               |
+| -------------------------- | -------------------------------------------------------- | --------------------------------------------------- |
+| Class / struct             | `PascalCase`                                             | `LocalPlanGrid`, `LivoxMid360Processor`             |
+| Method / function          | `PascalCase` (đã resolve conflict, theo ROS 2/PX4 style) | `Reset()`, `MarkOccupied()`, `BuildSphericalGrid()` |
+| Member variable            | `snake_case_`                                            | `grid_`, `cloud_points_`                            |
+| Local variable / parameter | `snake_case`                                             | `yaw_bin`, `dist_horiz_m`                           |
+| Namespace                  | `snake_case`                                             | `px4_common::math`                                  |
+| File name                  | `snake_case.cpp/.hpp`                                    | `local_plan_grid.cpp`                               |
+| `constexpr`                | `kPascalCase`                                            | `kDefaultYawBins`, `kNoObstacle`                    |
+| `#define`                  | `SCREAMING_SNAKE_CASE` — hạn chế dùng                    | —                                                   |
+| Indent                     | 4 spaces                                                 | —                                                   |
+| Braces                     | attach (K&R)                                             | —                                                   |
+| Line length                | ≤ 100 ký tự                                              | —                                                   |
 
 ### Include style
 
@@ -168,12 +168,12 @@ endif()
 
 ## 6. Frame conventions (KHÔNG được vi phạm)
 
-| Frame | Định nghĩa | Sử dụng |
-| --- | --- | --- |
-| `map_ned` (NED) | X=North, Y=East, Z=Down | PX4 local world frame |
-| ENU | X=East, Y=North, Z=Up | ROS default world frame |
-| `aircraft` (FRD) | X=Forward, Y=Right, Z=Down | PX4 body frame |
-| `base_link` (FLU) | X=Forward, Y=Left, Z=Up | ROS REP-103 body frame |
+| Frame             | Định nghĩa                 | Sử dụng                 |
+| ----------------- | -------------------------- | ----------------------- |
+| `map_ned` (NED)   | X=North, Y=East, Z=Down    | PX4 local world frame   |
+| ENU               | X=East, Y=North, Z=Up      | ROS default world frame |
+| `aircraft` (FRD)  | X=Forward, Y=Right, Z=Down | PX4 body frame          |
+| `base_link` (FLU) | X=Forward, Y=Left, Z=Up    | ROS REP-103 body frame  |
 
 ### Transform cơ bản
 
@@ -206,7 +206,7 @@ inline constexpr char kAircraft[] = "aircraft";
 ## 7. Time conventions
 
 - **Single clock source**: ROS 2 clock (`rclcpp::Clock`, `this->now()`, `header.stamp`).
-- MicroXRCE-DDS agent đảm nhận dịch `timestamp_sample` (PX4 wall-clock μs) ↔ ROS 2 time. Không maintain manual offset trong node trừ khi agent sync không đáng tin.
+- MicroXRCE-DDS agent đảm nhận dịch `timestamp_sample` (PX4 wall-clock μs) ↔ ROS 2 time. Không maintain manual offset trong node.
 - Internal messages dùng `std::chrono::nanoseconds` hoặc `rclcpp::Time`. Tránh mix `double seconds` / `int64_t nanoseconds` trong cùng buffer.
 - Pose buffer: enforce strict monotonic timestamps, track non-monotonic / overflow / miss counters.
 - Nếu publish lên PX4 (`vehicle_visual_odometry`, `trajectory_setpoint`), `timestamp` và `timestamp_sample` phải từ cùng ROS 2 clock source.
@@ -248,13 +248,13 @@ inline constexpr char kAircraft[] = "aircraft";
 
 ## 11. Roadmap & phân pha
 
-| Phase | Mục tiêu | Trạng thái tóm tắt |
-| --- | --- | --- |
-| **0** | Foundation: transforms, pose buffer, frame constants, logging policy | Đang tiến hành — phải đóng trước khi mở rộng sang navigation nâng cao |
-| **1** | Mapping: `fast_lio2_node`, `ned_transform_node`, `voxmap_manager_node`, Livox Mid-360 optimization | Trọng tâm chính hiện tại |
-| **2** | Navigation nâng cao: B-spline, `navigation3d_controller_node`, state machine | Tạm hoãn theo scope lock |
-| **3** | PX4 bridge mở rộng: offboard mode manager, health watcher, TF publishers, top-level launch | Tạm hoãn, chỉ giữ mức cần thiết cho mapping + odom |
-| **4** | Visualization & recording mở rộng | Tạm hoãn, chỉ giữ tooling tối thiểu phục vụ đánh giá SLAM/map/odom |
+| Phase | Mục tiêu                                                                                           | Trạng thái tóm tắt                                                    |
+| ----- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **0** | Foundation: transforms, pose buffer, frame constants, logging policy                               | Đang tiến hành — phải đóng trước khi mở rộng sang navigation nâng cao |
+| **1** | Mapping: `fast_lio2_node`, `ned_transform_node`, `voxmap_manager_node`, Livox Mid-360 optimization | Trọng tâm chính hiện tại                                              |
+| **2** | Navigation nâng cao: B-spline, `navigation3d_controller_node`, state machine                       | Tạm hoãn theo scope lock                                              |
+| **3** | PX4 bridge mở rộng: offboard mode manager, health watcher, TF publishers, top-level launch         | Tạm hoãn, chỉ giữ mức cần thiết cho mapping + odom                    |
+| **4** | Visualization & recording mở rộng                                                                  | Tạm hoãn, chỉ giữ tooling tối thiểu phục vụ đánh giá SLAM/map/odom    |
 
 ### Nguyên tắc thực hiện
 
@@ -270,12 +270,4 @@ inline constexpr char kAircraft[] = "aircraft";
 
 - `docs/conventions.md`
 - `docs/architecture.md`
-- `reviews/review_phase_2_1.md`
-- `reviews/review_architecture_consistency.md`
-- `reviews/review_critical_assessment.md`
-- `reviews/review_transform_conventions.md`
-- `reviews/review_feature_parity.md`
-- `reviews/review_logging_monitoring.md`
-- `reviews/review_timestamp_sync.md`
-- `reviews/remediation_plan.md`
-- `MEMORY.md` (workspace root)
+- `reviews/project_status_review.md`

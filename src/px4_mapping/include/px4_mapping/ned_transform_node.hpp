@@ -18,6 +18,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <px4_common/time/pose_buffer.hpp>
+#include <px4_ros_com/time_sync.hpp>
 
 namespace px4_mapping {
 
@@ -25,12 +26,12 @@ namespace px4_mapping {
  * @brief Node for transforming point clouds from FAST-LIO2 camera_init frame to PX4 map_ned frame.
  *
  * Subscribes to:
- * - /livox_processed (sensor_msgs/PointCloud2, camera_init/ENU frame)
- * - /odometry (nav_msgs/Odometry, camera_init frame)
+ * - /livox/l1/cloud (sensor_msgs/PointCloud2, camera_init/ENU frame)
+ * - /livox/l1/odometry (nav_msgs/Odometry, camera_init frame)
  * - /fmu/out/vehicle_odometry (px4_msgs/VehicleOdometry, NED frame)
  *
  * Publishes:
- * - /livox_processed_ned (sensor_msgs/PointCloud2, map_ned frame)
+ * - /livox/world/cloud (sensor_msgs/PointCloud2, map_ned frame)
  * - /fmu/in/vehicle_visual_odometry (px4_msgs/VehicleOdometry, optional)
  */
 class NedTransformNode : public rclcpp::Node {
@@ -107,20 +108,15 @@ class NedTransformNode : public rclcpp::Node {
     Eigen::Quaterniond visual_align_rotation_;
     bool visual_alignment_ready_;
 
-    // PX4 timestamp offset: one-time init, guarded by px4_offset_mutex_.
-    // Replaces the previous static atomic pair so the offset is owned by the
-    // node instance and protected by a single mutex (matches repo convention).
-    std::mutex px4_offset_mutex_;
-    bool px4_offset_init_{false};
-    int64_t px4_to_ros_offset_ns_{0};
-    uint64_t px4_offset_init_dropped_early_{0};
-
     // Diagnostic counters for runtime stability monitoring.
     uint64_t lio_pose_lookup_miss_{0};
     uint64_t px4_pose_lookup_miss_{0};
 
     // Statistics
     uint64_t frame_count_;
+
+    // Shared timestamp-domain adapter for PX4->ROS conversion.
+    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
 };
 
 }  // namespace px4_mapping

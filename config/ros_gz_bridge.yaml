@@ -14,7 +14,7 @@ ros_gz_bridge:
   ros__parameters:
     bridges:
       # Gazebo gpu_lidar publishes PointCloud2 on GZ transport.
-      # Bridge to ROS 2 sensor_msgs/PointCloud2 for livox_mid360_processor.
+      # Bridge to ROS 2 sensor_msgs/PointCloud2 for obstacle_perception.
       - topic: "/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/scan/points"
         ros_type: "sensor_msgs/msg/PointCloud2"
         gz_type: "gz.msgs.PointCloud2"

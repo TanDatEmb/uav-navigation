@@ -18,6 +18,7 @@
 #include <Eigen/Geometry>
 #include <nav_msgs/msg/odometry.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
+#include <rcl_interfaces/msg/parameter_descriptor.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
@@ -25,6 +26,7 @@
 #include <px4_common/frame_constants.hpp>
 #include <px4_common/math/transforms.hpp>
 #include <px4_common/time/pose_buffer.hpp>
+#include <px4_ros_com/time_sync.hpp>
 #include <px4_ros_com/topic_helpers.hpp>
 
 namespace px4_mapping {
@@ -59,7 +61,7 @@ bool IsValidAlignmentMode(const std::string& mode) {
 }  // namespace
 
 NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("ned_transform_node", options),
+    : rclcpp::Node("world_bridge_node", options),
       lio_pose_buffer_(500, std::chrono::nanoseconds(5'000'000'000LL)),
       px4_pose_buffer_(500, std::chrono::nanoseconds(5'000'000'000LL)),
       visual_align_translation_(Eigen::Vector3d::Zero()),
@@ -110,7 +112,7 @@ NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
         compute_subscription_options);
 
     // Create publishers.
-    // /livox_processed_ned is an internal pipeline topic consumed by the
+    // /livox/world/cloud is an internal pipeline topic consumed by the
     // voxmap_manager and recorded by rosbag2 (which subscribes with the
     // default reliable QoS). Use reliable to stay consistent with the
     // fast_lio2 publisher pattern and avoid QoS incompatibility.
@@ -135,16 +137,30 @@ NedTransformNode::NedTransformNode(const rclcpp::NodeOptions& options)
 }
 
 void NedTransformNode::LoadParameters() {
+    rcl_interfaces::msg::ParameterDescriptor use_px4_odom_desc;
+    use_px4_odom_desc.read_only = true;
+    use_px4_odom_desc.description =
+        "Require PX4 odometry for camera_init->map_ned SE(3) composition.";
+    use_px4_odom_desc.additional_constraints =
+        "Must be true. Legacy static shortcut was removed.";
+
+    rcl_interfaces::msg::ParameterDescriptor alignment_mode_desc;
+    alignment_mode_desc.description =
+        "Alignment mode for EV publishing when visual_odom_align_to_px4=true.";
+    alignment_mode_desc.additional_constraints =
+        "One of: translation_only, yaw_translation, full_6dof.";
+
     // Declare and load parameters
-    this->declare_parameter<std::string>("input_cloud_topic", "/livox_processed");
-    this->declare_parameter<std::string>("output_cloud_topic", "/livox_processed_ned");
-    this->declare_parameter<std::string>("lio_odom_topic", "/odometry");
+    this->declare_parameter<std::string>("input_cloud_topic", "/livox/l1/cloud");
+    this->declare_parameter<std::string>("output_cloud_topic", "/livox/world/cloud");
+    this->declare_parameter<std::string>("lio_odom_topic", "/livox/l1/odometry");
     this->declare_parameter<std::string>("px4_odom_topic", "/fmu/out/vehicle_odometry");
-    this->declare_parameter<bool>("use_px4_odom", true);
+    this->declare_parameter<bool>("use_px4_odom", true, use_px4_odom_desc);
     this->declare_parameter<bool>("publish_visual_odometry_to_px4", false);
     this->declare_parameter<std::string>("visual_odom_topic", "/fmu/in/vehicle_visual_odometry");
     this->declare_parameter<bool>("visual_odom_align_to_px4", true);
-    this->declare_parameter<std::string>("visual_odom_alignment_mode", "translation_only");
+    this->declare_parameter<std::string>("visual_odom_alignment_mode", "translation_only",
+                                         alignment_mode_desc);
     this->declare_parameter<bool>("visual_odom_align_full_6dof", false);
     this->declare_parameter<std::vector<double>>("visual_odom_position_variance",
                                                  {0.04, 0.04, 0.09});
@@ -257,38 +273,19 @@ void NedTransformNode::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr 
 }
 
 void NedTransformNode::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-    // PX4 uORB timestamp_sample is wall-clock microseconds. Convert into ROS
-    // time domain using a one-time offset captured after /clock is valid.
-    const int64_t px4_wall_ns = static_cast<int64_t>(msg->timestamp_sample) * 1000LL;
+    // MicroXRCE-DDS time sync is the single boundary policy in this repo:
+    // timestamp_sample is already in ROS clock domain (microseconds).
+    const int64_t now_ns = this->now().nanoseconds();
+    const int64_t t_ns = px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
 
-    {
-        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
-        if (!px4_offset_init_) {
-            const int64_t now_ns = this->now().nanoseconds();
-            constexpr int64_t kMinValidSimTimeNs = 1'000'000'000LL;
-            if (now_ns < kMinValidSimTimeNs) {
-                ++px4_offset_init_dropped_early_;
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                                     "[NED] PX4 offset init waiting for /clock "
-                                     "(dropped_early=%lu)",
-                                     static_cast<unsigned long>(px4_offset_init_dropped_early_));
-                return;
-            }
-
-            px4_to_ros_offset_ns_ = now_ns - px4_wall_ns;
-            px4_offset_init_ = true;
-
-            RCLCPP_INFO(this->get_logger(),
-                        "[NED] PX4 timestamp offset captured at sim_time=%.3f: %.3fs "
-                        "(wall-clock to ROS time)",
-                        now_ns * 1e-9, (now_ns - px4_wall_ns) * 1e-9);
-        }
-    }
-
-    int64_t t_ns;
-    {
-        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
-        t_ns = px4_wall_ns + px4_to_ros_offset_ns_;
+    if (now_ns > 1'000'000'000LL &&
+        !px4_ros_com::time::IsWithinTimestampDomainGuard(t_ns, now_ns)) {
+        RCLCPP_ERROR_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "[NED] PX4 /fmu/out/vehicle_odometry timestamp_sample is outside ROS domain "
+            "guard (stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
+            t_ns, now_ns);
+        return;
     }
 
     // Create pose sample
@@ -389,7 +386,7 @@ bool NedTransformNode::TransformPointCloud(
     //   map_ned       : PX4 local world frame (North-East-Down).
     //
     // Inputs:
-    //   p_camera_init : point from /livox_processed (already in camera_init world).
+    //   p_camera_init : point from /livox/l1/cloud (already in camera_init world).
     //   T_camera_init_body_lio = (R_lio, t_lio) from FAST-LIO2 odometry.
     //   T_map_ned_body_px4     = (R_px4, t_px4) from PX4 VehicleOdometry.
     //
@@ -498,29 +495,16 @@ void NedTransformNode::PublishVisualOdometry(const px4_common::time::PoseSample&
                                  : lio_in_ned.orientation)
             .normalized();
 
-    const int64_t now_ros_ns = this->now().nanoseconds();
-    int64_t px4_offset_ns;
-    {
-        std::lock_guard<std::mutex> offset_lock(px4_offset_mutex_);
-        if (!px4_offset_init_) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                                 "[NED] Skip EV publish until PX4 timestamp offset is ready");
-            return;
-        }
-        px4_offset_ns = px4_to_ros_offset_ns_;
-    }
-
-    // Convert ROS sim timestamps to PX4 wall-clock domain expected by uORB.
-    const int64_t sample_px4_ns = lio_sample.t_ns - px4_offset_ns;
-    const int64_t now_px4_ns = now_ros_ns - px4_offset_ns;
-    if (sample_px4_ns <= 0 || now_px4_ns <= 0) {
+    // Publish timestamps directly from ROS clock domain. PX4 boundary sync is
+    // handled by MicroXRCE-DDS according to the repo timestamp policy.
+    const uint64_t sample_px4_us = px4_ros_com::time::RosNanosecondsToPx4Microseconds(
+        lio_sample.t_ns);
+    const uint64_t now_px4_us = px4_ros_com::time::RosTimeToPx4Microseconds(this->now());
+    if (sample_px4_us == 0 || now_px4_us == 0) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[NED] Skip EV publish due to invalid PX4 timestamp conversion");
+                             "[NED] Skip EV publish due to invalid ROS timestamp");
         return;
     }
-
-    const uint64_t sample_px4_us = static_cast<uint64_t>(sample_px4_ns / 1000LL);
-    const uint64_t now_px4_us = static_cast<uint64_t>(now_px4_ns / 1000LL);
 
     // Create and populate the message
     px4_msgs::msg::VehicleOdometry ev_msg;

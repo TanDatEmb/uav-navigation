@@ -6,7 +6,7 @@
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
        - Runs distance based eviction timer to bound map memory
-       - Publishes /livox_map for RViz and Layer 3 ring buffer (intra-process)
+    - Publishes global map topic for RViz and Layer 3 ring buffer
 
     2. Factory
        - get_voxmap_node returns Node and IVoxMapManager interface
@@ -41,6 +41,7 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <px4_ros_com/frame_transforms.hpp>
+#include <px4_ros_com/time_sync.hpp>
 #include <px4_ros_com/topic_helpers.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
@@ -87,8 +88,9 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     int log_interval_{1};
     double timeout_seconds_{3600.0};
     std::string log_path_;
-    std::string cloud_topic_{"/livox/lidar"};
-    std::string input_source_{"px4_only"};
+    std::string cloud_topic_{"/livox/world/cloud"};
+    std::string map_topic_{"/livox/map/global"};
+    std::string input_source_{"px4_full"};
     bool deskewed_input_{false};
     bool full_pose_input_{false};
     bool lio_world_input_{false};
@@ -133,7 +135,7 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     std::atomic<bool> fatal_fault_{false};
 
     // LIO subscription monitor
-    std::string lio_odom_topic_{"/odometry"};
+    std::string lio_odom_topic_{"/livox/l1/odometry"};
     std::size_t lio_samples_received_{0};
     rclcpp::Time lio_first_sample_time_;
 
@@ -143,6 +145,9 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
 
     // Rollback knob
     bool use_lio_buffer_{true};
+
+    // Shared timestamp-domain adapter for PX4->ROS conversion.
+    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
 
     // Alignment gate: when enabled, the node waits for the drone to be armed,
     // nearly stationary, EKF position valid, and LIO covariance small before
@@ -163,13 +168,6 @@ class VoxMapManagerNode : public rclcpp::Node, public px4_common::mapping::IVoxM
     std::atomic<double> drone_speed_{0.0};
     std::atomic<bool> ekf_pose_valid_{false};
 
-    // PX4 wall-clock to ROS sim_time offset.
-    // Previously declared as atomics; replaced with a single mutex-guarded pair
-    // to match the rest of the codebase and avoid duplicate state per instance.
-    std::mutex px4_offset_mutex_;
-    bool px4_offset_initialized_{false};
-    int64_t px4_to_ros_offset_ns_{0};
-    uint64_t px4_offset_init_dropped_early_{0};
     std::atomic<double> lio_covariance_trace_{1e9};
     rclcpp::Time alignment_start_time_;
     rclcpp::Time aligned_streak_start_;

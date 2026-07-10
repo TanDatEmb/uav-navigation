@@ -5,7 +5,7 @@
 # Starts a complete SITL stack:
 #   BG  – MicroXRCE-DDS Agent        (PX4 ↔ ROS 2 bridge)
 #   BG  – ros_gz_bridge                (LiDAR PointCloud2 from Gazebo → ROS 2)
-#   BG  – livox_mid360_processor      (PointCloud2 → 2.5D grid → ObstacleDistance for PX4 CP)
+#   BG  – obstacle_perception         (PointCloud2 → 2.5D grid → ObstacleDistance for PX4 CP)
 #   BG  – obstacle_distance_visualizer (RViz markers from ObstacleDistance)
 #   BG  – rosbag2 record               (optional, set SKIP_BAG=1 to disable)
 #   WIN – PX4 SITL console             (also launches Gazebo via gz_bridge)
@@ -20,6 +20,7 @@
 #   XRCE_PORT   – uXRCE-DDS UDP port (default: 8888)
 #   SKIP_BAG    – set 1 to skip rosbag recording
 #   GZ_GUI      – set 1 to open Gazebo GUI
+#   ENABLE_OBSTACLE_VIZ – set 1 to run RViz obstacle marker visualizer
 # =============================================================================
 set -euo pipefail
 
@@ -31,7 +32,8 @@ ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 XRCE_PORT="${XRCE_PORT:-8888}"
 SKIP_BAG="${SKIP_BAG:-0}"
 GZ_GUI="${GZ_GUI:-0}"
-# Map input source for voxmap_manager_node.
+ENABLE_OBSTACLE_VIZ="${ENABLE_OBSTACLE_VIZ:-0}"
+# Map input source for voxel_map node.
 # Production: px4_full (per Topic Contract in docs/architecture.md).
 # Debug only: lio_world (frame=camera_init, NOT for quality assessment).
 MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-px4_full}"
@@ -186,59 +188,69 @@ ros2 run ros_gz_bridge parameter_bridge \
   -r "${GZ_WORLD_CLOCK}:=/clock"
 BGEOF
 
-# ── obstacle_distance visualizer node ─────────────────────────────────────
+# ── obstacle_distance visualizer node (debug-only) ────────────────────────
+if [[ "${ENABLE_OBSTACLE_VIZ}" == "1" ]]; then
 make_bg "obstacle-viz" 16 << BGEOF
 ros2 run px4_navigation obstacle_distance_visualizer_node --ros-args -p use_sim_time:=true
 BGEOF
+else
+    echo "  [skip] obstacle-viz disabled by default (set ENABLE_OBSTACLE_VIZ=1 to enable)"
+fi
 
 # ── FAST-LIO2 adapter (core contract topics) ──────────────────────────────
 make_bg "fast-lio2" 13 << BGEOF
 ros2 run px4_mapping fast_lio2_node \
     --ros-args \
+        -r __node:=cloud_preprocessor \
     --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
     -p use_sim_time:=true \
     -p input_cloud_topic:=/lidar_360/points \
     -p px4_odom_topic:=/fmu/out/vehicle_odometry \
     -p vehicle_imu_topic:=/fmu/out/vehicle_imu \
     -p use_imu_fusion:=false \
-    -p output_cloud_topic:=/livox_processed \
-    -p output_odom_topic:=/odometry
+        -p output_cloud_topic:=/livox/l1/cloud \
+        -p output_odom_topic:=/livox/l1/odometry
 BGEOF
 
-# ── NED transform node (FAST-LIO2 camera_init → map_ned) ────────────────────
+# ── world_bridge node (L1 camera_init → map_ned world cloud) ──────────────
 make_bg "ned-transform" 14 << BGEOF
 ros2 run px4_mapping ned_transform_node \
   --ros-args \
+    -r __node:=world_bridge \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
-  -p input_cloud_topic:=/livox_processed \
-  -p output_cloud_topic:=/livox_processed_ned \
-  -p lio_odom_topic:=/odometry \
+    -p input_cloud_topic:=/livox/l1/cloud \
+    -p output_cloud_topic:=/livox/world/cloud \
+    -p lio_odom_topic:=/livox/l1/odometry \
   -p px4_odom_topic:=/fmu/out/vehicle_odometry \
   -p publish_visual_odometry_to_px4:=true \
   -p visual_odom_topic:=/fmu/in/vehicle_visual_odometry
 BGEOF
 
-# ── Voxel map manager node (sparse global map in map_ned) ───────────────────
+# ── voxel_map node (sparse global map in map_ned) ─────────────────────────
 make_bg "voxmap-manager" 16 << BGEOF
 ros2 run px4_mapping voxmap_manager_node \
   --ros-args \
+    -r __node:=voxel_map \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
-  -p cloud_topic:=/livox_processed_ned \
-  -p lio_odom_topic:=/odometry \
+    -p cloud_topic:=/livox/world/cloud \
+    -p map_topic:=/livox/map/global \
+    -p lio_odom_topic:=/livox/l1/odometry \
   -p input_source:=${MAP_INPUT_SOURCE}
 BGEOF
 
-# ── livox_mid360_processor_node ─────────────────────────────────────────────
+# ── obstacle_perception node ───────────────────────────────────────────────
 make_bg "livox-proc" 14 << BGEOF
 ros2 run px4_navigation livox_mid360_processor_node \
   --ros-args \
+    -r __node:=obstacle_perception \
   --params-file "${WS_DIR}/src/px4_navigation/config/livox_mid360_processor.yaml" \
   -p use_sim_time:=true \
   -p input_cloud_topic:=/lidar_360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \
   -p obstacle_distance_topic:=/fmu/in/obstacle_distance \
+    -p local_virtual_scan_topic:=/livox/perception/scan_1d \
   -p grid_markers_topic:=/livox/grid_2d5/markers \
   -p min_distance_cloud_topic:=/livox/grid_2d5/min_distance
 BGEOF
@@ -255,10 +267,15 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   /lidar_360/points \
   /livox/grid_2d5/markers \
   /livox/grid_2d5/min_distance \
+    /livox/perception/scan_1d \
+    /livox/l1/cloud \
+    /livox/l1/odometry \
+    /livox/world/cloud \
+    /livox/map/global \
     /local_virtual_scan \
-  /livox_processed \
-  /livox_processed_ned \
-  /livox_map \
+    /livox_processed \
+    /livox_processed_ned \
+    /livox_map \
   /fmu/in/obstacle_distance \
   /fmu/in/vehicle_visual_odometry \
   /fmu/out/vehicle_odometry \
@@ -266,7 +283,7 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   /fmu/out/vehicle_local_position_v1 \
   /fmu/out/vehicle_status \
   /fmu/out/vehicle_status_v1 \
-  /odometry
+    /odometry
 BGEOF
 fi
 

@@ -38,7 +38,7 @@ def generate_launch_description():
         Node(
             package='px4_mapping',
             executable='ned_transform_node',
-            name='ned_transform',
+            name='world_bridge',
             parameters=[
                 config_file,
                 {
@@ -48,9 +48,9 @@ def generate_launch_description():
             ],
             output='screen',
             remappings=[
-                ('/livox_processed', '/livox_processed'),
-                ('/livox_processed_ned', '/livox_processed_ned'),
-                ('/odometry', '/odometry'),
+                ('/livox/l1/cloud', '/livox/l1/cloud'),
+                ('/livox/world/cloud', '/livox/world/cloud'),
+                ('/livox/l1/odometry', '/livox/l1/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/in/vehicle_visual_odometry', '/fmu/in/vehicle_visual_odometry'),
             ]),

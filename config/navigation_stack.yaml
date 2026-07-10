@@ -13,12 +13,12 @@ px4_mapping:
     body_frame: "base_link"
     lidar_frame: "lidar"
 
-  # NED transform node: converts FAST-LIO2 camera_init/ENU data to map_ned.
-  ned_transform:
+  # World bridge node: converts L1 camera_init data to map_ned.
+  world_bridge:
     ros__parameters:
-      input_cloud_topic: "/livox_processed"
-      output_cloud_topic: "/livox_processed_ned"
-      lio_odom_topic: "/odometry"
+      input_cloud_topic: "/livox/l1/cloud"
+      output_cloud_topic: "/livox/world/cloud"
+      lio_odom_topic: "/livox/l1/odometry"
       px4_odom_topic: "/fmu/out/vehicle_odometry"
       use_px4_odom: true
       publish_visual_odometry_to_px4: false
@@ -30,12 +30,13 @@ px4_mapping:
       visual_odom_orientation_variance: [0.25, 0.25, 0.05]
       visual_odom_quality: 100
 
-  # Voxel map manager node: builds the sparse global map in map_ned.
-  voxmap_manager:
+  # Voxel map node: builds the sparse global map in map_ned.
+  voxel_map:
     ros__parameters:
-      cloud_topic: "/livox_processed_ned"
-      lio_odom_topic: "/odometry"
-      input_source: "lio_world"
+      cloud_topic: "/livox/world/cloud"
+      map_topic: "/livox/map/global"
+      lio_odom_topic: "/livox/l1/odometry"
+      input_source: "px4_full"
       publish_local_map: true
       extrinsic_T: [-0.011, -0.02329, 0.04412]
       ready_min_frames: 5
@@ -59,8 +60,8 @@ px4_navigation:
     vehicle_radius_m: 0.35
     safety_margin_m: 0.5
 
-  # Livox MID-360 processor for PX4 Collision Prevention.
-  livox_mid360_processor:
+  # Obstacle perception node for PX4 Collision Prevention.
+  obstacle_perception:
     ros__parameters:
       # Spherical grid resolution.
       yaw_bins: 72
@@ -92,6 +93,7 @@ px4_navigation:
       input_cloud_topic: "/lidar_360/points"
       vehicle_odom_topic: "/fmu/out/vehicle_odometry"
       obstacle_distance_topic: "/fmu/in/obstacle_distance"
+      local_virtual_scan_topic: "/livox/perception/scan_1d"
       grid_markers_topic: "/livox/grid_2d5/markers"
       min_distance_cloud_topic: "/livox/grid_2d5/min_distance"
 
@@ -107,8 +109,8 @@ px4_navigation:
       markers_topic: "/obstacle_distance/markers"
       scale_min_m: 0.1
       scale_max_m: 20.0
-      frame: 12  # MAV_FRAME_BODY_FRD
-      sensor_orientation: 0  # MAV_SENSOR_ORIENTATION_NONE
+      frame: 12 # MAV_FRAME_BODY_FRD
+      sensor_orientation: 0 # MAV_SENSOR_ORIENTATION_NONE
 
 px4_ros_com:
   ros__parameters:

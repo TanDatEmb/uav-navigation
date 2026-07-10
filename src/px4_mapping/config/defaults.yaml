@@ -1,7 +1,7 @@
 # Default parameters for px4_mapping nodes.
 # Override via command line or a top-level launch file.
 
-fast_lio2:
+cloud_preprocessor:
   ros__parameters:
     # Input LiDAR cloud in sensor FLU frame (Gazebo bridge output).
     input_cloud_topic: "/lidar_360/points"
@@ -12,11 +12,11 @@ fast_lio2:
     # Input PX4 IMU integration topic.
     vehicle_imu_topic: "/fmu/out/vehicle_imu"
 
-    # FAST-LIO2-compatible outputs.
-    output_cloud_topic: "/livox_processed"
-    output_odom_topic: "/odometry"
+    # Layer-1 outputs.
+    output_cloud_topic: "/livox/l1/cloud"
+    output_odom_topic: "/livox/l1/odometry"
 
-    # Output frame contract expected by ned_transform_node.
+    # Output frame contract expected by world_bridge.
     output_frame_id: "camera_init"
     output_child_frame_id: "base_link"
 
@@ -30,16 +30,16 @@ fast_lio2:
     # Note: requires /fmu/out/vehicle_imu to be published by the PX4 DDS client.
     use_imu_fusion: false
 
-ned_transform:
+world_bridge:
   ros__parameters:
     # Input: FAST-LIO2 world-frame point cloud in camera_init/ENU frame.
-    input_cloud_topic: "/livox_processed"
+    input_cloud_topic: "/livox/l1/cloud"
 
     # Output: point cloud transformed to PX4 map_ned frame.
-    output_cloud_topic: "/livox_processed_ned"
+    output_cloud_topic: "/livox/world/cloud"
 
     # Input: FAST-LIO2 odometry in camera_init frame.
-    lio_odom_topic: "/odometry"
+    lio_odom_topic: "/livox/l1/odometry"
 
     # Input: PX4 vehicle odometry in map_ned frame.
     px4_odom_topic: "/fmu/out/vehicle_odometry"
@@ -70,20 +70,23 @@ ned_transform:
     # External vision quality indicator (0-100).
     visual_odom_quality: 100
 
-voxmap_manager:
+voxel_map:
   ros__parameters:
     # Input: point cloud in map_ned frame.
-    cloud_topic: "/livox_processed_ned"
+    cloud_topic: "/livox/world/cloud"
+
+    # Output global sparse map topic.
+    map_topic: "/livox/map/global"
 
     # Input: FAST-LIO2 odometry in camera_init frame.
-    lio_odom_topic: "/odometry"
+    lio_odom_topic: "/livox/l1/odometry"
 
     # Input source mode:
     #   "lio_world"  : cloud already in map_ned, only LIO odometry used.
     #   "px4_only"   : use PX4 odometry as sensor origin (legacy fallback).
     #   "px4_full"   : cloud in aircraft frame with full PX4 pose.
     #   "fast_lio2_deskew" : deskewed cloud from FAST-LIO2.
-    input_source: "lio_world"
+    input_source: "px4_full"
 
     # Publish the sparse occupied voxel map for RViz / downstream nodes.
     publish_local_map: true

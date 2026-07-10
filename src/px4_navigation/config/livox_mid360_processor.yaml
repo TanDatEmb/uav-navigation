@@ -1,4 +1,4 @@
-# Configuration for the livox_mid360_processor node.
+# Configuration for the obstacle_perception node.
 # Converts a Livox MID-360 style PointCloud2 into a 2.5D spherical grid and
 # publishes a 72-bin obstacle distance message for PX4 Collision Prevention.
 #
@@ -13,7 +13,7 @@
 #   horizontal : 720 samples -> 0.5 deg resolution
 #   vertical   : 28 samples  -> ~2.1 deg resolution over -7 deg .. +52 deg
 
-livox_mid360_processor:
+obstacle_perception:
   ros__parameters:
     # Spherical grid resolution.
     # yaw_bins = 72 gives 5 degrees per bin, matching px4_msgs/ObstacleDistance.
@@ -45,7 +45,7 @@ livox_mid360_processor:
     #   "sensor"     : cloud is already in PX4 body FRD frame (x=FWD, y=RIGHT, z=DOWN).
     #   "sensor_flu" : cloud is in ROS/Gazebo conventional FLU frame (x=FWD, y=LEFT, z=UP).
     #                  The processor converts FLU -> FRD internally.
-    #   "ned"        : cloud is in map_ned world frame (e.g. ned_transform_node output).
+    #   "ned"        : cloud is in map_ned world frame (e.g. world_bridge output).
     cloud_frame: "sensor_flu"
 
     # Ground-plane filter. In body FRD, z is down. Points with z > 0 are
@@ -60,7 +60,7 @@ livox_mid360_processor:
 
     # Publish a local virtual scan for local planning/diagnostics (M4).
     publish_local_virtual_scan: true
-    local_virtual_scan_topic: "/local_virtual_scan"
+    local_virtual_scan_topic: "/livox/perception/scan_1d"
     local_virtual_scan_frame_id: "aircraft"
 
     # use_sim_time should be set via command line for SITL.

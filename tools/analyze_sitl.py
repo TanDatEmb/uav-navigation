@@ -5,9 +5,9 @@ This tool reads the latest rosbag under log/sim/latest/rosbag/flight_data and
 produces a concise report for Phase 1 milestones:
 
   M1 - Collision Prevention: /fmu/in/obstacle_distance rate and validity
-  M2 - NED transform: /livox_processed_ned frame and rate
-  M3 - Global map: /livox_map voxel count and rate
-  M4 - Local planning: (optional) /local_virtual_scan if recorded
+    M2 - NED transform: /livox/world/cloud (fallback: /livox_processed_ned)
+    M3 - Global map: /livox/map/global (fallback: /livox_map)
+    M4 - Local planning: /livox/perception/scan_1d (fallback: /local_virtual_scan)
   M5 - Visual odometry: /fmu/in/vehicle_visual_odometry vs /fmu/out/vehicle_odometry RMSE
 
 Usage:
@@ -26,6 +26,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 M5_RMSE_THRESHOLD_M = 2.0
+
+
+def select_topic(messages: Dict[str, List[Any]], candidates: List[str]) -> Tuple[str, List[Any]]:
+    """Select the first topic that has data, preserving candidate priority."""
+    for topic in candidates:
+        topic_messages = messages.get(topic, [])
+        if topic_messages:
+            return topic, topic_messages
+
+    # No data found: return canonical candidate with empty payload.
+    return candidates[0], []
 
 
 def find_latest_bag(workspace_dir: Path) -> Optional[Path]:
@@ -195,8 +206,8 @@ def analyze_laserscan(messages: List[Any], expected_frame: str) -> Dict[str, Any
     }
 
 
-def analyze_voxel_map(messages: List[Any]) -> Dict[str, Any]:
-    """Analyze /livox_map PointCloud2 messages.
+def analyze_voxel_map(messages: List[Any], topic_name: str) -> Dict[str, Any]:
+    """Analyze voxel-map PointCloud2 messages.
 
     Production contract requires frame_id == "map_ned" (see
     docs/architecture.md Topic Contract). If the frame is not map_ned we
@@ -204,7 +215,7 @@ def analyze_voxel_map(messages: List[Any]) -> Dict[str, Any]:
     reason, so the analyzer never produces a false OK for debug mode.
     """
     if not messages:
-        return {"status": "NO_DATA"}
+        return {"status": "NO_DATA", "topic": topic_name}
 
     point_counts = []
     frames = set()
@@ -218,6 +229,7 @@ def analyze_voxel_map(messages: List[Any]) -> Dict[str, Any]:
 
     result = {
         "status": status,
+        "topic": topic_name,
         "count": len(messages),
         "rate_hz": topic_rate(messages),
         "frame_id": frame_id,
@@ -228,7 +240,7 @@ def analyze_voxel_map(messages: List[Any]) -> Dict[str, Any]:
     }
     if not frame_ok:
         result["reason"] = (
-            "/livox_map frame_id must be 'map_ned' for production assessment. "
+            f"{topic_name} frame_id must be 'map_ned' for production assessment. "
             "Re-run with MAP_INPUT_SOURCE=px4_full."
         )
     return result
@@ -438,30 +450,40 @@ def main() -> int:
         "milestones": {},
     }
 
-    # M1 - Collision Prevention
-    report["milestones"]["M1_collision_prevention"] = analyze_obstacle_distance(
-        messages.get("/fmu/in/obstacle_distance", [])
-    )
+    # M1 - Collision Prevention (canonical topic, no legacy fallback needed).
+    m1_messages = messages.get("/fmu/in/obstacle_distance", [])
+    report["milestones"]["M1_collision_prevention"] = analyze_obstacle_distance(m1_messages)
+    report["milestones"]["M1_collision_prevention"]["topic"] = "/fmu/in/obstacle_distance"
 
-    # M2 - NED transform
+    # M2 - NED transform (canonical + legacy fallback)
+    m2_topic, m2_messages = select_topic(
+        messages, ["/livox/world/cloud", "/livox_processed_ned"]
+    )
     report["milestones"]["M2_ned_transform"] = analyze_cloud(
-        messages.get("/livox_processed_ned", []), expected_frame="map_ned"
+        m2_messages, expected_frame="map_ned"
     )
+    report["milestones"]["M2_ned_transform"]["topic"] = m2_topic
 
-    # M3 - Global voxel map
-    report["milestones"]["M3_global_map"] = analyze_voxel_map(
-        messages.get("/livox_map", [])
+    # M3 - Global voxel map (canonical + legacy fallback)
+    m3_topic, m3_messages = select_topic(
+        messages, ["/livox/map/global", "/livox_map"]
     )
+    report["milestones"]["M3_global_map"] = analyze_voxel_map(m3_messages, m3_topic)
 
-    # M4 - Local virtual scan (if present)
+    # M4 - Local virtual scan (canonical + legacy fallback)
+    m4_topic, m4_messages = select_topic(
+        messages, ["/livox/perception/scan_1d", "/local_virtual_scan"]
+    )
     report["milestones"]["M4_local_virtual_scan"] = analyze_laserscan(
-        messages.get("/local_virtual_scan", []), expected_frame="aircraft"
+        m4_messages, expected_frame="aircraft"
     )
+    report["milestones"]["M4_local_virtual_scan"]["topic"] = m4_topic
 
     # M5 - Visual odometry
+    ev_messages = messages.get("/fmu/in/vehicle_visual_odometry", [])
+    px4_messages = messages.get("/fmu/out/vehicle_odometry", [])
     report["milestones"]["M5_visual_odometry"] = analyze_visual_odometry(
-        messages.get("/fmu/in/vehicle_visual_odometry", []),
-        messages.get("/fmu/out/vehicle_odometry", []),
+        ev_messages, px4_messages
     )
 
     # Print and save report

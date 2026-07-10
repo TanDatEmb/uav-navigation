@@ -2,9 +2,9 @@
 Launch file for the full mapping pipeline (Phase 1).
 
 Brings up:
-    - fast_lio2_node : lidar + px4 odom -> /livox_processed + /odometry
-    - ned_transform_node : camera_init/ENU cloud -> map_ned cloud
-    - voxmap_manager_node : map_ned cloud -> sparse global voxel map
+    - cloud_preprocessor : lidar + px4 odom -> /livox/l1/cloud + /livox/l1/odometry
+    - world_bridge : camera_init/ENU cloud -> /livox/world/cloud
+    - voxel_map : world cloud -> sparse global voxel map
 """
 
 import os
@@ -38,13 +38,13 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'input_source',
-            default_value='lio_world',
-            description='Cloud source for voxmap_manager_node'),
+            default_value='px4_full',
+            description='Cloud source for voxel_map node'),
 
         DeclareLaunchArgument(
             'enable_fast_lio2',
             default_value='true',
-            description='Run FAST-LIO2 adapter to provide /livox_processed and /odometry'),
+            description='Run cloud preprocessor to provide /livox/l1/cloud and /livox/l1/odometry'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

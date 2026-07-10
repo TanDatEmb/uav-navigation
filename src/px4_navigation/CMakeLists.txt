@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(px4_common REQUIRED)
+find_package(px4_ros_com REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -35,6 +36,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     sensor_msgs::sensor_msgs
 )
 ament_target_dependencies(${PROJECT_NAME} PUBLIC
+    px4_ros_com
     rclcpp
     geometry_msgs
     nav_msgs
@@ -100,7 +102,7 @@ install(DIRECTORY launch/
 )
 
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_common px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs visualization_msgs)
+ament_export_dependencies(px4_common px4_ros_com px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs visualization_msgs)
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)

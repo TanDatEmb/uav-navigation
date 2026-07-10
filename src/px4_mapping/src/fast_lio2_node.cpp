@@ -8,6 +8,7 @@
 
 #include <px4_common/math/transforms.hpp>
 #include <px4_common/utils/parameter_loader.hpp>
+#include <px4_ros_com/time_sync.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace px4_mapping {
@@ -29,7 +30,7 @@ inline Eigen::Quaterniond SmallAngleQuaternion(const Eigen::Vector3d &delta_angl
 }  // namespace
 
 FastLio2Node::FastLio2Node(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("fast_lio2", options) {
+    : rclcpp::Node("cloud_preprocessor_node", options) {
     LoadParameters();
 
     const auto sensor_qos = rclcpp::SensorDataQoS();
@@ -53,7 +54,7 @@ FastLio2Node::FastLio2Node(const rclcpp::NodeOptions &options)
     pub_lio_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(output_odom_topic_, lio_pub_qos);
 
     RCLCPP_INFO(this->get_logger(),
-                "fast_lio2 started: in_cloud=%s px4_odom=%s imu=%s out_cloud=%s out_odom=%s "
+                "cloud_preprocessor started: in_cloud=%s px4_odom=%s imu=%s out_cloud=%s out_odom=%s "
                 "point_filter_num=%d blind=%.2f",
                 input_cloud_topic_.c_str(), px4_odom_topic_.c_str(), vehicle_imu_topic_.c_str(),
                 output_cloud_topic_.c_str(), output_odom_topic_.c_str(), point_filter_num_,
@@ -73,10 +74,10 @@ void FastLio2Node::LoadParameters() {
         LoadParam(*this, "vehicle_imu_topic", std::string("/fmu/out/vehicle_imu"),
                   "Input PX4 vehicle IMU topic for incremental propagation.");
     output_cloud_topic_ =
-        LoadParam(*this, "output_cloud_topic", std::string("/livox_processed"),
+        LoadParam(*this, "output_cloud_topic", std::string("/livox/l1/cloud"),
                   "Output processed cloud in camera_init frame.");
     output_odom_topic_ =
-        LoadParam(*this, "output_odom_topic", std::string("/odometry"),
+        LoadParam(*this, "output_odom_topic", std::string("/livox/l1/odometry"),
                   "Output odometry in camera_init frame.");
     output_frame_id_ =
         LoadParam(*this, "output_frame_id", std::string("camera_init"),
@@ -131,7 +132,26 @@ void FastLio2Node::LoadParameters() {
 
 void FastLio2Node::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     OdomSample sample;
-    sample.stamp = this->now();
+    const int64_t now_ns = this->now().nanoseconds();
+    const int64_t sample_t_ns =
+        px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
+    if (sample_t_ns <= 0) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[cloud_preprocessor] PX4 odometry timestamp_sample invalid (%lu), fallback to now()",
+                             static_cast<unsigned long>(msg->timestamp_sample));
+        sample.stamp = this->now();
+    } else {
+        if (now_ns > 1'000'000'000LL &&
+            !px4_ros_com::time::IsWithinTimestampDomainGuard(sample_t_ns, now_ns)) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "[cloud_preprocessor] PX4 odometry timestamp outside ROS domain guard "
+                "(stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
+                sample_t_ns, now_ns);
+            return;
+        }
+        sample.stamp = rclcpp::Time(sample_t_ns, this->get_clock()->get_clock_type());
+    }
     sample.position_ned = Eigen::Vector3d(static_cast<double>(msg->position[0]),
                                           static_cast<double>(msg->position[1]),
                                           static_cast<double>(msg->position[2]));
@@ -154,7 +174,7 @@ void FastLio2Node::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedP
         origin_orientation_enu_ = px4_common::math::QuaternionNedToEnu(sample.orientation_ned);
         origin_initialized_ = true;
         RCLCPP_INFO(this->get_logger(),
-                    "fast_lio2 origin initialized at NED (%.3f, %.3f, %.3f)",
+                    "cloud_preprocessor origin initialized at NED (%.3f, %.3f, %.3f)",
                     origin_position_ned_.x(), origin_position_ned_.y(), origin_position_ned_.z());
     }
 }
@@ -186,7 +206,13 @@ void FastLio2Node::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPtr
     const Eigen::Vector3d delta_velocity_ned = fused_odom_.orientation_ned * delta_velocity_body;
     fused_odom_.velocity_ned += delta_velocity_ned;
     fused_odom_.position_ned += fused_odom_.velocity_ned * dt_s;
-    fused_odom_.stamp = this->now();
+    const int64_t imu_t_ns =
+        px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, this->now().nanoseconds());
+    if (imu_t_ns > 0) {
+        fused_odom_.stamp = rclcpp::Time(imu_t_ns, this->get_clock()->get_clock_type());
+    } else {
+        fused_odom_.stamp = this->now();
+    }
     fused_odom_.valid = true;
 }
 
@@ -337,9 +363,13 @@ void FastLio2Node::PublishLioOdometry(const OdomSample &odom_sample, const rclcp
     msg.pose.pose.orientation.y = q_rel_enu.y();
     msg.pose.pose.orientation.z = q_rel_enu.z();
 
-    msg.twist.twist.linear.x = v_enu.x();
-    msg.twist.twist.linear.y = v_enu.y();
-    msg.twist.twist.linear.z = v_enu.z();
+    // nav_msgs/Odometry requires twist in child_frame_id (base_link). Convert
+    // world ENU linear velocity into body FLU using the inverse body attitude.
+    const Eigen::Vector3d v_body_flu = q_rel_enu.conjugate() * v_enu;
+
+    msg.twist.twist.linear.x = v_body_flu.x();
+    msg.twist.twist.linear.y = v_body_flu.y();
+    msg.twist.twist.linear.z = v_body_flu.z();
 
     // Same orientation in LIO-derived odometry; angular velocity in body frame
     // would require an extra finite-difference on q_rel_enu, intentionally

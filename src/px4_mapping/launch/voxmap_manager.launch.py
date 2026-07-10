@@ -32,13 +32,13 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'input_source',
-            default_value='lio_world',
+            default_value='px4_full',
             description='Cloud source: lio_world, px4_only, px4_full, fast_lio2_deskew'),
 
         Node(
             package='px4_mapping',
             executable='voxmap_manager_node',
-            name='voxmap_manager',
+            name='voxel_map',
             parameters=[
                 config_file,
                 {
@@ -48,8 +48,9 @@ def generate_launch_description():
             ],
             output='screen',
             remappings=[
-                ('/livox_processed_ned', '/livox_processed_ned'),
-                ('/odometry', '/odometry'),
+                ('/livox/world/cloud', '/livox/world/cloud'),
+                ('/livox/map/global', '/livox/map/global'),
+                ('/livox/l1/odometry', '/livox/l1/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/out/vehicle_status', '/fmu/out/vehicle_status'),
                 ('/fmu/out/vehicle_local_position', '/fmu/out/vehicle_local_position'),

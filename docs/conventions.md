@@ -80,7 +80,7 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
   `header.stamp`).
 - **PX4 boundary**: MicroXRCE-DDS agent translates `timestamp_sample`
   (PX4 wall-clock microseconds) into ROS 2 time. Do not maintain a manual
-  offset inside nodes unless agent sync is proven unreliable.
+  offset inside nodes.
 - **Internal messages**: use `std::chrono::nanoseconds` or `rclcpp::Time`.
   Avoid mixing `double seconds` and `int64_t nanoseconds` in the same buffer.
 - **Pose buffers**: enforce strict monotonic timestamps and track
