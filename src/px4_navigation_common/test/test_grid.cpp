@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
-#include <px4_common/math/grid.hpp>
+#include <px4_navigation_common/math/grid.hpp>
 
-using px4_common::math::AddressToIndex;
-using px4_common::math::IndexToAddress;
-using px4_common::math::IndexToWorld;
-using px4_common::math::IsIndexInBounds;
-using px4_common::math::IsPositionInMap;
-using px4_common::math::WorldToIndex;
+using px4_navigation_common::math::AddressToIndex;
+using px4_navigation_common::math::IndexToAddress;
+using px4_navigation_common::math::IndexToWorld;
+using px4_navigation_common::math::IsIndexInBounds;
+using px4_navigation_common::math::IsPositionInMap;
+using px4_navigation_common::math::WorldToIndex;
 
 TEST(GridTest, WorldToIndexAndBack) {
     const Eigen::Vector3d origin(0.0, 0.0, 0.0);

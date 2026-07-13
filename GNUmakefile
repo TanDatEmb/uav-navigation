@@ -11,9 +11,15 @@
 
 PARALLEL_WORKERS ?= 2
 MAKE_JOBS        ?= 2
-COLCON_FLAGS    ?= --cmake-args -DCMAKE_BUILD_TYPE=Release
+ROS_PYTHON       ?= /usr/bin/python3
+COLCON_FLAGS     ?= --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=$(ROS_PYTHON) -DPYTHON_EXECUTABLE=$(ROS_PYTHON) -DPython3_FIND_VIRTUALENV=STANDARD
 
-ALL_PACKAGES := px4_common px4_mapping px4_navigation px4_ros_com
+ALL_PACKAGES := px4_navigation_common px4_mapping px4_navigation px4_ros2_utils
+
+# ── Environment guard ───────────────────────────────────────────────────────
+ifndef AMENT_PREFIX_PATH
+$(warning AMENT_PREFIX_PATH not set. Did you forget to: source /opt/ros/jazzy/setup.bash?)
+endif
 
 # ── Default: build all ──────────────────────────────────────────────────────
 .DEFAULT_GOAL := build

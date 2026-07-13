@@ -1,10 +1,10 @@
-#ifndef PX4_COMMON_MATH_GRID_HPP_
-#define PX4_COMMON_MATH_GRID_HPP_
+#ifndef PX4_NAVIGATION_COMMON_MATH_GRID_HPP_
+#define PX4_NAVIGATION_COMMON_MATH_GRID_HPP_
 
 #include <Eigen/Dense>
 #include <cmath>
 
-namespace px4_common::math {
+namespace px4_navigation_common::math {
 
 /**
  * @brief Convert a world position to a discrete voxel/grid index.
@@ -97,6 +97,6 @@ inline bool IsPositionInMap(const Eigen::Vector3d &position, const Eigen::Vector
     return IsIndexInBounds(WorldToIndex(position, origin, resolution), size);
 }
 
-}  // namespace px4_common::math
+}  // namespace px4_navigation_common::math
 
-#endif  // PX4_COMMON_MATH_GRID_HPP_
+#endif  // PX4_NAVIGATION_COMMON_MATH_GRID_HPP_

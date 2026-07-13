@@ -6,9 +6,9 @@
 #include <limits>
 #include <vector>
 
-#include <px4_common/math/transforms.hpp>
-#include <px4_common/utils/parameter_loader.hpp>
-#include <px4_ros_com/time_sync.hpp>
+#include <px4_ros2_utils/frame/transform.hpp>
+#include <px4_ros2_utils/parameter/param_utils.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace px4_mapping {
@@ -30,7 +30,7 @@ inline Eigen::Quaterniond SmallAngleQuaternion(const Eigen::Vector3d &delta_angl
 }  // namespace
 
 LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("lidar_odometry", options) {
+    : rclcpp::Node("lidar_odometry", options), timesync_(this->get_clock()) {
     LoadParameters();
 
     const auto sensor_qos = rclcpp::SensorDataQoS();
@@ -49,9 +49,17 @@ LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
         vehicle_imu_topic_, px4_qos,
         std::bind(&LidarOdometry::VehicleImuCallback, this, std::placeholders::_1));
 
+    sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+            "/fmu/out/timesync_status"),
+        rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+            timesync_.update(msg);
+        });
+
     pub_processed_cloud_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, lio_pub_qos);
-    pub_lio_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(output_odom_topic_, lio_pub_qos);
+    pub_lio_odom_ =
+        this->create_publisher<nav_msgs::msg::Odometry>(output_odom_topic_, lio_pub_qos);
 
     RCLCPP_INFO(this->get_logger(),
                 "lidar_odometry started: in_cloud=%s px4_odom=%s imu=%s out_cloud=%s out_odom=%s "
@@ -62,36 +70,34 @@ LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
 }
 
 void LidarOdometry::LoadParameters() {
-    using px4_common::utils::LoadParam;
+    const auto load_parameter = [this]<typename T>(const std::string &name, const T &default_value,
+                                                   const std::string &description) {
+        return px4_ros2_utils::parameter::declare_and_get(
+            *this, name, default_value, px4_ros2_utils::parameter::descriptor(description));
+    };
 
-    input_cloud_topic_ =
-        LoadParam(*this, "input_cloud_topic", std::string("/lidar_360/points"),
-                  "Input LiDAR point cloud topic in sensor FLU frame.");
-    px4_odom_topic_ =
-        LoadParam(*this, "px4_odom_topic", std::string("/fmu/out/vehicle_odometry"),
-                  "Input PX4 vehicle odometry in map_ned frame.");
-    vehicle_imu_topic_ =
-        LoadParam(*this, "vehicle_imu_topic", std::string("/fmu/out/vehicle_imu"),
-                  "Input PX4 vehicle IMU topic for incremental propagation.");
-    output_cloud_topic_ =
-        LoadParam(*this, "output_cloud_topic", std::string("/localization/cloud"),
-                  "Output processed cloud in camera_init frame.");
-    output_odom_topic_ =
-        LoadParam(*this, "output_odom_topic", std::string("/localization/odometry"),
-                  "Output odometry in camera_init frame.");
-    output_frame_id_ =
-        LoadParam(*this, "output_frame_id", std::string("camera_init"),
-                  "Output frame id for processed cloud and odometry.");
-    output_child_frame_id_ =
-        LoadParam(*this, "output_child_frame_id", std::string("base_link"),
-                  "Output child frame id for odometry.");
+    input_cloud_topic_ = load_parameter("input_cloud_topic", std::string("/lidar_360/points"),
+                                        "Input LiDAR point cloud topic in sensor FLU frame.");
+    px4_odom_topic_ = load_parameter("px4_odom_topic", std::string("/fmu/out/vehicle_odometry"),
+                                     "Input PX4 vehicle odometry in map_ned frame.");
+    vehicle_imu_topic_ = load_parameter("vehicle_imu_topic", std::string("/fmu/out/vehicle_imu"),
+                                        "Input PX4 vehicle IMU topic for incremental propagation.");
+    output_cloud_topic_ = load_parameter("output_cloud_topic", std::string("/localization/cloud"),
+                                         "Output processed cloud in camera_init frame.");
+    output_odom_topic_ = load_parameter("output_odom_topic", std::string("/localization/odometry"),
+                                        "Output odometry in camera_init frame.");
+    output_frame_id_ = load_parameter("output_frame_id", std::string("camera_init"),
+                                      "Output frame id for processed cloud and odometry.");
+    output_child_frame_id_ = load_parameter("output_child_frame_id", std::string("base_link"),
+                                            "Output child frame id for odometry.");
 
-    point_filter_num_ = LoadParam(*this, "point_filter_num", 3,
-                                  "Take one out of N points for lightweight preprocessing.");
-    blind_m_ = LoadParam(*this, "blind_m", 0.5,
-                         "Ignore points within this radius from sensor origin (metres).");
-    use_imu_fusion_ = LoadParam(*this, "use_imu_fusion", true,
-                                "Use PX4 VehicleImu delta-angle/delta-velocity to propagate odometry between PX4 odom updates.");
+    point_filter_num_ = load_parameter("point_filter_num", 3,
+                                       "Take one out of N points for lightweight preprocessing.");
+    blind_m_ = load_parameter("blind_m", 0.5,
+                              "Ignore points within this radius from sensor origin (metres).");
+    use_imu_fusion_ = load_parameter("use_imu_fusion", true,
+                                     "Use PX4 VehicleImu delta-angle/delta-velocity to propagate "
+                                     "odometry between PX4 odom updates.");
 
     // Default pose/twist covariance for /odometry. Until localization
     // a real covariance, expose sensible values so downstream consumers
@@ -116,9 +122,9 @@ void LidarOdometry::LoadParameters() {
     twist_covariance_[35] = 0.0008;
 
     max_velocity_for_estimate_mps_ =
-        LoadParam(*this, "max_velocity_for_estimate_mps", 2.0,
-                  "Upper bound for finite-difference velocity (m/s). "
-                  "Velocities above this are clamped to avoid spikes from stalled topics.");
+        load_parameter("max_velocity_for_estimate_mps", 2.0,
+                       "Upper bound for finite-difference velocity (m/s). "
+                       "Velocities above this are clamped to avoid spikes from stalled topics.");
 
     if (point_filter_num_ <= 0) {
         RCLCPP_WARN(this->get_logger(), "point_filter_num=%d invalid, using 1", point_filter_num_);
@@ -132,26 +138,15 @@ void LidarOdometry::LoadParameters() {
 
 void LidarOdometry::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     OdomSample sample;
-    const int64_t now_ns = this->now().nanoseconds();
-    const int64_t sample_t_ns =
-        px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
-    if (sample_t_ns <= 0) {
+    const auto sample_stamp = timesync_.toROS(msg->timestamp_sample);
+    if (!sample_stamp) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[lidar_odometry] PX4 odometry timestamp_sample invalid (%lu), fallback to now()",
+                             "[lidar_odometry] Dropping PX4 odometry until TimesyncStatus is valid "
+                             "(timestamp_sample=%lu)",
                              static_cast<unsigned long>(msg->timestamp_sample));
-        sample.stamp = this->now();
-    } else {
-        if (now_ns > 1'000'000'000LL &&
-            !px4_ros_com::time::IsWithinTimestampDomainGuard(sample_t_ns, now_ns)) {
-            RCLCPP_ERROR_THROTTLE(
-                this->get_logger(), *this->get_clock(), 5000,
-                "[lidar_odometry] PX4 odometry timestamp outside ROS domain guard "
-                "(stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
-                sample_t_ns, now_ns);
-            return;
-        }
-        sample.stamp = rclcpp::Time(sample_t_ns, this->get_clock()->get_clock_type());
+        return;
     }
+    sample.stamp = *sample_stamp;
     sample.position_ned = Eigen::Vector3d(static_cast<double>(msg->position[0]),
                                           static_cast<double>(msg->position[1]),
                                           static_cast<double>(msg->position[2]));
@@ -171,7 +166,8 @@ void LidarOdometry::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::Shared
 
     if (!origin_initialized_) {
         origin_position_ned_ = sample.position_ned;
-        origin_orientation_enu_ = px4_common::math::QuaternionNedToEnu(sample.orientation_ned);
+        origin_orientation_enu_ =
+            px4_ros2_utils::frame::orientation_ned_to_enu(sample.orientation_ned);
         origin_initialized_ = true;
         RCLCPP_INFO(this->get_logger(),
                     "lidar_odometry origin initialized at NED (%.3f, %.3f, %.3f)",
@@ -181,6 +177,16 @@ void LidarOdometry::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::Shared
 
 void LidarOdometry::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPtr msg) {
     if (!use_imu_fusion_) {
+        return;
+    }
+
+    const auto imu_stamp = timesync_.toROS(msg->timestamp_sample);
+    if (!imu_stamp) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "[lidar_odometry] Ignoring IMU timestamp until TimesyncStatus is valid "
+            "(timestamp_sample=%lu)",
+            static_cast<unsigned long>(msg->timestamp_sample));
         return;
     }
 
@@ -206,13 +212,7 @@ void LidarOdometry::VehicleImuCallback(const px4_msgs::msg::VehicleImu::SharedPt
     const Eigen::Vector3d delta_velocity_ned = fused_odom_.orientation_ned * delta_velocity_body;
     fused_odom_.velocity_ned += delta_velocity_ned;
     fused_odom_.position_ned += fused_odom_.velocity_ned * dt_s;
-    const int64_t imu_t_ns =
-        px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, this->now().nanoseconds());
-    if (imu_t_ns > 0) {
-        fused_odom_.stamp = rclcpp::Time(imu_t_ns, this->get_clock()->get_clock_type());
-    } else {
-        fused_odom_.stamp = this->now();
-    }
+    fused_odom_.stamp = *imu_stamp;
     fused_odom_.valid = true;
 }
 
@@ -240,11 +240,12 @@ void LidarOdometry::CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr
 }
 
 bool LidarOdometry::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &input,
-                                       sensor_msgs::msg::PointCloud2 &output,
-                                       const OdomSample &odom_sample) {
+                                        sensor_msgs::msg::PointCloud2 &output,
+                                        const OdomSample &odom_sample) {
     const double blind_sq = blind_m_ * blind_m_;
 
-    const Eigen::Quaterniond q_enu = px4_common::math::QuaternionNedToEnu(odom_sample.orientation_ned);
+    const Eigen::Quaterniond q_enu =
+        px4_ros2_utils::frame::orientation_ned_to_enu(odom_sample.orientation_ned);
     const Eigen::Quaterniond q_rel_enu = origin_orientation_enu_.conjugate() * q_enu;
 
     std::vector<Eigen::Vector3f> accepted_points;
@@ -275,7 +276,7 @@ bool LidarOdometry::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &inp
         const Eigen::Vector3d p_world_ned =
             odom_sample.position_ned + odom_sample.orientation_ned * p_frd;
         const Eigen::Vector3d p_rel_ned = p_world_ned - origin_position_ned_;
-        const Eigen::Vector3d p_rel_enu = px4_common::math::NedToEnu(p_rel_ned);
+        const Eigen::Vector3d p_rel_enu = px4_ros2_utils::frame::ned_to_enu(p_rel_ned);
 
         accepted_points.emplace_back(static_cast<float>(p_rel_enu.x()),
                                      static_cast<float>(p_rel_enu.y()),
@@ -319,9 +320,10 @@ void LidarOdometry::PublishLioOdometry(const OdomSample &odom_sample, const rclc
     msg.child_frame_id = output_child_frame_id_;
 
     const Eigen::Vector3d p_rel_ned = odom_sample.position_ned - origin_position_ned_;
-    const Eigen::Vector3d p_rel_enu = px4_common::math::NedToEnu(p_rel_ned);
+    const Eigen::Vector3d p_rel_enu = px4_ros2_utils::frame::ned_to_enu(p_rel_ned);
 
-    const Eigen::Quaterniond q_enu = px4_common::math::QuaternionNedToEnu(odom_sample.orientation_ned);
+    const Eigen::Quaterniond q_enu =
+        px4_ros2_utils::frame::orientation_ned_to_enu(odom_sample.orientation_ned);
     const Eigen::Quaterniond q_rel_enu = origin_orientation_enu_.conjugate() * q_enu;
 
     // Twist selection priority:
@@ -332,13 +334,12 @@ void LidarOdometry::PublishLioOdometry(const OdomSample &odom_sample, const rclc
     //      seeing a literal zero twist during hover.
     Eigen::Vector3d v_enu;
     if (odom_sample.velocity_ned.norm() > 1e-3) {
-        v_enu = px4_common::math::NedToEnu(odom_sample.velocity_ned);
+        v_enu = px4_ros2_utils::frame::ned_to_enu(odom_sample.velocity_ned);
     } else {
         Eigen::Vector3d v_finite = Eigen::Vector3d::Zero();
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
-            const double dt_s =
-                (stamp - last_publish_stamp_).seconds();
+            const double dt_s = (stamp - last_publish_stamp_).seconds();
             if (last_publish_valid_ && dt_s > 1e-3) {
                 v_finite = (p_rel_ned - last_publish_position_ned_) / dt_s;
                 // Clamp to avoid spikes when the topic stalled.
@@ -351,7 +352,7 @@ void LidarOdometry::PublishLioOdometry(const OdomSample &odom_sample, const rclc
             last_publish_stamp_ = stamp;
             last_publish_valid_ = true;
         }
-        v_enu = px4_common::math::NedToEnu(v_finite);
+        v_enu = px4_ros2_utils::frame::ned_to_enu(v_finite);
     }
 
     msg.pose.pose.position.x = p_rel_enu.x();

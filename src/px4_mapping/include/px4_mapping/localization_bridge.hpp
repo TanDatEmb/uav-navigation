@@ -17,13 +17,15 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
-#include <px4_common/time/pose_buffer.hpp>
-#include <px4_ros_com/time_sync.hpp>
+#include <px4_mapping/time/pose_buffer.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
 
 namespace px4_mapping {
 
 /**
- * @brief Node for transforming localization point clouds from camera_init frame to PX4 map_ned frame.
+ * @brief Node for transforming localization point clouds from camera_init frame to PX4 map_ned
+ * frame.
  *
  * Subscribes to:
  * - /localization/cloud (sensor_msgs/PointCloud2, camera_init/ENU frame)
@@ -67,7 +69,7 @@ class LocalizationBridge : public rclcpp::Node {
     bool TransformPointCloud(const sensor_msgs::msg::PointCloud2::SharedPtr& input_cloud,
                              sensor_msgs::msg::PointCloud2& output_cloud);
 
-    void PublishVisualOdometry(const px4_common::time::PoseSample& lio_sample);
+    void PublishVisualOdometry(const px4_mapping::time::PoseSample& lio_sample);
 
     // Parameter loading
     void LoadParameters();
@@ -84,8 +86,8 @@ class LocalizationBridge : public rclcpp::Node {
     rclcpp::CallbackGroup::SharedPtr compute_callback_group_;
 
     // Pose buffers
-    px4_common::time::PoseBuffer lio_pose_buffer_;
-    px4_common::time::PoseBuffer px4_pose_buffer_;
+    px4_mapping::time::PoseBuffer lio_pose_buffer_;
+    px4_mapping::time::PoseBuffer px4_pose_buffer_;
 
     // Parameters
     std::string input_cloud_topic_;
@@ -115,8 +117,9 @@ class LocalizationBridge : public rclcpp::Node {
     // Statistics
     uint64_t frame_count_;
 
-    // Shared timestamp-domain adapter for PX4->ROS conversion.
-    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
+    // Converts PX4 timestamps using the authoritative PX4 timesync offset.
+    px4_ros2_utils::time::Timesync timesync_;
+    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr sub_timesync_status_;
 };
 
 }  // namespace px4_mapping

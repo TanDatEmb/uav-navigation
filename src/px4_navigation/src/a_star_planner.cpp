@@ -1,4 +1,4 @@
-#include <px4_common/math/grid.hpp>
+#include <px4_navigation_common/math/grid.hpp>
 #include <px4_navigation/a_star_planner.hpp>
 
 #include <algorithm>
@@ -8,8 +8,8 @@
 namespace px4_navigation {
 
 AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
-                                            const px4_common::DroneStateNed& start,
-                                            const px4_common::WaypointNed& goal) {
+                                            const px4_navigation_common::DroneStateNed& start,
+                                            const px4_navigation_common::WaypointNed& goal) {
     PlanResult result;
     std::ostringstream debug;
 
@@ -177,17 +177,17 @@ AStarPlanner::PlanResult AStarPlanner::Plan(const LocalPlanGrid& grid,
 
 Eigen::Vector3i AStarPlanner::WorldToGrid(const LocalPlanGrid& grid,
                                           const Eigen::Vector3d& world) const {
-    return px4_common::math::WorldToIndex(world, grid.Origin(), grid.Resolution());
+    return px4_navigation_common::math::WorldToIndex(world, grid.Origin(), grid.Resolution());
 }
 
 Eigen::Vector3d AStarPlanner::GridToWorld(const LocalPlanGrid& grid,
                                           const Eigen::Vector3i& idx) const {
-    return px4_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
+    return px4_navigation_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
 }
 
 bool AStarPlanner::IsBlocked(const LocalPlanGrid& grid, const Eigen::Vector3i& idx) const {
     const Eigen::Vector3d world_pos =
-        px4_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
+        px4_navigation_common::math::IndexToWorld(idx, grid.Origin(), grid.Resolution());
     return !grid.IsFree(world_pos.x(), world_pos.y(), world_pos.z());
 }
 

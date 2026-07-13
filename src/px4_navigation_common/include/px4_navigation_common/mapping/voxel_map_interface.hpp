@@ -1,11 +1,11 @@
-#ifndef PX4_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_
-#define PX4_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_
+#ifndef PX4_NAVIGATION_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_
+#define PX4_NAVIGATION_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_
 
 #include <Eigen/Core>
 #include <cstdint>
 #include <vector>
 
-namespace px4_common::mapping {
+namespace px4_navigation_common::mapping {
 
 /**
  * @brief Abstract interface between the mapping layer and the navigation layer.
@@ -76,6 +76,6 @@ class IVoxMapManager {
     virtual Eigen::Vector3d GetExtrinsicTranslation() const noexcept = 0;
 };
 
-}  // namespace px4_common::mapping
+}  // namespace px4_navigation_common::mapping
 
-#endif  // PX4_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_
+#endif  // PX4_NAVIGATION_COMMON_MAPPING_VOXEL_MAP_INTERFACE_HPP_

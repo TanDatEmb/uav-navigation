@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/types.hpp>
 #include <px4_navigation/local_plan_grid.hpp>
 
 namespace px4_navigation {
@@ -67,8 +67,8 @@ class AStarPlanner {
      * @param goal Goal position in NED frame
      * @return PlanResult containing the computed path or failure information
      */
-    PlanResult Plan(const LocalPlanGrid& grid, const px4_common::DroneStateNed& start,
-                    const px4_common::WaypointNed& goal);
+    PlanResult Plan(const LocalPlanGrid& grid, const px4_navigation_common::DroneStateNed& start,
+                    const px4_navigation_common::WaypointNed& goal);
 
     /// Maximum search distance from start position (metres)
     inline static constexpr double kPlanningHorizonM = 20.0;
@@ -121,7 +121,7 @@ class AStarPlanner {
     std::vector<Node> node_pool_;
 
     /// Best g-value for each visited node to avoid redundant expansions
-    std::unordered_map<Eigen::Vector3i, double, px4_common::VoxelHash> best_g_;
+    std::unordered_map<Eigen::Vector3i, double, px4_navigation_common::VoxelHash> best_g_;
 
     /// Current index in node pool
     size_t pool_idx_{0};

@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/types.hpp>
 
-using px4_common::DroneStateNed;
-using px4_common::MissionPathNed;
-using px4_common::PointLivox;
-using px4_common::VoxelHash;
-using px4_common::WaypointNed;
+using px4_navigation_common::DroneStateNed;
+using px4_navigation_common::MissionPathNed;
+using px4_navigation_common::PointLivox;
+using px4_navigation_common::VoxelHash;
+using px4_navigation_common::WaypointNed;
 
 TEST(TypesTest, PointLivoxDefaultConstructed) {
     const PointLivox pt;

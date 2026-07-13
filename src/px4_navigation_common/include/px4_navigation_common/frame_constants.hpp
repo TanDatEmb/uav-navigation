@@ -1,9 +1,9 @@
-#ifndef PX4_COMMON_FRAME_CONSTANTS_HPP_
-#define PX4_COMMON_FRAME_CONSTANTS_HPP_
+#ifndef PX4_NAVIGATION_COMMON_FRAME_CONSTANTS_HPP_
+#define PX4_NAVIGATION_COMMON_FRAME_CONSTANTS_HPP_
 
 #include <string_view>
 
-namespace px4_common::frame {
+namespace px4_navigation_common::frame {
 
 /// PX4 local world frame: North-East-Down.
 inline constexpr std::string_view kMapNed = "map_ned";
@@ -20,6 +20,6 @@ inline constexpr std::string_view kAircraft = "aircraft";
 /// Sensor frame for LiDAR/depth in ROS conventions.
 inline constexpr std::string_view kSensor = "sensor";
 
-}  // namespace px4_common::frame
+}  // namespace px4_navigation_common::frame
 
-#endif  // PX4_COMMON_FRAME_CONSTANTS_HPP_
+#endif  // PX4_NAVIGATION_COMMON_FRAME_CONSTANTS_HPP_

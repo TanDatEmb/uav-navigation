@@ -7,8 +7,8 @@
 
 #include <Eigen/Core>
 
-#include <px4_common/mapping/voxel_types.hpp>
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/mapping/voxel_types.hpp>
+#include <px4_navigation_common/types.hpp>
 
 namespace px4_mapping {
 

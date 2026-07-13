@@ -2,11 +2,11 @@
 
 #include <Eigen/Core>
 
-#include <px4_common/mapping/voxel_types.hpp>
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/mapping/voxel_types.hpp>
+#include <px4_navigation_common/types.hpp>
 #include <px4_mapping/voxel_hash_map.hpp>
 
-using px4_common::PointLivox;
+using px4_navigation_common::PointLivox;
 using px4_mapping::VoxelHashMap;
 
 class VoxelHashMapTest : public ::testing::Test {
@@ -56,9 +56,9 @@ TEST_F(VoxelHashMapTest, GetOccupiedPointsInRadiusReturnsExpectedPoint) {
     map_.GetOccupiedPointsInRadius(Eigen::Vector3d::Zero(), 5.0, occupied);
 
     ASSERT_EQ(occupied.size(), 1U);
-    EXPECT_NEAR(occupied[0].x(), 2.0, px4_common::mapping::kDefaultVoxelResolutionM);
-    EXPECT_NEAR(occupied[0].y(), 0.0, px4_common::mapping::kDefaultVoxelResolutionM);
-    EXPECT_NEAR(occupied[0].z(), 0.0, px4_common::mapping::kDefaultVoxelResolutionM);
+    EXPECT_NEAR(occupied[0].x(), 2.0, px4_navigation_common::mapping::kDefaultVoxelResolutionM);
+    EXPECT_NEAR(occupied[0].y(), 0.0, px4_navigation_common::mapping::kDefaultVoxelResolutionM);
+    EXPECT_NEAR(occupied[0].z(), 0.0, px4_navigation_common::mapping::kDefaultVoxelResolutionM);
 }
 
 TEST_F(VoxelHashMapTest, EvictDistantRemovesFarVoxels) {
@@ -125,7 +125,7 @@ TEST_F(VoxelHashMapTest, GetChangedPointsAfterEvictDoesNotCrash) {
 }
 
 TEST_F(VoxelHashMapTest, ImplementsVoxMapManagerInterface) {
-    EXPECT_DOUBLE_EQ(map_.GetResolution(), px4_common::mapping::kDefaultVoxelResolutionM);
+    EXPECT_DOUBLE_EQ(map_.GetResolution(), px4_navigation_common::mapping::kDefaultVoxelResolutionM);
     EXPECT_EQ(map_.FramesDropped(), 0U);
     EXPECT_TRUE(map_.GetExtrinsicTranslation().isApprox(Eigen::Vector3d::Zero()));
 }

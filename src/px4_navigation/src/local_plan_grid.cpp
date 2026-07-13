@@ -16,22 +16,22 @@ void LocalPlanGrid::Reset(const Eigen::Vector3i &size, const Eigen::Vector3d &or
 }
 
 void LocalPlanGrid::MarkOccupied(const Eigen::Vector3d &position) {
-    const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
-    if (!px4_common::math::IsIndexInBounds(index, size_)) {
+    const Eigen::Vector3i index = px4_navigation_common::math::WorldToIndex(position, origin_, resolution_);
+    if (!px4_navigation_common::math::IsIndexInBounds(index, size_)) {
         return;
     }
 
-    const int address = px4_common::math::IndexToAddress(index, size_);
+    const int address = px4_navigation_common::math::IndexToAddress(index, size_);
     grid_[address] = 1;
 }
 
 void LocalPlanGrid::MarkFree(const Eigen::Vector3d &position) {
-    const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
-    if (!px4_common::math::IsIndexInBounds(index, size_)) {
+    const Eigen::Vector3i index = px4_navigation_common::math::WorldToIndex(position, origin_, resolution_);
+    if (!px4_navigation_common::math::IsIndexInBounds(index, size_)) {
         return;
     }
 
-    const int address = px4_common::math::IndexToAddress(index, size_);
+    const int address = px4_navigation_common::math::IndexToAddress(index, size_);
     grid_[address] = 0;
 }
 
@@ -69,15 +69,15 @@ void LocalPlanGrid::InflateObstacles(int inflation_radius_voxels) {
             continue;
         }
 
-        const Eigen::Vector3i current_index = px4_common::math::AddressToIndex(address, size_);
+        const Eigen::Vector3i current_index = px4_navigation_common::math::AddressToIndex(address, size_);
 
         for (const auto &offset : stencil) {
             const Eigen::Vector3i inflated_index = current_index + offset;
-            if (!px4_common::math::IsIndexInBounds(inflated_index, size_)) {
+            if (!px4_navigation_common::math::IsIndexInBounds(inflated_index, size_)) {
                 continue;
             }
 
-            const int inflated_address = px4_common::math::IndexToAddress(inflated_index, size_);
+            const int inflated_address = px4_navigation_common::math::IndexToAddress(inflated_index, size_);
             grid_[inflated_address] = 1;
         }
     }
@@ -85,25 +85,25 @@ void LocalPlanGrid::InflateObstacles(int inflation_radius_voxels) {
 
 bool LocalPlanGrid::IsFree(double x, double y, double z) const {
     const Eigen::Vector3d position(x, y, z);
-    const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
+    const Eigen::Vector3i index = px4_navigation_common::math::WorldToIndex(position, origin_, resolution_);
 
-    if (!px4_common::math::IsIndexInBounds(index, size_)) {
+    if (!px4_navigation_common::math::IsIndexInBounds(index, size_)) {
         return false;
     }
 
-    const int address = px4_common::math::IndexToAddress(index, size_);
+    const int address = px4_navigation_common::math::IndexToAddress(index, size_);
     return grid_[address] == 0;
 }
 
 bool LocalPlanGrid::IsOccupied(double x, double y, double z) const {
     const Eigen::Vector3d position(x, y, z);
-    const Eigen::Vector3i index = px4_common::math::WorldToIndex(position, origin_, resolution_);
+    const Eigen::Vector3i index = px4_navigation_common::math::WorldToIndex(position, origin_, resolution_);
 
-    if (!px4_common::math::IsIndexInBounds(index, size_)) {
+    if (!px4_navigation_common::math::IsIndexInBounds(index, size_)) {
         return true;
     }
 
-    const int address = px4_common::math::IndexToAddress(index, size_);
+    const int address = px4_navigation_common::math::IndexToAddress(index, size_);
     return grid_[address] == 1;
 }
 

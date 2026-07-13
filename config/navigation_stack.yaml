@@ -112,9 +112,7 @@ px4_navigation:
       frame: 12 # MAV_FRAME_BODY_FRD
       sensor_orientation: 0 # MAV_SENSOR_ORIENTATION_NONE
 
-px4_ros_com:
-  ros__parameters:
-    # Placeholder for bridge / offboard parameters.
-    offboard_timeout_s: 1.0
-    position_topic: "/fmu/in/trajectory_setpoint"
-    vehicle_odometry_topic: "/fmu/out/vehicle_odometry"
+# Placeholder for bridge / offboard parameters (previously under px4_ros_com).
+# offboard_timeout_s: 1.0
+# position_topic: "/fmu/in/trajectory_setpoint"
+# vehicle_odometry_topic: "/fmu/out/vehicle_odometry"

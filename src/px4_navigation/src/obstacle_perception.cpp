@@ -23,14 +23,16 @@
 #include <limits>
 #include <string>
 
-#include <px4_common/math/transforms.hpp>
-#include <px4_ros_com/time_sync.hpp>
+#include <px4_ros2_utils/common/constants.hpp>
+#include <px4_ros2_utils/math/angles.hpp>
+#include <px4_ros2_utils/math/quaternion.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 namespace px4_navigation {
 
 ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("obstacle_perception", options) {
+    : rclcpp::Node("obstacle_perception", options), timesync_(this->get_clock()) {
     LoadParameters();
 
     // Allocate spherical grid.
@@ -50,10 +52,17 @@ ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
 
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
         obstacle_distance_topic_, rclcpp::QoS(20).reliable());
+
+    sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+            "/fmu/out/timesync_status"),
+        rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+            timesync_.update(msg);
+        });
+
     if (publish_local_virtual_scan_) {
-        pub_local_virtual_scan_ =
-            this->create_publisher<sensor_msgs::msg::LaserScan>(local_virtual_scan_topic_,
-                                                                 rclcpp::QoS(20).reliable());
+        pub_local_virtual_scan_ = this->create_publisher<sensor_msgs::msg::LaserScan>(
+            local_virtual_scan_topic_, rclcpp::QoS(20).reliable());
     }
 
     const auto period_ns = static_cast<int64_t>(1e9 / publish_rate_hz_);
@@ -65,8 +74,8 @@ ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
                 "pitch_bins=%d pitch=[%.1f, %.1f] deg range=[%.2f, %.2f] m "
                 "body_exclusion=%.2f m rate=%.1f Hz local_scan=%s",
                 cloud_frame_.c_str(), yaw_bins_, pitch_bins_,
-                px4_common::math::Rad2Deg(min_pitch_rad_),
-                px4_common::math::Rad2Deg(max_pitch_rad_), min_distance_m_, max_distance_m_,
+                px4_ros2_utils::math::rad2deg(min_pitch_rad_),
+                px4_ros2_utils::math::rad2deg(max_pitch_rad_), min_distance_m_, max_distance_m_,
                 body_exclusion_radius_m_, publish_rate_hz_,
                 publish_local_virtual_scan_ ? local_virtual_scan_topic_.c_str() : "disabled");
 }
@@ -76,8 +85,8 @@ void ObstaclePerception::LoadParameters() {
     pitch_bins_ = this->declare_parameter("pitch_bins", kDefaultPitchBins);
     const double min_pitch_deg = this->declare_parameter("min_pitch_deg", kDefaultMinPitchDeg);
     const double max_pitch_deg = this->declare_parameter("max_pitch_deg", kDefaultMaxPitchDeg);
-    min_pitch_rad_ = px4_common::math::Deg2Rad(min_pitch_deg);
-    max_pitch_rad_ = px4_common::math::Deg2Rad(max_pitch_deg);
+    min_pitch_rad_ = px4_ros2_utils::math::deg2rad(min_pitch_deg);
+    max_pitch_rad_ = px4_ros2_utils::math::deg2rad(max_pitch_deg);
 
     min_distance_m_ = this->declare_parameter("min_distance_m", kDefaultMinDistanceM);
     max_distance_m_ = this->declare_parameter("max_distance_m", kDefaultMaxDistanceM);
@@ -117,8 +126,8 @@ void ObstaclePerception::LoadParameters() {
         RCLCPP_WARN(this->get_logger(),
                     "max_pitch_deg <= min_pitch_deg, using defaults [%.1f, %.1f]",
                     kDefaultMinPitchDeg, kDefaultMaxPitchDeg);
-        min_pitch_rad_ = px4_common::math::Deg2Rad(kDefaultMinPitchDeg);
-        max_pitch_rad_ = px4_common::math::Deg2Rad(kDefaultMaxPitchDeg);
+        min_pitch_rad_ = px4_ros2_utils::math::deg2rad(kDefaultMinPitchDeg);
+        max_pitch_rad_ = px4_ros2_utils::math::deg2rad(kDefaultMaxPitchDeg);
     }
     if (max_distance_m_ <= min_distance_m_) {
         RCLCPP_WARN(this->get_logger(),
@@ -163,7 +172,7 @@ void ObstaclePerception::CloudCallback(const sensor_msgs::msg::PointCloud2::Shar
 void ObstaclePerception::OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
     const Eigen::Quaterniond q(static_cast<double>(msg->q[0]), static_cast<double>(msg->q[1]),
                                static_cast<double>(msg->q[2]), static_cast<double>(msg->q[3]));
-    const double yaw = px4_common::math::QuaternionGetYaw(q);
+    const double yaw = px4_ros2_utils::math::quaternion_to_rpy(q).z();
 
     std::lock_guard<std::mutex> lock(state_mutex_);
     vehicle_yaw_ = yaw;
@@ -202,7 +211,14 @@ void ObstaclePerception::TimerCallback() {
     }
 
     auto obstacle_msg = px4_msgs::msg::ObstacleDistance();
-    obstacle_msg.timestamp = px4_ros_com::time::RosTimeToPx4Microseconds(this->now());
+    const auto now_px4 = timesync_.toPX4(this->now());
+    if (!now_px4) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "[obstacle_perception] Skipping obstacle distance publish until "
+                             "TimesyncStatus is valid");
+        return;
+    }
+    obstacle_msg.timestamp = *now_px4;
     obstacle_msg.frame = kFrameBodyFrd;
     obstacle_msg.sensor_type = kSensorTypeLaser;
     obstacle_msg.increment = 360.0f / static_cast<float>(yaw_bins_);
@@ -247,10 +263,10 @@ void ObstaclePerception::TimerCallback() {
         sensor_msgs::msg::LaserScan scan_msg;
         scan_msg.header.stamp = this->now();
         scan_msg.header.frame_id = local_virtual_scan_frame_id_;
-        scan_msg.angle_min = static_cast<float>(-px4_common::math::kPi);
-        scan_msg.angle_max = static_cast<float>(px4_common::math::kPi);
-        scan_msg.angle_increment =
-            static_cast<float>(2.0 * px4_common::math::kPi / static_cast<double>(min_distances.size()));
+        scan_msg.angle_min = static_cast<float>(-px4_ros2_utils::constants::PI);
+        scan_msg.angle_max = static_cast<float>(px4_ros2_utils::constants::PI);
+        scan_msg.angle_increment = static_cast<float>(2.0 * px4_ros2_utils::constants::PI /
+                                                      static_cast<double>(min_distances.size()));
         scan_msg.time_increment = 0.0f;
         scan_msg.scan_time = static_cast<float>(1.0 / publish_rate_hz_);
         scan_msg.range_min = static_cast<float>(min_distance_m_);
@@ -260,9 +276,8 @@ void ObstaclePerception::TimerCallback() {
         const float no_obstacle = std::numeric_limits<float>::infinity();
         for (size_t i = 0; i < min_distances.size(); ++i) {
             const uint16_t dist_cm = min_distances[i];
-            scan_msg.ranges[i] = (dist_cm == kNoObstacle)
-                                     ? no_obstacle
-                                     : static_cast<float>(dist_cm) * 0.01f;
+            scan_msg.ranges[i] =
+                (dist_cm == kNoObstacle) ? no_obstacle : static_cast<float>(dist_cm) * 0.01f;
         }
 
         pub_local_virtual_scan_->publish(scan_msg);
@@ -288,7 +303,7 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
         return;
     }
 
-    const double yaw_bin_size_rad = 2.0 * px4_common::math::kPi / yaw_bins_;
+    const double yaw_bin_size_rad = 2.0 * px4_ros2_utils::constants::PI / yaw_bins_;
     const double pitch_bin_size_rad = (max_pitch_rad_ - min_pitch_rad_) / pitch_bins_;
 
     const float min_dist_m = static_cast<float>(min_distance_m_);
@@ -362,7 +377,7 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
         // Yaw angle in body FRD: 0 = forward, positive = clockwise (right).
         float yaw_angle = std::atan2(pt_body.y(), pt_body.x());
         if (yaw_angle < 0.0f) {
-            yaw_angle += static_cast<float>(2.0 * px4_common::math::kPi);
+            yaw_angle += static_cast<float>(2.0 * px4_ros2_utils::constants::PI);
         }
 
         // Pitch angle from horizontal plane.

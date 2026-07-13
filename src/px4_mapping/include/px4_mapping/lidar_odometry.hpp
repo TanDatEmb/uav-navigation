@@ -14,7 +14,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
-#include <px4_ros_com/time_sync.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
 
 namespace px4_mapping {
 
@@ -32,7 +33,7 @@ namespace px4_mapping {
  */
 class LidarOdometry : public rclcpp::Node {
    public:
-     explicit LidarOdometry(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+    explicit LidarOdometry(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
    private:
     struct OdomSample {
@@ -49,8 +50,7 @@ class LidarOdometry : public rclcpp::Node {
     void CloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
     bool BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &input,
-                             sensor_msgs::msg::PointCloud2 &output,
-                             const OdomSample &odom_sample);
+                             sensor_msgs::msg::PointCloud2 &output, const OdomSample &odom_sample);
     void PublishLioOdometry(const OdomSample &odom_sample, const rclcpp::Time &stamp);
 
     // Subscriptions and publishers
@@ -95,7 +95,8 @@ class LidarOdometry : public rclcpp::Node {
     rclcpp::Time last_publish_stamp_{0, 0, RCL_ROS_TIME};
     Eigen::Vector3d last_publish_position_ned_{Eigen::Vector3d::Zero()};
     bool last_publish_valid_{false};
-    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
+    px4_ros2_utils::time::Timesync timesync_;
+    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr sub_timesync_status_;
 };
 
 }  // namespace px4_mapping

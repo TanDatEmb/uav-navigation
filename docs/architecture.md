@@ -15,11 +15,14 @@
 - ROS 2 equivalents of PX4 uORB messages.
 - Tracked from upstream `PX4/px4_msgs`.
 
-### `px4_common`
+### `px4_navigation_common`
 
-- geometry, quaternion, NED↔ENU transforms
+- stable mapping-to-navigation contracts: voxel interface, shared grid helpers,
+  occupancy constants, and project frame identifiers
+- does not wrap generic PX4/ROS helpers; consumers use `px4_ros2_utils` directly
 - interpolation, clamping, grid↔world helpers
 - parameter loading helpers
+- timestamp-domain adapter for PX4 ↔ ROS 2 clock mapping
 - unit tests for all pure functions
 
 ### `px4_mapping`
@@ -35,17 +38,16 @@
 - Thư viện: `LocalPlanGrid` (dense 3D grid cho A*), `AStarPlanner` (3D A* trên LocalPlanGrid), `VirtualScan` (1D perception 360 bin, khác với obstacle_perception_virtual_scan).
 - Ngoài scope lock hiện tại: B-spline optimizer, navigation controller đầy đủ, state machine, map local 3D executable.
 
-### `px4_ros_com`
+### `px4_ros2_utils` (submodule)
 
-- **Self-developed** PX4 ↔ ROS 2 bridge and transform helpers.
+- External C++20 header-first library: `git@github.com:TanDatEmb/px4_ros2_utils.git`.
+- Provides generic PX4 ↔ ROS 2 helpers: frame transforms, time constants, math, parameters, QoS, geometry bridges.
+- Used directly by `px4_navigation_common`, `px4_mapping`, and `px4_navigation`.
 - Do NOT submodule upstream `PX4/px4_ros_com`; it is ROS 1 legacy and poorly maintained for ROS 2 Jazzy.
-- Frame transform publishing (NED↔ENU, body↔baselink).
-- Offboard mode manager / health watcher.
-- ROS 2 message conversion utilities on top of `px4_common` math.
 
 > Note: `px4_visualization` was removed on 2026-07-08. Visualization helpers
-> (RViz configs, plotting, bag workflows) will be added to `px4_ros_com` or
-> maintained as external Foxglove/RViz configs when needed.
+> (RViz configs, plotting, bag workflows) are maintained as external Foxglove/RViz
+> configs when needed.
 
 ## Time Synchronization
 
@@ -66,8 +68,7 @@
 - `camera_init` — localization frontend initialization frame (legacy).
 - `odom` / `base_link` — ROS REP-103 body frame, Forward-Left-Up.
 - `aircraft` — PX4 body frame, Forward-Right-Down.
-- Transforms are implemented in `px4_common::math` and exposed in
-  `px4_ros_com::frame_transforms`.
+- Transforms are implemented and consumed directly through `px4_ros2_utils::frame`.
 
 ## Output Taxonomy (effective 2026-07-09, chốt để tránh nhầm)
 

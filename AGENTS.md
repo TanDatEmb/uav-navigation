@@ -35,20 +35,20 @@ Standard ROS 2 workspace structure:
 
 ```
 src/
-  px4_msgs/            # upstream PX4 uORB message definitions (submodule)
-  px4_common/          # shared math, geometry, parameter helpers
-  px4_mapping/         # odometry, local map
-  px4_navigation/      # planner, controller, state machine
-  px4_ros_com/         # ROS 2 ↔ PX4 bridge, transforms
-config/              # global YAML parameters
+  px4_msgs/                 # upstream PX4 uORB message definitions (submodule)
+  px4_ros2_utils/           # external PX4 ↔ ROS 2 utilities (submodule)
+  px4_navigation_common/    # project-specific types, transforms, helpers
+  px4_mapping/              # odometry, local map
+  px4_navigation/           # planner, controller, state machine
+config/                   # global YAML parameters
 launch/              # top-level launch files
 docs/                # architecture, conventions
 tools/               # helper scripts
 tests/               # integration tests
 ```
 
-> Note (2026-07-08): `px4_visualization` was removed. Visualization helpers will
-> live in `px4_ros_com` or as external RViz/Foxglove configs when needed.
+> Note (2026-07-08): `px4_visualization` was removed. Visualization helpers live
+> in `px4_ros_com` (now removed) or as external RViz/Foxglove configs when needed.
 
 ## Build
 

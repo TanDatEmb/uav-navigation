@@ -23,22 +23,17 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
-#include <px4_common/frame_constants.hpp>
-#include <px4_common/math/transforms.hpp>
-#include <px4_common/time/pose_buffer.hpp>
-#include <px4_ros_com/time_sync.hpp>
-#include <px4_ros_com/topic_helpers.hpp>
+#include <px4_mapping/time/pose_buffer.hpp>
+#include <px4_navigation_common/frame_constants.hpp>
+#include <px4_ros2_utils/math/quaternion.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
 
 namespace px4_mapping {
 
 namespace {
 
 Eigen::Matrix3d LioWorldToNedMatrix() {
-    return (Eigen::Matrix3d() <<
-            0.0, 1.0, 0.0,
-            1.0, 0.0, 0.0,
-            0.0, 0.0, -1.0)
-        .finished();
+    return (Eigen::Matrix3d() << 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0).finished();
 }
 
 Eigen::Vector3d LioPositionToNed(const Eigen::Vector3d& p_lio) {
@@ -67,7 +62,8 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
       visual_align_translation_(Eigen::Vector3d::Zero()),
       visual_align_rotation_(Eigen::Quaterniond::Identity()),
       visual_alignment_ready_(false),
-      frame_count_(0) {
+      frame_count_(0),
+      timesync_(this->get_clock()) {
     // Load parameters
     LoadParameters();
 
@@ -90,6 +86,16 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
         px4_odom_topic_, px4_qos,
         [this](const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
             this->Px4OdomCallback(msg);
+        },
+        io_subscription_options);
+
+    // === PX4 timesync status ===
+    sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+            "/fmu/out/timesync_status"),
+        rclcpp::QoS(5).best_effort(),
+        [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+            timesync_.update(msg);
         },
         io_subscription_options);
 
@@ -121,7 +127,7 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
         this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, ned_cloud_qos);
 
     if (publish_visual_odometry_to_px4_) {
-        // /fmu/in/* topics are best_effort in PX4 (per px4_ros_com convention).
+        // /fmu/in/* topics are best_effort in PX4 (per uXRCE-DDS convention).
         pub_visual_odom_ =
             this->create_publisher<px4_msgs::msg::VehicleOdometry>(visual_odom_topic_, px4_qos);
     }
@@ -142,8 +148,7 @@ void LocalizationBridge::LoadParameters() {
     use_px4_odom_desc.read_only = true;
     use_px4_odom_desc.description =
         "Require PX4 odometry for camera_init->map_ned SE(3) composition.";
-    use_px4_odom_desc.additional_constraints =
-        "Must be true. Legacy static shortcut was removed.";
+    use_px4_odom_desc.additional_constraints = "Must be true. Legacy static shortcut was removed.";
 
     rcl_interfaces::msg::ParameterDescriptor alignment_mode_desc;
     alignment_mode_desc.description =
@@ -259,7 +264,7 @@ void LocalizationBridge::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPt
                          static_cast<int64_t>(msg->header.stamp.nanosec);
 
     // Create pose sample
-    px4_common::time::PoseSample sample;
+    px4_mapping::time::PoseSample sample;
     sample.t_ns = t_ns;
     sample.position = Eigen::Vector3d(msg->pose.pose.position.x, msg->pose.pose.position.y,
                                       msg->pose.pose.position.z);
@@ -275,24 +280,19 @@ void LocalizationBridge::LioOdomCallback(const nav_msgs::msg::Odometry::SharedPt
 }
 
 void LocalizationBridge::Px4OdomCallback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-    // MicroXRCE-DDS time sync is the single boundary policy in this repo:
-    // timestamp_sample is already in ROS clock domain (microseconds).
-    const int64_t now_ns = this->now().nanoseconds();
-    const int64_t t_ns = px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
-
-    if (now_ns > 1'000'000'000LL &&
-        !px4_ros_com::time::IsWithinTimestampDomainGuard(t_ns, now_ns)) {
-        RCLCPP_ERROR_THROTTLE(
+    const auto sample_stamp = timesync_.toROS(msg->timestamp_sample);
+    if (!sample_stamp) {
+        RCLCPP_WARN_THROTTLE(
             this->get_logger(), *this->get_clock(), 5000,
-            "[NED] PX4 /fmu/out/vehicle_odometry timestamp_sample is outside ROS domain "
-            "guard (stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
-            t_ns, now_ns);
+            "[NED] PX4 /fmu/out/vehicle_odometry timestamp_sample invalid or conversion failed "
+            "(px4_us=%lu). Verify UXRCE_DDS_SYNCT and /clock setup.",
+            static_cast<unsigned long>(msg->timestamp_sample));
         return;
     }
 
     // Create pose sample
-    px4_common::time::PoseSample sample;
-    sample.t_ns = t_ns;
+    px4_mapping::time::PoseSample sample;
+    sample.t_ns = sample_stamp->nanoseconds();
     sample.position = Eigen::Vector3d(static_cast<double>(msg->position[0]),
                                       static_cast<double>(msg->position[1]),
                                       static_cast<double>(msg->position[2]));
@@ -336,7 +336,7 @@ bool LocalizationBridge::TransformPointCloud(
 
     // Build output cloud
     output_cloud.header = input_cloud->header;
-    output_cloud.header.frame_id = std::string(px4_common::frame::kMapNed);
+    output_cloud.header.frame_id = std::string(px4_navigation_common::frame::kMapNed);
     output_cloud.height = 1;
     output_cloud.width = static_cast<uint32_t>(n);
 
@@ -358,14 +358,13 @@ bool LocalizationBridge::TransformPointCloud(
     // use_px4_odom_ must be true (enforced in LoadParameters). We need PX4
     // odometry to know the SE(3) pose of the baselink in map_ned so that the
     // camera_init -> map_ned transform can be composed per-scan.
-    px4_common::time::PoseSample lio_sample, px4_sample;
+    px4_mapping::time::PoseSample lio_sample, px4_sample;
     if (!lio_pose_buffer_.Lookup(scan_t_ns, lio_sample)) {
         ++lio_pose_lookup_miss_;
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                              "LIO pose interpolation failed for scan at time %ld ns "
                              "(miss=%lu)",
-                             scan_t_ns,
-                             static_cast<unsigned long>(lio_pose_lookup_miss_));
+                             scan_t_ns, static_cast<unsigned long>(lio_pose_lookup_miss_));
         return false;
     }
 
@@ -374,8 +373,7 @@ bool LocalizationBridge::TransformPointCloud(
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                              "PX4 pose interpolation failed for scan at time %ld ns "
                              "(miss=%lu)",
-                             scan_t_ns,
-                             static_cast<unsigned long>(px4_pose_lookup_miss_));
+                             scan_t_ns, static_cast<unsigned long>(px4_pose_lookup_miss_));
         return false;
     }
 
@@ -405,8 +403,7 @@ bool LocalizationBridge::TransformPointCloud(
         (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
 
     const Eigen::Matrix3d R_lio_T = lio_sample.orientation.toRotationMatrix().transpose();
-    const Eigen::Matrix3d R_total =
-        px4_sample.orientation.toRotationMatrix() * C_FRD_FLU * R_lio_T;
+    const Eigen::Matrix3d R_total = px4_sample.orientation.toRotationMatrix() * C_FRD_FLU * R_lio_T;
 
     for (size_t i = 0; i < n; ++i, ++it_ox, ++it_oy, ++it_oz, ++it_oi) {
         const uint8_t* p = in_data + i * step;
@@ -427,7 +424,7 @@ bool LocalizationBridge::TransformPointCloud(
     return true;
 }
 
-void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSample& lio_sample) {
+void LocalizationBridge::PublishVisualOdometry(const px4_mapping::time::PoseSample& lio_sample) {
     if (!publish_visual_odometry_to_px4_ || !pub_visual_odom_) {
         return;
     }
@@ -436,14 +433,14 @@ void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSampl
 
     // Convert LIO pose from camera_init world + FLU body convention into
     // PX4 map_ned + FRD body convention.
-    px4_common::time::PoseSample lio_in_ned;
+    px4_mapping::time::PoseSample lio_in_ned;
     lio_in_ned.t_ns = lio_sample.t_ns;
     lio_in_ned.position = LioPositionToNed(lio_sample.position);
     lio_in_ned.orientation = LioOrientationToNed(lio_sample.orientation);
 
     if (visual_odom_align_to_px4_ && !visual_alignment_ready_) {
         // Get interpolated PX4 pose for alignment
-        px4_common::time::PoseSample px4_sample;
+        px4_mapping::time::PoseSample px4_sample;
         if (!px4_pose_buffer_.Lookup(lio_in_ned.t_ns, px4_sample)) {
             return;
         }
@@ -452,16 +449,15 @@ void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSampl
             // Full SE(3) alignment: T_map_ned_camera_init = T_map_ned_body *
             // T_body_camera_init. T_body_camera_init is the inverse of the LIO
             // pose expressed in NED (p_raw/q_raw).
-            visual_align_rotation_ = px4_sample.orientation *
-                                     lio_in_ned.orientation.inverse();
+            visual_align_rotation_ = px4_sample.orientation * lio_in_ned.orientation.inverse();
             visual_align_translation_ =
                 px4_sample.position - visual_align_rotation_ * lio_in_ned.position;
         } else if (visual_odom_alignment_mode_ == "yaw_translation") {
             // Yaw + translation alignment for world frames where roll/pitch are
             // already gravity-aligned but heading differs.
             const double yaw_delta =
-                px4_common::math::QuaternionGetYaw(px4_sample.orientation) -
-                px4_common::math::QuaternionGetYaw(lio_in_ned.orientation);
+                px4_ros2_utils::math::quaternion_to_rpy(px4_sample.orientation).z() -
+                px4_ros2_utils::math::quaternion_to_rpy(lio_in_ned.orientation).z();
 
             visual_align_rotation_ =
                 Eigen::Quaterniond(Eigen::AngleAxisd(yaw_delta, Eigen::Vector3d::UnitZ()));
@@ -477,10 +473,9 @@ void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSampl
         visual_alignment_ready_ = true;
 
         RCLCPP_INFO(this->get_logger(),
-                "[localization_bridge] EV alignment captured (%s): offset=(%.3f, %.3f, %.3f)",
-                    visual_odom_alignment_mode_.c_str(),
-                    visual_align_translation_.x(), visual_align_translation_.y(),
-                    visual_align_translation_.z());
+                    "[localization_bridge] EV alignment captured (%s): offset=(%.3f, %.3f, %.3f)",
+                    visual_odom_alignment_mode_.c_str(), visual_align_translation_.x(),
+                    visual_align_translation_.y(), visual_align_translation_.z());
     }
 
     if (visual_odom_align_to_px4_ && !visual_alignment_ready_) {
@@ -488,25 +483,26 @@ void LocalizationBridge::PublishVisualOdometry(const px4_common::time::PoseSampl
     }
 
     // Apply alignment if needed
-    const Eigen::Vector3d p_ev = visual_alignment_ready_
-                                     ? visual_align_rotation_ * lio_in_ned.position +
-                                           visual_align_translation_
-                                     : lio_in_ned.position;
+    const Eigen::Vector3d p_ev =
+        visual_alignment_ready_
+            ? visual_align_rotation_ * lio_in_ned.position + visual_align_translation_
+            : lio_in_ned.position;
     const Eigen::Quaterniond q_ev =
         (visual_alignment_ready_ ? visual_align_rotation_ * lio_in_ned.orientation
                                  : lio_in_ned.orientation)
             .normalized();
 
-    // Publish timestamps directly from ROS clock domain. PX4 boundary sync is
-    // handled by MicroXRCE-DDS according to the repo timestamp policy.
-    const uint64_t sample_px4_us = px4_ros_com::time::RosNanosecondsToPx4Microseconds(
-        lio_sample.t_ns);
-    const uint64_t now_px4_us = px4_ros_com::time::RosTimeToPx4Microseconds(this->now());
-    if (sample_px4_us == 0 || now_px4_us == 0) {
+    // Publish timestamps converted through the authoritative PX4 timesync offset.
+    const auto sample_px4_us_opt =
+        timesync_.toPX4(rclcpp::Time(lio_sample.t_ns, this->get_clock()->get_clock_type()));
+    const auto now_px4_us_opt = timesync_.toPX4(this->now());
+    if (!sample_px4_us_opt || !now_px4_us_opt) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[NED] Skip EV publish due to invalid ROS timestamp");
+                             "[NED] Skip EV publish due to invalid timestamp conversion");
         return;
     }
+    const uint64_t sample_px4_us = *sample_px4_us_opt;
+    const uint64_t now_px4_us = *now_px4_us_opt;
 
     // Create and populate the message
     px4_msgs::msg::VehicleOdometry ev_msg;

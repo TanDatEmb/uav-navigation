@@ -6,8 +6,8 @@
 #include <memory>
 #include <vector>
 
-#include <px4_common/math/transforms.hpp>
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/types.hpp>
+#include <px4_ros2_utils/common/constants.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 
 namespace px4_navigation {
@@ -52,7 +52,7 @@ class VirtualScan {
      * @param max_range Maximum range in meters
      * @param vehicle_radius Vehicle safety radius in meters
      */
-    void Reset(double angle_resolution = px4_common::math::kPi / 180.0,  // 1 degree
+    void Reset(double angle_resolution = px4_ros2_utils::constants::PI / 180.0,  // 1 degree
                double max_range = kDefaultMaxRange, double vehicle_radius = kDefaultVehicleRadius);
 
     /**
@@ -63,8 +63,8 @@ class VirtualScan {
      * @param height_above Include points up to X meters above drone
      * @param height_below Include points up to X meters below drone
      */
-    void Update(const std::vector<px4_common::PointLivox>& occupied_points,
-                const px4_common::DroneStateNed& drone_state, double height_above = 2.0,
+    void Update(const std::vector<px4_navigation_common::PointLivox>& occupied_points,
+                const px4_navigation_common::DroneStateNed& drone_state, double height_above = 2.0,
                 double height_below = 1.0);
 
     /**

@@ -9,19 +9,20 @@ This repository is the next-generation, clean-room redesign of the mapping and n
 ```
 LiDAR + IMU / depth / stereo
         ↓
-┌──────────────────┐
-│   px4_mapping    │  ← odometry, local voxel map, sensor handlers
-└──────────────────┘
+┌───────────────────────┐
+│      px4_mapping      │  ← odometry, local voxel map, sensor handlers
+└───────────────────────┘
         ↓
-┌──────────────────┐
-│  px4_navigation  │  ← reactive + deliberative planner, state machine
-└──────────────────┘
+┌───────────────────────┐
+│     px4_navigation    │  ← reactive + deliberative planner, state machine
+└───────────────────────┘
         ↓
-┌──────────────────┐
-│   px4_ros_com    │  ← ROS 2 ↔ PX4 uORB bridge, frame transforms
-└──────────────────┘
+┌───────────────────────┐
+│  px4_navigation_common │  ← mapping ↔ navigation contracts
+│      px4_ros2_utils    │  ← external PX4 ↔ ROS 2 utilities (submodule)
+└───────────────────────┘
         ↓
-       PX4
+         PX4
 ```
 
 ## Repository Layout
@@ -31,12 +32,12 @@ Standard ROS 2 workspace structure:
 ```
 uav-navigation/
 ├── src/
-│   ├── px4_msgs/            # upstream PX4 uORB message definitions (submodule)
-│   ├── px4_common/          # shared math, geometry, transforms, parameter helpers
-│   ├── px4_mapping/         # LiDAR odometry + global mapping bridge
-│   ├── px4_navigation/      # local planning, trajectory generation, control
-│   └── px4_ros_com/         # DDS bridge, TF, offboard helpers
-├── config/                  # global runtime parameters
+│   ├── px4_msgs/                 # upstream PX4 uORB message definitions (submodule)
+│   ├── px4_ros2_utils/           # external PX4 ↔ ROS 2 utilities (submodule)
+│   ├── px4_navigation_common/    # project-specific types, transforms, helpers
+│   ├── px4_mapping/              # LiDAR odometry + global mapping bridge
+│   └── px4_navigation/           # local planning, trajectory generation, control
+├── config/                       # global runtime parameters
 ├── launch/                  # top-level orchestration launch files
 ├── docs/                    # conventions, frame definitions, architecture
 ├── tests/                   # integration tests

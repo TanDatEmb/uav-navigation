@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/types.hpp>
 #include <px4_navigation/virtual_scan.hpp>
 
 using namespace px4_navigation;
-using namespace px4_common;
+using namespace px4_navigation_common;
 
 class VirtualScanTest : public ::testing::Test {
    protected:

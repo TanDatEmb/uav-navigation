@@ -28,11 +28,6 @@ def generate_launch_description():
         #     parameters=[config, {'use_sim_time': use_sim_time}],
         #     output='screen'),
 
-        # PX4 bridge node placeholder.
-        # Node(
-        #     package='px4_ros_com',
-        #     executable='px4_bridge_node',
-        #     name='px4_bridge_node',
-        #     parameters=[config, {'use_sim_time': use_sim_time}],
-        #     output='screen'),
+        # PX4 bridge node placeholder (previously px4_ros_com; bridge logic now
+        # lives in localization_bridge / obstacle_perception / future navigation_node).
     ])

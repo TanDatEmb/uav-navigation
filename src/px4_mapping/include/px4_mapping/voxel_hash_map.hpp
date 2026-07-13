@@ -12,10 +12,10 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include <px4_common/mapping/voxel_map_interface.hpp>
-#include <px4_common/mapping/voxel_types.hpp>
-#include <px4_common/math/grid.hpp>
-#include <px4_common/types.hpp>
+#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
+#include <px4_navigation_common/mapping/voxel_types.hpp>
+#include <px4_navigation_common/math/grid.hpp>
+#include <px4_navigation_common/types.hpp>
 
 #include <px4_mapping/voxel.hpp>
 
@@ -31,10 +31,10 @@ namespace px4_mapping {
  * planning queries to snapshot indices quickly and release the map mutex
  * before converting indices to world positions.
  */
-class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
+class VoxelHashMap : public px4_navigation_common::mapping::IVoxMapManager {
    public:
     VoxelHashMap()
-        : pool_(px4_common::mapping::kVoxelPoolSize),
+        : pool_(px4_navigation_common::mapping::kVoxelPoolSize),
           head_(nullptr),
           tail_(nullptr),
           current_size_(0U),
@@ -46,8 +46,8 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
           frames_dropped_(0U),
           extrinsic_translation_(Eigen::Vector3d::Zero()) {
         map_table_.max_load_factor(0.8f);
-        map_table_.reserve(px4_common::mapping::kMaxVoxels * 1.5);
-        occupied_list_.reserve(px4_common::mapping::kMaxVoxels);
+        map_table_.reserve(px4_navigation_common::mapping::kMaxVoxels * 1.5);
+        occupied_list_.reserve(px4_navigation_common::mapping::kMaxVoxels);
     }
 
     ~VoxelHashMap() override {
@@ -77,7 +77,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
      * @param points Sensor-frame points in metres.
      * @param sensor_origin Sensor origin in the NED frame in metres.
      */
-    void Update(const std::vector<px4_common::PointLivox> &points,
+    void Update(const std::vector<px4_navigation_common::PointLivox> &points,
                 const Eigen::Vector3d &sensor_origin) {
         std::lock_guard<std::mutex> lock(map_mutex_);
 
@@ -88,7 +88,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         timed_out_ = false;
 
         const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::microseconds(px4_common::mapping::kUpdateTimeoutUs);
+                              std::chrono::microseconds(px4_navigation_common::mapping::kUpdateTimeoutUs);
 
         for (std::size_t i = 0U; i < points.size(); ++i) {
             if ((i & 0xFFU) == 0xFFU) {
@@ -117,9 +117,9 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
      *
      * @param[out] out Vector filled with occupied voxel centres.
      */
-    void GetChangedPoints(std::vector<px4_common::PointLivox> &out) {
-        std::vector<px4_common::PointLivox> new_snap;
-        std::vector<px4_common::PointLivox> keep_snap;
+    void GetChangedPoints(std::vector<px4_navigation_common::PointLivox> &out) {
+        std::vector<px4_navigation_common::PointLivox> new_snap;
+        std::vector<px4_navigation_common::PointLivox> keep_snap;
 
         {
             std::lock_guard<std::mutex> lock(map_mutex_);
@@ -147,10 +147,10 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
      * @brief Return all currently occupied voxels for debug/global dump.
      * @return Vector of occupied voxel centres.
      */
-    std::vector<px4_common::PointLivox> GetPointCloud() {
+    std::vector<px4_navigation_common::PointLivox> GetPointCloud() {
         std::lock_guard<std::mutex> lock(map_mutex_);
 
-        std::vector<px4_common::PointLivox> out;
+        std::vector<px4_navigation_common::PointLivox> out;
         out.reserve(occupied_count_);
 
         Voxel *current = head_;
@@ -194,10 +194,10 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         std::lock_guard<std::mutex> lock(map_mutex_);
 
         const double radius_voxels =
-            px4_common::mapping::kEvictRadiusM / px4_common::mapping::kDefaultVoxelResolutionM;
+            px4_navigation_common::mapping::kEvictRadiusM / px4_navigation_common::mapping::kDefaultVoxelResolutionM;
         const double radius_sq = radius_voxels * radius_voxels;
-        const Eigen::Vector3i drone_idx = px4_common::math::WorldToIndex(
-            drone_pos, Eigen::Vector3d::Zero(), px4_common::mapping::kDefaultVoxelResolutionM);
+        const Eigen::Vector3i drone_idx = px4_navigation_common::math::WorldToIndex(
+            drone_pos, Eigen::Vector3d::Zero(), px4_navigation_common::mapping::kDefaultVoxelResolutionM);
 
         std::size_t evicted = 0U;
         Voxel *current = tail_;
@@ -227,7 +227,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
 
     // IVoxMapManager interface implementation.
     double GetResolution() const override {
-        return px4_common::mapping::kDefaultVoxelResolutionM;
+        return px4_navigation_common::mapping::kDefaultVoxelResolutionM;
     }
 
     void GetOccupiedPointsInRadius(const Eigen::Vector3d &center, double radius,
@@ -248,8 +248,8 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         out.clear();
         const double radius_sq = radius * radius;
         for (const Eigen::Vector3i &idx : index_snapshot) {
-            const Eigen::Vector3d position = px4_common::math::IndexToWorld(
-                idx, Eigen::Vector3d::Zero(), px4_common::mapping::kDefaultVoxelResolutionM);
+            const Eigen::Vector3d position = px4_navigation_common::math::IndexToWorld(
+                idx, Eigen::Vector3d::Zero(), px4_navigation_common::mapping::kDefaultVoxelResolutionM);
             if ((position - center).squaredNorm() <= radius_sq) {
                 out.push_back(position);
             }
@@ -278,7 +278,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
 
    private:
     VoxelPool pool_;
-    std::unordered_map<Eigen::Vector3i, Voxel *, px4_common::VoxelHash> map_table_;
+    std::unordered_map<Eigen::Vector3i, Voxel *, px4_navigation_common::VoxelHash> map_table_;
     std::vector<Voxel *> new_voxels_;
     std::vector<Voxel *> kept_voxels_;
     std::vector<Voxel *> occupied_list_;
@@ -297,11 +297,11 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
 
     mutable std::mutex map_mutex_;
 
-    px4_common::PointLivox VoxelToPoint(Voxel *voxel) {
-        const Eigen::Vector3d position = px4_common::math::IndexToWorld(
-            voxel->index, Eigen::Vector3d::Zero(), px4_common::mapping::kDefaultVoxelResolutionM);
+    px4_navigation_common::PointLivox VoxelToPoint(Voxel *voxel) {
+        const Eigen::Vector3d position = px4_navigation_common::math::IndexToWorld(
+            voxel->index, Eigen::Vector3d::Zero(), px4_navigation_common::mapping::kDefaultVoxelResolutionM);
 
-        px4_common::PointLivox point;
+        px4_navigation_common::PointLivox point;
         point.x = position.x();
         point.y = position.y();
         point.z = position.z();
@@ -343,10 +343,10 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
     }
 
     void Raycast(const Eigen::Vector3d &origin, const Eigen::Vector3d &endpoint,
-                 const px4_common::PointLivox &point) {
-        const Eigen::Vector3d origin_grid = origin / px4_common::mapping::kDefaultVoxelResolutionM;
+                 const px4_navigation_common::PointLivox &point) {
+        const Eigen::Vector3d origin_grid = origin / px4_navigation_common::mapping::kDefaultVoxelResolutionM;
         const Eigen::Vector3d endpoint_grid =
-            endpoint / px4_common::mapping::kDefaultVoxelResolutionM;
+            endpoint / px4_navigation_common::mapping::kDefaultVoxelResolutionM;
 
         Eigen::Vector3i start_idx = origin_grid.array().floor().cast<int>();
         Eigen::Vector3i end_idx = endpoint_grid.array().floor().cast<int>();
@@ -362,11 +362,11 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
             return;
         }
 
-        if (ray_length > px4_common::mapping::kMaxRayLengthM) {
-            direction = direction / ray_length * px4_common::mapping::kMaxRayLengthM;
-            end_idx = px4_common::math::WorldToIndex(origin + direction, Eigen::Vector3d::Zero(),
-                                                     px4_common::mapping::kDefaultVoxelResolutionM);
-            ray_length = px4_common::mapping::kMaxRayLengthM;
+        if (ray_length > px4_navigation_common::mapping::kMaxRayLengthM) {
+            direction = direction / ray_length * px4_navigation_common::mapping::kMaxRayLengthM;
+            end_idx = px4_navigation_common::math::WorldToIndex(origin + direction, Eigen::Vector3d::Zero(),
+                                                     px4_navigation_common::mapping::kDefaultVoxelResolutionM);
+            ray_length = px4_navigation_common::mapping::kMaxRayLengthM;
         }
 
         direction /= ray_length;
@@ -379,15 +379,15 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
             if (direction(axis) > 1e-9) {
                 step(axis) = 1;
                 const double boundary =
-                    (start_idx(axis) + 1) * px4_common::mapping::kDefaultVoxelResolutionM;
+                    (start_idx(axis) + 1) * px4_navigation_common::mapping::kDefaultVoxelResolutionM;
                 t_max(axis) = (boundary - origin(axis)) / direction(axis);
-                t_delta(axis) = px4_common::mapping::kDefaultVoxelResolutionM / direction(axis);
+                t_delta(axis) = px4_navigation_common::mapping::kDefaultVoxelResolutionM / direction(axis);
             } else if (direction(axis) < -1e-9) {
                 step(axis) = -1;
                 const double boundary =
-                    start_idx(axis) * px4_common::mapping::kDefaultVoxelResolutionM;
+                    start_idx(axis) * px4_navigation_common::mapping::kDefaultVoxelResolutionM;
                 t_max(axis) = (boundary - origin(axis)) / direction(axis);
-                t_delta(axis) = px4_common::mapping::kDefaultVoxelResolutionM / (-direction(axis));
+                t_delta(axis) = px4_navigation_common::mapping::kDefaultVoxelResolutionM / (-direction(axis));
             } else {
                 step(axis) = 0;
                 t_max(axis) = std::numeric_limits<double>::max();
@@ -397,7 +397,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
 
         Eigen::Vector3i current = start_idx;
         const int max_steps =
-            static_cast<int>(ray_length / px4_common::mapping::kDefaultVoxelResolutionM) + 3;
+            static_cast<int>(ray_length / px4_navigation_common::mapping::kDefaultVoxelResolutionM) + 3;
 
         for (int step_count = 0; step_count < max_steps; ++step_count) {
             if (t_max.x() < t_max.y()) {
@@ -429,7 +429,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         TouchVoxelHit(end_idx, point);
     }
 
-    void TouchVoxelHit(const Eigen::Vector3i &idx, const px4_common::PointLivox &point) {
+    void TouchVoxelHit(const Eigen::Vector3i &idx, const px4_navigation_common::PointLivox &point) {
         auto it = map_table_.find(idx);
 
         if (it == map_table_.end()) {
@@ -442,7 +442,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
             current_size_++;
             voxel->last_update_id = frame_count_;
             voxel->intensity = point.intensity;
-            UpdateOccupancy(voxel, px4_common::mapping::kLogOddsHit);
+            UpdateOccupancy(voxel, px4_navigation_common::mapping::kLogOddsHit);
             AttachToHead(voxel);
             new_voxels_.push_back(voxel);
         } else {
@@ -450,7 +450,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
             if (voxel->last_update_id != frame_count_) {
                 voxel->last_update_id = frame_count_;
                 voxel->intensity = point.intensity;
-                UpdateOccupancy(voxel, px4_common::mapping::kLogOddsHit);
+                UpdateOccupancy(voxel, px4_navigation_common::mapping::kLogOddsHit);
                 DetachNode(voxel);
                 AttachToHead(voxel);
                 kept_voxels_.push_back(voxel);
@@ -470,7 +470,7 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         }
 
         voxel->last_update_id = frame_count_;
-        UpdateOccupancy(voxel, px4_common::mapping::kLogOddsMiss);
+        UpdateOccupancy(voxel, px4_navigation_common::mapping::kLogOddsMiss);
         DetachNode(voxel);
         AttachToHead(voxel);
         kept_voxels_.push_back(voxel);
@@ -497,9 +497,9 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
         const bool was_occupied = voxel->is_occupied;
 
         voxel->log_odds += delta;
-        voxel->log_odds = std::clamp(voxel->log_odds, px4_common::mapping::kLogOddsMin,
-                                     px4_common::mapping::kLogOddsMax);
-        voxel->is_occupied = (voxel->log_odds >= px4_common::mapping::kLogOddsOccupiedThreshold);
+        voxel->log_odds = std::clamp(voxel->log_odds, px4_navigation_common::mapping::kLogOddsMin,
+                                     px4_navigation_common::mapping::kLogOddsMax);
+        voxel->is_occupied = (voxel->log_odds >= px4_navigation_common::mapping::kLogOddsOccupiedThreshold);
 
         if (!was_occupied && voxel->is_occupied) {
             occupied_count_++;
@@ -570,12 +570,12 @@ class VoxelHashMap : public px4_common::mapping::IVoxMapManager {
     }
 
     void ManageMemory() {
-        while (current_size_ > px4_common::mapping::kMaxVoxels) {
+        while (current_size_ > px4_navigation_common::mapping::kMaxVoxels) {
             RemoveTail();
         }
 
         while (tail_ != nullptr &&
-               (frame_count_ - tail_->last_update_id) > px4_common::mapping::kMaxFrameAge) {
+               (frame_count_ - tail_->last_update_id) > px4_navigation_common::mapping::kMaxFrameAge) {
             RemoveTail();
         }
     }

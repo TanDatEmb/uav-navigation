@@ -7,7 +7,7 @@
 namespace px4_navigation {
 
 VirtualScan::VirtualScan()
-    : angle_increment_(px4_common::math::kPi / 180.0),  // 1 degree
+    : angle_increment_(px4_ros2_utils::constants::PI / 180.0),  // 1 degree
       max_range_(kDefaultMaxRange),
       vehicle_radius_(kDefaultVehicleRadius),
       vehicle_radius_sq_(kDefaultVehicleRadius * kDefaultVehicleRadius),
@@ -25,9 +25,9 @@ void VirtualScan::Reset(double angle_resolution, double max_range, double vehicl
     scan_ranges_.assign(kNumBins, static_cast<float>(max_range_));
 }
 
-void VirtualScan::Update(const std::vector<px4_common::PointLivox> &occupied_points,
-                         const px4_common::DroneStateNed &drone_state, double height_above,
-                         double height_below) {
+void VirtualScan::Update(const std::vector<px4_navigation_common::PointLivox> &occupied_points,
+                         const px4_navigation_common::DroneStateNed &drone_state,
+                         double height_above, double height_below) {
     // Reset all bins to max range, indicates no obstacle
     std::fill(scan_ranges_.begin(), scan_ranges_.end(), static_cast<float>(max_range_));
 
@@ -60,7 +60,7 @@ void VirtualScan::Update(const std::vector<px4_common::PointLivox> &occupied_poi
         angle = std::atan2(std::sin(angle), std::cos(angle));
 
         // Map angle to bin index
-        int bin = static_cast<int>((angle + px4_common::math::kPi) / angle_increment_);
+        int bin = static_cast<int>((angle + px4_ros2_utils::constants::PI) / angle_increment_);
         if (bin < 0)
             bin = 0;
         if (bin >= kNumBins)
@@ -78,7 +78,7 @@ std::vector<double> VirtualScan::ObstacleBearings() const {
     bearings.reserve(kNumBins);
 
     for (int i = 0; i < kNumBins; ++i) {
-        bearings.push_back(-px4_common::math::kPi + i * angle_increment_);
+        bearings.push_back(-px4_ros2_utils::constants::PI + i * angle_increment_);
     }
 
     return bearings;

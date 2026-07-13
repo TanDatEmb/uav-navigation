@@ -34,21 +34,20 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
-#include <px4_common/frame_constants.hpp>
-#include <px4_common/mapping/voxel_map_interface.hpp>
-#include <px4_common/time/pose_buffer.hpp>
+#include <px4_mapping/time/pose_buffer.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
-#include <px4_ros_com/frame_transforms.hpp>
-#include <px4_ros_com/time_sync.hpp>
-#include <px4_ros_com/topic_helpers.hpp>
+#include <px4_navigation_common/frame_constants.hpp>
+#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
 
 namespace px4_mapping {
 
-class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapManager {
+class GlobalMapper : public rclcpp::Node, public px4_navigation_common::mapping::IVoxMapManager {
    public:
     explicit GlobalMapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
@@ -81,7 +80,7 @@ class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapMan
     rclcpp::CallbackGroup::SharedPtr compute_cb_group_;
 
     // Reusable scratch buffer
-    std::vector<px4_common::PointLivox> changed_buf_;
+    std::vector<px4_navigation_common::PointLivox> changed_buf_;
 
     // Parameters
     bool publish_local_map_{true};
@@ -140,14 +139,17 @@ class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapMan
     rclcpp::Time lio_first_sample_time_;
 
     // Timestamped pose buffers for scan-time raycast origin lookup
-    px4_common::time::PoseBuffer lio_buf_;
-    px4_common::time::PoseBuffer px4_buf_;
+    px4_mapping::time::PoseBuffer lio_buf_;
+    px4_mapping::time::PoseBuffer px4_buf_;
 
     // Rollback knob
     bool use_lio_buffer_{true};
 
-    // Shared timestamp-domain adapter for PX4->ROS conversion.
-    px4_ros_com::time::Px4TimestampDomainAdapter px4_timestamp_adapter_;
+    // Converts PX4 timestamps using the authoritative PX4 timesync offset.
+    px4_ros2_utils::time::Timesync timesync_;
+
+    // PX4 timesync status subscription used to keep timesync_ valid.
+    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr sub_timesync_status_;
 
     // Alignment gate: when enabled, the node waits for the drone to be armed,
     // nearly stationary, EKF position valid, and LIO covariance small before
@@ -182,7 +184,7 @@ class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapMan
     uint32_t off_intensity_{0};
 
     // Persistent point buffer
-    std::vector<px4_common::PointLivox> input_points_;
+    std::vector<px4_navigation_common::PointLivox> input_points_;
 
     // Static FRD to FLU rotation matrix
     const Eigen::Matrix3d C_FRD_FLU_ =
@@ -217,7 +219,7 @@ class GlobalMapper : public rclcpp::Node, public px4_common::mapping::IVoxMapMan
 // Factory for composed pipeline
 std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
-    std::shared_ptr<px4_common::mapping::IVoxMapManager>& out_iface);
+    std::shared_ptr<px4_navigation_common::mapping::IVoxMapManager>& out_iface);
 
 }  // namespace px4_mapping
 

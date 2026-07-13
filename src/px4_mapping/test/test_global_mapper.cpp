@@ -8,15 +8,16 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
+#include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 
-#include <px4_common/mapping/voxel_map_interface.hpp>
 #include <px4_mapping/global_mapper.hpp>
+#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
 
-using px4_common::mapping::IVoxMapManager;
 using px4_mapping::get_global_mapper_node;
+using px4_navigation_common::mapping::IVoxMapManager;
 
 class GlobalMapperTest : public ::testing::Test {
    protected:
@@ -33,13 +34,16 @@ class GlobalMapperTest : public ::testing::Test {
         executor_->add_node(node_);
 
         pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
-        pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
-            "/fmu/out/vehicle_status", 5);
+        pub_status_ =
+            node_->create_publisher<px4_msgs::msg::VehicleStatus>("/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
             "/fmu/out/vehicle_odometry", 20);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+        pub_timesync_status_ =
+            node_->create_publisher<px4_msgs::msg::TimesyncStatus>("/fmu/out/timesync_status", 5);
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
 
     void TearDown() override {
@@ -59,11 +63,10 @@ class GlobalMapperTest : public ::testing::Test {
         msg.is_bigendian = false;
 
         sensor_msgs::PointCloud2Modifier modifier(msg);
-        modifier.setPointCloud2Fields(4,
-                                      "x", 1, sensor_msgs::msg::PointField::FLOAT32,
-                                      "y", 1, sensor_msgs::msg::PointField::FLOAT32,
-                                      "z", 1, sensor_msgs::msg::PointField::FLOAT32,
-                                      "intensity", 1, sensor_msgs::msg::PointField::FLOAT32);
+        modifier.setPointCloud2Fields(4, "x", 1, sensor_msgs::msg::PointField::FLOAT32, "y", 1,
+                                      sensor_msgs::msg::PointField::FLOAT32, "z", 1,
+                                      sensor_msgs::msg::PointField::FLOAT32, "intensity", 1,
+                                      sensor_msgs::msg::PointField::FLOAT32);
 
         sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
         sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
@@ -71,7 +74,8 @@ class GlobalMapperTest : public ::testing::Test {
         sensor_msgs::PointCloud2Iterator<float> iter_intensity(msg, "intensity");
 
         for (uint32_t i = 0; i < point_count; ++i, ++iter_x, ++iter_y, ++iter_z, ++iter_intensity) {
-            const float angle = static_cast<float>(i) * 2.0f * 3.14159265f / static_cast<float>(point_count);
+            const float angle =
+                static_cast<float>(i) * 2.0f * 3.14159265f / static_cast<float>(point_count);
             *iter_x = radius * std::cos(angle);
             *iter_y = radius * std::sin(angle);
             *iter_z = 0.5f;
@@ -113,6 +117,11 @@ class GlobalMapperTest : public ::testing::Test {
     }
 
     void PublishPx4Odom(double x = 0.0, double y = 0.0, double z = 0.0) {
+        px4_msgs::msg::TimesyncStatus timesync_status;
+        timesync_status.timestamp = static_cast<uint64_t>(node_->now().nanoseconds() / 1000LL);
+        timesync_status.estimated_offset = 0;
+        pub_timesync_status_->publish(timesync_status);
+
         px4_msgs::msg::VehicleOdometry px4_odom;
         const uint64_t now_us = static_cast<uint64_t>(node_->now().nanoseconds() / 1000LL);
         px4_odom.timestamp = now_us;
@@ -135,6 +144,7 @@ class GlobalMapperTest : public ::testing::Test {
     rclcpp::Publisher<px4_msgs::msg::VehicleStatus>::SharedPtr pub_status_;
     rclcpp::Publisher<px4_msgs::msg::VehicleLocalPosition>::SharedPtr pub_local_pos_;
     rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr pub_px4_odom_;
+    rclcpp::Publisher<px4_msgs::msg::TimesyncStatus>::SharedPtr pub_timesync_status_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_lio_odom_;
 };
 
@@ -190,13 +200,16 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
         executor_->add_node(node_);
 
         pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
-        pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
-            "/fmu/out/vehicle_status", 5);
+        pub_status_ =
+            node_->create_publisher<px4_msgs::msg::VehicleStatus>("/fmu/out/vehicle_status", 5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
             "/fmu/out/vehicle_local_position", 5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
             "/fmu/out/vehicle_odometry", 20);
-        pub_lio_odom_ = node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+        pub_timesync_status_ =
+            node_->create_publisher<px4_msgs::msg::TimesyncStatus>("/fmu/out/timesync_status", 5);
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
 };
 
@@ -230,8 +243,10 @@ TEST_F(GlobalMapperAlignmentTest, GateBlocksReadyUntilConditionsMet) {
 
 TEST_F(GlobalMapperAlignmentTest, GateBlockedWhenMoving) {
     // Arm + valid EKF but moving too fast -> gate should not capture.
-    PublishAlignment(true, true, 1.0, 0.001);
+    // Publish alignment continuously so the speed constraint is seen by the
+    // 10 Hz alignment tick (a single publish can race against gate evaluation).
     for (int i = 0; i < 5; ++i) {
+        PublishAlignment(true, true, 1.0, 0.001);
         PublishPx4Odom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);

@@ -1,5 +1,5 @@
-#ifndef PX4_COMMON_TYPES_HPP_
-#define PX4_COMMON_TYPES_HPP_
+#ifndef PX4_NAVIGATION_COMMON_TYPES_HPP_
+#define PX4_NAVIGATION_COMMON_TYPES_HPP_
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace px4_common {
+namespace px4_navigation_common {
 
 /**
  * @brief Raw LiDAR point with intensity.
@@ -137,6 +137,6 @@ class MissionPathNed {
     }
 };
 
-}  // namespace px4_common
+}  // namespace px4_navigation_common
 
-#endif  // PX4_COMMON_TYPES_HPP_
+#endif  // PX4_NAVIGATION_COMMON_TYPES_HPP_

@@ -5,8 +5,8 @@
 #include <cmath>
 #include <limits>
 
-#include <px4_common/math/transforms.hpp>
 #include <px4_msgs/msg/obstacle_distance.hpp>
+#include <px4_ros2_utils/math/angles.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -122,7 +122,7 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
         // In lidar_sensor_link (FLU x=FWD, y=LEFT, z=UP), clockwise from forward
         // maps to x = +cos(theta), y = -sin(theta).
         const double theta_deg = static_cast<double>(i) * kIncrementDeg;
-        const double theta_rad = px4_common::math::Deg2Rad(theta_deg);
+        const double theta_rad = px4_ros2_utils::math::deg2rad(theta_deg);
         const double dx = static_cast<double>(draw_dist) * std::cos(theta_rad);
         const double dy = -static_cast<double>(draw_dist) * std::sin(theta_rad);
 

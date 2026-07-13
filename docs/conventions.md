@@ -3,9 +3,10 @@
 ## Package Types and Submodules
 
 - `px4_msgs`: MUST be a Git submodule pointing to `PX4/px4_msgs`. Message definitions must match the PX4 firmware version used in simulation/flight.
-- `px4_ros_com` (this workspace): self-developed bridge/transforms/offboard helpers. Do NOT submodule the upstream `PX4/px4_ros_com`; it is ROS 1 legacy, weakly maintained for ROS 2 Jazzy, and brings dependency conflicts. Re-implement only the helpers we need on top of `px4_common` math and `px4_msgs`.
+- `px4_ros2_utils` (submodule): external C++20 header-first PX4 ↔ ROS 2 utility library (`TanDatEmb/px4_ros2_utils`). Provides frame transforms, time constants, math, parameters, QoS, and geometry bridges. Do NOT submodule the upstream `PX4/px4_ros_com`; it is ROS 1 legacy, weakly maintained for ROS 2 Jazzy, and brings dependency conflicts.
+- `px4_navigation_common` (this workspace): project-specific helpers built on top of `px4_ros2_utils` and `px4_msgs`.
 - Header-only packages: use `INTERFACE` library type with proper `install(TARGETS ...)` and `ament_export_targets`.
-- Compiled C++ packages: use `SHARED` library type with explicit `CMAKE_CXX_STANDARD 17`.
+- Compiled C++ packages: use `SHARED` library type with explicit `CMAKE_CXX_STANDARD 20`.
 - `buildtool_depend` must be `ament_cmake` (not `ament_cmake_ros`) for consistency unless a package genuinely requires ROS-specific CMake macros.
 
 ## C++ Style

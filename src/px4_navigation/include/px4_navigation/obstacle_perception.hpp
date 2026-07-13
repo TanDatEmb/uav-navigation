@@ -20,7 +20,9 @@
 #include <Eigen/Geometry>
 
 #include <px4_msgs/msg/obstacle_distance.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -61,6 +63,7 @@ class ObstaclePerception : public rclcpp::Node {
     // Subscriptions
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
     rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr sub_odom_;
+    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr sub_timesync_status_;
 
     // Publishers
     rclcpp::Publisher<px4_msgs::msg::ObstacleDistance>::SharedPtr pub_obstacle_distance_;
@@ -108,6 +111,9 @@ class ObstaclePerception : public rclcpp::Node {
     //   "ned"        : map_ned world frame; rotated to body FRD using yaw.
     std::string cloud_frame_;
     bool filter_ground_points_ = true;
+
+    // Converts PX4 timestamps using the authoritative PX4 timesync offset.
+    px4_ros2_utils::time::Timesync timesync_{nullptr};
 
     // Statistics
     uint64_t clouds_received_ = 0;

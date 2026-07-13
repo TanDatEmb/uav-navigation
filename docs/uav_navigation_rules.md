@@ -53,11 +53,11 @@ Hệ thống có 5 đầu ra chính. Tên gọi cố định, không dùng “ma
 ```text
 uav-navigation/
 ├── src/
-│   ├── px4_msgs/            # submodule upstream PX4/px4_msgs, phải match PX4 firmware
-│   ├── px4_common/          # shared math, geometry, transforms, parameter helpers, tests
-│   ├── px4_mapping/         # LiDAR/IMU odometry, local voxel map, NED bridge
-│   ├── px4_navigation/      # virtual scan, planner, state machine, trajectory follower
-│   └── px4_ros_com/         # self-developed PX4↔ROS 2 bridge, transforms, offboard helpers
+│   ├── px4_msgs/                 # submodule upstream PX4/px4_msgs, phải match PX4 firmware
+│   ├── px4_ros2_utils/           # external PX4 ↔ ROS 2 utilities (submodule)
+│   ├── px4_navigation_common/    # project-specific types, transforms, helpers, tests
+│   ├── px4_mapping/              # LiDAR/IMU odometry, local voxel map, NED bridge
+│   └── px4_navigation/           # virtual scan, planner, state machine, trajectory follower
 ├── config/                  # global runtime parameters
 ├── launch/                  # top-level orchestration
 ├── docs/                    # conventions, architecture, agent rules
@@ -67,22 +67,21 @@ uav-navigation/
 └── assets/                  # RViz, Gazebo models, worlds
 ```
 
-> Note (2026-07-08): `px4_visualization` đã bị xóa. Các helper visualization sẽ
-> được bổ sung vào `px4_ros_com` hoặc duy trì dưới dạng config RViz/Foxgolve bên
-> ngoài khi cần.
+> Note (2026-07-08): `px4_visualization` đã bị xóa. Các helper visualization
+> được duy trì dưới dạng config RViz/Foxglove bên ngoài khi cần.
 
 ### Quy tắc package
 
 | Loại package                              | CMake target                   | Cài đặt bắt buộc                                                                                               |
 | ----------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Header-only (`px4_common`, `px4_mapping`) | `INTERFACE`                    | `install(TARGETS ...)`, `install(DIRECTORY include/ ...)`, `ament_export_targets`, `ament_export_dependencies` |
+| Header-only (`px4_navigation_common`, `px4_mapping`) | `INTERFACE` | `install(TARGETS ...)`, `install(DIRECTORY include/ ...)`, `ament_export_targets`, `ament_export_dependencies` |
 | Compiled library (`px4_navigation`)       | `SHARED`                       | `install(TARGETS ... ARCHIVE/LIBRARY/RUNTIME)`, `install(DIRECTORY include/ ...)`, exports                     |
 | Executable node                           | `add_executable`               | `install(TARGETS ... DESTINATION lib/${PROJECT_NAME})`                                                         |
 | Python package                            | `ament_python_install_package` | Không commit `__pycache__/` hoặc `*.pyc`                                                                       |
 
 - `buildtool_depend` phải là `ament_cmake` (không `ament_cmake_ros`) trừ khi thực sự cần.
 - `px4_msgs` phải là Git submodule, không dùng installed package lung tung.
-- **KHÔNG** submodule upstream `PX4/px4_ros_com`. Tự implement bridge trên `px4_common` + `px4_msgs`.
+- **KHÔNG** submodule upstream `PX4/px4_ros_com`. Dùng submodule `TanDatEmb/px4_ros2_utils` và project-specific helpers trong `px4_navigation_common`.
 
 ### 2.1 Nguyên tắc "modular nhưng tinh gọn"
 

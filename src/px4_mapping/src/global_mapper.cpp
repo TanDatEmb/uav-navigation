@@ -36,20 +36,17 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
-#include <px4_common/frame_constants.hpp>
-#include <px4_common/mapping/voxel_map_interface.hpp>
-#include <px4_common/mapping/voxel_types.hpp>
-#include <px4_common/math/grid.hpp>
-#include <px4_common/math/transforms.hpp>
-#include <px4_common/time/pose_buffer.hpp>
-#include <px4_common/types.hpp>
-#include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_mapping/time/pose_buffer.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
-#include <px4_ros_com/frame_transforms.hpp>
-#include <px4_ros_com/time_sync.hpp>
-#include <px4_ros_com/topic_helpers.hpp>
+#include <px4_navigation_common/frame_constants.hpp>
+#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
+#include <px4_navigation_common/mapping/voxel_types.hpp>
+#include <px4_navigation_common/math/grid.hpp>
+#include <px4_navigation_common/types.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
 
@@ -60,10 +57,11 @@ namespace px4_mapping {
 GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     : Node("global_mapper", options),
       voxel_map_(),
-      lio_buf_(px4_common::time::PoseBuffer::kDefaultMaxSamples,
-               px4_common::time::PoseBuffer::kDefaultWindow),
-      px4_buf_(px4_common::time::PoseBuffer::kDefaultMaxSamples,
-               px4_common::time::PoseBuffer::kDefaultWindow) {
+      lio_buf_(px4_mapping::time::PoseBuffer::kDefaultMaxSamples,
+               px4_mapping::time::PoseBuffer::kDefaultWindow),
+      px4_buf_(px4_mapping::time::PoseBuffer::kDefaultMaxSamples,
+               px4_mapping::time::PoseBuffer::kDefaultWindow),
+      timesync_(this->get_clock()) {
     // Declare and read parameters
     this->declare_parameter<bool>("publish_local_map", true);
     this->declare_parameter<int>("log_interval", 1);
@@ -119,12 +117,10 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     aligned_timeout_action_ = this->get_parameter("aligned_timeout_action").as_string();
 
     if (require_alignment_gate_) {
-        RCLCPP_INFO(this->get_logger(),
-                    "Alignment gate: ENABLED (timeout_action=%s)",
+        RCLCPP_INFO(this->get_logger(), "Alignment gate: ENABLED (timeout_action=%s)",
                     aligned_timeout_action_.c_str());
     } else {
-        RCLCPP_INFO(this->get_logger(),
-                    "Alignment gate: DISABLED");
+        RCLCPP_INFO(this->get_logger(), "Alignment gate: DISABLED");
     }
     RCLCPP_INFO(this->get_logger(),
                 "Readiness gate, requires %d consecutive frames AND %d occupied voxels",
@@ -163,8 +159,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
 
     // Subscribe point cloud input according to the selected pipeline mode.
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        cloud_topic_, qos_sensor, std::bind(&GlobalMapper::cloudCallback, this, _1),
-        compute_opts);
+        cloud_topic_, qos_sensor, std::bind(&GlobalMapper::cloudCallback, this, _1), compute_opts);
 
     // Sensor origin source depends on input_source
     sub_lio_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
@@ -172,27 +167,35 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         io_opts);
 
     if (!lio_world_input_) {
+        // Subscribe PX4 timesync status for accurate PX4 <-> ROS time mapping.
+        sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            rclcpp::QoS(5).best_effort(),
+            [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+                timesync_.update(msg);
+            },
+            io_opts);
+
         // Subscribe PX4 /fmu/out/vehicle_odometry for pose information
         sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
-            px4_ros_com::topic::Px4TopicName<px4_msgs::msg::VehicleOdometry>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
                 "/fmu/out/vehicle_odometry"),
             rclcpp::QoS(20).best_effort(),
             [this](px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-                const int64_t now_ns = this->now().nanoseconds();
-                const int64_t sample_t_ns =
-                    px4_timestamp_adapter_.ToRosNanoseconds(msg->timestamp_sample, now_ns);
+                const auto sample_stamp = timesync_.toROS(msg->timestamp_sample);
 
-                if (now_ns > 1'000'000'000LL &&
-                    !px4_ros_com::time::IsWithinTimestampDomainGuard(sample_t_ns, now_ns)) {
-                    RCLCPP_ERROR_THROTTLE(
+                if (!sample_stamp) {
+                    RCLCPP_WARN_THROTTLE(
                         this->get_logger(), *this->get_clock(), 5000,
-                        "[VoxMap] PX4 odometry timestamp_sample outside ROS domain guard "
-                        "(stamp_ns=%ld, now_ns=%ld). Verify UXRCE_DDS_SYNCT and /clock setup.",
-                        sample_t_ns, now_ns);
+                        "[VoxMap] PX4 odometry timestamp_sample invalid or conversion failed "
+                        "(px4_us=%lu). Verify UXRCE_DDS_SYNCT and /clock setup.",
+                        static_cast<unsigned long>(msg->timestamp_sample));
                     return;
                 }
+                const int64_t sample_t_ns = sample_stamp->nanoseconds();
 
-                px4_common::time::PoseSample sample;
+                px4_mapping::time::PoseSample sample;
                 sample.t_ns = sample_t_ns;
                 sample.position =
                     Eigen::Vector3d(msg->position[0], msg->position[1], msg->position[2]);
@@ -225,17 +228,17 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     // === Timers ===
     last_data_time_ = this->now();
 
-    timeout_timer_ = this->create_wall_timer(std::chrono::seconds(1),
-                                             std::bind(&GlobalMapper::timeoutCallback, this),
-                                             compute_cb_group_);
+    timeout_timer_ =
+        this->create_wall_timer(std::chrono::seconds(1),
+                                std::bind(&GlobalMapper::timeoutCallback, this), compute_cb_group_);
 
     // Alignment monitor runs at 10 Hz on the IO callback group so that
     // long-running cloud raycasting in the compute group cannot starve it.
     if (require_alignment_gate_ && !lio_world_input_) {
         alignment_start_time_ = this->now();
-        alignment_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100), std::bind(&GlobalMapper::alignmentTick, this),
-            io_cb_group_);
+        alignment_timer_ =
+            this->create_wall_timer(std::chrono::milliseconds(100),
+                                    std::bind(&GlobalMapper::alignmentTick, this), io_cb_group_);
     } else {
         // Gate disabled or lio_world mode
         alignment_captured_.store(true, std::memory_order_release);
@@ -244,7 +247,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     // Distance-based eviction sweeps voxels beyond EVICT_RADIUS around drone_pos_
     if (!lio_world_input_) {
         eviction_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(px4_common::mapping::kEvictIntervalMs),
+            std::chrono::milliseconds(px4_navigation_common::mapping::kEvictIntervalMs),
             [this]() {
                 Eigen::Vector3d pos;
                 {
@@ -254,7 +257,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                 size_t evicted = voxel_map_.EvictDistant(pos);
                 if (evicted > 0)
                     RCLCPP_DEBUG(this->get_logger(), "Evicted %zu voxels (>%.0fm)", evicted,
-                                 px4_common::mapping::kEvictRadiusM);
+                                 px4_navigation_common::mapping::kEvictRadiusM);
             },
             compute_cb_group_);
     }
@@ -268,8 +271,8 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                     "lio_world mode: distance eviction disabled; voxel count bounded "
                     "only by kMaxVoxels=%zu and kMaxFrameAge=%d. Dev/debug only — "
                     "use input_source=px4_full for production flights.",
-                    static_cast<size_t>(px4_common::mapping::kMaxVoxels),
-                    px4_common::mapping::kMaxFrameAge);
+                    static_cast<size_t>(px4_navigation_common::mapping::kMaxVoxels),
+                    px4_navigation_common::mapping::kMaxFrameAge);
     }
 
     RCLCPP_INFO(this->get_logger(), "GlobalMapper initialized");
@@ -287,7 +290,7 @@ double GlobalMapper::GetResolution() const {
 }
 
 void GlobalMapper::GetOccupiedPointsInRadius(const Eigen::Vector3d& center, double radius,
-                                                  std::vector<Eigen::Vector3d>& out) {
+                                             std::vector<Eigen::Vector3d>& out) {
     voxel_map_.GetOccupiedPointsInRadius(center, radius, out);
 }
 
@@ -298,7 +301,8 @@ bool GlobalMapper::IsReady() const noexcept {
     // becomes sparse (e.g. flying into open space).
     const bool fresh = data_fresh_.load(std::memory_order_acquire);
     const bool coverage = coverage_ok_.load(std::memory_order_acquire);
-    const bool sustained = ready_consecutive_frames_.load(std::memory_order_acquire) >= ready_min_frames_;
+    const bool sustained =
+        ready_consecutive_frames_.load(std::memory_order_acquire) >= ready_min_frames_;
     const bool no_fault = !fatal_fault_.load(std::memory_order_acquire);
     const bool aligned = alignment_captured_.load(std::memory_order_acquire);
     return fresh && coverage && sustained && no_fault && aligned;
@@ -347,8 +351,7 @@ void GlobalMapper::initLogging() {
     localtime_r(&time_t, &tm_buf);
 
     std::ostringstream oss;
-    oss << log_path_ << "/global_mapper_" << std::put_time(&tm_buf, "%Y%m%d_%H%M%S")
-        << ".log";
+    oss << log_path_ << "/global_mapper_" << std::put_time(&tm_buf, "%Y%m%d_%H%M%S") << ".log";
     // Not storing log_filename_ as member since we're not using it in this implementation
 
     // For simplicity, we're not implementing full logging as in the original
@@ -462,8 +465,7 @@ void GlobalMapper::alignmentTick() {
 /* =====================================================================
     vehicleStatusCallback, arming state for the alignment gate
    ===================================================================== */
-void GlobalMapper::vehicleStatusCallback(
-    const px4_msgs::msg::VehicleStatus::SharedPtr msg) {
+void GlobalMapper::vehicleStatusCallback(const px4_msgs::msg::VehicleStatus::SharedPtr msg) {
     armed_.store(msg->arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED,
                  std::memory_order_release);
 }
@@ -515,7 +517,7 @@ void GlobalMapper::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     }
 
     // Build the timestamped sample
-    px4_common::time::PoseSample sample;
+    px4_mapping::time::PoseSample sample;
     sample.t_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1'000'000'000LL +
                   static_cast<int64_t>(msg->header.stamp.nanosec);
     sample.position = Eigen::Vector3d(msg->pose.pose.position.x, msg->pose.pose.position.y,
@@ -564,8 +566,7 @@ void GlobalMapper::lioOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
 /* =====================================================================
     hasField, helper to check PointCloud2 for a named field
    ===================================================================== */
-bool GlobalMapper::hasField(const sensor_msgs::msg::PointCloud2& msg,
-                                 const std::string& name) {
+bool GlobalMapper::hasField(const sensor_msgs::msg::PointCloud2& msg, const std::string& name) {
     for (const auto& field : msg.fields) {
         if (field.name == name)
             return true;
@@ -632,7 +633,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
             continue;
 
-        px4_common::PointLivox pt;
+        px4_navigation_common::PointLivox pt;
         pt.x = static_cast<double>(x);
         pt.y = static_cast<double>(y);
         pt.z = static_cast<double>(z);
@@ -662,7 +663,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     // Path B Option gamma chain attempt
     const int64_t cloud_t_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1'000'000'000LL +
                                static_cast<int64_t>(msg->header.stamp.nanosec);
-    px4_common::time::PoseSample px4_at_cloud, lio_at_cloud;
+    px4_mapping::time::PoseSample px4_at_cloud, lio_at_cloud;
     bool chain_ok = false;
     if (use_lio_buffer_ && !lio_world_input_) {
         const bool px4_hit = px4_buf_.Lookup(cloud_t_ns, px4_at_cloud);
@@ -885,7 +886,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
 // Factory function for composed pipeline
 std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
-    std::shared_ptr<px4_common::mapping::IVoxMapManager>& out_iface) {
+    std::shared_ptr<px4_navigation_common::mapping::IVoxMapManager>& out_iface) {
     auto mgr = std::make_shared<GlobalMapper>(options);
     out_iface = mgr;
     return mgr;

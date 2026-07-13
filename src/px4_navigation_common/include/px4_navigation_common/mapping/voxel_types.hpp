@@ -1,10 +1,10 @@
-#ifndef PX4_COMMON_MAPPING_VOXEL_TYPES_HPP_
-#define PX4_COMMON_MAPPING_VOXEL_TYPES_HPP_
+#ifndef PX4_NAVIGATION_COMMON_MAPPING_VOXEL_TYPES_HPP_
+#define PX4_NAVIGATION_COMMON_MAPPING_VOXEL_TYPES_HPP_
 
 #include <cmath>
 #include <cstdint>
 
-namespace px4_common::mapping {
+namespace px4_navigation_common::mapping {
 
 /**
  * @brief Default voxel resolution for the local occupancy map in metres.
@@ -104,6 +104,6 @@ inline constexpr std::int64_t kUpdateTimeoutUs = 50000LL;
  */
 inline constexpr std::size_t kVoxelPoolSize = kMaxVoxels + 10000U;
 
-}  // namespace px4_common::mapping
+}  // namespace px4_navigation_common::mapping
 
-#endif  // PX4_COMMON_MAPPING_VOXEL_TYPES_HPP_
+#endif  // PX4_NAVIGATION_COMMON_MAPPING_VOXEL_TYPES_HPP_

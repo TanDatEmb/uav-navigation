@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include <px4_common/mapping/voxel_map_interface.hpp>
+#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
 
 #include <Eigen/Core>
 #include <vector>
 
-using px4_common::mapping::IVoxMapManager;
+using px4_navigation_common::mapping::IVoxMapManager;
 
 namespace {
 
