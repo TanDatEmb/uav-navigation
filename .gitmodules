@@ -6,3 +6,6 @@
 	path = src/px4_ros2_interface_lib
 	url = https://github.com/Auterion/px4-ros2-interface-lib.git
 	branch = release/1.17
+[submodule "px4_ros2_utils"]
+	path = src/px4_ros2_utils
+	url = https://github.com/TanDatEmb/px4_ros2_utils.git
