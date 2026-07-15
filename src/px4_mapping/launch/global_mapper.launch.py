@@ -1,8 +1,8 @@
 """
 Launch file for the voxel map manager node.
 
-Builds a sparse global occupancy map in the PX4 map_ned frame from a
-NED point cloud and odometry sources.
+Builds accumulated global occupancy and a radius-bounded local view from a
+point cloud plus synchronized odometry.
 """
 
 import os
@@ -50,6 +50,7 @@ def generate_launch_description():
             remappings=[
                 ('/world/cloud', '/world/cloud'),
                 ('/mapping/global', '/mapping/global'),
+                ('/mapping/local', '/mapping/local'),
                 ('/localization/odometry', '/localization/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/out/vehicle_status', '/fmu/out/vehicle_status'),

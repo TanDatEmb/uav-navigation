@@ -302,6 +302,199 @@ TEST_F(GlobalMapperLioWorldTest, PublishesAccumulatedOccupiedMap) {
     EXPECT_GT(latest_width, first_width);
 }
 
+TEST_F(GlobalMapperLioWorldTest, PublishesRadiusBoundedLocalMapFromGlobalOccupancy) {
+    bool global_has_first_region = false;
+    bool global_has_second_region = false;
+    bool local_has_first_region = false;
+    bool local_has_second_region = false;
+    std::size_t global_messages = 0U;
+    std::size_t local_messages = 0U;
+
+    auto inspect_regions = [](const sensor_msgs::msg::PointCloud2& msg, bool& has_first,
+                              bool& has_second) {
+        has_first = false;
+        has_second = false;
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(msg, "x");
+        for (; iter_x != iter_x.end(); ++iter_x) {
+            has_first = has_first || (*iter_x < 5.0f);
+            has_second = has_second || (*iter_x > 15.0f);
+        }
+    };
+
+    auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            inspect_regions(*msg, global_has_first_region, global_has_second_region);
+            ++global_messages;
+        });
+    auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            inspect_regions(*msg, local_has_first_region, local_has_second_region);
+            ++local_messages;
+        });
+    ASSERT_NE(sub_global, nullptr);
+    ASSERT_NE(sub_local, nullptr);
+    SpinMs(50);
+
+    const auto publish_scan = [&](double sensor_x, float cloud_x_offset) {
+        const auto stamp = node_->now();
+
+        nav_msgs::msg::Odometry odom;
+        odom.header.stamp = stamp;
+        odom.header.frame_id = "lio_world";
+        odom.pose.pose.position.x = sensor_x;
+        odom.pose.pose.orientation.w = 1.0;
+        pub_lio_odom_->publish(odom);
+        SpinMs(50);
+
+        auto cloud = MakeDenseCloud(200, 3.0f);
+        cloud.header.stamp = stamp;
+        cloud.header.frame_id = "lio_world";
+        sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
+        for (; iter_x != iter_x.end(); ++iter_x) {
+            *iter_x += cloud_x_offset;
+        }
+        pub_cloud_->publish(cloud);
+        SpinMs(200);
+    };
+
+    publish_scan(0.0, 0.0f);
+    ASSERT_GT(global_messages, 0U);
+    ASSERT_GT(local_messages, 0U);
+    ASSERT_TRUE(global_has_first_region);
+    ASSERT_TRUE(local_has_first_region);
+
+    publish_scan(20.0, 20.0f);
+    EXPECT_TRUE(global_has_first_region);
+    EXPECT_TRUE(global_has_second_region);
+    EXPECT_FALSE(local_has_first_region);
+    EXPECT_TRUE(local_has_second_region);
+}
+
+class GlobalMapperPx4RetentionTest : public GlobalMapperTest {
+   protected:
+    void SetUp() override {
+        SetUpWithDistanceEviction(false);
+    }
+
+    void SetUpWithDistanceEviction(bool enable_distance_eviction) {
+        node_options_ = rclcpp::NodeOptions();
+        node_options_.append_parameter_override("ready_min_frames", 1);
+        node_options_.append_parameter_override("ready_min_occupied", 1);
+        node_options_.append_parameter_override("timeout_seconds", 5.0);
+        node_options_.append_parameter_override("use_sim_time", false);
+        node_options_.append_parameter_override("input_source", "px4_full");
+        node_options_.append_parameter_override("use_lio_buffer", false);
+        node_options_.append_parameter_override("enable_distance_eviction",
+                                                enable_distance_eviction);
+
+        node_ = get_global_mapper_node(node_options_, iface_);
+        executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+        executor_->add_node(node_);
+
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
+        pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
+                "/fmu/out/vehicle_odometry"),
+            20);
+        pub_timesync_status_ = node_->create_publisher<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            5);
+    }
+
+    void PrimePx4Pose(double x, double y, double z) {
+        // The first pair establishes Timesync; the second odometry sample is
+        // deterministic even when DDS delivers the initial callbacks out of order.
+        PublishPx4Odom(x, y, z);
+        SpinMs(50);
+        PublishPx4Odom(x, y, z);
+        SpinMs(50);
+    }
+};
+
+TEST_F(GlobalMapperPx4RetentionTest, GlobalHistoryIsIndependentOfInputSource) {
+    bool global_has_origin_region = false;
+    bool global_has_far_region = false;
+    bool local_has_origin_region = false;
+    bool local_has_far_region = false;
+
+    auto inspect_regions = [](const sensor_msgs::msg::PointCloud2& msg, bool& has_origin,
+                              bool& has_far) {
+        has_origin = false;
+        has_far = false;
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(msg, "x");
+        for (; iter_x != iter_x.end(); ++iter_x) {
+            has_origin = has_origin || (*iter_x < 10.0f);
+            has_far = has_far || (*iter_x > 90.0f);
+        }
+    };
+
+    auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            inspect_regions(*msg, global_has_origin_region, global_has_far_region);
+        });
+    auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            inspect_regions(*msg, local_has_origin_region, local_has_far_region);
+        });
+    ASSERT_NE(sub_global, nullptr);
+    ASSERT_NE(sub_local, nullptr);
+    SpinMs(50);
+
+    PrimePx4Pose(0.0, 0.0, 0.0);
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    SpinMs(200);
+    ASSERT_TRUE(global_has_origin_region);
+    ASSERT_TRUE(local_has_origin_region);
+
+    PrimePx4Pose(100.0, 0.0, 0.0);
+    SpinMs(700);  // Exceeds the legacy 500 ms distance-eviction interval.
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    SpinMs(200);
+
+    EXPECT_TRUE(global_has_origin_region);
+    EXPECT_TRUE(global_has_far_region);
+    EXPECT_FALSE(local_has_origin_region);
+    EXPECT_TRUE(local_has_far_region);
+}
+
+class GlobalMapperPx4DistanceEvictionTest : public GlobalMapperPx4RetentionTest {
+   protected:
+    void SetUp() override {
+        SetUpWithDistanceEviction(true);
+    }
+};
+
+TEST_F(GlobalMapperPx4DistanceEvictionTest, ExplicitOptInEvictsLegacyDistantHistory) {
+    bool has_origin_region = false;
+    bool has_far_region = false;
+    auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            has_origin_region = false;
+            has_far_region = false;
+            sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+            for (; iter_x != iter_x.end(); ++iter_x) {
+                has_origin_region = has_origin_region || (*iter_x < 10.0f);
+                has_far_region = has_far_region || (*iter_x > 90.0f);
+            }
+        });
+    ASSERT_NE(sub_global, nullptr);
+    SpinMs(50);
+
+    PrimePx4Pose(0.0, 0.0, 0.0);
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    SpinMs(200);
+    ASSERT_TRUE(has_origin_region);
+
+    PrimePx4Pose(100.0, 0.0, 0.0);
+    SpinMs(700);
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    SpinMs(200);
+
+    EXPECT_FALSE(has_origin_region);
+    EXPECT_TRUE(has_far_region);
+}
+
 // Fixture that enables the alignment gate with short thresholds so the gate
 // can be exercised quickly in unit tests.
 class GlobalMapperAlignmentTest : public GlobalMapperTest {

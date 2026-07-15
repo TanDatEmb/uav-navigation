@@ -10,7 +10,7 @@ Collision Prevention input.
 Implemented and maintained:
 
 - FAST-LIO2-style 15-DOF IESKF localization for the MID-360 pipeline
-- incremental ikd-Tree scan map and accumulated global voxel map
+- incremental ikd-Tree scan map, accumulated global occupancy, and a 15 m rolling local view
 - explicit ROS ENU-like/FLU to PX4 NED/FRD boundary conversion
 - ROS/PX4 timestamp conversion through `px4_ros2_utils::time::Timesync`
 - PX4 `ObstacleDistance` generation and a ROS `LaserScan` debug view
@@ -20,7 +20,7 @@ Deferred by the current scope lock:
 
 - B-spline trajectory optimization
 - a complete navigation controller and mission state machine
-- an executable planner-local 3D map
+- executable planner/controller integration for the local map
 - loop closure and multi-session SLAM
 
 ## Runtime Architecture
@@ -36,7 +36,9 @@ Gazebo MID-360 or physical sensor
     ├── /lio/cloud_registered
     └── /lio/path
              │
-             ├──► px4_mapping/global_mapper ──► /mapping/global
+             ├──► px4_mapping/global_mapper
+             │             ├──► /mapping/global
+             │             └──► /mapping/local
              │
              └──► px4_mapping/lio_px4_alignment
                          └──► /fmu/in/vehicle_visual_odometry

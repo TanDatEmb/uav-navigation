@@ -5,8 +5,8 @@
     - Subscribes localization cloud and PX4 VehicleOdometry
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
-       - Runs distance based eviction timer to bound map memory
-    - Publishes global map topic for RViz and Layer 3 ring buffer
+       - Supports opt-in distance eviction for memory-constrained deployments
+    - Publishes accumulated global occupancy and a radius-bounded local view
 
     2. Factory
        - get_global_mapper_node returns Node and IVoxMapManager interface
@@ -66,7 +66,8 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr sub_status_;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr sub_local_pos_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_lio_odom_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_map_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_global_map_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_local_map_;
     rclcpp::TimerBase::SharedPtr timeout_timer_;
     rclcpp::TimerBase::SharedPtr eviction_timer_;
 
@@ -75,12 +76,16 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     rclcpp::CallbackGroup::SharedPtr compute_cb_group_;
 
     // Parameters
+    bool publish_global_map_{true};
     bool publish_local_map_{true};
+    bool enable_distance_eviction_{false};
     int log_interval_{1};
     double timeout_seconds_{3600.0};
     std::string log_path_;
     std::string cloud_topic_{"/world/cloud"};
     std::string map_topic_{"/mapping/global"};
+    std::string local_map_topic_{"/mapping/local"};
+    double local_map_radius_m_{15.0};
     std::string input_source_{"px4_full"};
     bool deskewed_input_{false};
     bool full_pose_input_{false};
@@ -175,8 +180,9 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     uint32_t off_z_{8};
     uint32_t off_intensity_{0};
 
-    // Persistent point buffer
+    // Persistent point buffers
     std::vector<px4_nav_common::PointLivox> input_points_;
+    std::vector<Eigen::Vector3d> local_map_points_;
 
     // Logging
     double total_process_time_ms_{0.0};
@@ -201,7 +207,6 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     void initLogging();
     static void mkdirRecursive(const std::string& path);
     void writeSummary();
-    void publishMap();
 };
 
 // Factory for composed pipeline

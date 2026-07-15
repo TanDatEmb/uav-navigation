@@ -70,7 +70,8 @@ MID-360 PointCloud2 + IMU
   └── /lio/path              [lio_world, ROS time]
           │
           ├──► global_mapper
-          │       └──► /mapping/global
+          │       ├──► /mapping/global  [accumulated occupancy]
+          │       └──► /mapping/local   [15 m rolling view]
           │
           └──► lio_px4_alignment
                   └──► /fmu/in/vehicle_visual_odometry
@@ -151,15 +152,38 @@ These names are fixed; do not use “local map” for unrelated products.
 | --- | --- | --- | --- |
 | Registered LIO cloud | `/lio/cloud_registered` | `fast_lio` | Current scan transformed into `lio_world` |
 | Global 3D map | `/mapping/global` | `global_mapper` | Full accumulated occupied voxel map for the active input frame |
-| Planner-local 3D map | not implemented | deferred executable | Bounded map intended for a future 3D planner |
+| Planner-local 3D map | `/mapping/local` | `global_mapper` | Stateless radius-bounded view rebuilt from global occupancy around the UAV |
 | Distance bins 2D | `/fmu/in/obstacle_distance` | `obstacle_perception` | 72-bin PX4 Collision Prevention input |
 | Virtual scan 1D | `/perception/scan_1d` by the SITL script | `obstacle_perception` | ROS debug perception output, not a map |
 | External odometry | `/fmu/in/vehicle_visual_odometry` | `lio_px4_alignment` | PX4 `VehicleOdometry`, not a map |
 
-`/mapping/global` uses the incoming `lio_world` frame in the default
-`input_source=lio_world` pipeline. Other supported mapper modes can publish the
-map in `map_ned`; consumers must inspect the message `frame_id` rather than infer
-it from the topic name.
+`/mapping/global` and `/mapping/local` use the incoming `lio_world` frame in the
+default `input_source=lio_world` pipeline. The local topic contains only occupied
+voxels within `local_map_radius_m` of the synchronized UAV pose and is rebuilt on
+every accepted cloud, so points outside the rolling window disappear without
+being deleted from global occupancy. Global retention is independent of
+`input_source`: distance eviction is opt-in through
+`enable_distance_eviction=true`, while voxel-capacity and frame-age bounds always
+remain active. Other supported mapper modes can publish in `map_ned`; consumers
+must inspect `frame_id` rather than infer it from the topic.
+
+## MID-360 Occupancy Evidence Contract
+
+The physical Livox ROS Driver 2 messages do not expose a generic no-return or
+sensor-failure state per emitted direction. A finite, quality-accepted point is
+**Hit** evidence, and the segment from the synchronized sensor origin to that hit
+provides free-space evidence. Point absence is **Unknown**, not **Clear**.
+
+`tag` carries return-quality classifications and `line` identifies one of the
+MID-360 laser lines; neither field encodes clear space. Zero-depth placeholders
+used by Livox FOV masking are invalid/masked samples, not maximum-range clear
+returns. Therefore the physical sensor path must not synthesize PX4
+`max_distance + 1` bins from an empty sector or blanket-clear the field of view.
+An explicit `Hit/Clear/Unknown` adapter remains deferred until the deployed
+hardware/driver contract provides measured ray coverage and health evidence.
+This contract was verified against Livox ROS Driver 2 commit
+[`13eb05e`](https://github.com/Livox-SDK/livox_ros_driver2/tree/13eb05e4e6dd7a765b934d0c5fd6236676a57b49),
+including `CustomPoint.msg`, `lddc.cpp`, and `comm/pub_handler.cpp`.
 
 ## Primary Topic Contract
 
@@ -168,7 +192,8 @@ it from the topic name.
 | `/lio/odometry` | `fast_lio` | parent `lio_world`, child `mid360_imu` | ROS | reliable |
 | `/lio/cloud_registered` | `fast_lio` | `lio_world` | ROS | reliable |
 | `/lio/path` | `fast_lio` | `lio_world` | ROS | reliable |
-| `/mapping/global` | `global_mapper` | active mapper world frame | ROS | reliable |
+| `/mapping/global` | `global_mapper` | active mapper world frame; accumulated occupancy | ROS | reliable |
+| `/mapping/local` | `global_mapper` | same frame; radius-bounded rolling occupancy | ROS | reliable |
 | `/fmu/in/vehicle_visual_odometry` | `lio_px4_alignment` | NED pose, FRD body; unavailable velocity is NaN | PX4 boot μs via `Timesync` | best effort |
 | `/fmu/in/obstacle_distance` | `obstacle_perception` | `BODY_FRD` message frame | PX4 boot μs via `Timesync` | reliable |
 | `/perception/scan_1d` | `obstacle_perception` | configured ROS debug frame | ROS | reliable |
@@ -193,7 +218,7 @@ parser.
 Implemented:
 
 - FAST-LIO localization and incremental ikd-Tree mapping
-- accumulated global voxel-map publication
+- accumulated global voxel-map and radius-bounded local-map publication
 - PX4 external-odometry message conversion with separate sample/publish times
 - PX4 Collision Prevention distance bins and ROS scan visualization
 - mapping/planning support libraries and regression tests
@@ -202,6 +227,6 @@ Deferred:
 
 - controlled map-quality tuning A/B beyond the preserved baseline parameters
 - dynamic `lio_world` to PX4-origin/yaw alignment estimation
-- planner-local 3D map executable
+- executable planner/controller integration that consumes the local-map view
 - B-spline optimizer, full controller, and mission state machine
 - loop closure and multi-session SLAM

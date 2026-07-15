@@ -125,12 +125,18 @@ established by initialization assumptions.
 
 `global_mapper` preserves the active world frame:
 
-- `input_source=lio_world`: registered points and `/mapping/global` remain in
-  `lio_world`; distance-based local eviction is disabled for the accumulated map.
-- PX4-based modes: map output is represented in `map_ned`.
+- `input_source=lio_world`: registered points, `/mapping/global`, and
+  `/mapping/local` remain in `lio_world`.
+- PX4-based modes: both map outputs are represented in `map_ned`.
 
-Consumers must use `PointCloud2.header.frame_id`; the topic name alone does not
-imply a frame.
+Global retention is independent of `input_source`. Distance eviction is disabled
+by default; `enable_distance_eviction=true` explicitly opts into the legacy
+radius-bounded memory mode. Capacity and frame-age bounds remain active in both
+modes.
+
+`/mapping/local` is a radius-bounded view of `/mapping/global`; it does not define
+a new coordinate frame. Consumers must use `PointCloud2.header.frame_id`; the
+topic name alone does not imply a frame.
 
 ## Legacy Compatibility Path
 

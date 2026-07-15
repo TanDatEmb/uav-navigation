@@ -75,8 +75,9 @@ global_mapper:
     # Input: point cloud in map_ned frame.
     cloud_topic: "/world/cloud"
 
-    # Output global sparse map topic.
+    # Output topics for the accumulated global map and the rolling local view.
     map_topic: "/mapping/global"
+    local_map_topic: "/mapping/local"
 
     # Input: localization odometry in camera_init frame.
     lio_odom_topic: "/localization/odometry"
@@ -88,8 +89,16 @@ global_mapper:
     #   "localization_deskew" : deskewed cloud from the localization frontend.
     input_source: "px4_full"
 
-    # Publish the sparse occupied voxel map for RViz / downstream nodes.
+    # Publish the complete accumulated map for diagnostics and long-range context.
+    publish_global_map: true
+
+    # Publish a stateless radius-bounded view derived from global occupancy.
     publish_local_map: true
+    local_map_radius_m: 15.0
+
+    # Opt-in legacy memory mode. When false, global occupancy is independent of
+    # input_source and is bounded only by voxel capacity and frame age.
+    enable_distance_eviction: false
 
     # Lidar-to-IMU extrinsic translation in metres (sensor frame w.r.t. IMU).
     extrinsic_T: [-0.011, -0.02329, 0.04412]

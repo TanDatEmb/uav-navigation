@@ -5,8 +5,8 @@
     - Subscribes world cloud and PX4 VehicleOdometry
        - Transforms raw points from sensor FLU to world NED before raycasting
        - Implements IVoxMapManager so Layer 3 can query resolution
-       - Runs distance based eviction timer to bound map memory
-    - Publishes global map topic for RViz and Layer 3 ring buffer (intra-process)
+       - Supports opt-in distance eviction for memory-constrained deployments
+    - Publishes accumulated global occupancy and a radius-bounded local view
 
     2. Factory
        - get_global_mapper_node returns Node and IVoxMapManager interface
@@ -56,6 +56,76 @@ using std::placeholders::_1;
 
 namespace px4_mapping {
 
+namespace {
+
+sensor_msgs::msg::PointCloud2 MakeGlobalMapCloud(
+    const std::vector<px4_nav_common::PointLivox>& points,
+    const builtin_interfaces::msg::Time& stamp, const std::string& frame_id) {
+    sensor_msgs::msg::PointCloud2 msg;
+    msg.header.stamp = stamp;
+    msg.header.frame_id = frame_id;
+    msg.height = 1;
+    msg.width = static_cast<std::uint32_t>(points.size());
+    msg.is_dense = true;
+    msg.is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier modifier(msg);
+    modifier.setPointCloud2Fields(4, "x", 1, sensor_msgs::msg::PointField::FLOAT32, "y", 1,
+                                  sensor_msgs::msg::PointField::FLOAT32, "z", 1,
+                                  sensor_msgs::msg::PointField::FLOAT32, "intensity", 1,
+                                  sensor_msgs::msg::PointField::FLOAT32);
+    modifier.resize(points.size());
+
+    sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
+    sensor_msgs::PointCloud2Iterator<float> iter_intensity(msg, "intensity");
+    for (const auto& point : points) {
+        *iter_x = static_cast<float>(point.x);
+        *iter_y = static_cast<float>(point.y);
+        *iter_z = static_cast<float>(point.z);
+        *iter_intensity = point.intensity;
+        ++iter_x;
+        ++iter_y;
+        ++iter_z;
+        ++iter_intensity;
+    }
+    return msg;
+}
+
+sensor_msgs::msg::PointCloud2 MakeLocalMapCloud(const std::vector<Eigen::Vector3d>& points,
+                                                const builtin_interfaces::msg::Time& stamp,
+                                                const std::string& frame_id) {
+    sensor_msgs::msg::PointCloud2 msg;
+    msg.header.stamp = stamp;
+    msg.header.frame_id = frame_id;
+    msg.height = 1;
+    msg.width = static_cast<std::uint32_t>(points.size());
+    msg.is_dense = true;
+    msg.is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier modifier(msg);
+    modifier.setPointCloud2Fields(3, "x", 1, sensor_msgs::msg::PointField::FLOAT32, "y", 1,
+                                  sensor_msgs::msg::PointField::FLOAT32, "z", 1,
+                                  sensor_msgs::msg::PointField::FLOAT32);
+    modifier.resize(points.size());
+
+    sensor_msgs::PointCloud2Iterator<float> iter_x(msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(msg, "z");
+    for (const auto& point : points) {
+        *iter_x = static_cast<float>(point.x());
+        *iter_y = static_cast<float>(point.y());
+        *iter_z = static_cast<float>(point.z());
+        ++iter_x;
+        ++iter_y;
+        ++iter_z;
+    }
+    return msg;
+}
+
+}  // namespace
+
 GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     : Node("global_mapper", options),
       voxel_map_(),
@@ -65,12 +135,16 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                px4_mapping::time::PoseBuffer::kDefaultWindow),
       timesync_(this->get_clock()) {
     // Declare and read parameters
+    this->declare_parameter<bool>("publish_global_map", true);
     this->declare_parameter<bool>("publish_local_map", true);
+    this->declare_parameter<bool>("enable_distance_eviction", false);
     this->declare_parameter<int>("log_interval", 1);
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
     this->declare_parameter<std::string>("cloud_topic", "/world/cloud");
     this->declare_parameter<std::string>("map_topic", "/mapping/global");
+    this->declare_parameter<std::string>("local_map_topic", "/mapping/local");
+    this->declare_parameter<double>("local_map_radius_m", 15.0);
     this->declare_parameter<std::string>("input_source", "px4_full");
     this->declare_parameter<std::vector<double>>("extrinsic_T",
                                                  std::vector<double>{-0.011, -0.02329, 0.04412});
@@ -85,13 +159,23 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     this->declare_parameter<double>("aligned_max_seconds_to_capture", 30.0);
     this->declare_parameter<std::string>("aligned_timeout_action", "hold_indefinitely");
 
+    publish_global_map_ = this->get_parameter("publish_global_map").as_bool();
     publish_local_map_ = this->get_parameter("publish_local_map").as_bool();
+    enable_distance_eviction_ = this->get_parameter("enable_distance_eviction").as_bool();
     log_interval_ = this->get_parameter("log_interval").as_int();
     timeout_seconds_ = this->get_parameter("timeout_seconds").as_double();
     log_path_ = this->get_parameter("log_path").as_string();
     cloud_topic_ = this->get_parameter("cloud_topic").as_string();
     map_topic_ = this->get_parameter("map_topic").as_string();
+    local_map_topic_ = this->get_parameter("local_map_topic").as_string();
+    local_map_radius_m_ = this->get_parameter("local_map_radius_m").as_double();
     input_source_ = this->get_parameter("input_source").as_string();
+
+    if (!std::isfinite(local_map_radius_m_) || local_map_radius_m_ <= 0.0) {
+        RCLCPP_FATAL(this->get_logger(), "local_map_radius_m must be finite and > 0, got %.3f",
+                     local_map_radius_m_);
+        throw std::runtime_error("Invalid local_map_radius_m parameter");
+    }
 
     auto extrinsic_T_vec = this->get_parameter("extrinsic_T").as_double_array();
     if (extrinsic_T_vec.size() != 3) {
@@ -205,6 +289,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
 
                 {
                     std::lock_guard<std::mutex> lock(odom_mutex_);
+                    drone_pos_ = sample.position;
                     drone_q_ = sample.orientation;
                     have_drone_q_ = true;
                 }
@@ -228,7 +313,12 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     }
 
     // === Publishers ===
-    pub_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic_, 20);
+    pub_global_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic_, 20);
+    pub_local_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(local_map_topic_, 20);
+    RCLCPP_INFO(this->get_logger(), "Map outputs: global=%s (%s), local=%s (%s, radius=%.1fm)",
+                map_topic_.c_str(), publish_global_map_ ? "enabled" : "disabled",
+                local_map_topic_.c_str(), publish_local_map_ ? "enabled" : "disabled",
+                local_map_radius_m_);
 
     // === Timers ===
     last_data_time_ = this->now();
@@ -249,8 +339,10 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         alignment_captured_.store(true, std::memory_order_release);
     }
 
-    // Distance-based eviction sweeps voxels beyond EVICT_RADIUS around drone_pos_
-    if (!lio_world_input_) {
+    // Optional distance eviction is independent of the input pipeline. It is
+    // disabled by default so /mapping/global retains history in every mode;
+    // /mapping/local remains bounded by its query radius either way.
+    if (enable_distance_eviction_) {
         eviction_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(px4_nav_common::mapping::kEvictIntervalMs),
             [this]() {
@@ -259,23 +351,23 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                     std::lock_guard<std::mutex> lock(odom_mutex_);
                     pos = drone_pos_;
                 }
-                size_t evicted = voxel_map_.EvictDistant(pos);
-                if (evicted > 0)
+                const size_t evicted = voxel_map_.EvictDistant(pos);
+                if (evicted > 0) {
                     RCLCPP_DEBUG(this->get_logger(), "Evicted %zu voxels (>%.0fm)", evicted,
                                  px4_nav_common::mapping::kEvictRadiusM);
+                }
             },
             compute_cb_group_);
     }
 
-    RCLCPP_INFO(
-        this->get_logger(), "Voxel Map Manager (Layer 2) initialized. Eviction: %s",
-        lio_world_input_ ? "age-only (lio_world global map)" : "distance + age (local map)");
+    RCLCPP_INFO(this->get_logger(),
+                "Voxel Map Manager (Layer 2) initialized. Retention: %s + age/capacity bounds",
+                enable_distance_eviction_ ? "distance-bounded" : "global");
 
-    if (lio_world_input_) {
+    if (!enable_distance_eviction_) {
         RCLCPP_WARN(this->get_logger(),
-                    "lio_world mode: distance eviction disabled; voxel count bounded "
-                    "only by kMaxVoxels=%zu and kMaxFrameAge=%d. Dev/debug only — "
-                    "use input_source=px4_full for production flights.",
+                    "Distance eviction disabled: /mapping/global retains history across the "
+                    "flight and is bounded by kMaxVoxels=%zu and kMaxFrameAge=%d.",
                     static_cast<size_t>(px4_nav_common::mapping::kMaxVoxels),
                     px4_nav_common::mapping::kMaxFrameAge);
     }
@@ -403,18 +495,15 @@ void GlobalMapper::timeoutCallback() {
 
         voxel_map_.Clear();
 
-        // Publish an empty cloud in the same coordinate frame as the map.
-        sensor_msgs::msg::PointCloud2 empty_msg;
-        empty_msg.header.frame_id =
+        // Publish empty clouds so RViz/downstream rolling views do not retain stale points.
+        const std::string frame_id =
             (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
-        empty_msg.header.stamp = ros_now;
-        empty_msg.height = 0;
-        empty_msg.width = 0;
-        empty_msg.is_dense = true;
-        empty_msg.is_bigendian = false;
-        empty_msg.point_step = 16;  // x(4) + y(4) + z(4) + intensity(4)
-        empty_msg.row_step = 0;
-        pub_map_->publish(empty_msg);
+        if (publish_global_map_) {
+            pub_global_map_->publish(MakeGlobalMapCloud({}, ros_now, frame_id));
+        }
+        if (publish_local_map_) {
+            pub_local_map_->publish(MakeLocalMapCloud({}, ros_now, frame_id));
+        }
 
         map_cleared_ = true;
         coverage_ok_.store(false, std::memory_order_release);
@@ -792,74 +881,31 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         ready_consecutive_frames_.store(0, std::memory_order_release);
     }
 
-    // Publish the complete occupied map. RViz PointCloud2 displays replace the
-    // previous cloud on each message, so publishing only per-frame deltas would
+    const std::string map_frame_id =
+        (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
+
+    // Publish the complete occupied global map. RViz PointCloud2 displays replace
+    // the previous cloud on each message, so publishing only per-frame deltas would
     // make accumulated surfaces disappear from the visualization.
-    if (publish_local_map_) {
+    if (publish_global_map_) {
         const auto map_points = voxel_map_.GetPointCloud();
-        if (!map_points.empty()) {
-            // Create a simple point structure for output
-            struct PointXYZI {
-                float x, y, z, intensity;
-            };
-            std::vector<PointXYZI> pcl_out;
-            pcl_out.reserve(map_points.size());
+        pub_global_map_->publish(MakeGlobalMapCloud(map_points, msg->header.stamp, map_frame_id));
+    }
 
-            for (const auto& p : map_points) {
-                PointXYZI pt;
-                pt.x = static_cast<float>(p.x);
-                pt.y = static_cast<float>(p.y);
-                pt.z = static_cast<float>(p.z);
-                pt.intensity = p.intensity;
-                pcl_out.push_back(pt);
-            }
-
-            // Create PointCloud2 message manually
-            sensor_msgs::msg::PointCloud2 ros_msg;
-            ros_msg.header.stamp = msg->header.stamp;
-            ros_msg.header.frame_id =
-                (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
-            ros_msg.height = 1;
-            ros_msg.width = pcl_out.size();
-            ros_msg.is_dense = true;
-            ros_msg.is_bigendian = false;
-
-            // Define fields
-            sensor_msgs::msg::PointField field_x, field_y, field_z, field_intensity;
-            field_x.name = "x";
-            field_x.offset = 0;
-            field_x.datatype = sensor_msgs::msg::PointField::FLOAT32;
-            field_x.count = 1;
-            field_y.name = "y";
-            field_y.offset = 4;
-            field_y.datatype = sensor_msgs::msg::PointField::FLOAT32;
-            field_y.count = 1;
-            field_z.name = "z";
-            field_z.offset = 8;
-            field_z.datatype = sensor_msgs::msg::PointField::FLOAT32;
-            field_z.count = 1;
-            field_intensity.name = "intensity";
-            field_intensity.offset = 12;
-            field_intensity.datatype = sensor_msgs::msg::PointField::FLOAT32;
-            field_intensity.count = 1;
-
-            ros_msg.fields = {field_x, field_y, field_z, field_intensity};
-            ros_msg.point_step = 16;  // 4 floats
-            ros_msg.row_step = ros_msg.point_step * ros_msg.width;
-
-            // Fill data
-            ros_msg.data.resize(ros_msg.row_step);
-            uint8_t* data_ptr = ros_msg.data.data();
-            for (size_t i = 0; i < pcl_out.size(); ++i) {
-                float* point_data = reinterpret_cast<float*>(data_ptr + i * 16);
-                point_data[0] = pcl_out[i].x;
-                point_data[1] = pcl_out[i].y;
-                point_data[2] = pcl_out[i].z;
-                point_data[3] = pcl_out[i].intensity;
-            }
-
-            pub_map_->publish(ros_msg);
+    // The local map is a stateless rolling view derived from global occupancy.
+    // Rebuilding it every frame makes points outside the planning radius disappear
+    // immediately without deleting them from the global map.
+    if (publish_local_map_) {
+        Eigen::Vector3d local_map_center = pos;
+        if (chain_ok) {
+            local_map_center = px4_at_cloud.position;
+        } else if (lio_world_input_ && lio_world_pose_ok) {
+            local_map_center = lio_at_cloud.position;
         }
+        voxel_map_.GetOccupiedPointsInRadius(local_map_center, local_map_radius_m_,
+                                             local_map_points_);
+        pub_local_map_->publish(
+            MakeLocalMapCloud(local_map_points_, msg->header.stamp, map_frame_id));
     }
 
     auto t2 = std::chrono::high_resolution_clock::now();
