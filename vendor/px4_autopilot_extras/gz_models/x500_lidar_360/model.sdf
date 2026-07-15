@@ -2,6 +2,11 @@
 <!--
   x500 quadrotor with Livox MID-360 LiDAR for 360-degree obstacle sensing.
 
+  UPDATES v2.0 (2026-07-14):
+    - Updated to use new lidar_mid360 model with unified origin
+    - Frame: mid360_link (was lidar_sensor_link)
+    - Extrinsic: z=0.28m from base_link (unified origin)
+
   The LiDAR sensor is loaded from the standalone lidar_mid360 model via
   <include merge='true'> so the same sensor can be reused on other airframes.
 -->
@@ -13,12 +18,17 @@
 
     <include merge='true'>
       <uri>model://lidar_mid360</uri>
+      <!--
+        Mount position: 28cm above base_link
+        This is the housing origin (mid360_link), which is also
+        the LiDAR optical center and IMU location (unified origin)
+      -->
       <pose>0 0 0.28 0 0 0</pose>
     </include>
 
-    <joint name='lidar_sensor_joint' type='fixed'>
+    <joint name='mid360_mount_joint' type='fixed'>
       <parent>base_link</parent>
-      <child>lidar_sensor_link</child>
+      <child>mid360_link</child>
       <pose relative_to='base_link'>0 0 0.28 0 0 0</pose>
     </joint>
   </model>

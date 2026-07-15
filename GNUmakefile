@@ -1,6 +1,8 @@
 # =============================================================================
 # GNUmakefile — uav-navigation colcon build + SITL targets
 #
+SHELL := /bin/bash
+
 # Usage:
 #   make              # build all packages
 #   make sim          # start SITL with Gazebo GUI
@@ -14,7 +16,7 @@ MAKE_JOBS        ?= 2
 ROS_PYTHON       ?= /usr/bin/python3
 COLCON_FLAGS     ?= --cmake-args -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=$(ROS_PYTHON) -DPYTHON_EXECUTABLE=$(ROS_PYTHON) -DPython3_FIND_VIRTUALENV=STANDARD
 
-ALL_PACKAGES := px4_navigation_common px4_mapping px4_navigation px4_ros2_utils
+ALL_PACKAGES := px4_nav_common px4_mapping px4_navigation px4_ros2_utils fast_lio
 
 # ── Environment guard ───────────────────────────────────────────────────────
 ifndef AMENT_PREFIX_PATH
@@ -62,10 +64,10 @@ test:
 #   GZ_GUI=0 make sim # same as make sim-headless
 # ─────────────────────────────────────────────────────────────────────────────
 sim:
-	@GZ_GUI=1 bash scripts/sim_launch.sh
+	@GZ_GUI="$${GZ_GUI:-1}" bash scripts/sim_launch.sh
 
 sim-headless:
-	@GZ_GUI=0 bash scripts/sim_launch.sh
+	@GZ_GUI=0 ENABLE_RVIZ=0 bash scripts/sim_launch.sh
 
 sim-stop:
 	@bash scripts/sim_stop.sh

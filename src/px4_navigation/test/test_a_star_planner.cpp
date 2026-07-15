@@ -29,8 +29,8 @@ class AStarPlannerTest : public ::testing::Test {
     }
 
     LocalPlanGrid grid_;
-    px4_navigation_common::DroneStateNed start_;
-    px4_navigation_common::WaypointNed goal_;
+    px4_nav_common::DroneStateNed start_;
+    px4_nav_common::WaypointNed goal_;
     AStarPlanner planner_;
 };
 

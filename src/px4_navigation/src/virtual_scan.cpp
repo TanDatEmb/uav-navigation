@@ -25,8 +25,8 @@ void VirtualScan::Reset(double angle_resolution, double max_range, double vehicl
     scan_ranges_.assign(kNumBins, static_cast<float>(max_range_));
 }
 
-void VirtualScan::Update(const std::vector<px4_navigation_common::PointLivox> &occupied_points,
-                         const px4_navigation_common::DroneStateNed &drone_state,
+void VirtualScan::Update(const std::vector<px4_nav_common::PointLivox> &occupied_points,
+                         const px4_nav_common::DroneStateNed &drone_state,
                          double height_above, double height_below) {
     // Reset all bins to max range, indicates no obstacle
     std::fill(scan_ranges_.begin(), scan_ranges_.end(), static_cast<float>(max_range_));

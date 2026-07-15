@@ -41,11 +41,11 @@
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
-#include <px4_navigation_common/frame_constants.hpp>
-#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
-#include <px4_navigation_common/mapping/voxel_types.hpp>
-#include <px4_navigation_common/math/grid.hpp>
-#include <px4_navigation_common/types.hpp>
+#include <px4_nav_common/frame_constants.hpp>
+#include <px4_nav_common/mapping/voxel_map_interface.hpp>
+#include <px4_nav_common/mapping/voxel_types.hpp>
+#include <px4_nav_common/math/grid.hpp>
+#include <px4_nav_common/types.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
@@ -247,7 +247,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     // Distance-based eviction sweeps voxels beyond EVICT_RADIUS around drone_pos_
     if (!lio_world_input_) {
         eviction_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(px4_navigation_common::mapping::kEvictIntervalMs),
+            std::chrono::milliseconds(px4_nav_common::mapping::kEvictIntervalMs),
             [this]() {
                 Eigen::Vector3d pos;
                 {
@@ -257,7 +257,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                 size_t evicted = voxel_map_.EvictDistant(pos);
                 if (evicted > 0)
                     RCLCPP_DEBUG(this->get_logger(), "Evicted %zu voxels (>%.0fm)", evicted,
-                                 px4_navigation_common::mapping::kEvictRadiusM);
+                                 px4_nav_common::mapping::kEvictRadiusM);
             },
             compute_cb_group_);
     }
@@ -271,8 +271,8 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                     "lio_world mode: distance eviction disabled; voxel count bounded "
                     "only by kMaxVoxels=%zu and kMaxFrameAge=%d. Dev/debug only — "
                     "use input_source=px4_full for production flights.",
-                    static_cast<size_t>(px4_navigation_common::mapping::kMaxVoxels),
-                    px4_navigation_common::mapping::kMaxFrameAge);
+                    static_cast<size_t>(px4_nav_common::mapping::kMaxVoxels),
+                    px4_nav_common::mapping::kMaxFrameAge);
     }
 
     RCLCPP_INFO(this->get_logger(), "GlobalMapper initialized");
@@ -396,9 +396,10 @@ void GlobalMapper::timeoutCallback() {
 
         voxel_map_.Clear();
 
-        // Publish empty cloud to clear RViz display
+        // Publish an empty cloud in the same coordinate frame as the map.
         sensor_msgs::msg::PointCloud2 empty_msg;
-        empty_msg.header.frame_id = "map_ned";
+        empty_msg.header.frame_id =
+            (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
         empty_msg.header.stamp = this->now();
         empty_msg.height = 0;
         empty_msg.width = 0;
@@ -633,7 +634,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
             continue;
 
-        px4_navigation_common::PointLivox pt;
+        px4_nav_common::PointLivox pt;
         pt.x = static_cast<double>(x);
         pt.y = static_cast<double>(y);
         pt.z = static_cast<double>(z);
@@ -665,7 +666,10 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
                                static_cast<int64_t>(msg->header.stamp.nanosec);
     px4_mapping::time::PoseSample px4_at_cloud, lio_at_cloud;
     bool chain_ok = false;
-    if (use_lio_buffer_ && !lio_world_input_) {
+    bool lio_world_pose_ok = false;
+    if (lio_world_input_) {
+        lio_world_pose_ok = lio_buf_.Lookup(cloud_t_ns, lio_at_cloud);
+    } else if (use_lio_buffer_) {
         const bool px4_hit = px4_buf_.Lookup(cloud_t_ns, px4_at_cloud);
         const bool lio_hit = lio_buf_.Lookup(cloud_t_ns, lio_at_cloud);
         chain_ok = px4_hit && lio_hit;
@@ -678,10 +682,17 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
                                       lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
         sensor_world = px4_at_cloud.position + t_ned;
     } else if (lio_world_input_) {
-        // lio_world mode
-        const Eigen::Vector3d t_world =
-            have_q ? (q_ned_frd.toRotationMatrix() * T_lidar_in_imu_) : T_lidar_in_imu_;
-        sensor_world = pos + t_world;
+        // The registered cloud is already in lio_world, but raycasting still
+        // needs the synchronized LiDAR origin. Derive it from the LIO IMU pose
+        // and rotate the calibrated IMU-to-LiDAR translation.
+        if (!lio_world_pose_ok) {
+            frames_dropped_.fetch_add(1, std::memory_order_relaxed);
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "lio_world mode: waiting for synchronized LIO odometry");
+            return;
+        }
+        sensor_world =
+            lio_at_cloud.position + lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
     } else if (full_pose_input_ && have_q) {
         // px4_full fallback
         const Eigen::Vector3d t_ned = q_ned_frd.toRotationMatrix() * C_FRD_FLU_ * T_lidar_in_imu_;
@@ -795,7 +806,8 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
             // Create PointCloud2 message manually
             sensor_msgs::msg::PointCloud2 ros_msg;
             ros_msg.header.stamp = msg->header.stamp;
-            ros_msg.header.frame_id = lio_world_input_ ? "camera_init" : "map_ned";
+            ros_msg.header.frame_id =
+                (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
             ros_msg.height = 1;
             ros_msg.width = pcl_out.size();
             ros_msg.is_dense = true;
@@ -886,7 +898,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
 // Factory function for composed pipeline
 std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
-    std::shared_ptr<px4_navigation_common::mapping::IVoxMapManager>& out_iface) {
+    std::shared_ptr<px4_nav_common::mapping::IVoxMapManager>& out_iface) {
     auto mgr = std::make_shared<GlobalMapper>(options);
     out_iface = mgr;
     return mgr;

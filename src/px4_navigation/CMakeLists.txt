@@ -9,7 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(px4_navigation_common REQUIRED)
+find_package(px4_nav_common REQUIRED)
 find_package(px4_ros2_utils REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -28,7 +28,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC
     Eigen3::Eigen
-    px4_navigation_common::px4_navigation_common
+    px4_nav_common::px4_nav_common
     sensor_msgs::sensor_msgs
 )
 ament_target_dependencies(${PROJECT_NAME} PUBLIC
@@ -49,7 +49,7 @@ target_include_directories(obstacle_perception PRIVATE
 target_link_libraries(obstacle_perception
     ${PROJECT_NAME}
     Eigen3::Eigen
-    px4_navigation_common::px4_navigation_common
+    px4_nav_common::px4_nav_common
     rclcpp::rclcpp
     sensor_msgs::sensor_msgs
     px4_msgs::px4_msgs
@@ -67,7 +67,7 @@ target_include_directories(obstacle_distance_visualizer_node PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 target_link_libraries(obstacle_distance_visualizer_node
-    px4_navigation_common::px4_navigation_common
+    px4_nav_common::px4_nav_common
     rclcpp::rclcpp
     px4_msgs::px4_msgs
     visualization_msgs::visualization_msgs
@@ -94,7 +94,7 @@ install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
 )
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_navigation_common px4_ros2_utils px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs visualization_msgs)
+ament_export_dependencies(px4_nav_common px4_ros2_utils px4_msgs Eigen3 rclcpp geometry_msgs nav_msgs trajectory_msgs sensor_msgs visualization_msgs)
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     ament_add_gtest(test_local_plan_grid test/test_local_plan_grid.cpp)
@@ -103,5 +103,20 @@ if(BUILD_TESTING)
     target_link_libraries(test_virtual_scan ${PROJECT_NAME})
     ament_add_gtest(test_a_star_planner test/test_a_star_planner.cpp)
     target_link_libraries(test_a_star_planner ${PROJECT_NAME})
+
+    ament_add_gtest(test_obstacle_perception
+        test/test_obstacle_perception.cpp
+        src/obstacle_perception.cpp)
+    target_include_directories(test_obstacle_perception PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+    target_link_libraries(test_obstacle_perception
+        ${PROJECT_NAME}
+        Eigen3::Eigen
+        px4_nav_common::px4_nav_common
+        rclcpp::rclcpp
+        sensor_msgs::sensor_msgs
+        px4_msgs::px4_msgs
+        visualization_msgs::visualization_msgs)
+    ament_target_dependencies(test_obstacle_perception px4_ros2_utils)
 endif()
 ament_package()

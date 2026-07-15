@@ -9,7 +9,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>px4_navigation_common</depend>
+  <depend>px4_nav_common</depend>
   <depend>px4_ros2_utils</depend>
   <depend>px4_msgs</depend>
   <depend>rclcpp</depend>

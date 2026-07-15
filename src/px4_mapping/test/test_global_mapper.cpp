@@ -14,10 +14,10 @@
 #include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <px4_mapping/global_mapper.hpp>
-#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
+#include <px4_nav_common/mapping/voxel_map_interface.hpp>
 
 using px4_mapping::get_global_mapper_node;
-using px4_navigation_common::mapping::IVoxMapManager;
+using px4_nav_common::mapping::IVoxMapManager;
 
 class GlobalMapperTest : public ::testing::Test {
    protected:
@@ -178,6 +178,54 @@ TEST_F(GlobalMapperTest, DropsReadyWhenDataStops) {
     // long enough for the 1 Hz timeout timer to fire and mark data stale.
     SpinMs(500);
     EXPECT_FALSE(iface_->IsReady()) << "Node should drop ready after data timeout";
+}
+
+class GlobalMapperLioWorldTest : public GlobalMapperTest {
+   protected:
+    void SetUp() override {
+        node_options_ = rclcpp::NodeOptions();
+        node_options_.append_parameter_override("ready_min_frames", 1);
+        node_options_.append_parameter_override("ready_min_occupied", 50);
+        node_options_.append_parameter_override("timeout_seconds", 2.0);
+        node_options_.append_parameter_override("use_sim_time", false);
+        node_options_.append_parameter_override("input_source", "lio_world");
+        node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+
+        node_ = get_global_mapper_node(node_options_, iface_);
+        executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+        executor_->add_node(node_);
+        pub_cloud_ =
+            node_->create_publisher<sensor_msgs::msg::PointCloud2>("/lio/cloud_registered", 20);
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+    }
+};
+
+TEST_F(GlobalMapperLioWorldTest, RequiresLioPoseBeforeRaycastingRegisteredCloud) {
+    auto cloud_without_pose = MakeDenseCloud(200, 3.0f);
+    cloud_without_pose.header.frame_id = "lio_world";
+    pub_cloud_->publish(cloud_without_pose);
+    SpinMs(100);
+    EXPECT_FALSE(iface_->IsReady());
+    EXPECT_GT(iface_->FramesDropped(), 0U);
+
+    const auto synchronized_stamp = node_->now();
+    nav_msgs::msg::Odometry odom;
+    odom.header.stamp = synchronized_stamp;
+    odom.header.frame_id = "lio_world";
+    odom.pose.pose.position.x = 10.0;
+    odom.pose.pose.orientation.w = std::sqrt(0.5);
+    odom.pose.pose.orientation.z = std::sqrt(0.5);
+    pub_lio_odom_->publish(odom);
+    SpinMs(50);
+
+    auto synchronized_cloud = MakeDenseCloud(200, 3.0f);
+    synchronized_cloud.header.frame_id = "lio_world";
+    synchronized_cloud.header.stamp = synchronized_stamp;
+    pub_cloud_->publish(synchronized_cloud);
+    SpinMs(150);
+
+    EXPECT_TRUE(iface_->IsReady());
 }
 
 // Fixture that enables the alignment gate with short thresholds so the gate

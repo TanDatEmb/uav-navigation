@@ -39,15 +39,15 @@
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
-#include <px4_navigation_common/frame_constants.hpp>
-#include <px4_navigation_common/mapping/voxel_map_interface.hpp>
+#include <px4_nav_common/frame_constants.hpp>
+#include <px4_nav_common/mapping/voxel_map_interface.hpp>
 #include <px4_ros2_utils/time/timesync.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
 
 namespace px4_mapping {
 
-class GlobalMapper : public rclcpp::Node, public px4_navigation_common::mapping::IVoxMapManager {
+class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMapManager {
    public:
     explicit GlobalMapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
@@ -80,7 +80,7 @@ class GlobalMapper : public rclcpp::Node, public px4_navigation_common::mapping:
     rclcpp::CallbackGroup::SharedPtr compute_cb_group_;
 
     // Reusable scratch buffer
-    std::vector<px4_navigation_common::PointLivox> changed_buf_;
+    std::vector<px4_nav_common::PointLivox> changed_buf_;
 
     // Parameters
     bool publish_local_map_{true};
@@ -184,7 +184,7 @@ class GlobalMapper : public rclcpp::Node, public px4_navigation_common::mapping:
     uint32_t off_intensity_{0};
 
     // Persistent point buffer
-    std::vector<px4_navigation_common::PointLivox> input_points_;
+    std::vector<px4_nav_common::PointLivox> input_points_;
 
     // Static FRD to FLU rotation matrix
     const Eigen::Matrix3d C_FRD_FLU_ =
@@ -219,7 +219,7 @@ class GlobalMapper : public rclcpp::Node, public px4_navigation_common::mapping:
 // Factory for composed pipeline
 std::shared_ptr<rclcpp::Node> get_global_mapper_node(
     const rclcpp::NodeOptions& options,
-    std::shared_ptr<px4_navigation_common::mapping::IVoxMapManager>& out_iface);
+    std::shared_ptr<px4_nav_common::mapping::IVoxMapManager>& out_iface);
 
 }  // namespace px4_mapping
 

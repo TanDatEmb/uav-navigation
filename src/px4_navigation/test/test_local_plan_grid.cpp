@@ -99,11 +99,11 @@ TEST_F(LocalPlanGridTest, WorldToIndexRoundTrip) {
 
     // Convert to index
     const Eigen::Vector3i index =
-        px4_navigation_common::math::WorldToIndex(boundary_point, grid_.Origin(), grid_.Resolution());
+        px4_nav_common::math::WorldToIndex(boundary_point, grid_.Origin(), grid_.Resolution());
 
     // Convert back to world position
     const Eigen::Vector3d converted_position =
-        px4_navigation_common::math::IndexToWorld(index, grid_.Origin(), grid_.Resolution());
+        px4_nav_common::math::IndexToWorld(index, grid_.Origin(), grid_.Resolution());
 
     // Check that the conversion is consistent (within half voxel resolution)
     const double tolerance = grid_.Resolution() / 2.0;

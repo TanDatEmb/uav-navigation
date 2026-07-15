@@ -5,7 +5,7 @@
 // Pipeline per timer tick:
 //   1. Lock state mutex and snapshot the latest cached point cloud + pose.
 //   2. If the cloud is stale or no data is available, publish UINT16_MAX to
-//      all bins (clear).
+//      all bins (unknown/unavailable).
 //   3. Otherwise, for each point:
 //        - Skip points inside the body-exclusion sphere.
 //        - Compute yaw and pitch angles in body FRD.
@@ -32,8 +32,14 @@
 namespace px4_navigation {
 
 ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("obstacle_perception", options), timesync_(this->get_clock()) {
+    : rclcpp::Node("obstacle_perception", options) {
     LoadParameters();
+
+    bool use_sim_time = false;
+    this->get_parameter("use_sim_time", use_sim_time);
+    const auto timesync_mode = use_sim_time ? px4_ros2_utils::time::Timesync::Mode::Simulation
+                                            : px4_ros2_utils::time::Timesync::Mode::External;
+    timesync_ = std::make_unique<px4_ros2_utils::time::Timesync>(this->get_clock(), timesync_mode);
 
     // Allocate spherical grid.
     grid_.resize(static_cast<size_t>(yaw_bins_),
@@ -53,12 +59,14 @@ ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
         obstacle_distance_topic_, rclcpp::QoS(20).reliable());
 
-    sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
-        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
-            "/fmu/out/timesync_status"),
-        rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
-            timesync_.update(msg);
-        });
+    if (!use_sim_time) {
+        sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+                timesync_->update(msg);
+            });
+    }
 
     if (publish_local_virtual_scan_) {
         pub_local_virtual_scan_ = this->create_publisher<sensor_msgs::msg::LaserScan>(
@@ -112,9 +120,10 @@ void ObstaclePerception::LoadParameters() {
     filter_ground_points_ = this->declare_parameter("filter_ground_points", true);
 
     // Validation.
-    if (yaw_bins_ <= 0 || yaw_bins_ > 360) {
-        RCLCPP_WARN(this->get_logger(), "yaw_bins=%d out of range, using default %d", yaw_bins_,
-                    kDefaultYawBins);
+    if (yaw_bins_ != kDefaultYawBins) {
+        RCLCPP_WARN(this->get_logger(),
+                    "yaw_bins=%d is incompatible with the fixed 72-element PX4 message; using %d",
+                    yaw_bins_, kDefaultYawBins);
         yaw_bins_ = kDefaultYawBins;
     }
     if (pitch_bins_ <= 0 || pitch_bins_ > 180) {
@@ -122,19 +131,39 @@ void ObstaclePerception::LoadParameters() {
                     kDefaultPitchBins);
         pitch_bins_ = kDefaultPitchBins;
     }
-    if (max_pitch_rad_ <= min_pitch_rad_) {
+    if (!std::isfinite(min_pitch_rad_) || !std::isfinite(max_pitch_rad_) ||
+        max_pitch_rad_ <= min_pitch_rad_) {
         RCLCPP_WARN(this->get_logger(),
                     "max_pitch_deg <= min_pitch_deg, using defaults [%.1f, %.1f]",
                     kDefaultMinPitchDeg, kDefaultMaxPitchDeg);
         min_pitch_rad_ = px4_ros2_utils::math::deg2rad(kDefaultMinPitchDeg);
         max_pitch_rad_ = px4_ros2_utils::math::deg2rad(kDefaultMaxPitchDeg);
     }
-    if (max_distance_m_ <= min_distance_m_) {
+    constexpr double kLargestEncodableMaxDistanceM = 655.33;
+    if (!std::isfinite(min_distance_m_) || !std::isfinite(max_distance_m_) ||
+        min_distance_m_ < 0.0 || max_distance_m_ <= min_distance_m_ ||
+        max_distance_m_ > kLargestEncodableMaxDistanceM) {
         RCLCPP_WARN(this->get_logger(),
-                    "max_distance_m=%.2f <= min_distance_m=%.2f, using defaults", max_distance_m_,
-                    min_distance_m_);
+                    "distance range [%.2f, %.2f] cannot encode a distinct measured-clear value; "
+                    "using defaults",
+                    min_distance_m_, max_distance_m_);
         min_distance_m_ = kDefaultMinDistanceM;
         max_distance_m_ = kDefaultMaxDistanceM;
+    }
+    if (!std::isfinite(body_exclusion_radius_m_) || body_exclusion_radius_m_ < 0.0) {
+        RCLCPP_WARN(this->get_logger(), "body_exclusion_radius_m=%.2f invalid, using %.2f",
+                    body_exclusion_radius_m_, kDefaultBodyExclusionRadiusM);
+        body_exclusion_radius_m_ = kDefaultBodyExclusionRadiusM;
+    }
+    if (!std::isfinite(publish_rate_hz_) || publish_rate_hz_ <= 0.0) {
+        RCLCPP_WARN(this->get_logger(), "publish_rate_hz=%.2f invalid, using %.2f",
+                    publish_rate_hz_, kDefaultPublishRateHz);
+        publish_rate_hz_ = kDefaultPublishRateHz;
+    }
+    if (stale_timeout_ms_ <= 0) {
+        RCLCPP_WARN(this->get_logger(), "stale_timeout_ms=%d invalid, using %d", stale_timeout_ms_,
+                    kDefaultStaleTimeoutMs);
+        stale_timeout_ms_ = kDefaultStaleTimeoutMs;
     }
     if (cloud_frame_ != "sensor" && cloud_frame_ != "sensor_flu" && cloud_frame_ != "ned") {
         RCLCPP_WARN(this->get_logger(),
@@ -162,7 +191,6 @@ void ObstaclePerception::CloudCallback(const sensor_msgs::msg::PointCloud2::Shar
         std::lock_guard<std::mutex> lock(state_mutex_);
         cloud_points_ = std::move(points);
         last_cloud_time_ = rclcpp::Time(msg->header.stamp, this->get_clock()->get_clock_type());
-        last_cloud_arrival_time_ = std::chrono::steady_clock::now();
         ++latest_cloud_seq_;
         cloud_received_ = true;
     }
@@ -188,7 +216,7 @@ void ObstaclePerception::TimerCallback() {
     bool have_odom = false;
     bool reuse_last_scan = false;
     uint64_t cloud_seq = 0;
-    std::chrono::steady_clock::time_point cloud_arrival;
+    rclcpp::Time cloud_time(0, 0, this->get_clock()->get_clock_type());
 
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -200,18 +228,19 @@ void ObstaclePerception::TimerCallback() {
         if (!reuse_last_scan) {
             cloud = cloud_points_;
         }
-        cloud_arrival = last_cloud_arrival_time_;
+        cloud_time = last_cloud_time_;
     }
 
     bool is_stale = false;
     if (have_cloud) {
-        const auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - cloud_arrival);
-        is_stale = age_ms > std::chrono::milliseconds(stale_timeout_ms_);
+        const rclcpp::Duration age = this->now() - cloud_time;
+        is_stale =
+            age.nanoseconds() >= 0 &&
+            age > rclcpp::Duration::from_seconds(static_cast<double>(stale_timeout_ms_) / 1000.0);
     }
 
     auto obstacle_msg = px4_msgs::msg::ObstacleDistance();
-    const auto now_px4 = timesync_.toPX4(this->now());
+    const auto now_px4 = timesync_->toPX4(this->now());
     if (!now_px4) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
                              "[obstacle_perception] Skipping obstacle distance publish until "
@@ -229,7 +258,8 @@ void ObstaclePerception::TimerCallback() {
     std::array<uint16_t, 72> min_distances{};
     std::fill(min_distances.begin(), min_distances.end(), kNoObstacle);
 
-    if (is_stale || !have_cloud || !have_odom) {
+    const bool required_odom_missing = (cloud_frame_ == "ned") && !have_odom;
+    if (is_stale || !have_cloud || required_odom_missing) {
         if (is_stale) {
             std::lock_guard<std::mutex> lock(state_mutex_);
             last_min_distances_valid_ = false;
@@ -243,6 +273,10 @@ void ObstaclePerception::TimerCallback() {
     } else if (reuse_last_scan) {
         std::lock_guard<std::mutex> lock(state_mutex_);
         min_distances = last_min_distances_;
+    } else if (cloud.empty()) {
+        // A zero-width PointCloud2 is unavailable data, not an observed-clear scan.
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        last_min_distances_valid_ = false;
     } else {
         BuildSphericalGrid(cloud);
         ComputeMinDistances(min_distances);
@@ -276,8 +310,9 @@ void ObstaclePerception::TimerCallback() {
         const float no_obstacle = std::numeric_limits<float>::infinity();
         for (size_t i = 0; i < min_distances.size(); ++i) {
             const uint16_t dist_cm = min_distances[i];
-            scan_msg.ranges[i] =
-                (dist_cm == kNoObstacle) ? no_obstacle : static_cast<float>(dist_cm) * 0.01f;
+            scan_msg.ranges[i] = (dist_cm == kNoObstacle || dist_cm == ClearDistanceCm())
+                                     ? no_obstacle
+                                     : static_cast<float>(dist_cm) * 0.01f;
         }
 
         pub_local_virtual_scan_->publish(scan_msg);
@@ -356,7 +391,7 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
 
         // Body exclusion: points too close to the UAV frame.
         const float dist_3d_m = pt_body.norm();
-        if (dist_3d_m < body_excl_m) {
+        if (dist_3d_m <= body_excl_m) {
             continue;
         }
 
@@ -387,7 +422,10 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
             continue;
         }
 
-        int yaw_bin = static_cast<int>(std::floor(yaw_angle / yaw_bin_size_rad));
+        // PX4 interprets each array index as a bin center. Round to the nearest
+        // center while keeping angle_offset=0 (bin 0 centered on forward).
+        int yaw_bin =
+            static_cast<int>(std::floor((yaw_angle + 0.5 * yaw_bin_size_rad) / yaw_bin_size_rad));
         yaw_bin = ((yaw_bin % yaw_bins_) + yaw_bins_) % yaw_bins_;
 
         int pitch_bin =
@@ -404,7 +442,9 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
 }
 
 void ObstaclePerception::ComputeMinDistances(std::array<uint16_t, 72>& min_distances) const {
-    std::fill(min_distances.begin(), min_distances.end(), kNoObstacle);
+    // A fresh MID-360 scan observes all 72 yaw sectors. Bins without a finite
+    // return are measured clear, not unknown.
+    std::fill(min_distances.begin(), min_distances.end(), ClearDistanceCm());
 
     const int yaw_limit = std::min(yaw_bins_, 72);
     for (int yaw_bin = 0; yaw_bin < yaw_limit; ++yaw_bin) {
@@ -416,8 +456,15 @@ void ObstaclePerception::ComputeMinDistances(std::array<uint16_t, 72>& min_dista
                 best = d;
             }
         }
-        min_distances[static_cast<size_t>(yaw_bin)] = best;
+        if (best != kNoObstacle) {
+            min_distances[static_cast<size_t>(yaw_bin)] = best;
+        }
     }
+}
+
+uint16_t ObstaclePerception::ClearDistanceCm() const {
+    const auto max_distance_cm = static_cast<uint16_t>(std::round(max_distance_m_ * 100.0));
+    return static_cast<uint16_t>(max_distance_cm + 1U);
 }
 
 }  // namespace px4_navigation

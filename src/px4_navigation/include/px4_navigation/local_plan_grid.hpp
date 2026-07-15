@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <vector>
 
-#include <px4_navigation_common/mapping/voxel_types.hpp>
-#include <px4_navigation_common/math/grid.hpp>
+#include <px4_nav_common/mapping/voxel_types.hpp>
+#include <px4_nav_common/math/grid.hpp>
 
 namespace px4_navigation {
 
@@ -123,10 +123,10 @@ class LocalPlanGrid {
     Eigen::Vector3i size_ = Eigen::Vector3i::Zero();
 
     /// Grid resolution in metres per voxel
-    double resolution_ = px4_navigation_common::mapping::kDefaultVoxelResolutionM;
+    double resolution_ = px4_nav_common::mapping::kDefaultVoxelResolutionM;
 
     /// Inflation radius in voxels
-    int inflation_radius_voxels_ = px4_navigation_common::mapping::kInflationVoxels;
+    int inflation_radius_voxels_ = px4_nav_common::mapping::kInflationVoxels;
 };
 
 }  // namespace px4_navigation

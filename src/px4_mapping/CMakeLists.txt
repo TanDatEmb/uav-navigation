@@ -9,7 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(px4_navigation_common REQUIRED)
+find_package(px4_nav_common REQUIRED)
 find_package(px4_ros2_utils REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -17,6 +17,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2 REQUIRED)
 # find_package(PCL REQUIRED)
 # find_package(pcl_conversions REQUIRED)
 add_library(${PROJECT_NAME} INTERFACE)
@@ -26,7 +27,7 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 )
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME} INTERFACE
-    px4_navigation_common
+    px4_nav_common
     px4_ros2_utils
     rclcpp
     geometry_msgs
@@ -34,6 +35,29 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     sensor_msgs
     px4_msgs
 )
+# LIO-PX4 alignment bridge executable
+add_executable(lio_px4_alignment
+    src/lio_px4_alignment.cpp
+)
+target_include_directories(lio_px4_alignment PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(lio_px4_alignment
+    ${PROJECT_NAME}
+)
+ament_target_dependencies(lio_px4_alignment
+    px4_nav_common
+    px4_ros2_utils
+    rclcpp
+    geometry_msgs
+    nav_msgs
+    sensor_msgs
+    px4_msgs
+    tf2_ros
+    tf2
+)
+
 # Localization bridge executable
 add_executable(localization_bridge
     src/localization_bridge.cpp
@@ -47,7 +71,7 @@ target_link_libraries(localization_bridge
     ${PROJECT_NAME}
 )
 ament_target_dependencies(localization_bridge
-    px4_navigation_common
+    px4_nav_common
     px4_ros2_utils
     rclcpp
     geometry_msgs
@@ -68,7 +92,7 @@ target_link_libraries(lidar_odometry
     ${PROJECT_NAME}
 )
 ament_target_dependencies(lidar_odometry
-    px4_navigation_common
+    px4_nav_common
     px4_ros2_utils
     rclcpp
     nav_msgs
@@ -87,7 +111,7 @@ target_link_libraries(global_mapper_core
     Eigen3::Eigen
 )
 ament_target_dependencies(global_mapper_core
-    px4_navigation_common
+    px4_nav_common
     px4_ros2_utils
     px4_msgs
     rclcpp
@@ -112,7 +136,7 @@ install(TARGETS global_mapper_core
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(TARGETS ${PROJECT_NAME} lidar_odometry localization_bridge global_mapper
+install(TARGETS ${PROJECT_NAME} lidar_odometry localization_bridge global_mapper lio_px4_alignment
     EXPORT export_${PROJECT_NAME}
     RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
@@ -126,7 +150,7 @@ install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
 )
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_navigation_common px4_ros2_utils Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs px4_msgs tf2_ros)
+ament_export_dependencies(px4_nav_common px4_ros2_utils Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs px4_msgs tf2_ros tf2)
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     ament_add_gtest(test_voxel_pool test/test_voxel_pool.cpp)

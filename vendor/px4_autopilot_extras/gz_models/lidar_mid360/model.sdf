@@ -14,6 +14,12 @@
     - Range precision: ~2 cm (@ 10 m)
     - Close-proximity blind zone: 0.1 m
 
+  UPDATES v2.0 (2026-07-14):
+    - Unified origin: single mid360_link (removed 3cm offset)
+    - Added IMU sensor (ICM-40609 simulation)
+    - Frame IDs: mid360_lidar_frame, mid360_imu_frame
+    - Extrinsic: LiDAR and IMU co-located (true to MID-360 hardware)
+
   gpu_lidar configuration:
     - Horizontal: 720 samples -> 0.5 deg resolution
     - Vertical: 28 samples over -7 deg .. +52 deg -> ~2.1 deg resolution
@@ -24,7 +30,16 @@
 -->
 <sdf version='1.11'>
   <model name='lidar_mid360'>
-    <link name='lidar_sensor_link'>
+    <!--
+      Unified origin design:
+      - mid360_link: Housing origin (unified)
+      - mid360_lidar_frame: LiDAR optical center (same as link for MID-360)
+      - mid360_imu_frame: IMU chip location (same as link for MID-360)
+
+      MID-360: LiDAR and IMU are co-located at same origin.
+      Ref: https://www.livoxtech.com/mid-360/specs
+    -->
+    <link name='mid360_link'>
       <pose>0 0 0 0 0 0</pose>
       <inertial>
         <mass>0.27</mass>
@@ -39,8 +54,8 @@
       </inertial>
 
       <sensor name='lidar' type='gpu_lidar'>
-        <gz_frame_id>lidar_sensor_link</gz_frame_id>
-        <pose>0 0 0.03 0 0 0</pose>
+        <gz_frame_id>mid360_lidar_frame</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
         <ray>
           <scan>
             <horizontal>
@@ -70,6 +85,60 @@
         <always_on>1</always_on>
         <update_rate>10</update_rate>
         <visualize>false</visualize>
+      </sensor>
+
+      <!--
+        IMU sensor simulating MID-360 built-in ICM-40609
+        - Rate: 200Hz (typical for MID-360)
+        - Co-located with LiDAR origin
+      -->
+      <sensor name='mid360_imu' type='imu'>
+        <gz_frame_id>mid360_imu_frame</gz_frame_id>
+        <pose>0 0 0 0 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>200</update_rate>
+        <imu>
+          <angular_velocity>
+            <x>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.001</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.001</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.001</stddev>
+              </noise>
+            </z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.01</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.01</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type='gaussian'>
+                <mean>0.0</mean>
+                <stddev>0.01</stddev>
+              </noise>
+            </z>
+          </linear_acceleration>
+        </imu>
       </sensor>
     </link>
   </model>

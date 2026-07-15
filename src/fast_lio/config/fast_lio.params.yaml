@@ -1,0 +1,63 @@
+# FAST-LIO2 Configuration for MID-360 Simulation
+
+/**:
+  ros__parameters:
+    # Topics
+    imu_topic: "/livox/imu"
+    lidar_topic: "/livox/lidar"
+
+    # Frames
+    body_frame: "mid360_imu"      # IMU frame
+    world_frame: "lio_world"      # FAST-LIO world frame
+    lidar_frame: "mid360_lidar"   # LiDAR frame
+
+    # Simulation mode
+    # true: All points have same timestamp (deskew disabled)
+    # false: Uses per-point timestamps for deskew
+    sim_mode: true
+
+    # Debug and bounded publication/backlog state
+    print_time_cost: false
+    path_max_poses: 2000            # Retain only the newest path poses
+    imu_buffer_max_samples: 2000    # About 10 s at 200 Hz
+    lidar_buffer_max_scans: 3       # Prefer fresh scans over stale backlog
+
+    # LiDAR filtering
+    lidar_filter_num: 3           # Take every N-th point
+    lidar_min_range: 0.5          # Minimum range (m)
+    lidar_max_range: 40.0         # Maximum range (m)
+
+    # Resolution
+    scan_resolution: 0.5          # Scan downsampling (m)
+    map_resolution: 0.5           # Map downsampling (m)
+
+    # Local map
+    cube_len: 50.0                # Local map cube size (m)
+    det_range: 40.0               # Detection range (m)
+    move_thresh: 0.5              # Map move threshold (ratio)
+
+    # IMU noise (MID-360 ICM-40609 typical values)
+    na: 0.01                      # Accelerometer noise (m/s^2)
+    ng: 0.001                     # Gyroscope noise (rad/s)
+    nba: 0.0001                   # Accelerometer bias noise
+    nbg: 0.00001                  # Gyroscope bias noise
+
+    # Algorithm
+    imu_init_num: 50              # IMU samples for initialization
+    imu_init_accel_std_max: 0.5   # Maximum stationary-window accel std (m/s^2)
+    imu_init_gyro_rms_max: 0.1    # Maximum stationary-window gyro RMS (rad/s)
+    imu_init_gravity_tolerance: 3.0  # Allowed mean acceleration norm error (m/s^2)
+    near_search_num: 5            # KNN for correspondence
+    ieskf_max_iter: 1             # IESKF max iterations
+    gravity_align: true           # Align gravity at startup
+    esti_il: false                # Estimate LiDAR-IMU extrinsic online
+
+    # Extrinsic: LiDAR in IMU frame (MID-360)
+    # From MID-360 datasheet: LiDAR origin offset from IMU
+    extrinsic_t: [-0.011, -0.02329, 0.04412]  # meters
+    extrinsic_r: [1.0, 0.0, 0.0,   # Identity (aligned axes)
+                  0.0, 1.0, 0.0,
+                  0.0, 0.0, 1.0]
+
+    # Measurement covariance
+    lidar_cov_inv: 200.0          # Inverse of LiDAR measurement covariance

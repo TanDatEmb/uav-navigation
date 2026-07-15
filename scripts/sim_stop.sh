@@ -43,8 +43,22 @@ fi
 # ── 2. Add well-known orphan processes ───────────────────────────────────────
 # Exact process-name matches (comm field). These never match a shell running
 # this script.
-for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node obstacle_perception static_transform_publisher lidar_odometry localization_bridge global_mapper xterm; do
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_perception localization_bridge global_mapper xterm; do
     for pid in $(pgrep -x "${name}" 2>/dev/null || true); do
+        [[ "${pid}" == "${MY_PID}" ]] && continue
+        [[ -n "${pid}" ]] && PIDS+=("${pid}")
+    done
+done
+
+# Executable names longer than Linux's 15-character comm limit cannot be
+# matched reliably with pgrep -x (for example static_transform_publisher).
+for pattern in \
+    '^/opt/ros/.*/lib/tf2_ros/static_transform_publisher( |$)' \
+    '^.*/lib/fast_lio/fast_lio_node( |$)' \
+    '^.*/lib/px4_mapping/lio_px4_alignment( |$)' \
+    '^.*/lib/px4_navigation/obstacle_perception( |$)' \
+    '^.*/lib/px4_mapping/global_mapper( |$)'; do
+    for pid in $(pgrep -f "${pattern}" 2>/dev/null || true); do
         [[ "${pid}" == "${MY_PID}" ]] && continue
         [[ -n "${pid}" ]] && PIDS+=("${pid}")
     done
@@ -102,10 +116,12 @@ fi
 # ── 5. Verify clean ─────────────────────────────────────────────────────────
 sleep 0.5
 remaining=0
-for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_distance_publisher_node obstacle_distance_visualizer_node obstacle_perception static_transform_publisher lidar_odometry localization_bridge global_mapper xterm; do
+for name in rviz2 px4 MicroXRCEAgent parameter_bridge obstacle_perception localization_bridge global_mapper xterm; do
     count=$(pgrep -x "${name}" 2>/dev/null | wc -l)
     remaining=$((remaining + count))
 done
+remaining=$((remaining + $(pgrep -f '^/opt/ros/.*/lib/tf2_ros/static_transform_publisher( |$)' 2>/dev/null | wc -l)))
+remaining=$((remaining + $(pgrep -f '^.*/lib/(fast_lio/fast_lio_node|px4_mapping/lio_px4_alignment)( |$)' 2>/dev/null | wc -l)))
 remaining=$((remaining + $(pgrep -f "^gz sim" 2>/dev/null | wc -l)))
 remaining=$((remaining + $(pgrep -f "ros2 bag record" 2>/dev/null | wc -l)))
 

@@ -1,0 +1,58 @@
+# FAST-LIO2 Internal Configuration (flat YAML for YAML::LoadFile)
+
+# Topics
+imu_topic: "/livox/imu"
+lidar_topic: "/livox/lidar"
+
+# Frames
+body_frame: "mid360_imu"
+world_frame: "lio_world"
+lidar_frame: "mid360_lidar"
+
+# Simulation mode
+sim_mode: true
+
+# Debug and bounded publication/backlog state
+print_time_cost: false
+path_max_poses: 2000
+imu_buffer_max_samples: 2000
+lidar_buffer_max_scans: 3
+
+# LiDAR filtering
+lidar_filter_num: 3
+lidar_min_range: 0.5
+lidar_max_range: 40.0
+
+# Resolution
+scan_resolution: 0.5
+map_resolution: 0.5
+
+# Local map
+cube_len: 50.0
+det_range: 40.0
+move_thresh: 0.5
+
+# IMU noise
+na: 0.01
+ng: 0.001
+nba: 0.0001
+nbg: 0.00001
+
+# Algorithm
+imu_init_num: 50
+imu_init_accel_std_max: 0.5
+imu_init_gyro_rms_max: 0.1
+imu_init_gravity_tolerance: 3.0
+near_search_num: 5
+ieskf_max_iter: 1
+gravity_align: true
+esti_il: false
+
+# Extrinsic
+extrinsic_t: [-0.011, -0.02329, 0.04412]
+extrinsic_r: [1.0, 0.0, 0.0,
+              0.0, 1.0, 0.0,
+              0.0, 0.0, 1.0]
+
+# Measurement covariance
+lidar_cov_inv: 200.0

@@ -6,7 +6,7 @@
 #include <memory>
 #include <vector>
 
-#include <px4_navigation_common/types.hpp>
+#include <px4_nav_common/types.hpp>
 #include <px4_ros2_utils/common/constants.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 
@@ -63,8 +63,8 @@ class VirtualScan {
      * @param height_above Include points up to X meters above drone
      * @param height_below Include points up to X meters below drone
      */
-    void Update(const std::vector<px4_navigation_common::PointLivox>& occupied_points,
-                const px4_navigation_common::DroneStateNed& drone_state, double height_above = 2.0,
+    void Update(const std::vector<px4_nav_common::PointLivox>& occupied_points,
+                const px4_nav_common::DroneStateNed& drone_state, double height_above = 2.0,
                 double height_below = 1.0);
 
     /**

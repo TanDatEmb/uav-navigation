@@ -30,10 +30,9 @@ obstacle_perception:
 
     # Points closer than this radius to the sensor origin are ignored so the
     # UAV frame / propellers / landing gear do not produce false obstacles.
-    # x500 propeller disk radius is ~0.25 m, landing gear struts extend a
-    # bit further. Use 0.35 m to suppress false obstacles from the airframe
-    # without creating an excessive near-field dead zone.
-    body_exclusion_radius_m: 0.35
+    # ULog analysis shows stable x500 self-returns at 0.35-0.37 m. Use an
+    # inclusive 0.50 m boundary to suppress the complete simulated airframe.
+    body_exclusion_radius_m: 0.50
 
     # Publish rate (Hz). Must stay well below PX4 CP timeout (500 ms).
     publish_rate_hz: 20.0

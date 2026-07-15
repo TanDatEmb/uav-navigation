@@ -38,16 +38,20 @@ class ObstaclePerception : public rclcpp::Node {
     static constexpr double kDefaultMaxPitchDeg = 52.0;
     static constexpr double kDefaultMinDistanceM = 0.1;
     static constexpr double kDefaultMaxDistanceM = 40.0;
-    static constexpr double kDefaultBodyExclusionRadiusM = 0.3;
+    static constexpr double kDefaultBodyExclusionRadiusM = 0.5;
     static constexpr double kDefaultPublishRateHz = 20.0;
     static constexpr int kDefaultStaleTimeoutMs = 400;
     static constexpr uint8_t kFrameBodyFrd = 12;
     static constexpr uint8_t kSensorTypeLaser = 0;
-    static constexpr uint16_t kNoObstacle = 65535;  // UINT16_MAX
+    // PX4 ObstacleDistance uses UINT16_MAX for unknown/unavailable data.
+    // A measured-clear bin is encoded separately as max_distance + 1.
+    static constexpr uint16_t kNoObstacle = 65535;
 
     explicit ObstaclePerception(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
    private:
+    friend class ObstaclePerceptionTestAccess;
+
     struct GridCell {
         uint16_t min_distance_cm = kNoObstacle;
     };
@@ -59,6 +63,7 @@ class ObstaclePerception : public rclcpp::Node {
 
     void BuildSphericalGrid(const std::vector<Eigen::Vector3f>& cloud);
     void ComputeMinDistances(std::array<uint16_t, 72>& min_distances) const;
+    uint16_t ClearDistanceCm() const;
 
     // Subscriptions
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
@@ -76,7 +81,6 @@ class ObstaclePerception : public rclcpp::Node {
     mutable std::mutex state_mutex_;
     std::vector<Eigen::Vector3f> cloud_points_;
     rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
-    std::chrono::steady_clock::time_point last_cloud_arrival_time_;
     uint64_t latest_cloud_seq_ = 0;
     uint64_t last_processed_cloud_seq_ = 0;
     std::array<uint16_t, 72> last_min_distances_{};
@@ -112,8 +116,9 @@ class ObstaclePerception : public rclcpp::Node {
     std::string cloud_frame_;
     bool filter_ground_points_ = true;
 
-    // Converts PX4 timestamps using the authoritative PX4 timesync offset.
-    px4_ros2_utils::time::Timesync timesync_{nullptr};
+    // Converts timestamps between the node-owned ROS clock and PX4 time.
+    // The mode is selected from use_sim_time during construction.
+    std::unique_ptr<px4_ros2_utils::time::Timesync> timesync_;
 
     // Statistics
     uint64_t clouds_received_ = 0;

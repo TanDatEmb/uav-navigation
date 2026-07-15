@@ -24,7 +24,7 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <px4_mapping/time/pose_buffer.hpp>
-#include <px4_navigation_common/frame_constants.hpp>
+#include <px4_nav_common/frame_constants.hpp>
 #include <px4_ros2_utils/math/quaternion.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
 
@@ -336,7 +336,7 @@ bool LocalizationBridge::TransformPointCloud(
 
     // Build output cloud
     output_cloud.header = input_cloud->header;
-    output_cloud.header.frame_id = std::string(px4_navigation_common::frame::kMapNed);
+    output_cloud.header.frame_id = std::string(px4_nav_common::frame::kMapNed);
     output_cloud.height = 1;
     output_cloud.width = static_cast<uint32_t>(n);
 

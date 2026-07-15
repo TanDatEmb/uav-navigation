@@ -7,7 +7,7 @@
 #   BG  – ros_gz_bridge                (LiDAR PointCloud2 from Gazebo → ROS 2)
 #   BG  – obstacle_perception         (PointCloud2 → 2.5D grid → ObstacleDistance for PX4 CP)
 #   BG  – obstacle_distance_visualizer (RViz markers from ObstacleDistance)
-#   BG  – rosbag2 record               (optional, set SKIP_BAG=1 to disable)
+#   BG  – rosbag2 record               (optional, set RECORD_BAG=1 to enable)
 #   WIN – PX4 SITL console             (also launches Gazebo via gz_bridge)
 #
 # Usage:
@@ -18,9 +18,10 @@
 #   PX4_DIR     – PX4 Autopilot repo (default: ~/Dev/Autopilot)
 #   ROS_DISTRO  – ROS 2 distro      (default: jazzy)
 #   XRCE_PORT   – uXRCE-DDS UDP port (default: 8888)
-#   SKIP_BAG    – set 1 to skip rosbag recording
+#   RECORD_BAG  – set 1 to enable high-bandwidth rosbag recording (default: 0)
 #   GZ_GUI      – set 1 to open Gazebo GUI
-#   ENABLE_OBSTACLE_VIZ – set 1 to run RViz obstacle marker visualizer
+#   ENABLE_OBSTACLE_VIZ – set 0 to disable RViz obstacle-bin visualization
+#   ENABLE_EXTERNAL_ODOMETRY – set 1 to publish FAST-LIO odometry to PX4 (default: 0)
 # =============================================================================
 set -euo pipefail
 
@@ -30,16 +31,27 @@ WS_DIR="${WS_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 PX4_DIR="${PX4_DIR:-${HOME}/Dev/Autopilot}"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
 XRCE_PORT="${XRCE_PORT:-8888}"
-SKIP_BAG="${SKIP_BAG:-0}"
+RECORD_BAG="${RECORD_BAG:-0}"
 GZ_GUI="${GZ_GUI:-0}"
-ENABLE_OBSTACLE_VIZ="${ENABLE_OBSTACLE_VIZ:-0}"
+ENABLE_OBSTACLE_VIZ="${ENABLE_OBSTACLE_VIZ:-1}"
+ENABLE_RVIZ="${ENABLE_RVIZ:-${GZ_GUI}}"
+# Disabled by default while isolating unstable EV fusion from Collision Prevention.
+ENABLE_EXTERNAL_ODOMETRY="${ENABLE_EXTERNAL_ODOMETRY:-0}"
+SKIP_PX4_BUILD="${SKIP_PX4_BUILD:-0}"
 # Map input source for global_mapper node.
-# Production: px4_full (per Topic Contract in docs/architecture.md).
-# Debug only: lio_world (frame=camera_init, NOT for quality assessment).
-MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-px4_full}"
+# The default pipeline consumes FAST-LIO's registered cloud in lio_world.
+# px4_full is an explicit fallback that consumes the raw sensor cloud and uses
+# PX4 pose directly; it must never receive an already-registered LIO cloud.
+MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-lio_world}"
 if [[ "${MAP_INPUT_SOURCE}" != "px4_full" && "${MAP_INPUT_SOURCE}" != "lio_world" ]]; then
     echo "ERROR: MAP_INPUT_SOURCE='${MAP_INPUT_SOURCE}' invalid. Use 'px4_full' or 'lio_world'." >&2
     exit 1
+fi
+
+if [[ "${MAP_INPUT_SOURCE}" == "lio_world" ]]; then
+    GLOBAL_MAP_CLOUD_TOPIC="/lio/cloud_registered"
+else
+    GLOBAL_MAP_CLOUD_TOPIC="/lidar_360/points"
 fi
 
 # ── PX4 paths ──────────────────────────────────────────────────────────────
@@ -72,12 +84,41 @@ if [[ -n "${DISPLAY:-}" ]] && command -v xdpyinfo >/dev/null 2>&1; then
     fi
 fi
 
-# ── Pre-launch stale node cleanup ─────────────────────────────────────────
-# Previous sessions may leave node executables running even after sim_stop,
-# which causes duplicate publishers and misleading QoS discovery warnings.
-for stale_name in localization_bridge lidar_odometry global_mapper; do
-    pkill -9 -f "${stale_name}" 2>/dev/null || true
+# ── Pre-launch cleanup ─────────────────────────────────────────────────────
+# `make sim` is intentionally idempotent: a previous detached session must not
+# leave PX4, Gazebo, XRCE, ROS nodes, or rosbag recorders competing with the new
+# session. Use the workspace stop script so recorded process trees are cleaned
+# before allocating ports and ROS node names again.
+if pgrep -x px4 >/dev/null 2>&1 \
+    || pgrep -x MicroXRCEAgent >/dev/null 2>&1 \
+    || pgrep -f '^gz sim' >/dev/null 2>&1 \
+    || pgrep -f 'ros2 bag record' >/dev/null 2>&1; then
+    echo "[sim] Existing SITL session detected; stopping it first..."
+    bash "${SCRIPT_DIR}/sim_stop.sh"
+fi
+
+# Clean up standalone ROS processes that may predate PID tracking.
+for stale_name in global_mapper lio_px4_alignment fast_lio obstacle_perception ros_gz_bridge; do
+    pkill -TERM -f "${stale_name}" 2>/dev/null || true
 done
+
+# ── PX4 airframe rebuild check ────────────────────────────────────────────
+# If the selected airframe is not present in the PX4 build rootfs, we must
+# rebuild PX4 so the new airframe is included in the ROMFS.
+AIRFRAME_SCRIPT="${PX4_DIR}/ROMFS/px4fmu_common/init.d-posix/airframes/4022_gz_x500_lidar_360"
+BUILT_AIRFRAME="${PX4_BUILD}/rootfs/etc/init.d-posix/airframes/4022_gz_x500_lidar_360"
+if [[ "${SKIP_PX4_BUILD}" != "1" && -f "${AIRFRAME_SCRIPT}" && ! -f "${BUILT_AIRFRAME}" ]]; then
+    echo ""
+    echo "[sim] Airframe 4022_gz_x500_lidar_360 not found in PX4 build. Rebuilding PX4..."
+    echo "      This happens when the extras have just been applied."
+    echo "      Set SKIP_PX4_BUILD=1 to skip this check."
+    (cd "${PX4_DIR}" && PX4_AIRFRAME=4022_gz_x500_lidar_360 make px4_sitl_default)
+    if [[ ! -f "${BUILT_AIRFRAME}" ]]; then
+        echo "ERROR: PX4 rebuild failed; airframe still missing: ${BUILT_AIRFRAME}" >&2
+        exit 1
+    fi
+    echo "[sim] PX4 rebuild complete."
+fi
 
 # ── Session logging ────────────────────────────────────────────────────────
 SESSION_ID="$(date +%Y%m%d_%H%M%S)"
@@ -173,18 +214,20 @@ MicroXRCEAgent udp4 -p ${XRCE_PORT}
 BGEOF
 
 # ── ros_gz_bridge (LiDAR PointCloud2 + sim /clock → ROS 2) ───────────────
-# Gazebo Harmonic gpu_lidar publishes PointCloud2 on:
-#   /world/.../model/.../link/lidar_sensor_link/sensor/lidar/scan/points
-GZ_LIDAR_POINTS="/world/obstacle_course/model/x500_lidar_360_0/link/lidar_sensor_link/sensor/lidar/scan/points"
+# Gazebo Harmonic MID-360 topics from the standalone lidar_mid360 model.
+GZ_LIDAR_POINTS="/world/obstacle_course/model/x500_lidar_360_0/link/mid360_link/sensor/lidar/scan/points"
+GZ_LIDAR_IMU="/world/obstacle_course/model/x500_lidar_360_0/link/mid360_link/sensor/mid360_imu/imu"
 GZ_WORLD_CLOCK="/world/obstacle_course/clock"
 make_bg "gz-bridge" 10 << BGEOF
 export GZ_IP=127.0.0.1
 export GZ_SIM_RESOURCE_PATH="${PX4_GZ_MODELS}:${PX4_GZ_WORLDS}:\${GZ_SIM_RESOURCE_PATH:-}"
 ros2 run ros_gz_bridge parameter_bridge \
   "${GZ_LIDAR_POINTS}@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked" \
+  "${GZ_LIDAR_IMU}@sensor_msgs/msg/Imu[gz.msgs.IMU" \
   "${GZ_WORLD_CLOCK}@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
   --ros-args \
   -r "${GZ_LIDAR_POINTS}:=/lidar_360/points" \
+  -r "${GZ_LIDAR_IMU}:=/imu/out" \
   -r "${GZ_WORLD_CLOCK}:=/clock"
 BGEOF
 
@@ -194,38 +237,28 @@ make_bg "obstacle-viz" 16 << BGEOF
 ros2 run px4_navigation obstacle_distance_visualizer_node --ros-args -p use_sim_time:=true
 BGEOF
 else
-    echo "  [skip] obstacle-viz disabled by default (set ENABLE_OBSTACLE_VIZ=1 to enable)"
+    echo "  [skip] obstacle-viz disabled (ENABLE_OBSTACLE_VIZ=0)"
 fi
 
-# ── lidar_odometry node (core localization contract topics) ───────────────
-make_bg "lidar-odometry" 13 << BGEOF
-ros2 run px4_mapping lidar_odometry \
-    --ros-args \
-        -r __node:=lidar_odometry \
-    --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
-    -p use_sim_time:=true \
-    -p input_cloud_topic:=/lidar_360/points \
-    -p px4_odom_topic:=/fmu/out/vehicle_odometry \
-    -p vehicle_imu_topic:=/fmu/out/vehicle_imu \
-    -p use_imu_fusion:=false \
-        -p output_cloud_topic:=/localization/cloud \
-        -p output_odom_topic:=/localization/odometry
+# ── FAST-LIO2 node (15-DOF IESKF LiDAR-Inertial Odometry) ───────────────
+make_bg "fast-lio" 13 << BGEOF
+ros2 launch fast_lio fast_lio_sim.launch.py \
+    use_sim_time:=true \
+    lidar_topic:=/lidar_360/points \
+    imu_topic:=/imu/out
 BGEOF
 
-# ── localization_bridge node (camera_init → map_ned world cloud) ──────────
-make_bg "localization-bridge" 14 << BGEOF
-ros2 run px4_mapping localization_bridge \
-  --ros-args \
-    -r __node:=localization_bridge \
-  --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
-  -p use_sim_time:=true \
-    -p input_cloud_topic:=/localization/cloud \
-    -p output_cloud_topic:=/world/cloud \
-    -p lio_odom_topic:=/localization/odometry \
-  -p px4_odom_topic:=/fmu/out/vehicle_odometry \
-  -p publish_visual_odometry_to_px4:=true \
-  -p visual_odom_topic:=/fmu/in/vehicle_visual_odometry
+# ── LIO-PX4 alignment bridge (LIO world → PX4 NED) ───────────────────────
+# Keep this opt-in during the isolation test. FAST-LIO still runs and publishes
+# diagnostics, but PX4 receives no external vehicle odometry when disabled.
+if [[ "${ENABLE_EXTERNAL_ODOMETRY}" == "1" ]]; then
+make_bg "lio-px4-alignment" 14 << BGEOF
+ros2 launch px4_mapping lio_px4_alignment.launch.py \
+    use_sim_time:=true
 BGEOF
+else
+    echo "  [isolation] external odometry publication to PX4 disabled"
+fi
 
 # ── global_mapper node (sparse global map in map_ned) ─────────────────────
 make_bg "global-mapper" 16 << BGEOF
@@ -234,10 +267,11 @@ ros2 run px4_mapping global_mapper \
     -r __node:=global_mapper \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
-    -p cloud_topic:=/world/cloud \
+    -p cloud_topic:=${GLOBAL_MAP_CLOUD_TOPIC} \
     -p map_topic:=/mapping/global \
-    -p lio_odom_topic:=/localization/odometry \
-  -p input_source:=${MAP_INPUT_SOURCE}
+    -p lio_odom_topic:=/lio/odometry \
+    -p input_source:=${MAP_INPUT_SOURCE} \
+    -p use_lio_buffer:=false
 BGEOF
 
 # ── obstacle_perception node ───────────────────────────────────────────────
@@ -256,7 +290,7 @@ ros2 run px4_navigation obstacle_perception \
 BGEOF
 
 # ── rosbag2 (optional) ────────────────────────────────────────────────────
-if [[ "${SKIP_BAG}" != "1" ]]; then
+if [[ "${RECORD_BAG}" == "1" ]]; then
 make_bg "rosbag" 20 << BGEOF
 mkdir -p "${LOG_DIR}/rosbag"
 ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
@@ -265,45 +299,54 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   --include-unpublished-topics \
   --topics \
   /lidar_360/points \
-  /visualization/grid_2d5/markers \
-  /visualization/grid_2d5/min_distance \
-    /perception/scan_1d \
-    /localization/cloud \
-    /localization/odometry \
-    /world/cloud \
-    /mapping/global \
-  /fmu/in/obstacle_distance \
+  /livox/lidar/pointcloud \
+  /imu/out \
+  /lio/odometry \
+  /lio/path \
+  /lio/cloud_registered \
   /fmu/in/vehicle_visual_odometry \
+  /fmu/in/obstacle_distance \
   /fmu/out/vehicle_odometry \
   /fmu/out/vehicle_local_position \
   /fmu/out/vehicle_local_position_v1 \
   /fmu/out/vehicle_status \
   /fmu/out/vehicle_status_v1 \
-    /odometry
+  /fmu/out/vehicle_imu \
+  /visualization/grid_2d5/markers \
+  /visualization/grid_2d5/min_distance \
+  /perception/scan_1d \
+  /tf \
+  /tf_static \
+  /clock
 BGEOF
 fi
 
-# ── RViz2 (optional) ────────────────────────────────────────────────────────
+# ── RViz2 and visualization TFs (optional) ─────────────────────────────────
 RVIZ2_BIN="/opt/ros/${ROS_DISTRO}/bin/rviz2"
-if [[ -x "${RVIZ2_BIN}" ]]; then
-# Publish static TF frames so RViz can display the point cloud and markers properly.
-make_bg "static-tf" 18 << BGEOF
+if [[ "${ENABLE_RVIZ}" == "1" && -x "${RVIZ2_BIN}" ]]; then
+# Gazebo publishes the raw cloud in mid360_lidar_frame. Connect it to the
+# project sensor frame used by RViz and obstacle diagnostics.
+make_bg "static-tf-lidar" 18 << BGEOF
 ros2 run tf2_ros static_transform_publisher \
   --x 0 --y 0 --z 0 --roll 0 --pitch 0 --yaw 0 \
   --frame-id lidar_sensor_link \
-  --child-frame-id x500_lidar_360_0/lidar_sensor_link/lidar
+  --child-frame-id mid360_lidar_frame
+BGEOF
 
+# FAST-LIO publishes lio_world -> mid360_imu. This calibrated static transform
+# closes the chain to the LiDAR/RViz sensor frame.
+make_bg "static-tf-extrinsic" 18 << BGEOF
 ros2 run tf2_ros static_transform_publisher \
-  --x 0 --y 0 --z 0 --roll 0 --pitch 0 --yaw 0 \
-  --frame-id map_ned \
-  --child-frame-id base_link
+  --x -0.011 --y -0.023 --z 0.044 --roll 0 --pitch 0 --yaw 0 \
+  --frame-id mid360_imu \
+  --child-frame-id lidar_sensor_link
 BGEOF
 
 make_bg "rviz" 20 << BGEOF
 "${RVIZ2_BIN}" -d "${WS_DIR}/assets/rviz/uav_navigation.rviz" 2>&1
 BGEOF
 else
-    echo "  [skip] rviz2 not installed. Install: sudo apt install ros-${ROS_DISTRO}-rviz2"
+    echo "  [skip] RViz disabled or unavailable (ENABLE_RVIZ=${ENABLE_RVIZ})"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -312,9 +355,14 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 echo ""
 echo "Starting PX4 SITL..."
+echo "  Model: x500_lidar_360"
+echo "  World: obstacle_course"
+echo ""
 
 make_win "px4-sitl" 4 "140x35" << WINEOF
-export PX4_SIMULATOR=gz
+# PX4 selects the airframe by the full autostart model name (including gz_).
+# The selected airframe then maps it to the Gazebo asset x500_lidar_360.
+export PX4_SYS_AUTOSTART=4022
 export PX4_SIM_MODEL=gz_x500_lidar_360
 export PX4_GZ_WORLD=obstacle_course
 export PX4_GZ_MODEL_POSE="0,0,0,0,0,0"
@@ -381,11 +429,10 @@ echo ""
 echo "  Background logs:"
 echo "    xrce-dds     : ${LOG_DIR}/bg_xrce-dds-agent.log"
 echo "    gz-bridge    : ${LOG_DIR}/bg_gz-bridge.log"
-echo "    lidar-odom   : ${LOG_DIR}/bg_lidar-odometry.log"
-echo "    localization : ${LOG_DIR}/bg_localization-bridge.log"
+
 echo "    global-map   : ${LOG_DIR}/bg_global-mapper.log"
 echo "    obstacle     : ${LOG_DIR}/bg_obstacle-perception.log"
-if [[ "${SKIP_BAG}" != "1" ]]; then
+if [[ "${RECORD_BAG}" == "1" ]]; then
     echo "    rosbag       : ${LOG_DIR}/bg_rosbag.log → rosbag/flight_data/"
 fi
 echo ""

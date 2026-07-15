@@ -80,3 +80,7 @@ compile_commands.json
 
 # Ignore only untracked submodules content if needed; submodule metadata is tracked.
 # px4_msgs content is managed by git submodule.
+
+.claude/
+CLAUDE.md
+AGENTS.md

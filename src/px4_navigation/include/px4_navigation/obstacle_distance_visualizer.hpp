@@ -38,6 +38,8 @@ class ObstacleDistanceVisualizer : public rclcpp::Node {
     rclcpp::TimerBase::SharedPtr timer_;
 
     std::array<uint16_t, kNumBins> distances_{};
+    uint16_t max_distance_cm_{0};
+    std::string marker_frame_;
     bool obstacle_valid_{false};
     std::mutex distances_mutex_;
 };
