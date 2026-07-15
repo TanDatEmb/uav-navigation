@@ -19,11 +19,6 @@ log/sim/latest
 *.db3
 *.bag
 
-# Local review notes from ongoing development (kept on local only)
-reviews/draft/
-reviews/local/
-*.review.md
-
 # Python
 __pycache__/
 *.py[cod]
