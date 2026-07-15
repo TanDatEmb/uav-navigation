@@ -88,7 +88,7 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
     {
         auto delete_all = visualization_msgs::msg::Marker();
         delete_all.header.frame_id = "lidar_sensor_link";
-        delete_all.header.stamp = this->now();
+        // Keep stamp at zero so RViz uses the latest available transform.
         delete_all.action = visualization_msgs::msg::Marker::DELETEALL;
         delete_all.ns = "obstacle_distance";
         msg.markers.push_back(delete_all);
@@ -97,7 +97,9 @@ void ObstacleDistanceVisualizer::PublishMarkers() {
     // Bounded line-list: one thin line per bin from UAV to obstacle.
     auto lines = visualization_msgs::msg::Marker();
     lines.header.frame_id = "lidar_sensor_link";
-    lines.header.stamp = this->now();
+    // These live markers visualize the latest obstacle bins. A zero stamp avoids
+    // transient future-extrapolation errors while FAST-LIO publishes scan-time TF.
+    lines.frame_locked = true;
     lines.ns = "obstacle_distance";
     lines.id = 1;
     lines.type = visualization_msgs::msg::Marker::LINE_LIST;

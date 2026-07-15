@@ -79,9 +79,6 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     rclcpp::CallbackGroup::SharedPtr io_cb_group_;
     rclcpp::CallbackGroup::SharedPtr compute_cb_group_;
 
-    // Reusable scratch buffer
-    std::vector<px4_nav_common::PointLivox> changed_buf_;
-
     // Parameters
     bool publish_local_map_{true};
     int log_interval_{1};

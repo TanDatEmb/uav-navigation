@@ -783,18 +783,20 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         ready_consecutive_frames_.store(0, std::memory_order_release);
     }
 
-    // Publish changed voxels
+    // Publish the complete occupied map. RViz PointCloud2 displays replace the
+    // previous cloud on each message, so publishing only per-frame deltas would
+    // make accumulated surfaces disappear from the visualization.
     if (publish_local_map_) {
-        voxel_map_.GetChangedPoints(changed_buf_);
-        if (!changed_buf_.empty()) {
+        const auto map_points = voxel_map_.GetPointCloud();
+        if (!map_points.empty()) {
             // Create a simple point structure for output
             struct PointXYZI {
                 float x, y, z, intensity;
             };
             std::vector<PointXYZI> pcl_out;
-            pcl_out.reserve(changed_buf_.size());
+            pcl_out.reserve(map_points.size());
 
-            for (const auto& p : changed_buf_) {
+            for (const auto& p : map_points) {
                 PointXYZI pt;
                 pt.x = static_cast<float>(p.x);
                 pt.y = static_cast<float>(p.y);

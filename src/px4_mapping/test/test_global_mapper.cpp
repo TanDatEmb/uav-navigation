@@ -228,6 +228,63 @@ TEST_F(GlobalMapperLioWorldTest, RequiresLioPoseBeforeRaycastingRegisteredCloud)
     EXPECT_TRUE(iface_->IsReady());
 }
 
+TEST_F(GlobalMapperLioWorldTest, PublishesAccumulatedOccupiedMap) {
+    bool latest_has_first_region = false;
+    bool latest_has_second_region = false;
+    std::size_t latest_width = 0U;
+    std::size_t map_messages = 0U;
+
+    auto sub_map = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            latest_has_first_region = false;
+            latest_has_second_region = false;
+            latest_width = msg->width;
+            ++map_messages;
+
+            sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+            for (; iter_x != iter_x.end(); ++iter_x) {
+                latest_has_first_region = latest_has_first_region || (*iter_x < 4.0f);
+                latest_has_second_region = latest_has_second_region || (*iter_x > 8.0f);
+            }
+        });
+    ASSERT_NE(sub_map, nullptr);
+    SpinMs(50);
+
+    const auto publish_scan = [&](double sensor_x, float cloud_x_offset) {
+        const auto stamp = node_->now();
+
+        nav_msgs::msg::Odometry odom;
+        odom.header.stamp = stamp;
+        odom.header.frame_id = "lio_world";
+        odom.child_frame_id = "mid360_imu";
+        odom.pose.pose.position.x = sensor_x;
+        odom.pose.pose.orientation.w = 1.0;
+        pub_lio_odom_->publish(odom);
+        SpinMs(50);
+
+        auto cloud = MakeDenseCloud(200, 3.0f);
+        cloud.header.stamp = stamp;
+        cloud.header.frame_id = "lio_world";
+        sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
+        for (; iter_x != iter_x.end(); ++iter_x) {
+            *iter_x += cloud_x_offset;
+        }
+        pub_cloud_->publish(cloud);
+        SpinMs(200);
+    };
+
+    publish_scan(0.0, 0.0f);
+    ASSERT_GT(map_messages, 0U);
+    ASSERT_TRUE(latest_has_first_region);
+    const std::size_t first_width = latest_width;
+
+    publish_scan(12.0, 12.0f);
+    EXPECT_TRUE(latest_has_first_region)
+        << "Previously occupied voxels must remain in each full-map publication";
+    EXPECT_TRUE(latest_has_second_region);
+    EXPECT_GT(latest_width, first_width);
+}
+
 // Fixture that enables the alignment gate with short thresholds so the gate
 // can be exercised quickly in unit tests.
 class GlobalMapperAlignmentTest : public GlobalMapperTest {
