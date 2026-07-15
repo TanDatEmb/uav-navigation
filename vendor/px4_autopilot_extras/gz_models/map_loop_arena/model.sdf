@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <model name="map_loop_arena">
+    <static>true</static>
+    <link name="arena_link">
+      <!--
+        Outer footprint: x=[-40,40], y=[0,80] m in model coordinates.
+        The split South wall leaves a 16 m entrance aligned with the long
+        corridor. The central 30 x 30 m island creates a 24.5 m-wide ring.
+      -->
+      <collision name="outer_west_collision">
+        <pose>-40 40 7.5 0 0 0</pose>
+        <geometry><box><size>0.5 80.5 15</size></box></geometry>
+      </collision>
+      <visual name="outer_west_visual">
+        <pose>-40 40 7.5 0 0 0</pose>
+        <geometry><box><size>0.5 80.5 15</size></box></geometry>
+        <material><ambient>0.18 0.32 0.62 1</ambient><diffuse>0.25 0.45 0.85 1</diffuse></material>
+      </visual>
+      <collision name="outer_east_collision">
+        <pose>40 40 7.5 0 0 0</pose>
+        <geometry><box><size>0.5 80.5 15</size></box></geometry>
+      </collision>
+      <visual name="outer_east_visual">
+        <pose>40 40 7.5 0 0 0</pose>
+        <geometry><box><size>0.5 80.5 15</size></box></geometry>
+        <material><ambient>0.62 0.25 0.20 1</ambient><diffuse>0.85 0.35 0.28 1</diffuse></material>
+      </visual>
+      <collision name="outer_north_collision">
+        <pose>0 80 7.5 0 0 0</pose>
+        <geometry><box><size>80.5 0.5 15</size></box></geometry>
+      </collision>
+      <visual name="outer_north_visual">
+        <pose>0 80 7.5 0 0 0</pose>
+        <geometry><box><size>80.5 0.5 15</size></box></geometry>
+        <material><ambient>0.20 0.55 0.28 1</ambient><diffuse>0.28 0.75 0.38 1</diffuse></material>
+      </visual>
+      <collision name="outer_south_west_collision">
+        <pose>-24 0 7.5 0 0 0</pose>
+        <geometry><box><size>32 0.5 15</size></box></geometry>
+      </collision>
+      <visual name="outer_south_west_visual">
+        <pose>-24 0 7.5 0 0 0</pose>
+        <geometry><box><size>32 0.5 15</size></box></geometry>
+        <material><ambient>0.45 0.38 0.18 1</ambient><diffuse>0.68 0.58 0.25 1</diffuse></material>
+      </visual>
+      <collision name="outer_south_east_collision">
+        <pose>24 0 7.5 0 0 0</pose>
+        <geometry><box><size>32 0.5 15</size></box></geometry>
+      </collision>
+      <visual name="outer_south_east_visual">
+        <pose>24 0 7.5 0 0 0</pose>
+        <geometry><box><size>32 0.5 15</size></box></geometry>
+        <material><ambient>0.45 0.38 0.18 1</ambient><diffuse>0.68 0.58 0.25 1</diffuse></material>
+      </visual>
+
+      <!-- Central island: x=[-15,15], y=[25,55] m. -->
+      <collision name="island_west_collision">
+        <pose>-15 40 6 0 0 0</pose>
+        <geometry><box><size>0.5 30 12</size></box></geometry>
+      </collision>
+      <visual name="island_west_visual">
+        <pose>-15 40 6 0 0 0</pose>
+        <geometry><box><size>0.5 30 12</size></box></geometry>
+        <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.48 0.48 0.54 1</diffuse></material>
+      </visual>
+      <collision name="island_east_collision">
+        <pose>15 40 6 0 0 0</pose>
+        <geometry><box><size>0.5 30 12</size></box></geometry>
+      </collision>
+      <visual name="island_east_visual">
+        <pose>15 40 6 0 0 0</pose>
+        <geometry><box><size>0.5 30 12</size></box></geometry>
+        <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.48 0.48 0.54 1</diffuse></material>
+      </visual>
+      <collision name="island_south_collision">
+        <pose>0 25 6 0 0 0</pose>
+        <geometry><box><size>30 0.5 12</size></box></geometry>
+      </collision>
+      <visual name="island_south_visual">
+        <pose>0 25 6 0 0 0</pose>
+        <geometry><box><size>30 0.5 12</size></box></geometry>
+        <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.48 0.48 0.54 1</diffuse></material>
+      </visual>
+      <collision name="island_north_collision">
+        <pose>0 55 6 0 0 0</pose>
+        <geometry><box><size>30 0.5 12</size></box></geometry>
+      </collision>
+      <visual name="island_north_visual">
+        <pose>0 55 6 0 0 0</pose>
+        <geometry><box><size>30 0.5 12</size></box></geometry>
+        <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.48 0.48 0.54 1</diffuse></material>
+      </visual>
+
+      <!-- Asymmetric landmarks reduce square-course geometric ambiguity. -->
+      <collision name="north_east_tower_collision">
+        <pose>32 70 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>1.2</radius><length>15</length></cylinder></geometry>
+      </collision>
+      <visual name="north_east_tower_visual">
+        <pose>32 70 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>1.2</radius><length>15</length></cylinder></geometry>
+        <material><ambient>0.75 0.18 0.08 1</ambient><diffuse>0.95 0.25 0.10 1</diffuse></material>
+      </visual>
+      <collision name="north_west_block_collision">
+        <pose>-32 70 5 0 0 0.35</pose>
+        <geometry><box><size>4 2 10</size></box></geometry>
+      </collision>
+      <visual name="north_west_block_visual">
+        <pose>-32 70 5 0 0 0.35</pose>
+        <geometry><box><size>4 2 10</size></box></geometry>
+        <material><ambient>0.58 0.10 0.62 1</ambient><diffuse>0.82 0.15 0.88 1</diffuse></material>
+      </visual>
+      <collision name="south_east_cone_collision">
+        <pose>32 10 5 0 0 0</pose>
+        <geometry><cone><radius>1.8</radius><length>10</length></cone></geometry>
+      </collision>
+      <visual name="south_east_cone_visual">
+        <pose>32 10 5 0 0 0</pose>
+        <geometry><cone><radius>1.8</radius><length>10</length></cone></geometry>
+        <material><ambient>0.08 0.55 0.65 1</ambient><diffuse>0.10 0.78 0.90 1</diffuse></material>
+      </visual>
+      <collision name="south_west_sphere_collision">
+        <pose>-32 10 4 0 0 0</pose>
+        <geometry><sphere><radius>2</radius></sphere></geometry>
+      </collision>
+      <visual name="south_west_sphere_visual">
+        <pose>-32 10 4 0 0 0</pose>
+        <geometry><sphere><radius>2</radius></sphere></geometry>
+        <material><ambient>0.68 0.52 0.06 1</ambient><diffuse>0.92 0.72 0.08 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <model name="wire_test_gate">
+    <static>true</static>
+    <link name="wire_gate_link">
+      <!-- Support posts: 0.24 m diameter, 15 m high, spaced 12 m apart. -->
+      <collision name="west_post_collision">
+        <pose>-6 0 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>15</length></cylinder></geometry>
+      </collision>
+      <visual name="west_post_visual">
+        <pose>-6 0 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>15</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material>
+      </visual>
+      <collision name="east_post_collision">
+        <pose>6 0 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>15</length></cylinder></geometry>
+      </collision>
+      <visual name="east_post_visual">
+        <pose>6 0 7.5 0 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>15</length></cylinder></geometry>
+        <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material>
+      </visual>
+
+      <!--
+        Horizontal cylinders use a +90 degree pitch so their axes run along X.
+        Diameters are 20, 50, and 100 mm at heights 5, 9, and 13 m.
+        Collision and visual geometry are identical; a missed return is therefore
+        a sensor-sampling / filtering result, not a visual-only model artifact.
+      -->
+      <collision name="wire_20mm_collision">
+        <pose>0 0 5 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.01</radius><length>12</length></cylinder></geometry>
+      </collision>
+      <visual name="wire_20mm_visual">
+        <pose>0 0 5 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.01</radius><length>12</length></cylinder></geometry>
+        <material><ambient>0.85 0.08 0.08 1</ambient><diffuse>1.0 0.10 0.10 1</diffuse></material>
+      </visual>
+      <collision name="wire_50mm_collision">
+        <pose>0 0 9 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.025</radius><length>12</length></cylinder></geometry>
+      </collision>
+      <visual name="wire_50mm_visual">
+        <pose>0 0 9 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.025</radius><length>12</length></cylinder></geometry>
+        <material><ambient>0.85 0.55 0.05 1</ambient><diffuse>1.0 0.72 0.08 1</diffuse></material>
+      </visual>
+      <collision name="wire_100mm_collision">
+        <pose>0 0 13 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.05</radius><length>12</length></cylinder></geometry>
+      </collision>
+      <visual name="wire_100mm_visual">
+        <pose>0 0 13 0 1.57079632679 0</pose>
+        <geometry><cylinder><radius>0.05</radius><length>12</length></cylinder></geometry>
+        <material><ambient>0.08 0.65 0.12 1</ambient><diffuse>0.10 0.90 0.15 1</diffuse></material>
+      </visual>
+
+      <!-- Graduated small-object array: 40, 80, and 150 mm diameters. -->
+      <collision name="rod_40mm_collision">
+        <pose>-11.5 -2 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>4</length></cylinder></geometry>
+      </collision>
+      <visual name="rod_40mm_visual">
+        <pose>-11.5 -2 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>4</length></cylinder></geometry>
+        <material><ambient>0.85 0.08 0.08 1</ambient><diffuse>1.0 0.10 0.10 1</diffuse></material>
+      </visual>
+      <collision name="rod_80mm_collision">
+        <pose>-11.5 0 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.04</radius><length>4</length></cylinder></geometry>
+      </collision>
+      <visual name="rod_80mm_visual">
+        <pose>-11.5 0 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.04</radius><length>4</length></cylinder></geometry>
+        <material><ambient>0.85 0.55 0.05 1</ambient><diffuse>1.0 0.72 0.08 1</diffuse></material>
+      </visual>
+      <collision name="rod_150mm_collision">
+        <pose>-11.5 2 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.075</radius><length>4</length></cylinder></geometry>
+      </collision>
+      <visual name="rod_150mm_visual">
+        <pose>-11.5 2 2 0 0 0</pose>
+        <geometry><cylinder><radius>0.075</radius><length>4</length></cylinder></geometry>
+        <material><ambient>0.08 0.65 0.12 1</ambient><diffuse>0.10 0.90 0.15 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

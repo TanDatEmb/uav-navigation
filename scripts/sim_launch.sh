@@ -36,7 +36,7 @@ GZ_GUI="${GZ_GUI:-0}"
 ENABLE_OBSTACLE_VIZ="${ENABLE_OBSTACLE_VIZ:-1}"
 ENABLE_RVIZ="${ENABLE_RVIZ:-${GZ_GUI}}"
 # Disabled by default while isolating unstable EV fusion from Collision Prevention.
-ENABLE_EXTERNAL_ODOMETRY="${ENABLE_EXTERNAL_ODOMETRY:-0}"
+ENABLE_EXTERNAL_ODOMETRY="${ENABLE_EXTERNAL_ODOMETRY:-1}"
 SKIP_PX4_BUILD="${SKIP_PX4_BUILD:-0}"
 # Map input source for global_mapper node.
 # The default pipeline consumes FAST-LIO's registered cloud in lio_world.

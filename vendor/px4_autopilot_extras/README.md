@@ -1,36 +1,52 @@
-# PX4 Autopilot Extras — Backup for SITL with Livox MID-360
+# PX4 Autopilot Extras — SITL với Livox MID-360
 
-Thư mục này lưu trữ các file mô phỏng cần thiết để chạy SITL `uav-navigation` với PX4 `release/1.17` + Gazebo Harmonic + Livox MID-360.
+Thư mục này lưu các file mô phỏng CTUAV cần để chạy `uav-navigation` với PX4
+`release/1.17`, Gazebo Harmonic và Livox MID-360. Các file không thuộc upstream
+PX4; `vendor/` là source of truth, còn `Tools/simulation/gz/` chỉ là bản triển
+khai để chạy local.
 
-Các file này **không thuộc upstream PX4** — đây là patch thử nghiệm của CTUAV. Khi cần triển khai lại trên một bản PX4 sạch, dùng script tự động hoặc copy/patch thủ công theo hướng dẫn bên dưới.
-
-## Files trong thư mục này
+## Cấu trúc
 
 ```text
 vendor/px4_autopilot_extras/
-├── README.md                              # Hướng dẫn này
 ├── airframes/
-│   └── 4022_gz_x500_lidar_360           # Airframe x500 + Livox MID-360
-├── airframes_CMakeLists.patch           # Diff thêm airframe vào CMakeLists
+│   └── 4022_gz_x500_lidar_360
+├── airframes_CMakeLists.patch
 ├── gz_models/
 │   ├── lidar_mid360/
-│   │   ├── model.config                 # Mô tả Livox MID-360
-│   │   └── model.sdf                    # Sensor standalone
-│   ├── map_tree/
-│   │   ├── model.config                 # Cây primitive, không cần Gazebo Fuel
-│   │   └── model.sdf                    # Trunk + canopy có visual/collision
+│   ├── map_loop_arena/                  # Arena vuông 80 m
+│   ├── map_tree/                        # Cây primitive có collision
+│   ├── wire_test_gate/                  # Dây/rod theo cấp đường kính
 │   └── x500_lidar_360/
-│       ├── model.config                 # Mô tả x500 + MID-360
-│       └── model.sdf                    # Include x500 + lidar_mid360
 └── gz_worlds/
-    └── obstacle_course.sdf              # Corridor 220 m + cây + vật thể động
+    └── obstacle_course.sdf
 ```
 
-## Cách áp dụng tự động (khuyến nghị)
+## Naming convention
 
-Từ thư mục `uav-navigation`:
+Entity trong world dùng thứ tự:
+
+```text
+<zone>_<type>_<station>_<profile-or-side>_<shape>
+```
+
+Ví dụ:
+
+- `corridor_wall_east`
+- `corridor_pillar_route_040m`
+- `corridor_tree_west_015m`
+- `corridor_mover_025m_slow_crate`
+- `corridor_mover_105m_medium_barrel`
+- `corridor_mover_185m_fast_panel`
+- `loop_arena_square_080m`
+- `loop_wire_gate_222m`
+
+Tên station luôn zero-pad ba chữ số để Scene Tree sắp xếp theo khoảng cách.
+
+## Áp dụng tự động
 
 ```bash
+cd ~/Dev/uav-navigation
 bash tools/apply_px4_extras.sh [PX4_DIR]
 ```
 
@@ -38,72 +54,67 @@ Mặc định `PX4_DIR=${HOME}/Dev/Autopilot`. Script sẽ:
 
 1. Copy airframe `4022_gz_x500_lidar_360`.
 2. Patch `ROMFS/.../airframes/CMakeLists.txt`.
-3. Copy Gazebo models `lidar_mid360`, `map_tree` và `x500_lidar_360`.
-4. Copy world `obstacle_course.sdf`.
-5. Checkout submodule `Tools/simulation/gz` về commit thử nghiệm `606c099` (nếu có sẵn).
+3. Checkout Gazebo submodule về baseline thử nghiệm nếu commit có sẵn.
+4. Copy `lidar_mid360`, `map_loop_arena`, `map_tree`, `wire_test_gate` và
+   `x500_lidar_360`.
+5. Copy world `obstacle_course.sdf`.
 
-## Cách áp dụng thủ công
-
-Giả sử PX4 repo ở `~/Dev/Autopilot` và đang ở branch `release/1.17`:
+## Áp dụng thủ công
 
 ```bash
 cd ~/Dev/Autopilot
-
 EXTRAS=~/Dev/uav-navigation/vendor/px4_autopilot_extras
 
-# 1. Copy airframe
 cp "${EXTRAS}/airframes/4022_gz_x500_lidar_360" \
    ROMFS/px4fmu_common/init.d-posix/airframes/
-
-# 2. Patch CMakeLists để build system nhận airframe mới
 patch -p1 < "${EXTRAS}/airframes_CMakeLists.patch"
 
-# 3. Copy Gazebo models
 cp -r "${EXTRAS}/gz_models/lidar_mid360" Tools/simulation/gz/models/
+cp -r "${EXTRAS}/gz_models/map_loop_arena" Tools/simulation/gz/models/
 cp -r "${EXTRAS}/gz_models/map_tree" Tools/simulation/gz/models/
+cp -r "${EXTRAS}/gz_models/wire_test_gate" Tools/simulation/gz/models/
 cp -r "${EXTRAS}/gz_models/x500_lidar_360" Tools/simulation/gz/models/
-
-# 4. Copy Gazebo world
 cp "${EXTRAS}/gz_worlds/obstacle_course.sdf" Tools/simulation/gz/worlds/
-
-# 5. Checkout submodule Gazebo về commit chứa obstacle_course world
-#    Commit này là phiên bản thử nghiệm, không phải upstream.
-cd Tools/simulation/gz
-git checkout 606c099   # hoặc commit tương đương nếu đã thay đổi
 ```
 
-## Kiểm tra sau khi áp dụng
+## Hình học test
 
-```bash
-cd ~/Dev/Autopilot
-git status --short
+- Corridor dài 220 m, dẫn vào arena tại `y=210 m`.
+- Arena ngoài `80 x 80 m`: `x=[-40,40]`, `y=[210,290] m`.
+- Island giữa `30 x 30 m`; hành lang vòng rộng tối thiểu `24.5 m`.
+- Nominal square lap dài khoảng `220 m` và quay lại cùng điểm.
+- Mover cao `8/10/12 m`; force/mass profile chậm/vừa/nhanh giữ nguyên.
+- Mover là free rigid body với `<gravity>false>`: `TrajectoryFollower` vẫn điều
+  khiển được, trong khi không có trọng lực/contact torque làm vật cao bị lật.
+- Cổng dây tại `y=222 m`: dây `20/50/100 mm` ở cao `5/9/13 m`; rod đứng
+  `40/80/150 mm`, cao 4 m.
 
-# Kỳ vọng:
-# A  ROMFS/px4fmu_common/init.d-posix/airframes/4022_gz_x500_lidar_360
-# M  ROMFS/px4fmu_common/init.d-posix/airframes/CMakeLists.txt
-#  M Tools/simulation/gz
-```
+Quy trình đo chi tiết:
+[`docs/simulation_validation_course.md`](../../docs/simulation_validation_course.md).
 
-Sau đó build PX4 SITL. Vì submodule `Tools/simulation/gz` đang ở commit thử nghiệm
-khác với upstream, bạn cần cho phép build sử dụng submodule hiện tại:
-
-```bash
-cd ~/Dev/Autopilot
-GIT_SUBMODULES_ARE_EVIL=1 make px4_sitl_default -j$(nproc)
-```
-
-Hoặc nếu build hỏi `y/n`, chọn `y` để tiếp tục với commit thử nghiệm.
-
-## Chạy SITL từ uav-navigation
+## Validation
 
 ```bash
 cd ~/Dev/uav-navigation
-make sim        # hoặc make sim-headless
+python3 tools/validate_obstacle_course.py
+
+SDF_PATH="$PWD/vendor/px4_autopilot_extras/gz_models" \
+  gz sdf -k vendor/px4_autopilot_extras/gz_worlds/obstacle_course.sdf
+```
+
+Sau khi copy vào PX4:
+
+```bash
+cmp vendor/px4_autopilot_extras/gz_worlds/obstacle_course.sdf \
+    ~/Dev/Autopilot/Tools/simulation/gz/worlds/obstacle_course.sdf
 ```
 
 ## Lưu ý
 
-- **Không commit các file này vào PX4 upstream** nếu chưa được review.
-- `Tools/simulation/gz` là submodule. Nếu chạy `git submodule update --recursive`, các thay đổi trong submodule sẽ bị mất. Hãy đảm bảo đã checkout đúng commit thử nghiệm trước khi chạy SITL.
-- Nếu muốn lưu dài hạn hơn, hãy tạo branch trên fork riêng thay vì để ở working tree.
-- Nếu commit hash `606c099` của submodule bị thay đổi trong tương lai, cập nhật `GZ_COMMIT` trong `tools/apply_px4_extras.sh`.
+- Gazebo không hot-reload world; phải restart để nhận tên và mover model mới.
+- Không commit file custom trực tiếp vào upstream `PX4-gazebo-models`.
+- `Tools/simulation/gz` là submodule; `git submodule update` có thể xóa các file
+  untracked đã triển khai. Luôn giữ bản canonical trong `vendor/`.
+- `TrajectoryFollower` là force-driven; tốc độ và overshoot phải đo runtime.
+- FAST-LIO hiện không có loop-closure correction; arena chỉ đo revisit drift và
+  map overlap.

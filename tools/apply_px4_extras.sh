@@ -64,7 +64,11 @@ echo "  [4/5] Copy Gazebo models"
 cd "${PX4_DIR}"
 cp -r "${EXTRAS_DIR}/gz_models/lidar_mid360" \
    "${PX4_DIR}/Tools/simulation/gz/models/"
+cp -r "${EXTRAS_DIR}/gz_models/map_loop_arena" \
+   "${PX4_DIR}/Tools/simulation/gz/models/"
 cp -r "${EXTRAS_DIR}/gz_models/map_tree" \
+   "${PX4_DIR}/Tools/simulation/gz/models/"
+cp -r "${EXTRAS_DIR}/gz_models/wire_test_gate" \
    "${PX4_DIR}/Tools/simulation/gz/models/"
 cp -r "${EXTRAS_DIR}/gz_models/x500_lidar_360" \
    "${PX4_DIR}/Tools/simulation/gz/models/"
