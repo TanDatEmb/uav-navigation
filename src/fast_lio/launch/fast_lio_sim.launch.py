@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
-"""
-FAST-LIO2 Launch File for Gazebo + PX4 SITL
+"""Launch FAST-LIO with the canonical ROS 2 parameter file.
 
-Prerequisites:
-    - PX4 SITL running with Mid360 LiDAR model
-    - Gazebo simulation running
-    - livox_sim_adapter (or similar) converting Gazebo point cloud to ROS2
+The caller owns the sensor bridge. The workspace SITL orchestrator maps Gazebo
+Harmonic MID-360 data to the launch arguments used here.
 
-Usage:
-    ros2 launch fast_lio fast_lio_sim.launch.py
+Frames:
+    - ``lio_world``: gravity-aligned, Z-up LIO world with arbitrary initial yaw
+    - ``mid360_imu``: FAST-LIO FLU body state
+    - registered cloud output: ``lio_world``
 
-Frame Convention:
-    - world_frame: "lio_world" - gravity-aligned FAST-LIO world
-    - body_frame: "mid360_imu" - IMU frame from PX4
-    - lidar_frame: "mid360_lidar" - LiDAR optical center
-    - map_frame: "lio_map" - registered point cloud frame
-
-Configuration:
-    Edit config/fast_lio.yaml for algorithm parameters
+This launch file does not publish a transform between ``lio_world`` and
+``map_ned``. PX4 message conversion belongs to ``px4_mapping``.
 """
 
-import os
-import ament_index_python
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -45,10 +36,6 @@ def generate_launch_description():
         ]),
         description='Path to FAST-LIO configuration file'
     )
-    # Static config path for the node's YAML loader (resolved at launch time)
-    config_path_str = os.path.join(
-        ament_index_python.get_package_share_directory('fast_lio'),
-        'config', 'fast_lio_config.yaml')
 
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
@@ -74,9 +61,10 @@ def generate_launch_description():
         executable='fast_lio_node',
         name='fast_lio',
         output='screen',
-        parameters=[config_file,
-                      {'use_sim_time': LaunchConfiguration('use_sim_time'),
-                       'config_path': config_path_str}],
+        parameters=[
+            config_file,
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+        ],
         remappings=[
             # Input topics (adjust if needed)
             ('/livox/imu', LaunchConfiguration('imu_topic')),
@@ -89,41 +77,10 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'info'],
     )
 
-    # Static transform: map -> lio_world (identity at startup)
-    # This allows visualization in RViz
-    static_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='lio_world_to_map',
-        parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
-        arguments=['0', '0', '0', '0', '0', '0', 'map', 'lio_world'],
-    )
-
-    # Optional: Point cloud processor for visualization
-    # Downsamples registered cloud for RViz
-    voxel_grid_node = Node(
-        package='pcl_ros',
-        executable='voxel_grid_node',
-        name='voxel_grid',
-        parameters=[{
-            'leaf_size': 0.05,
-            'filter_field_name': '',
-            'filter_limit_min': -1000.0,
-            'filter_limit_max': 1000.0,
-        }],
-        remappings=[
-            ('/input', '/lio/cloud_registered'),
-            ('/output', '/lio/cloud_registered_voxel'),
-        ],
-        condition={'IfCondition': 'false'},  # Disabled by default
-    )
-
     return LaunchDescription([
         config_file_arg,
         use_sim_time_arg,
         imu_topic_arg,
         lidar_topic_arg,
         fast_lio_node,
-        static_tf_node,
-        # voxel_grid_node,  # Enable if needed
     ])

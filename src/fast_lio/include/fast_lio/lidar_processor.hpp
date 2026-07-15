@@ -38,7 +38,7 @@ struct LocalMap {
  *   - R: rotation from IMU state
  *   - p_body: point in IMU frame
  *
- * Reference: ieskf_math_review.md (2026-07-14)
+ * Design reference: docs/ieskf_design.md
  */
 class LidarProcessor {
    public:

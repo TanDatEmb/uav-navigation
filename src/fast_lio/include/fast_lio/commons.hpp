@@ -60,7 +60,7 @@ using PointVec = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
 // ============================================================
 
 /**
- * @brief NEW: 15-DOF State for UAV (Math Expert Review)
+ * @brief 15-DOF FAST-LIO state for UAV localization.
  *
  * State: [R, p, v, b_a, b_ω] ∈ SO(3) × ℝ¹²
  * - R ∈ SO(3): Body-to-world rotation
@@ -135,7 +135,7 @@ struct State15 {
 // ============================================================
 
 /**
- * @brief NEW: 15-DOF shared state (Math Expert Review)
+ * @brief Linearized LiDAR measurement data for the 15-DOF IESKF.
  *
  * Contains stacked Jacobians and residuals for IESKF update.
  * Dynamic sizing for variable number of measurements.
@@ -191,7 +191,6 @@ struct SyncPackage {
 // ============================================================
 struct Config {
     // LiDAR filter
-    int lidar_filter_num = 3;
     double lidar_min_range = 0.5;
     double lidar_max_range = 100.0;
     double scan_resolution = 0.1;
@@ -216,7 +215,6 @@ struct Config {
     int near_search_num = 5;
     int ieskf_max_iter = 3;
     bool gravity_align = true;
-    bool esti_il = false;  // Estimate LiDAR-IMU extrinsic online
 
     // Extrinsic: LiDAR in IMU frame
     V3D t_il = V3D::Zero();

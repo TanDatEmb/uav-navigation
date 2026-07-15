@@ -1,175 +1,197 @@
-# FAST-LIO2 Integration Guide
+# FAST-LIO Integration Guide
 
-## Overview
+## Purpose
 
-This package provides FAST-LIO2 LiDAR-Inertial Odometry integration for UAV navigation with PX4.
+The `fast_lio` package provides MID-360 LiDAR-inertial odometry for the
+`uav-navigation` workspace. It owns localization in `lio_world` and remains
+independent of PX4. PX4 frame and timestamp conversion is performed by
+`px4_mapping`.
 
-## Architecture
+## Data Flow
 
+```text
+PointCloud2 + sensor_msgs/Imu
+             │
+             ▼
+         fast_lio
+    ├── /lio/odometry
+    ├── /lio/cloud_registered
+    ├── /lio/path
+    └── TF: lio_world -> mid360_imu
+             │
+             ├──► global_mapper -> /mapping/global
+             └──► lio_px4_alignment
+                       └──► /fmu/in/vehicle_visual_odometry
 ```
-Gazebo Simulation
-    ├── LiDAR (mid360_link) → PointCloud2
-    └── IMU (mid360_link) → IMU messages
-            ↓
-    livox_sim_adapter (optional)
-            ↓
-    FAST-LIO2 (15-DOF IESKF)
-            ↓
-    /lio/odometry → lio_px4_alignment → /fmu/in/odometry
-```
 
-## Quick Start
+The filter uses a 15-DOF state and an incremental ikd-Tree map. See
+`docs/ieskf_design.md` and `docs/ikdtree_architecture.md` for implementation
+details.
 
-### 1. Build Package
+## Build
 
 ```bash
-# Source ROS2
 source /opt/ros/jazzy/setup.bash
-
-# Build FAST-LIO2
-cd ~/Dev/uav-navigation
-colcon build --packages-select fast_lio
-
-# Source workspace
+cd /home/letandat/Dev/uav-navigation
+colcon build --packages-up-to fast_lio
 source install/setup.bash
+colcon test --packages-select fast_lio
+colcon test-result --all --verbose
 ```
 
-### 2. Run with Gazebo + PX4 SITL
+## Run the Package Directly
 
 ```bash
-# Terminal 1: Start PX4 SITL with Mid360
-make px4_sitl gazebo-classic_x500_lidar_360
-
-# Terminal 2: Run FAST-LIO2
-ros2 launch fast_lio fast_lio_sim.launch.py
+ros2 launch fast_lio fast_lio_sim.launch.py \
+  use_sim_time:=true \
+  lidar_topic:=/lidar_360/points \
+  imu_topic:=/imu/out
 ```
 
-### 3. Visualize
+The launch file loads `config/fast_lio.params.yaml` and remaps the relative
+outputs to `/lio/*`.
+
+## Run the Supported SITL Stack
+
+From the workspace root:
 
 ```bash
-# RViz with pre-configured layout
-rviz2 -d ~/Dev/uav-navigation/assets/rviz/uav_navigation.rviz
+bash scripts/sim_launch.sh
 ```
 
-## Configuration
+Useful environment switches:
 
-### Topics (config/fast_lio.params.yaml)
+```bash
+GZ_GUI=1 bash scripts/sim_launch.sh
+RECORD_BAG=1 bash scripts/sim_launch.sh
+ENABLE_EXTERNAL_ODOMETRY=1 bash scripts/sim_launch.sh
+```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `imu_topic` | `/livox/imu` | IMU input topic |
-| `lidar_topic` | `/livox/lidar` | LiDAR input topic |
-| `sim_mode` | `true` | Disable deskew for simulation |
+External odometry is disabled by default. Enabling it publishes FAST-LIO output
+to PX4 through `lio_px4_alignment`; it does not command or arm the vehicle.
+Stop the stack with:
 
-### Algorithm Parameters
+```bash
+bash scripts/sim_stop.sh
+```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `scan_resolution` | 0.1m | Scan downsampling |
-| `map_resolution` | 0.2m | Map downsampling |
-| `cube_len` | 50m | Local map size |
-| `ieskf_max_iter` | 3 | Max IESKF iterations |
+## Canonical Configuration
 
-### Extrinsic Calibration (MID-360)
+`config/fast_lio.params.yaml` is the only FAST-LIO parameter file. The node
+declares every active value through the ROS 2 parameter API. Launch dictionaries
+and CLI overrides follow normal ROS 2 precedence; no internal YAML parser writes
+a second set of values.
+
+### Active topics and frames
+
+| Parameter | Active value | Meaning |
+| --- | --- | --- |
+| `imu_topic` | `/livox/imu` before launch remapping | IMU input |
+| `lidar_topic` | `/livox/lidar` before launch remapping | PointCloud2 input |
+| `world_frame` | `lio_world` | gravity-aligned Z-up LIO world |
+| `body_frame` | `mid360_imu` | FLU IMU/body state |
+| `sim_mode` | `true` | treat each Gazebo GPU-LiDAR frame as instantaneous; disable deskew |
+
+### Active mapping profile
+
+| Parameter | Active value | Meaning |
+| --- | --- | --- |
+| `scan_resolution` | `0.5 m` | current-scan voxel filter leaf size |
+| `map_resolution` | `0.5 m` | ikd-Tree voxel downsampling size |
+| `cube_len` | `50.0 m` | sliding local-map cube edge |
+| `det_range` | `40.0 m` | detection range used by map movement logic |
+| `move_thresh` | `0.5` | local-map movement ratio |
+| `near_search_num` | `5` | neighbors requested for plane fitting |
+| `ieskf_max_iter` | `1` | maximum LiDAR re-linearizations in the active profile |
+
+These values were preserved during the single-YAML migration. Resolution and
+iteration changes require a controlled timing/map-quality A/B test; they must not
+be changed as an undocumented cleanup side effect.
+
+Example override:
+
+```bash
+ros2 run fast_lio fast_lio_node --ros-args \
+  --params-file src/fast_lio/config/fast_lio.params.yaml \
+  -p scan_resolution:=0.25 \
+  -p map_resolution:=0.25 \
+  -p ieskf_max_iter:=3
+```
+
+Invalid parameter combinations fail node construction instead of falling back
+silently.
+
+## LiDAR-to-IMU Extrinsic
+
+The canonical profile defines the LiDAR pose in the IMU frame:
 
 ```yaml
-extrinsic_t: [-0.011, -0.02329, 0.04412]  # LiDAR in IMU frame (m)
-extrinsic_r: [1.0, 0.0, 0.0,   # Identity rotation
+extrinsic_t: [-0.011, -0.02329, 0.04412]
+extrinsic_r: [1.0, 0.0, 0.0,
               0.0, 1.0, 0.0,
               0.0, 0.0, 1.0]
 ```
 
-## Frame Conventions
+Translations are meters. `extrinsic_r` is a row-major 3×3 rotation matrix. The
+extrinsic is fixed and is not estimated online.
 
-See `docs/frame_contract_v1.md` for detailed frame specifications.
+## Frame Boundary
 
-| Frame | Description |
-|-------|-------------|
-| `lio_world` | FAST-LIO world frame (gravity-aligned) |
-| `mid360_imu` | IMU sensor frame |
-| `mid360_lidar` | LiDAR optical center |
-| `map` | PX4 NED world frame |
+See `docs/frame_contract.md` for the authoritative contract.
 
-## Debug with Rosbag
+- `lio_world` is gravity-aligned and Z-up, with arbitrary initial yaw.
+- `mid360_imu` uses FLU body axes.
+- `map_ned` and PX4 body fields use NED/FRD only after the explicit PX4 boundary.
+- no identity TF is valid between `lio_world` and `map_ned`
 
-### Record Debug Session
+`lio_px4_alignment` converts the pose representation with
+`px4_ros2_utils::frame` and converts measurement/publication time with
+`Timesync`. Despite the historical node name, it does not estimate a dynamic
+PX4-origin or north-yaw alignment.
+
+## Outputs
+
+| Topic | Frame | Content |
+| --- | --- | --- |
+| `/lio/odometry` | `lio_world -> mid360_imu` | estimated IMU pose and covariance |
+| `/lio/cloud_registered` | `lio_world` | current downsampled scan transformed by the estimated pose |
+| `/lio/path` | `lio_world` | bounded pose history |
+| `/tf` | `lio_world -> mid360_imu` | dynamic transform |
+
+## Rosbag and Replay
 
 ```bash
-# Basic recording
 ros2 launch fast_lio record_debug_bag.launch.py
-
-# With custom path
-ros2 launch fast_lio record_debug_bag.launch.py bag_path:=$HOME/bags/session1
-
-# Full debug session with recording
 ros2 launch fast_lio full_debug_session.launch.py with_px4:=true
 ```
 
-### Recorded Topics
-
-| Category | Topics |
-|----------|--------|
-| **IMU** | `/livox/imu`, `/imu/out`, `/fmu/out/vehicle_imu` |
-| **LiDAR** | `/livox/lidar`, `/livox/lidar/pointcloud` |
-| **LIO Output** | `/lio/odometry`, `/lio/path`, `/lio/registered_points` |
-| **PX4** | `/fmu/out/vehicle_local_position`, `/fmu/out/vehicle_attitude` |
-| **Transforms** | `/tf`, `/tf_static` |
-
-### Playback for Analysis
+The workspace SITL launcher can also record the integrated topic set:
 
 ```bash
-# Analyze bag
-./scripts/analyze_bag.sh ~/bags/fastlio_debug_20250714_101234
-
-# Play at 50% speed with controls
-./scripts/play_bag_debug.sh ~/bags/fastlio_debug_20250714_101234
-
-# Play at 10% speed, start paused
-./scripts/play_bag_debug.sh ~/bags/fastlio_debug_20250714_101234 -r 0.1 --pause
-
-# Direct playback
-ros2 bag play ~/bags/fastlio_debug_20250714_101234 --clock --rate 0.5
+RECORD_BAG=1 bash scripts/sim_launch.sh
 ```
 
-### Debug Workflow
+Replay a recorded bag with simulation time:
 
-1. **Record**: Run `full_debug_session.launch.py` during flight
-2. **Analyze**: Use `analyze_bag.sh` to extract statistics
-3. **Replay**: Use `play_bag_debug.sh` with RViz
-4. **Iterate**: Fix issues and replay with new code
+```bash
+ros2 bag play <bag-directory> --clock --rate 0.5
+```
 
 ## Troubleshooting
 
-### Build Errors
+| Symptom | Check |
+| --- | --- |
+| No odometry | verify `/imu/out` and `/lidar_360/points`; confirm the stationary IMU window passes validation |
+| Node exits during startup | inspect the fail-fast parameter error and canonical YAML values |
+| Registered cloud has the wrong frame | verify `world_frame=lio_world` and the input sensor `frame_id` |
+| Rapid drift or duplicated walls | verify the LiDAR/IMU extrinsic, time ordering, and map/scan resolutions |
+| PX4 receives no external odometry | confirm the boundary node is enabled and `Timesync` yields non-zero PX4 timestamps |
+| RViz TF errors | verify `lio_world -> mid360_imu` and the static MID-360 extrinsic chain; do not add `lio_world -> map_ned` identity TF |
 
-```bash
-# Missing Sophus (optional - uses Eigen fallback)
-sudo apt install ros-jazzy-sophus
+## Known Boundaries
 
-# Missing PCL
-sudo apt install libpcl-dev ros-jazzy-pcl-ros
-```
-
-### Runtime Issues
-
-| Symptom | Solution |
-|---------|----------|
-| No odometry output | Check IMU and LiDAR topics |
-| Drifting rapidly | Verify extrinsic calibration |
-| High latency | Increase `scan_resolution` |
-
-## Performance
-
-- **Target**: < 5ms per scan @ 10Hz
-- **Typical**: ~3ms per scan
-- **Bottleneck**: Point-to-plane ICP (O(N) with PCL KD-tree)
-
-## TODO
-
-- [x] Complete ikd-Tree integration
-- [x] Add lio_px4_alignment node
-- [x] Add rosbag recording for debug
-- [ ] Support Livox CustomMsg format
-- [ ] Add loop closure detection
-- [ ] Multi-session SLAM
-- [ ] Add automated flight test validation
+- no loop closure or multi-session map correction
+- no online LiDAR/IMU extrinsic estimation
+- PointCloud2 input only in the active pipeline; Livox CustomMsg is not an active
+  input path
+- dynamic `lio_world` to PX4-origin/yaw alignment is not implemented

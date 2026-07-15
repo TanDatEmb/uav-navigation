@@ -24,7 +24,6 @@ endif()
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(yaml-cpp REQUIRED)
 
 # Sophus (optional) - check only, apply after target creation
 find_package(Sophus QUIET)
@@ -102,7 +101,6 @@ ament_target_dependencies(${PROJECT_NAME}_core
 )
 target_link_libraries(${PROJECT_NAME}_core
   ${PCL_LIBRARIES}
-  yaml-cpp
 )
 if(OpenMP_FOUND)
   target_link_libraries(${PROJECT_NAME}_core OpenMP::OpenMP_CXX)
