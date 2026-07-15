@@ -20,7 +20,7 @@ vendor/px4_autopilot_extras/
 │       ├── model.config                 # Mô tả x500 + MID-360
 │       └── model.sdf                    # Include x500 + lidar_mid360
 └── gz_worlds/
-    └── obstacle_course.sdf              # World cho CP testing
+    └── obstacle_course.sdf              # World CP + long-flight corridor 220 m
 ```
 
 ## Cách áp dụng tự động (khuyến nghị)

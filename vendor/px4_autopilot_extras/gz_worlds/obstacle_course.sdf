@@ -3,13 +3,14 @@
   Obstacle course world for Collision Prevention testing.
 
   Layout (top-down, ENU frame, units in metres):
-    - 4 walls forming a corridor (open ends on North and South)
-    - 3 pillars scattered inside/around the corridor
-    - Ground plane at z=0
+    - Two 220 m side walls and one South back wall form a long corridor
+    - Three near-field regression pillars are preserved around the origin
+    - Five route pillars provide repeated obstacle encounters out to 200 m North
+    - Ground plane at z=0, enlarged for long-distance flight
     - All obstacles are 15 m tall
 
-  The drone starts at origin (0, 0, 0.24) and can fly through the corridor
-  to test CP stopping behaviour from multiple approach angles.
+  The drone starts at origin (0, 0, 0.24). The original near-field layout is
+  preserved while the corridor extends North for long-flight mapping tests.
 -->
 <sdf version="1.9">
   <world name="obstacle_course">
@@ -35,7 +36,7 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>100 100</size>
+              <size>500 500</size>
             </plane>
           </geometry>
         </collision>
@@ -43,7 +44,7 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>100 100</size>
+              <size>500 500</size>
             </plane>
           </geometry>
           <material>
@@ -78,19 +79,19 @@
       <elevation>0</elevation>
     </spherical_coordinates>
 
-    <!-- Corridor wall East: runs North-South at x=8, from y=-10 to y=10 -->
+    <!-- Corridor wall East: runs North-South at x=8, from y=-10 to y=210 -->
     <model name="wall_east">
-      <pose>8 0 7.5 0 0 0</pose>
+      <pose>8 100 7.5 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
           <geometry>
-            <box><size>0.5 20 15</size></box>
+            <box><size>0.5 220 15</size></box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
-            <box><size>0.5 20 15</size></box>
+            <box><size>0.5 220 15</size></box>
           </geometry>
           <material>
             <ambient>0.6 0.3 0.3 1</ambient>
@@ -100,19 +101,19 @@
       </link>
     </model>
 
-    <!-- Corridor wall West: runs North-South at x=-8, from y=-10 to y=10 -->
+    <!-- Corridor wall West: runs North-South at x=-8, from y=-10 to y=210 -->
     <model name="wall_west">
-      <pose>-8 0 7.5 0 0 0</pose>
+      <pose>-8 100 7.5 0 0 0</pose>
       <static>true</static>
       <link name="link">
         <collision name="collision">
           <geometry>
-            <box><size>0.5 20 15</size></box>
+            <box><size>0.5 220 15</size></box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
-            <box><size>0.5 20 15</size></box>
+            <box><size>0.5 220 15</size></box>
           </geometry>
           <material>
             <ambient>0.3 0.3 0.6 1</ambient>
@@ -205,6 +206,112 @@
           <material>
             <ambient>0.3 0.6 0.3 1</ambient>
             <diffuse>0.3 0.6 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Long-route pillars: staggered to keep a traversable path through the corridor. -->
+    <model name="route_pillar_40m">
+      <pose>0 40 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.4 0.1 1</ambient>
+            <diffuse>0.8 0.4 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_pillar_80m">
+      <pose>4 80 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.4 0.1 1</ambient>
+            <diffuse>0.8 0.4 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_pillar_120m">
+      <pose>-4 120 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.4 0.1 1</ambient>
+            <diffuse>0.8 0.4 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_pillar_160m">
+      <pose>3 160 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.4 0.1 1</ambient>
+            <diffuse>0.8 0.4 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="route_pillar_200m">
+      <pose>-3 200 7.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder><radius>1.2</radius><length>15</length></cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.4 0.1 1</ambient>
+            <diffuse>0.8 0.4 0.1 1</diffuse>
           </material>
         </visual>
       </link>
