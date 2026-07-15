@@ -2,12 +2,12 @@
 
 #include <Eigen/Core>
 
+#include <px4_mapping/voxel_hash_map.hpp>
 #include <px4_nav_common/mapping/voxel_types.hpp>
 #include <px4_nav_common/types.hpp>
-#include <px4_mapping/voxel_hash_map.hpp>
 
-using px4_nav_common::PointLivox;
 using px4_mapping::VoxelHashMap;
+using px4_nav_common::PointLivox;
 
 class VoxelHashMapTest : public ::testing::Test {
    protected:
@@ -59,6 +59,54 @@ TEST_F(VoxelHashMapTest, GetOccupiedPointsInRadiusReturnsExpectedPoint) {
     EXPECT_NEAR(occupied[0].x(), 2.0, px4_nav_common::mapping::kDefaultVoxelResolutionM);
     EXPECT_NEAR(occupied[0].y(), 0.0, px4_nav_common::mapping::kDefaultVoxelResolutionM);
     EXPECT_NEAR(occupied[0].z(), 0.0, px4_nav_common::mapping::kDefaultVoxelResolutionM);
+}
+
+TEST_F(VoxelHashMapTest, ClippedRayDoesNotCreateOccupiedBoundary) {
+    PointLivox point;
+    point.x = static_cast<float>(px4_nav_common::mapping::kMaxRayLengthM + 5.0);
+    point.y = 0.0f;
+    point.z = 0.0f;
+    point.intensity = 100.0f;
+
+    map_.Update({point}, Eigen::Vector3d::Zero());
+
+    EXPECT_EQ(map_.Size(), 0U);
+    EXPECT_EQ(map_.OccupiedCount(), 0U);
+}
+
+TEST_F(VoxelHashMapTest, ClippedRayClearsExistingBoundaryVoxel) {
+    PointLivox boundary_point;
+    boundary_point.x = static_cast<float>(px4_nav_common::mapping::kMaxRayLengthM);
+    boundary_point.y = 0.0f;
+    boundary_point.z = 0.0f;
+    boundary_point.intensity = 100.0f;
+    map_.Update({boundary_point}, Eigen::Vector3d::Zero());
+    ASSERT_EQ(map_.OccupiedCount(), 1U);
+
+    PointLivox distant_point = boundary_point;
+    distant_point.x = static_cast<float>(px4_nav_common::mapping::kMaxRayLengthM + 5.0);
+    map_.Update({distant_point}, Eigen::Vector3d::Zero());
+
+    EXPECT_EQ(map_.OccupiedCount(), 0U);
+}
+
+TEST_F(VoxelHashMapTest, LaterRayClearsMovedObstacleVoxel) {
+    PointLivox moved_obstacle;
+    moved_obstacle.x = 5.0f;
+    moved_obstacle.y = 0.0f;
+    moved_obstacle.z = 0.0f;
+    moved_obstacle.intensity = 100.0f;
+    map_.Update({moved_obstacle}, Eigen::Vector3d::Zero());
+    ASSERT_EQ(map_.OccupiedCount(), 1U);
+
+    PointLivox background_return = moved_obstacle;
+    background_return.x = 10.0f;
+    map_.Update({background_return}, Eigen::Vector3d::Zero());
+
+    std::vector<Eigen::Vector3d> near_old_position;
+    map_.GetOccupiedPointsInRadius(Eigen::Vector3d(5.0, 0.0, 0.0), 1.0, near_old_position);
+    EXPECT_TRUE(near_old_position.empty());
+    EXPECT_EQ(map_.OccupiedCount(), 1U);
 }
 
 TEST_F(VoxelHashMapTest, EvictDistantRemovesFarVoxels) {

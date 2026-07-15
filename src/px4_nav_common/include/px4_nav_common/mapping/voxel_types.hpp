@@ -54,8 +54,8 @@ inline constexpr float kLogOddsOccupiedThreshold = 0.6f;
 /**
  * @brief Maximum ray length for raycasting in metres.
  *
- * Rays longer than this value are truncated. This limits the local map
- * extent and avoids integrating distant noisy returns.
+ * Rays longer than this value are traversed only to the limit. Their clipped
+ * endpoints are treated as free space rather than occupied returns.
  */
 inline constexpr double kMaxRayLengthM = 20.0;
 
