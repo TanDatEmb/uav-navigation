@@ -138,6 +138,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     this->declare_parameter<bool>("publish_global_map", true);
     this->declare_parameter<bool>("publish_local_map", true);
     this->declare_parameter<bool>("enable_distance_eviction", false);
+    this->declare_parameter<int>("global_map_publish_interval", 1);
     this->declare_parameter<int>("log_interval", 1);
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
@@ -162,6 +163,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     publish_global_map_ = this->get_parameter("publish_global_map").as_bool();
     publish_local_map_ = this->get_parameter("publish_local_map").as_bool();
     enable_distance_eviction_ = this->get_parameter("enable_distance_eviction").as_bool();
+    global_map_publish_interval_ = this->get_parameter("global_map_publish_interval").as_int();
     log_interval_ = this->get_parameter("log_interval").as_int();
     timeout_seconds_ = this->get_parameter("timeout_seconds").as_double();
     log_path_ = this->get_parameter("log_path").as_string();
@@ -175,6 +177,11 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         RCLCPP_FATAL(this->get_logger(), "local_map_radius_m must be finite and > 0, got %.3f",
                      local_map_radius_m_);
         throw std::runtime_error("Invalid local_map_radius_m parameter");
+    }
+    if (global_map_publish_interval_ <= 0) {
+        RCLCPP_FATAL(this->get_logger(), "global_map_publish_interval must be > 0, got %d",
+                     global_map_publish_interval_);
+        throw std::runtime_error("Invalid global_map_publish_interval parameter");
     }
 
     auto extrinsic_T_vec = this->get_parameter("extrinsic_T").as_double_array();
@@ -315,8 +322,11 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     // === Publishers ===
     pub_global_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic_, 20);
     pub_local_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(local_map_topic_, 20);
-    RCLCPP_INFO(this->get_logger(), "Map outputs: global=%s (%s), local=%s (%s, radius=%.1fm)",
+    RCLCPP_INFO(this->get_logger(),
+                "Map outputs: global=%s (%s, every %d frame%s), "
+                "local=%s (%s, radius=%.1fm)",
                 map_topic_.c_str(), publish_global_map_ ? "enabled" : "disabled",
+                global_map_publish_interval_, global_map_publish_interval_ == 1 ? "" : "s",
                 local_map_topic_.c_str(), publish_local_map_ ? "enabled" : "disabled",
                 local_map_radius_m_);
 
@@ -459,10 +469,32 @@ void GlobalMapper::initLogging() {
     writeSummary, append aggregate timing stats to log file on shutdown
    ===================================================================== */
 void GlobalMapper::writeSummary() {
-    // Simplified summary - in a real implementation you would write to a log file
+    const auto occupied_points = voxel_map_.GetPointCloud();
+
     printf("\n============ VOXMAP SUMMARY ============\n");
     printf("Total Frames:      %lu\n", frame_count_);
     printf("Frames Dropped:    %lu\n", frames_dropped_.load(std::memory_order_relaxed));
+    printf("Allocated Voxels:  %zu\n", voxel_map_.Size());
+    printf("Occupied Voxels:   %zu\n", occupied_points.size());
+    printf("Voxel Resolution:  %.3f m\n", voxel_map_.GetResolution());
+    if (!occupied_points.empty()) {
+        double min_x = occupied_points.front().x;
+        double min_y = occupied_points.front().y;
+        double min_z = occupied_points.front().z;
+        double max_x = min_x;
+        double max_y = min_y;
+        double max_z = min_z;
+        for (const auto& point : occupied_points) {
+            min_x = std::min(min_x, point.x);
+            min_y = std::min(min_y, point.y);
+            min_z = std::min(min_z, point.z);
+            max_x = std::max(max_x, point.x);
+            max_y = std::max(max_y, point.y);
+            max_z = std::max(max_z, point.z);
+        }
+        printf("Occupied Bounds:  X[%.2f, %.2f] Y[%.2f, %.2f] Z[%.2f, %.2f] m\n", min_x, max_x,
+               min_y, max_y, min_z, max_z);
+    }
     printf("Final Ready State: %s\n", IsReady() ? "true" : "false");
     if (fatal_fault_.load(std::memory_order_relaxed)) {
         printf("FATAL FAULT: timestamp-domain contamination or unrecoverable error occurred\n");
@@ -884,10 +916,11 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     const std::string map_frame_id =
         (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
 
-    // Publish the complete occupied global map. RViz PointCloud2 displays replace
-    // the previous cloud on each message, so publishing only per-frame deltas would
-    // make accumulated surfaces disappear from the visualization.
-    if (publish_global_map_) {
+    // Publish complete snapshots at the configured frame interval. RViz PointCloud2
+    // displays replace the previous cloud, so publishing per-frame deltas would make
+    // accumulated surfaces disappear. Frame 1 is always published immediately.
+    if (publish_global_map_ &&
+        ((frame_count_ - 1U) % static_cast<std::uint64_t>(global_map_publish_interval_) == 0U)) {
         const auto map_points = voxel_map_.GetPointCloud();
         pub_global_map_->publish(MakeGlobalMapCloud(map_points, msg->header.stamp, map_frame_id));
     }

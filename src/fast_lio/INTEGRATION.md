@@ -96,8 +96,8 @@ a second set of values.
 
 | Parameter | Active value | Meaning |
 | --- | --- | --- |
-| `scan_resolution` | `0.5 m` | current-scan voxel filter leaf size |
-| `map_resolution` | `0.5 m` | ikd-Tree voxel downsampling size |
+| `scan_resolution` | `0.3 m` | current-scan voxel filter leaf size |
+| `map_resolution` | `0.3 m` | ikd-Tree voxel downsampling size |
 | `cube_len` | `50.0 m` | sliding local-map cube edge |
 | `det_range` | `40.0 m` | detection range used by map movement logic |
 | `move_thresh` | `0.5` | local-map movement ratio |

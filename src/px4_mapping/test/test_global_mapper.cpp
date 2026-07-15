@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
@@ -168,6 +169,13 @@ class GlobalMapperTest : public ::testing::Test {
 TEST_F(GlobalMapperTest, InitiallyNotReady) {
     EXPECT_FALSE(iface_->IsReady());
     EXPECT_EQ(iface_->FramesDropped(), 0U);
+}
+
+TEST_F(GlobalMapperTest, RejectsNonPositiveGlobalMapPublishInterval) {
+    auto invalid_options = rclcpp::NodeOptions();
+    invalid_options.append_parameter_override("global_map_publish_interval", 0);
+    std::shared_ptr<IVoxMapManager> invalid_iface;
+    EXPECT_THROW(get_global_mapper_node(invalid_options, invalid_iface), std::runtime_error);
 }
 
 TEST_F(GlobalMapperTest, BecomesReadyAfterSufficientOccupiedFrames) {
@@ -368,6 +376,63 @@ TEST_F(GlobalMapperLioWorldTest, PublishesRadiusBoundedLocalMapFromGlobalOccupan
     EXPECT_TRUE(global_has_second_region);
     EXPECT_FALSE(local_has_first_region);
     EXPECT_TRUE(local_has_second_region);
+}
+
+class GlobalMapperThrottledPublishTest : public GlobalMapperTest {
+   protected:
+    void SetUp() override {
+        node_options_ = rclcpp::NodeOptions();
+        node_options_.append_parameter_override("ready_min_frames", 1);
+        node_options_.append_parameter_override("ready_min_occupied", 1);
+        node_options_.append_parameter_override("timeout_seconds", 2.0);
+        node_options_.append_parameter_override("use_sim_time", false);
+        node_options_.append_parameter_override("input_source", "lio_world");
+        node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("global_map_publish_interval", 3);
+
+        node_ = get_global_mapper_node(node_options_, iface_);
+        executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+        executor_->add_node(node_);
+        pub_cloud_ =
+            node_->create_publisher<sensor_msgs::msg::PointCloud2>("/lio/cloud_registered", 20);
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+    }
+};
+
+TEST_F(GlobalMapperThrottledPublishTest, ThrottlesGlobalButNotLocalMap) {
+    std::size_t global_messages = 0U;
+    std::size_t local_messages = 0U;
+    auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
+            ++global_messages;
+        });
+    auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
+            ++local_messages;
+        });
+    ASSERT_NE(sub_global, nullptr);
+    ASSERT_NE(sub_local, nullptr);
+    SpinMs(100);
+
+    for (int i = 0; i < 4; ++i) {
+        const auto stamp = node_->now();
+        nav_msgs::msg::Odometry odom;
+        odom.header.stamp = stamp;
+        odom.header.frame_id = "lio_world";
+        odom.pose.pose.orientation.w = 1.0;
+        pub_lio_odom_->publish(odom);
+        SpinMs(30);
+
+        auto cloud = MakeDenseCloud(100, 3.0f);
+        cloud.header.stamp = stamp;
+        cloud.header.frame_id = "lio_world";
+        pub_cloud_->publish(cloud);
+        SpinMs(100);
+    }
+
+    EXPECT_EQ(global_messages, 2U) << "Global map should publish on frames 1 and 4";
+    EXPECT_EQ(local_messages, 4U) << "Local map should publish on every accepted frame";
 }
 
 class GlobalMapperPx4RetentionTest : public GlobalMapperTest {

@@ -38,8 +38,8 @@ Visualization Manager:
       Plane Cell Count: 40
       Reference Frame: lio_world
       Value: true
-    - Alpha: 0.9
-      Autocompute Intensity Bounds: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: false
       Autocompute Value Bounds:
         Max Value: 10
         Min Value: -2
@@ -48,17 +48,19 @@ Visualization Manager:
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 80; 220; 120
-      Color Transformer: FlatColor
+      Color Transformer: Intensity
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
-      Max Color: 255; 255; 255
+      Max Color: 80; 220; 120
+      Max Intensity: 255
       Min Color: 40; 120; 255
+      Min Intensity: 0
       Name: Global Map
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 2
-      Size (m): 0.08
+      Size (m): 0.04
       Style: Flat Squares
       Topic:
         Depth: 5

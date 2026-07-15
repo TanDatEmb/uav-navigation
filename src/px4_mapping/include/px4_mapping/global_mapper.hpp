@@ -79,6 +79,7 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     bool publish_global_map_{true};
     bool publish_local_map_{true};
     bool enable_distance_eviction_{false};
+    int global_map_publish_interval_{1};
     int log_interval_{1};
     double timeout_seconds_{3600.0};
     std::string log_path_;

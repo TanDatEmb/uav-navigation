@@ -72,18 +72,19 @@ localization_bridge:
 
 global_mapper:
   ros__parameters:
-    # Input: point cloud in map_ned frame.
+    # Input point cloud. Its world frame depends on input_source.
     cloud_topic: "/world/cloud"
 
     # Output topics for the accumulated global map and the rolling local view.
     map_topic: "/mapping/global"
     local_map_topic: "/mapping/local"
 
-    # Input: localization odometry in camera_init frame.
+    # Input localization odometry.
     lio_odom_topic: "/localization/odometry"
 
     # Input source mode:
-    #   "lio_world"  : cloud already in map_ned, only LIO odometry used.
+    #   "lio_world"  : cloud already registered in lio_world; LIO odometry
+    #                  supplies the synchronized sensor origin.
     #   "px4_only"   : use PX4 odometry as sensor origin (legacy fallback).
     #   "px4_full"   : cloud in aircraft frame with full PX4 pose.
     #   "localization_deskew" : deskewed cloud from the localization frontend.
@@ -92,9 +93,15 @@ global_mapper:
     # Publish the complete accumulated map for diagnostics and long-range context.
     publish_global_map: true
 
-    # Publish a stateless radius-bounded view derived from global occupancy.
+    # Full-map serialization dominates runtime as the map grows. Publish it at
+    # 2 Hz for a 10 Hz LiDAR while keeping the local map updated every frame.
+    global_map_publish_interval: 5
+
+    # Rolling spatial snapshot selected from persistent global occupancy, not
+    # from the current LiDAR scan. A 30 m radius preserves visible local history
+    # behind the UAV while covering a 60 m-wide local planning neighbourhood.
     publish_local_map: true
-    local_map_radius_m: 15.0
+    local_map_radius_m: 30.0
 
     # Opt-in legacy memory mode. When false, global occupancy is independent of
     # input_source and is bounded only by voxel capacity and frame age.

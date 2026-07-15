@@ -27,10 +27,10 @@
     lidar_min_range: 0.5          # Minimum range (m)
     lidar_max_range: 40.0         # Maximum range (m)
 
-    # Resolution (current performance profile; intentionally unchanged)
-    # Lower values improve wall detail but increase correspondence/map cost.
-    scan_resolution: 0.5          # Current-scan voxel filter leaf size (m)
-    map_resolution: 0.5           # FAST-LIO ikd-tree downsampling size (m)
+    # Balanced-detail profile: denser than the 0.5 m baseline without the
+    # near-order-of-magnitude map growth risk of a 0.1 m setting.
+    scan_resolution: 0.3          # Denser current-scan voxel filter leaf size (m)
+    map_resolution: 0.3           # Denser FAST-LIO ikd-tree downsampling size (m)
 
     # Local map
     cube_len: 50.0                # Local map cube size (m)

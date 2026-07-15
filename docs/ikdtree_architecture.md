@@ -47,7 +47,7 @@ is no ROS parameter that switches to the PCL backend.
   `0.15 m` downsampling
 
 `MapBuilder` immediately overrides the downsampling size with the active
-`map_resolution` parameter (`0.5 m` in the canonical YAML).
+`map_resolution` parameter (`0.3 m` in the canonical YAML).
 
 ### Incremental Operations
 
@@ -99,7 +99,7 @@ During rebuild:
 |---------|--------------|--------|-------------|
 | deletion criterion | 0.4 | wrapper constructor | Rebuild trigger for deleted-point ratio |
 | balance criterion | 0.6 | wrapper constructor | Rebuild trigger for tree imbalance |
-| `map_resolution` | 0.5 m | canonical ROS YAML | ikd-Tree voxel downsampling size |
+| `map_resolution` | 0.3 m | canonical ROS YAML | ikd-Tree voxel downsampling size |
 | `cube_len` | 50.0 m | canonical ROS YAML | Local map cube edge length |
 | `det_range` | 40.0 m | canonical ROS YAML | Detection range used by the move threshold |
 | `move_thresh` | 0.5 | canonical ROS YAML | Ratio used to decide when the cube moves |
