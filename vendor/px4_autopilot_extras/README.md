@@ -16,11 +16,14 @@ vendor/px4_autopilot_extras/
 │   ├── lidar_mid360/
 │   │   ├── model.config                 # Mô tả Livox MID-360
 │   │   └── model.sdf                    # Sensor standalone
+│   ├── map_tree/
+│   │   ├── model.config                 # Cây primitive, không cần Gazebo Fuel
+│   │   └── model.sdf                    # Trunk + canopy có visual/collision
 │   └── x500_lidar_360/
 │       ├── model.config                 # Mô tả x500 + MID-360
 │       └── model.sdf                    # Include x500 + lidar_mid360
 └── gz_worlds/
-    └── obstacle_course.sdf              # World CP + long-flight corridor 220 m
+    └── obstacle_course.sdf              # Corridor 220 m + cây + vật thể động
 ```
 
 ## Cách áp dụng tự động (khuyến nghị)
@@ -35,7 +38,7 @@ Mặc định `PX4_DIR=${HOME}/Dev/Autopilot`. Script sẽ:
 
 1. Copy airframe `4022_gz_x500_lidar_360`.
 2. Patch `ROMFS/.../airframes/CMakeLists.txt`.
-3. Copy Gazebo models `lidar_mid360` và `x500_lidar_360`.
+3. Copy Gazebo models `lidar_mid360`, `map_tree` và `x500_lidar_360`.
 4. Copy world `obstacle_course.sdf`.
 5. Checkout submodule `Tools/simulation/gz` về commit thử nghiệm `606c099` (nếu có sẵn).
 
@@ -57,6 +60,7 @@ patch -p1 < "${EXTRAS}/airframes_CMakeLists.patch"
 
 # 3. Copy Gazebo models
 cp -r "${EXTRAS}/gz_models/lidar_mid360" Tools/simulation/gz/models/
+cp -r "${EXTRAS}/gz_models/map_tree" Tools/simulation/gz/models/
 cp -r "${EXTRAS}/gz_models/x500_lidar_360" Tools/simulation/gz/models/
 
 # 4. Copy Gazebo world
