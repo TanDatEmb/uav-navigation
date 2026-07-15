@@ -1,71 +1,59 @@
-// lio_px4_alignment.hpp
-// Bridge FAST-LIO2 odometry to PX4 external odometry
-// Transforms from LIO world (ENU-like) to PX4 world (NED)
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026, LeTanDat
 
 #ifndef PX4_MAPPING_LIO_PX4_ALIGNMENT_HPP_
 #define PX4_MAPPING_LIO_PX4_ALIGNMENT_HPP_
 
-#include <rclcpp/rclcpp.hpp>
-#include <nav_msgs/msg/odometry.hpp>
-#include <px4_msgs/msg/vehicle_odometry.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
+#include <cstdint>
+#include <memory>
+#include <string>
 
-#include <Eigen/Dense>
+#include <nav_msgs/msg/odometry.hpp>
+#include <px4_msgs/msg/timesync_status.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 namespace px4_mapping {
 
 /**
- * @brief Bridge node for LIO-to-PX4 odometry alignment
+ * @brief Convert an ENU-world/FLU-body representation into PX4 NED/FRD fields.
  *
- * Transform conventions:
- *   - LIO: lio_world (ENU-like, gravity-aligned, Z-up)
- *   - PX4: map (NED, X-north, Y-east, Z-down)
+ * This is a coordinate-basis conversion only; it does not estimate origin or
+ * yaw alignment. Timestamp conversion is handled by the caller so this
+ * function remains deterministic and directly testable.
+ */
+px4_msgs::msg::VehicleOdometry ConvertLioOdometryToPx4(const nav_msgs::msg::Odometry& lio_msg,
+                                                       std::uint64_t publish_timestamp_us,
+                                                       std::uint64_t sample_timestamp_us,
+                                                       std::int8_t quality);
+
+/**
+ * @brief Bridge FAST-LIO odometry into PX4 external-odometry semantics.
  *
- * Transformation:
- *   - Position: [x, -y, -z] (ENU → NED)
- *   - Rotation: 180° roll then negate pitch/yaw
- *   - Velocity: [x, -y, -z] (ENU → NED)
- *
- * Covariance is transformed accordingly.
+ * The input must already satisfy ENU world semantics with a FLU body. Output is
+ * represented as NED world + FRD body. A gravity-aligned LIO frame with arbitrary
+ * yaw still requires a separately validated origin/yaw alignment before it is
+ * semantically north-aligned. ROS and PX4 timestamps are converted only through
+ * px4_ros2_utils::time::Timesync.
  */
 class LioPx4Alignment : public rclcpp::Node {
- public:
-  LioPx4Alignment();
+   public:
+    explicit LioPx4Alignment(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
- private:
-  void loadParameters();
-  void lioCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+   private:
+    void LoadParameters();
+    void LioCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
 
-  // Transform LIO pose to PX4 NED frame
-  px4_msgs::msg::VehicleOdometry transformToPX4(
-      const nav_msgs::msg::Odometry& lio_msg);
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_sub_;
+    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr timesync_sub_;
+    rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_pub_;
 
-  // Static transform: lio_world → map (NED)
-  // Computed once from parameters or TF
-  void computeStaticTransform();
+    std::unique_ptr<px4_ros2_utils::time::Timesync> timesync_;
 
-  // Members
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_sub_;
-  rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_pub_;
-
-  // TF
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-
-  // Parameters
-  std::string lio_topic_;
-  std::string px4_topic_;
-  std::string lio_frame_id_;
-  std::string px4_frame_id_;
-  bool use_tf_lookup_;
-
-  // Static transform (if not using TF)
-  Eigen::Matrix3d R_lio_px4_;  // Rotation from LIO to PX4
-  Eigen::Vector3d t_lio_px4_;  // Translation (typically zero)
-
-  // Covariance transform matrix
-  Eigen::Matrix<double, 6, 6> J_pose_transform_;
+    std::string lio_topic_;
+    std::string px4_topic_;
+    int visual_odom_quality_{100};
 };
 
 }  // namespace px4_mapping

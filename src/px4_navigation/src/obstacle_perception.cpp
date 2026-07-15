@@ -24,9 +24,11 @@
 #include <string>
 
 #include <px4_ros2_utils/common/constants.hpp>
+#include <px4_ros2_utils/frame/transform.hpp>
 #include <px4_ros2_utils/math/angles.hpp>
 #include <px4_ros2_utils/math/quaternion.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 namespace px4_navigation {
@@ -46,10 +48,10 @@ ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
                  std::vector<GridCell>(static_cast<size_t>(pitch_bins_)));
 
     // QoS matching PX4 uXRCE-DDS bridge expectations.
-    const auto px4_qos = rclcpp::QoS(20).best_effort();
+    const auto px4_qos = px4_ros2_utils::qos::sensor_qos(20);
 
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        input_cloud_topic_, rclcpp::SensorDataQoS(),
+        input_cloud_topic_, px4_ros2_utils::qos::sensor_qos(),
         std::bind(&ObstaclePerception::CloudCallback, this, std::placeholders::_1));
 
     sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
@@ -57,20 +59,21 @@ ObstaclePerception::ObstaclePerception(const rclcpp::NodeOptions& options)
         std::bind(&ObstaclePerception::OdomCallback, this, std::placeholders::_1));
 
     pub_obstacle_distance_ = this->create_publisher<px4_msgs::msg::ObstacleDistance>(
-        obstacle_distance_topic_, rclcpp::QoS(20).reliable());
+        obstacle_distance_topic_, px4_ros2_utils::qos::telemetry_qos(20));
 
     if (!use_sim_time) {
         sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
                 "/fmu/out/timesync_status"),
-            rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+            px4_ros2_utils::qos::sensor_qos(5),
+            [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
                 timesync_->update(msg);
             });
     }
 
     if (publish_local_virtual_scan_) {
         pub_local_virtual_scan_ = this->create_publisher<sensor_msgs::msg::LaserScan>(
-            local_virtual_scan_topic_, rclcpp::QoS(20).reliable());
+            local_virtual_scan_topic_, px4_ros2_utils::qos::telemetry_qos(20));
     }
 
     const auto period_ns = static_cast<int64_t>(1e9 / publish_rate_hz_);
@@ -231,20 +234,24 @@ void ObstaclePerception::TimerCallback() {
         cloud_time = last_cloud_time_;
     }
 
+    // Keep ROS-domain age checks and ROS message headers on the node-owned
+    // clock. Convert this same instant only at the PX4 message boundary.
+    const rclcpp::Time ros_now = this->now();
+
     bool is_stale = false;
     if (have_cloud) {
-        const rclcpp::Duration age = this->now() - cloud_time;
+        const rclcpp::Duration age = ros_now - cloud_time;
         is_stale =
             age.nanoseconds() >= 0 &&
             age > rclcpp::Duration::from_seconds(static_cast<double>(stale_timeout_ms_) / 1000.0);
     }
 
     auto obstacle_msg = px4_msgs::msg::ObstacleDistance();
-    const auto now_px4 = timesync_->toPX4(this->now());
-    if (!now_px4) {
+    const auto now_px4 = timesync_->toPX4(ros_now);
+    if (!now_px4 || *now_px4 == 0) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[obstacle_perception] Skipping obstacle distance publish until "
-                             "TimesyncStatus is valid");
+                             "[obstacle_perception] Skipping publish until PX4/ROS timesync "
+                             "yields a valid non-zero timestamp");
         return;
     }
     obstacle_msg.timestamp = *now_px4;
@@ -295,7 +302,7 @@ void ObstaclePerception::TimerCallback() {
 
     if (publish_local_virtual_scan_ && pub_local_virtual_scan_) {
         sensor_msgs::msg::LaserScan scan_msg;
-        scan_msg.header.stamp = this->now();
+        scan_msg.header.stamp = ros_now;
         scan_msg.header.frame_id = local_virtual_scan_frame_id_;
         scan_msg.angle_min = static_cast<float>(-px4_ros2_utils::constants::PI);
         scan_msg.angle_max = static_cast<float>(px4_ros2_utils::constants::PI);
@@ -368,7 +375,7 @@ void ObstaclePerception::BuildSphericalGrid(const std::vector<Eigen::Vector3f>& 
         } else if (cloud_frame_ == "sensor_flu") {
             // Gazebo / ROS conventional sensor frame: x=FWD, y=LEFT, z=UP.
             // Convert to body FRD before spherical mapping.
-            pt_body = Eigen::Vector3f(pt_in.x(), -pt_in.y(), -pt_in.z());
+            pt_body = px4_ros2_utils::frame::flu_to_frd(pt_in.cast<double>()).cast<float>();
         } else {
             // Cloud is in NED world frame: transform to body FRD.
             // PX4 NED yaw is positive clockwise (right-hand rule around the

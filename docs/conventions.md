@@ -4,7 +4,7 @@
 
 - `px4_msgs`: MUST be a Git submodule pointing to `PX4/px4_msgs`. Message definitions must match the PX4 firmware version used in simulation/flight.
 - `px4_ros2_utils` (submodule): external C++20 header-first PX4 ↔ ROS 2 utility library (`TanDatEmb/px4_ros2_utils`). Provides frame transforms, time constants, math, parameters, QoS, and geometry bridges. Do NOT submodule the upstream `PX4/px4_ros_com`; it is ROS 1 legacy, weakly maintained for ROS 2 Jazzy, and brings dependency conflicts.
-- `px4_navigation_common` (this workspace): project-specific helpers built on top of `px4_ros2_utils` and `px4_msgs`.
+- `px4_nav_common` (this workspace): project-specific contracts built on top of `px4_ros2_utils` and `px4_msgs`.
 - Header-only packages: use `INTERFACE` library type with proper `install(TARGETS ...)` and `ament_export_targets`.
 - Compiled C++ packages: use `SHARED` library type with explicit `CMAKE_CXX_STANDARD 20`.
 - `buildtool_depend` must be `ament_cmake` (not `ament_cmake_ros`) for consistency unless a package genuinely requires ROS-specific CMake macros.
@@ -31,10 +31,17 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
 
 ## Comments and Documentation
 
-- All source comments in English.
+- All first-party source comments, commit messages, and repository documentation
+  are written in English. Standard technical names, symbols, and units are kept
+  unchanged.
 - Use Doxygen style for public APIs: `/** ... */`.
 - No commented-out debug code in final commits.
 - Explain **why**, not what, when intent is non-obvious.
+- Do not track one-time review, audit, status-snapshot, or remediation reports.
+  Promote durable findings into the relevant architecture/design document and
+  delete the temporary report.
+- Each engineering contract has one authoritative document; update it instead of
+  creating overlapping notes.
 
 ## Parameters
 
@@ -58,8 +65,9 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
 - **Aircraft body frame** (`aircraft`, FRD): Forward-Right-Down, PX4 body frame.
 - **Base link body frame** (`base_link`, FLU): Forward-Left-Up, ROS REP-103 body frame.
 - **FRD↔FLU rotation**: `diag(1, -1, -1)` applied as a passive frame rotation.
-- Every transform function name must state source and destination frames
-  unambiguously (e.g. `EnuToNed`, `QuaternionAircraftToBaselink`).
+- Generic frame conversion must use `px4_ros2_utils::frame` directly (for
+  example `enu_to_ned`, `enu_to_ned_pose`, and `flu_to_frd`). Do not duplicate
+  these operations with local sign flips or matrices.
 
 ## Quaternion Conventions
 
@@ -71,21 +79,31 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
   - `ArrayToEigenQuat()` expects `[w, x, y, z]`.
 - **Euler angles**: ZYX intrinsic sequence (yaw, pitch, roll) unless
   explicitly documented otherwise.
-- **Transform direction**: all frame transforms are **passive** (rotate the
-  coordinate frame, not the vector), implemented as
-  `q_rotation * q * q_rotation.conjugate()` for quaternions.
+- **Transform direction**: treat frame conversion as a coordinate
+  representation change. Use the complete pose helpers for world+body changes;
+  do not derive orientation conversion by negating Euler angles.
 
 ## Time Conventions
 
-- **Single clock source**: ROS 2 clock (`rclcpp::Clock`, `this->now()`,
-  `header.stamp`).
-- **PX4 boundary**: MicroXRCE-DDS agent translates `timestamp_sample`
-  (PX4 wall-clock microseconds) into ROS 2 time. Do not maintain a manual
-  offset inside nodes.
-- **Internal messages**: use `std::chrono::nanoseconds` or `rclcpp::Time`.
-  Avoid mixing `double seconds` and `int64_t nanoseconds` in the same buffer.
-- **Pose buffers**: enforce strict monotonic timestamps and track
-  non-monotonic / overflow / miss counters for diagnostics.
+- The system has **two explicit clock domains**:
+  - ROS messages and internal freshness/timeout logic use the node-owned ROS 2
+    clock (`this->now()`, `rclcpp::Time`, and `header.stamp`).
+  - PX4 message fields `timestamp` and `timestamp_sample` use microseconds in
+    the PX4 boot-time domain.
+- At every PX4 boundary, use `px4_ros2_utils::time::Timesync`:
+  - PX4 input → ROS processing: `Timesync::toROS(px4_timestamp_us)`.
+  - ROS measurement/publication → PX4 output: `Timesync::toPX4(ros_time)`.
+- `timestamp` means publication time. `timestamp_sample` means measurement
+  acquisition time. They may differ and must not be collapsed into one value.
+- Never cast `this->now().nanoseconds() / 1000` directly into a PX4 timestamp,
+  and never use a PX4 integer timestamp directly as a ROS header stamp.
+- `Timesync` must receive `node->get_clock()`; utilities must not construct a
+  separate clock. External mode requires a valid `TimesyncStatus`. Simulation
+  mode is only for the documented zero-offset `/clock` configuration.
+- Failed conversion and PX4 timestamp zero are invalid: drop/defer the sample;
+  do not guess or fall back to another clock.
+- Internal pose buffers store one documented ROS nanosecond domain, enforce
+  strict monotonic timestamps, and track non-monotonic/overflow/miss counters.
 
 ## Logging and Monitoring Conventions
 
@@ -100,9 +118,9 @@ Supplement: PX4 Style Guide for safety-critical and autopilot-adjacent code.
 - Python tooling (`recorder.py`, `visualize.py`) keeps CSV schemas stable
   or documents breaking changes explicitly.
 
-## Frame Conventions
-
-Frame conventions will be documented in `docs/architecture.md` once finalized. Every transform must have a named, versioned convention.
+The authoritative runtime topic contract is documented in `docs/architecture.md`.
+The authoritative frame definitions and boundary rules are documented in
+`docs/frame_contract.md`.
 
 ## Formatting and Linting
 
@@ -123,4 +141,6 @@ Run formatting before committing:
 - [ ] No Vietnamese comments.
 - [ ] No leftover debug logs.
 - [ ] Single publish path per cycle.
+- [ ] No direct ROS↔PX4 timestamp cast; all boundary timestamps use `Timesync`.
+- [ ] Documentation is English-only and contains no temporary review artifact.
 - [ ] `clang-format` passes.

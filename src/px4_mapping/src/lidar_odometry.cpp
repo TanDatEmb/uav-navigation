@@ -9,15 +9,12 @@
 #include <px4_ros2_utils/frame/transform.hpp>
 #include <px4_ros2_utils/parameter/param_utils.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace px4_mapping {
 
 namespace {
-
-inline Eigen::Vector3d FluToFrd(const Eigen::Vector3d &p_flu) {
-    return Eigen::Vector3d(p_flu.x(), -p_flu.y(), -p_flu.z());
-}
 
 inline Eigen::Quaterniond SmallAngleQuaternion(const Eigen::Vector3d &delta_angle_rad) {
     const double angle = delta_angle_rad.norm();
@@ -33,8 +30,8 @@ LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
     : rclcpp::Node("lidar_odometry", options), timesync_(this->get_clock()) {
     LoadParameters();
 
-    const auto sensor_qos = rclcpp::SensorDataQoS();
-    const auto px4_qos = rclcpp::QoS(20).best_effort();
+    const auto sensor_qos = px4_ros2_utils::qos::sensor_qos();
+    const auto px4_qos = px4_ros2_utils::qos::sensor_qos(20);
     const auto lio_pub_qos = rclcpp::QoS(20).reliable();
 
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -52,7 +49,7 @@ LidarOdometry::LidarOdometry(const rclcpp::NodeOptions &options)
     sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
         px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
             "/fmu/out/timesync_status"),
-        rclcpp::QoS(5).best_effort(), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+        px4_ros2_utils::qos::sensor_qos(5), [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
             timesync_.update(msg);
         });
 
@@ -268,7 +265,7 @@ bool LidarOdometry::BuildProcessedCloud(const sensor_msgs::msg::PointCloud2 &inp
             continue;
         }
 
-        const Eigen::Vector3d p_frd = FluToFrd(p_flu);
+        const Eigen::Vector3d p_frd = px4_ros2_utils::frame::flu_to_frd(p_flu);
         if (p_frd.squaredNorm() <= blind_sq) {
             continue;
         }

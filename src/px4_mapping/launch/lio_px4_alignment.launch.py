@@ -1,29 +1,20 @@
 #!/usr/bin/env python3
-"""
-LIO-PX4 Alignment Bridge Launch File
+"""Launch the LIO-to-PX4 coordinate-basis and timestamp converter.
 
-Bridge FAST-LIO2 odometry to PX4 external odometry.
-Transforms from LIO world (ENU-like) to PX4 NED frame.
+Input pose must already satisfy ENU-world/FLU-body semantics. The node converts
+that representation to PX4 NED/FRD fields and converts ROS sample/publication
+time to PX4 boot time through Timesync.
 
-Usage:
-    ros2 launch px4_mapping lio_px4_alignment.launch.py
-
-Topics:
-    Input:  /lio/odometry (nav_msgs/Odometry, ENU frame)
-    Output: /fmu/in/vehicle_visual_odometry (px4_msgs/VehicleOdometry, NED frame)
-
-Frame Conventions:
-    - LIO: lio_world (gravity-aligned, Z-up, ENU-like)
-    - PX4: map (X-north, Y-east, Z-down, NED)
-
-    Transform: [x, y, z] → [x, -y, -z]
-               [roll, pitch, yaw] → [roll, -pitch, -yaw]
+The historical executable name contains ``alignment``, but the node does not
+estimate translation or yaw between an arbitrary ``lio_world`` origin and the
+PX4 EKF origin. That alignment must be established separately.
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -49,6 +40,12 @@ def generate_launch_description():
         description='Use simulation time'
     )
 
+    quality_arg = DeclareLaunchArgument(
+        'visual_odom_quality',
+        default_value='100',
+        description='PX4 VehicleOdometry quality in [1, 100]'
+    )
+
     # LIO-PX4 alignment node
     lio_px4_alignment_node = Node(
         package='px4_mapping',
@@ -58,9 +55,8 @@ def generate_launch_description():
         parameters=[{
             'lio_topic': lio_topic,
             'px4_topic': px4_topic,
-            'lio_frame_id': 'lio_world',
-            'px4_frame_id': 'map',
-            'use_tf_lookup': False,
+            'visual_odom_quality': ParameterValue(
+                LaunchConfiguration('visual_odom_quality'), value_type=int),
             'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
     )
@@ -69,5 +65,6 @@ def generate_launch_description():
         lio_topic_arg,
         px4_topic_arg,
         use_sim_time_arg,
+        quality_arg,
         lio_px4_alignment_node,
     ])

@@ -1,225 +1,170 @@
-// lio_px4_alignment.cpp
-// Bridge FAST-LIO2 odometry to PX4 external odometry
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026, LeTanDat
 
 #include "px4_mapping/lio_px4_alignment.hpp"
 
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <stdexcept>
+
+#include <Eigen/Core>
+#include <Eigen/Geometry>
+#include <px4_ros2_utils/frame/covariance.hpp>
+#include <px4_ros2_utils/frame/transform.hpp>
+#include <px4_ros2_utils/parameter/param_utils.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 
 namespace px4_mapping {
 
-LioPx4Alignment::LioPx4Alignment()
-    : Node("lio_px4_alignment") {
+namespace {
 
-    RCLCPP_INFO(this->get_logger(), "LIO-PX4 Alignment Node Starting...");
-
-    loadParameters();
-    computeStaticTransform();
-
-    // TF buffer
-    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-    // Subscriber
-    lio_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        lio_topic_, 10,
-        std::bind(&LioPx4Alignment::lioCallback, this, std::placeholders::_1));
-
-    // Publisher
-    px4_pub_ = this->create_publisher<px4_msgs::msg::VehicleOdometry>(
-        px4_topic_, 10);
-
-    RCLCPP_INFO(this->get_logger(), "Subscribing to: %s", lio_topic_.c_str());
-    RCLCPP_INFO(this->get_logger(), "Publishing to: %s", px4_topic_.c_str());
+float VarianceOrNaN(double value) {
+    return std::isfinite(value) && value >= 0.0 ? static_cast<float>(value)
+                                                : std::numeric_limits<float>::quiet_NaN();
 }
 
-void LioPx4Alignment::loadParameters() {
-    this->declare_parameter<std::string>("lio_topic", "/lio/odometry");
-    this->declare_parameter<std::string>("px4_topic", "/fmu/in/vehicle_visual_odometry");
-    this->declare_parameter<std::string>("lio_frame_id", "lio_world");
-    this->declare_parameter<std::string>("px4_frame_id", "map");
-    this->declare_parameter<bool>("use_tf_lookup", false);
-
-    this->get_parameter("lio_topic", lio_topic_);
-    this->get_parameter("px4_topic", px4_topic_);
-    this->get_parameter("lio_frame_id", lio_frame_id_);
-    this->get_parameter("px4_frame_id", px4_frame_id_);
-    this->get_parameter("use_tf_lookup", use_tf_lookup_);
+bool HasFinitePose(const nav_msgs::msg::Odometry& odometry) {
+    const auto& position = odometry.pose.pose.position;
+    const auto& orientation = odometry.pose.pose.orientation;
+    const Eigen::Quaterniond q_enu_flu(orientation.w, orientation.x, orientation.y, orientation.z);
+    return std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z) &&
+           q_enu_flu.coeffs().allFinite() && q_enu_flu.norm() > 1e-12;
 }
 
-void LioPx4Alignment::computeStaticTransform() {
-    // ENU to NED transformation:
-    // NED = T * ENU
-    // where T = Rx(180°) followed by coordinate swap
-    //
-    // Result: [x_ned, y_ned, z_ned] = [x_enu, -y_enu, -z_enu]
-    //
-    // Rotation matrix for ENU → NED:
-    // R = [1  0  0
-    //      0 -1  0
-    //      0  0 -1]
-    //
-    // This is equivalent to 180° rotation around X axis
+}  // namespace
 
-    R_lio_px4_ = Eigen::Matrix3d::Identity();
-    R_lio_px4_(1, 1) = -1.0;  // Flip Y
-    R_lio_px4_(2, 2) = -1.0;  // Flip Z
+px4_msgs::msg::VehicleOdometry ConvertLioOdometryToPx4(const nav_msgs::msg::Odometry& lio_msg,
+                                                       std::uint64_t publish_timestamp_us,
+                                                       std::uint64_t sample_timestamp_us,
+                                                       std::int8_t quality) {
+    const Eigen::Vector3d position_enu(lio_msg.pose.pose.position.x, lio_msg.pose.pose.position.y,
+                                       lio_msg.pose.pose.position.z);
+    const Eigen::Quaterniond q_enu_flu(
+        lio_msg.pose.pose.orientation.w, lio_msg.pose.pose.orientation.x,
+        lio_msg.pose.pose.orientation.y, lio_msg.pose.pose.orientation.z);
 
-    // Translation is typically zero (same origin)
-    t_lio_px4_ = Eigen::Vector3d::Zero();
-
-    // Jacobian for covariance transformation (6x6)
-    // Position part: R_lio_px4
-    // Rotation part: R_lio_px4 (for Euler angles, approximately)
-    J_pose_transform_.setZero();
-    J_pose_transform_.block<3, 3>(0, 0) = R_lio_px4_;
-    J_pose_transform_.block<3, 3>(3, 3) = R_lio_px4_;
-
-    RCLCPP_INFO(this->get_logger(),
-        "Static transform computed: ENU → NED");
-    RCLCPP_INFO(this->get_logger(),
-        "  Position: [x, -y, -z]");
-    RCLCPP_INFO(this->get_logger(),
-        "  Velocity: [vx, -vy, -vz]");
-}
-
-px4_msgs::msg::VehicleOdometry LioPx4Alignment::transformToPX4(
-    const nav_msgs::msg::Odometry& lio_msg) {
+    Eigen::Vector3d position_ned;
+    Eigen::Quaterniond q_ned_frd;
+    px4_ros2_utils::frame::enu_to_ned_pose(position_enu, q_enu_flu.normalized(), position_ned,
+                                           q_ned_frd);
 
     px4_msgs::msg::VehicleOdometry px4_msg;
-
-    // Timestamp
-    px4_msg.timestamp = this->now().nanoseconds() / 1000;  // microseconds
-
-    // Frame IDs
-    // PX4 frame convention:
-    //   0: NED earth-fixed frame
-    //   1: FRD body-fixed frame
+    px4_msg.timestamp = publish_timestamp_us;
+    px4_msg.timestamp_sample = sample_timestamp_us;
     px4_msg.pose_frame = px4_msgs::msg::VehicleOdometry::POSE_FRAME_NED;
-    px4_msg.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_NED;
+    px4_msg.position[0] = static_cast<float>(position_ned.x());
+    px4_msg.position[1] = static_cast<float>(position_ned.y());
+    px4_msg.position[2] = static_cast<float>(position_ned.z());
+    px4_msg.q[0] = static_cast<float>(q_ned_frd.w());
+    px4_msg.q[1] = static_cast<float>(q_ned_frd.x());
+    px4_msg.q[2] = static_cast<float>(q_ned_frd.y());
+    px4_msg.q[3] = static_cast<float>(q_ned_frd.z());
 
-    // Position: ENU → NED [x, -y, -z]
-    Eigen::Vector3d p_lio(lio_msg.pose.pose.position.x,
-                          lio_msg.pose.pose.position.y,
-                          lio_msg.pose.pose.position.z);
-
-    Eigen::Vector3d p_px4 = R_lio_px4_ * p_lio + t_lio_px4_;
-
-    px4_msg.position[0] = static_cast<float>(p_px4(0));  // North
-    px4_msg.position[1] = static_cast<float>(p_px4(1));  // East
-    px4_msg.position[2] = static_cast<float>(p_px4(2));  // Down
-
-    // Orientation: ENU → NED
-    // Convert quaternion to rotation matrix, transform, convert back
-    tf2::Quaternion q_lio(
-        lio_msg.pose.pose.orientation.x,
-        lio_msg.pose.pose.orientation.y,
-        lio_msg.pose.pose.orientation.z,
-        lio_msg.pose.pose.orientation.w);
-
-    tf2::Matrix3x3 R_lio(q_lio);
-
-    // Apply ENU→NED rotation: R_px4 = R_lio_px4 * R_lio * R_lio_px4^T
-    // Actually for orientation: R_ned = R_enu_to_ned * R_enu
-    double roll_lio, pitch_lio, yaw_lio;
-    R_lio.getRPY(roll_lio, pitch_lio, yaw_lio);
-
-    // Transform Euler angles: roll same, pitch and yaw negated
-    double r_px4_angle = roll_lio;
-    double p_px4_angle = -pitch_lio;
-    double y_px4_angle = -yaw_lio;
-
-    // Convert back to quaternion
-    tf2::Quaternion q_px4;
-    q_px4.setRPY(r_px4_angle, p_px4_angle, y_px4_angle);
-
-    px4_msg.q[0] = static_cast<float>(q_px4.w());
-    px4_msg.q[1] = static_cast<float>(q_px4.x());
-    px4_msg.q[2] = static_cast<float>(q_px4.y());
-    px4_msg.q[3] = static_cast<float>(q_px4.z());
-
-    // Velocity: ENU → NED [vx, -vy, -vz]
-    Eigen::Vector3d v_lio(lio_msg.twist.twist.linear.x,
-                          lio_msg.twist.twist.linear.y,
-                          lio_msg.twist.twist.linear.z);
-
-    Eigen::Vector3d v_px4 = R_lio_px4_ * v_lio;
-
-    px4_msg.velocity[0] = static_cast<float>(v_px4(0));
-    px4_msg.velocity[1] = static_cast<float>(v_px4(1));
-    px4_msg.velocity[2] = static_cast<float>(v_px4(2));
-
-    // Angular velocity (body frame, should already be correct)
-    px4_msg.angular_velocity[0] = static_cast<float>(lio_msg.twist.twist.angular.x);
-    px4_msg.angular_velocity[1] = static_cast<float>(-lio_msg.twist.twist.angular.y);
-    px4_msg.angular_velocity[2] = static_cast<float>(-lio_msg.twist.twist.angular.z);
-
-    // Position covariance: transform from LIO to PX4
-    // Extract 3x3 position covariance
-    Eigen::Matrix3d P_pos_lio;
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            P_pos_lio(i, j) = lio_msg.pose.covariance[i * 6 + j];
-        }
+    // FAST-LIO currently does not populate nav_msgs/Odometry.twist. Publishing
+    // default zeroes as measured velocity would over-constrain EKF2, so mark
+    // velocity and angular velocity unavailable explicitly.
+    px4_msg.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_UNKNOWN;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    for (int axis = 0; axis < 3; ++axis) {
+        px4_msg.velocity[axis] = nan;
+        px4_msg.angular_velocity[axis] = nan;
+        px4_msg.velocity_variance[axis] = nan;
     }
 
-    // Transform: P_px4 = R * P_lio * R^T
-    Eigen::Matrix3d P_pos_px4 = R_lio_px4_ * P_pos_lio * R_lio_px4_.transpose();
+    const Eigen::Vector3d position_variance_enu(
+        lio_msg.pose.covariance[0], lio_msg.pose.covariance[7], lio_msg.pose.covariance[14]);
+    const Eigen::Vector3d position_variance_ned =
+        px4_ros2_utils::frame::enu_var_to_ned(position_variance_enu);
+    const Eigen::Vector3d orientation_variance_flu(
+        lio_msg.pose.covariance[21], lio_msg.pose.covariance[28], lio_msg.pose.covariance[35]);
+    const Eigen::Vector3d orientation_variance_frd =
+        px4_ros2_utils::frame::flu_var_to_frd(orientation_variance_flu);
 
-    // Set position covariance in PX4 message
-    // PX4 uses row-major order for upper triangle
-    px4_msg.position_variance[0] = static_cast<float>(P_pos_px4(0, 0));
-    px4_msg.position_variance[1] = static_cast<float>(P_pos_px4(1, 1));
-    px4_msg.position_variance[2] = static_cast<float>(P_pos_px4(2, 2));
-
-    // Orientation variance (simplified)
-    px4_msg.orientation_variance[0] = static_cast<float>(lio_msg.pose.covariance[21]);  // roll
-    px4_msg.orientation_variance[1] = static_cast<float>(lio_msg.pose.covariance[28]);  // pitch
-    px4_msg.orientation_variance[2] = static_cast<float>(lio_msg.pose.covariance[35]);  // yaw
-
-    // Velocity covariance
-    Eigen::Matrix3d P_vel_lio;
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            P_vel_lio(i, j) = lio_msg.twist.covariance[i * 6 + j];
-        }
+    for (int axis = 0; axis < 3; ++axis) {
+        px4_msg.position_variance[axis] = VarianceOrNaN(position_variance_ned[axis]);
+        px4_msg.orientation_variance[axis] = VarianceOrNaN(orientation_variance_frd[axis]);
     }
 
-    Eigen::Matrix3d P_vel_px4 = R_lio_px4_ * P_vel_lio * R_lio_px4_.transpose();
-
-    px4_msg.velocity_variance[0] = static_cast<float>(P_vel_px4(0, 0));
-    px4_msg.velocity_variance[1] = static_cast<float>(P_vel_px4(1, 1));
-    px4_msg.velocity_variance[2] = static_cast<float>(P_vel_px4(2, 2));
-
+    px4_msg.reset_counter = 0;
+    px4_msg.quality = quality;
     return px4_msg;
 }
 
-void LioPx4Alignment::lioCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    // Transform LIO message to PX4 format
-    auto px4_msg = transformToPX4(*msg);
+LioPx4Alignment::LioPx4Alignment(const rclcpp::NodeOptions& options)
+    : rclcpp::Node("lio_px4_alignment", options) {
+    LoadParameters();
 
-    // Publish to PX4
-    px4_pub_->publish(px4_msg);
+    bool use_sim_time = false;
+    this->get_parameter("use_sim_time", use_sim_time);
+    const auto timesync_mode = use_sim_time ? px4_ros2_utils::time::Timesync::Mode::Simulation
+                                            : px4_ros2_utils::time::Timesync::Mode::External;
+    timesync_ = std::make_unique<px4_ros2_utils::time::Timesync>(this->get_clock(), timesync_mode);
 
-    // Debug logging (throttled)
-    static int count = 0;
-    if (++count % 50 == 0) {
-        RCLCPP_INFO(this->get_logger(),
-            "Published odometry [%d]: pos=[%.2f, %.2f, %.2f]",
-            count,
-            px4_msg.position[0],
-            px4_msg.position[1],
-            px4_msg.position[2]);
+    lio_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        lio_topic_, px4_ros2_utils::qos::telemetry_qos(20),
+        std::bind(&LioPx4Alignment::LioCallback, this, std::placeholders::_1));
+    px4_pub_ = this->create_publisher<px4_msgs::msg::VehicleOdometry>(
+        px4_topic_, px4_ros2_utils::qos::sensor_qos(20));
+
+    if (!use_sim_time) {
+        timesync_sub_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            px4_ros2_utils::qos::sensor_qos(5),
+            [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
+                timesync_->update(msg);
+            });
+    }
+
+    RCLCPP_INFO(this->get_logger(),
+                "LIO-PX4 basis converter started: %s (ENU/FLU required) -> %s (NED/FRD), "
+                "quality=%d; origin/yaw alignment is not estimated",
+                lio_topic_.c_str(), px4_topic_.c_str(), visual_odom_quality_);
+}
+
+void LioPx4Alignment::LoadParameters() {
+    const auto load_parameter = [this]<typename T>(const std::string& name, const T& default_value,
+                                                   const std::string& description) {
+        return px4_ros2_utils::parameter::declare_and_get(
+            *this, name, default_value, px4_ros2_utils::parameter::descriptor(description));
+    };
+
+    lio_topic_ = load_parameter(
+        "lio_topic", std::string("/lio/odometry"),
+        "Odometry input topic; pose must already satisfy ENU-world/FLU-body semantics.");
+    px4_topic_ = load_parameter("px4_topic", std::string("/fmu/in/vehicle_visual_odometry"),
+                                "PX4 external-odometry output topic (NED world, FRD body).");
+    visual_odom_quality_ =
+        load_parameter("visual_odom_quality", 100, "PX4 VehicleOdometry quality in [1, 100].");
+
+    if (lio_topic_.empty() || px4_topic_.empty()) {
+        throw std::invalid_argument("lio_topic and px4_topic must not be empty");
+    }
+    if (visual_odom_quality_ < 1 || visual_odom_quality_ > 100) {
+        throw std::invalid_argument("visual_odom_quality must be in [1, 100]");
     }
 }
 
-}  // namespace px4_mapping
+void LioPx4Alignment::LioCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    if (!msg || !HasFinitePose(*msg)) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "Dropping LIO odometry with invalid pose");
+        return;
+    }
 
-#include <rclcpp/rclcpp.hpp>
+    const rclcpp::Time sample_time(msg->header.stamp, this->get_clock()->get_clock_type());
+    const auto sample_px4_us = timesync_->toPX4(sample_time);
+    const auto publish_px4_us = timesync_->toPX4(this->now());
+    if (!sample_px4_us || !publish_px4_us || *sample_px4_us == 0 || *publish_px4_us == 0) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                             "Dropping LIO odometry until PX4/ROS timesync is valid");
+        return;
+    }
 
-int main(int argc, char** argv) {
-    rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<px4_mapping::LioPx4Alignment>());
-    rclcpp::shutdown();
-    return 0;
+    px4_pub_->publish(ConvertLioOdometryToPx4(*msg, *publish_px4_us, *sample_px4_us,
+                                              static_cast<std::int8_t>(visual_odom_quality_)));
 }
+
+}  // namespace px4_mapping

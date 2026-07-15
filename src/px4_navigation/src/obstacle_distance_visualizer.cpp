@@ -7,6 +7,8 @@
 
 #include <px4_msgs/msg/obstacle_distance.hpp>
 #include <px4_ros2_utils/math/angles.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -41,10 +43,12 @@ std_msgs::msg::ColorRGBA ColorFromDistance(float dist_m) {
 
 ObstacleDistanceVisualizer::ObstacleDistanceVisualizer(const rclcpp::NodeOptions& options)
     : rclcpp::Node("obstacle_distance_visualizer", options) {
-    const auto px4_qos = rclcpp::QoS(20).best_effort();
+    const auto px4_qos = px4_ros2_utils::qos::sensor_qos(20);
 
     sub_obstacle_ = this->create_subscription<px4_msgs::msg::ObstacleDistance>(
-        "/fmu/in/obstacle_distance", px4_qos,
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::ObstacleDistance>(
+            "/fmu/in/obstacle_distance"),
+        px4_qos,
         std::bind(&ObstacleDistanceVisualizer::ObstacleDistanceCallback, this,
                   std::placeholders::_1));
 

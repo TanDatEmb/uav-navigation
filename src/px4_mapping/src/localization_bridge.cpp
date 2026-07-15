@@ -25,29 +25,14 @@
 
 #include <px4_mapping/time/pose_buffer.hpp>
 #include <px4_nav_common/frame_constants.hpp>
+#include <px4_ros2_utils/frame/transform.hpp>
 #include <px4_ros2_utils/math/quaternion.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 
 namespace px4_mapping {
 
 namespace {
-
-Eigen::Matrix3d LioWorldToNedMatrix() {
-    return (Eigen::Matrix3d() << 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0).finished();
-}
-
-Eigen::Vector3d LioPositionToNed(const Eigen::Vector3d& p_lio) {
-    return LioWorldToNedMatrix() * p_lio;
-}
-
-Eigen::Quaterniond LioOrientationToNed(const Eigen::Quaterniond& q_lio) {
-    static const Eigen::Matrix3d kCFrdFlu =
-        (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
-
-    const Eigen::Matrix3d r_ned_frd =
-        LioWorldToNedMatrix() * q_lio.normalized().toRotationMatrix() * kCFrdFlu;
-    return Eigen::Quaterniond(r_ned_frd).normalized();
-}
 
 bool IsValidAlignmentMode(const std::string& mode) {
     return mode == "translation_only" || mode == "yaw_translation" || mode == "full_6dof";
@@ -81,7 +66,7 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
 
     // Create subscriptions
     // === PX4 odometry (NED, 50-100 Hz) ===
-    auto px4_qos = rclcpp::QoS(20).best_effort();
+    const auto px4_qos = px4_ros2_utils::qos::sensor_qos(20);
     sub_px4_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
         px4_odom_topic_, px4_qos,
         [this](const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
@@ -93,7 +78,7 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
     sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
         px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
             "/fmu/out/timesync_status"),
-        rclcpp::QoS(5).best_effort(),
+        px4_ros2_utils::qos::sensor_qos(5),
         [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
             timesync_.update(msg);
         },
@@ -108,8 +93,7 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
         io_subscription_options);
 
     // === L1 world-frame cloud (camera_init, 10 Hz) ===
-    auto cloud_qos = rclcpp::SensorDataQoS();
-    cloud_qos.keep_last(50);
+    const auto cloud_qos = px4_ros2_utils::qos::sensor_qos(50);
     sub_localization_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         input_cloud_topic_, cloud_qos,
         [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
@@ -392,18 +376,16 @@ bool LocalizationBridge::TransformPointCloud(
     //
     // Chain:
     //   p_body_lio  = R_lio^T * (p_camera_init - t_lio)
-    //   p_body_px4  = C_FRD_FLU * p_body_lio       (FLU -> FRD reflection)
+    //   p_body_px4  = R_FLU_TO_FRD * p_body_lio    (FLU -> FRD reflection)
     //   p_map_ned   = R_px4 * p_body_px4 + t_px4
     //
     // The FRD_FLU reflection comes from Gazebo/sim convention: the processed
     // Livox cloud reaches this node in a ROS body-FLU-like representation, while
     // PX4 expects body-FRD. If the upstream cloud frame ever changes, this
     // constant must be revisited.
-    static const Eigen::Matrix3d C_FRD_FLU =
-        (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
-
     const Eigen::Matrix3d R_lio_T = lio_sample.orientation.toRotationMatrix().transpose();
-    const Eigen::Matrix3d R_total = px4_sample.orientation.toRotationMatrix() * C_FRD_FLU * R_lio_T;
+    const Eigen::Matrix3d R_total =
+        px4_sample.orientation.toRotationMatrix() * px4_ros2_utils::frame::R_FLU_TO_FRD * R_lio_T;
 
     for (size_t i = 0; i < n; ++i, ++it_ox, ++it_oy, ++it_oz, ++it_oi) {
         const uint8_t* p = in_data + i * step;
@@ -435,8 +417,8 @@ void LocalizationBridge::PublishVisualOdometry(const px4_mapping::time::PoseSamp
     // PX4 map_ned + FRD body convention.
     px4_mapping::time::PoseSample lio_in_ned;
     lio_in_ned.t_ns = lio_sample.t_ns;
-    lio_in_ned.position = LioPositionToNed(lio_sample.position);
-    lio_in_ned.orientation = LioOrientationToNed(lio_sample.orientation);
+    px4_ros2_utils::frame::enu_to_ned_pose(lio_sample.position, lio_sample.orientation,
+                                           lio_in_ned.position, lio_in_ned.orientation);
 
     if (visual_odom_align_to_px4_ && !visual_alignment_ready_) {
         // Get interpolated PX4 pose for alignment
@@ -496,9 +478,10 @@ void LocalizationBridge::PublishVisualOdometry(const px4_mapping::time::PoseSamp
     const auto sample_px4_us_opt =
         timesync_.toPX4(rclcpp::Time(lio_sample.t_ns, this->get_clock()->get_clock_type()));
     const auto now_px4_us_opt = timesync_.toPX4(this->now());
-    if (!sample_px4_us_opt || !now_px4_us_opt) {
+    if (!sample_px4_us_opt || !now_px4_us_opt || *sample_px4_us_opt == 0 || *now_px4_us_opt == 0) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                             "[NED] Skip EV publish due to invalid timestamp conversion");
+                             "[NED] Skip EV publish until PX4/ROS timesync yields valid "
+                             "non-zero timestamps");
         return;
     }
     const uint64_t sample_px4_us = *sample_px4_us_opt;

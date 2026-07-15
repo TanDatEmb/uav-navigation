@@ -46,7 +46,9 @@
 #include <px4_nav_common/mapping/voxel_types.hpp>
 #include <px4_nav_common/math/grid.hpp>
 #include <px4_nav_common/types.hpp>
+#include <px4_ros2_utils/frame/transform.hpp>
 #include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/qos/sensor.hpp>
 
 #include <px4_mapping/voxel_hash_map.hpp>
 
@@ -154,8 +156,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     compute_opts.callback_group = compute_cb_group_;
 
     // === Subscribers ===
-    auto qos_sensor = rclcpp::SensorDataQoS();
-    qos_sensor.keep_last(50);
+    const auto qos_sensor = px4_ros2_utils::qos::sensor_qos(50);
 
     // Subscribe point cloud input according to the selected pipeline mode.
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -171,7 +172,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
                 "/fmu/out/timesync_status"),
-            rclcpp::QoS(5).best_effort(),
+            px4_ros2_utils::qos::sensor_qos(5),
             [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
                 timesync_.update(msg);
             },
@@ -181,7 +182,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
                 "/fmu/out/vehicle_odometry"),
-            rclcpp::QoS(20).best_effort(),
+            px4_ros2_utils::qos::sensor_qos(20),
             [this](px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
                 const auto sample_stamp = timesync_.toROS(msg->timestamp_sample);
 
@@ -214,11 +215,15 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
 
         // Alignment gate inputs: arming state and EKF position/velocity validity
         sub_status_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(
-            "/fmu/out/vehicle_status", rclcpp::QoS(5).best_effort(),
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
+                "/fmu/out/vehicle_status"),
+            px4_ros2_utils::qos::sensor_qos(5),
             std::bind(&GlobalMapper::vehicleStatusCallback, this, _1), io_opts);
 
         sub_local_pos_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(
-            "/fmu/out/vehicle_local_position", rclcpp::QoS(5).best_effort(),
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleLocalPosition>(
+                "/fmu/out/vehicle_local_position"),
+            px4_ros2_utils::qos::sensor_qos(5),
             std::bind(&GlobalMapper::vehicleLocalPositionCallback, this, _1), io_opts);
     }
 
@@ -386,7 +391,9 @@ void GlobalMapper::writeSummary() {
     timeoutCallback, clear map if no lidar data arrived recently
    ===================================================================== */
 void GlobalMapper::timeoutCallback() {
-    const double elapsed = (this->now() - last_data_time_).seconds();
+    // Timeout state and PointCloud2 headers stay in the node-owned ROS domain.
+    const rclcpp::Time ros_now = this->now();
+    const double elapsed = (ros_now - last_data_time_).seconds();
     const bool fresh = elapsed < timeout_seconds_;
     data_fresh_.store(fresh, std::memory_order_release);
 
@@ -400,7 +407,7 @@ void GlobalMapper::timeoutCallback() {
         sensor_msgs::msg::PointCloud2 empty_msg;
         empty_msg.header.frame_id =
             (lio_world_input_ && !last_frame_id_.empty()) ? last_frame_id_ : "map_ned";
-        empty_msg.header.stamp = this->now();
+        empty_msg.header.stamp = ros_now;
         empty_msg.height = 0;
         empty_msg.width = 0;
         empty_msg.is_dense = true;
@@ -429,12 +436,12 @@ void GlobalMapper::alignmentTick() {
     const bool c4 =
         lio_covariance_trace_.load(std::memory_order_acquire) < aligned_lio_covariance_max_;
 
-    const auto now = this->now();
+    const rclcpp::Time ros_now = this->now();
     if (c1 && c2 && c3 && c4) {
         if (aligned_streak_start_.nanoseconds() == 0) {
-            aligned_streak_start_ = now;
+            aligned_streak_start_ = ros_now;
         }
-        const double streak_s = (now - aligned_streak_start_).seconds();
+        const double streak_s = (ros_now - aligned_streak_start_).seconds();
         if (streak_s >= aligned_min_seconds_) {
             alignment_captured_.store(true, std::memory_order_release);
             RCLCPP_INFO(this->get_logger(),
@@ -446,7 +453,7 @@ void GlobalMapper::alignmentTick() {
     }
 
     // Apply timeout fallback
-    const double since_start = (now - alignment_start_time_).seconds();
+    const double since_start = (ros_now - alignment_start_time_).seconds();
     if (since_start > aligned_max_seconds_to_capture_ && !alignment_warned_) {
         alignment_warned_ = true;
         RCLCPP_ERROR(this->get_logger(),
@@ -678,7 +685,8 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     Eigen::Vector3d sensor_world;
     if (chain_ok) {
         // Path B Option gamma, scan-time pose chain
-        const Eigen::Vector3d t_ned = px4_at_cloud.orientation.toRotationMatrix() * C_FRD_FLU_ *
+        const Eigen::Vector3d t_ned = px4_at_cloud.orientation.toRotationMatrix() *
+                                      px4_ros2_utils::frame::R_FLU_TO_FRD *
                                       lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
         sensor_world = px4_at_cloud.position + t_ned;
     } else if (lio_world_input_) {
@@ -695,15 +703,15 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
             lio_at_cloud.position + lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
     } else if (full_pose_input_ && have_q) {
         // px4_full fallback
-        const Eigen::Vector3d t_ned = q_ned_frd.toRotationMatrix() * C_FRD_FLU_ * T_lidar_in_imu_;
+        const Eigen::Vector3d t_ned =
+            q_ned_frd.toRotationMatrix() * px4_ros2_utils::frame::R_FLU_TO_FRD * T_lidar_in_imu_;
         sensor_world = pos + t_ned;
     } else {
         // Yaw-only chain
-        const double bx = T_lidar_in_imu_.x();
-        const double by = -T_lidar_in_imu_.y();
-        const double bz = -T_lidar_in_imu_.z();
+        const Eigen::Vector3d t_frd = px4_ros2_utils::frame::flu_to_frd(T_lidar_in_imu_);
         sensor_world =
-            Eigen::Vector3d(pos.x() + cy * bx - sy * by, pos.y() + sy * bx + cy * by, pos.z() + bz);
+            Eigen::Vector3d(pos.x() + cy * t_frd.x() - sy * t_frd.y(),
+                            pos.y() + sy * t_frd.x() + cy * t_frd.y(), pos.z() + t_frd.z());
     }
 
     // Save first raw point for periodic transform debug log
@@ -721,7 +729,8 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
                                  "px4_full mode: waiting for /fmu/out/vehicle_odometry");
             return;
         }
-        const Eigen::Matrix3d R_ned_flu = q_ned_frd.toRotationMatrix() * C_FRD_FLU_;
+        const Eigen::Matrix3d R_ned_flu =
+            q_ned_frd.toRotationMatrix() * px4_ros2_utils::frame::R_FLU_TO_FRD;
         for (auto& pt : input_points_) {
             Eigen::Vector3d p_flu(pt.x, pt.y, pt.z);
             Eigen::Vector3d p_ned = R_ned_flu * p_flu + pos;

@@ -12,6 +12,8 @@
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
+#include <px4_ros2_utils/px4/topic.hpp>
+#include <px4_ros2_utils/time/timesync.hpp>
 
 #include <px4_mapping/global_mapper.hpp>
 #include <px4_nav_common/mapping/voxel_map_interface.hpp>
@@ -34,14 +36,22 @@ class GlobalMapperTest : public ::testing::Test {
         executor_->add_node(node_);
 
         pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
-        pub_status_ =
-            node_->create_publisher<px4_msgs::msg::VehicleStatus>("/fmu/out/vehicle_status", 5);
+        pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
+                "/fmu/out/vehicle_status"),
+            5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
-            "/fmu/out/vehicle_local_position", 5);
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleLocalPosition>(
+                "/fmu/out/vehicle_local_position"),
+            5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
-            "/fmu/out/vehicle_odometry", 20);
-        pub_timesync_status_ =
-            node_->create_publisher<px4_msgs::msg::TimesyncStatus>("/fmu/out/timesync_status", 5);
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
+                "/fmu/out/vehicle_odometry"),
+            20);
+        pub_timesync_status_ = node_->create_publisher<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            5);
         pub_lio_odom_ =
             node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
@@ -117,15 +127,22 @@ class GlobalMapperTest : public ::testing::Test {
     }
 
     void PublishPx4Odom(double x = 0.0, double y = 0.0, double z = 0.0) {
+        // Unit-test clock model: an explicit zero-offset Timesync keeps ROS and
+        // PX4 test clocks aligned without casting between timestamp domains.
+        px4_ros2_utils::time::Timesync zero_offset_timesync(node_->get_clock());
+        zero_offset_timesync.update_manual(1U, 0);
+        const auto now_us = zero_offset_timesync.toPX4(node_->now());
+        ASSERT_TRUE(now_us.has_value());
+        ASSERT_NE(*now_us, 0U);
+
         px4_msgs::msg::TimesyncStatus timesync_status;
-        timesync_status.timestamp = static_cast<uint64_t>(node_->now().nanoseconds() / 1000LL);
+        timesync_status.timestamp = *now_us;
         timesync_status.estimated_offset = 0;
         pub_timesync_status_->publish(timesync_status);
 
         px4_msgs::msg::VehicleOdometry px4_odom;
-        const uint64_t now_us = static_cast<uint64_t>(node_->now().nanoseconds() / 1000LL);
-        px4_odom.timestamp = now_us;
-        px4_odom.timestamp_sample = now_us;
+        px4_odom.timestamp = *now_us;
+        px4_odom.timestamp_sample = *now_us;
         px4_odom.position[0] = static_cast<float>(x);
         px4_odom.position[1] = static_cast<float>(y);
         px4_odom.position[2] = static_cast<float>(z);
@@ -305,14 +322,22 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
         executor_->add_node(node_);
 
         pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
-        pub_status_ =
-            node_->create_publisher<px4_msgs::msg::VehicleStatus>("/fmu/out/vehicle_status", 5);
+        pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
+                "/fmu/out/vehicle_status"),
+            5);
         pub_local_pos_ = node_->create_publisher<px4_msgs::msg::VehicleLocalPosition>(
-            "/fmu/out/vehicle_local_position", 5);
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleLocalPosition>(
+                "/fmu/out/vehicle_local_position"),
+            5);
         pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
-            "/fmu/out/vehicle_odometry", 20);
-        pub_timesync_status_ =
-            node_->create_publisher<px4_msgs::msg::TimesyncStatus>("/fmu/out/timesync_status", 5);
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
+                "/fmu/out/vehicle_odometry"),
+            20);
+        pub_timesync_status_ = node_->create_publisher<px4_msgs::msg::TimesyncStatus>(
+            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            5);
         pub_lio_odom_ =
             node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }

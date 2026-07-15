@@ -25,11 +25,6 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-#include <geometry_msgs/msg/point.hpp>
-#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
-#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -91,7 +86,7 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     bool full_pose_input_{false};
     bool lio_world_input_{false};
 
-    // Activity tracking
+    // Activity tracking in the node-owned ROS clock domain.
     rclcpp::Time last_data_time_;
     std::string last_frame_id_;
     bool map_cleared_{true};
@@ -130,7 +125,7 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     // unrecoverable conditions. Once true IsReady() stays false.
     std::atomic<bool> fatal_fault_{false};
 
-    // LIO subscription monitor
+    // LIO subscription monitor (ROS clock domain).
     std::string lio_odom_topic_{"/localization/odometry"};
     std::size_t lio_samples_received_{0};
     rclcpp::Time lio_first_sample_time_;
@@ -160,7 +155,7 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     double aligned_max_seconds_to_capture_{30.0};
     std::string aligned_timeout_action_{"hold_indefinitely"};
 
-    // Alignment gate runtime state
+    // Alignment gate runtime state; rclcpp::Time values use the ROS clock.
     std::atomic<bool> alignment_captured_{false};
     std::atomic<bool> alignment_degraded_{false};
     std::atomic<bool> armed_{false};
@@ -182,10 +177,6 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
 
     // Persistent point buffer
     std::vector<px4_nav_common::PointLivox> input_points_;
-
-    // Static FRD to FLU rotation matrix
-    const Eigen::Matrix3d C_FRD_FLU_ =
-        (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0).finished();
 
     // Logging
     double total_process_time_ms_{0.0};

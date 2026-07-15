@@ -12,12 +12,9 @@ find_package(Eigen3 REQUIRED)
 find_package(px4_nav_common REQUIRED)
 find_package(px4_ros2_utils REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2 REQUIRED)
 # find_package(PCL REQUIRED)
 # find_package(pcl_conversions REQUIRED)
 add_library(${PROJECT_NAME} INTERFACE)
@@ -30,32 +27,33 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     px4_nav_common
     px4_ros2_utils
     rclcpp
-    geometry_msgs
     nav_msgs
     sensor_msgs
     px4_msgs
 )
-# LIO-PX4 alignment bridge executable
-add_executable(lio_px4_alignment
+# LIO-PX4 alignment bridge core (shared with unit tests) and executable.
+add_library(lio_px4_alignment_core STATIC
     src/lio_px4_alignment.cpp
 )
-target_include_directories(lio_px4_alignment PUBLIC
+target_include_directories(lio_px4_alignment_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(lio_px4_alignment
+target_link_libraries(lio_px4_alignment_core
     ${PROJECT_NAME}
 )
-ament_target_dependencies(lio_px4_alignment
+ament_target_dependencies(lio_px4_alignment_core
     px4_nav_common
     px4_ros2_utils
     rclcpp
-    geometry_msgs
     nav_msgs
-    sensor_msgs
     px4_msgs
-    tf2_ros
-    tf2
+)
+add_executable(lio_px4_alignment
+    src/lio_px4_alignment_main.cpp
+)
+target_link_libraries(lio_px4_alignment
+    lio_px4_alignment_core
 )
 
 # Localization bridge executable
@@ -74,7 +72,6 @@ ament_target_dependencies(localization_bridge
     px4_nav_common
     px4_ros2_utils
     rclcpp
-    geometry_msgs
     nav_msgs
     sensor_msgs
     px4_msgs
@@ -115,10 +112,8 @@ ament_target_dependencies(global_mapper_core
     px4_ros2_utils
     px4_msgs
     rclcpp
-    geometry_msgs
     nav_msgs
     sensor_msgs
-    tf2_ros
 )
 # Global mapper node executable
 add_executable(global_mapper
@@ -131,7 +126,7 @@ target_include_directories(global_mapper PUBLIC
 target_link_libraries(global_mapper
     global_mapper_core
 )
-install(TARGETS global_mapper_core
+install(TARGETS global_mapper_core lio_px4_alignment_core
     EXPORT export_${PROJECT_NAME}
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
@@ -150,7 +145,7 @@ install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
 )
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_nav_common px4_ros2_utils Eigen3 rclcpp geometry_msgs nav_msgs sensor_msgs px4_msgs tf2_ros tf2)
+ament_export_dependencies(px4_nav_common px4_ros2_utils Eigen3 rclcpp nav_msgs sensor_msgs px4_msgs)
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     ament_add_gtest(test_voxel_pool test/test_voxel_pool.cpp)
@@ -159,5 +154,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_voxel_hash_map ${PROJECT_NAME})
     ament_add_gtest(test_global_mapper test/test_global_mapper.cpp)
     target_link_libraries(test_global_mapper ${PROJECT_NAME} global_mapper_core)
+    ament_add_gtest(test_lio_px4_alignment test/test_lio_px4_alignment.cpp)
+    target_link_libraries(test_lio_px4_alignment ${PROJECT_NAME} lio_px4_alignment_core)
 endif()
 ament_package()
