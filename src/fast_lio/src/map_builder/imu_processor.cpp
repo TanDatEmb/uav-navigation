@@ -276,8 +276,15 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<IESKF> kf,
         trajectory.append(knot);
     }
 
-    held_imu.time = scan_end_time;
-    last_imu_ = held_imu;
+    // Carry forward the IMU sample at scan_end. If we have an imu_after sample,
+    // interpolate to the exact scan_end time; otherwise keep the latest held
+    // sample with the scan_end timestamp for continuous next-scan integration.
+    if (imu_after.has_value() && imu_after->time > current_time) {
+        last_imu_ = interpolateImu(held_imu, *imu_after, scan_end_time);
+    } else {
+        last_imu_ = held_imu;
+        last_imu_.time = scan_end_time;
+    }
     integration_time_ = scan_end_time;
 
     return trajectory;

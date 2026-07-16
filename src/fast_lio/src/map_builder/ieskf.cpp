@@ -80,12 +80,12 @@ void IESKF::predict(const IMUData& imu, double dt) {
         return;
     }
 
-    // Propagate state
+    // Propagate state with true midpoint integration
     propagateState(imu, dt);
 
-    // Propagate covariance (error-state EKF)
+    // Propagate covariance using the same midpoint linearization point
     auto Phi = computeStateTransition(imu, dt);
-    auto Q = computeProcessNoise(dt);
+    auto Q = computeProcessNoise(imu, dt);
 
     P_ = Phi * P_ * Phi.transpose() + Q;
 
@@ -104,16 +104,22 @@ void IESKF::propagateState(const IMUData& imu, double dt) {
     Eigen::Vector3d a_unbiased = imu.acc - x_.b_a;
     Eigen::Vector3d w_unbiased = imu.gyro - x_.b_w;
 
-    // Rotation propagation. SO3::exp handles a zero angular rate without the
-    // undefined normalization performed by Eigen::AngleAxis on a zero vector.
-    x_.R_wb = x_.R_wb * SO3d::exp(w_unbiased * dt);
+    // Rotation increment over the interval
+    Eigen::Vector3d angle_inc = w_unbiased * dt;
+    SO3d dR = SO3d::exp(angle_inc);
 
-    // Acceleration in world frame
-    Eigen::Vector3d a_world = x_.R_wb * a_unbiased + GRAVITY_WORLD_;
+    // Midpoint rotation for acceleration projection (true midpoint integration)
+    SO3d R_mid = x_.R_wb * SO3d::exp(0.5 * angle_inc);
 
-    // Position and velocity (midpoint integration)
-    x_.p_w += x_.v_w * dt + 0.5 * a_world * dt * dt;
+    // Update rotation to the end of the interval
+    x_.R_wb = x_.R_wb * dR;
+
+    // Acceleration in world frame evaluated at the midpoint attitude
+    Eigen::Vector3d a_world = R_mid * a_unbiased + GRAVITY_WORLD_;
+
+    // Update velocity and position using the midpoint acceleration
     x_.v_w += a_world * dt;
+    x_.p_w += x_.v_w * dt - 0.5 * a_world * dt * dt;
 
     // Biases: random walk (no deterministic propagation)
     // x_.b_a unchanged
@@ -121,16 +127,20 @@ void IESKF::propagateState(const IMUData& imu, double dt) {
 }
 
 Eigen::Matrix<double, 15, 15> IESKF::computeStateTransition(const IMUData& imu, double dt) const {
-    // Error-state transition matrix Φ
-    // δx_dot = F * δx + w
+    // Error-state transition matrix Φ = I + F * dt
+    // Linearized at the midpoint of the propagation interval to match nominal
+    // midpoint integration.
 
     Eigen::Matrix<double, 15, 15> Phi = Eigen::Matrix<double, 15, 15>::Identity();
 
-    // Bias-corrected accel
+    // Bias-corrected measurements
     Eigen::Vector3d a_unbiased = imu.acc - x_.b_a;
+    Eigen::Vector3d w_unbiased = imu.gyro - x_.b_w;
+
+    // Midpoint rotation (must match propagateState)
+    SO3d R_mid = x_.R_wb * SO3d::exp(0.5 * w_unbiased * dt);
 
     // Rotation error: δθ_dot = -[ω]× δθ - δb_ω
-    Eigen::Vector3d w_unbiased = imu.gyro - x_.b_w;
     Phi.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() - skewSymmetric(w_unbiased) * dt;
     Phi.block<3, 3>(0, 12) = -Eigen::Matrix3d::Identity() * dt;  // δb_ω → δθ
 
@@ -138,33 +148,41 @@ Eigen::Matrix<double, 15, 15> IESKF::computeStateTransition(const IMUData& imu, 
     Phi.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity() * dt;
 
     // Velocity error: δv_dot = -R * [a]× * δθ - R * δb_a
-    Phi.block<3, 3>(6, 0) = -x_.R_wb.matrix() * skewSymmetric(a_unbiased) * dt;
-    Phi.block<3, 3>(6, 9) = -x_.R_wb.matrix() * dt;  // δb_a → δv
+    Phi.block<3, 3>(6, 0) = -R_mid.matrix() * skewSymmetric(a_unbiased) * dt;
+    Phi.block<3, 3>(6, 9) = -R_mid.matrix() * dt;  // δb_a → δv
 
     // Bias errors: no cross terms (random walk)
 
     return Phi;
 }
 
-Eigen::Matrix<double, 15, 15> IESKF::computeProcessNoise(double dt) const {
-    // Discrete process noise Q_d
-    Eigen::Matrix<double, 15, 15> Q = Eigen::Matrix<double, 15, 15>::Zero();
+Eigen::Matrix<double, 15, 15> IESKF::computeProcessNoise(const IMUData& imu, double dt) const {
+    // Continuous-time noise PSD injection matrix G maps:
+    //   gyro noise n_ω -> δθ
+    //   accel noise n_a -> δv
+    //   gyro bias RW n_bω -> δb_ω
+    //   accel bias RW n_ba -> δb_a
+    // Build Q_c = diag(σ_ω², σ_a², σ_bω², σ_ba²) and propagate through Φ to capture
+    // first-order coupling between rotation/velocity/position errors.
 
-    // Gyro noise: affects rotation
-    Q.block<3, 3>(0, 0) = std::pow(noise_params_.gyro_noise, 2) * dt * Eigen::Matrix3d::Identity();
+    Eigen::Matrix<double, 15, 12> G = Eigen::Matrix<double, 15, 12>::Zero();
+    G.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();   // n_ω -> δθ
+    G.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();   // n_a -> δv
+    G.block<3, 3>(12, 6) = Eigen::Matrix3d::Identity();  // n_bω -> δb_ω
+    G.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity();   // n_ba -> δb_a
 
-    // Velocity noise: from accel
-    Q.block<3, 3>(6, 6) = std::pow(noise_params_.accel_noise, 2) * dt * Eigen::Matrix3d::Identity();
+    Eigen::Matrix<double, 12, 12> Q_c = Eigen::Matrix<double, 12, 12>::Zero();
+    Q_c.block<3, 3>(0, 0) = std::pow(noise_params_.gyro_noise, 2) * Eigen::Matrix3d::Identity();
+    Q_c.block<3, 3>(3, 3) = std::pow(noise_params_.accel_noise, 2) * Eigen::Matrix3d::Identity();
+    Q_c.block<3, 3>(6, 6) = std::pow(noise_params_.gyro_bias_rw, 2) * Eigen::Matrix3d::Identity();
+    Q_c.block<3, 3>(9, 9) = std::pow(noise_params_.accel_bias_rw, 2) * Eigen::Matrix3d::Identity();
 
-    // Accel bias random walk
-    Q.block<3, 3>(9, 9) =
-        std::pow(noise_params_.accel_bias_rw, 2) * dt * Eigen::Matrix3d::Identity();
+    // First-order discrete noise: Q_d ≈ G * Q_c * G^T * dt
+    Eigen::Matrix<double, 15, 15> Q_base = G * Q_c * G.transpose() * dt;
 
-    // Gyro bias random walk
-    Q.block<3, 3>(12, 12) =
-        std::pow(noise_params_.gyro_bias_rw, 2) * dt * Eigen::Matrix3d::Identity();
-
-    return Q;
+    // Propagate through the state transition to include coupling effects
+    Eigen::Matrix<double, 15, 15> Phi = computeStateTransition(imu, dt);
+    return Phi * Q_base * Phi.transpose();
 }
 
 IeskfUpdateResult IESKF::update(int max_iterations) {
@@ -286,11 +304,24 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
 
     x_ = x_iter;
     P_ = posterior;
-    
+
+    // Apply first-order manifold reset Jacobian for the right perturbation
+    // rotation update R <- R * Exp(δθ). The error state must be reset after a
+    // non-zero rotation correction to keep the covariance consistent with the
+    // new linearization point. For small corrections G is close to identity.
+    const double rot_correction_rad = accumulated_delta.segment<3>(0).norm();
+    if (rot_correction_rad > 1e-9) {
+        Matrix15 G = Matrix15::Identity();
+        G.block<3, 3>(0, 0) =
+            Eigen::Matrix3d::Identity() - 0.5 * skewSymmetric(accumulated_delta.segment<3>(0));
+        P_ = G * P_ * G.transpose();
+        P_ = 0.5 * (P_ + P_.transpose());
+    }
+
     result.final_delta_rotation_rad = accumulated_delta.segment<3>(0).norm();
     result.final_delta_position_m = accumulated_delta.segment<3>(3).norm();
     result.status = IeskfUpdateStatus::kSuccess;
-    
+
     return result;
 }
 

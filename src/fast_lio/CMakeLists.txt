@@ -151,6 +151,9 @@ if(BUILD_TESTING)
   target_link_libraries(test_ieskf ${PROJECT_NAME}_core)
 
   # New: PointCloud2 decoder tests
+  ament_add_gtest(test_imu_propagation test/test_imu_propagation.cpp)
+  target_link_libraries(test_imu_propagation ${PROJECT_NAME}_core)
+
   ament_add_gtest(test_pointcloud2_decoder test/test_pointcloud2_decoder.cpp)
   target_link_libraries(test_pointcloud2_decoder ${PROJECT_NAME}_core)
   ament_target_dependencies(test_pointcloud2_decoder

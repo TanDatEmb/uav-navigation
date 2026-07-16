@@ -153,7 +153,7 @@ class IESKF {
     // IMU propagation helpers
     void propagateState(const IMUData& imu, double dt);
     Eigen::Matrix<double, 15, 15> computeStateTransition(const IMUData& imu, double dt) const;
-    Eigen::Matrix<double, 15, 15> computeProcessNoise(double dt) const;
+    Eigen::Matrix<double, 15, 15> computeProcessNoise(const IMUData& imu, double dt) const;
 
     // Skew-symmetric matrix
     static Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v);
