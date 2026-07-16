@@ -6,6 +6,7 @@
 #include "fast_lio/imu_processor.hpp"
 #include "fast_lio/lidar_processor.hpp"
 #include "fast_lio/spatial_index.hpp"
+#include "fast_lio/lidar_deskewer.hpp"
 
 #include <memory>
 
@@ -46,7 +47,11 @@ class MapBuilder {
      *
      * @param package Synchronized LiDAR + IMU
      */
-    void process(SyncPackage& package);
+    /**
+     * @brief Process synchronized package.
+     * @return LidarUpdateResult from LiDAR processing step.
+     */
+    LidarUpdateResult process(SyncPackage& package);
 
     /**
      * @brief Get current builder status.
@@ -61,6 +66,11 @@ class MapBuilder {
     bool isInitialized() const {
         return status_ == BuilderStatus::MAPPING;
     }
+
+    /**
+     * @brief Get IMU initialization diagnostics.
+     */
+    ImuInitializationDiagnostics imuInitializationDiagnostics() const;
 
     /**
      * @brief Get IESKF instance.
@@ -84,6 +94,13 @@ class MapBuilder {
     SE3d getLiDARPose() const;
 
     /**
+     * @brief Get current IESKF state.
+     */
+    State15 state() const {
+        return kf_ ? kf_->getState() : State15();
+    }
+
+    /**
      * @brief Get current IMU pose in world frame.
      *
      * T_lio_world_mid360_imu
@@ -96,6 +113,7 @@ class MapBuilder {
     std::unique_ptr<IMUProcessor> imu_processor_;
     std::shared_ptr<LidarProcessor> lidar_processor_;
     std::shared_ptr<MapTreeInterface> map_tree_;
+    std::unique_ptr<LidarDeskewer> deskewer_;
 
     BuilderStatus status_;
     int imu_init_count_;

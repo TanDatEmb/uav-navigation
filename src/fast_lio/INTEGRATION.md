@@ -90,7 +90,74 @@ a second set of values.
 | `lidar_topic` | `/livox/lidar` before launch remapping | PointCloud2 input |
 | `world_frame` | `lio_world` | gravity-aligned Z-up LIO world |
 | `body_frame` | `mid360_imu` | FLU IMU/body state |
-| `sim_mode` | `true` | treat each Gazebo GPU-LiDAR frame as instantaneous; disable deskew |
+| `lidar_frame` | `mid360_lidar` | Expected LiDAR sensor frame_id |
+
+### LiDAR input decoder
+
+The `PointCloud2Decoder` normalizes `sensor_msgs::PointCloud2` into a
+`NormalizedLidarScan` before any synchronization, deskew, or map update.
+
+Replaces the former `sim_mode` boolean with explicit per-point time
+configuration:
+
+| Parameter | SIM default | REAL MID-360 | Meaning |
+| --- | --- | --- | --- |
+| `lidar_input.profile` | `sim_xyzi_snapshot` | `mid360_pointcloud2` | Input profile |
+| `lidar_input.time_field` | `""` (none) | `offset_time` | Per-point time field name |
+| `lidar_input.time_unit` | `nanoseconds` | `nanoseconds` | Time unit: seconds/ms/us/ns |
+| `lidar_input.header_stamp_is_scan_start` | `true` | `true` | Header stamp semantics |
+| `lidar_input.require_per_point_time` | `false` | `true` | Reject if time field missing |
+| `lidar_input.max_scan_duration_s` | `0.2` | `0.2` | Max scan duration |
+| `lidar_input.min_range_m` | `0.5` | `0.5` | Min range filter |
+| `lidar_input.max_range_m` | `100.0` | `100.0` | Max range filter |
+| `lidar_input.filter_livox_tags` | `false` | `true` | Filter by Livox tag bits |
+| `lidar_input.point_stride` | `1` | `1` | Keep every N-th point |
+
+**Contract:** `curvature` in `PointXYZINormal` stores per-point relative time
+in **seconds** (not milliseconds). Points are sorted by ascending time by
+the decoder. `scan_start_time_s` and `scan_end_time_s` are computed by the
+decoder and consumed directly by the synchronizer.
+
+### Deskew (Layer 3)
+
+The `LidarDeskewer` compensates point motion distortion using the forward-propagated IMU trajectory.
+
+| Parameter | Value | Meaning |
+| --- | --- | --- |
+| `deskew.enabled` | `true` | Enable motion compensation |
+| `deskew.traj_min_knots` | `2` | Minimum IMU trajectory knots required |
+
+**Formula:** Uses SE(3) absolute transforms:
+```
+P_L_end = (T_W_L_end)⁻¹ * T_W_L_i * P_L_i
+```
+where `T_W_L_i = T_W_I_i * T_I_L` (LiDAR pose at point time).
+
+Points are iterated forward (ascending time) with monotonic knot index for O(N+M) complexity. Points outside trajectory coverage are copied raw without compensation.
+
+**Contract:**
+- Requires `NormalizedLidarScan.has_per_point_time = true`
+- Requires `ImuTrajectory.covers(point_time)` for each point
+- SIM snapshots (zero duration) skip deskew automatically
+- Output cloud replaces input in `SyncPackage::cloud`
+
+### MeasurementSynchronizer
+
+The `MeasurementSynchronizer` replaces the inline `syncPackage()` in the node.
+It buffers LiDAR scans and IMU samples, then produces `SyncPackage` with
+bracketing IMU samples at both scan boundaries.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `synchronizer.max_imu_samples` | 4000 | Max IMU samples in buffer |
+| `synchronizer.max_lidar_scans` | 5 | Max LiDAR scans in buffer |
+| `synchronizer.max_imu_gap_s` | 0.02 | Max allowed IMU gap within scan |
+| `synchronizer.require_imu_before_scan_start` | true | Reject if no IMU before scan_start |
+| `synchronizer.require_imu_after_scan_end` | true | Keep first IMU after scan_end as bracket |
+
+**Contract:** `SyncPackage` now includes `imu_before_scan` and `imu_after_scan`
+optional brackets for interpolation. The synchronizer retains boundary samples
+between consecutive packages for continuity.
 
 ### Active mapping profile
 
@@ -193,5 +260,7 @@ ros2 bag play <bag-directory> --clock --rate 0.5
 - no loop closure or multi-session map correction
 - no online LiDAR/IMU extrinsic estimation
 - PointCloud2 input only in the active pipeline; Livox CustomMsg is not an active
-  input path
+  input path (use a driver adapter to convert CustomMsg to canonical PointCloud2)
 - dynamic `lio_world` to PX4-origin/yaw alignment is not implemented
+- per-point time is stored in `curvature` as seconds (FAST-LIO2 convention);
+  a future refactor may introduce a dedicated `LidarPoint` type

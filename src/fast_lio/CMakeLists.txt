@@ -61,6 +61,10 @@ add_library(${PROJECT_NAME}_core SHARED
   src/map_builder/pcl_tree_backend.cpp
   src/map_builder/ikd_tree.cpp
   src/map_builder/ikd_tree_backend.cpp
+  src/lidar_deskewer.cpp
+  src/measurement_synchronizer.cpp
+  src/pointcloud2_decoder.cpp
+  src/point_plane_measurement.cpp
   src/utils.cpp
 )
 
@@ -141,8 +145,34 @@ ament_export_targets(export_${PROJECT_NAME}_core HAS_LIBRARY_TARGET)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
+  # Existing IESKF / IMU / mapping tests
   ament_add_gtest(test_ieskf test/test_ieskf.cpp)
   target_link_libraries(test_ieskf ${PROJECT_NAME}_core)
+
+  # New: PointCloud2 decoder tests
+  ament_add_gtest(test_pointcloud2_decoder test/test_pointcloud2_decoder.cpp)
+  target_link_libraries(test_pointcloud2_decoder ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_pointcloud2_decoder
+    rclcpp
+    sensor_msgs
+  )
+
+  # New: MeasurementSynchronizer tests
+  ament_add_gtest(test_measurement_synchronizer test/test_measurement_synchronizer.cpp)
+  target_link_libraries(test_measurement_synchronizer ${PROJECT_NAME}_core)
+
+  # New: LidarDeskewer tests
+  ament_add_gtest(test_lidar_deskewer test/test_lidar_deskewer.cpp)
+  target_link_libraries(test_lidar_deskewer ${PROJECT_NAME}_core)
+
+  # New: ImuTrajectory tests (propagation/filter consistency)
+  ament_add_gtest(test_imu_trajectory test/test_imu_trajectory.cpp)
+  target_link_libraries(test_imu_trajectory ${PROJECT_NAME}_core)
+
+  # New: PointPlaneMeasurement tests (Jacobian verification)
+  ament_add_gtest(test_point_plane_measurement test/test_point_plane_measurement.cpp)
+  target_link_libraries(test_point_plane_measurement ${PROJECT_NAME}_core)
 endif()
 
 ament_package()

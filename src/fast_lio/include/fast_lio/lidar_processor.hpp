@@ -28,6 +28,68 @@ struct LocalMap {
 };
 
 /**
+ * @brief Status of LiDAR processing operation.
+ */
+enum class LidarUpdateStatus {
+    kUnknown = 0,                     ///\u003c Initial/unset status
+    kSuccess = 1,                     ///\u003c IESKF update succeeded
+    kMapInitialized = 2,              ///\u003c First scan - map initialized only
+    kEmptyInput = 3,                  ///\u003c Empty input cloud
+    kInsufficientDownsampledPoints = 4, ///\u003c Downsampled to too few points
+    kNoMeasurements = 5,              ///\u003c No correspondence found
+    kInsufficientMeasurements = 6,    ///\u003c Below minimum correspondence threshold
+    kIeskfFailure = 7,                ///\u003c IESKF update failed
+    kInvalidState = 8                 ///\u003c Invalid state detected
+};
+
+/**
+ * @brief Residual statistics alias (defined in commons.hpp).
+ */
+using ResidualStatistics = fast_lio::ResidualStatistics;
+
+/**
+ * @brief Result of LiDAR processing operation with full diagnostics.
+ */
+struct LidarUpdateResult {
+    LidarUpdateStatus status{LidarUpdateStatus::kUnknown};
+
+    // Result flags
+    bool update_applied{false};       ///\u003c IESKF state was corrected
+    bool map_inserted{false};         ///\u003c Scan was inserted into map
+    bool converged{false};            ///\u003c IESKF iterations converged
+
+    // Point counts
+    std::size_t input_points{0};              ///\u003c Raw input points
+    std::size_t downsampled_points{0};        ///\u003c After voxel grid
+    std::size_t queried_points{0};            ///\u003c Points sent to KNN
+    std::size_t plane_candidates{0};          ///\u003c Points with valid plane
+    std::size_t accepted_correspondences{0};  ///\u003c Passed isFinite() and residual gate
+
+    // Iteration count
+    std::size_t ieskf_iterations{0};
+
+    // Rejection diagnostics
+    RejectionStatistics rejection_stats;
+
+    // Residual statistics (from final iteration if iterated)
+    ResidualStatistics residual;
+
+    // Timing (milliseconds)
+    double downsample_time_ms{0.0};
+    double correspondence_time_ms{0.0};
+    double update_time_ms{0.0};
+    double map_insertion_time_ms{0.0};
+
+    // Nested IESKF result
+    IeskfUpdateResult ieskf;
+
+    [[nodiscard]] bool success() const {
+        return status == LidarUpdateStatus::kSuccess ||
+               status == LidarUpdateStatus::kMapInitialized;
+    }
+};
+
+/**
  * @brief LiDAR feature extraction and point-to-plane ICP.
  *
  * Uses a 15-DOF state with right perturbation on SO(3).
@@ -63,13 +125,14 @@ class LidarProcessor {
      * 5. Incremental map update
      *
      * @param package Synchronized LiDAR + IMU package
+     * @return LidarUpdateResult with full diagnostics
      */
-    void process(SyncPackage& package);
+    LidarUpdateResult process(SyncPackage& package);
 
     /**
      * @brief Get current LiDAR pose in world frame.
      *
-     * T_world_lidar = T_world_imu * T_imu_lidar
+     * T_world_lidar = T_world_imu * T_I_L
      *
      * @return SE3 transform from LiDAR to world
      */
@@ -104,6 +167,9 @@ class LidarProcessor {
     CloudType::Ptr cloud_down_world_;
     CloudType::Ptr cloud_effect_lidar_;
     CloudType::Ptr cloud_effect_world_;
+
+    // Last shared state for diagnostics
+    SharedState15 last_shared_state_;
 
     // Voxel grid filter for downsampling
     pcl::VoxelGrid<PointType> voxel_filter_;

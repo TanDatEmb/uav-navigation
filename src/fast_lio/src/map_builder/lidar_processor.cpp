@@ -1,6 +1,8 @@
 #include "fast_lio/lidar_processor.hpp"
+#include "fast_lio/point_plane_measurement.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -19,10 +21,17 @@ LidarProcessor::LidarProcessor(const Config& config, std::shared_ptr<IESKF> kf,
                               config_.scan_resolution);
 }
 
-void LidarProcessor::process(SyncPackage& package) {
+LidarUpdateResult LidarProcessor::process(SyncPackage& package) {
+    LidarUpdateResult result;
+    result.input_points = package.cloud ? package.cloud->size() : 0;
+
+    // Check empty input
     if (!package.cloud || package.cloud->empty()) {
-        return;
+        result.status = LidarUpdateStatus::kEmptyInput;
+        return result;
     }
+
+    auto t_downsample_start = std::chrono::high_resolution_clock::now();
 
     // Downsample input cloud
     if (config_.scan_resolution > 0) {
@@ -44,28 +53,45 @@ void LidarProcessor::process(SyncPackage& package) {
     cloud_filtered->height = 1;
     cloud_down_lidar_ = cloud_filtered;
 
-    if (cloud_down_lidar_->empty())
-        return;
+    result.downsampled_points = cloud_down_lidar_->size();
 
-    // Initialize the map in the world frame, just like every incremental scan.
+    auto t_downsample_end = std::chrono::high_resolution_clock::now();
+    result.downsample_time_ms =
+        std::chrono::duration<double, std::milli>(t_downsample_end - t_downsample_start).count();
+
+    // Check insufficient downsampled points
+    if (cloud_down_lidar_->empty()) {
+        result.status = LidarUpdateStatus::kInsufficientDownsampledPoints;
+        return result;
+    }
+
+    // Initialize the map on first scan
     if (!local_map_.initialized) {
+        auto t_map_start = std::chrono::high_resolution_clock::now();
         initMap(cloud_down_lidar_);
-        return;
+        auto t_map_end = std::chrono::high_resolution_clock::now();
+        result.map_insertion_time_ms =
+            std::chrono::duration<double, std::milli>(t_map_end - t_map_start).count();
+
+        result.status = LidarUpdateStatus::kMapInitialized;
+        result.map_inserted = true;
+        return result;
     }
 
     // Update local map based on current position
     const auto& state = kf_->getState();
-    Eigen::Vector3d pos_lidar = state.p_w + state.R_wb.matrix() * state.T_imu_lidar.translation();
+    Eigen::Vector3d pos_lidar = state.p_w + state.R_wb.matrix() * state.T_I_L.translation();
     local_map_.update(pos_lidar, config_.cube_len, config_.move_thresh, config_.det_range);
     updateLocalMap();
 
     // IESKF update with point-to-plane constraints
+    auto t_correspondence_start = std::chrono::high_resolution_clock::now();
+
     auto loss_func = [this](const State15& s, SharedState15& sh) {
         this->computePointToPlaneConstraint(s, sh);
     };
 
     auto stop_func = [](const V15D& delta) -> bool {
-        // Convergence: rotation < 0.01 deg, translation < 0.015 m
         double rot_norm = delta.segment<3>(0).norm() * 180.0 / M_PI;
         double pos_norm = delta.segment<3>(3).norm();
         return (rot_norm < 0.01) && (pos_norm < 0.015);
@@ -73,10 +99,46 @@ void LidarProcessor::process(SyncPackage& package) {
 
     kf_->setLossFunction(loss_func);
     kf_->setConvergenceCheck(stop_func);
-    kf_->update(config_.ieskf_max_iter);
 
-    // Update map
+    auto t_update_start = std::chrono::high_resolution_clock::now();
+    const auto update_result = kf_->update(config_.ieskf_max_iter);
+    auto t_update_end = std::chrono::high_resolution_clock::now();
+
+    result.update_time_ms =
+        std::chrono::duration<double, std::milli>(t_update_end - t_update_start).count();
+
+    result.ieskf = update_result;
+    result.ieskf_iterations = update_result.iterations;
+    result.converged = update_result.converged;
+
+    // Handle IESKF status
+    if (!update_result.success()) {
+        result.status = (update_result.status == IeskfUpdateStatus::kInsufficientMeasurements)
+                            ? LidarUpdateStatus::kInsufficientMeasurements
+                            : LidarUpdateStatus::kIeskfFailure;
+        result.update_applied = false;
+        result.map_inserted = false;
+        return result;
+    }
+
+    // IESKF succeeded - record measurement stats from last shared state
+    result.update_applied = true;
+    result.accepted_correspondences = update_result.measurements;
+    result.queried_points = last_shared_state_.queried_points;
+    result.plane_candidates = last_shared_state_.plane_candidates;
+    result.residual = last_shared_state_.residual;
+
+    // Map insertion
+    auto t_map_insert_start = std::chrono::high_resolution_clock::now();
     incrementMap();
+    auto t_map_insert_end = std::chrono::high_resolution_clock::now();
+    result.map_insertion_time_ms =
+        std::chrono::duration<double, std::milli>(t_map_insert_end - t_map_insert_start).count();
+
+    result.map_inserted = true;
+    result.status = LidarUpdateStatus::kSuccess;
+
+    return result;
 }
 
 void LidarProcessor::initMap(const CloudType::Ptr& cloud) {
@@ -132,69 +194,110 @@ void LidarProcessor::incrementMap() {
 }
 
 void LidarProcessor::computePointToPlaneConstraint(const State15& state, SharedState15& shared) {
-    // Point-to-plane constraint for IESKF
-    // Jacobian: H = [H_θ, H_p, 0, 0, 0]
-    // H_θ = -n^T * R * [p_body]×
-    // H_p = n^T
-
+    // Point-to-plane constraint for IESKF using tested measurement helper
     shared.reset(cloud_down_lidar_->points.size());
 
-    SE3d T_world_lidar = state.getLiDARPose();
+    // Track statistics for diagnostics
+    std::size_t queried_points = 0;
+    std::size_t plane_candidates = 0;
+    std::size_t valid_measurements = 0;
+    std::size_t residual_rejected = 0;
+
+    double residual_sum = 0.0;
+    double residual_abs_sum = 0.0;
+    double residual_squared_sum = 0.0;
+    double residual_max_abs = 0.0;
 
     for (size_t i = 0; i < cloud_down_lidar_->points.size(); ++i) {
         const auto& pt = cloud_down_lidar_->points[i];
         Eigen::Vector3d p_lidar(pt.x, pt.y, pt.z);
+        ++queried_points;
 
-        // Transform to world
-        Eigen::Vector3d p_world =
-            T_world_lidar.rotation().matrix() * p_lidar + T_world_lidar.translation();
+        // Transform to world for KNN query
+        SE3d T_world_lidar = state.getLiDARPose();
+        Eigen::Vector3d p_world = T_world_lidar * p_lidar;
 
         // Find plane correspondence
         Eigen::Vector3d normal, plane_point;
         if (!findPlaneCorrespondence(p_lidar, p_world, normal, plane_point)) {
             continue;
         }
+        ++plane_candidates;
 
-        // Transform point to IMU frame for Jacobian
-        Eigen::Vector3d p_imu =
-            state.T_imu_lidar.rotation().matrix() * p_lidar + state.T_imu_lidar.translation();
+        // Evaluate measurement using tested helper
+        const auto measurement =
+            evaluatePointPlaneMeasurement(state, p_lidar, normal, plane_point);
 
-        // Point-to-plane residual: r = n^T * (p_world - q_plane)
-        double residual = normal.dot(p_world - plane_point);
+        // Skip invalid measurements
+        if (!measurement.isFinite()) {
+            continue;
+        }
+        ++valid_measurements;
 
-        // Jacobian w.r.t. rotation (right perturbation)
-        // H_θ = -n^T * R * [p_imu]×
-        Eigen::Matrix3d p_imu_skew = skewSymmetric(p_imu);
-        Eigen::Vector3d H_theta =
-            -(normal.transpose() * state.R_wb.matrix() * p_imu_skew).transpose();
+        // Residual gating: skip if residual exceeds threshold
+        if (std::abs(measurement.residual) > config_.max_point_plane_residual_m) {
+            ++residual_rejected;
+            continue;
+        }
 
-        // Jacobian w.r.t. position
-        Eigen::Vector3d H_p = normal;
-
-        // Full Jacobian (1×15)
-        Eigen::Matrix<double, 1, 15> H;
-        H.setZero();
-        H.segment<3>(0) = H_theta;  // δθ
-        H.segment<3>(3) = H_p;      // δp
-        // H.segment<3>(6) = 0 (velocity)
-        // H.segment<3>(9) = 0 (accel bias)
-        // H.segment<3>(12) = 0 (gyro bias)
+        // Track residual statistics
+        const double r = measurement.residual;
+        residual_sum += r;
+        residual_abs_sum += std::abs(r);
+        residual_squared_sum += r * r;
+        residual_max_abs = std::max(residual_max_abs, std::abs(r));
 
         // Add to shared state
         if (shared.num_measurements < shared.H.rows()) {
-            shared.H.row(shared.num_measurements) = H;
-            shared.b(shared.num_measurements) = residual;
+            shared.H.row(shared.num_measurements) = measurement.H;
+            shared.b(shared.num_measurements) = measurement.residual;
             ++shared.num_measurements;
         }
     }
 
-    shared.valid = (shared.num_measurements > 0);
+    // Store statistics
+    shared.queried_points = queried_points;
+    shared.plane_candidates = plane_candidates;
+    shared.valid_measurements = valid_measurements;
+
+    // Check minimum threshold
+    if (shared.num_measurements == 0) {
+        shared.valid = false;
+        shared.validation_status = MeasurementValidationStatus::kNoMeasurements;
+    } else if (static_cast<std::size_t>(shared.num_measurements) < config_.min_effective_correspondences) {
+        shared.valid = false;
+        shared.validation_status = MeasurementValidationStatus::kInsufficientMeasurements;
+    } else {
+        shared.valid = true;
+        shared.validation_status = MeasurementValidationStatus::kValid;
+    }
+
+    // Save for diagnostics access after IESKF update
+    // Use resize/copy instead of operator= to avoid Eigen alignment issues in tests
+    last_shared_state_.reset();
+    last_shared_state_.valid = shared.valid;
+    last_shared_state_.validation_status = shared.validation_status;
+    last_shared_state_.queried_points = shared.queried_points;
+    last_shared_state_.plane_candidates = shared.plane_candidates;
+    last_shared_state_.valid_measurements = shared.valid_measurements;
+    last_shared_state_.num_measurements = shared.num_measurements;
+    last_shared_state_.residual = shared.residual;
+
+    // Populate residual statistics
+    if (shared.num_measurements > 0) {
+        const double n = static_cast<double>(shared.num_measurements);
+        last_shared_state_.residual.mean_signed = residual_sum / n;
+        last_shared_state_.residual.mean_absolute = residual_abs_sum / n;
+        last_shared_state_.residual.rms = std::sqrt(residual_squared_sum / n);
+        last_shared_state_.residual.max_absolute = residual_max_abs;
+    }
 }
 
-bool LidarProcessor::findPlaneCorrespondence(const Eigen::Vector3d& /*point_lidar*/,
-                                             const Eigen::Vector3d& point_world,
-                                             Eigen::Vector3d& normal,
-                                             Eigen::Vector3d& plane_point) {
+bool LidarProcessor::findPlaneCorrespondence(
+    const Eigen::Vector3d& /*point_lidar*/,
+    const Eigen::Vector3d& point_world,
+    Eigen::Vector3d& normal,
+    Eigen::Vector3d& plane_point) {
     // Find nearest neighbors for plane fitting.
     PointType query;
     query.x = point_world.x();
@@ -204,15 +307,20 @@ bool LidarProcessor::findPlaneCorrespondence(const Eigen::Vector3d& /*point_lida
     PointVec neighbor_points;
     std::vector<float> distances;
 
-    size_t found =
-        map_tree_->nearestKSearchPoints(query, config_.near_search_num, neighbor_points, distances);
+    size_t found = map_tree_->nearestKSearchPoints(
+        query, static_cast<int>(config_.knn_search_count), neighbor_points, distances);
 
-    if (found < 5)
+    // Check min neighbors (configurable)
+    if (found < config_.min_plane_neighbors) {
         return false;
+    }
 
-    // Check distance threshold
-    if (distances.back() > 1.0)
+    // Check max neighbor distance (configurable)
+    // Convert squared distances to linear for comparison
+    double max_dist_sq = config_.max_neighbor_distance_m * config_.max_neighbor_distance_m;
+    if (distances.back() > max_dist_sq) {
         return false;
+    }
 
     std::vector<Eigen::Vector3d> neighbors_eigen;
     neighbors_eigen.reserve(neighbor_points.size());
@@ -243,7 +351,7 @@ bool LidarProcessor::estimatePlane(const std::vector<Eigen::Vector3d>& points,
     }
     covariance /= points.size();
 
-    // Eigen decomposition - smallest eigenvalue gives normal
+    // Eigen decomposition - eigenvalues sorted in ascending order
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(covariance);
     if (solver.info() != Eigen::Success)
         return false;
@@ -255,10 +363,40 @@ bool LidarProcessor::estimatePlane(const std::vector<Eigen::Vector3d>& points,
         normal = -normal;
     }
 
-    // Check planarity: ratio of smallest to largest eigenvalue
-    double eigenvalues = solver.eigenvalues()(0);
-    if (eigenvalues > 0.01)
+    // Check planarity using eigenvalue ratios
+    // Eigenvalues: lambda_0 <= lambda_1 <= lambda_2
+    const double lambda_0 = solver.eigenvalues()(0);
+    const double lambda_1 = solver.eigenvalues()(1);
+    const double lambda_2 = solver.eigenvalues()(2);
+
+    // Reject if covariance is too small (degenerate)
+    if (lambda_2 <= 1e-9) {
+        return false;
+    }
+
+    // Check planarity: lambda_0 / lambda_2 <= threshold
+    // Small ratio = flat plane, large ratio = volumetric
+    const double planarity_ratio = lambda_0 / lambda_2;
+    if (planarity_ratio > config_.max_plane_eigen_ratio) {
         return false;  // Not planar enough
+    }
+
+    // Check linearity: lambda_1 / lambda_2 >= threshold
+    // Small ratio = line-like, large ratio = planar
+    const double linearity_ratio = lambda_1 / lambda_2;
+    if (linearity_ratio < config_.min_second_eigen_ratio) {
+        return false;  // Too linear (line-like neighborhood)
+    }
+
+    // Check that neighbors are close to the plane
+    double max_plane_dist = 0.0;
+    for (const auto& p : points) {
+        double dist = std::abs(normal.dot(p - plane_point));
+        max_plane_dist = std::max(max_plane_dist, dist);
+        if (dist > config_.max_neighbor_plane_distance_m) {
+            return false;  // Neighbor too far from plane
+        }
+    }
 
     return true;
 }

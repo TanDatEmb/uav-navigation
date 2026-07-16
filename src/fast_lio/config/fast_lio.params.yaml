@@ -11,19 +11,37 @@
     # Frames
     body_frame: "mid360_imu" # IMU frame
     world_frame: "lio_world" # FAST-LIO world frame
+    lidar_frame: "mid360_lidar_frame" # Expected LiDAR sensor frame_id from Gazebo
 
-    # Simulation mode
-    # true: All points have same timestamp (deskew disabled)
-    # false: Uses per-point timestamps for deskew
-    sim_mode: true
+    # --- LiDAR input decoder configuration ---
+    # Replaces sim_mode. The decoder normalizes PointCloud2 into
+    # NormalizedLidarScan with per-point time in seconds.
+    lidar_input.profile: "sim_xyzi_snapshot"
+    lidar_input.time_field: ""
+    lidar_input.time_unit: "nanoseconds"
+    lidar_input.header_stamp_is_scan_start: true
+    lidar_input.require_per_point_time: false
+    lidar_input.max_scan_duration_s: 0.2
+    lidar_input.intensity_field: "intensity"
+    lidar_input.line_field: "line"
+    lidar_input.tag_field: "tag"
+    lidar_input.min_range_m: 0.5
+    lidar_input.max_range_m: 100.0
+    lidar_input.point_stride: 1
+    lidar_input.filter_livox_tags: false
 
     # Debug and bounded publication/backlog state
     print_time_cost: false
     path_max_poses: 2000 # Retain only the newest path poses
-    imu_buffer_max_samples: 2000 # About 10 s at 200 Hz
-    lidar_buffer_max_scans: 3 # Prefer fresh scans over stale backlog
 
-    # LiDAR filtering
+    # --- Synchronizer configuration ---
+    synchronizer.max_imu_samples: 4000
+    synchronizer.max_lidar_scans: 5
+    synchronizer.max_imu_gap_s: 0.02 # Max gap between IMU samples (s)
+    synchronizer.require_imu_before_scan_start: true
+    synchronizer.require_imu_after_scan_end: true
+
+    # LiDAR filtering (downstream, in LidarProcessor)
     lidar_min_range: 0.5 # Minimum range (m)
     lidar_max_range: 40.0 # Maximum range (m)
 
@@ -48,11 +66,20 @@
     imu_init_accel_std_max: 0.5 # Maximum stationary-window accel std (m/s^2)
     imu_init_gyro_rms_max: 0.1 # Maximum stationary-window gyro RMS (rad/s)
     imu_init_gravity_tolerance: 3.0 # Allowed mean acceleration norm error (m/s^2)
-    near_search_num: 5 # KNN for correspondence (minimum valid: 5)
-    ieskf_max_iter: 1 # Current performance profile; validate A/B before raising
+    ieskf_max_iter: 3 # Increased from 1 to allow convergence during motion
     gravity_align: true # Align gravity at startup
 
-    # Extrinsic: LiDAR in IMU frame (MID-360)
+    # Lidar matching configuration
+    knn_search_count: 5 # KNN count for correspondence
+    min_plane_neighbors: 5 # Minimum neighbors for plane fit
+    max_neighbor_distance_m: 1.0 # Maximum KNN search radius (m)
+    max_plane_eigen_ratio: 0.01 # Planarity threshold lambda0/lambda2
+    min_second_eigen_ratio: 0.05 # Linearity threshold lambda1/lambda2
+    max_neighbor_plane_distance_m: 0.10 # Max distance from neighbor to plane (m)
+    max_point_plane_residual_m: 0.40 # Max point-to-plane residual (m)
+    min_effective_correspondences: 20 # Minimum accepted measurements for IESKF update
+
+    # Extrinsic: LiDAR-to-IMU transform (p_I = R_I_L * p_L + t_I_L)
     # From MID-360 datasheet: LiDAR origin offset from IMU
     extrinsic_t: [-0.011, -0.02329, 0.04412] # meters
     extrinsic_r: [

@@ -11,6 +11,35 @@ namespace fast_lio {
 // State and SharedState15 already defined in commons.hpp
 
 /**
+ * @brief Status of IESKF update operation.
+ */
+enum class IeskfUpdateStatus {
+    kSuccess = 0,                    ///< Update succeeded, state corrected
+    kNoMeasurements = 1,             ///< No valid measurements provided
+    kInsufficientMeasurements = 2,   ///< Below minimum correspondence threshold
+    kPriorFactorizationFailure = 3,  ///< Prior covariance factorization failed
+    kMeasurementFactorizationFailure = 4,  ///< Measurement info factorization failed
+    kNonFiniteCorrection = 5,        ///< Correction delta contains NaN/Inf
+    kFinalLinearizationFailure = 6,  ///< Final covariance linearization failed
+};
+
+/**
+ * @brief Result of IESKF update operation.
+ */
+struct IeskfUpdateResult {
+    IeskfUpdateStatus status = IeskfUpdateStatus::kNoMeasurements;
+    bool converged = false;               ///< Whether iteration converged
+    std::size_t iterations = 0;           ///< Number of iterations executed
+    std::size_t measurements = 0;          ///< Number of accepted measurements
+    double final_delta_rotation_rad = 0.0;  ///< Final rotation correction norm [rad]
+    double final_delta_position_m = 0.0;      ///< Final position correction norm [m]
+    
+    [[nodiscard]] bool success() const {
+        return status == IeskfUpdateStatus::kSuccess;
+    }
+};
+
+/**
  * @brief Iterated Error-State Kalman Filter (15-DOF)
  *
  * Optimized for UAV navigation with:
@@ -63,8 +92,9 @@ class IESKF {
      * Uses loss function provided by LidarProcessor.
      *
      * @param max_iterations Maximum IESKF iterations (default: 3)
+     * @return Update result with status and diagnostics
      */
-    void update(int max_iterations = 3);
+    IeskfUpdateResult update(int max_iterations = 3);
 
     // Set loss function for point-to-plane constraints
     // Signature: void(State15&, SharedState15&)
@@ -111,7 +141,7 @@ class IESKF {
 
     // Gravity in the z-up LIO world frame.
     // Use inline static instead of constexpr for Eigen
-    static inline const Eigen::Vector3d GRAVITY_WORLD_{0.0, 0.0, -9.81};
+    static inline const Eigen::Vector3d GRAVITY_WORLD_{0.0, 0.0, -9.80665};
 
     // Callbacks
     std::function<void(const State15&, SharedState15&)> loss_func_;

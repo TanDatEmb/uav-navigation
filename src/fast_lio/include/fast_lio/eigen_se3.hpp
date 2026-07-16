@@ -111,6 +111,11 @@ struct SE3d {
         return SE3d(so3_ * other.so3_, so3_ * other.translation_ + translation_);
     }
 
+    SE3d inverse() const {
+        SO3d inv_r = so3_.inverse();
+        return SE3d(inv_r, inv_r * (-translation_));
+    }
+
     // Transform point
     Eigen::Vector3d operator*(const Eigen::Vector3d& v) const {
         return so3_ * v + translation_;

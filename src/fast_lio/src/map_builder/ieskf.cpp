@@ -167,30 +167,34 @@ Eigen::Matrix<double, 15, 15> IESKF::computeProcessNoise(double dt) const {
     return Q;
 }
 
-void IESKF::update(int max_iterations) {
+IeskfUpdateResult IESKF::update(int max_iterations) {
+    IeskfUpdateResult result;
+    result.status = IeskfUpdateStatus::kNoMeasurements;
+    
     if (!loss_func_) {
         std::cerr << "[IESKF] No loss function set!" << std::endl;
-        return;
+        return result;
     }
     if (max_iterations <= 0) {
-        return;
+        result.status = IeskfUpdateStatus::kNoMeasurements;
+        return result;
     }
 
     using Matrix15 = Eigen::Matrix<double, 15, 15>;
     const Matrix15 identity = Matrix15::Identity();
 
-    // Work in information form so the only factorization is 15x15. The old
-    // measurement-space implementation formed and factorized an NxN matrix,
-    // which is cubic in the number of point-to-plane correspondences.
+    // Work in information form so the only factorization is 15x15.
     const Eigen::LDLT<Matrix15> prior_ldlt(P_);
     if (prior_ldlt.info() != Eigen::Success) {
         std::cerr << "[IESKF] Prior covariance factorization failed" << std::endl;
-        return;
+        result.status = IeskfUpdateStatus::kPriorFactorizationFailure;
+        return result;
     }
     const Matrix15 prior_information = prior_ldlt.solve(identity);
     if (prior_ldlt.info() != Eigen::Success || !prior_information.allFinite()) {
         std::cerr << "[IESKF] Prior information solve failed" << std::endl;
-        return;
+        result.status = IeskfUpdateStatus::kPriorFactorizationFailure;
+        return result;
     }
 
     State15 x_iter = x_;
@@ -199,54 +203,63 @@ void IESKF::update(int max_iterations) {
     for (int iter = 0; iter < max_iterations; ++iter) {
         SharedState15 shared;
         loss_func_(x_iter, shared);
-        if (!shared.valid || shared.num_measurements == 0) {
-            std::cerr << "[IESKF] No valid measurements!" << std::endl;
-            return;
+        
+        if (!shared.valid) {
+            // Check specific validation status for diagnostics
+            if (shared.validation_status == MeasurementValidationStatus::kInsufficientMeasurements) {
+                std::cerr << "[IESKF] Insufficient measurements (" << shared.num_measurements
+                          << " < minimum required)" << std::endl;
+                result.status = IeskfUpdateStatus::kInsufficientMeasurements;
+                result.measurements = shared.num_measurements;
+                return result;
+            } else {
+                std::cerr << "[IESKF] No valid measurements!" << std::endl;
+                result.status = IeskfUpdateStatus::kNoMeasurements;
+                return result;
+            }
         }
 
         const auto H = shared.H.topRows(shared.num_measurements);
         const auto residual = shared.b.head(shared.num_measurements);
 
         const Matrix15 information = prior_information + lidar_information_ * (H.transpose() * H);
-        // shared.b stores h(x)-z, therefore the correction solves
-        // H*delta = -residual. The prior term anchors repeated iterations to
-        // the state at the beginning of this update.
         const V15D rhs = -lidar_information_ * (H.transpose() * residual) -
                          prior_information * accumulated_delta;
 
         Eigen::LDLT<Matrix15> information_ldlt(information);
         if (information_ldlt.info() != Eigen::Success) {
             std::cerr << "[IESKF] Measurement information factorization failed" << std::endl;
-            return;
+            result.status = IeskfUpdateStatus::kMeasurementFactorizationFailure;
+            return result;
         }
         const V15D delta_x = information_ldlt.solve(rhs);
         if (information_ldlt.info() != Eigen::Success || !delta_x.allFinite()) {
             std::cerr << "[IESKF] Measurement information solve failed" << std::endl;
-            return;
+            result.status = IeskfUpdateStatus::kNonFiniteCorrection;
+            return result;
         }
 
-        // Always apply the correction before checking convergence. The old
-        // implementation discarded a small but valid converged update.
         x_iter.update(delta_x);
         accumulated_delta += delta_x;
+        ++result.iterations;
+        result.measurements = shared.num_measurements;
 
         const bool converged =
             convergence_check_ ? convergence_check_(delta_x) : defaultConvergenceCheck(delta_x);
         if (converged) {
+            result.converged = true;
             break;
         }
     }
 
-    // Re-linearize once at the candidate state and recover the posterior
-    // covariance from the 15x15 information matrix. Commit state and
-    // covariance together so a failed final linearization cannot leave them
-    // describing different estimates.
+    // Final linearization for covariance
     SharedState15 shared_final;
     loss_func_(x_iter, shared_final);
     if (!shared_final.valid || shared_final.num_measurements == 0) {
         std::cerr << "[IESKF] Final covariance linearization has no valid measurements"
                   << std::endl;
-        return;
+        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        return result;
     }
 
     const auto H = shared_final.H.topRows(shared_final.num_measurements);
@@ -255,13 +268,15 @@ void IESKF::update(int max_iterations) {
     Eigen::LDLT<Matrix15> posterior_ldlt(posterior_information);
     if (posterior_ldlt.info() != Eigen::Success) {
         std::cerr << "[IESKF] Posterior covariance factorization failed" << std::endl;
-        return;
+        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        return result;
     }
 
     Matrix15 posterior = posterior_ldlt.solve(identity);
     if (posterior_ldlt.info() != Eigen::Success || !posterior.allFinite()) {
         std::cerr << "[IESKF] Posterior covariance solve failed" << std::endl;
-        return;
+        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        return result;
     }
 
     posterior = 0.5 * (posterior + posterior.transpose());
@@ -271,6 +286,12 @@ void IESKF::update(int max_iterations) {
 
     x_ = x_iter;
     P_ = posterior;
+    
+    result.final_delta_rotation_rad = accumulated_delta.segment<3>(0).norm();
+    result.final_delta_position_m = accumulated_delta.segment<3>(3).norm();
+    result.status = IeskfUpdateStatus::kSuccess;
+    
+    return result;
 }
 
 bool IESKF::defaultConvergenceCheck(const V15D& delta_x) {

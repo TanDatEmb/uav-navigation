@@ -11,11 +11,15 @@
 #include <cmath>
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 
 #include "fast_lio/commons.hpp"
+#include "fast_lio/lidar_scan.hpp"
 #include "fast_lio/map_builder.hpp"
+#include "fast_lio/measurement_synchronizer.hpp"
+#include "fast_lio/pointcloud2_decoder.hpp"
 #include "fast_lio/utils.hpp"
 
 using namespace std::chrono_literals;
@@ -35,24 +39,7 @@ struct NodeConfig {
     std::string body_frame = "mid360_imu";
     std::string world_frame = "lio_world";
     bool print_time_cost = false;
-    bool sim_mode = true;  // Disable deskew in sim mode
     std::size_t path_max_poses = 2000;
-    std::size_t imu_buffer_max_samples = 2000;
-    std::size_t lidar_buffer_max_scans = 3;
-};
-
-/**
- * @brief State data for synchronization
- */
-struct StateData {
-    bool lidar_pushed = false;
-    std::mutex imu_mutex;
-    std::mutex lidar_mutex;
-    double last_lidar_time = -1.0;
-    double last_imu_time = -1.0;
-    std::deque<IMUData> imu_buffer;
-    std::deque<std::pair<double, CloudType::Ptr>> lidar_buffer;
-    nav_msgs::msg::Path path;
 };
 
 /**
@@ -67,6 +54,12 @@ class FastLIONode : public rclcpp::Node {
         RCLCPP_INFO(this->get_logger(), "FAST-LIO2 (15-DOF) Node Starting...");
 
         loadParameters();
+
+        // Initialize the PointCloud2 decoder with loaded config
+        m_decoder = std::make_unique<PointCloud2Decoder>(m_decoder_config);
+
+        // Initialize the MeasurementSynchronizer
+        m_synchronizer = std::make_unique<MeasurementSynchronizer>(m_sync_config);
 
         // Subscriptions
         m_imu_sub = this->create_subscription<sensor_msgs::msg::Imu>(
@@ -87,9 +80,9 @@ class FastLIONode : public rclcpp::Node {
         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
         // Initialize path
-        m_state_data.path.poses.clear();
-        m_state_data.path.poses.reserve(m_node_config.path_max_poses);
-        m_state_data.path.header.frame_id = m_node_config.world_frame;
+        m_path.poses.clear();
+        m_path.poses.reserve(m_node_config.path_max_poses);
+        m_path.header.frame_id = m_node_config.world_frame;
 
         // Initialize KF and MapBuilder with 15-DOF state
         m_kf = std::make_shared<IESKF>();
@@ -99,8 +92,8 @@ class FastLIONode : public rclcpp::Node {
         m_timer = this->create_wall_timer(20ms, std::bind(&FastLIONode::timerCallback, this));
 
         RCLCPP_INFO(this->get_logger(), "FAST-LIO2 Node Started");
-        RCLCPP_INFO(this->get_logger(), "Sim mode: %s",
-                    m_node_config.sim_mode ? "true (deskew disabled)" : "false");
+        RCLCPP_INFO(this->get_logger(), "Input profile: per_point_time=%s",
+                    m_decoder_config.time_field.empty() ? "disabled" : m_decoder_config.time_field.c_str());
         RCLCPP_INFO(this->get_logger(), "Body frame: %s, World frame: %s",
                     m_node_config.body_frame.c_str(), m_node_config.world_frame.c_str());
     }
@@ -118,16 +111,74 @@ class FastLIONode : public rclcpp::Node {
             this->declare_parameter<std::string>("body_frame", m_node_config.body_frame);
         m_node_config.world_frame =
             this->declare_parameter<std::string>("world_frame", m_node_config.world_frame);
-        m_node_config.sim_mode = this->declare_parameter<bool>("sim_mode", m_node_config.sim_mode);
+        // --- LiDAR input decoder configuration ---
+        // Replaces sim_mode with explicit per-point time configuration.
+        const std::string input_profile_str =
+            this->declare_parameter<std::string>("lidar_input.profile", "sim_xyzi_snapshot");
+        if (input_profile_str == "mid360_pointcloud2") {
+            m_decoder_config.profile = LidarInputProfile::kMid360PointCloud2;
+        } else {
+            m_decoder_config.profile = LidarInputProfile::kSimXyziSnapshot;
+        }
+
+        m_decoder_config.lidar_frame =
+            this->declare_parameter<std::string>("lidar_frame", "mid360_lidar");
+        m_decoder_config.time_field =
+            this->declare_parameter<std::string>("lidar_input.time_field", "");
+
+        const std::string time_unit_str =
+            this->declare_parameter<std::string>("lidar_input.time_unit", "nanoseconds");
+        if (time_unit_str == "seconds") {
+            m_decoder_config.time_unit = TimeUnit::kSeconds;
+        } else if (time_unit_str == "milliseconds") {
+            m_decoder_config.time_unit = TimeUnit::kMilliseconds;
+        } else if (time_unit_str == "microseconds") {
+            m_decoder_config.time_unit = TimeUnit::kMicroseconds;
+        } else {
+            m_decoder_config.time_unit = TimeUnit::kNanoseconds;
+        }
+
+        m_decoder_config.header_stamp_is_scan_start =
+            this->declare_parameter<bool>("lidar_input.header_stamp_is_scan_start", true);
+        m_decoder_config.require_per_point_time =
+            this->declare_parameter<bool>("lidar_input.require_per_point_time", false);
+        m_decoder_config.max_scan_duration_s =
+            this->declare_parameter<double>("lidar_input.max_scan_duration_s", 0.2);
+        m_decoder_config.intensity_field =
+            this->declare_parameter<std::string>("lidar_input.intensity_field", "intensity");
+        m_decoder_config.line_field =
+            this->declare_parameter<std::string>("lidar_input.line_field", "line");
+        m_decoder_config.tag_field =
+            this->declare_parameter<std::string>("lidar_input.tag_field", "tag");
+        m_decoder_config.min_range_m =
+            this->declare_parameter<double>("lidar_input.min_range_m", 0.5);
+        m_decoder_config.max_range_m =
+            this->declare_parameter<double>("lidar_input.max_range_m", 100.0);
+        m_decoder_config.point_stride =
+            this->declare_parameter<int>("lidar_input.point_stride", 1);
+        m_decoder_config.filter_livox_tags =
+            this->declare_parameter<bool>("lidar_input.filter_livox_tags", false);
+
         m_node_config.print_time_cost =
             this->declare_parameter<bool>("print_time_cost", m_node_config.print_time_cost);
 
+        // --- Synchronizer configuration ---
+        const int sync_max_imu = this->declare_parameter<int>(
+            "synchronizer.max_imu_samples", 4000);
+        const int sync_max_lidar = this->declare_parameter<int>(
+            "synchronizer.max_lidar_scans", 5);
+        m_sync_config.max_imu_gap_s =
+            this->declare_parameter<double>("synchronizer.max_imu_gap_s", 0.02);
+        m_sync_config.require_imu_before_scan_start =
+            this->declare_parameter<bool>("synchronizer.require_imu_before_scan_start", true);
+        m_sync_config.require_imu_after_scan_end =
+            this->declare_parameter<bool>("synchronizer.require_imu_after_scan_end", true);
+
+        if (sync_max_imu > 0) m_sync_config.max_imu_samples = static_cast<std::size_t>(sync_max_imu);
+        if (sync_max_lidar > 0) m_sync_config.max_lidar_scans = static_cast<std::size_t>(sync_max_lidar);
+
         const int path_max_poses = this->declare_parameter<int>(
             "path_max_poses", static_cast<int>(m_node_config.path_max_poses));
-        const int imu_buffer_max_samples = this->declare_parameter<int>(
-            "imu_buffer_max_samples", static_cast<int>(m_node_config.imu_buffer_max_samples));
-        const int lidar_buffer_max_scans = this->declare_parameter<int>(
-            "lidar_buffer_max_scans", static_cast<int>(m_node_config.lidar_buffer_max_scans));
 
         m_builder_config.lidar_min_range =
             this->declare_parameter<double>("lidar_min_range", m_builder_config.lidar_min_range);
@@ -155,8 +206,8 @@ class FastLIONode : public rclcpp::Node {
             "imu_init_gyro_rms_max", m_builder_config.imu_init_gyro_rms_max);
         m_builder_config.imu_init_gravity_tolerance = this->declare_parameter<double>(
             "imu_init_gravity_tolerance", m_builder_config.imu_init_gravity_tolerance);
-        m_builder_config.near_search_num =
-            this->declare_parameter<int>("near_search_num", m_builder_config.near_search_num);
+        m_builder_config.knn_search_count =
+            this->declare_parameter<int>("knn_search_count", m_builder_config.knn_search_count);
         m_builder_config.ieskf_max_iter =
             this->declare_parameter<int>("ieskf_max_iter", m_builder_config.ieskf_max_iter);
         m_builder_config.gravity_align =
@@ -166,13 +217,13 @@ class FastLIONode : public rclcpp::Node {
 
         const auto extrinsic_t = this->declare_parameter<std::vector<double>>(
             "extrinsic_t",
-            {m_builder_config.t_il.x(), m_builder_config.t_il.y(), m_builder_config.t_il.z()});
+            {m_builder_config.t_I_L.x(), m_builder_config.t_I_L.y(), m_builder_config.t_I_L.z()});
         const auto extrinsic_r = this->declare_parameter<std::vector<double>>(
             "extrinsic_r",
-            {m_builder_config.r_il(0, 0), m_builder_config.r_il(0, 1), m_builder_config.r_il(0, 2),
-             m_builder_config.r_il(1, 0), m_builder_config.r_il(1, 1), m_builder_config.r_il(1, 2),
-             m_builder_config.r_il(2, 0), m_builder_config.r_il(2, 1),
-             m_builder_config.r_il(2, 2)});
+            {m_builder_config.R_I_L(0, 0), m_builder_config.R_I_L(0, 1), m_builder_config.R_I_L(0, 2),
+             m_builder_config.R_I_L(1, 0), m_builder_config.R_I_L(1, 1), m_builder_config.R_I_L(1, 2),
+             m_builder_config.R_I_L(2, 0), m_builder_config.R_I_L(2, 1),
+             m_builder_config.R_I_L(2, 2)});
 
         const auto fail = [this](const std::string& reason) {
             RCLCPP_FATAL(this->get_logger(), "Invalid FAST-LIO parameter: %s", reason.c_str());
@@ -185,8 +236,8 @@ class FastLIONode : public rclcpp::Node {
         if (m_node_config.body_frame.empty() || m_node_config.world_frame.empty()) {
             fail("body_frame and world_frame must not be empty");
         }
-        if (path_max_poses <= 0 || imu_buffer_max_samples <= 0 || lidar_buffer_max_scans <= 0) {
-            fail("path and buffer limits must be positive");
+        if (path_max_poses <= 0) {
+            fail("path_max_poses must be positive");
         }
         if (m_builder_config.lidar_min_range < 0.0 ||
             m_builder_config.lidar_max_range <= m_builder_config.lidar_min_range) {
@@ -208,27 +259,25 @@ class FastLIONode : public rclcpp::Node {
             m_builder_config.imu_init_gravity_tolerance < 0.0) {
             fail("IMU initialization limits are invalid");
         }
-        if (m_builder_config.near_search_num < 5 || m_builder_config.ieskf_max_iter <= 0 ||
+        if (m_builder_config.knn_search_count < 5 || m_builder_config.ieskf_max_iter <= 0 ||
             m_builder_config.lidar_cov_inv <= 0.0) {
-            fail("near_search_num must be >= 5; ieskf_max_iter and lidar_cov_inv must be positive");
+            fail("knn_search_count must be >= 5; ieskf_max_iter and lidar_cov_inv must be positive");
         }
         if (extrinsic_t.size() != 3 || extrinsic_r.size() != 9) {
             fail("extrinsic_t must contain 3 values and extrinsic_r must contain 9 values");
         }
 
         m_node_config.path_max_poses = static_cast<std::size_t>(path_max_poses);
-        m_node_config.imu_buffer_max_samples = static_cast<std::size_t>(imu_buffer_max_samples);
-        m_node_config.lidar_buffer_max_scans = static_cast<std::size_t>(lidar_buffer_max_scans);
-        m_builder_config.t_il = Eigen::Vector3d(extrinsic_t[0], extrinsic_t[1], extrinsic_t[2]);
+        m_builder_config.t_I_L = Eigen::Vector3d(extrinsic_t[0], extrinsic_t[1], extrinsic_t[2]);
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) {
-                m_builder_config.r_il(row, col) = extrinsic_r[row * 3 + col];
+                m_builder_config.R_I_L(row, col) = extrinsic_r[row * 3 + col];
             }
         }
         const Eigen::Matrix3d rotation_error =
-            m_builder_config.r_il.transpose() * m_builder_config.r_il - Eigen::Matrix3d::Identity();
-        if (!m_builder_config.r_il.allFinite() || rotation_error.norm() > 1e-3 ||
-            std::abs(m_builder_config.r_il.determinant() - 1.0) > 1e-3) {
+            m_builder_config.R_I_L.transpose() * m_builder_config.R_I_L - Eigen::Matrix3d::Identity();
+        if (!m_builder_config.R_I_L.allFinite() || rotation_error.norm() > 1e-3 ||
+            std::abs(m_builder_config.R_I_L.determinant() - 1.0) > 1e-3) {
             fail("extrinsic_r must be a finite right-handed rotation matrix");
         }
 
@@ -236,21 +285,15 @@ class FastLIONode : public rclcpp::Node {
                     "ROS parameters loaded: scan=%.2fm map=%.2fm KNN=%d IESKF=%d range=[%.1f, "
                     "%.1f]m",
                     m_builder_config.scan_resolution, m_builder_config.map_resolution,
-                    m_builder_config.near_search_num, m_builder_config.ieskf_max_iter,
+                    m_builder_config.knn_search_count, m_builder_config.ieskf_max_iter,
                     m_builder_config.lidar_min_range, m_builder_config.lidar_max_range);
         RCLCPP_INFO(this->get_logger(), "LiDAR-IMU translation: [%.3f, %.3f, %.3f]",
-                    m_builder_config.t_il.x(), m_builder_config.t_il.y(),
-                    m_builder_config.t_il.z());
+                    m_builder_config.t_I_L.x(), m_builder_config.t_I_L.y(),
+                    m_builder_config.t_I_L.z());
     }
 
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-        std::lock_guard<std::mutex> lock(m_state_data.imu_mutex);
-
         double timestamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
-        if (timestamp < m_state_data.last_imu_time) {
-            RCLCPP_WARN(this->get_logger(), "IMU message out of order, clearing buffer");
-            std::deque<IMUData>().swap(m_state_data.imu_buffer);
-        }
 
         IMUData imu;
         imu.acc = Eigen::Vector3d(msg->linear_acceleration.x, msg->linear_acceleration.y,
@@ -264,127 +307,100 @@ class FastLIONode : public rclcpp::Node {
             return;
         }
 
-        m_state_data.imu_buffer.emplace_back(imu);
-        const std::size_t dropped =
-            utils::trimDequeFront(m_state_data.imu_buffer, m_node_config.imu_buffer_max_samples);
-        if (dropped > 0) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "IMU backlog full; dropped %zu oldest samples", dropped);
-        }
-        m_state_data.last_imu_time = timestamp;
+        m_synchronizer->pushImu(imu);
+
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "IMU accepted: t=%.6f gyro=[%.4f %.4f %.4f] acc=[%.4f %.4f %.4f]",
+                             imu.time, imu.gyro.x(), imu.gyro.y(), imu.gyro.z(),
+                             imu.acc.x(), imu.acc.y(), imu.acc.z());
+
+        processReadyPackages();
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-        // Gazebo publishes XYZI only, while FAST-LIO's internal point type also
-        // carries normals and per-point time in `curvature`. Converting directly
-        // to PointXYZINormal emits missing-field warnings and can leave auxiliary
-        // fields invalid, so normalize the wire format explicitly.
-        pcl::PointCloud<pcl::PointXYZI> xyzi_cloud;
-        pcl::fromROSMsg(*msg, xyzi_cloud);
+        DecodeResult result = m_decoder->decode(*msg);
 
-        CloudType::Ptr cloud(new CloudType);
-        cloud->header = xyzi_cloud.header;
-        cloud->width = xyzi_cloud.width;
-        cloud->height = xyzi_cloud.height;
-        cloud->is_dense = xyzi_cloud.is_dense;
-        cloud->points.resize(xyzi_cloud.points.size());
-        for (std::size_t i = 0; i < xyzi_cloud.points.size(); ++i) {
-            const auto& src = xyzi_cloud.points[i];
-            auto& dst = cloud->points[i];
-            dst.x = src.x;
-            dst.y = src.y;
-            dst.z = src.z;
-            dst.intensity = src.intensity;
-            dst.normal_x = 0.0f;
-            dst.normal_y = 0.0f;
-            dst.normal_z = 0.0f;
-            dst.curvature = 0.0f;
-        }
-        if (cloud->empty()) {
+        if (!result.ok()) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "Ignoring empty LiDAR cloud");
+                                 "LiDAR decode failed: %s", result.errorMessage().c_str());
             return;
         }
 
-        std::lock_guard<std::mutex> lock(m_state_data.lidar_mutex);
+        const auto& scan = result.scan;
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 2000,
+            "LiDAR accepted: points=%zu timed=%d scan=[%.6f, %.6f] duration=%.6f frame='%s'",
+            scan.cloud ? scan.cloud->size() : 0U, static_cast<int>(scan.has_per_point_time),
+            scan.scan_start_time_s, scan.scan_end_time_s,
+            scan.scan_end_time_s - scan.scan_start_time_s, scan.lidar_frame.c_str());
 
-        double timestamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
-        if (timestamp < m_state_data.last_lidar_time) {
-            RCLCPP_WARN(this->get_logger(), "LiDAR message out of order, clearing buffer");
-            std::deque<std::pair<double, CloudType::Ptr>>().swap(m_state_data.lidar_buffer);
-            m_state_data.lidar_pushed = false;
-        }
-
-        // In sim mode, disable deskew by setting all curvature to 0
-        if (m_node_config.sim_mode) {
-            for (auto& pt : cloud->points) {
-                pt.curvature = 0.0f;
-            }
-        }
-
-        m_state_data.lidar_buffer.emplace_back(timestamp, cloud);
-        const std::size_t dropped =
-            utils::trimDequeFront(m_state_data.lidar_buffer, m_node_config.lidar_buffer_max_scans);
-        if (dropped > 0) {
-            // The package cached by syncPackage() referenced the old front.
-            // Abandon it so the next timer iteration binds the newest front.
-            m_state_data.lidar_pushed = false;
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "LiDAR backlog full; dropped %zu oldest scans", dropped);
-        }
-        m_state_data.last_lidar_time = timestamp;
+        m_synchronizer->pushLidar(result.scan);
+        processReadyPackages();
     }
 
-    bool syncPackage() {
-        std::lock_guard<std::mutex> lock_imu(m_state_data.imu_mutex);
-        std::lock_guard<std::mutex> lock_lidar(m_state_data.lidar_mutex);
+    void processReadyPackages() {
+        while (true) {
+            SyncResult sync_result = m_synchronizer->tryPop();
+            const auto diag = m_synchronizer->diagnostics();
 
-        if (m_state_data.imu_buffer.empty() || m_state_data.lidar_buffer.empty()) {
-            return false;
-        }
+            if (!sync_result.ready()) {
+                RCLCPP_INFO_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 2000,
+                    "Sync status=%d imu_buf=%zu lidar_buf=%zu "
+                    "imu_recv=%zu lidar_recv=%zu pkgs=%zu "
+                    "drops_start=%zu drops_gap=%zu regressions=%zu",
+                    static_cast<int>(sync_result.status), diag.imu_buffer_size,
+                    diag.lidar_buffer_size, diag.imu_received, diag.lidar_received,
+                    diag.packages_emitted, diag.dropped_no_start_coverage,
+                    diag.dropped_imu_gap, diag.imu_out_of_order);
 
-        if (!m_state_data.lidar_pushed) {
-            m_package.cloud = m_state_data.lidar_buffer.front().second;
-
-            // Sort points by curvature (time) if not in sim mode
-            if (!m_node_config.sim_mode) {
-                std::sort(m_package.cloud->points.begin(), m_package.cloud->points.end(),
-                          [](const PointType& p1, const PointType& p2) {
-                              return p1.curvature < p2.curvature;
-                          });
+                if (sync_result.status == SyncStatus::kDropNoStartCoverage) {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                         "Dropped scan: no IMU coverage at scan start");
+                } else if (sync_result.status == SyncStatus::kDropImuGap) {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                         "Dropped scan: IMU gap too large");
+                }
+                break;
             }
 
-            m_package.cloud_start_time = m_state_data.lidar_buffer.front().first;
-            m_package.cloud_end_time =
-                m_package.cloud_start_time + m_package.cloud->points.back().curvature / 1000.0;
-            m_state_data.lidar_pushed = true;
+            const auto& package = sync_result.package;
+            RCLCPP_INFO_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Sync READY: scan=[%.6f, %.6f] imus=%zu imu=[%.6f, %.6f]",
+                package.cloud_start_time, package.cloud_end_time,
+                package.imus.size(), package.imus.front().time,
+                package.imus.back().time);
+
+            m_package = std::move(sync_result.package);
+            processPackage();
+
+            // Log IMU initialization progress before publishing
+            const auto init_diag = m_builder->imuInitializationDiagnostics();
+            if (!init_diag.initialized) {
+                RCLCPP_INFO_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 2000,
+                    "IMU init: samples=%zu/%zu acc_mean=[%.4f %.4f %.4f] "
+                    "acc_norm=%.4f accel_std=%.4f gyro_rms=%.6f gravity_err=%.4f stationary=%d",
+                    init_diag.collected_samples, init_diag.required_samples,
+                    init_diag.mean_acceleration.x(), init_diag.mean_acceleration.y(),
+                    init_diag.mean_acceleration.z(), init_diag.acceleration_norm,
+                    init_diag.accel_std, init_diag.gyro_rms, init_diag.gravity_error,
+                    static_cast<int>(init_diag.stationary));
+            }
+
+            publishResults();
         }
-
-        if (m_state_data.last_imu_time < m_package.cloud_end_time) {
-            return false;
-        }
-
-        // Collect IMU data for this scan
-        m_package.imus.clear();
-        while (!m_state_data.imu_buffer.empty() &&
-               m_state_data.imu_buffer.front().time < m_package.cloud_end_time) {
-            m_package.imus.emplace_back(m_state_data.imu_buffer.front());
-            m_state_data.imu_buffer.pop_front();
-        }
-
-        m_state_data.lidar_buffer.pop_front();
-        m_state_data.lidar_pushed = false;
-
-        return true;
     }
 
     void timerCallback() {
-        if (!syncPackage())
-            return;
+        processReadyPackages();
+    }
 
+    void processPackage() {
         auto t1 = std::chrono::high_resolution_clock::now();
 
-        m_builder->process(m_package);
+        LidarUpdateResult result = m_builder->process(m_package);
 
         auto t2 = std::chrono::high_resolution_clock::now();
 
@@ -394,15 +410,45 @@ class FastLIONode : public rclcpp::Node {
             RCLCPP_INFO(this->get_logger(), "Processing time: %.2f ms", time_used);
         }
 
+        // Throttled update result logging
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "LidarUpdate: status=%d input=%zu down=%zu queried=%zu planes=%zu "
+            "accepted=%zu update=%d inserted=%d converged=%d "
+            "res=[mean=%.4f abs=%.4f rms=%.4f max=%.4f]",
+            static_cast<int>(result.status), result.input_points, result.downsampled_points,
+            result.queried_points, result.plane_candidates, result.accepted_correspondences,
+            static_cast<int>(result.update_applied), static_cast<int>(result.map_inserted),
+            static_cast<int>(result.converged), result.residual.mean_signed,
+            result.residual.mean_absolute, result.residual.rms, result.residual.max_absolute);
+
         if (m_builder->status() != BuilderStatus::MAPPING) {
             return;
         }
 
-        // Publish results
-        publishResults();
+        // Throttled state logging for debugging coordinate drift
+        const auto& state = m_builder->state();
+        const Eigen::AngleAxisd aa(state.R_wb.matrix());
+        const Eigen::Vector3d euler = aa.angle() * aa.axis() * 180.0 / M_PI;
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 1000,
+            "LIO state: p=[%.3f %.3f %.3f] v=[%.3f %.3f %.3f] "
+            "euler=[%.3f %.3f %.3f] ba=[%.4f %.4f %.4f] bw=[%.5f %.5f %.5f]",
+            state.p_w.x(), state.p_w.y(), state.p_w.z(), state.v_w.x(), state.v_w.y(),
+            state.v_w.z(), euler.x(), euler.y(), euler.z(), state.b_a.x(), state.b_a.y(),
+            state.b_a.z(), state.b_w.x(), state.b_w.y(), state.b_w.z());
     }
 
     void publishResults() {
+        // Guard: do not publish odometry/path/cloud before estimator is tracking
+        const auto builder_status = m_builder->status();
+        if (builder_status != BuilderStatus::MAPPING) {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "Skipping publish: builder status=%d (not tracking yet)",
+                                 static_cast<int>(builder_status));
+            return;
+        }
+
         double publish_time = m_package.cloud_end_time;
 
         // Get the current IMU pose from the 15-DOF state.
@@ -431,8 +477,8 @@ class FastLIONode : public rclcpp::Node {
         pose.header.stamp = utils::getTime(publish_time);
         pose.header.frame_id = m_node_config.world_frame;
         pose.pose = odom.pose.pose;
-        utils::appendBoundedPose(m_state_data.path, pose, m_node_config.path_max_poses);
-        m_path_pub->publish(m_state_data.path);
+        utils::appendBoundedPose(m_path, pose, m_node_config.path_max_poses);
+        m_path_pub->publish(m_path);
 
         // Publish registered cloud
         auto world_cloud = m_builder->getLidarProcessor()->getWorldCloud();
@@ -457,13 +503,17 @@ class FastLIONode : public rclcpp::Node {
 
     std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
 
-    StateData m_state_data;
     SyncPackage m_package;
     NodeConfig m_node_config;
     Config m_builder_config;
+    PointCloudDecoderConfig m_decoder_config;
+    SynchronizerConfig m_sync_config;
+    nav_msgs::msg::Path m_path;
 
     std::shared_ptr<IESKF> m_kf;
     std::unique_ptr<MapBuilder> m_builder;
+    std::unique_ptr<PointCloud2Decoder> m_decoder;
+    std::unique_ptr<MeasurementSynchronizer> m_synchronizer;
 };
 
 }  // namespace fast_lio

@@ -169,11 +169,11 @@ TEST(IMUProcessorTest, PropagatesAcrossConsecutiveZeroDurationSimScans) {
 
     // The first scan defines the filter epoch; start and end are both 1.0 s in
     // simulation when per-point times are unavailable.
-    processor.processIMU(filter, initialization, 1.0);
+    processor.propagate(filter, initialization, 0.0, 1.0);
 
     const std::deque<IMUData> next_scan{{acceleration, angular_rate, 1.02},
                                         {acceleration, angular_rate, 1.08}};
-    processor.processIMU(filter, next_scan, 1.10);
+    processor.propagate(filter, next_scan, 1.0, 1.10);
 
     const Eigen::AngleAxisd rotation(filter->getState().R_wb.matrix());
     EXPECT_NEAR(rotation.angle(), 0.10, 1e-3);
@@ -190,8 +190,8 @@ TEST(IMUProcessorTest, PropagatesAtMaximumSupportedInterval) {
     const std::deque<IMUData> initialization{
         {Eigen::Vector3d(0.0, 0.0, 9.81), Eigen::Vector3d(0.0, 0.0, 1.0), 0.0}};
     ASSERT_TRUE(processor.initialize(initialization));
-    processor.processIMU(filter, initialization, 0.0);
-    processor.processIMU(filter, {}, 0.1);
+    processor.propagate(filter, initialization, 0.0, 0.0);
+    processor.propagate(filter, {}, 0.0, 0.1);
 
     const Eigen::AngleAxisd rotation(filter->getState().R_wb.matrix());
     EXPECT_NEAR(rotation.angle(), 0.1, 1e-9);
@@ -220,15 +220,15 @@ TEST(IMUProcessorTest, WaitsForStationaryWindowAndNormalizesAccelerationMagnitud
         {Eigen::Vector3d(0.0, 0.0, kMeasuredGravity), Eigen::Vector3d::Zero(), 0.07},
         {Eigen::Vector3d(0.0, 0.0, kMeasuredGravity), Eigen::Vector3d::Zero(), 0.08}};
     ASSERT_TRUE(processor.initialize(stationary_window));
-    EXPECT_NEAR(processor.getAccelScale(), 9.81 / kMeasuredGravity, 1e-12);
+    EXPECT_NEAR(processor.getAccelScale(), 9.80665 / kMeasuredGravity, 1e-12);
 
     auto filter = std::make_shared<IESKF>();
     filter->initWithGravity(processor.getMeanAcc());
-    processor.processIMU(filter, stationary_window, 0.10);
+    processor.propagate(filter, stationary_window, 0.0, 0.10);
     const std::deque<IMUData> next_scan{
         {Eigen::Vector3d(0.0, 0.0, kMeasuredGravity), Eigen::Vector3d::Zero(), 0.12},
         {Eigen::Vector3d(0.0, 0.0, kMeasuredGravity), Eigen::Vector3d::Zero(), 0.18}};
-    processor.processIMU(filter, next_scan, 0.20);
+    processor.propagate(filter, next_scan, 0.10, 0.20);
     EXPECT_NEAR(filter->getState().v_w.norm(), 0.0, 1e-9);
 }
 
@@ -375,7 +375,7 @@ TEST(LidarProcessorTest, InitialMapAndPublishedCloudUseWorldFrame) {
     State15 state;
     state.R_wb = SO3d::exp(Eigen::Vector3d(0.0, 0.0, std::acos(-1.0) / 2.0));
     state.p_w = Eigen::Vector3d(1.0, 2.0, 3.0);
-    state.T_imu_lidar = SE3d(SO3d(), Eigen::Vector3d(0.5, 0.0, 0.0));
+    state.T_I_L = SE3d(SO3d(), Eigen::Vector3d(0.5, 0.0, 0.0));
     filter->setState(state);
 
     auto tree = MapTreeInterface::createPCLTree();
@@ -407,8 +407,8 @@ TEST(MapBuilderTest, GravityInitializationSurvivesExtrinsicAssignment) {
     Config config;
     config.imu_init_num = 2;
     config.gravity_align = true;
-    config.t_il = Eigen::Vector3d(0.1, -0.2, 0.3);
-    config.r_il = Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    config.t_I_L = Eigen::Vector3d(0.1, -0.2, 0.3);
+    config.R_I_L = Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
 
     auto filter = std::make_shared<IESKF>();
     MapBuilder builder(config, filter);
@@ -427,8 +427,8 @@ TEST(MapBuilderTest, GravityInitializationSurvivesExtrinsicAssignment) {
     EXPECT_NEAR(aligned_acceleration.x(), 0.0, 1e-9);
     EXPECT_NEAR(aligned_acceleration.y(), 0.0, 1e-9);
     EXPECT_NEAR(aligned_acceleration.z(), 1.0, 1e-9);
-    EXPECT_TRUE(state.T_imu_lidar.translation().isApprox(config.t_il, 1e-12));
-    EXPECT_TRUE(state.T_imu_lidar.rotation().matrix().isApprox(config.r_il, 1e-12));
+    EXPECT_TRUE(state.T_I_L.translation().isApprox(config.t_I_L, 1e-12));
+    EXPECT_TRUE(state.T_I_L.rotation().matrix().isApprox(config.R_I_L, 1e-12));
 }
 
 }  // namespace
