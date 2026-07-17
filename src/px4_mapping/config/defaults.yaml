@@ -34,19 +34,11 @@ global_mapper:
     cloud_topic: "/lio/cloud_registered"
 
     # Output topics for the accumulated global map and the rolling local view.
-    map_topic: "/mapping/global"
-    local_map_topic: "/mapping/local"
+    map_topic: "/mapping/occupancy/global"
+    local_map_topic: "/mapping/occupancy/local"
 
-    # Input localization odometry.
+    # Input localization odometry (lio_world frame).
     lio_odom_topic: "/lio/odometry"
-
-    # Input source mode:
-    #   "lio_world"  : cloud already registered in lio_world; LIO odometry
-    #                  supplies the synchronized sensor origin.
-    #   "px4_only"   : use PX4 odometry as sensor origin (legacy fallback).
-    #   "px4_full"   : cloud in aircraft frame with full PX4 pose.
-    #   "localization_deskew" : deskewed cloud from the localization frontend.
-    input_source: "px4_full"
 
     # Publish the complete accumulated map for diagnostics and long-range context.
     publish_global_map: true

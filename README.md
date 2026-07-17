@@ -37,8 +37,8 @@ Gazebo MID-360 or physical sensor
     └── /lio/path
              │
              ├──► px4_mapping/global_mapper
-             │             ├──► /mapping/global
-             │             └──► /mapping/local
+             │             ├──► /mapping/occupancy/global
+             │             └──► /mapping/occupancy/local
              │
              └──► px4_mapping/lio_px4_bridge
                          └──► /fmu/in/vehicle_visual_odometry

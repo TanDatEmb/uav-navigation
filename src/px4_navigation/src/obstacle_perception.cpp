@@ -107,7 +107,7 @@ void ObstaclePerception::LoadParameters() {
     stale_timeout_ms_ = this->declare_parameter("stale_timeout_ms", kDefaultStaleTimeoutMs);
 
     input_cloud_topic_ =
-        this->declare_parameter("input_cloud_topic", std::string("/lidar_360/points"));
+        this->declare_parameter("input_cloud_topic", std::string("/sim/livox/mid360/points"));
     vehicle_odom_topic_ =
         this->declare_parameter("vehicle_odom_topic", std::string("/fmu/out/vehicle_odometry"));
     obstacle_distance_topic_ = this->declare_parameter("obstacle_distance_topic",

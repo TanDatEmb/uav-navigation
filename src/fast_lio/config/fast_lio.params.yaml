@@ -5,8 +5,8 @@
 /**:
   ros__parameters:
     # Topics
-    imu_topic: "/livox/imu"
-    lidar_topic: "/livox/lidar"
+    imu_topic: "/livox/mid360/imu"
+    lidar_topic: "/livox/mid360/points"
 
     # Frames
     body_frame: "mid360_imu" # IMU frame
@@ -17,6 +17,8 @@
     # Replaces sim_mode. The decoder normalizes PointCloud2 into
     # NormalizedLidarScan with per-point time in seconds.
     lidar_input.profile: "sim_xyzi_snapshot"
+    # Simulation snapshot decoder configuration.
+    # Real MID-360S uses livox_ros_driver2::msg::CustomMsg (Mid360CustomMsgDecoder).
     lidar_input.time_field: ""
     lidar_input.time_unit: "nanoseconds"
     lidar_input.header_stamp_is_scan_start: true

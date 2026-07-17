@@ -19,7 +19,7 @@ PointCloud2 + sensor_msgs/Imu
     ├── /lio/path
     └── TF: lio_world -> mid360_imu
              │
-             ├──► global_mapper -> /mapping/global
+             ├──► global_mapper -> /mapping/occupancy/global
              └──► lio_px4_bridge
                        └──► /fmu/in/vehicle_visual_odometry
 ```
@@ -44,8 +44,8 @@ colcon test-result --all --verbose
 ```bash
 ros2 launch fast_lio fast_lio_sim.launch.py \
   use_sim_time:=true \
-  lidar_topic:=/lidar_360/points \
-  imu_topic:=/imu/out
+  lidar_topic:=/sim/livox/mid360/points \
+  imu_topic:=/sim/livox/mid360/imu
 ```
 
 The launch file loads `config/fast_lio.params.yaml` and remaps the relative
@@ -86,8 +86,8 @@ a second set of values.
 
 | Parameter | Active value | Meaning |
 | --- | --- | --- |
-| `imu_topic` | `/livox/imu` before launch remapping | IMU input |
-| `lidar_topic` | `/livox/lidar` before launch remapping | PointCloud2 input |
+| `imu_topic` | `/livox/mid360/imu` before launch remapping | IMU input |
+| `lidar_topic` | `/livox/mid360/points` before launch remapping | PointCloud2 input |
 | `world_frame` | `lio_world` | gravity-aligned Z-up LIO world |
 | `body_frame` | `mid360_imu` | FLU IMU/body state |
 | `lidar_frame` | `mid360_lidar` | Expected LiDAR sensor frame_id |
@@ -248,7 +248,7 @@ ros2 bag play <bag-directory> --clock --rate 0.5
 
 | Symptom | Check |
 | --- | --- |
-| No odometry | verify `/imu/out` and `/lidar_360/points`; confirm the stationary IMU window passes validation |
+| No odometry | verify `/sim/livox/mid360/imu` and `/sim/livox/mid360/points`; confirm the stationary IMU window passes validation |
 | Node exits during startup | inspect the fail-fast parameter error and canonical YAML values |
 | Registered cloud has the wrong frame | verify `world_frame=lio_world` and the input sensor `frame_id` |
 | Rapid drift or duplicated walls | verify the LiDAR/IMU extrinsic, time ordering, and map/scan resolutions |

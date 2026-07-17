@@ -34,8 +34,8 @@ namespace fast_lio {
  *   - world_frame: "lio_world" (FAST-LIO world, gravity-aligned)
  */
 struct NodeConfig {
-    std::string imu_topic = "/livox/imu";
-    std::string lidar_topic = "/livox/lidar";
+    std::string imu_topic = "/livox/mid360/imu";
+    std::string lidar_topic = "/livox/mid360/points";
     std::string body_frame = "mid360_imu";
     std::string world_frame = "lio_world";
     bool print_time_cost = false;
@@ -66,7 +66,9 @@ class FastLIONode : public rclcpp::Node {
             m_node_config.imu_topic, 10,
             std::bind(&FastLIONode::imuCallback, this, std::placeholders::_1));
 
-        // LiDAR subscription - PointCloud2 (works with Livox sim adapter)
+        // LiDAR subscription - PointCloud2 simulation snapshot adapter.
+        // Real MID-360S hardware uses livox_ros_driver2::msg::CustomMsg via
+        // Mid360CustomMsgDecoder (see input/mid360_custom_decoder.hpp).
         m_lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             m_node_config.lidar_topic, 10,
             std::bind(&FastLIONode::lidarCallback, this, std::placeholders::_1));

@@ -4,15 +4,10 @@
 #include "fast_lio/map_builder.hpp"
 #include "fast_lio/ikd_tree_backend.hpp"
 #include "fast_lio/lidar_deskewer.hpp"
-#include "fast_lio/pcl_tree_backend.hpp"
 
 #include <iostream>
 
 namespace fast_lio {
-
-std::shared_ptr<MapTreeInterface> MapTreeInterface::createPCLTree() {
-    return std::make_shared<PCLTreeBackend>();
-}
 
 std::shared_ptr<MapTreeInterface> MapTreeInterface::createIKDTree() {
     return std::make_shared<IKDTreeBackend>();

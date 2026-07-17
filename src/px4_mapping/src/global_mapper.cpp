@@ -37,7 +37,6 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <px4_mapping/time/pose_buffer.hpp>
-#include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
@@ -130,10 +129,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     : Node("global_mapper", options),
       voxel_map_(),
       lio_buf_(px4_mapping::time::PoseBuffer::kDefaultMaxSamples,
-               px4_mapping::time::PoseBuffer::kDefaultWindow),
-      px4_buf_(px4_mapping::time::PoseBuffer::kDefaultMaxSamples,
-               px4_mapping::time::PoseBuffer::kDefaultWindow),
-      timesync_(this->get_clock()) {
+               px4_mapping::time::PoseBuffer::kDefaultWindow) {
     // Declare and read parameters
     this->declare_parameter<bool>("publish_global_map", true);
     this->declare_parameter<bool>("publish_local_map", true);
@@ -143,16 +139,14 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
     this->declare_parameter<std::string>("cloud_topic", "/lio/cloud_registered");
-    this->declare_parameter<std::string>("map_topic", "/mapping/global");
-    this->declare_parameter<std::string>("local_map_topic", "/mapping/local");
+    this->declare_parameter<std::string>("map_topic", "/mapping/occupancy/global");
+    this->declare_parameter<std::string>("local_map_topic", "/mapping/occupancy/local");
     this->declare_parameter<double>("local_map_radius_m", 30.0);
-    this->declare_parameter<std::string>("input_source", "lio_world");
     this->declare_parameter<std::vector<double>>("extrinsic_T",
                                                  std::vector<double>{-0.011, -0.02329, 0.04412});
     this->declare_parameter<int>("ready_min_frames", 5);
     this->declare_parameter<int>("ready_min_occupied", 1000);
     this->declare_parameter<std::string>("lio_odom_topic", "/lio/odometry");
-    this->declare_parameter<bool>("use_lio_buffer", true);
     this->declare_parameter<bool>("require_alignment_gate", false);
     this->declare_parameter<double>("aligned_min_seconds", 5.0);
     this->declare_parameter<double>("aligned_max_velocity", 0.05);
@@ -171,7 +165,9 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     map_topic_ = this->get_parameter("map_topic").as_string();
     local_map_topic_ = this->get_parameter("local_map_topic").as_string();
     local_map_radius_m_ = this->get_parameter("local_map_radius_m").as_double();
-    input_source_ = this->get_parameter("input_source").as_string();
+    // Production mapper only supports the FAST-LIO lio_world pipeline.
+    // Legacy modes (px4_only, px4_full, localization_deskew) have been removed.
+
 
     if (!std::isfinite(local_map_radius_m_) || local_map_radius_m_ <= 0.0) {
         RCLCPP_FATAL(this->get_logger(), "local_map_radius_m must be finite and > 0, got %.3f",
@@ -197,9 +193,6 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     ready_min_frames_ = this->get_parameter("ready_min_frames").as_int();
     ready_min_occupied_ = this->get_parameter("ready_min_occupied").as_int();
     lio_odom_topic_ = this->get_parameter("lio_odom_topic").as_string();
-    use_lio_buffer_ = this->get_parameter("use_lio_buffer").as_bool();
-    RCLCPP_INFO(this->get_logger(), "Path B Option gamma chain: %s",
-                use_lio_buffer_ ? "ENABLED" : "DISABLED (rollback to latest-cache)");
 
     require_alignment_gate_ = this->get_parameter("require_alignment_gate").as_bool();
     aligned_min_seconds_ = this->get_parameter("aligned_min_seconds").as_double();
@@ -219,20 +212,10 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
                 "Readiness gate, requires %d consecutive frames AND %d occupied voxels",
                 ready_min_frames_, ready_min_occupied_);
 
-    deskewed_input_ = (input_source_ == "localization_deskew");
-    full_pose_input_ = (input_source_ == "px4_full");
-    lio_world_input_ = (input_source_ == "lio_world");
+    lio_world_input_ = true;
 
-    if (!deskewed_input_ && !full_pose_input_ && !lio_world_input_ && input_source_ != "px4_only") {
-        RCLCPP_FATAL(this->get_logger(),
-                     "Unknown input_source: '%s'. Valid: px4_only, px4_full, "
-                     "localization_deskew, lio_world",
-                     input_source_.c_str());
-        throw std::runtime_error("Invalid input_source parameter");
-    }
-
-    RCLCPP_INFO(this->get_logger(), "Input source: %s (cloud_topic=%s map_topic=%s)",
-                input_source_.c_str(), cloud_topic_.c_str(), map_topic_.c_str());
+    RCLCPP_INFO(this->get_logger(), "Input source: lio_world (cloud_topic=%s map_topic=%s)",
+                cloud_topic_.c_str(), map_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "Log Interval: every %d frames", log_interval_);
     RCLCPP_INFO(this->get_logger(), "Timeout: %.1f seconds", timeout_seconds_);
 
@@ -258,66 +241,18 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
         lio_odom_topic_, rclcpp::QoS(20), std::bind(&GlobalMapper::lioOdomCallback, this, _1),
         io_opts);
 
-    if (!lio_world_input_) {
-        // Subscribe PX4 timesync status for accurate PX4 <-> ROS time mapping.
-        sub_timesync_status_ = this->create_subscription<px4_msgs::msg::TimesyncStatus>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
-                "/fmu/out/timesync_status"),
-            px4_ros2_utils::qos::sensor_qos(5),
-            [this](px4_msgs::msg::TimesyncStatus::SharedPtr msg) {
-                timesync_.update(msg);
-            },
-            io_opts);
+    // Alignment gate inputs: arming state and EKF position/velocity validity.
+    sub_status_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
+            "/fmu/out/vehicle_status"),
+        px4_ros2_utils::qos::sensor_qos(5),
+        std::bind(&GlobalMapper::vehicleStatusCallback, this, _1), io_opts);
 
-        // Subscribe PX4 /fmu/out/vehicle_odometry for pose information
-        sub_odom_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
-                "/fmu/out/vehicle_odometry"),
-            px4_ros2_utils::qos::sensor_qos(20),
-            [this](px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-                const auto sample_stamp = timesync_.toROS(msg->timestamp_sample);
-
-                if (!sample_stamp) {
-                    RCLCPP_WARN_THROTTLE(
-                        this->get_logger(), *this->get_clock(), 5000,
-                        "[VoxMap] PX4 odometry timestamp_sample invalid or conversion failed "
-                        "(px4_us=%lu). Verify UXRCE_DDS_SYNCT and /clock setup.",
-                        static_cast<unsigned long>(msg->timestamp_sample));
-                    return;
-                }
-                const int64_t sample_t_ns = sample_stamp->nanoseconds();
-
-                px4_mapping::time::PoseSample sample;
-                sample.t_ns = sample_t_ns;
-                sample.position =
-                    Eigen::Vector3d(msg->position[0], msg->position[1], msg->position[2]);
-                sample.orientation =
-                    Eigen::Quaterniond(msg->q[0], msg->q[1], msg->q[2], msg->q[3]).normalized();
-
-                {
-                    std::lock_guard<std::mutex> lock(odom_mutex_);
-                    drone_pos_ = sample.position;
-                    drone_q_ = sample.orientation;
-                    have_drone_q_ = true;
-                }
-                // Push for SLERP lookup, internal monotonic guard handles drops
-                px4_buf_.Push(sample);
-            },
-            io_opts);
-
-        // Alignment gate inputs: arming state and EKF position/velocity validity
-        sub_status_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
-                "/fmu/out/vehicle_status"),
-            px4_ros2_utils::qos::sensor_qos(5),
-            std::bind(&GlobalMapper::vehicleStatusCallback, this, _1), io_opts);
-
-        sub_local_pos_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleLocalPosition>(
-                "/fmu/out/vehicle_local_position"),
-            px4_ros2_utils::qos::sensor_qos(5),
-            std::bind(&GlobalMapper::vehicleLocalPositionCallback, this, _1), io_opts);
-    }
+    sub_local_pos_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(
+        px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleLocalPosition>(
+            "/fmu/out/vehicle_local_position"),
+        px4_ros2_utils::qos::sensor_qos(5),
+        std::bind(&GlobalMapper::vehicleLocalPositionCallback, this, _1), io_opts);
 
     // === Publishers ===
     pub_global_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic_, 20);
@@ -339,19 +274,18 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
 
     // Alignment monitor runs at 10 Hz on the IO callback group so that
     // long-running cloud raycasting in the compute group cannot starve it.
-    if (require_alignment_gate_ && !lio_world_input_) {
+    if (require_alignment_gate_) {
         alignment_start_time_ = this->now();
         alignment_timer_ =
             this->create_wall_timer(std::chrono::milliseconds(100),
                                     std::bind(&GlobalMapper::alignmentTick, this), io_cb_group_);
     } else {
-        // Gate disabled or lio_world mode
         alignment_captured_.store(true, std::memory_order_release);
     }
 
     // Optional distance eviction is independent of the input pipeline. It is
-    // disabled by default so /mapping/global retains history in every mode;
-    // /mapping/local remains bounded by its query radius either way.
+    // disabled by default so /mapping/occupancy/global retains history in every
+    // mode; /mapping/occupancy/local remains bounded by its query radius either way.
     if (enable_distance_eviction_) {
         eviction_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(px4_nav_common::mapping::kEvictIntervalMs),
@@ -376,7 +310,7 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
 
     if (!enable_distance_eviction_) {
         RCLCPP_WARN(this->get_logger(),
-                    "Distance eviction disabled: /mapping/global retains history across the "
+                    "Distance eviction disabled: /mapping/occupancy/global retains history across the "
                     "flight and is bounded by kMaxVoxels=%zu and kMaxFrameAge=%d.",
                     static_cast<size_t>(px4_nav_common::mapping::kMaxVoxels),
                     px4_nav_common::mapping::kMaxFrameAge);
@@ -775,65 +709,20 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         return;
     }
 
-    // Transform FLU sensor frame to NED world frame
-    Eigen::Vector3d pos;
-    double cy, sy;
-    Eigen::Quaterniond q_ned_frd;
-    bool have_q;
-    {
-        std::lock_guard<std::mutex> lock(odom_mutex_);
-        pos = drone_pos_;
-        cy = cos_yaw_;
-        sy = sin_yaw_;
-        q_ned_frd = drone_q_;
-        have_q = have_drone_q_;
-    }
-
-    // Path B Option gamma chain attempt
+    // Look up the LIO pose at cloud time. The registered cloud is already in
+    // lio_world, but raycasting still needs the synchronized LiDAR origin.
     const int64_t cloud_t_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1'000'000'000LL +
                                static_cast<int64_t>(msg->header.stamp.nanosec);
-    px4_mapping::time::PoseSample px4_at_cloud, lio_at_cloud;
-    bool chain_ok = false;
-    bool lio_world_pose_ok = false;
-    if (lio_world_input_) {
-        lio_world_pose_ok = lio_buf_.Lookup(cloud_t_ns, lio_at_cloud);
-    } else if (use_lio_buffer_) {
-        const bool px4_hit = px4_buf_.Lookup(cloud_t_ns, px4_at_cloud);
-        const bool lio_hit = lio_buf_.Lookup(cloud_t_ns, lio_at_cloud);
-        chain_ok = px4_hit && lio_hit;
+    px4_mapping::time::PoseSample lio_at_cloud;
+    if (!lio_buf_.Lookup(cloud_t_ns, lio_at_cloud)) {
+        frames_dropped_.fetch_add(1, std::memory_order_relaxed);
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "lio_world mode: waiting for synchronized LIO odometry");
+        return;
     }
 
-    Eigen::Vector3d sensor_world;
-    if (chain_ok) {
-        // Path B Option gamma, scan-time pose chain
-        const Eigen::Vector3d t_ned = px4_at_cloud.orientation.toRotationMatrix() *
-                                      px4_ros2_utils::frame::R_FLU_TO_FRD *
-                                      lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
-        sensor_world = px4_at_cloud.position + t_ned;
-    } else if (lio_world_input_) {
-        // The registered cloud is already in lio_world, but raycasting still
-        // needs the synchronized LiDAR origin. Derive it from the LIO IMU pose
-        // and rotate the calibrated IMU-to-LiDAR translation.
-        if (!lio_world_pose_ok) {
-            frames_dropped_.fetch_add(1, std::memory_order_relaxed);
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "lio_world mode: waiting for synchronized LIO odometry");
-            return;
-        }
-        sensor_world =
-            lio_at_cloud.position + lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
-    } else if (full_pose_input_ && have_q) {
-        // px4_full fallback
-        const Eigen::Vector3d t_ned =
-            q_ned_frd.toRotationMatrix() * px4_ros2_utils::frame::R_FLU_TO_FRD * T_lidar_in_imu_;
-        sensor_world = pos + t_ned;
-    } else {
-        // Yaw-only chain
-        const Eigen::Vector3d t_frd = px4_ros2_utils::frame::flu_to_frd(T_lidar_in_imu_);
-        sensor_world =
-            Eigen::Vector3d(pos.x() + cy * t_frd.x() - sy * t_frd.y(),
-                            pos.y() + sy * t_frd.x() + cy * t_frd.y(), pos.z() + t_frd.z());
-    }
+    const Eigen::Vector3d sensor_world =
+        lio_at_cloud.position + lio_at_cloud.orientation.toRotationMatrix() * T_lidar_in_imu_;
 
     // Save first raw point for periodic transform debug log
     double dbg_raw_x = 0, dbg_raw_y = 0, dbg_raw_z = 0;
@@ -843,46 +732,15 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
         dbg_raw_z = input_points_[0].z;
     }
 
-    if (full_pose_input_) {
-        // px4_full mode
-        if (!have_q) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "px4_full mode: waiting for /fmu/out/vehicle_odometry");
-            return;
-        }
-        const Eigen::Matrix3d R_ned_flu =
-            q_ned_frd.toRotationMatrix() * px4_ros2_utils::frame::R_FLU_TO_FRD;
-        for (auto& pt : input_points_) {
-            Eigen::Vector3d p_flu(pt.x, pt.y, pt.z);
-            Eigen::Vector3d p_ned = R_ned_flu * p_flu + pos;
-            pt.x = p_ned.x();
-            pt.y = p_ned.y();
-            pt.z = p_ned.z();
-        }
-    } else if (lio_world_input_) {
-        // lio_world mode, points already in L1 camera_init world frame
-    } else if (!deskewed_input_) {
-        // px4_only mode: legacy yaw-only transform
-        const double offset_bz = -T_lidar_in_imu_.z();
-        for (auto& pt : input_points_) {
-            // FLU to body NED, then add sensor offset
-            double bx = pt.x;
-            double by = -pt.y;
-            double bz = -pt.z + offset_bz;
-
-            // Yaw rotation, then translate to world NED
-            pt.x = cy * bx - sy * by + pos.x();
-            pt.y = sy * bx + cy * by + pos.y();
-            pt.z = bz + pos.z();
-        }
-    }
+    // lio_world mode: the registered cloud is already in the LIO world frame.
+    // No additional point transform is performed here.
 
     // Periodic transform debug
     if (frame_count_ % 100 == 0 && !input_points_.empty()) {
         RCLCPP_INFO(this->get_logger(),
-                    "[TF_DBG] F%lu yaw=%.1f° pos=(%.1f,%.1f,%.1f) | "
+                    "[TF_DBG] F%lu sensor=(%.1f,%.1f,%.1f) | "
                     "raw=(%.2f,%.2f,%.2f) -> world=(%.2f,%.2f,%.2f)",
-                    frame_count_ + 1, std::atan2(sy, cy) * 180.0 / M_PI, pos.x(), pos.y(), pos.z(),
+                    frame_count_ + 1, sensor_world.x(), sensor_world.y(), sensor_world.z(),
                     dbg_raw_x, dbg_raw_y, dbg_raw_z, input_points_[0].x, input_points_[0].y,
                     input_points_[0].z);
     }
@@ -929,12 +787,7 @@ void GlobalMapper::cloudCallback(sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     // Rebuilding it every frame makes points outside the planning radius disappear
     // immediately without deleting them from the global map.
     if (publish_local_map_) {
-        Eigen::Vector3d local_map_center = pos;
-        if (chain_ok) {
-            local_map_center = px4_at_cloud.position;
-        } else if (lio_world_input_ && lio_world_pose_ok) {
-            local_map_center = lio_at_cloud.position;
-        }
+        const Eigen::Vector3d local_map_center = lio_at_cloud.position;
         voxel_map_.GetOccupiedPointsInRadius(local_map_center, local_map_radius_m_,
                                              local_map_points_);
         pub_local_map_->publish(

@@ -45,14 +45,14 @@ def generate_launch_description():
 
     imu_topic_arg = DeclareLaunchArgument(
         'imu_topic',
-        default_value='/imu/out',
-        description='IMU topic for simulation'
+        default_value='/sim/livox/mid360/imu',
+        description='IMU topic for Gazebo MID-360 simulation'
     )
 
     lidar_topic_arg = DeclareLaunchArgument(
         'lidar_topic',
-        default_value='/livox/lidar/pointcloud',
-        description='LiDAR topic for simulation'
+        default_value='/sim/livox/mid360/points',
+        description='LiDAR topic for Gazebo MID-360 simulation snapshot'
     )
 
     # FAST-LIO2 node
@@ -66,9 +66,9 @@ def generate_launch_description():
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
         ],
         remappings=[
-            # Input topics (adjust if needed)
-            ('/livox/imu', LaunchConfiguration('imu_topic')),
-            ('/livox/lidar', LaunchConfiguration('lidar_topic')),
+            # Input topics: node defaults are real-hardware names; remap to sim.
+            ('/livox/mid360/imu', LaunchConfiguration('imu_topic')),
+            ('/livox/mid360/points', LaunchConfiguration('lidar_topic')),
             # Output topics
             ('/cloud_registered', '/lio/cloud_registered'),
             ('/odometry', '/lio/odometry'),

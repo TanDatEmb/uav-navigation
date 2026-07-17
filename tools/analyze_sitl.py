@@ -6,7 +6,7 @@ produces a concise report for Phase 1 milestones:
 
     M1 - Collision Prevention: /fmu/in/obstacle_distance rate and validity
         M2 - NED transform: /world/cloud
-        M3 - Global map: /mapping/global
+        M3 - Global map: /mapping/occupancy/global
         M4 - Local planning: /perception/scan_1d
   M5 - Visual odometry: /fmu/in/vehicle_visual_odometry vs /fmu/out/vehicle_odometry RMSE
 
@@ -463,7 +463,7 @@ def main() -> int:
     report["milestones"]["M2_ned_transform"]["topic"] = m2_topic
 
     # M3 - Global map
-    m3_topic, m3_messages = select_topic(messages, ["/mapping/global"])
+    m3_topic, m3_messages = select_topic(messages, ["/mapping/occupancy/global"])
     report["milestones"]["M3_global_map"] = analyze_voxel_map(m3_messages, m3_topic)
 
     # M4 - Local virtual scan

@@ -3,8 +3,9 @@
 ## Overview
 
 The `fast_lio` mapping subsystem uses an incremental k-d tree (ikd-Tree) as
-its active spatial index for LiDAR scan matching and map updates. An abstract
-interface separates the LIO algorithm from the concrete backend.
+its production spatial index for LiDAR scan matching and map updates. An
+abstract interface separates the LIO algorithm from the concrete backend, but
+the implementation is fixed to ikd-Tree.
 
 ## Component Ownership and Data Flow
 
@@ -14,29 +15,31 @@ MapBuilder (owns)
 ├── IMUProcessor (IMU integration)
 ├── LidarProcessor (point cloud processing)
 │   └── MapTreeInterface (shared pointer)
-│       └── IKDTreeBackend (or PCLTreeBackend fallback)
+│       └── IKDTreeBackend
 ```
 
-The `MapBuilder` constructs the tree via `createMapTree()`, which instantiates `IKDTreeBackend` by default. The `LidarProcessor` queries the tree for nearest neighbors during scan matching and incrementally updates it with new world-frame points.
+The `MapBuilder` constructs the tree via `createMapTree()`, which instantiates
+`IKDTreeBackend`. The `LidarProcessor` queries the tree for nearest neighbors
+during scan matching and incrementally updates it with new world-frame points.
 
 ## MapTreeInterface Contract
 
-The abstract interface defines the minimal surface for LIO operations:
+The interface is intentionally minimal and matches the operations required by
+FAST-LIO2 scan-to-map registration:
 
-- **Point addition**: `addPoints(PointVec, bool downsample)` — incremental insertion with optional voxel downsampling
+- **Build**: `build(CloudType::Ptr)` — initial construction
+- **Point addition**: `addPoints(PointVec, bool downsample)` — incremental insertion with voxel downsampling
 - **Point deletion**: `deletePoints(vector<BoxPointType>)` — axis-aligned box deletion for local map management
-- **Nearest search**: `nearestKSearch()` returns indices; `nearestKSearchPoints()` returns actual points (ikd-Tree does not expose stable indices)
-- **Tree management**: `build()`, `rebuild()`, `clear()`
-- **State queries**: `size()`, `empty()`, `valid()`, `rebuilding()`
+- **Nearest search**: `nearestKSearchPoints()` returns actual neighbor points (ikd-Tree does not expose stable indices)
+- **State query**: `size()`
 - **Configuration**: `setDownsampleParam()`, `setLocalMapRange()`
 
-Factory methods create implementations:
+Factory:
 
 - `createIKDTree()` — incremental ikd-Tree backend
-- `createPCLTree()` — non-incremental PCL KD-tree backend
 
-`MapBuilder::createMapTree()` currently selects ikd-Tree unconditionally; there
-is no ROS parameter that switches to the PCL backend.
+The non-incremental PCL KD-tree fallback has been removed. Tests that need a
+spatial index use the same ikd-Tree backend.
 
 ## IKDTreeBackend Implementation
 
@@ -85,13 +88,11 @@ During rebuild:
 - **Slab deletion**: When the cube moves, only the non-overlapping slabs are queued in `boxes_to_remove` and deleted from the tree
 - **Configuration**: `cube_len` defines edge length; `move_thresh` (typically 0.5) controls sensitivity
 
-## Fallback Status
+## Registration Map Role
 
-- **PCLTreeBackend:** compiled as an alternative implementation, but not selected
-  by the current `MapBuilder`. It rebuilds the PCL index after additions or
-  deletions.
-- **Validity checks:** `valid()` checks `Root_Node != nullptr`; `size()` falls
-  back to total node count if `validnum()` returns `-1` during rebuild.
+This ikd-Tree stores geometric points used for local scan-to-map registration.
+It is not an occupancy map and does not represent free space, collision risk,
+or persistent planning semantics. Occupancy mapping lives in `px4_mapping`.
 
 ## Configuration
 
@@ -112,7 +113,7 @@ it into the bundled tree. The implementation uses its compile-time
 ## Build Configuration
 
 CMakeLists.txt selects the backend and dependencies:
-- Core library: `ikd_tree.cpp`, `ikd_tree_backend.cpp`, `pcl_tree_backend.cpp`
+- Core library: `ikd_tree.cpp`, `ikd_tree_backend.cpp`
 - Link: `pthread` (required for ikd-Tree)
 - Optional: `OpenMP` for parallel processing (`MP_EN`)
 - Compile flags: `-O3`, `-Wall -Wextra -Wpedantic`
@@ -120,14 +121,15 @@ CMakeLists.txt selects the backend and dependencies:
 ## Tests
 
 `test_ieskf.cpp` validates:
-- **IKDTreeBackendTest**: Incremental addition, deletion, and `size()`/`getAllPoints()` consistency
+- **IKDTreeBackendTest**: Incremental addition, deletion, and `size()` consistency
 - **LocalMapTest**: Sliding cube removes only departed slabs
 - **LidarProcessorTest**: World-frame transform and map population
 
 ## Known Limitations
 
-- **Rebuild detection**: `rebuilding()` always returns false; ikd-Tree does not expose background thread status through the wrapper
 - **Local map range**: `setLocalMapRange()` is a no-op; callers must use `deletePoints()` directly
+- **Nearest search returns points, not indices**: ikd-Tree does not expose stable
+  point indices, so plane fitting uses `nearestKSearchPoints()`
 - **Rebuild threshold:** the constructor accepts but does not apply
   `rebuild_threshold`; the bundled tree uses its compile-time constant.
 - **Point indices:** `nearestKSearch()` returns synthetic sequential indices

@@ -58,7 +58,6 @@ add_library(${PROJECT_NAME}_core SHARED
   src/map_builder/imu_processor.cpp
   src/map_builder/lidar_processor.cpp
   src/map_builder/map_builder.cpp
-  src/map_builder/pcl_tree_backend.cpp
   src/map_builder/ikd_tree.cpp
   src/map_builder/ikd_tree_backend.cpp
   src/lidar_deskewer.cpp

@@ -53,7 +53,7 @@ obstacle_perception:
     filter_ground_points: true
 
     # Topics.
-    input_cloud_topic: "/lidar_360/points"
+    input_cloud_topic: "/sim/livox/mid360/points"
     vehicle_odom_topic: "/fmu/out/vehicle_odometry"
     obstacle_distance_topic: "/fmu/in/obstacle_distance"
 

@@ -69,8 +69,8 @@ MID-360 PointCloud2 + IMU
   └── /lio/path              [lio_world, ROS time]
           │
           ├──► global_mapper
-          │       ├──► /mapping/global  [accumulated occupancy]
-          │       └──► /mapping/local   [30 m rolling historical view]
+          │       ├──► /mapping/occupancy/global  [accumulated occupancy]
+          │       └──► /mapping/occupancy/local   [30 m rolling historical view]
           │
           └──► lio_px4_bridge
                   └──► /fmu/in/vehicle_visual_odometry
@@ -150,13 +150,13 @@ These names are fixed; do not use “local map” for unrelated products.
 | Output | Primary topic | Producer | Meaning |
 | --- | --- | --- | --- |
 | Registered LIO cloud | `/lio/cloud_registered` | `fast_lio` | Current scan transformed into `lio_world` |
-| Global 3D map | `/mapping/global` | `global_mapper` | Full accumulated occupied voxel map for the active input frame |
-| Planner-local 3D map | `/mapping/local` | `global_mapper` | Rolling 30 m-radius spatial snapshot selected from accumulated global occupancy |
+| Global 3D map | `/mapping/occupancy/global` | `global_mapper` | Full accumulated occupied voxel map for the active input frame |
+| Planner-local 3D map | `/mapping/occupancy/local` | `global_mapper` | Rolling 30 m-radius spatial snapshot selected from accumulated global occupancy |
 | Distance bins 2D | `/fmu/in/obstacle_distance` | `obstacle_perception` | 72-bin PX4 Collision Prevention input |
 | Virtual scan 1D | `/perception/scan_1d` by the SITL script | `obstacle_perception` | ROS debug perception output, not a map |
 | External odometry | `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | PX4 `VehicleOdometry`, not a map |
 
-`/mapping/global` and `/mapping/local` use the incoming `lio_world` frame in the
+`/mapping/occupancy/global` and `/mapping/occupancy/local` use the incoming `lio_world` frame in the
 default `input_source=lio_world` pipeline. The local topic is **not** rebuilt
 from the current LiDAR scan: it selects occupied voxels from persistent global
 occupancy within `local_map_radius_m` of the synchronized UAV pose. It is
@@ -199,8 +199,8 @@ including `CustomPoint.msg`, `lddc.cpp`, and `comm/pub_handler.cpp`.
 | `/lio/odometry` | `fast_lio` | parent `lio_world`, child `mid360_imu` | ROS | reliable |
 | `/lio/cloud_registered` | `fast_lio` | `lio_world` | ROS | reliable |
 | `/lio/path` | `fast_lio` | `lio_world` | ROS | reliable |
-| `/mapping/global` | `global_mapper` | active mapper world frame; accumulated occupancy | ROS | reliable |
-| `/mapping/local` | `global_mapper` | same frame; 30 m-radius rolling historical occupancy | ROS | reliable |
+| `/mapping/occupancy/global` | `global_mapper` | active mapper world frame; accumulated occupancy | ROS | reliable |
+| `/mapping/occupancy/local` | `global_mapper` | same frame; 30 m-radius rolling historical occupancy | ROS | reliable |
 | `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | NED pose, FRD body; unavailable velocity is NaN | PX4 boot μs via `Timesync` | best effort |
 | `/fmu/in/obstacle_distance` | `obstacle_perception` | `BODY_FRD` message frame | PX4 boot μs via `Timesync` | reliable |
 | `/perception/scan_1d` | `obstacle_perception` | configured ROS debug frame | ROS | reliable |

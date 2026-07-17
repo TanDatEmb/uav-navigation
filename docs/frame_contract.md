@@ -124,8 +124,8 @@ to every LIO pose. No per-scan point-cloud transform is performed here.
 
 `global_mapper` preserves the active world frame:
 
-- `input_source=lio_world`: registered points, `/mapping/global`, and
-  `/mapping/local` remain in `lio_world`.
+- `input_source=lio_world`: registered points, `/mapping/occupancy/global`, and
+  `/mapping/occupancy/local` remain in `lio_world`.
 - PX4-based modes: both map outputs are represented in `map_ned`.
 
 Global retention is independent of `input_source`. Distance eviction is disabled
@@ -133,9 +133,9 @@ by default; `enable_distance_eviction=true` explicitly opts into the legacy
 radius-bounded memory mode. Capacity and frame-age bounds remain active in both
 modes.
 
-`/mapping/local` is a radius-bounded view of `/mapping/global`; it does not define
-a new coordinate frame. Consumers must use `PointCloud2.header.frame_id`; the
-topic name alone does not imply a frame.
+`/mapping/occupancy/local` is a radius-bounded view of `/mapping/occupancy/global`;
+it does not define a new coordinate frame. Consumers must use
+`PointCloud2.header.frame_id`; the topic name alone does not imply a frame.
 
 ## Legacy Compatibility Path
 

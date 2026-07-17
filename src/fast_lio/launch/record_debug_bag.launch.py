@@ -106,15 +106,15 @@ def generate_launch_description():
 
         if LaunchConfiguration('record_imu').perform(context) == 'true':
             topics.extend([
-                '/livox/imu',
-                '/imu/out',
+                '/livox/mid360/imu',
+                '/sim/livox/mid360/imu',
                 '/fmu/out/vehicle_imu',
             ])
 
         if LaunchConfiguration('record_lidar').perform(context) == 'true':
             topics.extend([
-                '/livox/lidar',
-                '/livox/lidar/pointcloud',
+                '/livox/mid360/points',
+                '/sim/livox/mid360/points',
                 '/fmu/out/vehicle_distance_sensor',
             ])
 

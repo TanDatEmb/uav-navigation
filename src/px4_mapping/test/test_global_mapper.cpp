@@ -31,17 +31,17 @@ class GlobalMapperTest : public ::testing::Test {
         node_options_.append_parameter_override("ready_min_occupied", 50);
         node_options_.append_parameter_override("timeout_seconds", 0.2);
         node_options_.append_parameter_override("use_sim_time", false);
-        // Keep the base fixture on the legacy px4_full path; derived fixtures
-        // exercise the lio_world path that is now the production default.
-        node_options_.append_parameter_override("input_source", "px4_full");
-        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
-        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
+        node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("lio_odom_topic", "/lio/odometry");
 
         node_ = get_global_mapper_node(node_options_, iface_);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/lio/cloud_registered", rclcpp::QoS(20).best_effort());
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/lio/odometry", 5);
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
                 "/fmu/out/vehicle_status"),
@@ -58,8 +58,6 @@ class GlobalMapperTest : public ::testing::Test {
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
                 "/fmu/out/timesync_status"),
             5);
-        pub_lio_odom_ =
-            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
     }
 
     void TearDown() override {
@@ -69,9 +67,11 @@ class GlobalMapperTest : public ::testing::Test {
         iface_.reset();
     }
 
-    sensor_msgs::msg::PointCloud2 MakeDenseCloud(uint32_t point_count, float radius) {
+    sensor_msgs::msg::PointCloud2 MakeDenseCloud(uint32_t point_count, float radius,
+                                                 double center_x = 0.0, double center_y = 0.0,
+                                                 double center_z = 0.0) {
         sensor_msgs::msg::PointCloud2 msg;
-        msg.header.frame_id = "sensor_flu";
+        msg.header.frame_id = "lio_world";
         msg.header.stamp = node_->now();
         msg.height = 1;
         msg.width = point_count;
@@ -92,9 +92,9 @@ class GlobalMapperTest : public ::testing::Test {
         for (uint32_t i = 0; i < point_count; ++i, ++iter_x, ++iter_y, ++iter_z, ++iter_intensity) {
             const float angle =
                 static_cast<float>(i) * 2.0f * 3.14159265f / static_cast<float>(point_count);
-            *iter_x = radius * std::cos(angle);
-            *iter_y = radius * std::sin(angle);
-            *iter_z = 0.5f;
+            *iter_x = static_cast<float>(center_x) + radius * std::cos(angle);
+            *iter_y = static_cast<float>(center_y) + radius * std::sin(angle);
+            *iter_z = static_cast<float>(center_z) + 0.5f;
             *iter_intensity = 100.0f;
         }
         return msg;
@@ -121,20 +121,34 @@ class GlobalMapperTest : public ::testing::Test {
         local_pos.vz = 0.0f;
         pub_local_pos_->publish(local_pos);
 
-        // Reflect LIO covariance through the LIO odometry topic so the gate sees it.
+        PublishLioOdom(0.0, 0.0, 0.0);
+
+        // Update the LIO odometry covariance so the alignment gate sees it.
         nav_msgs::msg::Odometry lio_odom;
         lio_odom.header.stamp = node_->now();
         lio_odom.pose.covariance[0] = lio_cov_trace / 3.0;
         lio_odom.pose.covariance[7] = lio_cov_trace / 3.0;
         lio_odom.pose.covariance[14] = lio_cov_trace / 3.0;
         pub_lio_odom_->publish(lio_odom);
+    }
 
-        PublishPx4Odom();
+    void PublishLioOdom(double x = 0.0, double y = 0.0, double z = 0.0) {
+        nav_msgs::msg::Odometry lio_odom;
+        lio_odom.header.stamp = node_->now();
+        lio_odom.header.frame_id = "lio_world";
+        lio_odom.child_frame_id = "mid360_imu";
+        lio_odom.pose.pose.position.x = x;
+        lio_odom.pose.pose.position.y = y;
+        lio_odom.pose.pose.position.z = z;
+        lio_odom.pose.pose.orientation.w = 1.0;
+        lio_odom.pose.pose.orientation.x = 0.0;
+        lio_odom.pose.pose.orientation.y = 0.0;
+        lio_odom.pose.pose.orientation.z = 0.0;
+        pub_lio_odom_->publish(lio_odom);
     }
 
     void PublishPx4Odom(double x = 0.0, double y = 0.0, double z = 0.0) {
-        // Unit-test clock model: an explicit zero-offset Timesync keeps ROS and
-        // PX4 test clocks aligned without casting between timestamp domains.
+        // Kept for alignment-gate tests; no longer used as the mapping pose source.
         px4_ros2_utils::time::Timesync zero_offset_timesync(node_->get_clock());
         zero_offset_timesync.update_manual(1U, 0);
         const auto now_us = zero_offset_timesync.toPX4(node_->now());
@@ -187,7 +201,7 @@ TEST_F(GlobalMapperTest, BecomesReadyAfterSufficientOccupiedFrames) {
     // Publish enough points over enough consecutive frames to satisfy both
     // the occupancy and consecutive-frame requirements.
     for (int i = 0; i < 5; ++i) {
-        PublishPx4Odom();
+        PublishLioOdom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -198,7 +212,7 @@ TEST_F(GlobalMapperTest, BecomesReadyAfterSufficientOccupiedFrames) {
 TEST_F(GlobalMapperTest, DropsReadyWhenDataStops) {
     // Make the node ready first.
     for (int i = 0; i < 5; ++i) {
-        PublishPx4Odom();
+        PublishLioOdom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -218,7 +232,6 @@ class GlobalMapperLioWorldTest : public GlobalMapperTest {
         node_options_.append_parameter_override("ready_min_occupied", 50);
         node_options_.append_parameter_override("timeout_seconds", 2.0);
         node_options_.append_parameter_override("use_sim_time", false);
-        node_options_.append_parameter_override("input_source", "lio_world");
         node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
         node_options_.append_parameter_override("local_map_radius_m", 15.0);
 
@@ -266,7 +279,7 @@ TEST_F(GlobalMapperLioWorldTest, PublishesAccumulatedOccupiedMap) {
     std::size_t map_messages = 0U;
 
     auto sub_map = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             latest_has_first_region = false;
             latest_has_second_region = false;
             latest_width = msg->width;
@@ -336,12 +349,12 @@ TEST_F(GlobalMapperLioWorldTest, PublishesRadiusBoundedLocalMapFromGlobalOccupan
     };
 
     auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             inspect_regions(*msg, global_has_first_region, global_has_second_region);
             ++global_messages;
         });
     auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             inspect_regions(*msg, local_has_first_region, local_has_second_region);
             ++local_messages;
         });
@@ -392,7 +405,6 @@ class GlobalMapperThrottledPublishTest : public GlobalMapperTest {
         node_options_.append_parameter_override("ready_min_occupied", 1);
         node_options_.append_parameter_override("timeout_seconds", 2.0);
         node_options_.append_parameter_override("use_sim_time", false);
-        node_options_.append_parameter_override("input_source", "lio_world");
         node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
         node_options_.append_parameter_override("local_map_radius_m", 15.0);
         node_options_.append_parameter_override("global_map_publish_interval", 3);
@@ -411,11 +423,11 @@ TEST_F(GlobalMapperThrottledPublishTest, ThrottlesGlobalButNotLocalMap) {
     std::size_t global_messages = 0U;
     std::size_t local_messages = 0U;
     auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
+        "/mapping/occupancy/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
             ++global_messages;
         });
     auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
+        "/mapping/occupancy/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr) {
             ++local_messages;
         });
     ASSERT_NE(sub_global, nullptr);
@@ -454,10 +466,8 @@ class GlobalMapperPx4RetentionTest : public GlobalMapperTest {
         node_options_.append_parameter_override("ready_min_occupied", 1);
         node_options_.append_parameter_override("timeout_seconds", 5.0);
         node_options_.append_parameter_override("use_sim_time", false);
-        node_options_.append_parameter_override("input_source", "px4_full");
-        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
-        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
-        node_options_.append_parameter_override("use_lio_buffer", false);
+        node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("lio_odom_topic", "/lio/odometry");
         node_options_.append_parameter_override("enable_distance_eviction",
                                                 enable_distance_eviction);
 
@@ -465,23 +475,16 @@ class GlobalMapperPx4RetentionTest : public GlobalMapperTest {
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
-        pub_px4_odom_ = node_->create_publisher<px4_msgs::msg::VehicleOdometry>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleOdometry>(
-                "/fmu/out/vehicle_odometry"),
-            20);
-        pub_timesync_status_ = node_->create_publisher<px4_msgs::msg::TimesyncStatus>(
-            px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::TimesyncStatus>(
-                "/fmu/out/timesync_status"),
-            5);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/lio/cloud_registered", rclcpp::QoS(20).best_effort());
+        pub_lio_odom_ =
+            node_->create_publisher<nav_msgs::msg::Odometry>("/lio/odometry", 5);
     }
 
-    void PrimePx4Pose(double x, double y, double z) {
-        // The first pair establishes Timesync; the second odometry sample is
-        // deterministic even when DDS delivers the initial callbacks out of order.
-        PublishPx4Odom(x, y, z);
+    void PrimeLioPose(double x, double y, double z) {
+        PublishLioOdom(x, y, z);
         SpinMs(50);
-        PublishPx4Odom(x, y, z);
+        PublishLioOdom(x, y, z);
         SpinMs(50);
     }
 };
@@ -504,26 +507,28 @@ TEST_F(GlobalMapperPx4RetentionTest, GlobalHistoryIsIndependentOfInputSource) {
     };
 
     auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             inspect_regions(*msg, global_has_origin_region, global_has_far_region);
         });
     auto sub_local = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/local", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             inspect_regions(*msg, local_has_origin_region, local_has_far_region);
         });
     ASSERT_NE(sub_global, nullptr);
     ASSERT_NE(sub_local, nullptr);
     SpinMs(50);
 
-    PrimePx4Pose(0.0, 0.0, 0.0);
+    PrimeLioPose(0.0, 0.0, 0.0);
     pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
     SpinMs(200);
     ASSERT_TRUE(global_has_origin_region);
     ASSERT_TRUE(local_has_origin_region);
 
-    PrimePx4Pose(100.0, 0.0, 0.0);
+    PrimeLioPose(100.0, 0.0, 0.0);
     SpinMs(700);  // Exceeds the legacy 500 ms distance-eviction interval.
-    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    PublishLioOdom(100.0, 0.0, 0.0);  // Provide a pose sample near cloud stamp.
+    // In lio_world the registered cloud travels with the drone.
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f, 100.0, 0.0, 0.0));
     SpinMs(200);
 
     EXPECT_TRUE(global_has_origin_region);
@@ -543,7 +548,7 @@ TEST_F(GlobalMapperPx4DistanceEvictionTest, ExplicitOptInEvictsLegacyDistantHist
     bool has_origin_region = false;
     bool has_far_region = false;
     auto sub_global = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "/mapping/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        "/mapping/occupancy/global", 10, [&](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
             has_origin_region = false;
             has_far_region = false;
             sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
@@ -555,14 +560,16 @@ TEST_F(GlobalMapperPx4DistanceEvictionTest, ExplicitOptInEvictsLegacyDistantHist
     ASSERT_NE(sub_global, nullptr);
     SpinMs(50);
 
-    PrimePx4Pose(0.0, 0.0, 0.0);
+    PrimeLioPose(0.0, 0.0, 0.0);
     pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
     SpinMs(200);
     ASSERT_TRUE(has_origin_region);
 
-    PrimePx4Pose(100.0, 0.0, 0.0);
+    PrimeLioPose(100.0, 0.0, 0.0);
     SpinMs(700);
-    pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
+    PublishLioOdom(100.0, 0.0, 0.0);  // Provide a pose sample near cloud stamp.
+    // In lio_world the registered cloud travels with the drone.
+    pub_cloud_->publish(MakeDenseCloud(200, 3.0f, 100.0, 0.0, 0.0));
     SpinMs(200);
 
     EXPECT_FALSE(has_origin_region);
@@ -579,9 +586,8 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
         node_options_.append_parameter_override("ready_min_occupied", 50);
         node_options_.append_parameter_override("timeout_seconds", 2.0);
         node_options_.append_parameter_override("use_sim_time", false);
-        node_options_.append_parameter_override("input_source", "px4_full");
-        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
-        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
+        node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("lio_odom_topic", "/lio/odometry");
         node_options_.append_parameter_override("require_alignment_gate", true);
         node_options_.append_parameter_override("aligned_min_seconds", 0.3);
         node_options_.append_parameter_override("aligned_max_velocity", 0.1);
@@ -591,7 +597,8 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
 
-        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("/world/cloud", 20);
+        pub_cloud_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "/lio/cloud_registered", rclcpp::QoS(20).best_effort());
         pub_status_ = node_->create_publisher<px4_msgs::msg::VehicleStatus>(
             px4_ros2_utils::px4::topic::topic_name<px4_msgs::msg::VehicleStatus>(
                 "/fmu/out/vehicle_status"),
@@ -609,7 +616,7 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
                 "/fmu/out/timesync_status"),
             5);
         pub_lio_odom_ =
-            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+            node_->create_publisher<nav_msgs::msg::Odometry>("/lio/odometry", 5);
     }
 };
 
@@ -617,7 +624,7 @@ TEST_F(GlobalMapperAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     // Without alignment inputs the gate stays open for occupancy but alignment
     // is not captured, so IsReady() must remain false even with dense clouds.
     for (int i = 0; i < 5; ++i) {
-        PublishPx4Odom();
+        PublishLioOdom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }
@@ -629,7 +636,7 @@ TEST_F(GlobalMapperAlignmentTest, GateBlocksReadyUntilConditionsMet) {
     bool became_ready = false;
     for (int i = 0; i < 30; ++i) {
         PublishAlignment(true, true, 0.0, 0.001);
-        PublishPx4Odom();
+        PublishLioOdom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
         if (iface_->IsReady()) {
@@ -647,7 +654,7 @@ TEST_F(GlobalMapperAlignmentTest, GateBlockedWhenMoving) {
     // 10 Hz alignment tick (a single publish can race against gate evaluation).
     for (int i = 0; i < 5; ++i) {
         PublishAlignment(true, true, 1.0, 0.001);
-        PublishPx4Odom();
+        PublishLioOdom();
         pub_cloud_->publish(MakeDenseCloud(200, 3.0f));
         SpinMs(100);
     }

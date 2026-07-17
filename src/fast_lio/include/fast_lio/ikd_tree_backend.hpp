@@ -37,34 +37,15 @@ class IKDTreeBackend : public MapTreeInterface {
     IKDTreeBackend(const IKDTreeBackend&) = delete;
     IKDTreeBackend& operator=(const IKDTreeBackend&) = delete;
 
-    // Core operations
+    void build(const CloudType::Ptr& cloud) override;
     size_t addPoints(const PointVec& points, bool downsample = true) override;
     size_t deletePoints(const std::vector<BoxPointType>& boxes) override;
-    size_t nearestKSearch(const PointType& query, int k,
-                         std::vector<int>& indices,
-                         std::vector<float>& distances) const override;
     size_t nearestKSearchPoints(const PointType& query, int k,
                                 PointVec& neighbors,
                                 std::vector<float>& distances) const override;
-
-    // Tree management
-    void build(const CloudType::Ptr& cloud) override;
-    void rebuild() override;
-    void clear() override;
-
-    // State queries
     size_t size() const override;
-    bool empty() const override;
-    bool valid() const override;
-    bool rebuilding() const override;
-
-    // Configuration
     void setDownsampleParam(float resolution) override;
     void setLocalMapRange(const BoxPointType& box) override;
-
-    // Accessors
-    void getAllPoints(PointVec& points) const override;
-    void getRemovedPoints(PointVec& points) override;
 
     // ikd-Tree specific
     void acquireRemovedPoints(PointVec& points);

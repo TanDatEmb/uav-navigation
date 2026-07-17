@@ -53,7 +53,7 @@ def generate_launch_description():
             ],
             output='screen',
             remappings=[
-                ('/lidar_360/points', '/lidar_360/points'),
+                ('/sim/livox/mid360/points', '/sim/livox/mid360/points'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/in/obstacle_distance', '/fmu/in/obstacle_distance'),
             ]),

@@ -299,7 +299,7 @@ TEST(UtilsTest, BoundedPathRetainsNewestPoses) {
     EXPECT_EQ(path.header.stamp.sec, 4);
 }
 
-TEST(IKDTreeBackendTest, AllPointsAndSizeTrackIncrementalUpdatesAndDeletion) {
+TEST(IKDTreeBackendTest, SizeTracksIncrementalUpdatesAndDeletion) {
     auto tree = MapTreeInterface::createIKDTree();
 
     CloudType::Ptr initial(new CloudType);
@@ -319,10 +319,22 @@ TEST(IKDTreeBackendTest, AllPointsAndSizeTrackIncrementalUpdatesAndDeletion) {
     PointVec added{added_point};
     tree->addPoints(added, false);
 
-    PointVec all_points;
-    tree->getAllPoints(all_points);
-    EXPECT_EQ(all_points.size(), 3U);
     EXPECT_EQ(tree->size(), 3U);
+
+    // Verify remaining points via nearest-neighbor queries.
+    auto has_neighbor_at = [&tree](float x) {
+        PointType query;
+        query.x = x;
+        query.y = 0.0f;
+        query.z = 0.0f;
+        PointVec neighbors;
+        std::vector<float> distances;
+        return tree->nearestKSearchPoints(query, 1, neighbors, distances) > 0 &&
+               distances.front() < 0.01f;
+    };
+    EXPECT_TRUE(has_neighbor_at(0.0f));
+    EXPECT_TRUE(has_neighbor_at(2.0f));
+    EXPECT_TRUE(has_neighbor_at(4.0f));
 
     BoxPointType removal{};
     removal.vertex_min[0] = -0.1f;
@@ -333,15 +345,10 @@ TEST(IKDTreeBackendTest, AllPointsAndSizeTrackIncrementalUpdatesAndDeletion) {
     removal.vertex_max[2] = 0.1f;
     tree->deletePoints({removal});
 
-    tree->getAllPoints(all_points);
-    ASSERT_EQ(all_points.size(), 2U);
     EXPECT_EQ(tree->size(), 2U);
-    std::vector<float> remaining_x;
-    for (const auto& point : all_points) {
-        remaining_x.push_back(point.x);
-    }
-    std::sort(remaining_x.begin(), remaining_x.end());
-    EXPECT_EQ(remaining_x, (std::vector<float>{2.0f, 4.0f}));
+    EXPECT_FALSE(has_neighbor_at(0.0f));
+    EXPECT_TRUE(has_neighbor_at(2.0f));
+    EXPECT_TRUE(has_neighbor_at(4.0f));
 }
 
 TEST(LocalMapTest, SlidingCubeRemovesOnlyDepartedSlab) {
@@ -378,7 +385,7 @@ TEST(LidarProcessorTest, InitialMapAndPublishedCloudUseWorldFrame) {
     state.T_I_L = SE3d(SO3d(), Eigen::Vector3d(0.5, 0.0, 0.0));
     filter->setState(state);
 
-    auto tree = MapTreeInterface::createPCLTree();
+    auto tree = MapTreeInterface::createIKDTree();
     LidarProcessor processor(config, filter, tree);
     SyncPackage package;
     PointType point;
@@ -395,12 +402,15 @@ TEST(LidarProcessorTest, InitialMapAndPublishedCloudUseWorldFrame) {
     EXPECT_NEAR(transformed.y, 3.5, 1e-6);
     EXPECT_NEAR(transformed.z, 3.0, 1e-6);
 
-    PointVec map_points;
-    tree->getAllPoints(map_points);
-    ASSERT_EQ(map_points.size(), 1U);
-    EXPECT_NEAR(map_points.front().x, transformed.x, 1e-6);
-    EXPECT_NEAR(map_points.front().y, transformed.y, 1e-6);
-    EXPECT_NEAR(map_points.front().z, transformed.z, 1e-6);
+    EXPECT_EQ(tree->size(), 1U);
+    PointType query;
+    query.x = static_cast<float>(transformed.x);
+    query.y = static_cast<float>(transformed.y);
+    query.z = static_cast<float>(transformed.z);
+    PointVec neighbors;
+    std::vector<float> distances;
+    ASSERT_EQ(tree->nearestKSearchPoints(query, 1, neighbors, distances), 1U);
+    EXPECT_NEAR(distances.front(), 0.0f, 1e-3f);
 }
 
 TEST(MapBuilderTest, GravityInitializationSurvivesExtrinsicAssignment) {

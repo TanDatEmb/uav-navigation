@@ -22,18 +22,12 @@ def generate_launch_description():
     )
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    input_source = LaunchConfiguration('input_source')
 
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_sim_time',
             default_value='true',
             description='Use simulation clock if true'),
-
-        DeclareLaunchArgument(
-            'input_source',
-            default_value='lio_world',
-            description='Cloud source: lio_world, px4_only, px4_full, localization_deskew'),
 
         Node(
             package='px4_mapping',
@@ -43,14 +37,13 @@ def generate_launch_description():
                 config_file,
                 {
                     'use_sim_time': use_sim_time,
-                    'input_source': input_source,
                 }
             ],
             output='screen',
             remappings=[
                 ('/lio/cloud_registered', '/lio/cloud_registered'),
-                ('/mapping/global', '/mapping/global'),
-                ('/mapping/local', '/mapping/local'),
+                ('/mapping/occupancy/global', '/mapping/occupancy/global'),
+                ('/mapping/occupancy/local', '/mapping/occupancy/local'),
                 ('/lio/odometry', '/lio/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/out/vehicle_status', '/fmu/out/vehicle_status'),

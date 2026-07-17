@@ -51,7 +51,7 @@ fi
 if [[ "${MAP_INPUT_SOURCE}" == "lio_world" ]]; then
     GLOBAL_MAP_CLOUD_TOPIC="/lio/cloud_registered"
 else
-    GLOBAL_MAP_CLOUD_TOPIC="/lidar_360/points"
+    GLOBAL_MAP_CLOUD_TOPIC="/sim/livox/mid360/points"
 fi
 
 # ── PX4 paths ──────────────────────────────────────────────────────────────
@@ -226,8 +226,8 @@ ros2 run ros_gz_bridge parameter_bridge \
   "${GZ_LIDAR_IMU}@sensor_msgs/msg/Imu[gz.msgs.IMU" \
   "${GZ_WORLD_CLOCK}@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
   --ros-args \
-  -r "${GZ_LIDAR_POINTS}:=/lidar_360/points" \
-  -r "${GZ_LIDAR_IMU}:=/imu/out" \
+  -r "${GZ_LIDAR_POINTS}:=/sim/livox/mid360/points" \
+  -r "${GZ_LIDAR_IMU}:=/sim/livox/mid360/imu" \\
   -r "${GZ_WORLD_CLOCK}:=/clock"
 BGEOF
 
@@ -244,8 +244,8 @@ fi
 make_bg "fast-lio" 13 << BGEOF
 ros2 launch fast_lio fast_lio_sim.launch.py \
     use_sim_time:=true \
-    lidar_topic:=/lidar_360/points \
-    imu_topic:=/imu/out
+    lidar_topic:=/sim/livox/mid360/points \
+    imu_topic:=/sim/livox/mid360/imu
 BGEOF
 
 # ── LIO-PX4 bridge (LIO world → PX4 NED) ────────────────────────────────
@@ -268,7 +268,7 @@ ros2 run px4_mapping global_mapper \
   --params-file "${WS_DIR}/src/px4_mapping/config/defaults.yaml" \
   -p use_sim_time:=true \
     -p cloud_topic:=${GLOBAL_MAP_CLOUD_TOPIC} \
-    -p map_topic:=/mapping/global \
+    -p map_topic:=/mapping/occupancy/global \
     -p lio_odom_topic:=/lio/odometry \
     -p input_source:=${MAP_INPUT_SOURCE} \
     -p use_lio_buffer:=false
@@ -281,12 +281,12 @@ ros2 run px4_navigation obstacle_perception \
     -r __node:=obstacle_perception \
   --params-file "${WS_DIR}/src/px4_navigation/config/obstacle_perception.yaml" \
   -p use_sim_time:=true \
-  -p input_cloud_topic:=/lidar_360/points \
+    -p input_cloud_topic:=/sim/livox/mid360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \
   -p obstacle_distance_topic:=/fmu/in/obstacle_distance \
     -p local_virtual_scan_topic:=/perception/scan_1d \
-  -p grid_markers_topic:=/visualization/grid_2d5/markers \
-  -p min_distance_cloud_topic:=/visualization/grid_2d5/min_distance
+    -p grid_markers_topic:=/perception/obstacles/grid_markers \
+    -p min_distance_cloud_topic:=/perception/obstacles/min_distance_cloud
 BGEOF
 
 # ── rosbag2 (optional) ────────────────────────────────────────────────────
@@ -298,9 +298,8 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
     --qos-profile-overrides-path "${WS_DIR}/config/rosbag_qos_overrides.yaml" \
   --include-unpublished-topics \
   --topics \
-  /lidar_360/points \
-  /livox/lidar/pointcloud \
-  /imu/out \
+  /sim/livox/mid360/points \
+  /sim/livox/mid360/imu \
   /lio/odometry \
   /lio/path \
   /lio/cloud_registered \
@@ -312,9 +311,9 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   /fmu/out/vehicle_status \
   /fmu/out/vehicle_status_v1 \
   /fmu/out/vehicle_imu \
-  /visualization/grid_2d5/markers \
-  /visualization/grid_2d5/min_distance \
-  /perception/scan_1d \
+  /perception/obstacles/grid_markers \
+  /perception/obstacles/min_distance_cloud \
+  /perception/scan_1d \\
   /tf \
   /tf_static \
   /clock

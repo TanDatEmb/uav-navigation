@@ -37,7 +37,7 @@ class DebugLidarObstacle(Node):
         )
 
         self.sub_cloud = self.create_subscription(
-            PointCloud2, "/lidar_360/points", self.cloud_cb, qos_be
+            PointCloud2, "/sim/livox/mid360/points", self.cloud_cb, qos_be
         )
         self.sub_obs = self.create_subscription(
             ObstacleDistance, "/fmu/in/obstacle_distance", self.obs_cb, qos_rel

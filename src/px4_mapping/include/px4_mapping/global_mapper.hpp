@@ -62,7 +62,6 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
 
     // ROS 2 interfaces
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
-    rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr sub_odom_;
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr sub_status_;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr sub_local_pos_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_lio_odom_;
@@ -83,14 +82,11 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     int log_interval_{1};
     double timeout_seconds_{3600.0};
     std::string log_path_;
-    std::string cloud_topic_{"/world/cloud"};
-    std::string map_topic_{"/mapping/global"};
-    std::string local_map_topic_{"/mapping/local"};
+    std::string cloud_topic_{"/lio/cloud_registered"};
+    std::string map_topic_{"/mapping/occupancy/global"};
+    std::string local_map_topic_{"/mapping/occupancy/local"};
     double local_map_radius_m_{15.0};
-    std::string input_source_{"px4_full"};
-    bool deskewed_input_{false};
-    bool full_pose_input_{false};
-    bool lio_world_input_{false};
+    bool lio_world_input_{true};
 
     // Activity tracking in the node-owned ROS clock domain.
     rclcpp::Time last_data_time_;
@@ -132,22 +128,12 @@ class GlobalMapper : public rclcpp::Node, public px4_nav_common::mapping::IVoxMa
     std::atomic<bool> fatal_fault_{false};
 
     // LIO subscription monitor (ROS clock domain).
-    std::string lio_odom_topic_{"/localization/odometry"};
+    std::string lio_odom_topic_{"/lio/odometry"};
     std::size_t lio_samples_received_{0};
     rclcpp::Time lio_first_sample_time_;
 
-    // Timestamped pose buffers for scan-time raycast origin lookup
+    // Timestamped pose buffer for scan-time raycast origin lookup.
     px4_mapping::time::PoseBuffer lio_buf_;
-    px4_mapping::time::PoseBuffer px4_buf_;
-
-    // Rollback knob
-    bool use_lio_buffer_{true};
-
-    // Converts PX4 timestamps using the authoritative PX4 timesync offset.
-    px4_ros2_utils::time::Timesync timesync_;
-
-    // PX4 timesync status subscription used to keep timesync_ valid.
-    rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr sub_timesync_status_;
 
     // Alignment gate: when enabled, the node waits for the drone to be armed,
     // nearly stationary, EKF position valid, and LIO covariance small before

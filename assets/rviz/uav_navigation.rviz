@@ -68,7 +68,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mapping/global
+        Value: /mapping/occupancy/global
       Use Fixed Frame: true
       Use rainbow: false
       Value: true
@@ -100,7 +100,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mapping/local
+        Value: /mapping/occupancy/local
       Use Fixed Frame: true
       Use rainbow: false
       Value: true
