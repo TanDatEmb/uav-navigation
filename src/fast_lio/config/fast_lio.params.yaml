@@ -13,24 +13,16 @@
     world_frame: "lio_world" # FAST-LIO world frame
     lidar_frame: "mid360_lidar_frame" # Expected LiDAR sensor frame_id from Gazebo
 
-    # --- LiDAR input decoder configuration ---
-    # Replaces sim_mode. The decoder normalizes PointCloud2 into
-    # NormalizedLidarScan with per-point time in seconds.
+    # --- LiDAR input adapter selection ---
+    # Replaces sim_mode and the monolithic PointCloud2Decoder config block.
+    # Supported adapters:
+    #   - "sim_snapshot": Gazebo GPU-LiDAR XYZI snapshot, no per-point time.
+    #   - "mid360_pointcloud2": MID-360 PointCloud2 replay with offset_time + tag/line.
+    #   - "mid360_custom": MID-360 hardware via livox_ros_driver2::msg::CustomMsg
+    #     (requires livox_ros_driver2; throws at runtime if not built with it).
+    lidar_input.adapter: "sim_snapshot"
+    # Legacy profile kept for backward compatibility; ignored when adapter is set.
     lidar_input.profile: "sim_xyzi_snapshot"
-    # Simulation snapshot decoder configuration.
-    # Real MID-360S uses livox_ros_driver2::msg::CustomMsg (Mid360CustomMsgDecoder).
-    lidar_input.time_field: ""
-    lidar_input.time_unit: "nanoseconds"
-    lidar_input.header_stamp_is_scan_start: true
-    lidar_input.require_per_point_time: false
-    lidar_input.max_scan_duration_s: 0.2
-    lidar_input.intensity_field: "intensity"
-    lidar_input.line_field: "line"
-    lidar_input.tag_field: "tag"
-    lidar_input.min_range_m: 0.5
-    lidar_input.max_range_m: 100.0
-    lidar_input.point_stride: 1
-    lidar_input.filter_livox_tags: false
 
     # Debug and bounded publication/backlog state
     print_time_cost: false

@@ -16,6 +16,9 @@
 #include <stdexcept>
 
 #include "fast_lio/commons.hpp"
+#include "fast_lio/input/lidar_input_adapter.hpp"
+#include "fast_lio/input/mid360_custom_adapter.hpp"
+#include "fast_lio/input/pointcloud2_adapter.hpp"
 #include "fast_lio/lidar_scan.hpp"
 #include "fast_lio/map_builder.hpp"
 #include "fast_lio/measurement_synchronizer.hpp"
@@ -55,8 +58,9 @@ class FastLIONode : public rclcpp::Node {
 
         loadParameters();
 
-        // Initialize the PointCloud2 decoder with loaded config
-        m_decoder = std::make_unique<PointCloud2Decoder>(m_decoder_config);
+        // Initialize the LiDAR input adapter. The adapter hides sensor-specific
+        // decoding (PointCloud2 snapshot, MID-360 PointCloud2, Livox CustomMsg).
+        m_lidar_adapter = createLidarAdapter();
 
         // Initialize the MeasurementSynchronizer
         m_synchronizer = std::make_unique<MeasurementSynchronizer>(m_sync_config);
@@ -66,9 +70,10 @@ class FastLIONode : public rclcpp::Node {
             m_node_config.imu_topic, 10,
             std::bind(&FastLIONode::imuCallback, this, std::placeholders::_1));
 
-        // LiDAR subscription - PointCloud2 simulation snapshot adapter.
-        // Real MID-360S hardware uses livox_ros_driver2::msg::CustomMsg via
-        // Mid360CustomMsgDecoder (see input/mid360_custom_decoder.hpp).
+        // LiDAR subscription - PointCloud2 path (sim snapshot or MID-360 replay).
+        // Real MID-360S hardware via livox_ros_driver2::msg::CustomMsg requires
+        // wiring makeMid360CustomAdapter() to a CustomMsg subscription; see
+        // input/mid360_custom_adapter.hpp.
         m_lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             m_node_config.lidar_topic, 10,
             std::bind(&FastLIONode::lidarCallback, this, std::placeholders::_1));
@@ -94,8 +99,8 @@ class FastLIONode : public rclcpp::Node {
         m_timer = this->create_wall_timer(20ms, std::bind(&FastLIONode::timerCallback, this));
 
         RCLCPP_INFO(this->get_logger(), "FAST-LIO2 Node Started");
-        RCLCPP_INFO(this->get_logger(), "Input profile: per_point_time=%s",
-                    m_decoder_config.time_field.empty() ? "disabled" : m_decoder_config.time_field.c_str());
+        RCLCPP_INFO(this->get_logger(), "LiDAR adapter: %s",
+                    m_lidar_adapter ? m_lidar_adapter->name().c_str() : "none");
         RCLCPP_INFO(this->get_logger(), "Body frame: %s, World frame: %s",
                     m_node_config.body_frame.c_str(), m_node_config.world_frame.c_str());
     }
@@ -113,53 +118,27 @@ class FastLIONode : public rclcpp::Node {
             this->declare_parameter<std::string>("body_frame", m_node_config.body_frame);
         m_node_config.world_frame =
             this->declare_parameter<std::string>("world_frame", m_node_config.world_frame);
-        // --- LiDAR input decoder configuration ---
-        // Replaces sim_mode with explicit per-point time configuration.
-        const std::string input_profile_str =
+        // --- LiDAR input adapter selection ---
+        // Adapter decouples the node from sensor-specific message formats.
+        // Supported: "sim_snapshot", "mid360_pointcloud2", "mid360_custom".
+        m_adapter_type =
+            this->declare_parameter<std::string>("lidar_input.adapter", "");
+        if (m_adapter_type.empty()) {
+            // Backward compatibility: map legacy lidar_input.profile to adapter.
+            const std::string input_profile_str =
+                this->declare_parameter<std::string>("lidar_input.profile", "sim_xyzi_snapshot");
+            if (input_profile_str == "mid360_pointcloud2") {
+                m_adapter_type = "mid360_pointcloud2";
+            } else {
+                m_adapter_type = "sim_snapshot";
+            }
+        } else {
+            // Declare legacy profile so existing parameter files do not fail,
+            // but do not use its value when adapter is explicit.
             this->declare_parameter<std::string>("lidar_input.profile", "sim_xyzi_snapshot");
-        if (input_profile_str == "mid360_pointcloud2") {
-            m_decoder_config.profile = LidarInputProfile::kMid360PointCloud2;
-        } else {
-            m_decoder_config.profile = LidarInputProfile::kSimXyziSnapshot;
         }
 
-        m_decoder_config.lidar_frame =
-            this->declare_parameter<std::string>("lidar_frame", "mid360_lidar");
-        m_decoder_config.time_field =
-            this->declare_parameter<std::string>("lidar_input.time_field", "");
-
-        const std::string time_unit_str =
-            this->declare_parameter<std::string>("lidar_input.time_unit", "nanoseconds");
-        if (time_unit_str == "seconds") {
-            m_decoder_config.time_unit = TimeUnit::kSeconds;
-        } else if (time_unit_str == "milliseconds") {
-            m_decoder_config.time_unit = TimeUnit::kMilliseconds;
-        } else if (time_unit_str == "microseconds") {
-            m_decoder_config.time_unit = TimeUnit::kMicroseconds;
-        } else {
-            m_decoder_config.time_unit = TimeUnit::kNanoseconds;
-        }
-
-        m_decoder_config.header_stamp_is_scan_start =
-            this->declare_parameter<bool>("lidar_input.header_stamp_is_scan_start", true);
-        m_decoder_config.require_per_point_time =
-            this->declare_parameter<bool>("lidar_input.require_per_point_time", false);
-        m_decoder_config.max_scan_duration_s =
-            this->declare_parameter<double>("lidar_input.max_scan_duration_s", 0.2);
-        m_decoder_config.intensity_field =
-            this->declare_parameter<std::string>("lidar_input.intensity_field", "intensity");
-        m_decoder_config.line_field =
-            this->declare_parameter<std::string>("lidar_input.line_field", "line");
-        m_decoder_config.tag_field =
-            this->declare_parameter<std::string>("lidar_input.tag_field", "tag");
-        m_decoder_config.min_range_m =
-            this->declare_parameter<double>("lidar_input.min_range_m", 0.5);
-        m_decoder_config.max_range_m =
-            this->declare_parameter<double>("lidar_input.max_range_m", 100.0);
-        m_decoder_config.point_stride =
-            this->declare_parameter<int>("lidar_input.point_stride", 1);
-        m_decoder_config.filter_livox_tags =
-            this->declare_parameter<bool>("lidar_input.filter_livox_tags", false);
+        // Validation of m_adapter_type happens after the 'fail' helper is defined.
 
         m_node_config.print_time_cost =
             this->declare_parameter<bool>("print_time_cost", m_node_config.print_time_cost);
@@ -232,6 +211,12 @@ class FastLIONode : public rclcpp::Node {
             throw std::invalid_argument(reason);
         };
 
+        if (m_adapter_type != "sim_snapshot" &&
+            m_adapter_type != "mid360_pointcloud2" &&
+            m_adapter_type != "mid360_custom") {
+            fail("lidar_input.adapter must be one of: sim_snapshot, mid360_pointcloud2, mid360_custom");
+        }
+
         if (m_node_config.imu_topic.empty() || m_node_config.lidar_topic.empty()) {
             fail("imu_topic and lidar_topic must not be empty");
         }
@@ -284,14 +269,29 @@ class FastLIONode : public rclcpp::Node {
         }
 
         RCLCPP_INFO(this->get_logger(),
-                    "ROS parameters loaded: scan=%.2fm map=%.2fm KNN=%d IESKF=%d range=[%.1f, "
+                    "ROS parameters loaded: scan=%.2fm map=%.2fm KNN=%zu IESKF=%zu range=[%.1f, "
                     "%.1f]m",
                     m_builder_config.scan_resolution, m_builder_config.map_resolution,
-                    m_builder_config.knn_search_count, m_builder_config.ieskf_max_iter,
+                    m_builder_config.knn_search_count,
+                    static_cast<std::size_t>(m_builder_config.ieskf_max_iter),
                     m_builder_config.lidar_min_range, m_builder_config.lidar_max_range);
         RCLCPP_INFO(this->get_logger(), "LiDAR-IMU translation: [%.3f, %.3f, %.3f]",
                     m_builder_config.t_I_L.x(), m_builder_config.t_I_L.y(),
                     m_builder_config.t_I_L.z());
+    }
+
+    std::unique_ptr<LidarInputAdapter> createLidarAdapter() const {
+        if (m_adapter_type == "sim_snapshot") {
+            return makeSimSnapshotAdapter();
+        }
+        if (m_adapter_type == "mid360_pointcloud2") {
+            return makeMid360PointCloud2Adapter();
+        }
+        if (m_adapter_type == "mid360_custom") {
+            return makeMid360CustomAdapter();
+        }
+        // Should never reach here because loadParameters validates the type.
+        throw std::invalid_argument("Unknown LiDAR adapter type: " + m_adapter_type);
     }
 
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
@@ -320,7 +320,7 @@ class FastLIONode : public rclcpp::Node {
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-        DecodeResult result = m_decoder->decode(*msg);
+        DecodeResult result = m_lidar_adapter->decode(*msg);
 
         if (!result.ok()) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
@@ -508,13 +508,13 @@ class FastLIONode : public rclcpp::Node {
     SyncPackage m_package;
     NodeConfig m_node_config;
     Config m_builder_config;
-    PointCloudDecoderConfig m_decoder_config;
     SynchronizerConfig m_sync_config;
     nav_msgs::msg::Path m_path;
+    std::string m_adapter_type;
 
     std::shared_ptr<IESKF> m_kf;
     std::unique_ptr<MapBuilder> m_builder;
-    std::unique_ptr<PointCloud2Decoder> m_decoder;
+    std::unique_ptr<LidarInputAdapter> m_lidar_adapter;
     std::unique_ptr<MeasurementSynchronizer> m_synchronizer;
 };
 

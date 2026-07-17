@@ -60,6 +60,8 @@ add_library(${PROJECT_NAME}_core SHARED
   src/map_builder/map_builder.cpp
   src/map_builder/ikd_tree.cpp
   src/map_builder/ikd_tree_backend.cpp
+  src/input/mid360_custom_adapter.cpp
+  src/input/pointcloud2_adapter.cpp
   src/lidar_deskewer.cpp
   src/measurement_synchronizer.cpp
   src/pointcloud2_decoder.cpp
@@ -156,6 +158,14 @@ if(BUILD_TESTING)
   ament_add_gtest(test_pointcloud2_decoder test/test_pointcloud2_decoder.cpp)
   target_link_libraries(test_pointcloud2_decoder ${PROJECT_NAME}_core)
   ament_target_dependencies(test_pointcloud2_decoder
+    rclcpp
+    sensor_msgs
+  )
+
+  # New: LiDAR input adapter tests
+  ament_add_gtest(test_lidar_input_adapters test/test_lidar_input_adapters.cpp)
+  target_link_libraries(test_lidar_input_adapters ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_lidar_input_adapters
     rclcpp
     sensor_msgs
   )

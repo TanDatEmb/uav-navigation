@@ -92,31 +92,26 @@ a second set of values.
 | `body_frame` | `mid360_imu` | FLU IMU/body state |
 | `lidar_frame` | `mid360_lidar` | Expected LiDAR sensor frame_id |
 
-### LiDAR input decoder
+### LiDAR input adapters
 
-The `PointCloud2Decoder` normalizes `sensor_msgs::PointCloud2` into a
-`NormalizedLidarScan` before any synchronization, deskew, or map update.
+The node selects a `LidarInputAdapter` via `lidar_input.adapter`. The adapter
+hides sensor-specific message decoding and produces a `NormalizedLidarScan`
+before synchronization, deskew, or map update.
 
-Replaces the former `sim_mode` boolean with explicit per-point time
-configuration:
+| Adapter | Message type | Use case |
+| --- | --- | --- |
+| `sim_snapshot` | `sensor_msgs::PointCloud2` | Gazebo GPU-LiDAR XYZI snapshot |
+| `mid360_pointcloud2` | `sensor_msgs::PointCloud2` | MID-360 replay with `offset_time` |
+| `mid360_custom` | `livox_ros_driver2::msg::CustomMsg` | MID-360 hardware (requires `livox_ros_driver2`) |
 
-| Parameter | SIM default | REAL MID-360 | Meaning |
-| --- | --- | --- | --- |
-| `lidar_input.profile` | `sim_xyzi_snapshot` | `mid360_pointcloud2` | Input profile |
-| `lidar_input.time_field` | `""` (none) | `offset_time` | Per-point time field name |
-| `lidar_input.time_unit` | `nanoseconds` | `nanoseconds` | Time unit: seconds/ms/us/ns |
-| `lidar_input.header_stamp_is_scan_start` | `true` | `true` | Header stamp semantics |
-| `lidar_input.require_per_point_time` | `false` | `true` | Reject if time field missing |
-| `lidar_input.max_scan_duration_s` | `0.2` | `0.2` | Max scan duration |
-| `lidar_input.min_range_m` | `0.5` | `0.5` | Min range filter |
-| `lidar_input.max_range_m` | `100.0` | `100.0` | Max range filter |
-| `lidar_input.filter_livox_tags` | `false` | `true` | Filter by Livox tag bits |
-| `lidar_input.point_stride` | `1` | `1` | Keep every N-th point |
+The legacy `lidar_input.profile` parameter is still accepted for backward
+compatibility and maps to the corresponding adapter when `lidar_input.adapter`
+is not set.
 
 **Contract:** `curvature` in `PointXYZINormal` stores per-point relative time
-in **seconds** (not milliseconds). Points are sorted by ascending time by
-the decoder. `scan_start_time_s` and `scan_end_time_s` are computed by the
-decoder and consumed directly by the synchronizer.
+in **seconds** (not milliseconds). Points are sorted by ascending time by the
+adapter. `scan_start_time_s` and `scan_end_time_s` are computed by the
+adapter and consumed directly by the synchronizer.
 
 ### Deskew (Layer 3)
 
