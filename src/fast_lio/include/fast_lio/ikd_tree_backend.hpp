@@ -27,8 +27,7 @@ class IKDTreeBackend : public MapTreeInterface {
     explicit IKDTreeBackend(
         float delete_criterion = 0.4f,
         float balance_criterion = 0.6f,
-        float downsample_resolution = 0.15f,
-        int rebuild_threshold = 1500
+        float downsample_resolution = 0.15f
     );
 
     ~IKDTreeBackend() override;
@@ -45,13 +44,13 @@ class IKDTreeBackend : public MapTreeInterface {
                                 std::vector<float>& distances) const override;
     size_t size() const override;
     void setDownsampleParam(float resolution) override;
-    void setLocalMapRange(const BoxPointType& box) override;
-
-    // ikd-Tree specific
-    void acquireRemovedPoints(PointVec& points);
-    void forceRebuild();
 
  private:
+    /// Find the existing point inside the voxel of @p query that is closest to
+    /// the voxel center. Returns true if a representative was found.
+    bool findVoxelRepresentative(const PointType& query, float resolution,
+                                 PointType& representative);
+
     // ikd-Tree instance
     KD_TREE<PointType> tree_;
 
@@ -63,7 +62,6 @@ class IKDTreeBackend : public MapTreeInterface {
         float delete_criterion;
         float balance_criterion;
         float downsample_resolution;
-        int rebuild_threshold;
     } config_;
 };
 

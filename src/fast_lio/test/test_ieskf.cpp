@@ -348,6 +348,51 @@ TEST(IKDTreeBackendTest, SizeTracksIncrementalUpdatesAndDeletion) {
     EXPECT_TRUE(has_neighbor_at(4.0f));
 }
 
+TEST(IKDTreeBackendTest, VoxelCenterInsertionKeepsClosestRepresentative) {
+    auto tree = MapTreeInterface::createIKDTree();
+    tree->setDownsampleParam(1.0f);
+
+    // Voxel [0, 1) has center 0.5.
+    auto makePoint = [](float x) {
+        PointType p;
+        p.x = x;
+        p.y = 0.0f;
+        p.z = 0.0f;
+        return p;
+    };
+
+    // ikd-Tree requires an initial Build before Add_Points can be used.
+    CloudType::Ptr initial(new CloudType);
+    initial->push_back(makePoint(0.4f));
+    tree->build(initial);
+
+    auto nearestTo = [&tree, &makePoint](float x) {
+        PointVec neighbors;
+        std::vector<float> distances;
+        tree->nearestKSearchPoints(makePoint(x), 1, neighbors, distances);
+        return neighbors.empty() ? std::numeric_limits<float>::infinity()
+                                 : neighbors.front().x;
+    };
+    EXPECT_NEAR(nearestTo(0.5f), 0.4f, 1e-3f);
+
+    // A farther point is rejected.
+    PointVec second{makePoint(0.1f)};
+    EXPECT_EQ(tree->addPoints(second, true), 0U);
+    EXPECT_EQ(tree->size(), 1U);
+
+    // A closer point replaces the representative.
+    PointVec third{makePoint(0.55f)};
+    EXPECT_EQ(tree->addPoints(third, true), 1U);
+    EXPECT_EQ(tree->size(), 1U);
+    EXPECT_NEAR(nearestTo(0.5f), 0.55f, 1e-3f);
+
+    // A point in a new voxel is inserted without downsampling.
+    PointVec fourth{makePoint(1.6f)};
+    EXPECT_EQ(tree->addPoints(fourth, true), 1U);
+    EXPECT_EQ(tree->size(), 2U);
+    EXPECT_NEAR(nearestTo(1.5f), 1.6f, 1e-3f);
+}
+
 TEST(LocalMapTest, SlidingCubeRemovesOnlyDepartedSlab) {
     LocalMap local_map;
     local_map.initialized = true;

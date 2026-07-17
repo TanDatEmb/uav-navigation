@@ -48,9 +48,6 @@ class MapTreeInterface {
     /// Set incremental downsampling resolution.
     virtual void setDownsampleParam(float resolution) = 0;
 
-    /// Set sliding local-map bounding box.
-    virtual void setLocalMapRange(const BoxPointType& box) = 0;
-
     /// Create the production ikd-Tree backend.
     static std::shared_ptr<MapTreeInterface> createIKDTree();
 };
