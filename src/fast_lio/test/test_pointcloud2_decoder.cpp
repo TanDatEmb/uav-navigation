@@ -164,8 +164,8 @@ TEST(PointCloud2DecoderSimTest, AcceptsValidXyziSnapshot) {
     ASSERT_TRUE(result.ok()) << result.errorMessage();
     EXPECT_EQ(result.scan.cloud->points.size(), 3u);
     EXPECT_FALSE(result.scan.has_per_point_time);
-    EXPECT_NEAR(result.scan.scan_start_time_s, 10.0, 1e-9);
-    EXPECT_NEAR(result.scan.scan_end_time_s, 10.0, 1e-9);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_start_time_ns) * 1e-9, 10.0, 1e-9);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_end_time_ns) * 1e-9, 10.0, 1e-9);
 
     for (const auto& pt : result.scan.cloud->points) {
         EXPECT_FLOAT_EQ(pt.curvature, 0.0f);
@@ -292,8 +292,8 @@ TEST(PointCloud2DecoderMid360Test, ParsesOffsetTimeNanoseconds) {
     EXPECT_NEAR(result.scan.cloud->points[2].curvature, 0.02, 1e-6);
 
     // Scan bounds: header=10.0 (start), max_rel_time=0.02s
-    EXPECT_NEAR(result.scan.scan_start_time_s, 10.0, 1e-9);
-    EXPECT_NEAR(result.scan.scan_end_time_s, 10.02, 1e-9);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_start_time_ns) * 1e-9, 10.0, 1e-9);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_end_time_ns) * 1e-9, 10.02, 1e-9);
 }
 
 TEST(PointCloud2DecoderMid360Test, SortsUnorderedTime) {
@@ -477,8 +477,8 @@ TEST(TimeUnitConversionTest, ConvertsAllUnits) {
 TEST(NormalizedLidarScanTest, DefaultConstructsEmpty) {
     NormalizedLidarScan scan;
     EXPECT_TRUE(scan.cloud->empty());
-    EXPECT_DOUBLE_EQ(scan.scan_start_time_s, 0.0);
-    EXPECT_DOUBLE_EQ(scan.scan_end_time_s, 0.0);
+    EXPECT_DOUBLE_EQ(static_cast<double>(scan.scan_start_time_ns) * 1e-9, 0.0);
+    EXPECT_DOUBLE_EQ(static_cast<double>(scan.scan_end_time_ns) * 1e-9, 0.0);
     EXPECT_FALSE(scan.has_per_point_time);
     EXPECT_TRUE(scan.lidar_frame.empty());
 }

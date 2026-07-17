@@ -17,8 +17,8 @@ namespace {
 // Helpers
 NormalizedLidarScan makeTimedScan(double start, double end, int num_points) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = start;
-    scan.scan_end_time_s = end;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(start * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(end * 1e9);
     scan.has_per_point_time = true;
     scan.lidar_frame = "lidar";
     scan.cloud->width = num_points;
@@ -38,8 +38,8 @@ NormalizedLidarScan makeTimedScan(double start, double end, int num_points) {
 NormalizedLidarScan makeTimedScanWithPoints(double start, double end,
                                                const std::vector<Eigen::Vector3f>& points) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = start;
-    scan.scan_end_time_s = end;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(start * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(end * 1e9);
     scan.has_per_point_time = true;
     scan.lidar_frame = "lidar";
     scan.cloud->width = static_cast<uint32_t>(points.size());
@@ -290,8 +290,8 @@ TEST(LidarDeskewerTest, D8_PointOutsideTrajectoryRejected) {
 // D9: SIM snapshot → deskew skipped
 TEST(LidarDeskewerTest, D9_SimSnapshotSkipsDeskew) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = 1.0;
-    scan.scan_end_time_s = 1.0;  // zero duration
+    scan.scan_start_time_ns = static_cast<std::int64_t>(1.0 * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(1.0 * 1e9);  // zero duration
     scan.has_per_point_time = false;
 
     EXPECT_FALSE(LidarDeskewer::needsDeskew(scan));
@@ -377,8 +377,8 @@ TEST(LidarDeskewerTest, D11_LeverArmWhileRotating) {
 // needsDeskew tests
 TEST(LidarDeskewerTest, NeedsDeskewRealTimedScan) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = 1.0;
-    scan.scan_end_time_s = 1.1;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(1.0 * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(1.1 * 1e9);
     scan.has_per_point_time = true;
     scan.cloud->width = 10;
     scan.cloud->height = 1;
@@ -388,8 +388,8 @@ TEST(LidarDeskewerTest, NeedsDeskewRealTimedScan) {
 
 TEST(LidarDeskewerTest, NoDeskewForZeroDuration) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = 1.0;
-    scan.scan_end_time_s = 1.0;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(1.0 * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(1.0 * 1e9);
     scan.has_per_point_time = true;
     scan.cloud->width = 10;
     scan.cloud->height = 1;
@@ -399,8 +399,8 @@ TEST(LidarDeskewerTest, NoDeskewForZeroDuration) {
 
 TEST(LidarDeskewerTest, NoDeskewForNoPerPointTime) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = 1.0;
-    scan.scan_end_time_s = 1.1;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(1.0 * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(1.1 * 1e9);
     scan.has_per_point_time = false;
     scan.cloud->width = 10;
     scan.cloud->height = 1;

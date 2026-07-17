@@ -61,8 +61,10 @@ void MeasurementSynchronizer::pushLidar(const NormalizedLidarScan& scan) {
         return;
     }
 
+    const double scan_start_s = static_cast<double>(scan.scan_start_time_ns) * 1e-9;
+
     // Large regression — check before duplicate
-    if (scan.scan_start_time_s < last_lidar_start_time_ - 1.0 &&
+    if (scan_start_s < last_lidar_start_time_ - 1.0 &&
         last_lidar_start_time_ > -1e17) {
         imu_buffer_.clear();
         lidar_buffer_.clear();
@@ -73,14 +75,14 @@ void MeasurementSynchronizer::pushLidar(const NormalizedLidarScan& scan) {
     }
 
     // Duplicate or small regression (after reset check)
-    if (scan.scan_start_time_s <= last_lidar_start_time_ + config_.timestamp_epsilon_s &&
+    if (scan_start_s <= last_lidar_start_time_ + config_.timestamp_epsilon_s &&
         last_lidar_start_time_ > -1e17) {
         ++diagnostics_.lidar_out_of_order;
         return;
     }
 
     lidar_buffer_.push_back(scan);
-    last_lidar_start_time_ = scan.scan_start_time_s;
+    last_lidar_start_time_ = scan_start_s;
 
     trimLidarBuffer();
 }
@@ -121,8 +123,8 @@ SyncResult MeasurementSynchronizer::tryPop() {
     // Cache front scan info on first access
     if (!lidar_pushed_) {
         const NormalizedLidarScan& scan = lidar_buffer_.front();
-        cached_start_time_ = scan.scan_start_time_s;
-        cached_end_time_ = scan.scan_end_time_s;
+        cached_start_time_ = static_cast<double>(scan.scan_start_time_ns) * 1e-9;
+        cached_end_time_ = static_cast<double>(scan.scan_end_time_ns) * 1e-9;
         cached_has_per_point_time_ = scan.has_per_point_time;
         lidar_pushed_ = true;
     }

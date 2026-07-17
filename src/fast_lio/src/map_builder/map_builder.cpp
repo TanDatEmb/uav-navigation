@@ -63,9 +63,11 @@ LidarUpdateResult MapBuilder::process(SyncPackage& package) {
     // 2. Deskew point cloud (if needed)
     NormalizedLidarScan scan;
     scan.cloud = package.cloud;
-    scan.scan_start_time_s = package.cloud_start_time;
-    scan.scan_end_time_s = package.cloud_end_time;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(package.cloud_start_time * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(package.cloud_end_time * 1e9);
     scan.has_per_point_time = package.has_per_point_time;
+    scan.timing_model = package.has_per_point_time ? LidarTimingModel::kAbsolutePointTime
+                                                   : LidarTimingModel::kSnapshot;
 
     CloudType::Ptr cloud_for_matching = package.cloud;  // Default: use raw
 

@@ -106,6 +106,20 @@ struct PointCloudDecoderConfig {
 };
 
 // ============================================================
+// Timing model
+// ============================================================
+
+/// @brief Describes how scan start/end times were derived from the raw input.
+enum class LidarTimingModel : int {
+    /// No per-point time; header stamp is treated as a single instantaneous scan.
+    kSnapshot = 0,
+    /// Per-point absolute timestamps; scan interval is derived from min/max.
+    kAbsolutePointTime = 1,
+    /// Per-point relative offsets from a message-level timebase.
+    kRelativePointTime = 2,
+};
+
+// ============================================================
 // Normalized LiDAR scan
 // ============================================================
 
@@ -113,10 +127,10 @@ struct PointCloudDecoderConfig {
 ///
 /// Points are in the LiDAR sensor frame (no transform applied).
 /// Per-point time is stored in `PointType::curvature` as **seconds** relative
-/// to scan_start_time_s. Points are sorted by ascending relative time.
+/// to scan_start_time_ns. Points are sorted by ascending relative time.
 ///
 /// Contract:
-///   - scan_start_time_s <= scan_end_time_s
+///   - scan_start_time_ns <= scan_end_time_ns
 ///   - If has_per_point_time: curvature >= 0 for all points
 ///   - If !has_per_point_time: curvature == 0 for all points
 ///   - All points have finite XYZ and valid range
@@ -124,14 +138,17 @@ struct NormalizedLidarScan {
     /// Point cloud in LiDAR frame. curvature = relative_time_s (seconds).
     CloudType::Ptr cloud;
 
-    /// Scan start time in seconds (epoch/sim time).
-    double scan_start_time_s = 0.0;
+    /// Scan start time in integer nanoseconds (epoch/sim time).
+    std::int64_t scan_start_time_ns = 0;
 
-    /// Scan end time in seconds (epoch/sim time).
-    double scan_end_time_s = 0.0;
+    /// Scan end time in integer nanoseconds (epoch/sim time).
+    std::int64_t scan_end_time_ns = 0;
 
     /// Whether per-point timestamps were present and decoded.
     bool has_per_point_time = false;
+
+    /// How the scan timing was derived.
+    LidarTimingModel timing_model = LidarTimingModel::kSnapshot;
 
     /// Frame_id from the original PointCloud2 header.
     std::string lidar_frame;

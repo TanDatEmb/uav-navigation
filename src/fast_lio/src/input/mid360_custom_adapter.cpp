@@ -43,6 +43,7 @@ DecodeResult Mid360CustomAdapter::decode(const livox_ros_driver2::msg::CustomMsg
     NormalizedLidarScan& scan = result.scan;
     scan.lidar_frame = msg.header.frame_id;
     scan.has_per_point_time = true;
+    scan.timing_model = LidarTimingModel::kRelativePointTime;
     scan.cloud->clear();
     scan.cloud->is_dense = false;
     scan.cloud->height = 1;
@@ -125,8 +126,8 @@ DecodeResult Mid360CustomAdapter::decode(const livox_ros_driver2::msg::CustomMsg
     std::sort(scan.cloud->points.begin(), scan.cloud->points.end(),
               [](const PointType& a, const PointType& b) { return a.curvature < b.curvature; });
 
-    scan.scan_start_time_s = timebase_s + min_rel_s;
-    scan.scan_end_time_s = timebase_s + max_rel_s;
+    scan.scan_start_time_ns = static_cast<std::int64_t>((timebase_s + min_rel_s) * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>((timebase_s + max_rel_s) * 1e9);
     scan.cloud->width = static_cast<std::uint32_t>(scan.cloud->points.size());
     scan.cloud->is_dense = true;
 

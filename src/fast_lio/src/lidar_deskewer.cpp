@@ -8,8 +8,10 @@
 namespace fast_lio {
 
 bool LidarDeskewer::needsDeskew(const NormalizedLidarScan& scan, double time_epsilon) {
+    const double start_s = static_cast<double>(scan.scan_start_time_ns) * 1e-9;
+    const double end_s = static_cast<double>(scan.scan_end_time_ns) * 1e-9;
     return scan.has_per_point_time &&
-           scan.scan_end_time_s > scan.scan_start_time_s + time_epsilon &&
+           end_s > start_s + time_epsilon &&
            scan.cloud->points.size() > 1;
 }
 
@@ -18,11 +20,14 @@ DeskewResult LidarDeskewer::deskewToScanEnd(const NormalizedLidarScan& scan,
                                              const SE3d& T_I_L,
                                              const SE3d& T_W_I_end) const {
     DeskewResult result;
-    result.reference_time_s = scan.scan_end_time_s;
+    result.reference_time_s = static_cast<double>(scan.scan_end_time_ns) * 1e-9;
+
+    const double scan_start_s = static_cast<double>(scan.scan_start_time_ns) * 1e-9;
+    const double scan_end_s = static_cast<double>(scan.scan_end_time_ns) * 1e-9;
 
     // Validate trajectory covers scan time range
-    if (!trajectory.covers(scan.scan_start_time_s) ||
-        !trajectory.covers(scan.scan_end_time_s)) {
+    if (!trajectory.covers(scan_start_s) ||
+        !trajectory.covers(scan_end_s)) {
         result.status = DeskewStatus::kInvalidTrajectory;
         result.cloud->points.clear();
         return result;
@@ -48,7 +53,7 @@ DeskewResult LidarDeskewer::deskewToScanEnd(const NormalizedLidarScan& scan,
     // First pass: validate all points are within trajectory coverage
     // This ensures we don't produce a hybrid deskewed/raw cloud
     for (const auto& src_pt : src_cloud.points) {
-        const double point_time_s = scan.scan_start_time_s + static_cast<double>(src_pt.curvature);
+        const double point_time_s = scan_start_s + static_cast<double>(src_pt.curvature);
         if (!trajectory.covers(point_time_s)) {
             result.status = DeskewStatus::kInvalidTrajectory;
             result.cloud->points.clear();
@@ -71,7 +76,7 @@ DeskewResult LidarDeskewer::deskewToScanEnd(const NormalizedLidarScan& scan,
         dst_pt.normal_z = src_pt.normal_z;
 
         // Compute absolute point time
-        const double point_time_s = scan.scan_start_time_s + static_cast<double>(src_pt.curvature);
+        const double point_time_s = scan_start_s + static_cast<double>(src_pt.curvature);
 
         // Advance knot_index to the interval containing point_time
         while (knot_index + 1 < trajectory.size() &&

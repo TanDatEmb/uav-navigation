@@ -22,8 +22,8 @@ namespace {
 NormalizedLidarScan makeScan(double start_time, double end_time, bool has_per_point_time,
                               int num_points = 3) {
     NormalizedLidarScan scan;
-    scan.scan_start_time_s = start_time;
-    scan.scan_end_time_s = end_time;
+    scan.scan_start_time_ns = static_cast<std::int64_t>(start_time * 1e9);
+    scan.scan_end_time_ns = static_cast<std::int64_t>(end_time * 1e9);
     scan.has_per_point_time = has_per_point_time;
     scan.lidar_frame = "mid360_lidar";
     scan.cloud->width = num_points;

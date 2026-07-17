@@ -144,12 +144,14 @@ double PointCloud2Decoder::readFieldValue(const std::uint8_t* data_ptr,
 void PointCloud2Decoder::computeScanTimeBounds(NormalizedLidarScan& scan,
                                                 double header_time,
                                                 double max_rel_time) const {
+    const std::int64_t header_ns = static_cast<std::int64_t>(header_time * 1e9);
+    const std::int64_t max_rel_ns = static_cast<std::int64_t>(max_rel_time * 1e9);
     if (config_.header_stamp_is_scan_start) {
-        scan.scan_start_time_s = header_time;
-        scan.scan_end_time_s = header_time + max_rel_time;
+        scan.scan_start_time_ns = header_ns;
+        scan.scan_end_time_ns = header_ns + max_rel_ns;
     } else {
-        scan.scan_end_time_s = header_time;
-        scan.scan_start_time_s = header_time - max_rel_time;
+        scan.scan_end_time_ns = header_ns;
+        scan.scan_start_time_ns = header_ns - max_rel_ns;
     }
 }
 
@@ -255,6 +257,8 @@ DecodeResult PointCloud2Decoder::decode(const sensor_msgs::msg::PointCloud2& msg
     NormalizedLidarScan& scan = result.scan;
     scan.lidar_frame = msg.header.frame_id;
     scan.has_per_point_time = has_time;
+    scan.timing_model = has_time ? LidarTimingModel::kAbsolutePointTime
+                                 : LidarTimingModel::kSnapshot;
     scan.cloud->clear();
     scan.cloud->is_dense = false;
     scan.cloud->width = 0;
@@ -384,8 +388,9 @@ DecodeResult PointCloud2Decoder::decode(const sensor_msgs::msg::PointCloud2& msg
         diagnostics_.last_scan_duration_s = scan_duration;
     } else {
         scan.has_per_point_time = false;
-        scan.scan_start_time_s = header_time;
-        scan.scan_end_time_s = header_time;
+        scan.timing_model = LidarTimingModel::kSnapshot;
+        scan.scan_start_time_ns = static_cast<std::int64_t>(header_time * 1e9);
+        scan.scan_end_time_ns = scan.scan_start_time_ns;
 
         diagnostics_.last_point_time_min_s = 0.0;
         diagnostics_.last_point_time_max_s = 0.0;

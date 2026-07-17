@@ -348,12 +348,13 @@ class FastLIONode : public rclcpp::Node {
         }
 
         const auto& scan = result.scan;
+        const double scan_start_s = static_cast<double>(scan.scan_start_time_ns) * 1e-9;
+        const double scan_end_s = static_cast<double>(scan.scan_end_time_ns) * 1e-9;
         RCLCPP_INFO_THROTTLE(
             this->get_logger(), *this->get_clock(), 2000,
             "LiDAR accepted: points=%zu timed=%d scan=[%.6f, %.6f] duration=%.6f frame='%s'",
             scan.cloud ? scan.cloud->size() : 0U, static_cast<int>(scan.has_per_point_time),
-            scan.scan_start_time_s, scan.scan_end_time_s,
-            scan.scan_end_time_s - scan.scan_start_time_s, scan.lidar_frame.c_str());
+            scan_start_s, scan_end_s, scan_end_s - scan_start_s, scan.lidar_frame.c_str());
 
         m_synchronizer->pushLidar(result.scan);
         processReadyPackages();

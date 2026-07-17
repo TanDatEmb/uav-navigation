@@ -148,7 +148,7 @@ TEST(LidarInputAdapterTest, SimSnapshotAdapterDecodesXyzi) {
     ASSERT_TRUE(result.ok()) << result.errorMessage();
     EXPECT_EQ(result.scan.cloud->points.size(), 3u);
     EXPECT_FALSE(result.scan.has_per_point_time);
-    EXPECT_NEAR(result.scan.scan_start_time_s, 10.0, 1e-6);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_start_time_ns) * 1e-9, 10.0, 1e-6);
 }
 
 TEST(LidarInputAdapterTest, Mid360PointCloud2AdapterRequiresTimestamp) {
@@ -176,8 +176,8 @@ TEST(LidarInputAdapterTest, Mid360PointCloud2AdapterDecodesTimedCloud) {
     ASSERT_TRUE(result.ok()) << result.errorMessage();
     EXPECT_EQ(result.scan.cloud->points.size(), 3u);
     EXPECT_TRUE(result.scan.has_per_point_time);
-    EXPECT_NEAR(result.scan.scan_start_time_s, 9.95, 1e-6);
-    EXPECT_NEAR(result.scan.scan_end_time_s, 10.0, 1e-6);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_start_time_ns) * 1e-9, 9.95, 1e-6);
+    EXPECT_NEAR(static_cast<double>(result.scan.scan_end_time_ns) * 1e-9, 10.0, 1e-6);
 
     // Points are sorted by ascending relative time.
     for (size_t i = 1; i < result.scan.cloud->points.size(); ++i) {
