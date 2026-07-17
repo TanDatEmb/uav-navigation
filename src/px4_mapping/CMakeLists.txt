@@ -31,51 +31,31 @@ ament_target_dependencies(${PROJECT_NAME} INTERFACE
     sensor_msgs
     px4_msgs
 )
-# LIO-PX4 alignment bridge core (shared with unit tests) and executable.
-add_library(lio_px4_alignment_core STATIC
-    src/lio_px4_alignment.cpp
+# LIO-PX4 bridge core (shared with unit tests) and executable.
+add_library(lio_px4_bridge_core STATIC
+    src/lio_px4_bridge.cpp
 )
-target_include_directories(lio_px4_alignment_core PUBLIC
+target_include_directories(lio_px4_bridge_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(lio_px4_alignment_core
+target_link_libraries(lio_px4_bridge_core
     ${PROJECT_NAME}
 )
-ament_target_dependencies(lio_px4_alignment_core
+ament_target_dependencies(lio_px4_bridge_core
     px4_nav_common
     px4_ros2_utils
     rclcpp
     nav_msgs
     px4_msgs
 )
-add_executable(lio_px4_alignment
-    src/lio_px4_alignment_main.cpp
+add_executable(lio_px4_bridge
+    src/lio_px4_bridge_main.cpp
 )
-target_link_libraries(lio_px4_alignment
-    lio_px4_alignment_core
+target_link_libraries(lio_px4_bridge
+    lio_px4_bridge_core
 )
 
-# Localization bridge executable
-add_executable(localization_bridge
-    src/localization_bridge.cpp
-    src/localization_bridge_main.cpp
-)
-target_include_directories(localization_bridge PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(localization_bridge
-    ${PROJECT_NAME}
-)
-ament_target_dependencies(localization_bridge
-    px4_nav_common
-    px4_ros2_utils
-    rclcpp
-    nav_msgs
-    sensor_msgs
-    px4_msgs
-)
 # Global mapper core library (shared with tests and the node executable)
 add_library(global_mapper_core STATIC
     src/global_mapper.cpp
@@ -106,12 +86,12 @@ target_include_directories(global_mapper PUBLIC
 target_link_libraries(global_mapper
     global_mapper_core
 )
-install(TARGETS global_mapper_core lio_px4_alignment_core
+install(TARGETS global_mapper_core lio_px4_bridge_core
     EXPORT export_${PROJECT_NAME}
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(TARGETS ${PROJECT_NAME} localization_bridge global_mapper lio_px4_alignment
+install(TARGETS ${PROJECT_NAME} global_mapper lio_px4_bridge
     EXPORT export_${PROJECT_NAME}
     RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
@@ -134,7 +114,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_voxel_hash_map ${PROJECT_NAME})
     ament_add_gtest(test_global_mapper test/test_global_mapper.cpp)
     target_link_libraries(test_global_mapper ${PROJECT_NAME} global_mapper_core)
-    ament_add_gtest(test_lio_px4_alignment test/test_lio_px4_alignment.cpp)
-    target_link_libraries(test_lio_px4_alignment ${PROJECT_NAME} lio_px4_alignment_core)
+    ament_add_gtest(test_lio_px4_bridge test/test_lio_px4_bridge.cpp)
+    target_link_libraries(test_lio_px4_bridge ${PROJECT_NAME} lio_px4_bridge_core)
 endif()
 ament_package()

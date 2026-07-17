@@ -2,10 +2,8 @@
 Launch file for the mapping pipeline.
 
 Brings up:
-    - localization_bridge : camera_init/ENU cloud -> /world/cloud
-    - global_mapper : world cloud -> sparse global voxel map
-
-TODO: replace localization_bridge with lio_px4_bridge once PR 2 lands.
+    - lio_px4_bridge : FAST-LIO /lio/odometry -> /fmu/in/vehicle_visual_odometry
+    - global_mapper  : /lio/cloud_registered -> occupancy maps
 """
 
 import os
@@ -21,7 +19,6 @@ def generate_launch_description():
     pkg_px4_mapping = get_package_share_directory('px4_mapping')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    publish_visual_odometry = LaunchConfiguration('publish_visual_odometry_to_px4')
     input_source = LaunchConfiguration('input_source')
 
     return LaunchDescription([
@@ -31,22 +28,16 @@ def generate_launch_description():
             description='Use simulation clock if true'),
 
         DeclareLaunchArgument(
-            'publish_visual_odometry_to_px4',
-            default_value='false',
-            description='Publish external vision odometry to PX4'),
-
-        DeclareLaunchArgument(
             'input_source',
-            default_value='px4_full',
+            default_value='lio_world',
             description='Cloud source for global_mapper node'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(pkg_px4_mapping, 'launch', 'localization_bridge.launch.py')
+                os.path.join(pkg_px4_mapping, 'launch', 'lio_px4_bridge.launch.py')
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,
-                'publish_visual_odometry_to_px4': publish_visual_odometry,
             }.items()
         ),
 

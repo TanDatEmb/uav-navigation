@@ -98,7 +98,7 @@ if pgrep -x px4 >/dev/null 2>&1 \
 fi
 
 # Clean up standalone ROS processes that may predate PID tracking.
-for stale_name in global_mapper lio_px4_alignment fast_lio obstacle_perception ros_gz_bridge; do
+for stale_name in global_mapper lio_px4_bridge fast_lio obstacle_perception ros_gz_bridge; do
     pkill -TERM -f "${stale_name}" 2>/dev/null || true
 done
 
@@ -248,12 +248,12 @@ ros2 launch fast_lio fast_lio_sim.launch.py \
     imu_topic:=/imu/out
 BGEOF
 
-# ── LIO-PX4 alignment bridge (LIO world → PX4 NED) ───────────────────────
+# ── LIO-PX4 bridge (LIO world → PX4 NED) ────────────────────────────────
 # Keep this opt-in during the isolation test. FAST-LIO still runs and publishes
 # diagnostics, but PX4 receives no external vehicle odometry when disabled.
 if [[ "${ENABLE_EXTERNAL_ODOMETRY}" == "1" ]]; then
-make_bg "lio-px4-alignment" 14 << BGEOF
-ros2 launch px4_mapping lio_px4_alignment.launch.py \
+make_bg "lio-px4-bridge" 14 << BGEOF
+ros2 launch px4_mapping lio_px4_bridge.launch.py \
     use_sim_time:=true
 BGEOF
 else

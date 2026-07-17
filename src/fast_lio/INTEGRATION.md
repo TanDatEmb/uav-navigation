@@ -20,7 +20,7 @@ PointCloud2 + sensor_msgs/Imu
     └── TF: lio_world -> mid360_imu
              │
              ├──► global_mapper -> /mapping/global
-             └──► lio_px4_alignment
+             └──► lio_px4_bridge
                        └──► /fmu/in/vehicle_visual_odometry
 ```
 
@@ -68,7 +68,7 @@ ENABLE_EXTERNAL_ODOMETRY=1 bash scripts/sim_launch.sh
 ```
 
 External odometry is disabled by default. Enabling it publishes FAST-LIO output
-to PX4 through `lio_px4_alignment`; it does not command or arm the vehicle.
+to PX4 through `lio_px4_bridge`; it does not command or arm the vehicle.
 Stop the stack with:
 
 ```bash
@@ -211,10 +211,10 @@ See `docs/frame_contract.md` for the authoritative contract.
 - `map_ned` and PX4 body fields use NED/FRD only after the explicit PX4 boundary.
 - no identity TF is valid between `lio_world` and `map_ned`
 
-`lio_px4_alignment` converts the pose representation with
-`px4_ros2_utils::frame` and converts measurement/publication time with
-`Timesync`. Despite the historical node name, it does not estimate a dynamic
-PX4-origin or north-yaw alignment.
+`lio_px4_bridge` converts the pose representation with `px4_ros2_utils::frame`
+and converts measurement/publication time with `Timesync`. It estimates a fixed
+`T_map_ned_lio_world` transform from PX4 odometry at startup and applies that
+transform to every subsequent LIO pose.
 
 ## Outputs
 

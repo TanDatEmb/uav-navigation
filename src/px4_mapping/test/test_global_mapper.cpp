@@ -31,6 +31,11 @@ class GlobalMapperTest : public ::testing::Test {
         node_options_.append_parameter_override("ready_min_occupied", 50);
         node_options_.append_parameter_override("timeout_seconds", 0.2);
         node_options_.append_parameter_override("use_sim_time", false);
+        // Keep the base fixture on the legacy px4_full path; derived fixtures
+        // exercise the lio_world path that is now the production default.
+        node_options_.append_parameter_override("input_source", "px4_full");
+        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
+        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
 
         node_ = get_global_mapper_node(node_options_, iface_);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
@@ -215,6 +220,7 @@ class GlobalMapperLioWorldTest : public GlobalMapperTest {
         node_options_.append_parameter_override("use_sim_time", false);
         node_options_.append_parameter_override("input_source", "lio_world");
         node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("local_map_radius_m", 15.0);
 
         node_ = get_global_mapper_node(node_options_, iface_);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
@@ -222,7 +228,7 @@ class GlobalMapperLioWorldTest : public GlobalMapperTest {
         pub_cloud_ =
             node_->create_publisher<sensor_msgs::msg::PointCloud2>("/lio/cloud_registered", 20);
         pub_lio_odom_ =
-            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+            node_->create_publisher<nav_msgs::msg::Odometry>("/lio/odometry", 5);
     }
 };
 
@@ -388,6 +394,7 @@ class GlobalMapperThrottledPublishTest : public GlobalMapperTest {
         node_options_.append_parameter_override("use_sim_time", false);
         node_options_.append_parameter_override("input_source", "lio_world");
         node_options_.append_parameter_override("cloud_topic", "/lio/cloud_registered");
+        node_options_.append_parameter_override("local_map_radius_m", 15.0);
         node_options_.append_parameter_override("global_map_publish_interval", 3);
 
         node_ = get_global_mapper_node(node_options_, iface_);
@@ -396,7 +403,7 @@ class GlobalMapperThrottledPublishTest : public GlobalMapperTest {
         pub_cloud_ =
             node_->create_publisher<sensor_msgs::msg::PointCloud2>("/lio/cloud_registered", 20);
         pub_lio_odom_ =
-            node_->create_publisher<nav_msgs::msg::Odometry>("/localization/odometry", 5);
+            node_->create_publisher<nav_msgs::msg::Odometry>("/lio/odometry", 5);
     }
 };
 
@@ -448,6 +455,8 @@ class GlobalMapperPx4RetentionTest : public GlobalMapperTest {
         node_options_.append_parameter_override("timeout_seconds", 5.0);
         node_options_.append_parameter_override("use_sim_time", false);
         node_options_.append_parameter_override("input_source", "px4_full");
+        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
+        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
         node_options_.append_parameter_override("use_lio_buffer", false);
         node_options_.append_parameter_override("enable_distance_eviction",
                                                 enable_distance_eviction);
@@ -570,6 +579,9 @@ class GlobalMapperAlignmentTest : public GlobalMapperTest {
         node_options_.append_parameter_override("ready_min_occupied", 50);
         node_options_.append_parameter_override("timeout_seconds", 2.0);
         node_options_.append_parameter_override("use_sim_time", false);
+        node_options_.append_parameter_override("input_source", "px4_full");
+        node_options_.append_parameter_override("cloud_topic", "/world/cloud");
+        node_options_.append_parameter_override("lio_odom_topic", "/localization/odometry");
         node_options_.append_parameter_override("require_alignment_gate", true);
         node_options_.append_parameter_override("aligned_min_seconds", 0.3);
         node_options_.append_parameter_override("aligned_max_velocity", 0.1);

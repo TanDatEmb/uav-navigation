@@ -25,8 +25,7 @@
 ### `px4_mapping`
 
 - converts localization data at ROS 2/PX4 boundaries
-- publishes external odometry to PX4 through `lio_px4_alignment` (to be unified
-  into `lio_px4_bridge`)
+- publishes external odometry to PX4 through the unified `lio_px4_bridge`
 - builds the accumulated sparse global voxel map
 - no longer contains the PX4-derived `lidar_odometry` compatibility node
 
@@ -73,7 +72,7 @@ MID-360 PointCloud2 + IMU
           │       ├──► /mapping/global  [accumulated occupancy]
           │       └──► /mapping/local   [30 m rolling historical view]
           │
-          └──► lio_px4_alignment
+          └──► lio_px4_bridge
                   └──► /fmu/in/vehicle_visual_odometry
                        [NED pose, FRD body, PX4 boot time]
 
@@ -85,16 +84,15 @@ Raw/local point cloud + PX4 vehicle odometry
   └──► /perception/scan_1d       [ROS debug topic]
 ```
 
-`lio_px4_alignment` currently performs coordinate-representation and timestamp
-conversion. It does **not** estimate a dynamic translation/yaw alignment between
-an arbitrary `lio_world` origin and the PX4 EKF origin. The integration must
-therefore establish compatible initialization semantics, or add a separately
-validated alignment stage, before treating the output as globally north-aligned.
+`lio_px4_bridge` performs coordinate-representation and timestamp conversion and
+estimates a fixed `T_map_ned_lio_world` transform from PX4 odometry at startup.
+After capture the same transform is applied to every LIO pose. No per-scan
+point-cloud transform is performed here; the occupancy map remains in
+`lio_world` and frame conversions happen at planning/PX4 boundaries.
 
-The PX4-derived `lidar_odometry` node has been removed. The `localization_bridge`
-path remains temporarily for compatibility and will be replaced by a single
-`lio_px4_bridge` node. `camera_init`, `/localization/*`, and `/world/cloud` are
-legacy interfaces; the primary FAST-LIO runtime path uses `/lio/*` topics.
+The PX4-derived `lidar_odometry` node and the legacy `localization_bridge` node
+have been removed. `camera_init`, `/localization/*`, and `/world/cloud` are no
+longer used; the primary FAST-LIO runtime path uses `/lio/*` topics.
 
 ## Clock Contract
 
@@ -156,7 +154,7 @@ These names are fixed; do not use “local map” for unrelated products.
 | Planner-local 3D map | `/mapping/local` | `global_mapper` | Rolling 30 m-radius spatial snapshot selected from accumulated global occupancy |
 | Distance bins 2D | `/fmu/in/obstacle_distance` | `obstacle_perception` | 72-bin PX4 Collision Prevention input |
 | Virtual scan 1D | `/perception/scan_1d` by the SITL script | `obstacle_perception` | ROS debug perception output, not a map |
-| External odometry | `/fmu/in/vehicle_visual_odometry` | `lio_px4_alignment` | PX4 `VehicleOdometry`, not a map |
+| External odometry | `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | PX4 `VehicleOdometry`, not a map |
 
 `/mapping/global` and `/mapping/local` use the incoming `lio_world` frame in the
 default `input_source=lio_world` pipeline. The local topic is **not** rebuilt
@@ -203,7 +201,7 @@ including `CustomPoint.msg`, `lddc.cpp`, and `comm/pub_handler.cpp`.
 | `/lio/path` | `fast_lio` | `lio_world` | ROS | reliable |
 | `/mapping/global` | `global_mapper` | active mapper world frame; accumulated occupancy | ROS | reliable |
 | `/mapping/local` | `global_mapper` | same frame; 30 m-radius rolling historical occupancy | ROS | reliable |
-| `/fmu/in/vehicle_visual_odometry` | `lio_px4_alignment` | NED pose, FRD body; unavailable velocity is NaN | PX4 boot μs via `Timesync` | best effort |
+| `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | NED pose, FRD body; unavailable velocity is NaN | PX4 boot μs via `Timesync` | best effort |
 | `/fmu/in/obstacle_distance` | `obstacle_perception` | `BODY_FRD` message frame | PX4 boot μs via `Timesync` | reliable |
 | `/perception/scan_1d` | `obstacle_perception` | configured ROS debug frame | ROS | reliable |
 

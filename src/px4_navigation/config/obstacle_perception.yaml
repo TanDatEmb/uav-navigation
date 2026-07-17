@@ -44,7 +44,7 @@ obstacle_perception:
     #   "sensor"     : cloud is already in PX4 body FRD frame (x=FWD, y=RIGHT, z=DOWN).
     #   "sensor_flu" : cloud is in ROS/Gazebo conventional FLU frame (x=FWD, y=LEFT, z=UP).
     #                  The processor converts FLU -> FRD internally.
-    #   "ned"        : cloud is in map_ned world frame (e.g. localization_bridge output).
+    #   "ned"        : cloud is in map_ned world frame (legacy; not used by current pipeline).
     cloud_frame: "sensor_flu"
 
     # Ground-plane filter. In body FRD, z is down. Points with z > 0 are

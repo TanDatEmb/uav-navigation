@@ -105,8 +105,8 @@ FAST-LIO remains independent of PX4 and must not publish `map_ned` data directly
 
 ## PX4 External-Odometry Boundary
 
-`px4_mapping/lio_px4_alignment` consumes `/lio/odometry` and publishes
-`VehicleOdometry` with:
+`px4_mapping/lio_px4_bridge` consumes `/lio/odometry` and `/fmu/out/vehicle_odometry`
+and publishes `VehicleOdometry` with:
 
 - `pose_frame = POSE_FRAME_NED`
 - position/orientation represented as NED world + FRD body
@@ -116,10 +116,9 @@ FAST-LIO remains independent of PX4 and must not publish `map_ned` data directly
 - `timestamp_sample` derived from the LIO header through `Timesync`
 - `timestamp` derived from publication time through `Timesync`
 
-Despite its historical name, this node currently performs deterministic frame
-and time conversion only. It does not estimate `T_map_ned_lio_world`. A separate,
-validated alignment design is required if PX4 origin and north alignment are not
-established by initialization assumptions.
+The node estimates a fixed `T_map_ned_lio_world` transform by comparing the LIO
+pose with PX4 odometry at startup. After capture the same transform is applied
+to every LIO pose. No per-scan point-cloud transform is performed here.
 
 ## Global Map Frames
 
@@ -140,14 +139,10 @@ topic name alone does not imply a frame.
 
 ## Legacy Compatibility Path
 
-The `localization_bridge` node temporarily uses:
-
-- `camera_init` as the localization world
-- `base_link` as the ROS body
-- `map_ned` at the PX4/world boundary
-
-The PX4-derived `lidar_odometry` node has been removed. New FAST-LIO integration
-should use `/lio/*` and the explicit PX4 boundary.
+The legacy `localization_bridge` and `lio_px4_alignment` nodes have been removed
+and replaced by the unified `lio_px4_bridge`. `camera_init`, `base_link`,
+`/localization/*`, and `/world/cloud` are no longer used. New FAST-LIO
+integration uses `/lio/*` topics and the explicit PX4 boundary.
 
 ## Validation Rules
 

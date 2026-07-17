@@ -40,7 +40,7 @@ Gazebo MID-360 or physical sensor
              │             ├──► /mapping/global
              │             └──► /mapping/local
              │
-             └──► px4_mapping/lio_px4_alignment
+             └──► px4_mapping/lio_px4_bridge
                          └──► /fmu/in/vehicle_visual_odometry
 
 Point cloud + PX4 vehicle odometry

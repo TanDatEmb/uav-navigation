@@ -32,7 +32,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'input_source',
-            default_value='px4_full',
+            default_value='lio_world',
             description='Cloud source: lio_world, px4_only, px4_full, localization_deskew'),
 
         Node(
@@ -48,10 +48,10 @@ def generate_launch_description():
             ],
             output='screen',
             remappings=[
-                ('/world/cloud', '/world/cloud'),
+                ('/lio/cloud_registered', '/lio/cloud_registered'),
                 ('/mapping/global', '/mapping/global'),
                 ('/mapping/local', '/mapping/local'),
-                ('/localization/odometry', '/localization/odometry'),
+                ('/lio/odometry', '/lio/odometry'),
                 ('/fmu/out/vehicle_odometry', '/fmu/out/vehicle_odometry'),
                 ('/fmu/out/vehicle_status', '/fmu/out/vehicle_status'),
                 ('/fmu/out/vehicle_local_position', '/fmu/out/vehicle_local_position'),

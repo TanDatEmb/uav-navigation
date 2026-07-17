@@ -142,16 +142,16 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     this->declare_parameter<int>("log_interval", 1);
     this->declare_parameter<double>("timeout_seconds", 3600.0);
     this->declare_parameter<std::string>("log_path", "");
-    this->declare_parameter<std::string>("cloud_topic", "/world/cloud");
+    this->declare_parameter<std::string>("cloud_topic", "/lio/cloud_registered");
     this->declare_parameter<std::string>("map_topic", "/mapping/global");
     this->declare_parameter<std::string>("local_map_topic", "/mapping/local");
-    this->declare_parameter<double>("local_map_radius_m", 15.0);
-    this->declare_parameter<std::string>("input_source", "px4_full");
+    this->declare_parameter<double>("local_map_radius_m", 30.0);
+    this->declare_parameter<std::string>("input_source", "lio_world");
     this->declare_parameter<std::vector<double>>("extrinsic_T",
                                                  std::vector<double>{-0.011, -0.02329, 0.04412});
     this->declare_parameter<int>("ready_min_frames", 5);
     this->declare_parameter<int>("ready_min_occupied", 1000);
-    this->declare_parameter<std::string>("lio_odom_topic", "/localization/odometry");
+    this->declare_parameter<std::string>("lio_odom_topic", "/lio/odometry");
     this->declare_parameter<bool>("use_lio_buffer", true);
     this->declare_parameter<bool>("require_alignment_gate", false);
     this->declare_parameter<double>("aligned_min_seconds", 5.0);

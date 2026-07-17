@@ -5,11 +5,12 @@
 
 #include <rclcpp/rclcpp.hpp>
 
-#include "px4_mapping/lio_px4_alignment.hpp"
+#include "px4_mapping/lio_px4_bridge.hpp"
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<px4_mapping::LioPx4Alignment>());
+    auto node = std::make_shared<px4_mapping::LioPx4Bridge>();
+    rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;
 }

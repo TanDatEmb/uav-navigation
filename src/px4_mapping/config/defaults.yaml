@@ -1,57 +1,44 @@
 # Default parameters for px4_mapping nodes.
 # Override via command line or a top-level launch file.
 
-localization_bridge:
+lio_px4_bridge:
   ros__parameters:
-    # Input: localization frontend world-frame point cloud in camera_init/ENU frame.
-    input_cloud_topic: "/localization/cloud"
+    # Input: FAST-LIO odometry in ENU world / FLU body.
+    lio_topic: "/lio/odometry"
 
-    # Output: point cloud transformed to PX4 map_ned frame.
-    output_cloud_topic: "/world/cloud"
-
-    # Input: localization odometry in camera_init frame.
-    lio_odom_topic: "/localization/odometry"
-
-    # Input: PX4 vehicle odometry in map_ned frame.
+    # Input: PX4 vehicle odometry in NED world / FRD body.
     px4_odom_topic: "/fmu/out/vehicle_odometry"
 
-    # Whether to use PX4 odometry for visual-inertial alignment.
-    use_px4_odom: true
+    # Output: PX4 external visual odometry in NED world / FRD body.
+    px4_topic: "/fmu/in/vehicle_visual_odometry"
 
-    # Optional external vision publisher to PX4 EKF2.
-    publish_visual_odometry_to_px4: false
-    visual_odom_topic: "/fmu/in/vehicle_visual_odometry"
-
-    # Align LIO origin to PX4 EKF origin on startup.
-    visual_odom_align_to_px4: true
+    # Estimate and apply a fixed T_map_ned_lio_world from PX4 odometry at startup.
+    align_to_px4: true
 
     # Alignment strategy:
     # - translation_only: keep axes, only align origin offset
     # - yaw_translation: align heading + origin
     # - full_6dof: align full SE(3)
-    visual_odom_alignment_mode: "translation_only"
-
-    # Use full 6-DOF alignment (true) or only yaw (false).
-    visual_odom_align_full_6dof: false
+    alignment_mode: "translation_only"
 
     # External vision variance (position [m^2], orientation [rad^2]).
-    visual_odom_position_variance: [0.04, 0.04, 0.09]
-    visual_odom_orientation_variance: [0.25, 0.25, 0.05]
+    position_variance: [0.04, 0.04, 0.09]
+    orientation_variance: [0.25, 0.25, 0.05]
 
-    # External vision quality indicator (0-100).
+    # External vision quality indicator (1-100).
     visual_odom_quality: 100
 
 global_mapper:
   ros__parameters:
-    # Input point cloud. Its world frame depends on input_source.
-    cloud_topic: "/world/cloud"
+    # Input point cloud from the LIO frontend.
+    cloud_topic: "/lio/cloud_registered"
 
     # Output topics for the accumulated global map and the rolling local view.
     map_topic: "/mapping/global"
     local_map_topic: "/mapping/local"
 
     # Input localization odometry.
-    lio_odom_topic: "/localization/odometry"
+    lio_odom_topic: "/lio/odometry"
 
     # Input source mode:
     #   "lio_world"  : cloud already registered in lio_world; LIO odometry

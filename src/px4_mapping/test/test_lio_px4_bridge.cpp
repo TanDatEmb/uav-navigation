@@ -7,7 +7,7 @@
 
 #include <Eigen/Geometry>
 
-#include "px4_mapping/lio_px4_alignment.hpp"
+#include "px4_mapping/lio_px4_bridge.hpp"
 
 namespace {
 
@@ -30,7 +30,7 @@ nav_msgs::msg::Odometry MakeLioOdometry() {
     return msg;
 }
 
-TEST(LioPx4ConversionTest, ConvertsEnuFluPoseToNedFrd) {
+TEST(LioPx4BridgeConversionTest, ConvertsEnuFluPoseToNedFrd) {
     const auto output =
         px4_mapping::ConvertLioOdometryToPx4(MakeLioOdometry(), 2'000'000, 1'900'000, 100);
 
@@ -46,7 +46,7 @@ TEST(LioPx4ConversionTest, ConvertsEnuFluPoseToNedFrd) {
     EXPECT_NEAR(std::abs(actual.dot(expected)), 1.0, 1e-6);
 }
 
-TEST(LioPx4ConversionTest, PreservesTimestampQualityAndMapsVariances) {
+TEST(LioPx4BridgeConversionTest, PreservesTimestampQualityAndMapsVariances) {
     const auto output =
         px4_mapping::ConvertLioOdometryToPx4(MakeLioOdometry(), 2'000'000, 1'900'000, 87);
 
@@ -60,7 +60,7 @@ TEST(LioPx4ConversionTest, PreservesTimestampQualityAndMapsVariances) {
     EXPECT_EQ(output.reset_counter, 0U);
 }
 
-TEST(LioPx4ConversionTest, MarksUnavailableTwistAndInvalidVarianceAsNan) {
+TEST(LioPx4BridgeConversionTest, MarksUnavailableTwistAndInvalidVarianceAsNan) {
     auto input = MakeLioOdometry();
     input.pose.covariance[0] = -1.0;
 

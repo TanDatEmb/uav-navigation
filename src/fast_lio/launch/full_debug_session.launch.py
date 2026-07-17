@@ -85,13 +85,13 @@ def generate_launch_description():
         condition=IfCondition(with_livox_adapter),
     )
 
-    # 3. LIO-PX4 alignment (optional)
+    # 3. LIO-PX4 bridge (optional)
     lio_px4_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             PathJoinSubstitution([
                 FindPackageShare('px4_mapping'),
                 'launch',
-                'lio_px4_alignment.launch.py'
+                'lio_px4_bridge.launch.py'
             ])
         ]),
         condition=IfCondition(with_px4),
