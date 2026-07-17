@@ -7,6 +7,17 @@ its production spatial index for LiDAR scan matching and map updates. An
 abstract interface separates the LIO algorithm from the concrete backend, but
 the implementation is fixed to ikd-Tree.
 
+**Academic baseline:** the bundled ikd-Tree implementation is derived from the
+incremental k-d tree described in:
+
+- W. Xu et al., "FAST-LIO2: Fast Direct LiDAR-Inertial Odometry," IEEE
+  Transactions on Robotics, 2022.
+- Y. Cao et al., "ikd-Tree: An Incremental K-D Tree for Robotic Applications,"
+  arXiv:2102.10808, 2021.
+
+The tree supports incremental point insertion/deletion, voxel downsampling,
+k-nearest search, and background rebuild to maintain balance.
+
 ## Component Ownership and Data Flow
 
 ```
@@ -70,10 +81,12 @@ The ikd-Tree uses internal pthread mutexes; `IKDTreeBackend` adds a `std::shared
 - **Read operations** (search): ikd-Tree acquires `search_flag_mutex` internally; external callers do not hold locks during search to avoid deadlock with the rebuild thread
 
 **Background rebuild thread**: Automatically started on construction. Triggers when:
+
 - Tree size exceeds threshold with imbalance ratio > `balance_criterion_param` (0.6)
 - Invalid/deleted points ratio exceeds `delete_criterion_param` (0.4)
 
 During rebuild:
+
 1. The subtree is flattened to a point vector
 2. A new balanced tree is constructed
 3. Operations logged during rebuild are replayed
@@ -113,6 +126,7 @@ it into the bundled tree. The implementation uses its compile-time
 ## Build Configuration
 
 CMakeLists.txt selects the backend and dependencies:
+
 - Core library: `ikd_tree.cpp`, `ikd_tree_backend.cpp`
 - Link: `pthread` (required for ikd-Tree)
 - Optional: `OpenMP` for parallel processing (`MP_EN`)
@@ -121,6 +135,7 @@ CMakeLists.txt selects the backend and dependencies:
 ## Tests
 
 `test_ieskf.cpp` validates:
+
 - **IKDTreeBackendTest**: Incremental addition, deletion, and `size()` consistency
 - **LocalMapTest**: Sliding cube removes only departed slabs
 - **LidarProcessorTest**: World-frame transform and map population

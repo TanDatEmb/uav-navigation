@@ -9,15 +9,21 @@
 namespace fast_lio {
 
 /// @brief Point-to-plane measurement evaluation result.
+///
+/// Mathematical baseline:
+///   Plane: {p | n^T (p - q) = 0}, with unit normal n
+///   Point in IMU frame: p_I = R_I_L * p_L + t_I_L
+///   Point in world frame: p_W = R_WI * p_I + p_WI
+///   Residual: r = n^T * (p_W - q)
+///   Jacobian under right perturbation R' = R * Exp(δθ):
+///     H_θ = ∂r/∂δθ = -n^T * R_WI * [p_I]_x
+///     H_p = ∂r/∂δp =  n^T
+///     H = [H_θ, H_p, 0_{1×9}]
 struct PointPlaneMeasurement {
     /// Signed point-to-plane residual: r = n^T * (p_W - q)
     double residual = 0.0;
 
     /// Jacobian w.r.t. error state (1x15)
-    /// H = [H_θ, H_p, 0, 0, 0] where:
-    ///   H_θ = -n^T * R_WI * [p_I]_x  (3 elements)
-    ///   H_p = n^T                     (3 elements)
-    ///   remaining 9 elements = 0 (velocity, accel bias, gyro bias)
     Eigen::Matrix<double, 1, 15> H = Eigen::Matrix<double, 1, 15>::Zero();
 
     /// Point in world frame (for debugging)

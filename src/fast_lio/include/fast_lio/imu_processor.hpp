@@ -48,6 +48,13 @@ class IMUProcessor {
     /// Uses imu_before_scan and imu_after_scan brackets from the synchronizer
     /// to ensure continuous integration from scan_start to scan_end.
     ///
+    /// Mathematical baseline: midpoint IMU integration
+    ///   ω_unbiased = (ω_a + ω_b)/2 - b_ω
+    ///   a_unbiased = (a_a + a_b)/2 - b_a
+    ///   R_{k+1} = R_k * Exp(ω_unbiased * Δt)
+    ///   v_{k+1} = v_k + (R_{k+1/2} * a_unbiased + g) * Δt
+    ///   p_{k+1} = p_k + v_k * Δt + 0.5 * (R_{k+1/2} * a_unbiased + g) * Δt²
+    ///
     /// @param kf Shared IESKF instance
     /// @param imus IMU samples within (scan_start, scan_end)
     /// @param scan_start_time Scan start time (seconds)

@@ -44,15 +44,12 @@ struct DeskewResult {
 
 /// @brief Deskews a LiDAR scan by compensating point motion distortion.
 ///
-/// Uses the forward-propagated IMU trajectory to transform each point
-/// from its capture time to the scan_end frame using SE(3) absolute
-/// transforms:
-///
-///   P_L_end = (T_W_L_end)⁻¹ * T_W_L_i * P_L_i
-///
-/// where:
-///   T_W_L_i = T_W_I_i * T_I_L  (LiDAR pose in world at point time i)
-///   T_W_L_end = T_W_I_end * T_I_L  (LiDAR pose in world at scan_end)
+/// Mathematical baseline (continuous-time motion compensation):
+///   Each point is captured at time t_i ∈ [scan_start, scan_end].
+///   Its sensor pose at capture time is T_W_L_i = T_W_I(t_i) * T_I_L.
+///   The reference pose is T_W_L_end = T_W_I(scan_end) * T_I_L.
+///   The deskewed point in the scan_end LiDAR frame is:
+///     p_L_end = (T_W_L_end)⁻¹ * T_W_L_i * p_L_i
 ///
 /// Points are iterated in ascending time order (forward, not backward)
 /// with a monotonic interval index for O(N+M) complexity.

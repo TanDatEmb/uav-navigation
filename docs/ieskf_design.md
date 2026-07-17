@@ -51,6 +51,7 @@ x = [R_wb, p_w, v_w, b_a, b_ω]
 Bias-corrected measurements: `a_unbiased = a_imu - b_a`, `ω_unbiased = ω_imu - b_ω`
 
 State propagation with midpoint integration:
+
 ```
 R_wb ← R_wb * exp(ω_unbiased * Δt)
 a_world ← R_wb * a_unbiased + g
@@ -92,6 +93,7 @@ The update uses **information form** (15×15 factorization) instead of measureme
 **Prior information**: `Λ_prior = P⁻¹`
 
 Per iteration:
+
 1. Evaluate loss function at current iterate
 2. Compute: `Λ = Λ_prior + λ * HᵀH`
 3. Solve: `δx = Λ⁻¹ * (-λ * Hᵀ * residual - Λ_prior * accumulated_delta)`
@@ -110,6 +112,7 @@ State and covariance commit atomically—if final linearization fails, neither u
 ### Measurement Model
 
 For LiDAR point `p_lidar`:
+
 ```
 p_world = R_wb * R_il * p_lidar + R_wb * t_il + p_w
 r = nᵀ * (p_world - q_plane)
@@ -120,6 +123,7 @@ Plane `(n, q_plane)` found via KNN search (default 5 neighbors).
 ### Jacobian
 
 `H = [H_θ, H_p, 0, 0, 0]` where:
+
 ```
 p_imu = R_il * p_lidar + t_il
 H_θ = -nᵀ * R_wb * [p_imu]×
@@ -162,11 +166,13 @@ an absolute eigenvalue threshold, not a normalized eigenvalue ratio.
 ## Initialization
 
 **IMU initialization:**
+
 1. Collect `imu_init_num` samples
 2. Validate: `std(accel) < threshold`, `rms(gyro) < threshold`, `|‖mean_acc‖ - 9.81| < tolerance`
 3. Apply scale: `scale = 9.81 / ‖mean_acc‖`
 
 **Gravity alignment:**
+
 ```
 R_wb = rotation_aligning(mean_acc/‖mean_acc‖ → [0,0,1])
 ```
@@ -178,21 +184,44 @@ Handles parallel, anti-parallel, and degenerate inputs safely.
 ## Invariants and Failure Behavior
 
 **Safety checks:**
+
 - Prediction rejected if `dt ≤ 0` or `dt > 0.1s`
 - Gravity alignment rejected if `‖mean_acc‖ < 1e-6` or non-finite
 - Covariance diagonal clamped to `[1e-12, 1e6]` after prediction
 - Update aborted if LDLT factorization fails
 
 **Failure recovery:**
+
 - Failed update: No state/covariance change
 - Failed final linearization: Atomic abort
 - Invalid measurements: `shared.valid = false` skips update
 
 ---
 
+## Academic baseline and assumptions
+
+This implementation follows the FAST-LIO2 estimator formulation (Xu et al.,
+FAST-LIO2: Fast Direct LiDAR-Inertial Odometry, IEEE T-RO 2022) with the
+simplifications below:
+
+- **Fixed gravity**: magnitude `g = 9.80665 m/s²` along -Z in `lio_world`.
+  The gravity vector is not estimated online.
+- **Static extrinsic**: `T_imu_lidar` is loaded from calibration and held fixed.
+- **Point-to-plane only**: each LiDAR correspondence contributes one scalar
+  residual. There is no point-to-line or unstructured fallback.
+- **Right perturbation**: rotation updates use `R ← R * Exp(δθ)` so that the
+  point-to-plane Jacobian `H_θ = -nᵀ * R_wb * [p_imu]_×` matches the convention
+  in the FAST-LIO2 derivation.
+- **Information-form update**: the 15×15 information matrix is factorized once
+  per iteration; measurement count affects only `HᵀH` accumulation.
+
+State and covariance updates are atomic: if final linearization or factorization
+fails, neither state nor covariance is committed.
+
 ## Tests and Limitations
 
 **Key unit tests:**
+
 - Large measurement update (20k points) verifies O(N) scaling
 - Atomic commit on final linearization failure
 - Configuration controls measurement weight and process noise

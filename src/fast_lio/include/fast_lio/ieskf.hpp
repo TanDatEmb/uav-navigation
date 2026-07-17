@@ -42,10 +42,11 @@ struct IeskfUpdateResult {
 /**
  * @brief Iterated Error-State Kalman Filter (15-DOF)
  *
- * Optimized for UAV navigation with:
- * - 15-DOF state with fixed world gravity
- * - Right perturbation on SO(3), consistent with the LiDAR Jacobian
- * - Point-to-plane LiDAR constraints
+ * Mathematical baseline (see docs/ieskf_design.md):
+ *   - State: x = [R_wb, p_w, v_w, b_a, b_ω] ∈ SO(3) × ℝ¹²
+ *   - Right perturbation on SO(3): R' = R * Exp(δθ)
+ *   - Prediction: continuous-time IMU error-state EKF with midpoint integration
+ *   - Update: information-form IESKF; 15×15 factorization avoids N×N scaling
  *
  * Real-time target: < 5ms per update (10-20Hz LiDAR)
  */
@@ -78,7 +79,15 @@ class IESKF {
      * @brief Prediction step (IMU propagation)
      *
      * Propagates state using IMU measurements.
-     * Continuous-time error-state EKF with discretization.
+     * Continuous-time error-state EKF with midpoint integration:
+     *   a_unbiased = a - b_a,   ω_unbiased = ω - b_ω
+     *   R ← R * Exp(ω_unbiased * Δt)
+     *   a_world = R * a_unbiased + g
+     *   p ← p + v * Δt + 0.5 * a_world * Δt²
+     *   v ← v + a_world * Δt
+     *
+     * Error-state transition: Φ = I + F * Δt
+     * Process noise: Q = diag(σ_ω²Δt, 0, σ_a²Δt, σ_ba²Δt, σ_bω²Δt)
      *
      * @param imu IMU measurement [accel, gyro] in body frame
      * @param dt Time step in seconds
@@ -88,8 +97,12 @@ class IESKF {
     /**
      * @brief IESKF update step (iterated)
      *
-     * Iteratively re-linearizes at current estimate until convergence.
-     * Uses loss function provided by LidarProcessor.
+     * Information-form iterated update:
+     *   Λ_prior = P⁻¹
+     *   Λ = Λ_prior + λ * HᵀH
+     *   δx = Λ⁻¹ * (-λ * Hᵀ * r - Λ_prior * accumulated_delta)
+     *   x ← x ⊕ δx
+     * Iterates until convergence (‖δθ‖ < threshold, ‖δp‖ < threshold).
      *
      * @param max_iterations Maximum IESKF iterations (default: 3)
      * @return Update result with status and diagnostics
