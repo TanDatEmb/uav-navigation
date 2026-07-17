@@ -12,10 +12,15 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
-# Livox driver (optional - can build without for testing)
+# Livox driver (required for MID-360 hardware CustomMsg support).
+# The driver is optional at build time so the core estimator can be built and
+# tested in environments without the Livox Lidar SDK. The mid360_custom profile
+# throws at runtime if the workspace was not built with LIVOX_ROS2_FOUND.
 find_package(livox_ros_driver2 QUIET)
 if(NOT livox_ros_driver2_FOUND)
-  message(WARNING "livox_ros_driver2 not found, using mock messages")
+  message(WARNING
+    "livox_ros_driver2 not found. mid360_custom adapter will throw at runtime. "
+    "Install Livox Lidar SDK + livox_ros_driver2 and rebuild to use hardware CustomMsg.")
   set(LIVOX_FOUND FALSE)
 else()
   set(LIVOX_FOUND TRUE)

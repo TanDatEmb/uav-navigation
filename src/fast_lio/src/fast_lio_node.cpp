@@ -70,13 +70,22 @@ class FastLIONode : public rclcpp::Node {
             m_node_config.imu_topic, 10,
             std::bind(&FastLIONode::imuCallback, this, std::placeholders::_1));
 
-        // LiDAR subscription - PointCloud2 path (sim snapshot or MID-360 replay).
-        // Real MID-360S hardware via livox_ros_driver2::msg::CustomMsg requires
-        // wiring makeMid360CustomAdapter() to a CustomMsg subscription; see
-        // input/mid360_custom_adapter.hpp.
-        m_lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            m_node_config.lidar_topic, 10,
-            std::bind(&FastLIONode::lidarCallback, this, std::placeholders::_1));
+        // LiDAR subscription: profile selects PointCloud2 or Livox CustomMsg.
+        if (m_adapter_type == "mid360_custom") {
+#ifdef LIVOX_ROS2_FOUND
+            m_custom_lidar_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+                m_node_config.lidar_topic, 10,
+                std::bind(&FastLIONode::customLidarCallback, this, std::placeholders::_1));
+#else
+            throw std::runtime_error(
+                "lidar_input.adapter=mid360_custom requires livox_ros_driver2. "
+                "Install the driver and rebuild.");
+#endif
+        } else {
+            m_lidar_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                m_node_config.lidar_topic, 10,
+                std::bind(&FastLIONode::lidarCallback, this, std::placeholders::_1));
+        }
 
         // Publishers
         m_world_cloud_pub =
@@ -321,7 +330,17 @@ class FastLIONode : public rclcpp::Node {
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         DecodeResult result = m_lidar_adapter->decode(*msg);
+        handleDecodeResult(result);
+    }
 
+#ifdef LIVOX_ROS2_FOUND
+    void customLidarCallback(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg) {
+        DecodeResult result = m_lidar_adapter->decode(*msg);
+        handleDecodeResult(result);
+    }
+#endif
+
+    void handleDecodeResult(DecodeResult& result) {
         if (!result.ok()) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                                  "LiDAR decode failed: %s", result.errorMessage().c_str());
@@ -496,6 +515,9 @@ class FastLIONode : public rclcpp::Node {
     // Members
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr m_imu_sub;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr m_lidar_sub;
+#ifdef LIVOX_ROS2_FOUND
+    rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr m_custom_lidar_sub;
+#endif
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_world_cloud_pub;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr m_path_pub;

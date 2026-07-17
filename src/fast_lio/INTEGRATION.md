@@ -106,8 +106,8 @@ before synchronization, deskew, or map update.
 | Adapter | Message type | Use case |
 | --- | --- | --- |
 | `sim_snapshot` | `sensor_msgs::PointCloud2` | Gazebo GPU-LiDAR XYZI snapshot |
-| `mid360_pointcloud2` | `sensor_msgs::PointCloud2` | MID-360 replay with `offset_time` |
-| `mid360_custom` | `livox_ros_driver2::msg::CustomMsg` | MID-360 hardware (requires `livox_ros_driver2`) |
+| `mid360_pointcloud2` | `sensor_msgs::PointCloud2` | MID-360 replay/driver PointCloud2 (`xfer_format=0`, FLOAT64 `timestamp`) |
+| `mid360_custom` | `livox_ros_driver2::msg::CustomMsg` | MID-360 hardware (`xfer_format=1`, `timebase + offset_time`; requires `livox_ros_driver2`) |
 
 The legacy `lidar_input.profile` parameter is still accepted for backward
 compatibility and maps to the corresponding adapter when `lidar_input.adapter`

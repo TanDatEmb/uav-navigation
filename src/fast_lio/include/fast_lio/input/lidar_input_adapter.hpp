@@ -11,6 +11,10 @@
 
 #include "fast_lio/lidar_scan.hpp"
 
+#ifdef LIVOX_ROS2_FOUND
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+#endif
+
 namespace fast_lio {
 
 /// @brief Abstract interface for LiDAR input adapters.
@@ -23,11 +27,20 @@ class LidarInputAdapter {
     virtual ~LidarInputAdapter() = default;
 
     /// @brief Decode a sensor_msgs::PointCloud2 scan.
-    ///
-    /// Subclasses that consume a different ROS message type may implement a
-    /// separate decode overload; this interface covers the PointCloud2-based
-    /// adapters used in both simulation and MID-360 PointCloud2 mode.
     virtual DecodeResult decode(const sensor_msgs::msg::PointCloud2& msg) = 0;
+
+#ifdef LIVOX_ROS2_FOUND
+    /// @brief Decode a Livox ROS Driver 2 CustomMsg scan.
+    ///
+    /// Only adapters that consume livox_ros_driver2::msg::CustomMsg need to
+    /// implement this overload. PointCloud2-based adapters inherit the default
+    /// error implementation.
+    virtual DecodeResult decode(const livox_ros_driver2::msg::CustomMsg& msg) {
+        DecodeResult result;
+        result.error = DecodeError::kSchemaMismatch;
+        return result;
+    }
+#endif
 
     /// @brief Human-readable adapter name for diagnostics.
     virtual std::string name() const = 0;

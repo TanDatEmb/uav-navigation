@@ -37,10 +37,14 @@ std::unique_ptr<LidarInputAdapter> makeSimSnapshotAdapter() {
 std::unique_ptr<LidarInputAdapter> makeMid360PointCloud2Adapter() {
     PointCloudDecoderConfig config;
     config.profile = LidarInputProfile::kMid360PointCloud2;
-    config.time_field = "offset_time";
-    config.time_unit = TimeUnit::kNanoseconds;
+    // Livox ROS Driver 2 PointCloud2 format (xfer_format=0) publishes a FLOAT64
+    // `timestamp` field with absolute seconds since epoch for each point.
+    config.time_field = "timestamp";
+    config.time_unit = TimeUnit::kSeconds;
     config.require_per_point_time = true;
-    config.header_stamp_is_scan_start = true;
+    // header.stamp is the scan end time; per-point timestamps are absolute and
+    // decrease toward the start of the scan.
+    config.header_stamp_is_scan_start = false;
     config.min_range_m = 0.5;
     config.max_range_m = 100.0;
     config.point_stride = 1;
