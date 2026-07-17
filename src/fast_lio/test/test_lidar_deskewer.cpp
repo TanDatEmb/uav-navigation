@@ -56,19 +56,20 @@ NormalizedLidarScan makeTimedScanWithPoints(double start, double end,
     return scan;
 }
 
-ImuTrajectoryKnot makeKnot(double t, const Eigen::Vector3d& pos,
-                            const Eigen::Vector3d& vel = Eigen::Vector3d::Zero(),
-                            const SO3d& rot = SO3d(),
-                            const Eigen::Vector3d& omega = Eigen::Vector3d::Zero(),
-                            const Eigen::Vector3d& accel = Eigen::Vector3d::Zero()) {
-    ImuTrajectoryKnot k;
-    k.timestamp_s = t;
-    k.R_W_I = rot;
-    k.p_W_I = pos;
-    k.v_W_I = vel;
-    k.omega_I = omega;
-    k.a_W = accel;
-    return k;
+ImuMotionSegment makeSegment(double t0, double t1, const Eigen::Vector3d& pos,
+                             const Eigen::Vector3d& vel = Eigen::Vector3d::Zero(),
+                             const SO3d& rot = SO3d(),
+                             const Eigen::Vector3d& omega = Eigen::Vector3d::Zero(),
+                             const Eigen::Vector3d& accel = Eigen::Vector3d::Zero()) {
+    ImuMotionSegment seg;
+    seg.t0_s = t0;
+    seg.t1_s = t1;
+    seg.R_W_I_t0 = rot;
+    seg.p_W_I_t0 = pos;
+    seg.v_W_I_t0 = vel;
+    seg.omega_mid_I = omega;
+    seg.acceleration_mid_W = accel;
+    return seg;
 }
 
 // D1: No motion → point unchanged
@@ -77,9 +78,8 @@ TEST(LidarDeskewerTest, D1_NoMotionPointUnchanged) {
     auto scan = makeTimedScan(1.0, 1.1, 5);
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.05, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.05, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.05, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_I_L = SE3d();  // identity
     SE3d T_W_I_end = SE3d();  // identity at scan_end
@@ -103,9 +103,8 @@ TEST(LidarDeskewerTest, D2_ConstantTranslationCompensated) {
 
     // UAV moves 0.5m in X over scan: v = 5 m/s
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d(5, 0, 0)));
-    traj.append(makeKnot(1.05, Eigen::Vector3d(0.25, 0, 0), Eigen::Vector3d(5, 0, 0)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d(0.5, 0, 0), Eigen::Vector3d(5, 0, 0)));
+    traj.append(makeSegment(1.0, 1.05, Eigen::Vector3d::Zero(), Eigen::Vector3d(5, 0, 0)));
+    traj.append(makeSegment(1.05, 1.1, Eigen::Vector3d(0.25, 0, 0), Eigen::Vector3d(5, 0, 0)));
 
     SE3d T_I_L = SE3d();  // identity extrinsic
     SE3d T_W_I_end(SO3d(), Eigen::Vector3d(0.5, 0, 0));  // end pose
@@ -138,12 +137,9 @@ TEST(LidarDeskewerTest, D3_ConstantRotationCompensated) {
     const double yaw_rate = M_PI / 0.1;  // ~31.4 rad/s
     
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
-                         SO3d::exp(Eigen::Vector3d(0, 0, 0)),
-                         Eigen::Vector3d(0, 0, yaw_rate)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
-                         SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)),
-                         Eigen::Vector3d(0, 0, yaw_rate)));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+                            SO3d::exp(Eigen::Vector3d(0, 0, 0)),
+                            Eigen::Vector3d(0, 0, yaw_rate)));
 
     SE3d T_I_L = SE3d();  // identity extrinsic
     // End rotation: 90° around Z
@@ -173,8 +169,7 @@ TEST(LidarDeskewerTest, D4_LeverArmCompensated) {
 
     // No motion, just lever arm
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_W_I_end = SE3d();  // identity
 
@@ -197,12 +192,9 @@ TEST(LidarDeskewerTest, D5_RotationAndTranslation) {
 
     // IMU moves 1m in X and rotates 90° around Z
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d(10, 0, 0),
-                         SO3d::exp(Eigen::Vector3d(0, 0, 0)),
-                         Eigen::Vector3d(0, 0, M_PI/0.1)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d(1.0, 0, 0), Eigen::Vector3d(10, 0, 0),
-                         SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)),
-                         Eigen::Vector3d(0, 0, M_PI/0.1)));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d(10, 0, 0),
+                            SO3d::exp(Eigen::Vector3d(0, 0, 0)),
+                            Eigen::Vector3d(0, 0, M_PI/0.1)));
 
     SE3d T_I_L = SE3d();  // identity extrinsic
     SE3d T_W_I_end(SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)), Eigen::Vector3d(1.0, 0, 0));
@@ -232,8 +224,7 @@ TEST(LidarDeskewerTest, D6_PointAtScanStartCompensated) {
     // Point 0: curvature = 0 (scan_start)
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d(0.1, 0, 0), Eigen::Vector3d(1, 0, 0)));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0)));
 
     SE3d T_I_L = SE3d();
     SE3d T_W_I_end(SO3d(), Eigen::Vector3d(0.1, 0, 0));
@@ -253,8 +244,7 @@ TEST(LidarDeskewerTest, D7_PointAtScanEndNearIdentity) {
     // Point 1: curvature = 0.1 (scan_end time)
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d(0.1, 0, 0), Eigen::Vector3d(1, 0, 0)));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0)));
 
     SE3d T_I_L = SE3d();
     SE3d T_W_I_end(SO3d(), Eigen::Vector3d(0.1, 0, 0));
@@ -274,8 +264,7 @@ TEST(LidarDeskewerTest, D8_PointOutsideTrajectoryRejected) {
     scan.cloud->points[0].curvature = -0.5;  // time = 0.5, before trajectory
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_I_L = SE3d();
     SE3d T_W_I_end = SE3d();
@@ -310,8 +299,7 @@ TEST(LidarDeskewerTest, D10_RotationalExtrinsic) {
     SE3d T_I_L(SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)), Eigen::Vector3d::Zero());
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_W_I_end = SE3d();  // No motion
 
@@ -342,12 +330,9 @@ TEST(LidarDeskewerTest, D11_LeverArmWhileRotating) {
     // IMU rotates 90° around Z over scan, staying at origin
     const double yaw_rate = M_PI / 0.1;
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
-                         SO3d::exp(Eigen::Vector3d(0, 0, 0)),
-                         Eigen::Vector3d(0, 0, yaw_rate)));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
-                         SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)),
-                         Eigen::Vector3d(0, 0, yaw_rate)));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+                            SO3d::exp(Eigen::Vector3d(0, 0, 0)),
+                            Eigen::Vector3d(0, 0, yaw_rate)));
 
     SE3d T_W_I_end(SO3d::exp(Eigen::Vector3d(0, 0, M_PI/2)), Eigen::Vector3d::Zero());
 
@@ -415,8 +400,7 @@ TEST(LidarDeskewerTest, D12_TrajectoryNotCoveringScan) {
 
     // Trajectory only covers t=1.0-1.1, not the scan time
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_I_L = SE3d();
     SE3d T_W_I_end = SE3d();
@@ -433,8 +417,7 @@ TEST(LidarDeskewerTest, D13_EmptyInputCloud) {
     auto scan = makeTimedScan(1.0, 1.1, 0);  // 0 points
 
     ImuTrajectory traj;
-    traj.append(makeKnot(1.0, Eigen::Vector3d::Zero()));
-    traj.append(makeKnot(1.1, Eigen::Vector3d::Zero()));
+    traj.append(makeSegment(1.0, 1.1, Eigen::Vector3d::Zero()));
 
     SE3d T_I_L = SE3d();
     SE3d T_W_I_end = SE3d();

@@ -150,10 +150,10 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
 
     if (!initialized_ || !kf) return trajectory;
 
-    // Build continuous, deduplicated IMU sequence
+    // Build continuous, deduplicated IMU sequence including brackets.
     auto seq = buildContinuousSequence(imus, imu_before, imu_after);
 
-    // First scan: initialize integration epoch
+    // First scan: initialize integration epoch with a zero-length segment.
     if (!integration_initialized_) {
         if (!seq.empty()) {
             last_imu_ = seq.back();
@@ -161,22 +161,19 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
         integration_time_ = scan_end_time;
         integration_initialized_ = true;
         const auto& state = kf->getState();
-        ImuTrajectoryKnot knot;
-        knot.timestamp_s = scan_start_time;
-        knot.R_W_I = state.R_wb;
-        knot.p_W_I = state.p_w;
-        knot.v_W_I = state.v_w;
-        if (!seq.empty()) {
-            knot.omega_I = seq.back().gyro - state.b_w;
-            knot.a_W = state.R_wb * (seq.back().acc * accel_scale_ - state.b_a) + kGravityW;
-        }
-        trajectory.append(knot);
+        ImuMotionSegment segment;
+        segment.t0_s = scan_start_time;
+        segment.t1_s = scan_start_time;
+        segment.R_W_I_t0 = state.R_wb;
+        segment.p_W_I_t0 = state.p_w;
+        segment.v_W_I_t0 = state.v_w;
+        trajectory.append(segment);
         return trajectory;
     }
 
     if (scan_end_time <= integration_time_) return trajectory;
 
-    // If seq is empty, propagate with last_imu_ only
+    // If seq is empty, propagate with last_imu_ only.
     if (seq.empty()) {
         const double dt = scan_end_time - integration_time_;
         if (dt > 0.0 && dt <= 0.1) {
@@ -186,34 +183,46 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
         }
         last_imu_.time = scan_end_time;
         integration_time_ = scan_end_time;
-        // Add knot at scan_end
         const auto& state = kf->getState();
-        ImuTrajectoryKnot knot;
-        knot.timestamp_s = scan_end_time;
-        knot.R_W_I = state.R_wb;
-        knot.p_W_I = state.p_w;
-        knot.v_W_I = state.v_w;
-        trajectory.append(knot);
+        ImuMotionSegment segment;
+        segment.t0_s = scan_start_time;
+        segment.t1_s = scan_end_time;
+        segment.R_W_I_t0 = state.R_wb;
+        segment.p_W_I_t0 = state.p_w;
+        segment.v_W_I_t0 = state.v_w;
+        trajectory.append(segment);
         return trajectory;
     }
 
-    // Add initial knot at scan_start using current state
-    {
-        const auto& state = kf->getState();
-        ImuTrajectoryKnot knot;
-        knot.timestamp_s = scan_start_time;
-        knot.R_W_I = state.R_wb;
-        knot.p_W_I = state.p_w;
-        knot.v_W_I = state.v_w;
-        // Use last_imu_ for omega/acc at scan_start
-        knot.omega_I = last_imu_.gyro - state.b_w;
-        knot.a_W = state.R_wb * (last_imu_.acc * accel_scale_ - state.b_a) + kGravityW;
-        trajectory.append(knot);
+    // Build bracketed segments. Each segment covers one IMU interval and stores
+    // the state at its start plus the midpoint measurement of the two bracket
+    // samples as control. This matches the FAST-LIO2 propagation sequence.
+    double current_time = integration_time_;
+    State15 state_t0 = kf->getState();
+    double t0 = scan_start_time;
+
+    // Propagate to scan_start if there is a gap. The synchronizer normally
+    // provides continuous coverage, but we keep this guard for robustness.
+    if (scan_start_time > current_time + 1e-9) {
+        const double dt = scan_start_time - current_time;
+        if (dt > 0.0 && dt <= 0.1) {
+            IMUData scaled = last_imu_;
+            scaled.acc *= accel_scale_;
+            kf->predict(scaled, dt);
+        }
+        current_time = scan_start_time;
+        state_t0 = kf->getState();
     }
 
-    // Forward propagation through IMU sequence
-    double current_time = integration_time_;
+    // held_imu is the sample at or before current_time.
     IMUData held_imu = last_imu_;
+    for (const auto& imu : seq) {
+        if (imu.time <= current_time) {
+            held_imu = imu;
+        } else {
+            break;
+        }
+    }
 
     for (const auto& imu : seq) {
         // Skip IMUs before current integration time
@@ -224,32 +233,35 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
         // Stop if past scan_end
         if (imu.time > scan_end_time) break;
 
-        const double dt = imu.time - current_time;
+        const double t1 = imu.time;
+        const double dt = t1 - current_time;
         if (dt > 0.0 && dt <= 0.1) {
-            // Midpoint integration
-            IMUData midpoint;
-            midpoint.acc = 0.5 * (held_imu.acc + imu.acc) * accel_scale_;
-            midpoint.gyro = 0.5 * (held_imu.gyro + imu.gyro);
-            midpoint.time = imu.time;
-            kf->predict(midpoint, dt);
+            // Midpoint measurement of the bracket (held_imu, imu).
+            const double mid_time = 0.5 * (held_imu.time + imu.time);
+            IMUData midpoint = interpolateImu(held_imu, imu, mid_time);
+            midpoint.acc *= accel_scale_;
 
-            // Save trajectory knot
-            const auto& state = kf->getState();
-            ImuTrajectoryKnot knot;
-            knot.timestamp_s = imu.time;
-            knot.R_W_I = state.R_wb;
-            knot.p_W_I = state.p_w;
-            knot.v_W_I = state.v_w;
-            knot.omega_I = midpoint.gyro - state.b_w;
-            knot.a_W = state.R_wb * (midpoint.acc - state.b_a) + kGravityW;
-            trajectory.append(knot);
+            ImuMotionSegment segment;
+            segment.t0_s = t0;
+            segment.t1_s = t1;
+            segment.R_W_I_t0 = state_t0.R_wb;
+            segment.p_W_I_t0 = state_t0.p_w;
+            segment.v_W_I_t0 = state_t0.v_w;
+            segment.omega_mid_I = midpoint.gyro - state_t0.b_w;
+            segment.acceleration_mid_W =
+                state_t0.R_wb * (midpoint.acc - state_t0.b_a) + kGravityW;
+            trajectory.append(segment);
+
+            kf->predict(midpoint, dt);
+            state_t0 = kf->getState();
         }
 
+        t0 = t1;
         held_imu = imu;
-        current_time = imu.time;
+        current_time = t1;
     }
 
-    // Propagate to exact scan_end
+    // Propagate to exact scan_end using the last bracket.
     const double dt_remaining = scan_end_time - current_time;
     if (dt_remaining > 0.0 && dt_remaining <= 0.1) {
         IMUData u_end = held_imu;
@@ -257,28 +269,26 @@ ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
             u_end = interpolateImu(held_imu, *imu_after, scan_end_time);
         }
 
-        // Midpoint between held_imu and u_end
+        // Midpoint between held_imu and u_end.
         IMUData u_mid;
         u_mid.acc = 0.5 * (held_imu.acc + u_end.acc) * accel_scale_;
         u_mid.gyro = 0.5 * (held_imu.gyro + u_end.gyro);
 
-        kf->predict(u_mid, dt_remaining);
+        ImuMotionSegment segment;
+        segment.t0_s = t0;
+        segment.t1_s = scan_end_time;
+        segment.R_W_I_t0 = state_t0.R_wb;
+        segment.p_W_I_t0 = state_t0.p_w;
+        segment.v_W_I_t0 = state_t0.v_w;
+        segment.omega_mid_I = u_mid.gyro - state_t0.b_w;
+        segment.acceleration_mid_W =
+            state_t0.R_wb * (u_mid.acc - state_t0.b_a) + kGravityW;
+        trajectory.append(segment);
 
-        // Save final knot at scan_end
-        const auto& state = kf->getState();
-        ImuTrajectoryKnot knot;
-        knot.timestamp_s = scan_end_time;
-        knot.R_W_I = state.R_wb;
-        knot.p_W_I = state.p_w;
-        knot.v_W_I = state.v_w;
-        knot.omega_I = u_mid.gyro - state.b_w;
-        knot.a_W = state.R_wb * (u_mid.acc - state.b_a) + kGravityW;
-        trajectory.append(knot);
+        kf->predict(u_mid, dt_remaining);
     }
 
-    // Carry forward the IMU sample at scan_end. If we have an imu_after sample,
-    // interpolate to the exact scan_end time; otherwise keep the latest held
-    // sample with the scan_end timestamp for continuous next-scan integration.
+    // Carry forward the IMU sample at scan_end.
     if (imu_after.has_value() && imu_after->time > current_time) {
         last_imu_ = interpolateImu(held_imu, *imu_after, scan_end_time);
     } else {

@@ -60,23 +60,35 @@ TEST(IMUTrajectoryTest, TrajectoryEndMatchesFilterStateAtScanEnd) {
     const State15 final_state = filter->getState();
 
     // ASSERTIONS: Trajectory end must match filter predicted state
-    ASSERT_GE(trajectory.size(), 2u);
-    const auto& last_knot = trajectory.back();
+    ASSERT_GE(trajectory.size(), 1u);
+    const auto& last_segment = trajectory.back();
 
-    // T1.1: Timestamp must match scan_end
-    EXPECT_NEAR(last_knot.timestamp_s, scan_end, 1e-9)
+    // T1.1: Segment must cover scan_end
+    EXPECT_NEAR(last_segment.t1_s, scan_end, 1e-9)
         << "Trajectory end timestamp must match scan_end_time";
 
+    // Compute the segment pose at t1_s from its stored start state and midpoint
+    // controls. The filter state is integrated forward to scan_end, so it
+    // should match the propagated end of the last segment.
+    const double dt_end = last_segment.t1_s - last_segment.t0_s;
+    const SO3d R_end = last_segment.R_W_I_t0 *
+                       SO3d::exp(last_segment.omega_mid_I * dt_end);
+    const Eigen::Vector3d p_end = last_segment.p_W_I_t0 +
+                                  last_segment.v_W_I_t0 * dt_end +
+                                  0.5 * last_segment.acceleration_mid_W * dt_end * dt_end;
+    const Eigen::Vector3d v_end =
+        last_segment.v_W_I_t0 + last_segment.acceleration_mid_W * dt_end;
+
     // T1.2: Rotation must match
-    EXPECT_TRUE(last_knot.R_W_I.matrix().isApprox(final_state.R_wb.matrix(), 1e-6))
+    EXPECT_TRUE(R_end.matrix().isApprox(final_state.R_wb.matrix(), 1e-6))
         << "Trajectory end rotation must match filter predicted rotation";
 
     // T1.3: Position must match
-    EXPECT_TRUE(last_knot.p_W_I.isApprox(final_state.p_w, 1e-6))
+    EXPECT_TRUE(p_end.isApprox(final_state.p_w, 1e-6))
         << "Trajectory end position must match filter predicted position";
 
     // T1.4: Velocity must match
-    EXPECT_TRUE(last_knot.v_W_I.isApprox(final_state.v_w, 1e-6))
+    EXPECT_TRUE(v_end.isApprox(final_state.v_w, 1e-6))
         << "Trajectory end velocity must match filter predicted velocity";
 }
 
@@ -109,20 +121,20 @@ TEST(IMUTrajectoryTest, StationaryPropagationMaintainsZeroVelocity) {
 
         ImuTrajectory trajectory = processor.propagate(filter, imus, scan_start, scan_end);
 
-        ASSERT_GE(trajectory.size(), 2u);
-        const auto& last_knot = trajectory.back();
+        ASSERT_GE(trajectory.size(), 1u);
+        const auto& last_segment = trajectory.back();
 
         // T2.1: Velocity must remain near zero
-        EXPECT_NEAR(last_knot.v_W_I.norm(), 0.0, 1e-6)
+        EXPECT_NEAR(last_segment.v_W_I_t0.norm(), 0.0, 1e-6)
             << "Stationary propagation: velocity must remain near zero at scan " << scan;
 
         // T2.2: Position must not drift
-        EXPECT_NEAR((last_knot.p_W_I - initial_position).norm(), 0.0, 1e-6)
+        EXPECT_NEAR((last_segment.p_W_I_t0 - initial_position).norm(), 0.0, 1e-6)
             << "Stationary propagation: position must not drift at scan " << scan;
 
         // T2.3: World-frame acceleration should cancel gravity
         // a_W = R * (f - b_a) + g_W = R * (R^T * g) - g = 0 (approximately)
-        EXPECT_NEAR(last_knot.a_W.norm(), 0.0, 1e-3)
+        EXPECT_NEAR(last_segment.acceleration_mid_W.norm(), 0.0, 1e-3)
             << "Stationary propagation: world acceleration should be near zero";
     }
 }
@@ -206,11 +218,11 @@ TEST(IMUTrajectoryTest, TrajectoryCoversScanTimeRange) {
     ImuTrajectory trajectory = processor.propagate(filter, imus, scan_start, scan_end);
 
     // T4.1: Trajectory must cover scan start
-    EXPECT_LE(trajectory.front().timestamp_s, scan_start + 1e-6)
+    EXPECT_LE(trajectory.front().t0_s, scan_start + 1e-6)
         << "Trajectory must start at or before scan_start";
 
     // T4.2: Trajectory must cover scan end
-    EXPECT_GE(trajectory.back().timestamp_s, scan_end - 1e-6)
+    EXPECT_GE(trajectory.back().t1_s, scan_end - 1e-6)
         << "Trajectory must end at or after scan_end";
 
     // T4.3: covers() method must return true for all points in range
@@ -219,29 +231,21 @@ TEST(IMUTrajectoryTest, TrajectoryCoversScanTimeRange) {
     EXPECT_TRUE(trajectory.covers((scan_start + scan_end) / 2.0));
 }
 
-// T5: Interpolation accuracy for query points within knots
-TEST(IMUTrajectoryTest, InterpolationAccuracyWithinKnots) {
+// T5: Interpolation accuracy for query points within segments
+TEST(IMUTrajectoryTest, InterpolationAccuracyWithinSegments) {
     ImuTrajectory traj;
     
     // Create simple trajectory: constant velocity 1 m/s in X
-    ImuTrajectoryKnot k0;
-    k0.timestamp_s = 0.0;
-    k0.R_W_I = SO3d();
-    k0.p_W_I = Eigen::Vector3d::Zero();
-    k0.v_W_I = Eigen::Vector3d(1.0, 0.0, 0.0);  // 1 m/s in X
-    k0.omega_I = Eigen::Vector3d::Zero();
-    k0.a_W = Eigen::Vector3d::Zero();
+    ImuMotionSegment seg;
+    seg.t0_s = 0.0;
+    seg.t1_s = 0.1;
+    seg.R_W_I_t0 = SO3d();
+    seg.p_W_I_t0 = Eigen::Vector3d::Zero();
+    seg.v_W_I_t0 = Eigen::Vector3d(1.0, 0.0, 0.0);  // 1 m/s in X
+    seg.omega_mid_I = Eigen::Vector3d::Zero();
+    seg.acceleration_mid_W = Eigen::Vector3d::Zero();
     
-    ImuTrajectoryKnot k1;
-    k1.timestamp_s = 0.1;
-    k1.R_W_I = SO3d();
-    k1.p_W_I = Eigen::Vector3d(0.1, 0.0, 0.0);  // 1 m/s * 0.1 s
-    k1.v_W_I = Eigen::Vector3d(1.0, 0.0, 0.0);
-    k1.omega_I = Eigen::Vector3d::Zero();
-    k1.a_W = Eigen::Vector3d::Zero();
-    
-    traj.append(k0);
-    traj.append(k1);
+    traj.append(seg);
 
     // Interpolate at mid-point
     const double query_time = 0.05;
@@ -257,30 +261,31 @@ TEST(IMUTrajectoryTest, InterpolationAccuracyWithinKnots) {
 TEST(IMUTrajectoryTest, InterpolationHandlesEdgeCases) {
     ImuTrajectory traj;
     
-    // Single knot
-    ImuTrajectoryKnot k0;
-    k0.timestamp_s = 1.0;
-    k0.R_W_I = SO3d::exp(Eigen::Vector3d(0.0, 0.0, M_PI/4));  // 45° Z rotation
-    k0.p_W_I = Eigen::Vector3d(1.0, 2.0, 3.0);
-    k0.v_W_I = Eigen::Vector3d::Zero();
-    k0.omega_I = Eigen::Vector3d::Zero();
-    k0.a_W = Eigen::Vector3d::Zero();
-    traj.append(k0);
+    // Single segment
+    ImuMotionSegment seg;
+    seg.t0_s = 1.0;
+    seg.t1_s = 1.0;
+    seg.R_W_I_t0 = SO3d::exp(Eigen::Vector3d(0.0, 0.0, M_PI/4));  // 45° Z rotation
+    seg.p_W_I_t0 = Eigen::Vector3d(1.0, 2.0, 3.0);
+    seg.v_W_I_t0 = Eigen::Vector3d::Zero();
+    seg.omega_mid_I = Eigen::Vector3d::Zero();
+    seg.acceleration_mid_W = Eigen::Vector3d::Zero();
+    traj.append(seg);
 
-    // Query before first knot
+    // Query before first segment
     SE3d T_before = traj.interpolateImuPose(0.5);
-    EXPECT_TRUE(T_before.rotation().matrix().isApprox(k0.R_W_I.matrix()));
-    EXPECT_TRUE(T_before.translation().isApprox(k0.p_W_I));
+    EXPECT_TRUE(T_before.rotation().matrix().isApprox(seg.R_W_I_t0.matrix()));
+    EXPECT_TRUE(T_before.translation().isApprox(seg.p_W_I_t0));
 
-    // Query at exact knot time
+    // Query at exact segment time
     SE3d T_at = traj.interpolateImuPose(1.0);
-    EXPECT_TRUE(T_at.rotation().matrix().isApprox(k0.R_W_I.matrix()));
-    EXPECT_TRUE(T_at.translation().isApprox(k0.p_W_I));
+    EXPECT_TRUE(T_at.rotation().matrix().isApprox(seg.R_W_I_t0.matrix()));
+    EXPECT_TRUE(T_at.translation().isApprox(seg.p_W_I_t0));
 
-    // Query after last knot
+    // Query after last segment
     SE3d T_after = traj.interpolateImuPose(2.0);
-    EXPECT_TRUE(T_after.rotation().matrix().isApprox(k0.R_W_I.matrix()));
-    EXPECT_TRUE(T_after.translation().isApprox(k0.p_W_I));
+    EXPECT_TRUE(T_after.rotation().matrix().isApprox(seg.R_W_I_t0.matrix()));
+    EXPECT_TRUE(T_after.translation().isApprox(seg.p_W_I_t0));
 }
 
 }  // namespace

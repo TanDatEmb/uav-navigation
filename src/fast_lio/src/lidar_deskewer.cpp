@@ -62,8 +62,8 @@ DeskewResult LidarDeskewer::deskewToScanEnd(const NormalizedLidarScan& scan,
     }
 
     // Second pass: deskew all points
-    // Monotonic interval index for O(N+M) traversal
-    std::size_t knot_index = 0;
+    // Monotonic segment index for O(N+M) traversal
+    std::size_t segment_index = 0;
 
     for (const auto& src_pt : src_cloud.points) {
         PointType dst_pt;
@@ -78,10 +78,10 @@ DeskewResult LidarDeskewer::deskewToScanEnd(const NormalizedLidarScan& scan,
         // Compute absolute point time
         const double point_time_s = scan_start_s + static_cast<double>(src_pt.curvature);
 
-        // Advance knot_index to the interval containing point_time
-        while (knot_index + 1 < trajectory.size() &&
-               trajectory[knot_index + 1].timestamp_s < point_time_s) {
-            ++knot_index;
+        // Advance segment_index to the segment containing point_time
+        while (segment_index + 1 < trajectory.size() &&
+               trajectory[segment_index + 1].t0_s < point_time_s) {
+            ++segment_index;
         }
 
         // IMU pose at point time: T_W_I_i = trajectory.interpolateImuPose(point_time_s)
