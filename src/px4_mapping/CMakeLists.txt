@@ -14,6 +14,7 @@ find_package(px4_ros2_utils REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 # find_package(PCL REQUIRED)
 # find_package(pcl_conversions REQUIRED)
@@ -47,6 +48,7 @@ ament_target_dependencies(lio_px4_bridge_core
     px4_ros2_utils
     rclcpp
     nav_msgs
+    diagnostic_msgs
     px4_msgs
 )
 add_executable(lio_px4_bridge
@@ -105,7 +107,7 @@ install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
 )
 ament_export_targets(export_${PROJECT_NAME})
-ament_export_dependencies(px4_nav_common px4_ros2_utils Eigen3 rclcpp nav_msgs sensor_msgs px4_msgs)
+ament_export_dependencies(px4_nav_common px4_ros2_utils Eigen3 rclcpp nav_msgs sensor_msgs diagnostic_msgs px4_msgs)
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     ament_add_gtest(test_voxel_pool test/test_voxel_pool.cpp)

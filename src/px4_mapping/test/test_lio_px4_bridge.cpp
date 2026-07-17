@@ -75,4 +75,39 @@ TEST(LioPx4BridgeConversionTest, MarksUnavailableTwistAndInvalidVarianceAsNan) {
     EXPECT_TRUE(std::isnan(output.position_variance[1]));
 }
 
+TEST(LioPx4BridgeAlignmentTest, YawTranslationAveragingRejectsOutliers) {
+    constexpr double kYawOffset = 0.3;  // rad
+    const Eigen::Vector3d kTranslation(10.0, 20.0, 0.0);
+
+    std::vector<px4_mapping::AlignmentPair> pairs;
+    for (int i = 0; i < 8; ++i) {
+        px4_mapping::AlignmentPair pair;
+        pair.t_ns = i * 100'000'000LL;
+        // LIO points on a circle, PX4 points rotated/translated.
+        const double angle = i * 0.2;
+        pair.lio_position = Eigen::Vector3d(std::cos(angle), std::sin(angle), 0.0);
+        pair.lio_orientation = Eigen::Quaterniond::Identity();
+
+        const Eigen::Quaterniond rotation(
+            Eigen::AngleAxisd(kYawOffset, Eigen::Vector3d::UnitZ()));
+        pair.px4_position = rotation * pair.lio_position + kTranslation;
+        pair.px4_orientation = rotation;
+        pairs.push_back(pair);
+    }
+
+    // Add an outlier pair.
+    {
+        px4_mapping::AlignmentPair outlier = pairs.back();
+        outlier.px4_orientation = Eigen::Quaterniond(
+            Eigen::AngleAxisd(kYawOffset + 1.0, Eigen::Vector3d::UnitZ()));
+        pairs.push_back(outlier);
+    }
+
+    const auto result = px4_mapping::ComputeYawTranslationAlignment(pairs, 0.2);
+    ASSERT_TRUE(result.ready);
+    EXPECT_EQ(result.samples_used, 8U);
+    EXPECT_NEAR(result.yaw_offset_rad, kYawOffset, 1e-3);
+    EXPECT_TRUE(result.translation.isApprox(kTranslation, 1e-3));
+}
+
 }  // namespace

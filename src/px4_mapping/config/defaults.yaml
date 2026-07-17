@@ -19,7 +19,7 @@ lio_px4_bridge:
     # - translation_only: keep axes, only align origin offset
     # - yaw_translation: align heading + origin
     # - full_6dof: align full SE(3)
-    alignment_mode: "translation_only"
+    alignment_mode: "yaw_translation"
 
     # External vision variance (position [m^2], orientation [rad^2]).
     position_variance: [0.04, 0.04, 0.09]
@@ -27,6 +27,13 @@ lio_px4_bridge:
 
     # External vision quality indicator (1-100).
     visual_odom_quality: 100
+
+    # Alignment gate: collect synchronized LIO/PX4 pose pairs before capturing.
+    alignment.window_seconds: 2.0
+    alignment.minimum_samples: 20
+    alignment.max_speed_mps: 0.5
+    alignment.max_lio_position_variance: 0.1
+    alignment.yaw_outlier_threshold_rad: 0.1
 
 global_mapper:
   ros__parameters:
