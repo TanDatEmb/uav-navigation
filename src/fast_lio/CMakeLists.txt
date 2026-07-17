@@ -39,6 +39,10 @@ else()
   message(STATUS "Found Sophus")
 endif()
 
+# IKFoM manifold toolkit (header-only, vendored under include/IKFoM_toolkit).
+# Boost is a transitive dependency of IKFoM's esekfom.hpp.
+find_package(Boost REQUIRED)
+
 # PCL
 find_package(PCL REQUIRED COMPONENTS common io filters)
 
@@ -51,6 +55,7 @@ endif()
 
 include_directories(
   include
+  ${Boost_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
 )
 
@@ -60,6 +65,7 @@ add_definitions(${PCL_DEFINITIONS})
 # Core library
 add_library(${PROJECT_NAME}_core SHARED
   src/map_builder/ieskf.cpp
+  src/map_builder/ikfom_estimator.cpp
   src/map_builder/imu_processor.cpp
   src/map_builder/lidar_processor.cpp
   src/map_builder/map_builder.cpp
@@ -155,6 +161,10 @@ if(BUILD_TESTING)
   # Existing IESKF / IMU / mapping tests
   ament_add_gtest(test_ieskf test/test_ieskf.cpp)
   target_link_libraries(test_ieskf ${PROJECT_NAME}_core)
+
+  # New: IKFoM baseline estimator tests
+  ament_add_gtest(test_ikfom_estimator test/test_ikfom_estimator.cpp)
+  target_link_libraries(test_ikfom_estimator ${PROJECT_NAME}_core)
 
   # New: PointCloud2 decoder tests
   ament_add_gtest(test_imu_propagation test/test_imu_propagation.cpp)

@@ -4,6 +4,12 @@ This document describes the Iterated Error-State Kalman Filter (IESKF) implement
 by `fast_lio`. The filter uses a 15-DOF state with fixed world gravity, a right
 perturbation on SO(3), and an information-form iterative LiDAR update.
 
+An IKFoM-based baseline estimator (`fast_lio::IkfomEstimator`) is also provided in
+`src/fast_lio/include/fast_lio/estimator/`. It uses the same 15-DOF state and
+constant-gravity process model, but is built on the HKUST IKFoM manifold toolkit
+(commit `59cfc095ca74425f9b330c7c04a5d74f68c6dd62`) for direct traceability to the
+FAST-LIO2 reference implementation. The LiDAR update is wired in Commit 6.
+
 ---
 
 ## State Vector
