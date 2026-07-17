@@ -13,6 +13,10 @@ namespace fast_lio {
 
 namespace {
 
+// IKFoM stores raw function pointers for its measurement callbacks, so the
+// active estimator impl is passed through a thread-local pointer during update.
+thread_local IkfomEstimatorImpl* g_current_impl = nullptr;
+
 // Constant gravity in the z-up LIO world frame [m/s²].
 constexpr double kGravityMps2 = 9.80665;
 const Eigen::Vector3d kGravityWorld(0.0, 0.0, -kGravityMps2);
@@ -105,16 +109,32 @@ Eigen::Matrix<double, 12, 12> BuildProcessNoiseCovariance(const Config& config) 
 
 }  // namespace
 
+// Forward declaration of the IKFoM measurement callback installed in BindProcessModel().
+static Eigen::Matrix<double, Eigen::Dynamic, 1> h_dyn_share_model(
+    IkfomState& s, esekfom::dyn_share_datastruct<double>& dyn_share);
+
 struct IkfomEstimatorImpl {
     esekfom::esekf<IkfomState, 12, IkfomInput> kf;
     Eigen::Matrix<double, 12, 12> process_noise_cov;
     double lidar_information = 200.0;
+    IkfomMeasurementProvider measurement_provider;
+    int last_measurement_count = 0;
+    double limit[15] = {};
 
-    IkfomEstimatorImpl() : kf(), process_noise_cov(Eigen::Matrix<double, 12, 12>::Zero()) {}
+    IkfomEstimatorImpl() : kf(), process_noise_cov(Eigen::Matrix<double, 12, 12>::Zero()) {
+        // Convergence thresholds for the error-state DOF order used by IKFoM:
+        // [pos, rot, vel, bg, ba].
+        for (int i = 0; i < 3; ++i) {
+            limit[i] = 0.015;                     // position [m]
+            limit[i + 3] = 0.01 * M_PI / 180.0;   // orientation [rad]
+            limit[i + 6] = 1.0;                   // velocity
+            limit[i + 9] = 1.0;                   // gyro bias
+            limit[i + 12] = 1.0;                  // accel bias
+        }
+    }
 
     void BindProcessModel() {
-        double limit[15] = {};
-        kf.init_dyn_runtime_share(get_f, df_dx, df_dw, 1, limit);
+        kf.init_dyn_share(get_f, df_dx, df_dw, &h_dyn_share_model, 3, limit);
     }
 
     void ResetTo(const IkfomState& x, const Eigen::Matrix<double, 15, 15>& P) {
@@ -122,6 +142,34 @@ struct IkfomEstimatorImpl {
         BindProcessModel();
     }
 };
+
+static Eigen::Matrix<double, Eigen::Dynamic, 1> h_dyn_share_model(
+    IkfomState& s, esekfom::dyn_share_datastruct<double>& dyn_share) {
+    dyn_share.valid = false;
+    if (!g_current_impl || !g_current_impl->measurement_provider) {
+        return Eigen::Matrix<double, Eigen::Dynamic, 1>();
+    }
+
+    const State15 state = FromIkfomState(s);
+    Eigen::MatrixXd H;
+    Eigen::VectorXd residuals;
+    Eigen::MatrixXd R;
+    if (!g_current_impl->measurement_provider(state, H, residuals, R) || residuals.size() == 0) {
+        return Eigen::Matrix<double, Eigen::Dynamic, 1>();
+    }
+
+    g_current_impl->last_measurement_count = static_cast<int>(residuals.size());
+    dyn_share.valid = true;
+    dyn_share.z = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(residuals.size());
+    dyn_share.h_x = H;
+    dyn_share.h_v = Eigen::MatrixXd::Identity(residuals.size(), residuals.size());
+    dyn_share.R = R;
+
+    // The provider gives residuals (z - h). We return them as the predicted
+    // measurement h so that IKFoM's innovation (z - h) becomes -residual,
+    // which drives the residual to zero.
+    return residuals;
+}
 
 IkfomEstimator::IkfomEstimator() : impl_(std::make_unique<IkfomEstimatorImpl>()) {
     reset();
@@ -156,21 +204,71 @@ void IkfomEstimator::predict(const IMUData& imu, double dt) {
     impl_->kf.predict(dt_mut, impl_->process_noise_cov, input);
 }
 
-IkfomUpdateResult IkfomEstimator::update(int /*max_iterations*/) {
+void IkfomEstimator::setMeasurementProvider(IkfomMeasurementProvider provider) {
+    impl_->measurement_provider = std::move(provider);
+}
+
+IkfomUpdateResult IkfomEstimator::update(int max_iterations) {
     IkfomUpdateResult result;
-    result.status = IkfomUpdateStatus::kNotImplemented;
+    result.status = IkfomUpdateStatus::kNoMeasurements;
     result.converged = false;
     result.iterations = 0;
     result.measurements = 0;
+
+    if (!impl_->measurement_provider) {
+        return result;
+    }
+
+    // The thread-local pointer lets the raw IKFoM callback reach the provider.
+    g_current_impl = impl_.get();
+    impl_->last_measurement_count = 0;
+
+    const State15 state_before = getState();
+
+    // Re-initialise with the requested iteration count. IKFoM keeps the prior
+    // state/covariance and only updates function pointers and maximum_iter.
+    impl_->kf.init_dyn_share(get_f, df_dx, df_dw, &h_dyn_share_model, max_iterations,
+                             impl_->limit);
+    impl_->kf.update_iterated_dyn_share();
+
+    const State15 state_after = getState();
+    g_current_impl = nullptr;
+
+    result.measurements = impl_->last_measurement_count;
+
+    if (result.measurements == 0) {
+        result.status = IkfomUpdateStatus::kNoMeasurements;
+        return result;
+    }
+
+    if (!state_after.p_w.allFinite() || !state_after.v_w.allFinite() ||
+        !state_after.R_wb.matrix().allFinite()) {
+        result.status = IkfomUpdateStatus::kInsufficientMeasurements;
+        return result;
+    }
+
+    const Eigen::Vector3d dpos = state_after.p_w - state_before.p_w;
+    const double dpos_norm = dpos.norm();
+    const Eigen::Matrix3d dR =
+        state_before.R_wb.matrix().transpose() * state_after.R_wb.matrix();
+    const double drot_angle = Eigen::AngleAxisd(dR).angle();
+
+    result.final_delta_position_m = dpos_norm;
+    result.final_delta_rotation_rad = drot_angle;
+    result.converged = (dpos_norm < 0.015) && (drot_angle < 0.01 * M_PI / 180.0);
+    result.iterations = max_iterations;
+    result.status = IkfomUpdateStatus::kSuccess;
     return result;
 }
 
 void IkfomEstimator::reset() {
     Eigen::Matrix<double, 15, 15> P = Eigen::Matrix<double, 15, 15>::Identity();
 
-    // Initial uncertainties match the custom IESKF defaults.
-    P.block<3, 3>(0, 0) = std::pow(5.0 * M_PI / 180.0, 2) * Eigen::Matrix3d::Identity();  // orientation
-    P.block<3, 3>(3, 3) = std::pow(0.1, 2) * Eigen::Matrix3d::Identity();                  // position
+    // Initial uncertainties in the IKFoM error-state DOF order:
+    // [pos, rot, vel, bg, ba]. These match the custom IESKF magnitudes but are
+    // reordered because IKFoM places position first.
+    P.block<3, 3>(0, 0) = std::pow(0.1, 2) * Eigen::Matrix3d::Identity();                  // position
+    P.block<3, 3>(3, 3) = std::pow(5.0 * M_PI / 180.0, 2) * Eigen::Matrix3d::Identity();  // orientation
     P.block<3, 3>(6, 6) = std::pow(0.1, 2) * Eigen::Matrix3d::Identity();                  // velocity
     P.block<3, 3>(9, 9) = std::pow(0.01, 2) * Eigen::Matrix3d::Identity();                 // gyro bias
     P.block<3, 3>(12, 12) = std::pow(0.1, 2) * Eigen::Matrix3d::Identity();                // accel bias

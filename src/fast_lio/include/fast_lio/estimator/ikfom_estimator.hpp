@@ -17,9 +17,26 @@
 
 #include <IKFoM_toolkit/esekfom/esekfom.hpp>
 
+#include <functional>
 #include <memory>
 
 namespace fast_lio {
+
+/**
+ * @brief Callback that provides point-to-plane measurements for the IKFoM update.
+ *
+ * The estimator calls this provider once per iteration with the current state
+ * estimate. The provider must fill:
+ *   - H:         N × 15 Jacobian of the residual w.r.t. the IKFoM error state
+ *                order [pos, rot, vel, bg, ba].
+ *   - residuals: N × 1 signed point-to-plane residuals.
+ *   - R:         N × N measurement noise covariance.
+ *
+ * Return false when no valid measurements are available.
+ */
+using IkfomMeasurementProvider =
+    std::function<bool(const State15&, Eigen::MatrixXd&, Eigen::VectorXd&,
+                       Eigen::MatrixXd&)>;
 
 // Forward-declared PIMPL storage so the esekf template stays out of the header.
 struct IkfomEstimatorImpl;
@@ -81,10 +98,18 @@ class IkfomEstimator {
     void predict(const IMUData& imu, double dt);
 
     /**
-     * @brief Iterated LiDAR update (placeholder for Commit 6).
+     * @brief Install the measurement provider used by update().
      *
-     * Currently returns kNotImplemented because the point-to-plane
-     * measurement model has not been migrated to IKFoM yet.
+     * The provider is normally supplied by LidarProcessor and captures the
+     * current downsampled cloud and the local map tree.
+     */
+    void setMeasurementProvider(IkfomMeasurementProvider provider);
+
+    /**
+     * @brief Iterated LiDAR update using point-to-plane measurements.
+     *
+     * Runs IKFoM's iterated error-state EKF update. The measurement provider
+     * must already be installed; otherwise the update returns kNoMeasurements.
      */
     IkfomUpdateResult update(int max_iterations = 3);
 

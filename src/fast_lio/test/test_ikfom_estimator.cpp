@@ -142,11 +142,44 @@ TEST(IkfomEstimatorTest, ProcessNoiseScalesWithConfiguredNoise) {
         << "Noisier configuration must not shrink diagonal covariance";
 }
 
-TEST(IkfomEstimatorTest, UpdateReturnsNotImplemented) {
+TEST(IkfomEstimatorTest, UpdateWithoutProviderReturnsNoMeasurements) {
     IkfomEstimator estimator;
     const auto result = estimator.update(3);
-    EXPECT_EQ(result.status, IkfomUpdateStatus::kNotImplemented);
+    EXPECT_EQ(result.status, IkfomUpdateStatus::kNoMeasurements);
     EXPECT_FALSE(result.success());
+    EXPECT_EQ(result.measurements, 0);
+}
+
+TEST(IkfomEstimatorTest, UpdateWithPlaneMeasurementCorrectsPosition) {
+    IkfomEstimator estimator;
+    estimator.initWithGravity(Eigen::Vector3d(0.0, 0.0, 9.80665));
+
+    // Start 0.1 m above the ground plane with a small roll error.
+    State15 state = estimator.getState();
+    state.p_w = Eigen::Vector3d(0.0, 0.0, 0.1);
+    state.R_wb = SO3d::exp(Eigen::Vector3d(0.01, 0.0, 0.0)) * state.R_wb;
+    estimator.setState(state);
+
+    // Synthetic ground-plane measurement at the sensor origin.
+    // Residual = height in world; Jacobian follows the IKFoM error order
+    // [pos, rot, vel, bg, ba].
+    estimator.setMeasurementProvider([](const State15& s, Eigen::MatrixXd& H,
+                                        Eigen::VectorXd& residuals,
+                                        Eigen::MatrixXd& R) -> bool {
+        H.resize(1, 15);
+        H.setZero();
+        H.block<1, 3>(0, 0) = Eigen::Vector3d::UnitZ().transpose();
+        residuals.resize(1);
+        residuals(0) = s.p_w.z();
+        R.resize(1, 1);
+        R(0, 0) = 0.001;
+        return true;
+    });
+
+    const auto result = estimator.update(3);
+    EXPECT_TRUE(result.success()) << "status=" << static_cast<int>(result.status);
+    EXPECT_EQ(result.measurements, 1);
+    EXPECT_LT(estimator.getState().p_w.z(), 0.01);
 }
 
 }  // namespace
