@@ -145,7 +145,7 @@ TEST(IkfomEstimatorTest, ProcessNoiseScalesWithConfiguredNoise) {
 TEST(IkfomEstimatorTest, UpdateWithoutProviderReturnsNoMeasurements) {
     IkfomEstimator estimator;
     const auto result = estimator.update(3);
-    EXPECT_EQ(result.status, IkfomUpdateStatus::kNoMeasurements);
+    EXPECT_EQ(result.status, EstimatorUpdateStatus::kNoMeasurements);
     EXPECT_FALSE(result.success());
     EXPECT_EQ(result.measurements, 0);
 }
@@ -161,20 +161,22 @@ TEST(IkfomEstimatorTest, UpdateWithPlaneMeasurementCorrectsPosition) {
     estimator.setState(state);
 
     // Synthetic ground-plane measurement at the sensor origin.
-    // Residual = height in world; Jacobian follows the IKFoM error order
-    // [pos, rot, vel, bg, ba].
-    estimator.setMeasurementProvider([](const State15& s, Eigen::MatrixXd& H,
-                                        Eigen::VectorXd& residuals,
-                                        Eigen::MatrixXd& R) -> bool {
-        H.resize(1, 15);
-        H.setZero();
-        H.block<1, 3>(0, 0) = Eigen::Vector3d::UnitZ().transpose();
-        residuals.resize(1);
-        residuals(0) = s.p_w.z();
-        R.resize(1, 1);
-        R(0, 0) = 0.001;
+    // SharedState15 order is [δθ, δp, δv, δb_a, δb_ω].
+    estimator.setMeasurementCallback([](const State15& s, SharedState15& shared) -> bool {
+        shared.reset(1);
+        shared.H.block<1, 3>(0, 3) = Eigen::Vector3d::UnitZ().transpose();
+        shared.b(0) = s.p_w.z();
+        shared.num_measurements = 1;
+        shared.valid = true;
+        shared.validation_status = MeasurementValidationStatus::kValid;
         return true;
     });
+
+    // Increase measurement weight so the single iterated update drives the
+    // residual below the 1 cm threshold used in this test.
+    Config config;
+    config.lidar_cov_inv = 1000.0;
+    estimator.configure(config);
 
     const auto result = estimator.update(3);
     EXPECT_TRUE(result.success()) << "status=" << static_cast<int>(result.status);

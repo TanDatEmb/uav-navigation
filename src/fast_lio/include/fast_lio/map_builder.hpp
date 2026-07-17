@@ -2,7 +2,7 @@
 #define FAST_LIO_MAP_BUILDER_HPP_
 
 #include "fast_lio/commons.hpp"
-#include "fast_lio/ieskf.hpp"
+#include "fast_lio/estimator/estimator.hpp"
 #include "fast_lio/imu_processor.hpp"
 #include "fast_lio/lidar_processor.hpp"
 #include "fast_lio/spatial_index.hpp"
@@ -20,7 +20,7 @@ namespace fast_lio {
  *
  * Architecture:
  *   IMU (200Hz) → IESKF predict
- *   LiDAR (10-20Hz) → LidarProcessor → IESKF update
+ *   LiDAR (10-20Hz) → LidarProcessor → estimator update
  *   MapTree → Incremental local map
  *
  * Design references: docs/frame_contract.md and docs/ieskf_design.md
@@ -31,9 +31,9 @@ class MapBuilder {
      * @brief Constructor.
      *
      * @param config Algorithm configuration
-     * @param kf Shared IESKF instance (15-DOF)
+     * @param kf Shared Estimator instance (15-DOF)
      */
-    MapBuilder(const Config& config, std::shared_ptr<IESKF> kf);
+    MapBuilder(const Config& config, std::shared_ptr<Estimator> kf);
 
     /**
      * @brief Process synchronized package.
@@ -73,9 +73,9 @@ class MapBuilder {
     ImuInitializationDiagnostics imuInitializationDiagnostics() const;
 
     /**
-     * @brief Get IESKF instance.
+     * @brief Get estimator instance.
      */
-    std::shared_ptr<IESKF> getKF() const {
+    std::shared_ptr<Estimator> getKF() const {
         return kf_;
     }
 
@@ -94,7 +94,7 @@ class MapBuilder {
     SE3d getLiDARPose() const;
 
     /**
-     * @brief Get current IESKF state.
+     * @brief Get current estimator state.
      */
     State15 state() const {
         return kf_ ? kf_->getState() : State15();
@@ -109,7 +109,7 @@ class MapBuilder {
 
    private:
     Config config_;
-    std::shared_ptr<IESKF> kf_;
+    std::shared_ptr<Estimator> kf_;
     std::unique_ptr<IMUProcessor> imu_processor_;
     std::shared_ptr<LidarProcessor> lidar_processor_;
     std::shared_ptr<MapTreeInterface> map_tree_;

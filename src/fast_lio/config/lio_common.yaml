@@ -28,6 +28,10 @@
     ieskf_max_iter: 3 # Increased from 1 to allow convergence during motion
     gravity_align: true # Align gravity at startup
 
+    # Estimator backend selection
+    # Supported: "ieskf" (legacy iterated ESKF) or "ikfom" (FAST-LIO2 IKFoM)
+    estimator_backend: "ieskf"
+
     # Lidar matching configuration
     knn_search_count: 5 # KNN count for correspondence
     min_plane_neighbors: 5 # Minimum neighbors for plane fit

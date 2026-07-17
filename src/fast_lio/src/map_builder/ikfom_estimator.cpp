@@ -117,7 +117,7 @@ struct IkfomEstimatorImpl {
     esekfom::esekf<IkfomState, 12, IkfomInput> kf;
     Eigen::Matrix<double, 12, 12> process_noise_cov;
     double lidar_information = 200.0;
-    IkfomMeasurementProvider measurement_provider;
+    Estimator::MeasurementCallback measurement_callback;
     int last_measurement_count = 0;
     double limit[15] = {};
 
@@ -143,32 +143,44 @@ struct IkfomEstimatorImpl {
     }
 };
 
+// Project error-state order (SharedState15): [δθ, δp, δv, δb_a, δb_ω]
+// IKFoM error-state order:                         [δp, δθ, δv, δb_ω, δb_a]
 static Eigen::Matrix<double, Eigen::Dynamic, 1> h_dyn_share_model(
     IkfomState& s, esekfom::dyn_share_datastruct<double>& dyn_share) {
     dyn_share.valid = false;
-    if (!g_current_impl || !g_current_impl->measurement_provider) {
+    if (!g_current_impl || !g_current_impl->measurement_callback) {
         return Eigen::Matrix<double, Eigen::Dynamic, 1>();
     }
 
     const State15 state = FromIkfomState(s);
-    Eigen::MatrixXd H;
-    Eigen::VectorXd residuals;
-    Eigen::MatrixXd R;
-    if (!g_current_impl->measurement_provider(state, H, residuals, R) || residuals.size() == 0) {
+    SharedState15 shared;
+    if (!g_current_impl->measurement_callback(state, shared) || !shared.valid ||
+        shared.num_measurements == 0) {
         return Eigen::Matrix<double, Eigen::Dynamic, 1>();
     }
 
-    g_current_impl->last_measurement_count = static_cast<int>(residuals.size());
-    dyn_share.valid = true;
-    dyn_share.z = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(residuals.size());
-    dyn_share.h_x = H;
-    dyn_share.h_v = Eigen::MatrixXd::Identity(residuals.size(), residuals.size());
-    dyn_share.R = R;
+    const int N = shared.num_measurements;
+    g_current_impl->last_measurement_count = N;
 
-    // The provider gives residuals (z - h). We return them as the predicted
-    // measurement h so that IKFoM's innovation (z - h) becomes -residual,
-    // which drives the residual to zero.
-    return residuals;
+    Eigen::MatrixXd H(N, 15);
+    H.setZero();
+    for (int i = 0; i < N; ++i) {
+        H.block<1, 3>(i, 0) = shared.H.block<1, 3>(i, 3);   // pos
+        H.block<1, 3>(i, 3) = shared.H.block<1, 3>(i, 0);   // rot
+        H.block<1, 3>(i, 6) = shared.H.block<1, 3>(i, 6);   // vel
+        H.block<1, 3>(i, 9) = shared.H.block<1, 3>(i, 12);  // bg (gyro bias)
+        H.block<1, 3>(i, 12) = shared.H.block<1, 3>(i, 9);  // ba (accel bias)
+    }
+
+    dyn_share.valid = true;
+    dyn_share.z = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(N);
+    dyn_share.h_x = H;
+    dyn_share.h_v = Eigen::MatrixXd::Identity(N, N);
+    dyn_share.R = Eigen::MatrixXd::Identity(N, N) / g_current_impl->lidar_information;
+
+    // The SharedState15 residual is r = h - z. By returning h = r and z = 0,
+    // IKFoM's innovation (z - h) becomes -r, which drives the residual to zero.
+    return shared.b.head(N);
 }
 
 IkfomEstimator::IkfomEstimator() : impl_(std::make_unique<IkfomEstimatorImpl>()) {
@@ -204,23 +216,20 @@ void IkfomEstimator::predict(const IMUData& imu, double dt) {
     impl_->kf.predict(dt_mut, impl_->process_noise_cov, input);
 }
 
-void IkfomEstimator::setMeasurementProvider(IkfomMeasurementProvider provider) {
-    impl_->measurement_provider = std::move(provider);
-}
-
-IkfomUpdateResult IkfomEstimator::update(int max_iterations) {
-    IkfomUpdateResult result;
-    result.status = IkfomUpdateStatus::kNoMeasurements;
+EstimatorUpdateResult IkfomEstimator::update(int max_iterations) {
+    EstimatorUpdateResult result;
+    result.status = EstimatorUpdateStatus::kNoMeasurements;
     result.converged = false;
     result.iterations = 0;
     result.measurements = 0;
 
-    if (!impl_->measurement_provider) {
+    if (!measurement_callback_ || !impl_) {
         return result;
     }
 
-    // The thread-local pointer lets the raw IKFoM callback reach the provider.
+    // The thread-local pointer lets the raw IKFoM callback reach the callback.
     g_current_impl = impl_.get();
+    impl_->measurement_callback = measurement_callback_;
     impl_->last_measurement_count = 0;
 
     const State15 state_before = getState();
@@ -237,13 +246,13 @@ IkfomUpdateResult IkfomEstimator::update(int max_iterations) {
     result.measurements = impl_->last_measurement_count;
 
     if (result.measurements == 0) {
-        result.status = IkfomUpdateStatus::kNoMeasurements;
+        result.status = EstimatorUpdateStatus::kNoMeasurements;
         return result;
     }
 
     if (!state_after.p_w.allFinite() || !state_after.v_w.allFinite() ||
         !state_after.R_wb.matrix().allFinite()) {
-        result.status = IkfomUpdateStatus::kInsufficientMeasurements;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
 
@@ -257,7 +266,7 @@ IkfomUpdateResult IkfomEstimator::update(int max_iterations) {
     result.final_delta_rotation_rad = drot_angle;
     result.converged = (dpos_norm < 0.015) && (drot_angle < 0.01 * M_PI / 180.0);
     result.iterations = max_iterations;
-    result.status = IkfomUpdateStatus::kSuccess;
+    result.status = EstimatorUpdateStatus::kSuccess;
     return result;
 }
 

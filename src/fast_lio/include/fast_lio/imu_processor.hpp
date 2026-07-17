@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "fast_lio/commons.hpp"
-#include "fast_lio/ieskf.hpp"
+#include "fast_lio/estimator/estimator.hpp"
 #include "fast_lio/imu_trajectory.hpp"
 
 namespace fast_lio {
@@ -62,12 +62,12 @@ class IMUProcessor {
     /// @param imu_before Optional bracket sample at or before scan_start
     /// @param imu_after Optional bracket sample at or after scan_end
     /// @return ImuTrajectory spanning [scan_start, scan_end]
-    ImuTrajectory propagate(std::shared_ptr<IESKF> kf,
-                              const std::deque<IMUData>& imus,
-                              double scan_start_time,
-                              double scan_end_time,
-                              const std::optional<IMUData>& imu_before = std::nullopt,
-                              const std::optional<IMUData>& imu_after = std::nullopt);
+    ImuTrajectory propagate(std::shared_ptr<Estimator> kf,
+                            const std::deque<IMUData>& imus,
+                            double scan_start_time,
+                            double scan_end_time,
+                            const std::optional<IMUData>& imu_before = std::nullopt,
+                            const std::optional<IMUData>& imu_after = std::nullopt);
 
     V3D getMeanAcc() const { return mean_acc_; }
     V3D getMeanGyro() const { return mean_gyro_; }

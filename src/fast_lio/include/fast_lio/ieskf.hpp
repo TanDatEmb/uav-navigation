@@ -2,42 +2,12 @@
 #define FAST_LIO_IESKF_HPP_
 
 #include "fast_lio/commons.hpp"
+#include "fast_lio/estimator/estimator.hpp"
 
 #include <Eigen/Dense>
 #include <functional>
 
 namespace fast_lio {
-
-// State and SharedState15 already defined in commons.hpp
-
-/**
- * @brief Status of IESKF update operation.
- */
-enum class IeskfUpdateStatus {
-    kSuccess = 0,                    ///< Update succeeded, state corrected
-    kNoMeasurements = 1,             ///< No valid measurements provided
-    kInsufficientMeasurements = 2,   ///< Below minimum correspondence threshold
-    kPriorFactorizationFailure = 3,  ///< Prior covariance factorization failed
-    kMeasurementFactorizationFailure = 4,  ///< Measurement info factorization failed
-    kNonFiniteCorrection = 5,        ///< Correction delta contains NaN/Inf
-    kFinalLinearizationFailure = 6,  ///< Final covariance linearization failed
-};
-
-/**
- * @brief Result of IESKF update operation.
- */
-struct IeskfUpdateResult {
-    IeskfUpdateStatus status = IeskfUpdateStatus::kNoMeasurements;
-    bool converged = false;               ///< Whether iteration converged
-    std::size_t iterations = 0;           ///< Number of iterations executed
-    std::size_t measurements = 0;          ///< Number of accepted measurements
-    double final_delta_rotation_rad = 0.0;  ///< Final rotation correction norm [rad]
-    double final_delta_position_m = 0.0;      ///< Final position correction norm [m]
-    
-    [[nodiscard]] bool success() const {
-        return status == IeskfUpdateStatus::kSuccess;
-    }
-};
 
 /**
  * @brief Iterated Error-State Kalman Filter (15-DOF)
@@ -48,9 +18,9 @@ struct IeskfUpdateResult {
  *   - Prediction: continuous-time IMU error-state EKF with midpoint integration
  *   - Update: information-form IESKF; 15×15 factorization avoids N×N scaling
  *
- * Real-time target: < 5ms per update (10-20Hz LiDAR)
+ * Implements the project-wide Estimator interface.
  */
-class IESKF {
+class IESKF : public Estimator {
    public:
     /**
      * @brief Constructor with UAV-optimized defaults
@@ -59,19 +29,12 @@ class IESKF {
      */
     IESKF();
 
-    /**
-     * @brief Apply filter noise and LiDAR measurement information from config.
-     */
-    void configure(const Config& config);
+    void configure(const Config& config) override;
 
-    // Set/get state
-    void setState(const State15& state) {
+    void setState(const State15& state) override {
         x_ = state;
     }
-    const State15& getState() const {
-        return x_;
-    }
-    State15& getState() {
+    State15 getState() const override {
         return x_;
     }
 
@@ -79,59 +42,27 @@ class IESKF {
      * @brief Prediction step (IMU propagation)
      *
      * Propagates state using IMU measurements.
-     * Continuous-time error-state EKF with midpoint integration:
-     *   a_unbiased = a - b_a,   ω_unbiased = ω - b_ω
-     *   R ← R * Exp(ω_unbiased * Δt)
-     *   a_world = R * a_unbiased + g
-     *   p ← p + v * Δt + 0.5 * a_world * Δt²
-     *   v ← v + a_world * Δt
-     *
-     * Error-state transition: Φ = I + F * Δt
-     * Process noise: Q = diag(σ_ω²Δt, 0, σ_a²Δt, σ_ba²Δt, σ_bω²Δt)
-     *
-     * @param imu IMU measurement [accel, gyro] in body frame
-     * @param dt Time step in seconds
+     * Continuous-time error-state EKF with midpoint integration.
      */
-    void predict(const IMUData& imu, double dt);
+    void predict(const IMUData& imu, double dt) override;
 
     /**
      * @brief IESKF update step (iterated)
      *
-     * Information-form iterated update:
-     *   Λ_prior = P⁻¹
-     *   Λ = Λ_prior + λ * HᵀH
-     *   δx = Λ⁻¹ * (-λ * Hᵀ * r - Λ_prior * accumulated_delta)
-     *   x ← x ⊕ δx
-     * Iterates until convergence (‖δθ‖ < threshold, ‖δp‖ < threshold).
-     *
-     * @param max_iterations Maximum IESKF iterations (default: 3)
-     * @return Update result with status and diagnostics
+     * Information-form iterated update using the SharedState15 supplied by the
+     * installed measurement callback.
      */
-    IeskfUpdateResult update(int max_iterations = 3);
+    EstimatorUpdateResult update(int max_iterations) override;
 
-    // Set loss function for point-to-plane constraints
-    // Signature: void(State15&, SharedState15&)
-    void setLossFunction(std::function<void(const State15&, SharedState15&)> func);
+    void setMeasurementCallback(MeasurementCallback callback) override {
+        measurement_callback_ = std::move(callback);
+    }
 
-    // Set convergence check
-    // Returns true if converged (‖δx‖ < threshold)
-    void setConvergenceCheck(std::function<bool(const V15D&)> func);
+    void reset() override;
 
-    // Reset filter to initial state
-    void reset();
+    void initWithGravity(const Eigen::Vector3d& mean_acc) override;
 
-    /**
-     * @brief Initialize with gravity alignment
-     *
-     * Uses mean accelerometer reading to estimate initial attitude.
-     * Only valid when sensor is stationary.
-     *
-     * @param mean_acc Mean accelerometer reading [m/s²] in body frame
-     */
-    void initWithGravity(const Eigen::Vector3d& mean_acc);
-
-    // Get covariance for debugging/health monitoring
-    const Eigen::Matrix<double, 15, 15>& getCovariance() const {
+    Eigen::Matrix<double, 15, 15> getCovariance() const override {
         return P_;
     }
 
@@ -153,12 +84,10 @@ class IESKF {
     double lidar_information_{200.0};
 
     // Gravity in the z-up LIO world frame.
-    // Use inline static instead of constexpr for Eigen
     static inline const Eigen::Vector3d GRAVITY_WORLD_{0.0, 0.0, -9.80665};
 
-    // Callbacks
-    std::function<void(const State15&, SharedState15&)> loss_func_;
-    std::function<bool(const V15D&)> convergence_check_;
+    // Measurement callback installed by LidarProcessor.
+    MeasurementCallback measurement_callback_;
 
     // Default convergence check
     static bool defaultConvergenceCheck(const V15D& delta_x);

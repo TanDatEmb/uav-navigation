@@ -23,14 +23,12 @@ namespace {
 TEST(IESKFTest, LargeMeasurementUpdateUsesFixedStateSolveAndCorrectResidualSign) {
     constexpr int kMeasurements = 20000;
     auto filter = std::make_shared<IESKF>();
-    filter->setLossFunction([](const State15&, SharedState15& shared) {
+    filter->setMeasurementCallback([](const State15&, SharedState15& shared) {
         shared.reset(kMeasurements);
         shared.H.col(3).setOnes();
         shared.b.setOnes();
         shared.num_measurements = kMeasurements;
         shared.valid = true;
-    });
-    filter->setConvergenceCheck([](const V15D&) {
         return true;
     });
 
@@ -53,10 +51,10 @@ TEST(IESKFTest, RejectsStateUpdateWhenFinalCovarianceLinearizationFails) {
     const Eigen::Matrix<double, 15, 15> covariance_before = filter.getCovariance();
     int loss_calls = 0;
 
-    filter.setLossFunction([&loss_calls](const State15&, SharedState15& shared) {
+    filter.setMeasurementCallback([&loss_calls](const State15&, SharedState15& shared) {
         ++loss_calls;
         if (loss_calls > 1) {
-            return;
+            return false;
         }
 
         shared.reset(1);
@@ -64,6 +62,7 @@ TEST(IESKFTest, RejectsStateUpdateWhenFinalCovarianceLinearizationFails) {
         shared.b(0) = 1.0;
         shared.num_measurements = 1;
         shared.valid = true;
+        return true;
     });
 
     filter.update(1);
@@ -80,14 +79,12 @@ TEST(IESKFTest, ConfigurationControlsMeasurementWeightAndProcessNoise) {
         Config config;
         config.lidar_cov_inv = lidar_information;
         filter.configure(config);
-        filter.setLossFunction([](const State15&, SharedState15& shared) {
+        filter.setMeasurementCallback([](const State15&, SharedState15& shared) {
             shared.reset(1);
             shared.H(0, 3) = 1.0;
             shared.b(0) = 1.0;
             shared.num_measurements = 1;
             shared.valid = true;
-        });
-        filter.setConvergenceCheck([](const V15D&) {
             return true;
         });
         filter.update(1);

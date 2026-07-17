@@ -9,7 +9,7 @@
 
 namespace fast_lio {
 
-LidarProcessor::LidarProcessor(const Config& config, std::shared_ptr<IESKF> kf,
+LidarProcessor::LidarProcessor(const Config& config, std::shared_ptr<Estimator> kf,
                                std::shared_ptr<MapTreeInterface> tree)
     : config_(config), kf_(kf), map_tree_(tree), local_map_{} {
     cloud_down_lidar_.reset(new CloudType);
@@ -84,21 +84,11 @@ LidarUpdateResult LidarProcessor::process(SyncPackage& package) {
     local_map_.update(pos_lidar, config_.cube_len, config_.move_thresh, config_.det_range);
     updateLocalMap();
 
-    // IESKF update with point-to-plane constraints
+    // Estimator update with point-to-plane constraints
     auto t_correspondence_start = std::chrono::high_resolution_clock::now();
 
-    auto loss_func = [this](const State15& s, SharedState15& sh) {
-        this->computePointToPlaneConstraint(s, sh);
-    };
-
-    auto stop_func = [](const V15D& delta) -> bool {
-        double rot_norm = delta.segment<3>(0).norm() * 180.0 / M_PI;
-        double pos_norm = delta.segment<3>(3).norm();
-        return (rot_norm < 0.01) && (pos_norm < 0.015);
-    };
-
-    kf_->setLossFunction(loss_func);
-    kf_->setConvergenceCheck(stop_func);
+    kf_->setMeasurementCallback(
+        [this](const State15& s, SharedState15& sh) { return this->computePointToPlaneConstraint(s, sh); });
 
     auto t_update_start = std::chrono::high_resolution_clock::now();
     const auto update_result = kf_->update(config_.ieskf_max_iter);
@@ -107,21 +97,25 @@ LidarUpdateResult LidarProcessor::process(SyncPackage& package) {
     result.update_time_ms =
         std::chrono::duration<double, std::milli>(t_update_end - t_update_start).count();
 
-    result.ieskf = update_result;
+    result.estimator_update = update_result;
     result.ieskf_iterations = update_result.iterations;
     result.converged = update_result.converged;
 
-    // Handle IESKF status
+    // Handle estimator status
     if (!update_result.success()) {
-        result.status = (update_result.status == IeskfUpdateStatus::kInsufficientMeasurements)
-                            ? LidarUpdateStatus::kInsufficientMeasurements
-                            : LidarUpdateStatus::kIeskfFailure;
+        if (update_result.status == EstimatorUpdateStatus::kInsufficientMeasurements) {
+            result.status = LidarUpdateStatus::kInsufficientMeasurements;
+        } else if (update_result.status == EstimatorUpdateStatus::kNoMeasurements) {
+            result.status = LidarUpdateStatus::kNoMeasurements;
+        } else {
+            result.status = LidarUpdateStatus::kIeskfFailure;
+        }
         result.update_applied = false;
         result.map_inserted = false;
         return result;
     }
 
-    // IESKF succeeded - record measurement stats from last shared state
+    // Estimator succeeded - record measurement stats from last shared state
     result.update_applied = true;
     result.accepted_correspondences = update_result.measurements;
     result.queried_points = last_shared_state_.queried_points;
@@ -193,7 +187,7 @@ void LidarProcessor::incrementMap() {
     map_tree_->addPoints(cloud_down_world_->points, true);
 }
 
-void LidarProcessor::computePointToPlaneConstraint(const State15& state, SharedState15& shared) {
+bool LidarProcessor::computePointToPlaneConstraint(const State15& state, SharedState15& shared) {
     // Point-to-plane constraint for IESKF using tested measurement helper
     shared.reset(cloud_down_lidar_->points.size());
 
@@ -291,6 +285,8 @@ void LidarProcessor::computePointToPlaneConstraint(const State15& state, SharedS
         last_shared_state_.residual.rms = std::sqrt(residual_squared_sum / n);
         last_shared_state_.residual.max_absolute = residual_max_abs;
     }
+
+    return shared.valid;
 }
 
 bool LidarProcessor::findPlaneCorrespondence(

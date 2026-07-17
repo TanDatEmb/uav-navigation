@@ -140,12 +140,12 @@ IMUData IMUProcessor::interpolateImu(const IMUData& a, const IMUData& b, double 
     return result;
 }
 
-ImuTrajectory IMUProcessor::propagate(std::shared_ptr<IESKF> kf,
-                                       const std::deque<IMUData>& imus,
-                                       double scan_start_time,
-                                       double scan_end_time,
-                                       const std::optional<IMUData>& imu_before,
-                                       const std::optional<IMUData>& imu_after) {
+ImuTrajectory IMUProcessor::propagate(std::shared_ptr<Estimator> kf,
+                                      const std::deque<IMUData>& imus,
+                                      double scan_start_time,
+                                      double scan_end_time,
+                                      const std::optional<IMUData>& imu_before,
+                                      const std::optional<IMUData>& imu_after) {
     ImuTrajectory trajectory;
 
     if (!initialized_ || !kf) return trajectory;

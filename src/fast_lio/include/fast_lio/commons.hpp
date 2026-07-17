@@ -251,6 +251,9 @@ struct Config {
     int ieskf_max_iter = 3;
     bool gravity_align = true;
 
+    // Estimator backend selection
+    std::string estimator_backend = "ieskf";  ///< "ieskf" or "ikfom"
+
     // Measurement validation
     std::size_t min_effective_correspondences = 20;  ///< Min accepted measurements for IESKF update
 

@@ -185,16 +185,16 @@ Eigen::Matrix<double, 15, 15> IESKF::computeProcessNoise(const IMUData& imu, dou
     return Phi * Q_base * Phi.transpose();
 }
 
-IeskfUpdateResult IESKF::update(int max_iterations) {
-    IeskfUpdateResult result;
-    result.status = IeskfUpdateStatus::kNoMeasurements;
-    
-    if (!loss_func_) {
-        std::cerr << "[IESKF] No loss function set!" << std::endl;
+EstimatorUpdateResult IESKF::update(int max_iterations) {
+    EstimatorUpdateResult result;
+    result.status = EstimatorUpdateStatus::kNoMeasurements;
+
+    if (!measurement_callback_) {
+        std::cerr << "[IESKF] No measurement callback set!" << std::endl;
         return result;
     }
     if (max_iterations <= 0) {
-        result.status = IeskfUpdateStatus::kNoMeasurements;
+        result.status = EstimatorUpdateStatus::kNoMeasurements;
         return result;
     }
 
@@ -205,13 +205,13 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
     const Eigen::LDLT<Matrix15> prior_ldlt(P_);
     if (prior_ldlt.info() != Eigen::Success) {
         std::cerr << "[IESKF] Prior covariance factorization failed" << std::endl;
-        result.status = IeskfUpdateStatus::kPriorFactorizationFailure;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
     const Matrix15 prior_information = prior_ldlt.solve(identity);
     if (prior_ldlt.info() != Eigen::Success || !prior_information.allFinite()) {
         std::cerr << "[IESKF] Prior information solve failed" << std::endl;
-        result.status = IeskfUpdateStatus::kPriorFactorizationFailure;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
 
@@ -220,19 +220,16 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
 
     for (int iter = 0; iter < max_iterations; ++iter) {
         SharedState15 shared;
-        loss_func_(x_iter, shared);
-        
-        if (!shared.valid) {
-            // Check specific validation status for diagnostics
+        if (!measurement_callback_(x_iter, shared) || !shared.valid) {
             if (shared.validation_status == MeasurementValidationStatus::kInsufficientMeasurements) {
                 std::cerr << "[IESKF] Insufficient measurements (" << shared.num_measurements
                           << " < minimum required)" << std::endl;
-                result.status = IeskfUpdateStatus::kInsufficientMeasurements;
+                result.status = EstimatorUpdateStatus::kInsufficientMeasurements;
                 result.measurements = shared.num_measurements;
                 return result;
             } else {
                 std::cerr << "[IESKF] No valid measurements!" << std::endl;
-                result.status = IeskfUpdateStatus::kNoMeasurements;
+                result.status = EstimatorUpdateStatus::kNoMeasurements;
                 return result;
             }
         }
@@ -247,13 +244,13 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
         Eigen::LDLT<Matrix15> information_ldlt(information);
         if (information_ldlt.info() != Eigen::Success) {
             std::cerr << "[IESKF] Measurement information factorization failed" << std::endl;
-            result.status = IeskfUpdateStatus::kMeasurementFactorizationFailure;
+            result.status = EstimatorUpdateStatus::kFailure;
             return result;
         }
         const V15D delta_x = information_ldlt.solve(rhs);
         if (information_ldlt.info() != Eigen::Success || !delta_x.allFinite()) {
             std::cerr << "[IESKF] Measurement information solve failed" << std::endl;
-            result.status = IeskfUpdateStatus::kNonFiniteCorrection;
+            result.status = EstimatorUpdateStatus::kFailure;
             return result;
         }
 
@@ -262,9 +259,7 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
         ++result.iterations;
         result.measurements = shared.num_measurements;
 
-        const bool converged =
-            convergence_check_ ? convergence_check_(delta_x) : defaultConvergenceCheck(delta_x);
-        if (converged) {
+        if (defaultConvergenceCheck(delta_x)) {
             result.converged = true;
             break;
         }
@@ -272,11 +267,11 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
 
     // Final linearization for covariance
     SharedState15 shared_final;
-    loss_func_(x_iter, shared_final);
-    if (!shared_final.valid || shared_final.num_measurements == 0) {
+    if (!measurement_callback_(x_iter, shared_final) || !shared_final.valid ||
+        shared_final.num_measurements == 0) {
         std::cerr << "[IESKF] Final covariance linearization has no valid measurements"
                   << std::endl;
-        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
 
@@ -286,14 +281,14 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
     Eigen::LDLT<Matrix15> posterior_ldlt(posterior_information);
     if (posterior_ldlt.info() != Eigen::Success) {
         std::cerr << "[IESKF] Posterior covariance factorization failed" << std::endl;
-        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
 
     Matrix15 posterior = posterior_ldlt.solve(identity);
     if (posterior_ldlt.info() != Eigen::Success || !posterior.allFinite()) {
         std::cerr << "[IESKF] Posterior covariance solve failed" << std::endl;
-        result.status = IeskfUpdateStatus::kFinalLinearizationFailure;
+        result.status = EstimatorUpdateStatus::kFailure;
         return result;
     }
 
@@ -320,7 +315,7 @@ IeskfUpdateResult IESKF::update(int max_iterations) {
 
     result.final_delta_rotation_rad = accumulated_delta.segment<3>(0).norm();
     result.final_delta_position_m = accumulated_delta.segment<3>(3).norm();
-    result.status = IeskfUpdateStatus::kSuccess;
+    result.status = EstimatorUpdateStatus::kSuccess;
 
     return result;
 }
@@ -335,14 +330,6 @@ bool IESKF::defaultConvergenceCheck(const V15D& delta_x) {
 
     // Threshold: 0.01 degrees rotation, 0.015 meters position
     return (rot_norm < 0.01) && (pos_norm < 0.015);
-}
-
-void IESKF::setLossFunction(std::function<void(const State15&, SharedState15&)> func) {
-    loss_func_ = func;
-}
-
-void IESKF::setConvergenceCheck(std::function<bool(const V15D&)> func) {
-    convergence_check_ = func;
 }
 
 Eigen::Matrix3d IESKF::skewSymmetric(const Eigen::Vector3d& v) {

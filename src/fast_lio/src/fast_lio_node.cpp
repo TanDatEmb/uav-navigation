@@ -16,6 +16,9 @@
 #include <stdexcept>
 
 #include "fast_lio/commons.hpp"
+#include "fast_lio/estimator/estimator.hpp"
+#include "fast_lio/estimator/ikfom_estimator.hpp"
+#include "fast_lio/ieskf.hpp"
 #include "fast_lio/input/lidar_input_adapter.hpp"
 #include "fast_lio/input/mid360_custom_adapter.hpp"
 #include "fast_lio/input/pointcloud2_adapter.hpp"
@@ -48,7 +51,7 @@ struct NodeConfig {
 /**
  * @brief FAST-LIO2 ROS2 Node (15-DOF)
  *
- * Integrates IMU propagation and LiDAR scan matching with IESKF.
+ * Integrates IMU propagation and LiDAR scan matching with an Estimator backend.
  * Outputs odometry, registered clouds, and TF transforms.
  */
 class FastLIONode : public rclcpp::Node {
@@ -101,7 +104,13 @@ class FastLIONode : public rclcpp::Node {
         m_path.header.frame_id = m_node_config.world_frame;
 
         // Initialize KF and MapBuilder with 15-DOF state
-        m_kf = std::make_shared<IESKF>();
+        if (m_builder_config.estimator_backend == "ikfom") {
+            m_kf = std::make_shared<IkfomEstimator>();
+        } else {
+            m_kf = std::make_shared<IESKF>();
+        }
+        RCLCPP_INFO(this->get_logger(), "Estimator backend: %s",
+                    m_builder_config.estimator_backend.c_str());
         m_builder = std::make_unique<MapBuilder>(m_builder_config, m_kf);
 
         // Timer for main loop (50Hz)
@@ -200,6 +209,8 @@ class FastLIONode : public rclcpp::Node {
             this->declare_parameter<int>("knn_search_count", m_builder_config.knn_search_count);
         m_builder_config.ieskf_max_iter =
             this->declare_parameter<int>("ieskf_max_iter", m_builder_config.ieskf_max_iter);
+        m_builder_config.estimator_backend =
+            this->declare_parameter<std::string>("estimator_backend", m_builder_config.estimator_backend);
         m_builder_config.gravity_align =
             this->declare_parameter<bool>("gravity_align", m_builder_config.gravity_align);
         m_builder_config.lidar_cov_inv =
@@ -258,6 +269,10 @@ class FastLIONode : public rclcpp::Node {
         if (m_builder_config.knn_search_count < 5 || m_builder_config.ieskf_max_iter <= 0 ||
             m_builder_config.lidar_cov_inv <= 0.0) {
             fail("knn_search_count must be >= 5; ieskf_max_iter and lidar_cov_inv must be positive");
+        }
+        if (m_builder_config.estimator_backend != "ieskf" &&
+            m_builder_config.estimator_backend != "ikfom") {
+            fail("estimator_backend must be one of: ieskf, ikfom");
         }
         if (extrinsic_t.size() != 3 || extrinsic_r.size() != 9) {
             fail("extrinsic_t must contain 3 values and extrinsic_r must contain 9 values");
@@ -535,7 +550,7 @@ class FastLIONode : public rclcpp::Node {
     nav_msgs::msg::Path m_path;
     std::string m_adapter_type;
 
-    std::shared_ptr<IESKF> m_kf;
+    std::shared_ptr<Estimator> m_kf;
     std::unique_ptr<MapBuilder> m_builder;
     std::unique_ptr<LidarInputAdapter> m_lidar_adapter;
     std::unique_ptr<MeasurementSynchronizer> m_synchronizer;

@@ -13,7 +13,7 @@ std::shared_ptr<MapTreeInterface> MapTreeInterface::createIKDTree() {
     return std::make_shared<IKDTreeBackend>();
 }
 
-MapBuilder::MapBuilder(const Config& config, std::shared_ptr<IESKF> kf)
+MapBuilder::MapBuilder(const Config& config, std::shared_ptr<Estimator> kf)
     : config_(config), kf_(kf), status_(BuilderStatus::INITIALIZING), imu_init_count_(0) {
     kf_->configure(config_);
     imu_processor_ = std::make_unique<IMUProcessor>(config);
@@ -86,7 +86,7 @@ LidarUpdateResult MapBuilder::process(SyncPackage& package) {
         }
     }
 
-    // 3. LiDAR scan matching + IESKF update
+    // 3. LiDAR scan matching + estimator update
     // Create temporary package with deskewed cloud for matching
     SyncPackage matching_package = package;
     matching_package.cloud = cloud_for_matching;

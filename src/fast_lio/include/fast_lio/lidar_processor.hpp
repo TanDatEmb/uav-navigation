@@ -2,7 +2,7 @@
 #define FAST_LIO_LIDAR_PROCESSOR_HPP_
 
 #include "fast_lio/commons.hpp"
-#include "fast_lio/ieskf.hpp"
+#include "fast_lio/estimator/estimator.hpp"
 #include "fast_lio/spatial_index.hpp"
 
 #include <pcl/filters/voxel_grid.h>
@@ -80,8 +80,8 @@ struct LidarUpdateResult {
     double update_time_ms{0.0};
     double map_insertion_time_ms{0.0};
 
-    // Nested IESKF result
-    IeskfUpdateResult ieskf;
+    // Nested estimator result
+    EstimatorUpdateResult estimator_update;
 
     [[nodiscard]] bool success() const {
         return status == LidarUpdateStatus::kSuccess ||
@@ -100,6 +100,8 @@ struct LidarUpdateResult {
  *   - R: rotation from IMU state
  *   - p_body: point in IMU frame
  *
+ * The processor is backend-agnostic and works with any Estimator implementation.
+ *
  * Design reference: docs/ieskf_design.md
  */
 class LidarProcessor {
@@ -108,20 +110,20 @@ class LidarProcessor {
      * @brief Constructor with map tree interface.
      *
      * @param config Algorithm configuration
-     * @param kf Shared IESKF instance (15-DOF)
+     * @param kf Shared Estimator instance (15-DOF)
      * @param tree Map tree interface (ikd-Tree or PCL fallback)
      */
-    LidarProcessor(const Config& config, std::shared_ptr<IESKF> kf,
+    LidarProcessor(const Config& config, std::shared_ptr<Estimator> kf,
                    std::shared_ptr<MapTreeInterface> tree);
 
     /**
-     * @brief Process LiDAR scan with IESKF update.
+     * @brief Process LiDAR scan with estimator update.
      *
      * Pipeline:
      * 1. Downsample input cloud
      * 2. Find correspondences (point-to-plane)
-     * 3. Setup loss function for IESKF
-     * 4. IESKF iterated update
+     * 3. Install measurement callback on estimator
+     * 4. Iterated estimator update
      * 5. Incremental map update
      *
      * @param package Synchronized LiDAR + IMU package
@@ -159,7 +161,7 @@ class LidarProcessor {
 
    private:
     Config config_;
-    std::shared_ptr<IESKF> kf_;
+    std::shared_ptr<Estimator> kf_;
     std::shared_ptr<MapTreeInterface> map_tree_;
 
     // Processing buffers
@@ -187,7 +189,7 @@ class LidarProcessor {
     void incrementMap();
 
     /**
-     * @brief Loss function for IESKF point-to-plane constraints.
+     * @brief Measurement callback for Estimator point-to-plane constraints.
      *
      * Computes Jacobians and residuals for each valid correspondence.
      *
@@ -200,8 +202,9 @@ class LidarProcessor {
      *
      * @param state Current state estimate (15-DOF)
      * @param shared Output: stacked Jacobians and residuals
+     * @return True if enough valid measurements were found
      */
-    void computePointToPlaneConstraint(const State15& state, SharedState15& shared);
+    bool computePointToPlaneConstraint(const State15& state, SharedState15& shared);
 
     /**
      * @brief Find plane correspondence for a point.
