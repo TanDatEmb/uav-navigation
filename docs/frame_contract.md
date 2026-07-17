@@ -140,14 +140,14 @@ topic name alone does not imply a frame.
 
 ## Legacy Compatibility Path
 
-The older `lidar_odometry` and `localization_bridge` nodes use:
+The `localization_bridge` node temporarily uses:
 
 - `camera_init` as the localization world
 - `base_link` as the ROS body
 - `map_ned` at the PX4/world boundary
 
-This path remains for compatibility and testing. New FAST-LIO integration should
-use `/lio/*` and the explicit PX4 boundary.
+The PX4-derived `lidar_odometry` node has been removed. New FAST-LIO integration
+should use `/lio/*` and the explicit PX4 boundary.
 
 ## Validation Rules
 

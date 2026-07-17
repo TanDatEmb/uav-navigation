@@ -1,10 +1,11 @@
 """
-Launch file for the full mapping pipeline (Phase 1).
+Launch file for the mapping pipeline.
 
 Brings up:
-    - lidar_odometry : lidar + px4 odom -> /localization/cloud + /localization/odometry
     - localization_bridge : camera_init/ENU cloud -> /world/cloud
     - global_mapper : world cloud -> sparse global voxel map
+
+TODO: replace localization_bridge with lio_px4_bridge once PR 2 lands.
 """
 
 import os
@@ -12,7 +13,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -23,7 +23,6 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     publish_visual_odometry = LaunchConfiguration('publish_visual_odometry_to_px4')
     input_source = LaunchConfiguration('input_source')
-    enable_lidar_odometry = LaunchConfiguration('enable_lidar_odometry')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -40,21 +39,6 @@ def generate_launch_description():
             'input_source',
             default_value='px4_full',
             description='Cloud source for global_mapper node'),
-
-        DeclareLaunchArgument(
-            'enable_lidar_odometry',
-            default_value='true',
-            description='Run lidar_odometry to provide /localization/cloud and /localization/odometry'),
-
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(pkg_px4_mapping, 'launch', 'lidar_odometry.launch.py')
-            ),
-            launch_arguments={
-                'use_sim_time': use_sim_time,
-            }.items(),
-            condition=IfCondition(enable_lidar_odometry)
-        ),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

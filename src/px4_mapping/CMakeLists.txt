@@ -76,26 +76,6 @@ ament_target_dependencies(localization_bridge
     sensor_msgs
     px4_msgs
 )
-# LiDAR odometry executable
-add_executable(lidar_odometry
-    src/lidar_odometry.cpp
-    src/lidar_odometry_main.cpp
-)
-target_include_directories(lidar_odometry PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(lidar_odometry
-    ${PROJECT_NAME}
-)
-ament_target_dependencies(lidar_odometry
-    px4_nav_common
-    px4_ros2_utils
-    rclcpp
-    nav_msgs
-    sensor_msgs
-    px4_msgs
-)
 # Global mapper core library (shared with tests and the node executable)
 add_library(global_mapper_core STATIC
     src/global_mapper.cpp
@@ -131,7 +111,7 @@ install(TARGETS global_mapper_core lio_px4_alignment_core
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(TARGETS ${PROJECT_NAME} lidar_odometry localization_bridge global_mapper lio_px4_alignment
+install(TARGETS ${PROJECT_NAME} localization_bridge global_mapper lio_px4_alignment
     EXPORT export_${PROJECT_NAME}
     RUNTIME DESTINATION lib/${PROJECT_NAME}
 )

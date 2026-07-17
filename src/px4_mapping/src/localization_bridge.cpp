@@ -104,8 +104,7 @@ LocalizationBridge::LocalizationBridge(const rclcpp::NodeOptions& options)
     // Create publishers.
     // /world/cloud is an internal pipeline topic consumed by the
     // global_mapper and recorded by rosbag2 (which subscribes with the
-    // default reliable QoS). Use reliable to stay consistent with the
-    // lidar_odometry publisher pattern and avoid QoS incompatibility.
+    // default reliable QoS). Use reliable to avoid QoS incompatibility.
     const auto ned_cloud_qos = rclcpp::QoS(20).reliable();
     pub_world_cloud_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, ned_cloud_qos);

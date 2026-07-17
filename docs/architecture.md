@@ -25,10 +25,10 @@
 ### `px4_mapping`
 
 - converts localization data at ROS 2/PX4 boundaries
-- publishes external odometry to PX4 through `lio_px4_alignment` or the legacy
-  `localization_bridge` path
+- publishes external odometry to PX4 through `lio_px4_alignment` (to be unified
+  into `lio_px4_bridge`)
 - builds the accumulated sparse global voxel map
-- contains compatibility nodes for the earlier `camera_init` localization path
+- no longer contains the PX4-derived `lidar_odometry` compatibility node
 
 ### `px4_navigation`
 
@@ -91,9 +91,10 @@ an arbitrary `lio_world` origin and the PX4 EKF origin. The integration must
 therefore establish compatible initialization semantics, or add a separately
 validated alignment stage, before treating the output as globally north-aligned.
 
-The older `lidar_odometry` + `localization_bridge` path remains in the repository
-for compatibility and testing. It uses `camera_init`, `/localization/*`, and
-`/world/cloud`; it is not the primary FAST-LIO runtime path.
+The PX4-derived `lidar_odometry` node has been removed. The `localization_bridge`
+path remains temporarily for compatibility and will be replaced by a single
+`lio_px4_bridge` node. `camera_init`, `/localization/*`, and `/world/cloud` are
+legacy interfaces; the primary FAST-LIO runtime path uses `/lio/*` topics.
 
 ## Clock Contract
 

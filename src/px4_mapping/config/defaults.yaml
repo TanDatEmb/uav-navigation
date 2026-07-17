@@ -1,35 +1,6 @@
 # Default parameters for px4_mapping nodes.
 # Override via command line or a top-level launch file.
 
-lidar_odometry:
-  ros__parameters:
-    # Input LiDAR cloud in sensor FLU frame (Gazebo bridge output).
-    input_cloud_topic: "/lidar_360/points"
-
-    # Input PX4 odometry in map_ned.
-    px4_odom_topic: "/fmu/out/vehicle_odometry"
-
-    # Input PX4 IMU integration topic.
-    vehicle_imu_topic: "/fmu/out/vehicle_imu"
-
-    # Layer-1 outputs.
-    output_cloud_topic: "/localization/cloud"
-    output_odom_topic: "/localization/odometry"
-
-    # Output frame contract expected by localization_bridge.
-    output_frame_id: "camera_init"
-    output_child_frame_id: "base_link"
-
-    # Preprocessing adapted from reference preprocess:
-    # - point decimation (take 1/N)
-    # - blind-zone filtering
-    point_filter_num: 3
-    blind_m: 0.5
-
-    # Enable incremental IMU propagation between PX4 odometry updates.
-    # Note: requires /fmu/out/vehicle_imu to be published by the PX4 DDS client.
-    use_imu_fusion: false
-
 localization_bridge:
   ros__parameters:
     # Input: localization frontend world-frame point cloud in camera_init/ENU frame.
