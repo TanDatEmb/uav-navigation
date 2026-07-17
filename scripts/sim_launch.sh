@@ -231,10 +231,9 @@ fi
 
 # ── FAST-LIO2 node (15-DOF IESKF LiDAR-Inertial Odometry) ───────────────
 make_bg "fast-lio" 13 << BGEOF
-ros2 launch fast_lio fast_lio_sim.launch.py \
-    use_sim_time:=true \
-    lidar_topic:=/sim/livox/mid360/points \
-    imu_topic:=/sim/livox/mid360/imu
+ros2 launch fast_lio lio.launch.py \
+    profile:=sim \
+    use_sim_time:=true
 BGEOF
 
 # ── LIO-PX4 bridge (LIO world → PX4 NED) ────────────────────────────────

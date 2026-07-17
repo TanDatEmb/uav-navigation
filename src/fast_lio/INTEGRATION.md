@@ -42,14 +42,12 @@ colcon test-result --all --verbose
 ## Run the Package Directly
 
 ```bash
-ros2 launch fast_lio fast_lio_sim.launch.py \
-  use_sim_time:=true \
-  lidar_topic:=/sim/livox/mid360/points \
-  imu_topic:=/sim/livox/mid360/imu
+ros2 launch fast_lio lio.launch.py profile:=sim use_sim_time:=true
 ```
 
-The launch file loads `config/fast_lio.params.yaml` and remaps the relative
-outputs to `/lio/*`.
+The launch file loads `config/lio_common.yaml` plus the selected profile YAML
+and remaps the relative outputs to `/lio/*`. Available profiles:
+`sim`, `mid360_pointcloud2`, `mid360_custom`.
 
 ## Run the Supported SITL Stack
 
@@ -77,10 +75,17 @@ bash scripts/sim_stop.sh
 
 ## Canonical Configuration
 
-`config/fast_lio.params.yaml` is the only FAST-LIO parameter file. The node
-declares every active value through the ROS 2 parameter API. Launch dictionaries
-and CLI overrides follow normal ROS 2 precedence; no internal YAML parser writes
-a second set of values.
+FAST-LIO uses a runtime profile system:
+
+- `config/lio_common.yaml` — estimator parameters shared by every profile.
+- `config/profile_<name>.yaml` — sensor-specific topics, frames, and adapter.
+- `launch/lio.launch.py profile:=<name>` — loads common + profile without
+  rebuilding.
+
+The legacy `fast_lio_sim.launch.py` + `fast_lio.params.yaml` combination still
+works as a fallback. The node declares every active value through the ROS 2
+parameter API; launch dictionaries and CLI overrides follow normal ROS 2
+precedence.
 
 ### Active topics and frames
 

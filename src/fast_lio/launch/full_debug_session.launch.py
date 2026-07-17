@@ -68,9 +68,10 @@ def generate_launch_description():
             PathJoinSubstitution([
                 FindPackageShare('fast_lio'),
                 'launch',
-                'fast_lio_sim.launch.py'
+                'lio.launch.py'
             ])
         ]),
+        launch_arguments={'profile': 'sim'}.items(),
     )
 
     # 2. Livox sim adapter (optional)

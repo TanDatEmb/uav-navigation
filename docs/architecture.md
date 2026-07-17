@@ -212,10 +212,19 @@ document, and relevant SITL analysis tooling together.
 3. Cross-package orchestration in top-level `config/` and `scripts/`.
 4. Launch arguments and ROS CLI parameters as runtime overrides.
 
-FAST-LIO has one canonical parameter source:
-`src/fast_lio/config/fast_lio.params.yaml`. The node uses native ROS 2 parameter
-declaration and standard launch/CLI precedence; it has no internal second YAML
-parser.
+FAST-LIO has runtime-selectable input profiles:
+
+- `src/fast_lio/config/lio_common.yaml` holds estimator parameters shared by
+  every profile.
+- `src/fast_lio/config/profile_<name>.yaml` holds sensor-specific topics,
+  frames, and `lidar_input.adapter`.
+- `ros2 launch fast_lio lio.launch.py profile:=<name>` loads the common file
+  plus the selected profile without rebuilding.
+
+Supported profiles: `sim`, `mid360_pointcloud2`, `mid360_custom`. The node uses
+native ROS 2 parameter declaration and standard launch/CLI precedence; it has no
+internal second YAML parser. The legacy `fast_lio.params.yaml` remains a
+convenience fallback for direct `fast_lio_sim.launch.py` usage.
 
 ## Current Scope Status (2026-07-15)
 

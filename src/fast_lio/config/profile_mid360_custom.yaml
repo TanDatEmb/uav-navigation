@@ -1,0 +1,32 @@
+# FAST-LIO2 runtime profile: MID-360 hardware via Livox ROS Driver 2
+# CustomMsg format (xfer_format=1).
+# The driver publishes a single `timebase` per message plus per-point
+# `offset_time` (relative seconds).
+
+/**:
+  ros__parameters:
+    # Topics
+    imu_topic: "/livox/mid360/imu"
+    lidar_topic: "/livox/mid360/lidar"
+
+    # Frames
+    body_frame: "mid360_imu" # IMU frame
+    world_frame: "lio_world" # FAST-LIO world frame
+    lidar_frame: "mid360_lidar_frame" # Expected LiDAR sensor frame_id
+
+    # --- LiDAR input adapter selection ---
+    lidar_input.adapter: "mid360_custom"
+    lidar_input.profile: "mid360_custom"
+
+    # LiDAR filtering (downstream, in LidarProcessor)
+    lidar_min_range: 0.5 # Minimum range (m)
+    lidar_max_range: 40.0 # Maximum range (m)
+
+    # Map / scan resolution tuned for the MID-360 real point density.
+    scan_resolution: 0.3
+    map_resolution: 0.3
+
+    # Local map
+    cube_len: 50.0 # Local map cube size (m)
+    det_range: 40.0 # Detection range (m)
+    move_thresh: 0.5 # Map move threshold (ratio)

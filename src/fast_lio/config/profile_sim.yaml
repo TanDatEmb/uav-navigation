@@ -1,0 +1,30 @@
+# FAST-LIO2 runtime profile: Gazebo MID-360 GPU-LiDAR snapshot.
+# No per-point time field; points arrive as a single XYZI snapshot.
+
+/**:
+  ros__parameters:
+    # Topics
+    imu_topic: "/sim/livox/mid360/imu"
+    lidar_topic: "/sim/livox/mid360/points"
+
+    # Frames
+    body_frame: "mid360_imu" # IMU frame
+    world_frame: "lio_world" # FAST-LIO world frame
+    lidar_frame: "mid360_lidar_frame" # Expected LiDAR sensor frame_id from Gazebo
+
+    # --- LiDAR input adapter selection ---
+    lidar_input.adapter: "sim_snapshot"
+    lidar_input.profile: "sim_xyzi_snapshot"
+
+    # LiDAR filtering (downstream, in LidarProcessor)
+    lidar_min_range: 0.5 # Minimum range (m)
+    lidar_max_range: 40.0 # Maximum range (m)
+
+    # Map / scan resolution tuned for the simulated MID-360 density.
+    scan_resolution: 0.3
+    map_resolution: 0.3
+
+    # Local map
+    cube_len: 50.0 # Local map cube size (m)
+    det_range: 40.0 # Detection range (m)
+    move_thresh: 0.5 # Map move threshold (ratio)
