@@ -48,7 +48,7 @@ Point cloud + PX4 vehicle odometry
              ▼
 px4_navigation/obstacle_perception
     ├── /fmu/in/obstacle_distance
-    └── /perception/scan_1d (debug)
+    └── /perception/obstacles/scan_1d (debug)
 ```
 
 FAST-LIO remains independent of PX4. Generic frame, time, QoS, parameter, and

@@ -19,18 +19,12 @@ def generate_launch_description():
     pkg_px4_mapping = get_package_share_directory('px4_mapping')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    input_source = LaunchConfiguration('input_source')
 
     return LaunchDescription([
         DeclareLaunchArgument(
             'use_sim_time',
             default_value='true',
             description='Use simulation clock if true'),
-
-        DeclareLaunchArgument(
-            'input_source',
-            default_value='lio_world',
-            description='Cloud source for global_mapper node'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -47,7 +41,6 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'use_sim_time': use_sim_time,
-                'input_source': input_source,
             }.items()
         ),
     ])

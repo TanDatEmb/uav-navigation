@@ -232,11 +232,11 @@ GlobalMapper::GlobalMapper(const rclcpp::NodeOptions& options)
     // === Subscribers ===
     const auto qos_sensor = px4_ros2_utils::qos::sensor_qos(50);
 
-    // Subscribe point cloud input according to the selected pipeline mode.
+    // Subscribe the registered FAST-LIO cloud in lio_world.
     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         cloud_topic_, qos_sensor, std::bind(&GlobalMapper::cloudCallback, this, _1), compute_opts);
 
-    // Sensor origin source depends on input_source
+    // Sensor origin comes from FAST-LIO odometry in lio_world.
     sub_lio_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
         lio_odom_topic_, rclcpp::QoS(20), std::bind(&GlobalMapper::lioOdomCallback, this, _1),
         io_opts);

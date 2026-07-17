@@ -59,7 +59,7 @@ obstacle_perception:
 
     # Publish a local virtual scan for local planning/diagnostics (M4).
     publish_local_virtual_scan: true
-    local_virtual_scan_topic: "/perception/scan_1d"
+    local_virtual_scan_topic: "/perception/obstacles/scan_1d"
     local_virtual_scan_frame_id: "aircraft"
 
     # use_sim_time should be set via command line for SITL.

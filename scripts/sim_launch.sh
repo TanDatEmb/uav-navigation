@@ -38,21 +38,10 @@ ENABLE_RVIZ="${ENABLE_RVIZ:-${GZ_GUI}}"
 # Disabled by default while isolating unstable EV fusion from Collision Prevention.
 ENABLE_EXTERNAL_ODOMETRY="${ENABLE_EXTERNAL_ODOMETRY:-1}"
 SKIP_PX4_BUILD="${SKIP_PX4_BUILD:-0}"
-# Map input source for global_mapper node.
-# The default pipeline consumes FAST-LIO's registered cloud in lio_world.
-# px4_full is an explicit fallback that consumes the raw sensor cloud and uses
-# PX4 pose directly; it must never receive an already-registered LIO cloud.
-MAP_INPUT_SOURCE="${MAP_INPUT_SOURCE:-lio_world}"
-if [[ "${MAP_INPUT_SOURCE}" != "px4_full" && "${MAP_INPUT_SOURCE}" != "lio_world" ]]; then
-    echo "ERROR: MAP_INPUT_SOURCE='${MAP_INPUT_SOURCE}' invalid. Use 'px4_full' or 'lio_world'." >&2
-    exit 1
-fi
-
-if [[ "${MAP_INPUT_SOURCE}" == "lio_world" ]]; then
-    GLOBAL_MAP_CLOUD_TOPIC="/lio/cloud_registered"
-else
-    GLOBAL_MAP_CLOUD_TOPIC="/sim/livox/mid360/points"
-fi
+# The SITL pipeline always consumes FAST-LIO's registered cloud in lio_world.
+# Legacy MAP_INPUT_SOURCE modes (px4_full, px4_only, localization_deskew) have
+# been removed; the mapper must not receive the raw sensor cloud.
+GLOBAL_MAP_CLOUD_TOPIC="/lio/cloud_registered"
 
 # ── PX4 paths ──────────────────────────────────────────────────────────────
 PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
@@ -227,7 +216,7 @@ ros2 run ros_gz_bridge parameter_bridge \
   "${GZ_WORLD_CLOCK}@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
   --ros-args \
   -r "${GZ_LIDAR_POINTS}:=/sim/livox/mid360/points" \
-  -r "${GZ_LIDAR_IMU}:=/sim/livox/mid360/imu" \\
+  -r "${GZ_LIDAR_IMU}:=/sim/livox/mid360/imu" \
   -r "${GZ_WORLD_CLOCK}:=/clock"
 BGEOF
 
@@ -269,9 +258,7 @@ ros2 run px4_mapping global_mapper \
   -p use_sim_time:=true \
     -p cloud_topic:=${GLOBAL_MAP_CLOUD_TOPIC} \
     -p map_topic:=/mapping/occupancy/global \
-    -p lio_odom_topic:=/lio/odometry \
-    -p input_source:=${MAP_INPUT_SOURCE} \
-    -p use_lio_buffer:=false
+  -p lio_odom_topic:=/lio/odometry
 BGEOF
 
 # ── obstacle_perception node ───────────────────────────────────────────────
@@ -284,7 +271,7 @@ ros2 run px4_navigation obstacle_perception \
     -p input_cloud_topic:=/sim/livox/mid360/points \
   -p vehicle_odom_topic:=/fmu/out/vehicle_odometry \
   -p obstacle_distance_topic:=/fmu/in/obstacle_distance \
-    -p local_virtual_scan_topic:=/perception/scan_1d \
+    -p local_virtual_scan_topic:=/perception/obstacles/scan_1d \
     -p grid_markers_topic:=/perception/obstacles/grid_markers \
     -p min_distance_cloud_topic:=/perception/obstacles/min_distance_cloud
 BGEOF
@@ -313,7 +300,7 @@ ros2 bag record --output "${LOG_DIR}/rosbag/flight_data" \
   /fmu/out/vehicle_imu \
   /perception/obstacles/grid_markers \
   /perception/obstacles/min_distance_cloud \
-  /perception/scan_1d \\
+  /perception/obstacles/scan_1d \
   /tf \
   /tf_static \
   /clock
@@ -423,7 +410,7 @@ echo "  uav-navigation SITL launched"
 echo "  Session      : ${SESSION_ID}"
 echo "  Log dir      : ${LOG_DIR}/"
 echo "  GUI          : ${GZ_GUI}"
-echo "  Map mode     : ${MAP_INPUT_SOURCE}"
+echo "  Global map cloud : ${GLOBAL_MAP_CLOUD_TOPIC}"
 echo ""
 echo "  Background logs:"
 echo "    xrce-dds     : ${LOG_DIR}/bg_xrce-dds-agent.log"

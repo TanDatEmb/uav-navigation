@@ -7,7 +7,7 @@ produces a concise report for Phase 1 milestones:
     M1 - Collision Prevention: /fmu/in/obstacle_distance rate and validity
         M2 - NED transform: /world/cloud
         M3 - Global map: /mapping/occupancy/global
-        M4 - Local planning: /perception/scan_1d
+        M4 - Local planning: /perception/obstacles/scan_1d
   M5 - Visual odometry: /fmu/in/vehicle_visual_odometry vs /fmu/out/vehicle_odometry RMSE
 
 Usage:
@@ -241,7 +241,7 @@ def analyze_voxel_map(messages: List[Any], topic_name: str) -> Dict[str, Any]:
     if not frame_ok:
         result["reason"] = (
             f"{topic_name} frame_id must be 'map_ned' for production assessment. "
-            "Re-run with MAP_INPUT_SOURCE=px4_full."
+            "The production pipeline only supports /lio/cloud_registered in lio_world."
         )
     return result
 
@@ -467,7 +467,7 @@ def main() -> int:
     report["milestones"]["M3_global_map"] = analyze_voxel_map(m3_messages, m3_topic)
 
     # M4 - Local virtual scan
-    m4_topic, m4_messages = select_topic(messages, ["/perception/scan_1d"])
+    m4_topic, m4_messages = select_topic(messages, ["/perception/obstacles/scan_1d"])
     report["milestones"]["M4_local_virtual_scan"] = analyze_laserscan(
         m4_messages, expected_frame="aircraft"
     )

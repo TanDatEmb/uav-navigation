@@ -114,7 +114,8 @@ void ObstaclePerception::LoadParameters() {
                                                        std::string("/fmu/in/obstacle_distance"));
     this->declare_parameter("publish_local_virtual_scan", true);
     this->get_parameter("publish_local_virtual_scan", publish_local_virtual_scan_);
-    this->declare_parameter("local_virtual_scan_topic", std::string("/perception/scan_1d"));
+    this->declare_parameter("local_virtual_scan_topic",
+                            std::string("/perception/obstacles/scan_1d"));
     this->get_parameter("local_virtual_scan_topic", local_virtual_scan_topic_);
     this->declare_parameter("local_virtual_scan_frame_id", std::string("aircraft"));
     this->get_parameter("local_virtual_scan_frame_id", local_virtual_scan_frame_id_);

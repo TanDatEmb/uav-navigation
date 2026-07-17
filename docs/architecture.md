@@ -81,7 +81,7 @@ Raw/local point cloud + PX4 vehicle odometry
           ▼
  obstacle_perception
   ├──► /fmu/in/obstacle_distance [BODY_FRD, PX4 boot time]
-  └──► /perception/scan_1d       [ROS debug topic]
+  └──► /perception/obstacles/scan_1d  [ROS debug topic]
 ```
 
 `lio_px4_bridge` performs coordinate-representation and timestamp conversion and
@@ -153,26 +153,23 @@ These names are fixed; do not use “local map” for unrelated products.
 | Global 3D map | `/mapping/occupancy/global` | `global_mapper` | Full accumulated occupied voxel map for the active input frame |
 | Planner-local 3D map | `/mapping/occupancy/local` | `global_mapper` | Rolling 30 m-radius spatial snapshot selected from accumulated global occupancy |
 | Distance bins 2D | `/fmu/in/obstacle_distance` | `obstacle_perception` | 72-bin PX4 Collision Prevention input |
-| Virtual scan 1D | `/perception/scan_1d` by the SITL script | `obstacle_perception` | ROS debug perception output, not a map |
+| Virtual scan 1D | `/perception/obstacles/scan_1d` | `obstacle_perception` | ROS debug perception output, not a map |
 | External odometry | `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | PX4 `VehicleOdometry`, not a map |
 
-`/mapping/occupancy/global` and `/mapping/occupancy/local` use the incoming `lio_world` frame in the
-default `input_source=lio_world` pipeline. The local topic is **not** rebuilt
-from the current LiDAR scan: it selects occupied voxels from persistent global
-occupancy within `local_map_radius_m` of the synchronized UAV pose. It is
-republished on every accepted cloud, so it preserves historical surfaces while
-they remain inside the rolling spatial window; only points leaving that window
-disappear from the local output. The canonical radius is 30 m (60 m diameter),
-doubled from the earlier 15 m profile so altitude and the 20 m raycast horizon do
-not make the local view resemble a single scan.
+`/mapping/occupancy/global` and `/mapping/occupancy/local` use the incoming `lio_world` frame. The
+local topic is **not** rebuilt from the current LiDAR scan: it selects occupied
+voxels from persistent global occupancy within `local_map_radius_m` of the
+synchronized UAV pose. It is republished on every accepted cloud, so it preserves
+historical surfaces while they remain inside the rolling spatial window; only
+points leaving that window disappear from the local output. The canonical radius
+is 30 m (60 m diameter), doubled from the earlier 15 m profile so altitude and
+the 20 m raycast horizon do not make the local view resemble a single scan.
 
-Global retention is independent of `input_source`: distance eviction is opt-in
-through `enable_distance_eviction=true`, while voxel-capacity and frame-age
-bounds always remain active. Full-global publication can be throttled with
-`global_map_publish_interval` (5 frames, or 2 Hz at the 10 Hz LiDAR default) to
-bound serialization cost; the local view still updates on every accepted cloud.
-Other supported mapper modes can publish in `map_ned`; consumers must inspect
-`frame_id` rather than infer it from the topic.
+Distance eviction is opt-in through `enable_distance_eviction=true`, while
+voxel-capacity and frame-age bounds always remain active. Full-global publication
+can be throttled with `global_map_publish_interval` (5 frames, or 2 Hz at the
+10 Hz LiDAR default) to bound serialization cost; the local view still updates on
+every accepted cloud.
 
 ## MID-360 Occupancy Evidence Contract
 
@@ -203,7 +200,7 @@ including `CustomPoint.msg`, `lddc.cpp`, and `comm/pub_handler.cpp`.
 | `/mapping/occupancy/local` | `global_mapper` | same frame; 30 m-radius rolling historical occupancy | ROS | reliable |
 | `/fmu/in/vehicle_visual_odometry` | `lio_px4_bridge` | NED pose, FRD body; unavailable velocity is NaN | PX4 boot μs via `Timesync` | best effort |
 | `/fmu/in/obstacle_distance` | `obstacle_perception` | `BODY_FRD` message frame | PX4 boot μs via `Timesync` | reliable |
-| `/perception/scan_1d` | `obstacle_perception` | configured ROS debug frame | ROS | reliable |
+| `/perception/obstacles/scan_1d` | `obstacle_perception` | configured ROS debug frame | ROS | reliable |
 
 A contract change must update the implementation, parameter YAML, tests, this
 document, and relevant SITL analysis tooling together.

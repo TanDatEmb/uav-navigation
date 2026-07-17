@@ -53,11 +53,13 @@ global_mapper:
     publish_local_map: true
     local_map_radius_m: 30.0
 
-    # Opt-in legacy memory mode. When false, global occupancy is independent of
-    # input_source and is bounded only by voxel capacity and frame age.
+    # Opt-in legacy memory mode. Global occupancy is bounded only by voxel
+    # capacity and frame age.
     enable_distance_eviction: false
 
     # Lidar-to-IMU extrinsic translation in metres (sensor frame w.r.t. IMU).
+    # Kept for potential future point-cloud preprocessing; the global mapper
+    # consumes already-registered points in lio_world.
     extrinsic_T: [-0.011, -0.02329, 0.04412]
 
     # Readiness gate: require this many consecutive frames and occupied voxels.
@@ -77,5 +79,5 @@ global_mapper:
     timeout_seconds: 3600.0
     log_path: ""
 
-    # Use LIO pose buffer for scan-time origin lookup.
-    use_lio_buffer: true
+    # Removed: use_lio_buffer. The mapper always uses the LIO pose buffer
+    # because it only consumes /lio/cloud_registered in lio_world.

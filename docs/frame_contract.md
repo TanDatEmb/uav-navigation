@@ -122,16 +122,16 @@ to every LIO pose. No per-scan point-cloud transform is performed here.
 
 ## Global Map Frames
 
-`global_mapper` preserves the active world frame:
+`global_mapper` always operates in the `lio_world` frame:
 
-- `input_source=lio_world`: registered points, `/mapping/occupancy/global`, and
-  `/mapping/occupancy/local` remain in `lio_world`.
-- PX4-based modes: both map outputs are represented in `map_ned`.
+- registered points from `/lio/cloud_registered`, `/mapping/occupancy/global`, and
+  `/mapping/occupancy/local` all remain in `lio_world`.
+- PX4-based mapper modes were removed in Commit 1; only the FAST-LIO lio_world
+  pipeline remains supported.
 
-Global retention is independent of `input_source`. Distance eviction is disabled
-by default; `enable_distance_eviction=true` explicitly opts into the legacy
-radius-bounded memory mode. Capacity and frame-age bounds remain active in both
-modes.
+Global retention is independent of distance eviction. Distance eviction is
+disabled by default; `enable_distance_eviction=true` explicitly opts into the
+legacy radius-bounded memory mode. Capacity and frame-age bounds remain active.
 
 `/mapping/occupancy/local` is a radius-bounded view of `/mapping/occupancy/global`;
 it does not define a new coordinate frame. Consumers must use
