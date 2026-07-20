@@ -125,43 +125,30 @@ class FastLIONode : public rclcpp::Node {
 
    private:
     void loadParameters() {
-        // ROS 2 parameters are the single configuration source. The launch file
-        // loads fast_lio.params.yaml, and later launch/CLI overrides retain the
-        // standard ROS 2 precedence instead of being overwritten by a second YAML parser.
+        // ROS 2 parameters - Canonical FAST-LIO parameter contract (Phase 1)
+        // All parameters under fast_lio.ros__parameters.* namespace
         m_node_config.imu_topic =
-            this->declare_parameter<std::string>("imu_topic", m_node_config.imu_topic);
+            this->declare_parameter<std::string>("topics.imu", m_node_config.imu_topic);
         m_node_config.lidar_topic =
-            this->declare_parameter<std::string>("lidar_topic", m_node_config.lidar_topic);
+            this->declare_parameter<std::string>("topics.lidar", m_node_config.lidar_topic);
         m_node_config.body_frame =
-            this->declare_parameter<std::string>("body_frame", m_node_config.body_frame);
+            this->declare_parameter<std::string>("frames.body", m_node_config.body_frame);
         m_node_config.world_frame =
-            this->declare_parameter<std::string>("world_frame", m_node_config.world_frame);
-        // --- LiDAR input adapter selection ---
-        // Adapter decouples the node from sensor-specific message formats.
-        // Supported: "sim_snapshot", "mid360_pointcloud2", "mid360_custom".
+            this->declare_parameter<std::string>("frames.world", m_node_config.world_frame);
+
+        // LiDAR input adapter selection
+        // Supported: "sim_snapshot", "mid360_pointcloud2", "mid360_custom"
         m_adapter_type =
-            this->declare_parameter<std::string>("lidar_input.adapter", "");
-        if (m_adapter_type.empty()) {
-            // Backward compatibility: map legacy lidar_input.profile to adapter.
-            const std::string input_profile_str =
-                this->declare_parameter<std::string>("lidar_input.profile", "sim_xyzi_snapshot");
-            if (input_profile_str == "mid360_pointcloud2") {
-                m_adapter_type = "mid360_pointcloud2";
-            } else {
-                m_adapter_type = "sim_snapshot";
-            }
-        } else {
-            // Declare legacy profile so existing parameter files do not fail,
-            // but do not use its value when adapter is explicit.
-            this->declare_parameter<std::string>("lidar_input.profile", "sim_xyzi_snapshot");
-        }
+            this->declare_parameter<std::string>("input.adapter", "sim_snapshot");
 
         // Validation of m_adapter_type happens after the 'fail' helper is defined.
 
         m_node_config.print_time_cost =
-            this->declare_parameter<bool>("print_time_cost", m_node_config.print_time_cost);
+            this->declare_parameter<bool>("debug.print_time_cost", m_node_config.print_time_cost);
+        const int path_max_poses = this->declare_parameter<int>(
+            "output.path_max_poses", static_cast<int>(m_node_config.path_max_poses));
 
-        // --- Synchronizer configuration ---
+        // Synchronizer configuration
         const int sync_max_imu = this->declare_parameter<int>(
             "synchronizer.max_imu_samples", 4000);
         const int sync_max_lidar = this->declare_parameter<int>(
@@ -176,51 +163,69 @@ class FastLIONode : public rclcpp::Node {
         if (sync_max_imu > 0) m_sync_config.max_imu_samples = static_cast<std::size_t>(sync_max_imu);
         if (sync_max_lidar > 0) m_sync_config.max_lidar_scans = static_cast<std::size_t>(sync_max_lidar);
 
-        const int path_max_poses = this->declare_parameter<int>(
-            "path_max_poses", static_cast<int>(m_node_config.path_max_poses));
-
+        // Filter configuration
         m_builder_config.lidar_min_range =
-            this->declare_parameter<double>("lidar_min_range", m_builder_config.lidar_min_range);
+            this->declare_parameter<double>("filter.min_range_m", m_builder_config.lidar_min_range);
         m_builder_config.lidar_max_range =
-            this->declare_parameter<double>("lidar_max_range", m_builder_config.lidar_max_range);
+            this->declare_parameter<double>("filter.max_range_m", m_builder_config.lidar_max_range);
         m_builder_config.scan_resolution =
-            this->declare_parameter<double>("scan_resolution", m_builder_config.scan_resolution);
+            this->declare_parameter<double>("filter.scan_voxel_size_m", m_builder_config.scan_resolution);
         m_builder_config.map_resolution =
-            this->declare_parameter<double>("map_resolution", m_builder_config.map_resolution);
-        m_builder_config.cube_len =
-            this->declare_parameter<double>("cube_len", m_builder_config.cube_len);
-        m_builder_config.det_range =
-            this->declare_parameter<double>("det_range", m_builder_config.det_range);
-        m_builder_config.move_thresh =
-            this->declare_parameter<double>("move_thresh", m_builder_config.move_thresh);
-        m_builder_config.na = this->declare_parameter<double>("na", m_builder_config.na);
-        m_builder_config.ng = this->declare_parameter<double>("ng", m_builder_config.ng);
-        m_builder_config.nba = this->declare_parameter<double>("nba", m_builder_config.nba);
-        m_builder_config.nbg = this->declare_parameter<double>("nbg", m_builder_config.nbg);
-        m_builder_config.imu_init_num =
-            this->declare_parameter<int>("imu_init_num", m_builder_config.imu_init_num);
-        m_builder_config.imu_init_accel_std_max = this->declare_parameter<double>(
-            "imu_init_accel_std_max", m_builder_config.imu_init_accel_std_max);
-        m_builder_config.imu_init_gyro_rms_max = this->declare_parameter<double>(
-            "imu_init_gyro_rms_max", m_builder_config.imu_init_gyro_rms_max);
-        m_builder_config.imu_init_gravity_tolerance = this->declare_parameter<double>(
-            "imu_init_gravity_tolerance", m_builder_config.imu_init_gravity_tolerance);
-        m_builder_config.knn_search_count =
-            this->declare_parameter<int>("knn_search_count", m_builder_config.knn_search_count);
-        m_builder_config.ieskf_max_iter =
-            this->declare_parameter<int>("ieskf_max_iter", m_builder_config.ieskf_max_iter);
-        m_builder_config.estimator_backend =
-            this->declare_parameter<std::string>("estimator_backend", m_builder_config.estimator_backend);
-        m_builder_config.gravity_align =
-            this->declare_parameter<bool>("gravity_align", m_builder_config.gravity_align);
-        m_builder_config.lidar_cov_inv =
-            this->declare_parameter<double>("lidar_cov_inv", m_builder_config.lidar_cov_inv);
+            this->declare_parameter<double>("filter.map_voxel_size_m", m_builder_config.map_resolution);
 
+        // Mapping configuration
+        m_builder_config.cube_len =
+            this->declare_parameter<double>("mapping.cube_side_length_m", m_builder_config.cube_len);
+        m_builder_config.det_range =
+            this->declare_parameter<double>("mapping.detection_range_m", m_builder_config.det_range);
+        m_builder_config.move_thresh =
+            this->declare_parameter<double>("mapping.move_threshold_ratio", m_builder_config.move_thresh);
+
+        // Noise configuration
+        m_builder_config.na = this->declare_parameter<double>("noise.accelerometer", m_builder_config.na);
+        m_builder_config.ng = this->declare_parameter<double>("noise.gyroscope", m_builder_config.ng);
+        m_builder_config.nba = this->declare_parameter<double>("noise.accelerometer_bias", m_builder_config.nba);
+        m_builder_config.nbg = this->declare_parameter<double>("noise.gyroscope_bias", m_builder_config.nbg);
+
+        // Initialization configuration
+        m_builder_config.imu_init_num =
+            this->declare_parameter<int>("initialization.imu_samples", m_builder_config.imu_init_num);
+        m_builder_config.imu_init_accel_std_max = this->declare_parameter<double>(
+            "initialization.accel_std_max_mps2", m_builder_config.imu_init_accel_std_max);
+        m_builder_config.imu_init_gyro_rms_max = this->declare_parameter<double>(
+            "initialization.gyro_rms_max_radps", m_builder_config.imu_init_gyro_rms_max);
+        m_builder_config.imu_init_gravity_tolerance = this->declare_parameter<double>(
+            "initialization.gravity_tolerance_mps2", m_builder_config.imu_init_gravity_tolerance);
+        m_builder_config.gravity_align =
+            this->declare_parameter<bool>("initialization.gravity_align", m_builder_config.gravity_align);
+
+        // Estimator configuration
+        m_builder_config.estimator_backend =
+            this->declare_parameter<std::string>("estimator.backend", m_builder_config.estimator_backend);
+        m_builder_config.ieskf_max_iter =
+            this->declare_parameter<int>("estimator.max_iterations", m_builder_config.ieskf_max_iter);
+
+        // Matching configuration (7 previously ignored parameters)
+        m_builder_config.knn_search_count =
+            this->declare_parameter<int>("matching.knn_count", m_builder_config.knn_search_count);
+        this->declare_parameter<int>("matching.min_plane_neighbors", 5);
+        this->declare_parameter<double>("matching.max_neighbor_distance_m", 1.0);
+        this->declare_parameter<double>("matching.max_plane_eigen_ratio", 0.01);
+        this->declare_parameter<double>("matching.min_second_eigen_ratio", 0.05);
+        this->declare_parameter<double>("matching.max_neighbor_plane_distance_m", 0.10);
+        this->declare_parameter<double>("matching.max_point_plane_residual_m", 0.40);
+        this->declare_parameter<int>("matching.min_effective_correspondences", 20);
+
+        // Measurement configuration
+        m_builder_config.lidar_cov_inv =
+            this->declare_parameter<double>("measurement.lidar_covariance_inverse", m_builder_config.lidar_cov_inv);
+
+        // Extrinsic configuration
         const auto extrinsic_t = this->declare_parameter<std::vector<double>>(
-            "extrinsic_t",
+            "extrinsic.translation_m",
             {m_builder_config.t_I_L.x(), m_builder_config.t_I_L.y(), m_builder_config.t_I_L.z()});
         const auto extrinsic_r = this->declare_parameter<std::vector<double>>(
-            "extrinsic_r",
+            "extrinsic.rotation_matrix_row_major",
             {m_builder_config.R_I_L(0, 0), m_builder_config.R_I_L(0, 1), m_builder_config.R_I_L(0, 2),
              m_builder_config.R_I_L(1, 0), m_builder_config.R_I_L(1, 1), m_builder_config.R_I_L(1, 2),
              m_builder_config.R_I_L(2, 0), m_builder_config.R_I_L(2, 1),

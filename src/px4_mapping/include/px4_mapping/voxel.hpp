@@ -2,34 +2,29 @@
 #define PX4_MAPPING_VOXEL_HPP_
 
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
 #include <vector>
 
 #include <Eigen/Core>
-
-#include <px4_nav_common/mapping/voxel_types.hpp>
-#include <px4_nav_common/types.hpp>
 
 namespace px4_mapping {
 
 /**
  * @brief Single voxel cell state.
  *
- * A voxel stores a log-odds occupancy estimate plus metadata needed by the
- * hash map: intensity of the last hit, frame id of last update, doubly-linked
- * list pointers for LRU ordering, and an index into the occupied-list vector
- * for O(1) removal.
- *
- * Voxels are allocated from a VoxelPool and never created by new/delete at
- * runtime.
+ * Voxel stores log-odds occupancy, intensity, and LRU metadata.
+ * Uses EIGEN_MAKE_ALIGNED_OPERATOR_NEW for proper Eigen alignment.
  */
 struct Voxel {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     Eigen::Vector3i index{Eigen::Vector3i::Zero()};
     float log_odds{0.0f};
     float intensity{0.0f};
     bool is_occupied{false};
     std::uint64_t last_update_id{0U};
 
+    // LRU list pointers - kept as raw pointers for compatibility with VoxelHashMap
     Voxel *prev{nullptr};
     Voxel *next{nullptr};
 
@@ -51,32 +46,27 @@ struct Voxel {
 };
 
 /**
- * @brief Pre-allocated memory pool for voxels.
+ * @brief Pre-allocated memory pool for voxels with proper C++ construction.
  *
- * A single std::malloc at construction eliminates heap allocations during
- * mapping runtime. Freed voxels are pushed onto a free stack for immediate
- * reuse.
+ * Uses std::vector with Eigen aligned allocator instead of malloc/free.
+ * Freed voxels are pushed onto a free stack for immediate reuse.
  */
 class VoxelPool {
    public:
     explicit VoxelPool(std::size_t capacity) : capacity_(capacity) {
-        storage_ = static_cast<Voxel *>(std::malloc(capacity * sizeof(Voxel)));
+        storage_.resize(capacity);
         free_stack_.reserve(capacity);
         for (std::size_t i = 0; i < capacity; ++i) {
             free_stack_.push_back(&storage_[i]);
         }
     }
 
-    ~VoxelPool() {
-        if (storage_ != nullptr) {
-            std::free(storage_);
-        }
-    }
+    ~VoxelPool() = default;
 
     VoxelPool(const VoxelPool &) = delete;
     VoxelPool &operator=(const VoxelPool &) = delete;
-    VoxelPool(VoxelPool &&) = delete;
-    VoxelPool &operator=(VoxelPool &&) = delete;
+    VoxelPool(VoxelPool &&) = default;
+    VoxelPool &operator=(VoxelPool &&) = default;
 
     /**
      * @brief Allocate a fresh voxel from the pool.
@@ -113,7 +103,7 @@ class VoxelPool {
 
    private:
     std::size_t capacity_{0U};
-    Voxel *storage_{nullptr};
+    std::vector<Voxel, Eigen::aligned_allocator<Voxel>> storage_;
     std::vector<Voxel *> free_stack_;
 };
 

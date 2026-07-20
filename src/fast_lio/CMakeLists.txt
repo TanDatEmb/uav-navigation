@@ -200,6 +200,12 @@ if(BUILD_TESTING)
   # New: PointPlaneMeasurement tests (Jacobian verification)
   ament_add_gtest(test_point_plane_measurement test/test_point_plane_measurement.cpp)
   target_link_libraries(test_point_plane_measurement ${PROJECT_NAME}_core)
+
+  # Phase 1: Parameter contract test (Python)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_parameter_contract test/test_parameter_contract.py
+    TIMEOUT 60
+  )
 endif()
 
 ament_package()

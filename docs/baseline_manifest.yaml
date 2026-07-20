@@ -1,0 +1,104 @@
+# Baseline Test Bag Manifest
+# Phase 1: Khóa baseline có thể tái lập
+
+bags:
+  stationary_120s:
+    description: "UAV đứng yên 120 giây"
+    purpose: "Bias, gravity, covariance, map drift"
+    duration_sec: 120
+    required_topics:
+      - /livox/mid360/lidar
+      - /livox/mid360/imu
+      - /lio/odometry
+      - /lio/diagnostics
+    checksum: null
+    observed_scans: null
+    status: not_recorded
+
+  yaw_rotation:
+    description: "Quay yaw chậm ±180°"
+    purpose: "Kiểm tra orientation/frame"
+    duration_sec: 60
+    required_topics:
+      - /livox/mid360/lidar
+      - /livox/mid360/imu
+      - /lio/odometry
+    observed_yaw_range_deg: null
+    status: not_recorded
+
+  translation_xyz:
+    description: "Di chuyển riêng X, Y, Z"
+    purpose: "Phát hiện swap trục và dấu"
+    duration_sec: 90
+    motion_sequence:
+      - "+X 2m"
+      - "-X 2m"
+      - "+Y 2m"
+      - "-Y 2m"
+      - "+Z 1m"
+      - "-Z 1m"
+    status: not_recorded
+
+  corridor:
+    description: "Hành lang hoặc ít đặc trưng"
+    purpose: "Kiểm tra correspondence degeneration"
+    duration_sec: 60
+    status: not_recorded
+
+  outdoor_mid360s:
+    description: "Bay/di chuyển ngoài trời"
+    purpose: "CPU, map growth, range"
+    duration_sec: 180
+    status: not_recorded
+
+  px4_sitl_ev:
+    description: "LIO giả lập gửi sang PX4"
+    purpose: "External vision bootstrap"
+    duration_sec: 60
+    required_topics:
+      - /fmu/in/vehicle_visual_odometry
+      - /fmu/out/vehicle_local_position
+    status: not_recorded
+
+metrics:
+  required_counters:
+    - scans_received
+    - scans_processed
+    - scans_dropped
+    - imu_coverage_missed
+    - points_input
+    - points_after_downsample
+    - effective_correspondences
+
+  required_timing_ms:
+    - preprocessing
+    - imu_propagation
+    - knn_search
+    - estimator_update
+    - map_insertion
+    - total_scan
+
+  required_resources:
+    - ikdtree_point_count
+    - odometry_output_hz
+    - px4_bridge_output_hz
+    - memory_rss_mb
+    - cpu_percent
+
+  acceptance_thresholds:
+    p95_processing_time_ms: 100
+    cpu_increase_max: "+10%"
+    memory_stable: true
+    no_deadlock: true
+    no_asan_errors: true
+    no_ubsan_errors: true
+
+validation:
+  command_build: "colcon build --symlink-install --packages-up-to fast_lio px4_mapping"
+  command_test: "colcon test --packages-select fast_lio px4_mapping"
+  command_sanitizer: "colcon build --cmake-args -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'"
+  smoke_test_profiles:
+    - sim
+    - mid360_custom
+    - mid360_pointcloud2
+  status: pending

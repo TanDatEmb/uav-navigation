@@ -1,0 +1,29 @@
+# FAST-LIO2 Profile: MID-360 CustomMsg
+# Requires: livox_ros_driver2
+
+fast_lio:
+  ros__parameters:
+    # Input mode
+    input.mode: "mid360_custom"
+
+    # Topics
+    topics.lidar: "/livox/mid360/lidar"
+    topics.imu: "/livox/mid360/imu"
+
+    # Frames
+    frames.world: "lio_world"
+    frames.body: "mid360_imu"
+    frames.lidar: "mid360_lidar_frame"
+
+    # Filter
+    filter.min_range: 0.5
+    filter.max_range: 40.0
+
+    # Resolution
+    filter.scan_voxel_size: 0.3
+    filter.map_voxel_size: 0.3
+
+    # Local map
+    mapping.detection_range: 40.0
+    mapping.cube_side_length: 50.0
+    mapping.move_threshold: 0.5
