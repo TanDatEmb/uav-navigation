@@ -129,6 +129,25 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("residual_rms_m", std::to_string(result.diagnostics.registration.residual_rms_m)),
       keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
       keyValue("covariance_trace", std::to_string(result.diagnostics.state.covariance_trace))};
+  status.values.push_back(keyValue(
+      "ros_received_imu_count",
+      std::to_string(result.diagnostics.sensor.ros_received_imu_count)));
+  status.values.push_back(keyValue(
+      "ros_received_lidar_count",
+      std::to_string(result.diagnostics.sensor.ros_received_lidar_count)));
+  status.values.push_back(keyValue(
+      "core_accepted_imu_count",
+      std::to_string(result.diagnostics.sensor.core_accepted_imu_count)));
+  status.values.push_back(keyValue(
+      "core_accepted_lidar_count",
+      std::to_string(result.diagnostics.sensor.core_accepted_lidar_count)));
+  status.values.push_back(keyValue(
+      "ros_maximum_imu_gap_ns",
+      std::to_string(result.diagnostics.sensor.ros_maximum_imu_gap_ns)));
+  status.values.push_back(keyValue(
+      "processing_queue_high_water_mark",
+      std::to_string(
+          result.diagnostics.sensor.processing_queue_high_water_mark)));
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

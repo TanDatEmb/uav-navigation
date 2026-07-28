@@ -40,9 +40,19 @@ enum class LidarUpdateStatus {
 [[nodiscard]] const char* toString(LidarUpdateStatus status) noexcept;
 
 struct SensorDiagnostics {
+  std::size_t ros_received_imu_count{0};
+  std::size_t ros_received_lidar_count{0};
+  std::size_t core_accepted_imu_count{0};
+  std::size_t core_accepted_lidar_count{0};
   std::size_t lidar_drop_count{0};
   std::size_t imu_drop_count{0};
   std::size_t timestamp_regression_count{0};
+  std::int64_t ros_maximum_imu_gap_ns{0};
+  std::size_t imu_subscription_sequence_gap_count{0};
+  std::size_t lidar_subscription_sequence_gap_count{0};
+  std::size_t imu_queue_high_water_mark{0};
+  std::size_t lidar_queue_high_water_mark{0};
+  std::size_t processing_queue_high_water_mark{0};
   std::size_t invalid_point_count{0};
 };
 
