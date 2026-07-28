@@ -1,0 +1,26 @@
+# Gazebo Harmonic -> ROS 2 Jazzy bridge for the kinematic M1 sensor rig.
+# This bridge publishes standard PointCloud2 / Imu, not Livox CustomMsg. It is
+# therefore a simulator contract test and must not be labelled as a Mid-360 bag.
+- ros_topic_name: /clock
+  gz_topic_name: /clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: gz.msgs.Clock
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /lidar/points
+  gz_topic_name: /sim/lidar/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /lidar/imu
+  gz_topic_name: /sim/imu/data
+  ros_type_name: sensor_msgs/msg/Imu
+  gz_type_name: gz.msgs.IMU
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /sim/cmd_vel
+  gz_topic_name: /model/mid360_imu_rig/cmd_vel
+  ros_type_name: geometry_msgs/msg/Twist
+  gz_type_name: gz.msgs.Twist
+  direction: ROS_TO_GZ
