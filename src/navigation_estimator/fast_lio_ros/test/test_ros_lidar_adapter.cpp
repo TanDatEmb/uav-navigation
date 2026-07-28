@@ -32,8 +32,11 @@ TEST(RosLidarAdapterTest, SimultaneousScanDoesNotInventPointTime) {
   const float coordinates[3]{1.0F, 2.0F, 3.0F};
   std::memcpy(cloud.data.data(), coordinates, sizeof(coordinates));
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kSimultaneousScan}.convert(cloud);
+      RosLidarAdapter{"lidar_link", LidarTimingMode::kSimultaneousScan,
+                      ClockDomain::kSimulationTime}
+          .convert(cloud);
   ASSERT_EQ(scan.points.size(), 1U);
+  EXPECT_EQ(scan.start_time.clock_domain(), ClockDomain::kSimulationTime);
   EXPECT_EQ(scan.points.front().relative_time_ns, 0U);
   EXPECT_FALSE(scan.has_per_point_time);
 }

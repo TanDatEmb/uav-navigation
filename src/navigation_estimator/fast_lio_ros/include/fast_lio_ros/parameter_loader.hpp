@@ -3,6 +3,9 @@
 #include <array>
 #include <rclcpp/node.hpp>
 #include <string>
+#include <string_view>
+
+#include "fast_lio_core/time/clock_domain.hpp"
 
 namespace uav::nav::lio {
 
@@ -15,6 +18,8 @@ struct RosParameters {
   std::string imu_topic;
   std::string lidar_message_type;
   std::string lidar_timing_mode;
+  std::string input_clock_domain;
+  std::string livox_timestamp_policy;
   std::int64_t maximum_imu_gap_ns{};
   bool reject_timestamp_regression{};
   bool estimate_extrinsic_online{};
@@ -30,6 +35,8 @@ struct RosParameters {
   bool publish_local_map{};
   double local_map_rate_hz{};
 };
+
+[[nodiscard]] ClockDomain parseClockDomain(std::string_view value);
 
 class ParameterLoader {
  public:

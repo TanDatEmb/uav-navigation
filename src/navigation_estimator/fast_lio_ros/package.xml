@@ -9,6 +9,7 @@
   <depend>fast_lio_core</depend>
   <depend>diagnostic_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>livox_ros_driver2</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>

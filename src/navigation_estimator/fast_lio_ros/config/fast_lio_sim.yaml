@@ -7,6 +7,8 @@ fast_lio:
       lidar_message_type: pointcloud2
     timing:
       lidar_mode: simultaneous_scan
+      clock_domain: simulation_time
+      livox_timestamp_policy: require_header_match
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
     extrinsic:

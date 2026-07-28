@@ -10,8 +10,24 @@ namespace uav::nav::lio {
 namespace {
 
 LidarTimingMode adapterTiming(const RosParameters& parameters) {
-  return parameters.lidar_timing_mode == "per_point" ? LidarTimingMode::kPerPoint
-                                                     : LidarTimingMode::kSimultaneousScan;
+  if (parameters.lidar_timing_mode == "per_point") {
+    return LidarTimingMode::kPerPoint;
+  }
+  if (parameters.lidar_timing_mode == "simultaneous_scan") {
+    return LidarTimingMode::kSimultaneousScan;
+  }
+  throw std::invalid_argument("unsupported production LiDAR timing mode");
+}
+
+LivoxTimestampPolicy livoxTimestampPolicy(
+    const RosParameters& parameters) {
+  if (parameters.livox_timestamp_policy == "require_header_match") {
+    return LivoxTimestampPolicy::kRequireHeaderMatchesTimebase;
+  }
+  if (parameters.livox_timestamp_policy == "timebase_authoritative") {
+    return LivoxTimestampPolicy::kTimebaseAuthoritative;
+  }
+  throw std::invalid_argument("unsupported Livox timestamp policy");
 }
 
 EstimatorConfig estimatorConfig(const RosParameters& parameters) {
@@ -42,24 +58,57 @@ FastLioNode::FastLioNode()
     : Node("fast_lio"),
       parameters_(ParameterLoader::declareAndLoad(*this)),
       pipeline_(estimatorConfig(parameters_)),
-      imu_adapter_(parameters_.imu_frame),
-      lidar_adapter_(parameters_.lidar_frame, adapterTiming(parameters_)),
+      imu_adapter_(parameters_.imu_frame,
+                   parseClockDomain(parameters_.input_clock_domain)),
+      lidar_adapter_(parameters_.lidar_frame, adapterTiming(parameters_),
+                     parseClockDomain(parameters_.input_clock_domain)),
+      livox_custom_adapter_(
+          parameters_.lidar_frame,
+          parseClockDomain(parameters_.input_clock_domain),
+          livoxTimestampPolicy(parameters_)),
       output_publisher_(*this, parameters_),
       transform_publisher_(*this, parameters_) {
-  if (parameters_.lidar_message_type != "pointcloud2") {
-    throw std::invalid_argument(
-        "this build accepts PointCloud2; livox_custom requires its explicit "
-        "optional adapter dependency");
-  }
+  const bool livox_input =
+      parameters_.lidar_message_type == "livox_custom";
   imu_subscription_ = create_subscription<sensor_msgs::msg::Imu>(
-      parameters_.imu_topic, QosProfiles::sensorInput(),
+      parameters_.imu_topic,
+      livox_input ? QosProfiles::livoxImuInput()
+                  : QosProfiles::sensorInput(),
       [this](const sensor_msgs::msg::Imu::ConstSharedPtr message) { onImu(message); });
-  lidar_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-      parameters_.lidar_topic, QosProfiles::sensorInput(),
-      [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) { onLidar(message); });
+  if (livox_input) {
+    livox_custom_subscription_ =
+        create_subscription<livox_ros_driver2::msg::CustomMsg>(
+            parameters_.lidar_topic, QosProfiles::livoxLidarInput(),
+            [this](
+                const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr
+                    message) { onLivoxCustom(message); });
+  } else {
+    lidar_subscription_ =
+        create_subscription<sensor_msgs::msg::PointCloud2>(
+            parameters_.lidar_topic, QosProfiles::sensorInput(),
+            [this](
+                const sensor_msgs::msg::PointCloud2::ConstSharedPtr
+                    message) { onLidar(message); });
+  }
   RCLCPP_WARN(get_logger(),
               "M1 baseline assumes base_link and imu_link origins coincide for public "
               "odometry; replace placeholder calibration before real operation");
+}
+
+void FastLioNode::onLivoxCustom(
+    const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message) {
+  try {
+    const auto status =
+        pipeline_.pushLidar(livox_custom_adapter_.convert(*message));
+    if (!status.ok()) {
+      RCLCPP_WARN(get_logger(), "rejected Livox CustomMsg: %s",
+                  status.message().c_str());
+    }
+    drainPipeline();
+  } catch (const std::exception& error) {
+    RCLCPP_WARN(get_logger(), "invalid Livox CustomMsg: %s",
+                error.what());
+  }
 }
 
 void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {

@@ -7,6 +7,25 @@
 
 namespace uav::nav::lio {
 
+ClockDomain parseClockDomain(std::string_view value) {
+  if (value == "ros_time") {
+    return ClockDomain::kRosTime;
+  }
+  if (value == "simulation_time") {
+    return ClockDomain::kSimulationTime;
+  }
+  if (value == "sensor_time") {
+    return ClockDomain::kSensorTime;
+  }
+  if (value == "system_time") {
+    return ClockDomain::kSystemTime;
+  }
+  if (value == "steady_time") {
+    return ClockDomain::kSteadyTime;
+  }
+  throw std::invalid_argument("unsupported timing.clock_domain");
+}
+
 RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   RosParameters result;
   result.odom_frame = node.declare_parameter("frames.odom", "odom");
@@ -17,6 +36,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.imu_topic = node.declare_parameter("input.imu_topic", "/lidar/imu");
   result.lidar_message_type = node.declare_parameter("input.lidar_message_type", "pointcloud2");
   result.lidar_timing_mode = node.declare_parameter("timing.lidar_mode", "simultaneous_scan");
+  result.input_clock_domain =
+      node.declare_parameter("timing.clock_domain", "ros_time");
+  result.livox_timestamp_policy = node.declare_parameter(
+      "timing.livox_timestamp_policy", "require_header_match");
   result.maximum_imu_gap_ns =
       node.declare_parameter<std::int64_t>("timing.max_imu_gap_ns", 20'000'000);
   result.reject_timestamp_regression =
@@ -52,6 +75,9 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.lidar_frame.empty()) {
     throw std::invalid_argument("frame names must not be empty");
   }
+  if (p.lidar_topic.empty() || p.imu_topic.empty()) {
+    throw std::invalid_argument("input topic names must not be empty");
+  }
   if (p.odom_frame == p.base_frame || p.imu_frame == p.lidar_frame) {
     throw std::invalid_argument("configured frames must identify distinct frames");
   }
@@ -60,6 +86,17 @@ void ParameterLoader::validate(const RosParameters& p) {
   }
   if (p.lidar_timing_mode != "simultaneous_scan" && p.lidar_timing_mode != "per_point") {
     throw std::invalid_argument("production lidar timing must be simultaneous_scan or per_point");
+  }
+  static_cast<void>(parseClockDomain(p.input_clock_domain));
+  if (p.livox_timestamp_policy != "require_header_match" &&
+      p.livox_timestamp_policy != "timebase_authoritative") {
+    throw std::invalid_argument(
+        "unsupported timing.livox_timestamp_policy");
+  }
+  if (p.lidar_message_type == "livox_custom" &&
+      p.lidar_timing_mode != "per_point") {
+    throw std::invalid_argument(
+        "livox_custom requires timing.lidar_mode=per_point");
   }
   const double quaternion_norm =
       std::sqrt(p.rotation_imu_lidar_xyzw[0] * p.rotation_imu_lidar_xyzw[0] +
@@ -77,10 +114,6 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.maximum_range_m <= p.minimum_range_m || p.voxel_size_m <= 0.0 ||
       p.local_map_rate_hz <= 0.0) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
-  }
-  if (p.lidar_message_type == "livox_custom") {
-    throw std::invalid_argument(
-        "livox_custom selected but this build has no livox_ros_driver2 adapter");
   }
 }
 

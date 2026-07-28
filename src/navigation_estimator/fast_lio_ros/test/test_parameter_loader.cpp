@@ -22,18 +22,36 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   const auto parameters = ParameterLoader::declareAndLoad(node);
   EXPECT_EQ(parameters.odom_frame, "odom");
   EXPECT_EQ(parameters.lidar_timing_mode, "simultaneous_scan");
+  EXPECT_EQ(parameters.input_clock_domain, "ros_time");
+  EXPECT_EQ(parameters.livox_timestamp_policy, "require_header_match");
   EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
 }
 
 TEST_F(ParameterLoaderTest, RejectsAutoTimingForProductionNode) {
-  RosParameters parameters;
-  parameters.odom_frame = "odom";
-  parameters.base_frame = "base_link";
-  parameters.imu_frame = "imu_link";
-  parameters.lidar_frame = "lidar_link";
-  parameters.lidar_message_type = "pointcloud2";
+  rclcpp::Node node{"parameter_loader_auto_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
   parameters.lidar_timing_mode = "auto";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
+TEST_F(ParameterLoaderTest, AcceptsPinnedLivoxCustomBoundary) {
+  rclcpp::Node node{"parameter_loader_livox_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.lidar_topic = "/livox/lidar";
+  parameters.imu_topic = "/livox/imu";
+  parameters.lidar_message_type = "livox_custom";
+  parameters.lidar_timing_mode = "per_point";
+  parameters.input_clock_domain = "sensor_time";
+  parameters.livox_timestamp_policy = "require_header_match";
+  EXPECT_NO_THROW(ParameterLoader::validate(parameters));
+}
+
+TEST_F(ParameterLoaderTest, RejectsLivoxCustomWithoutPerPointTiming) {
+  rclcpp::Node node{"parameter_loader_bad_livox_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.lidar_message_type = "livox_custom";
+  parameters.lidar_timing_mode = "simultaneous_scan";
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 

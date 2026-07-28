@@ -2,11 +2,13 @@ fast_lio:
   ros__parameters:
     frames: {odom: odom, base: base_link, imu: imu_link, lidar: lidar_link}
     input:
-      lidar_topic: /lidar/points
-      imu_topic: /lidar/imu
-      lidar_message_type: pointcloud2
+      lidar_topic: /livox/lidar
+      imu_topic: /livox/imu
+      lidar_message_type: livox_custom
     timing:
       lidar_mode: per_point
+      clock_domain: sensor_time
+      livox_timestamp_policy: require_header_match
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
     extrinsic:

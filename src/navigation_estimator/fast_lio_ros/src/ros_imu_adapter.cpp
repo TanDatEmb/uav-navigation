@@ -9,8 +9,10 @@
 
 namespace uav::nav::lio {
 
-RosImuAdapter::RosImuAdapter(std::string expected_frame)
-    : expected_frame_(std::move(expected_frame)) {}
+RosImuAdapter::RosImuAdapter(std::string expected_frame,
+                             ClockDomain clock_domain)
+    : expected_frame_(std::move(expected_frame)),
+      clock_domain_(clock_domain) {}
 
 ImuSample RosImuAdapter::convert(const sensor_msgs::msg::Imu& message) const {
   if (message.header.frame_id != expected_frame_) {
@@ -23,7 +25,9 @@ ImuSample RosImuAdapter::convert(const sensor_msgs::msg::Imu& message) const {
   if (!gyro.allFinite() || !accel.allFinite()) {
     throw std::invalid_argument("IMU measurement contains non-finite values");
   }
-  return ImuSample{RosTimeConverter::fromRos(message.header.stamp), gyro, accel};
+  return ImuSample{
+      RosTimeConverter::fromRos(message.header.stamp, clock_domain_),
+      gyro, accel};
 }
 
 }  // namespace uav::nav::lio

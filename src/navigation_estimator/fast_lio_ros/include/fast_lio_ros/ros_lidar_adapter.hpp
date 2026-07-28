@@ -10,12 +10,15 @@ enum class LidarTimingMode { kSimultaneousScan, kPerPoint };
 
 class RosLidarAdapter {
  public:
-  RosLidarAdapter(std::string expected_frame, LidarTimingMode timing_mode);
+  RosLidarAdapter(
+      std::string expected_frame, LidarTimingMode timing_mode,
+      ClockDomain clock_domain = ClockDomain::kRosTime);
   [[nodiscard]] LidarScan convert(const sensor_msgs::msg::PointCloud2& message) const;
 
  private:
   std::string expected_frame_;
   LidarTimingMode timing_mode_;
+  ClockDomain clock_domain_;
 };
 
 }  // namespace uav::nav::lio

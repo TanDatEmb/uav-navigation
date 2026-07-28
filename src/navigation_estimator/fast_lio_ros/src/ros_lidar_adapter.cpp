@@ -35,8 +35,12 @@ T readScalar(const std::uint8_t* point, std::uint32_t offset, std::uint32_t poin
 
 }  // namespace
 
-RosLidarAdapter::RosLidarAdapter(std::string expected_frame, LidarTimingMode timing_mode)
-    : expected_frame_(std::move(expected_frame)), timing_mode_(timing_mode) {}
+RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
+                                 LidarTimingMode timing_mode,
+                                 ClockDomain clock_domain)
+    : expected_frame_(std::move(expected_frame)),
+      timing_mode_(timing_mode),
+      clock_domain_(clock_domain) {}
 
 LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message) const {
   if (message.header.frame_id != expected_frame_) {
@@ -66,7 +70,8 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
     throw std::invalid_argument("PointCloud2 storage layout is inconsistent");
   }
 
-  const auto start_time = RosTimeConverter::fromRos(message.header.stamp);
+  const auto start_time =
+      RosTimeConverter::fromRos(message.header.stamp, clock_domain_);
   LidarScan scan{start_time, start_time, {}, time != nullptr};
   scan.points.reserve(static_cast<std::size_t>(message.width) * message.height);
   std::uint32_t maximum_relative_time = 0U;
