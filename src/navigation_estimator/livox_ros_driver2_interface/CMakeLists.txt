@@ -326,7 +326,9 @@ else(ROS_EDITION STREQUAL "ROS2")
       "set LIVOX_BUILD_HARDWARE_DRIVER=ON after installing Livox-SDK2")
   endif()
 
-  if(BUILD_TESTING)
+  option(LIVOX_ENABLE_UPSTREAM_LINT
+    "Run upstream style lint over the unmodified vendored driver source" OFF)
+  if(BUILD_TESTING AND LIVOX_ENABLE_UPSTREAM_LINT)
     find_package(ament_lint_auto REQUIRED)
     # the following line skips the linter which checks for copyrights
     # uncomment the line when a copyright and license is not present in all source files
