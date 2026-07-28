@@ -5,11 +5,11 @@
 #include <span>
 #include <vector>
 
-#include "fast_lio_core/estimation/iterated_kalman_filter.hpp"
 #include "fast_lio_core/estimation/manifold_state.hpp"
 #include "fast_lio_core/mapping/registration_map.hpp"
 #include "fast_lio_core/registration/correspondence.hpp"
 #include "fast_lio_core/registration/correspondence_search.hpp"
+#include "fast_lio_core/registration/linearized_measurement.hpp"
 #include "fast_lio_core/registration/plane_estimator.hpp"
 #include "fast_lio_core/registration/residual_gate.hpp"
 

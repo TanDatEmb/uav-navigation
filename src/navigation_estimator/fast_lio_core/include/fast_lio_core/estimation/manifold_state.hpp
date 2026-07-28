@@ -44,18 +44,8 @@ class ManifoldState {
   void set_accel_bias_m_s2(const Eigen::Vector3d& value) noexcept;
   void set_gravity_odom_m_s2(const Eigen::Vector3d& value) noexcept;
 
-  // Applies a right-multiplicative SO(3) tangent update and an S2 gravity
-  // tangent update. Fixed extrinsics ignore the two extrinsic increments.
-  void applyErrorState(const ErrorVector& increment, bool estimate_extrinsic = false);
-
-  // Returns this state minus reference in the same tangent ordering used by
-  // applyErrorState(). It is intended for small iterated-filter corrections.
-  [[nodiscard]] ErrorVector boxMinus(const ManifoldState& reference,
-                                     bool estimate_extrinsic = false) const;
-
   [[nodiscard]] Eigen::Vector3d transformLidarPointToOdom(
       const Eigen::Vector3d& point_lidar_m) const noexcept;
-  [[nodiscard]] Eigen::Matrix<double, 3, 2> gravityTangentBasis() const;
 
   void normalize();
   [[nodiscard]] bool allFinite() const noexcept;
