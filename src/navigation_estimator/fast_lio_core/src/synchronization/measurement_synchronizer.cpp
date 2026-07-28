@@ -80,19 +80,41 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
   }
 
   std::int64_t maximum_gap_ns = 0;
+  std::int64_t maximum_gap_previous_ns = 0;
+  std::int64_t maximum_gap_current_ns = 0;
   for (auto current = std::next(propagation_start_bracket); current != std::next(end_bracket);
        ++current) {
     const auto previous = std::prev(current);
-    maximum_gap_ns =
-        std::max(maximum_gap_ns, current->time.nanoseconds() - previous->time.nanoseconds());
+    const std::int64_t gap_ns =
+        current->time.nanoseconds() - previous->time.nanoseconds();
+    if (gap_ns > maximum_gap_ns) {
+      maximum_gap_ns = gap_ns;
+      maximum_gap_previous_ns = previous->time.nanoseconds();
+      maximum_gap_current_ns = current->time.nanoseconds();
+    }
   }
   if (config_.maximum_imu_gap_ns > 0 && maximum_gap_ns > config_.maximum_imu_gap_ns) {
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_imu_gap;
     return Status(StatusCode::kImuGap,
-                  "IMU gap exceeds configured synchronization limit: observed=" +
-                      std::to_string(maximum_gap_ns) + "ns limit=" +
-                      std::to_string(config_.maximum_imu_gap_ns) + "ns");
+                  "IMU_GAP previous_imu_ns=" +
+                      std::to_string(maximum_gap_previous_ns) +
+                      " current_imu_ns=" +
+                      std::to_string(maximum_gap_current_ns) +
+                      " observed_gap_ns=" + std::to_string(maximum_gap_ns) +
+                      " limit_ns=" +
+                      std::to_string(config_.maximum_imu_gap_ns) +
+                      " scan_start_ns=" +
+                      std::to_string(scan.start_time.nanoseconds()) +
+                      " scan_end_ns=" +
+                      std::to_string(scan.end_time.nanoseconds()) +
+                      " propagation_start_ns=" +
+                      std::to_string(propagation_start_time.nanoseconds()) +
+                      " buffer_front_imu_ns=" +
+                      std::to_string(imu.front().time.nanoseconds()) +
+                      " buffer_back_imu_ns=" +
+                      std::to_string(imu.back().time.nanoseconds()) +
+                      " buffer_imu_count=" + std::to_string(imu.size()));
   }
 
   MeasurementGroup group;
