@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <Eigen/Eigenvalues>
 #include <cmath>
 #include <vector>
 
@@ -128,6 +129,37 @@ TEST(IkfomEstimatorTest, ReportsConvergenceFromFinalUpstreamIncrement) {
   EXPECT_LE(correction.iteration_count, config.maximum_iterations);
   EXPECT_TRUE(std::isfinite(correction.final_increment_norm));
   EXPECT_LT(correction.final_increment_norm, config.convergence_limit);
+}
+
+TEST(IkfomEstimatorTest, CovarianceRemainsSymmetricAndPsdAcrossHundredsOfPredictions) {
+  IkfomEstimatorConfig config;
+  config.maximum_integration_step_ns = 20'000'000;
+  IkfomEstimator estimator(config, ResidualBuilderConfig{});
+  estimator.initialize(ManifoldState{});
+  for (std::int64_t step = 0; step < 300; ++step) {
+    const std::int64_t start_ns = step * 10'000'000;
+    const std::int64_t end_ns = start_ns + 10'000'000;
+    std::vector<ImuSample> samples(2);
+    samples[0].time = Timestamp(start_ns);
+    samples[1].time = Timestamp(end_ns);
+    for (auto& sample : samples) {
+      sample.angular_velocity_imu_rad_s = {0.001, -0.002, 0.0015};
+      sample.linear_acceleration_imu_m_s2 = {0.01, -0.02, 9.80665};
+    }
+    const auto prediction =
+        estimator.predict(samples, Timestamp(start_ns), Timestamp(end_ns));
+    ASSERT_TRUE(prediction.ok()) << prediction.status().message();
+    const auto covariance = estimator.covariance();
+    ASSERT_TRUE(covariance.allFinite());
+    EXPECT_LT((covariance - covariance.transpose()).cwiseAbs().maxCoeff(),
+              1e-8);
+    const auto symmetric = 0.5 * (covariance + covariance.transpose());
+    Eigen::SelfAdjointEigenSolver<ManifoldState::Covariance> solver(
+        symmetric, Eigen::EigenvaluesOnly);
+    ASSERT_EQ(solver.info(), Eigen::Success);
+    EXPECT_GE(solver.eigenvalues().minCoeff(), -1e-10);
+    EXPECT_TRUE(std::isfinite(covariance.trace()));
+  }
 }
 
 }  // namespace
