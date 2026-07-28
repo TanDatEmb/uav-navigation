@@ -38,7 +38,8 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
     }
     if (scan.start_time.nanoseconds() < last_synchronized_end_time_->nanoseconds()) {
       buffer.lidar_scans_.pop_front();
-      return Status(StatusCode::kTimestampRegression,
+      ++stats_.rejected_scan_overlap;
+      return Status(StatusCode::kScanOverlap,
                     "LiDAR scans overlap a previously propagated interval");
     }
   }
@@ -49,7 +50,8 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
   if (start_after == imu.begin()) {
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_missing_start_bracket;
-    return Status(StatusCode::kInsufficientData, "No IMU sample at or before LiDAR scan start");
+    return Status(StatusCode::kMissingStartBracket,
+                  "No IMU sample at or before LiDAR scan start");
   }
   const auto start_bracket = std::prev(start_after);
 
@@ -62,7 +64,8 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
   if (propagation_start_after == imu.begin()) {
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_missing_start_bracket;
-    return Status(StatusCode::kInsufficientData, "No IMU sample at or before propagation start");
+    return Status(StatusCode::kMissingStartBracket,
+                  "No IMU sample at or before propagation start");
   }
   const auto propagation_start_bracket = std::prev(propagation_start_after);
 
@@ -86,7 +89,7 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
   if (config_.maximum_imu_gap_ns > 0 && maximum_gap_ns > config_.maximum_imu_gap_ns) {
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_imu_gap;
-    return Status(StatusCode::kInsufficientData,
+    return Status(StatusCode::kImuGap,
                   "IMU gap exceeds configured synchronization limit: observed=" +
                       std::to_string(maximum_gap_ns) + "ns limit=" +
                       std::to_string(config_.maximum_imu_gap_ns) + "ns");

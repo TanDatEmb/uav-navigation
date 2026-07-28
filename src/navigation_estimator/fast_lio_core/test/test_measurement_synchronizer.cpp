@@ -89,7 +89,7 @@ TEST(MeasurementSynchronizerTest, RejectsPermanentlyMissingStartBracket) {
   MeasurementSynchronizer synchronizer;
   const auto result = synchronizer.synchronizeNext(buffer);
   ASSERT_FALSE(result.ok());
-  EXPECT_EQ(result.status().code(), StatusCode::kInsufficientData);
+  EXPECT_EQ(result.status().code(), StatusCode::kMissingStartBracket);
   EXPECT_EQ(buffer.lidarSize(), 0U);
 }
 
@@ -104,6 +104,73 @@ TEST(MeasurementSynchronizerTest, RejectsExcessiveImuGap) {
   const auto result = synchronizer.synchronizeNext(buffer);
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(synchronizer.stats().rejected_imu_gap, 1U);
+  EXPECT_EQ(result.status().code(), StatusCode::kImuGap);
+}
+
+TEST(MeasurementSynchronizerTest, Mid360ConsecutiveScansRemainBelowGapLimit) {
+  MeasurementBuffer buffer;
+  constexpr std::int64_t kImuPeriod = 5'780'000;
+  ASSERT_TRUE(buffer.pushLidar(syncScan(40'000'000, 72'635'000)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(74'000'000, 106'635'000)).ok());
+  for (std::int64_t time = 35'000'000; time <= 112'000'000;
+       time += kImuPeriod) {
+    ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
+  }
+  MeasurementSynchronizer synchronizer({20'000'000});
+  ASSERT_TRUE(synchronizer.synchronizeNext(buffer).value().has_value());
+  const auto second = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(second.ok());
+  ASSERT_TRUE(second.value().has_value());
+  EXPECT_LT(second.value()->max_imu_gap_ns, 20'000'000);
+}
+
+TEST(MeasurementSynchronizerTest, LightOverlapIsDistinctAndNextScanStillSyncs) {
+  MeasurementBuffer buffer;
+  ASSERT_TRUE(buffer.pushLidar(syncScan(40'000'000, 72'635'000)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(72'500'000, 105'135'000)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(106'000'000, 138'635'000)).ok());
+  for (std::int64_t time = 35'000'000; time <= 145'000'000;
+       time += 5'780'000) {
+    ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
+  }
+  MeasurementSynchronizer synchronizer({20'000'000});
+  ASSERT_TRUE(synchronizer.synchronizeNext(buffer).value().has_value());
+  const auto overlap = synchronizer.synchronizeNext(buffer);
+  ASSERT_FALSE(overlap.ok());
+  EXPECT_EQ(overlap.status().code(), StatusCode::kScanOverlap);
+  const auto following = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(following.ok());
+  ASSERT_TRUE(following.value().has_value());
+  EXPECT_EQ(synchronizer.stats().rejected_imu_gap, 0U);
+}
+
+TEST(MeasurementSynchronizerTest, DelayedProcessingWithCompleteQueueDoesNotLoseImu) {
+  MeasurementBuffer buffer;
+  for (std::int64_t time = 0; time <= 250'000'000; time += 5'780'000) {
+    ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
+  }
+  ASSERT_TRUE(buffer.pushLidar(syncScan(100'000'000, 132'635'000)).ok());
+  MeasurementSynchronizer synchronizer({20'000'000});
+  const auto result = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(result.ok());
+  ASSERT_TRUE(result.value().has_value());
+  EXPECT_LT(result.value()->max_imu_gap_ns, 20'000'000);
+}
+
+TEST(MeasurementSynchronizerTest, PruningKeepsPropagationBoundaryBrackets) {
+  MeasurementBuffer buffer;
+  ASSERT_TRUE(buffer.pushLidar(syncScan(100, 200)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(230, 300)).ok());
+  for (const auto time : {90, 150, 210, 250, 310}) {
+    ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
+  }
+  MeasurementSynchronizer synchronizer({100});
+  ASSERT_TRUE(synchronizer.synchronizeNext(buffer).value().has_value());
+  const auto second = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(second.ok());
+  ASSERT_TRUE(second.value().has_value());
+  EXPECT_LE(second.value()->imu_samples.front().time.nanoseconds(), 200);
+  EXPECT_GE(second.value()->imu_samples.back().time.nanoseconds(), 300);
 }
 
 TEST(MeasurementSynchronizerTest, ResetClearsPriorScanEpoch) {

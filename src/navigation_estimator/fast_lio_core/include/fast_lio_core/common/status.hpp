@@ -18,6 +18,11 @@ enum class StatusCode {
   kFrameMismatch,
   kInitializationRejected,
   kDeskewRejected,
+  kScanOverlap,
+  kImuGap,
+  kMissingStartBracket,
+  kMissingEndBracket,
+  kTransportMessageLoss,
 };
 
 class Status {

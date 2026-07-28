@@ -20,6 +20,7 @@ struct MeasurementSynchronizerStats {
   std::size_t rejected_missing_start_bracket{0};
   std::size_t rejected_imu_gap{0};
   std::size_t rejected_clock_domain{0};
+  std::size_t rejected_scan_overlap{0};
 };
 
 class MeasurementSynchronizer {
