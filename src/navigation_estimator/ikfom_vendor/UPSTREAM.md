@@ -6,14 +6,22 @@
   on 2026-07-28 returned this object ID.
 - Integration date: 2026-07-28.
 - Upstream license: GNU GPL version 2, as declared by upstream `LICENSE`.
-- Files used from upstream: none in this revision.
-- Differences from upstream: this package intentionally does not vendor, patch,
-  compile, or download IKFoM source. It exports the explicit
-  `ikfom_vendor::ikfom_vendor` interface target and provenance only.
+- Files vendored and used:
+  - `IKFoM_toolkit/esekfom/esekfom.hpp`
+  - `IKFoM_toolkit/esekfom/util.hpp`
+  - `IKFoM_toolkit/mtk/**`
+  - upstream `LICENSE` and `README.md`
+- Excluded upstream content: sample applications, PDFs, editor metadata and
+  Git metadata. The samples are algorithm references, not package dependencies.
+- Differences from upstream source: none. Project state/process definitions
+  live outside the vendor tree and are recorded separately when introduced.
+- Build behavior: exports the real toolkit include directory through
+  `ikfom_vendor::ikfom_vendor`, compiles an upstream API smoke test, and fails
+  CMake configuration when the pinned source is absent.
 
-Before any IKFoM header or source is introduced, copy the applicable upstream
-license text into `LICENSES/`, record every imported file here, and record each
-local patch in `PATCHES.md`. Do not replace the pinned commit with a branch name.
+The upstream license is preserved at `vendor/IKFoM/LICENSE` and copied to
+`LICENSES/IKFoM-GPL-2.0.txt`. Do not replace the pinned commit with a branch
+name.
 
 ## FAST-LIO algorithm reference
 

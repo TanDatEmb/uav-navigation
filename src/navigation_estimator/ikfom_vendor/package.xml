@@ -4,10 +4,12 @@
 <package format="3">
   <name>ikfom_vendor</name>
   <version>0.1.0</version>
-  <description>Traceable IKFoM dependency metadata and CMake interface target.</description>
+  <description>Pinned upstream IKFoM toolkit and exported include target.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation contributors</maintainer>
-  <license>MIT</license>
+  <license>GPL-2.0-only</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>eigen3_cmake_module</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

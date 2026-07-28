@@ -1,4 +1,4 @@
 # Local patches
 
-None. No IKFoM source is vendored in this revision, so no upstream filter
-formula or source file has been modified.
+None. No upstream IKFoM source file is patched. Package CMake and the smoke
+test are project-owned integration files outside `vendor/IKFoM`.
