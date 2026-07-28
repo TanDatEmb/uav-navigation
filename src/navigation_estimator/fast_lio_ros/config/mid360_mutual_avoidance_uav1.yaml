@@ -1,0 +1,29 @@
+fast_lio:
+  ros__parameters:
+    frames: {odom: odom, base: base_link, imu: imu_link, lidar: lidar_link}
+    input:
+      lidar_topic: /livox/lidar
+      imu_topic: /mavros/imu/data
+      lidar_frame: livox_frame
+      imu_frame: base_link
+      lidar_message_type: livox_custom
+    timing:
+      lidar_mode: per_point
+      clock_domain: sensor_time
+      livox_timestamp_policy: timebase_authoritative
+      max_imu_gap_ns: 20000000
+      reject_timestamp_regression: true
+    extrinsic:
+      estimate_online: false
+      translation_imu_lidar: [-0.019391, -0.000278, 0.080926]
+      rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
+    initialization: {minimum_imu_samples: 200, require_stationary: true}
+    preprocessing:
+      minimum_range_m: 0.1
+      maximum_range_m: 40.0
+      voxel_size_m: 0.2
+    registration: {maximum_iterations: 4}
+    output:
+      publish_registered_points: true
+      publish_local_map: true
+      local_map_rate_hz: 1.0

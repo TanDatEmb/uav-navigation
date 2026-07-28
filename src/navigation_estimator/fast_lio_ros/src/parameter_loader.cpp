@@ -34,6 +34,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.lidar_frame = node.declare_parameter("frames.lidar", "lidar_link");
   result.lidar_topic = node.declare_parameter("input.lidar_topic", "/lidar/points");
   result.imu_topic = node.declare_parameter("input.imu_topic", "/lidar/imu");
+  result.lidar_input_frame =
+      node.declare_parameter("input.lidar_frame", result.lidar_frame);
+  result.imu_input_frame =
+      node.declare_parameter("input.imu_frame", result.imu_frame);
   result.lidar_message_type = node.declare_parameter("input.lidar_message_type", "pointcloud2");
   result.lidar_timing_mode = node.declare_parameter("timing.lidar_mode", "simultaneous_scan");
   result.input_clock_domain =
@@ -72,7 +76,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
 
 void ParameterLoader::validate(const RosParameters& p) {
   if (p.odom_frame.empty() || p.base_frame.empty() || p.imu_frame.empty() ||
-      p.lidar_frame.empty()) {
+      p.lidar_frame.empty() || p.lidar_input_frame.empty() ||
+      p.imu_input_frame.empty()) {
     throw std::invalid_argument("frame names must not be empty");
   }
   if (p.lidar_topic.empty() || p.imu_topic.empty()) {

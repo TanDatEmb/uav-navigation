@@ -16,6 +16,8 @@ struct RosParameters {
   std::string lidar_frame;
   std::string lidar_topic;
   std::string imu_topic;
+  std::string lidar_input_frame;
+  std::string imu_input_frame;
   std::string lidar_message_type;
   std::string lidar_timing_mode;
   std::string input_clock_domain;
