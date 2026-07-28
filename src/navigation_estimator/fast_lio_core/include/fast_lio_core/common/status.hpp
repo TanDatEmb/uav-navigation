@@ -18,7 +18,7 @@ enum class StatusCode {
   kFrameMismatch,
   kInitializationRejected,
   kDeskewRejected,
-  kScanOverlap,
+  kOverlappingLidarInterval,
   kImuGap,
   kMissingStartBracket,
   kMissingEndBracket,

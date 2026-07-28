@@ -186,6 +186,42 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.values.push_back(keyValue(
       "total_processing_us",
       std::to_string(result.diagnostics.timing.total_processing_us)));
+  const auto& processing = result.diagnostics.processing;
+  status.values.push_back(keyValue(
+      "raw_lidar_count", std::to_string(processing.raw_lidar_count)));
+  status.values.push_back(keyValue(
+      "buffer_accepted_lidar_count",
+      std::to_string(processing.buffer_accepted_lidar_count)));
+  status.values.push_back(keyValue(
+      "overlap_rejected_count",
+      std::to_string(processing.overlap_rejected_count)));
+  status.values.push_back(keyValue(
+      "missing_bracket_rejected_count",
+      std::to_string(processing.missing_bracket_rejected_count)));
+  status.values.push_back(keyValue(
+      "invalid_timestamp_rejected_count",
+      std::to_string(processing.invalid_timestamp_rejected_count)));
+  status.values.push_back(keyValue(
+      "synchronized_group_count",
+      std::to_string(processing.synchronized_group_count)));
+  status.values.push_back(keyValue(
+      "correction_attempt_count",
+      std::to_string(processing.correction_attempt_count)));
+  status.values.push_back(keyValue(
+      "correction_success_count",
+      std::to_string(processing.correction_success_count)));
+  status.values.push_back(keyValue(
+      "correction_failure_count",
+      std::to_string(processing.correction_failure_count)));
+  status.values.push_back(keyValue(
+      "buffer_acceptance_ratio",
+      std::to_string(processing.bufferAcceptanceRatio())));
+  status.values.push_back(keyValue(
+      "synchronization_ratio",
+      std::to_string(processing.synchronizationRatio())));
+  status.values.push_back(keyValue(
+      "correction_success_ratio",
+      std::to_string(processing.correctionSuccessRatio())));
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

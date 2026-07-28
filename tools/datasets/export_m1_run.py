@@ -81,6 +81,7 @@ def export(bag: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     odometry = []
     diagnostics = []
+    latest_transport = {}
     maps = []
     status_counts = Counter()
     with AnyReader([bag]) as reader:
@@ -101,7 +102,15 @@ def export(bag: Path, output: Path) -> None:
             elif connection.topic == "/lio/diagnostics":
                 status = message.status[0]
                 values = {item.key: item.value for item in status.values}
-                status_counts[status.message] += 1
+                if status.name == "fast_lio/transport":
+                    latest_transport = values
+                    continue
+                reason_key = (
+                    "OVERLAPPING_LIDAR_INTERVAL"
+                    if status.message.startswith("OVERLAPPING_LIDAR_INTERVAL ")
+                    else status.message
+                )
+                status_counts[reason_key] += 1
                 diagnostics.append({
                     "record_time_ns": record_time,
                     "level": status.level,
@@ -185,6 +194,8 @@ def export(bag: Path, output: Path) -> None:
     )
     successful = status_counts["LIDAR_CORRECTION_CONVERGED"]
     rejected = len(diagnostics) - successful
+    last_diagnostic = diagnostics[-1] if diagnostics else {}
+    final_counters = {**last_diagnostic, **latest_transport}
     metadata = {
         "frame": "odom",
         "point_unit": "meter",
@@ -204,14 +215,15 @@ def export(bag: Path, output: Path) -> None:
         "bounding_box": bounds,
         "voxel_size_m": 0.2,
         "map_backend": "upstream ikd-Tree",
+        "config_path": final_counters.get("config_path"),
+        "config_SHA256": final_counters.get("config_sha256"),
     }
     (output / "map_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    last_diagnostic = diagnostics[-1] if diagnostics else {}
     full_ingress = (
-        last_diagnostic.get("ros_received_imu_count") == "8000"
-        and last_diagnostic.get("ros_received_lidar_count") == "1384"
-        and last_diagnostic.get("core_accepted_imu_count") == "8000"
-        and last_diagnostic.get("core_accepted_lidar_count") == "1384"
+        final_counters.get("ros_received_imu_count") == "8000"
+        and final_counters.get("ros_received_lidar_count") == "1384"
+        and final_counters.get("core_accepted_imu_count") == "8000"
+        and final_counters.get("core_accepted_lidar_count") == "1384"
     )
     finite_trajectory = all(
         math.isfinite(value) for row in odometry for value in row[1:8]
@@ -229,7 +241,7 @@ def export(bag: Path, output: Path) -> None:
         "finite_trajectory": finite_trajectory,
         "full_ingress_and_core_acceptance": full_ingress,
         "ingress_counters": {
-            key: last_diagnostic.get(key)
+            key: final_counters.get(key)
             for key in (
                 "ros_received_imu_count",
                 "ros_received_lidar_count",
@@ -237,6 +249,25 @@ def export(bag: Path, output: Path) -> None:
                 "core_accepted_lidar_count",
                 "ros_maximum_imu_gap_ns",
                 "processing_queue_high_water_mark",
+            )
+        },
+        "config_path": final_counters.get("config_path"),
+        "config_SHA256": final_counters.get("config_sha256"),
+        "processing_effectiveness": {
+            key: final_counters.get(key)
+            for key in (
+                "raw_lidar_count",
+                "buffer_accepted_lidar_count",
+                "overlap_rejected_count",
+                "missing_bracket_rejected_count",
+                "invalid_timestamp_rejected_count",
+                "synchronized_group_count",
+                "correction_attempt_count",
+                "correction_success_count",
+                "correction_failure_count",
+                "buffer_acceptance_ratio",
+                "synchronization_ratio",
+                "correction_success_ratio",
             )
         },
         "host": {

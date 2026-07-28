@@ -37,6 +37,8 @@ struct Counters {
   std::size_t failed_corrections{};
   std::int64_t maximum_imu_gap_ns{};
   std::int64_t previous_imu_ns{-1};
+  std::int64_t first_lidar_start_ns{-1};
+  std::int64_t last_lidar_end_ns{-1};
 };
 
 template <class Message>
@@ -112,7 +114,12 @@ int run(const std::filesystem::path& bag_path,
       try {
         const auto message =
             deserialize<livox_ros_driver2::msg::CustomMsg>(record);
-        const auto status = pipeline.pushLidar(lidar_adapter.convert(message));
+        auto scan = lidar_adapter.convert(message);
+        if (counters.first_lidar_start_ns < 0) {
+          counters.first_lidar_start_ns = scan.start_time.nanoseconds();
+        }
+        counters.last_lidar_end_ns = scan.end_time.nanoseconds();
+        const auto status = pipeline.pushLidar(std::move(scan));
         status.ok() ? ++counters.accepted_lidar : ++counters.rejected_lidar;
       } catch (const std::exception& error) {
         ++counters.rejected_lidar;
@@ -176,6 +183,19 @@ int run(const std::filesystem::path& bag_path,
                               std::chrono::steady_clock::now() - wall_start)
                               .count();
   const auto map = pipeline.registrationMapSnapshot();
+  const auto processing = pipeline.diagnostics().processing;
+  const double dataset_duration_seconds =
+      counters.first_lidar_start_ns >= 0 &&
+              counters.last_lidar_end_ns > counters.first_lidar_start_ns
+          ? static_cast<double>(counters.last_lidar_end_ns -
+                                counters.first_lidar_start_ns) *
+                1e-9
+          : 0.0;
+  const double effective_corrected_output_rate_hz =
+      dataset_duration_seconds > 0.0
+          ? static_cast<double>(processing.correction_success_count) /
+                dataset_duration_seconds
+          : 0.0;
   writePcd(output_path / "map_full.pcd", map);
   writePcd(output_path / "map_final_local.pcd", map);
   const auto write_run_metadata =
@@ -226,6 +246,26 @@ int run(const std::filesystem::path& bag_path,
           << ",\n"
           << "  \"failed_correction_count\": " << counters.failed_corrections
           << ",\n"
+          << "  \"overlap_rejected_count\": "
+          << processing.overlap_rejected_count << ",\n"
+          << "  \"missing_bracket_rejected_count\": "
+          << processing.missing_bracket_rejected_count << ",\n"
+          << "  \"invalid_timestamp_rejected_count\": "
+          << processing.invalid_timestamp_rejected_count << ",\n"
+          << "  \"synchronized_group_count\": "
+          << processing.synchronized_group_count << ",\n"
+          << "  \"correction_attempt_count\": "
+          << processing.correction_attempt_count << ",\n"
+          << "  \"buffer_acceptance_ratio\": "
+          << processing.bufferAcceptanceRatio() << ",\n"
+          << "  \"synchronization_ratio\": "
+          << processing.synchronizationRatio() << ",\n"
+          << "  \"correction_success_ratio_among_attempts\": "
+          << processing.correctionSuccessRatio() << ",\n"
+          << "  \"dataset_duration_seconds\": "
+          << dataset_duration_seconds << ",\n"
+          << "  \"effective_corrected_output_rate_hz\": "
+          << effective_corrected_output_rate_hz << ",\n"
           << "  \"map_point_count\": " << map.size() << ",\n"
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";

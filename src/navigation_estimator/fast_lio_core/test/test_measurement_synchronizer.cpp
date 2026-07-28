@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "fast_lio_core/common/constants.hpp"
+#include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
 #include "fast_lio_core/synchronization/measurement_synchronizer.hpp"
 
 namespace uav::nav::lio {
@@ -137,11 +138,63 @@ TEST(MeasurementSynchronizerTest, LightOverlapIsDistinctAndNextScanStillSyncs) {
   ASSERT_TRUE(synchronizer.synchronizeNext(buffer).value().has_value());
   const auto overlap = synchronizer.synchronizeNext(buffer);
   ASSERT_FALSE(overlap.ok());
-  EXPECT_EQ(overlap.status().code(), StatusCode::kScanOverlap);
+  EXPECT_EQ(overlap.status().code(),
+            StatusCode::kOverlappingLidarInterval);
+  EXPECT_NE(overlap.status().message().find(
+                "previous_synchronized_end_ns=72635000"),
+            std::string::npos);
+  EXPECT_NE(overlap.status().message().find("overlap_duration_ns=135000"),
+            std::string::npos);
   const auto following = synchronizer.synchronizeNext(buffer);
   ASSERT_TRUE(following.ok());
   ASSERT_TRUE(following.value().has_value());
+  EXPECT_EQ(following.value()->propagation_start_time.nanoseconds(),
+            72'635'000);
+  EXPECT_LE(following.value()->imu_samples.front().time.nanoseconds(),
+            72'635'000);
   EXPECT_EQ(synchronizer.stats().rejected_imu_gap, 0U);
+  EXPECT_EQ(synchronizer.stats().synchronized_groups, 2U);
+  EXPECT_EQ(synchronizer.stats().rejected_scan_overlap, 1U);
+}
+
+TEST(MeasurementSynchronizerTest, OverlapDoesNotConsumeImuIntervalTwice) {
+  MeasurementBuffer buffer;
+  ASSERT_TRUE(buffer.pushLidar(syncScan(100, 200)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(150, 250)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(260, 320)).ok());
+  for (const auto time : {90, 140, 190, 210, 240, 270, 330}) {
+    ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
+  }
+  MeasurementSynchronizer synchronizer({100});
+  const auto first = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(first.ok());
+  ASSERT_TRUE(first.value().has_value());
+  const auto overlap = synchronizer.synchronizeNext(buffer);
+  ASSERT_FALSE(overlap.ok());
+  EXPECT_EQ(overlap.status().code(),
+            StatusCode::kOverlappingLidarInterval);
+  const auto following = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(following.ok());
+  ASSERT_TRUE(following.value().has_value());
+  EXPECT_EQ(following.value()->propagation_start_time.nanoseconds(), 200);
+  EXPECT_EQ(following.value()->imu_samples.front().time.nanoseconds(), 190);
+  EXPECT_EQ(following.value()->imu_samples.back().time.nanoseconds(), 330);
+  EXPECT_EQ(following.value()->max_imu_gap_ns, 60);
+}
+
+TEST(ProcessingStatisticsTest, ProcessingRatiosAreSeparatedByStage) {
+  ProcessingStatistics statistics;
+  statistics.raw_lidar_count = 1384;
+  statistics.buffer_accepted_lidar_count = 1384;
+  statistics.synchronized_group_count = 1002;
+  statistics.correction_attempt_count = 974;
+  statistics.correction_success_count = 973;
+  statistics.correction_failure_count = 1;
+  EXPECT_DOUBLE_EQ(statistics.bufferAcceptanceRatio(), 1.0);
+  EXPECT_NEAR(statistics.synchronizationRatio(), 1002.0 / 1384.0, 1e-15);
+  EXPECT_NEAR(statistics.correctionSuccessRatio(), 973.0 / 974.0, 1e-15);
+  EXPECT_NE(statistics.synchronizationRatio(),
+            statistics.correctionSuccessRatio());
 }
 
 TEST(MeasurementSynchronizerTest, DelayedProcessingWithCompleteQueueDoesNotLoseImu) {

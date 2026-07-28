@@ -107,13 +107,18 @@ Status FastLioPipeline::pushImu(const ImuSample& sample) {
 }
 
 Status FastLioPipeline::pushLidar(LidarScan scan) {
+  ++diagnostics_.processing.raw_lidar_count;
   const Status status = buffer_.pushLidar(std::move(scan));
   if (!status.ok()) {
     ++diagnostics_.sensor.lidar_drop_count;
     if (status.code() == StatusCode::kTimestampRegression) {
       ++diagnostics_.sensor.timestamp_regression_count;
+      ++diagnostics_.processing.invalid_timestamp_rejected_count;
     }
     diagnostics_.reason = status.message();
+  }
+  if (status.ok()) {
+    ++diagnostics_.processing.buffer_accepted_lidar_count;
   }
   return status;
 }
@@ -126,11 +131,24 @@ std::optional<ProcessResult> FastLioPipeline::processNext() {
     result.rejection_reason = synchronized.status().message();
     diagnostics_.synchronization.sync_rejection_reason = synchronized.status().message();
     diagnostics_.reason = synchronized.status().message();
+    if (synchronized.status().code() ==
+        StatusCode::kOverlappingLidarInterval) {
+      ++diagnostics_.processing.overlap_rejected_count;
+    } else if (synchronized.status().code() ==
+                   StatusCode::kMissingStartBracket ||
+               synchronized.status().code() ==
+                   StatusCode::kMissingEndBracket) {
+      ++diagnostics_.processing.missing_bracket_rejected_count;
+    } else if (synchronized.status().code() ==
+                   StatusCode::kTimestampRegression) {
+      ++diagnostics_.processing.invalid_timestamp_rejected_count;
+    }
     return finalizeResult(std::move(result));
   }
   if (!synchronized.value().has_value()) {
     return std::nullopt;
   }
+  ++diagnostics_.processing.synchronized_group_count;
   return processInternal(*synchronized.value(), true);
 }
 
@@ -300,6 +318,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       registration_map_.size() == 0U ? static_cast<const RegistrationMap&>(bootstrap_map_)
                                      : static_cast<const RegistrationMap&>(registration_map_);
   result.lidar_update_status = LidarUpdateStatus::kRejected;
+  ++diagnostics_.processing.correction_attempt_count;
   const IkfomCorrectionResult correction =
       estimator_.correct(points_lidar_m, association_map);
   diagnostics_.timing.residual_build_us =
@@ -325,6 +344,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
 
   if (!correction.successful || !correction.finite ||
       !correction.corrected_state.allFinite()) {
+    ++diagnostics_.processing.correction_failure_count;
     ++consecutive_registration_failures_;
     diagnostics_.consecutive_registration_failure_count = consecutive_registration_failures_;
     if (status_ == EstimatorStatus::kInitializingMap) {
@@ -354,6 +374,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
 
   result.lidar_update_status = LidarUpdateStatus::kSucceeded;
+  ++diagnostics_.processing.correction_success_count;
   result.estimate_validity = EstimateValidity::kCorrected;
   result.scan_time = group.scan.end_time;
   result.corrected_estimate = StateEstimate{group.scan.end_time, state_, covariance_};

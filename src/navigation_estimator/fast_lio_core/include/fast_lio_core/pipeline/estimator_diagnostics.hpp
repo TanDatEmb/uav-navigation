@@ -67,6 +67,37 @@ struct SynchronizationDiagnostics {
   std::string sync_rejection_reason;
 };
 
+struct ProcessingStatistics {
+  std::size_t raw_lidar_count{0};
+  std::size_t buffer_accepted_lidar_count{0};
+  std::size_t overlap_rejected_count{0};
+  std::size_t missing_bracket_rejected_count{0};
+  std::size_t invalid_timestamp_rejected_count{0};
+  std::size_t synchronized_group_count{0};
+  std::size_t correction_attempt_count{0};
+  std::size_t correction_success_count{0};
+  std::size_t correction_failure_count{0};
+
+  [[nodiscard]] double bufferAcceptanceRatio() const noexcept {
+    return raw_lidar_count == 0
+               ? 0.0
+               : static_cast<double>(buffer_accepted_lidar_count) /
+                     static_cast<double>(raw_lidar_count);
+  }
+  [[nodiscard]] double synchronizationRatio() const noexcept {
+    return buffer_accepted_lidar_count == 0
+               ? 0.0
+               : static_cast<double>(synchronized_group_count) /
+                     static_cast<double>(buffer_accepted_lidar_count);
+  }
+  [[nodiscard]] double correctionSuccessRatio() const noexcept {
+    return correction_attempt_count == 0
+               ? 0.0
+               : static_cast<double>(correction_success_count) /
+                     static_cast<double>(correction_attempt_count);
+  }
+};
+
 struct InitializationDiagnostics {
   std::size_t samples_collected{0};
   Eigen::Vector3d gyro_mean_rad_s{Eigen::Vector3d::Zero()};
@@ -153,6 +184,7 @@ struct EstimatorDiagnostics {
   std::string reason;
   SensorDiagnostics sensor;
   SynchronizationDiagnostics synchronization;
+  ProcessingStatistics processing;
   InitializationDiagnostics initialization;
   DeskewDiagnostics deskew;
   RegistrationDiagnostics registration;

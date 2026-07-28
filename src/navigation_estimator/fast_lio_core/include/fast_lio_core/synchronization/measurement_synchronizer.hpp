@@ -38,6 +38,7 @@ class MeasurementSynchronizer {
   MeasurementSynchronizerConfig config_;
   MeasurementSynchronizerStats stats_;
   std::optional<Timestamp> last_synchronized_end_time_;
+  std::size_t scan_index_{0};
 };
 
 }  // namespace uav::nav::lio

@@ -37,10 +37,22 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
                     "Successive synchronized scans use different clock domains");
     }
     if (scan.start_time.nanoseconds() < last_synchronized_end_time_->nanoseconds()) {
+      const std::int64_t previous_end_ns =
+          last_synchronized_end_time_->nanoseconds();
+      const std::int64_t scan_start_ns = scan.start_time.nanoseconds();
+      const std::int64_t scan_end_ns = scan.end_time.nanoseconds();
       buffer.lidar_scans_.pop_front();
       ++stats_.rejected_scan_overlap;
-      return Status(StatusCode::kScanOverlap,
-                    "LiDAR scans overlap a previously propagated interval");
+      const std::size_t rejected_index = scan_index_++;
+      return Status(
+          StatusCode::kOverlappingLidarInterval,
+          "OVERLAPPING_LIDAR_INTERVAL previous_synchronized_end_ns=" +
+              std::to_string(previous_end_ns) +
+              " current_scan_start_ns=" + std::to_string(scan_start_ns) +
+              " current_scan_end_ns=" + std::to_string(scan_end_ns) +
+              " overlap_duration_ns=" +
+              std::to_string(previous_end_ns - scan_start_ns) +
+              " scan_index=" + std::to_string(rejected_index));
     }
   }
   const auto start_after = std::upper_bound(imu.begin(), imu.end(), scan.start_time.nanoseconds(),
@@ -133,6 +145,7 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
       end_bracket == buffer.imu_samples_.begin() ? end_bracket : std::prev(end_bracket);
   buffer.imu_samples_.erase(buffer.imu_samples_.begin(), retained_begin);
   last_synchronized_end_time_ = group.scan.end_time;
+  ++scan_index_;
   ++stats_.synchronized_groups;
   return std::optional<MeasurementGroup>(std::move(group));
 }
@@ -144,6 +157,7 @@ const MeasurementSynchronizerStats& MeasurementSynchronizer::stats() const noexc
 void MeasurementSynchronizer::reset() noexcept {
   stats_ = {};
   last_synchronized_end_time_.reset();
+  scan_index_ = 0;
 }
 
 }  // namespace uav::nav::lio
