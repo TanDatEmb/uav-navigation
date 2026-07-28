@@ -122,14 +122,10 @@ std::optional<ProcessResult> FastLioPipeline::processNext() {
   if (!synchronized.ok()) {
     ProcessResult result;
     result.status_before = status_;
-    result.status_after = status_;
-    result.corrected_state = state_;
-    result.corrected_covariance = covariance_;
     result.rejection_reason = synchronized.status().message();
     diagnostics_.synchronization.sync_rejection_reason = synchronized.status().message();
     diagnostics_.reason = synchronized.status().message();
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
   if (!synchronized.value().has_value()) {
     return std::nullopt;
@@ -163,14 +159,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.rejection_reason = "MEASUREMENT_GROUP_NOT_FULLY_BRACKETED";
     diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
     diagnostics_.reason = result.rejection_reason;
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
   if (status_ == EstimatorStatus::kLost) {
     result.rejection_reason = "ESTIMATOR_LOST_RESET_REQUIRED";
     diagnostics_.reason = result.rejection_reason;
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   if (status_ == EstimatorStatus::kWaitingForSensors) {
@@ -183,29 +177,22 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         if (!sample_status.ok()) {
           result.rejection_reason = sample_status.message();
           diagnostics_.reason = sample_status.message();
-          result.status_after = status_;
-          result.diagnostics = diagnostics_;
-          return result;
+          return finalizeResult(std::move(result));
         }
       }
     }
     tryCompleteImuInitialization();
     if (status_ != EstimatorStatus::kInitializingMap) {
       result.rejection_reason = "IMU_INITIALIZATION_NOT_READY";
-      result.status_after = status_;
-      result.corrected_state = state_;
-      result.corrected_covariance = covariance_;
-      result.diagnostics = diagnostics_;
-      return result;
+      diagnostics_.reason = result.rejection_reason;
+      return finalizeResult(std::move(result));
     }
   }
 
   if (!statusUsesEstimatorState(status_)) {
     result.rejection_reason = "ESTIMATOR_STATE_NOT_PROCESSABLE";
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   Timestamp propagation_start = group.scan.start_time;
@@ -215,9 +202,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
          group.scan.start_time.nanoseconds() < last_initialization_imu_time_->nanoseconds())) {
       result.rejection_reason = "SCAN_PRECEDES_IMU_INITIALIZATION_EPOCH";
       diagnostics_.reason = result.rejection_reason;
-      result.status_after = status_;
-      result.diagnostics = diagnostics_;
-      return result;
+      return finalizeResult(std::move(result));
     }
     // The initialization result determines attitude and biases from the
     // stationary window. Its first nominal state epoch is the first accepted
@@ -233,9 +218,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
        state_time_->nanoseconds() != group.propagation_start_time.nanoseconds())) {
     result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   auto trajectory =
@@ -244,9 +227,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!trajectory.ok()) {
     result.rejection_reason = trajectory.status().message();
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
   const ManifoldState predicted_state = estimator_.stateView();
   const ManifoldState::Covariance predicted_covariance =
@@ -254,6 +235,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   state_ = predicted_state;
   covariance_ = predicted_covariance;
   state_time_ = group.scan.end_time;
+  result.predicted_estimate =
+      StateEstimate{group.scan.end_time, predicted_state, predicted_covariance};
+  result.estimate_validity = EstimateValidity::kPredictedOnly;
 
   const RigidTransform T_imu_lidar(imuFrame(), lidarFrame(), predicted_state.rotation_imu_lidar(),
                                    predicted_state.position_imu_lidar_m());
@@ -265,10 +249,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!deskewed.ok()) {
     result.rejection_reason = deskewed.status().message();
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    fillStateDiagnostics(diagnostics_);
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
   diagnostics_.deskew.deskew_status = deskewed.value().status;
   diagnostics_.deskew.deskew_applied = deskewed.value().deskew_applied;
@@ -280,21 +261,16 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!preprocessed.ok()) {
     result.rejection_reason = preprocessed.status().message();
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    fillStateDiagnostics(diagnostics_);
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
   diagnostics_.registration.input_point_count = preprocessed.value().stats.input_point_count;
   diagnostics_.registration.filtered_point_count = preprocessed.value().stats.output_point_count;
   const std::vector<Eigen::Vector3d> points_lidar_m = toDoublePoints(preprocessed.value().scan);
   if (points_lidar_m.size() < config_.insertion_policy.minimum_point_count) {
+    result.lidar_update_status = LidarUpdateStatus::kRejected;
     result.rejection_reason = "INSUFFICIENT_FILTERED_POINTS";
     diagnostics_.reason = result.rejection_reason;
-    result.status_after = status_;
-    fillStateDiagnostics(diagnostics_);
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   if (status_ == EstimatorStatus::kInitializingMap && bootstrap_map_.size() == 0U) {
@@ -303,17 +279,13 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.rejection_reason = "INITIAL_MAP_REFERENCE_CAPTURED";
     diagnostics_.reason = result.rejection_reason;
     diagnostics_.map.map_point_count = registration_map_.size();
-    result.status_after = status_;
-    result.corrected_state = state_;
-    result.corrected_covariance = covariance_;
-    fillStateDiagnostics(diagnostics_);
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   const RegistrationMap& association_map =
       registration_map_.size() == 0U ? static_cast<const RegistrationMap&>(bootstrap_map_)
                                      : static_cast<const RegistrationMap&>(registration_map_);
+  result.lidar_update_status = LidarUpdateStatus::kRejected;
   const IkfomCorrectionResult correction =
       estimator_.correct(points_lidar_m, association_map);
 
@@ -351,12 +323,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     }
     result.rejection_reason = correction.reason;
     diagnostics_.reason = correction.reason;
-    result.status_after = status_;
-    result.corrected_state = state_;
-    result.corrected_covariance = covariance_;
-    fillStateDiagnostics(diagnostics_);
-    result.diagnostics = diagnostics_;
-    return result;
+    return finalizeResult(std::move(result));
   }
 
   state_ = estimator_.stateView();
@@ -367,16 +334,16 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.consecutive_registration_failure_count = 0U;
   transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
 
-  result.lidar_correction_successful = true;
-  result.has_corrected_odometry = true;
+  result.lidar_update_status = LidarUpdateStatus::kSucceeded;
+  result.estimate_validity = EstimateValidity::kCorrected;
   result.scan_time = group.scan.end_time;
-  result.corrected_state = state_;
-  result.corrected_covariance = covariance_;
+  result.corrected_estimate = StateEstimate{group.scan.end_time, state_, covariance_};
   result.registered_points_odom_m = transformPointsToOdom(points_lidar_m, state_);
 
   MapInsertionContext insertion_context;
   insertion_context.estimator_tracking = status_ == EstimatorStatus::kTracking;
-  insertion_context.lidar_update_successful = result.lidar_correction_successful;
+  insertion_context.lidar_update_successful =
+      result.lidar_update_status == LidarUpdateStatus::kSucceeded;
   insertion_context.converged = correction.converged;
   insertion_context.transform_finite = state_.allFinite();
   insertion_context.filtered_point_count = points_lidar_m.size();
@@ -407,10 +374,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
 
   diagnostics_.reason = "LIDAR_CORRECTION_CONVERGED";
-  result.status_after = status_;
-  fillStateDiagnostics(diagnostics_);
-  result.diagnostics = diagnostics_;
-  return result;
+  return finalizeResult(std::move(result));
 }
 
 void FastLioPipeline::reset() {
@@ -523,8 +487,6 @@ ProcessResult FastLioPipeline::makeBaseResult(const MeasurementGroup& group) con
   result.status_before = status_;
   result.status_after = status_;
   result.scan_time = group.scan.end_time;
-  result.corrected_state = state_;
-  result.corrected_covariance = covariance_;
   result.diagnostics = diagnostics_;
   result.diagnostics.synchronization.scan_start_ns = group.scan.start_time.nanoseconds();
   result.diagnostics.synchronization.scan_end_ns = group.scan.end_time.nanoseconds();
@@ -534,6 +496,34 @@ ProcessResult FastLioPipeline::makeBaseResult(const MeasurementGroup& group) con
   result.diagnostics.synchronization.imu_gap_max_ns = group.max_imu_gap_ns;
   result.diagnostics.synchronization.has_start_bracket = group.has_start_bracket;
   result.diagnostics.synchronization.has_end_bracket = group.has_end_bracket;
+  return result;
+}
+
+ProcessResult FastLioPipeline::finalizeResult(ProcessResult result) {
+  result.status_after = status_;
+  result.last_lidar_correction_time = last_correction_time_;
+  fillStateDiagnostics(diagnostics_);
+
+  OutputDiagnostics output;
+  output.estimate_validity = result.estimate_validity;
+  output.lidar_update_status = result.lidar_update_status;
+  output.predicted_estimate_valid = result.hasPredictedOutput();
+  output.corrected_estimate_valid = result.hasCorrectedOutput();
+  output.registered_scan_valid = result.hasRegisteredScanOutput();
+  if (result.corrected_estimate.has_value()) {
+    output.output_time_ns = result.corrected_estimate->time.nanoseconds();
+    output.clock_domain = std::string(toString(result.corrected_estimate->time.clock_domain()));
+  } else if (result.predicted_estimate.has_value()) {
+    output.output_time_ns = result.predicted_estimate->time.nanoseconds();
+    output.clock_domain = std::string(toString(result.predicted_estimate->time.clock_domain()));
+  } else if (result.scan_time.has_value()) {
+    output.clock_domain = std::string(toString(result.scan_time->clock_domain()));
+  }
+  if (last_correction_time_.has_value()) {
+    output.last_lidar_correction_time_ns = last_correction_time_->nanoseconds();
+  }
+  diagnostics_.output = std::move(output);
+  result.diagnostics = diagnostics_;
   return result;
 }
 

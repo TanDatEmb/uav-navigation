@@ -80,8 +80,14 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   const ProcessResult reference = pipeline.process(reference_group);
 
   EXPECT_EQ(reference.status_after, EstimatorStatus::kInitializingMap);
-  EXPECT_FALSE(reference.has_corrected_odometry);
-  EXPECT_FALSE(reference.lidar_correction_successful);
+  EXPECT_EQ(reference.estimate_validity, EstimateValidity::kPredictedOnly);
+  EXPECT_EQ(reference.lidar_update_status, LidarUpdateStatus::kNotAttempted);
+  EXPECT_TRUE(reference.hasPredictedOutput());
+  EXPECT_FALSE(reference.hasCorrectedOutput());
+  EXPECT_FALSE(reference.corrected_estimate.has_value());
+  EXPECT_TRUE(reference.registered_points_odom_m.empty());
+  EXPECT_TRUE(reference.diagnostics.output.predicted_estimate_valid);
+  EXPECT_FALSE(reference.diagnostics.output.corrected_estimate_valid);
   EXPECT_TRUE(pipeline.registrationMapSnapshot().empty());
   EXPECT_EQ(reference.rejection_reason, "INITIAL_MAP_REFERENCE_CAPTURED");
 
@@ -91,8 +97,16 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   const ProcessResult tracked = pipeline.process(tracking_group);
 
   EXPECT_EQ(tracked.status_after, EstimatorStatus::kTracking);
-  EXPECT_TRUE(tracked.has_corrected_odometry);
-  EXPECT_TRUE(tracked.lidar_correction_successful);
+  EXPECT_EQ(tracked.estimate_validity, EstimateValidity::kCorrected);
+  EXPECT_EQ(tracked.lidar_update_status, LidarUpdateStatus::kSucceeded);
+  EXPECT_TRUE(tracked.hasPredictedOutput());
+  EXPECT_TRUE(tracked.hasCorrectedOutput());
+  ASSERT_TRUE(tracked.corrected_estimate.has_value());
+  EXPECT_EQ(tracked.corrected_estimate->time, tracking_group.scan.end_time);
+  EXPECT_TRUE(tracked.diagnostics.output.corrected_estimate_valid);
+  EXPECT_TRUE(tracked.diagnostics.output.registered_scan_valid);
+  EXPECT_EQ(tracked.diagnostics.output.last_lidar_correction_time_ns,
+            tracking_group.scan.end_time.nanoseconds());
   EXPECT_TRUE(tracked.diagnostics.registration.converged);
   EXPECT_FALSE(tracked.registered_points_odom_m.empty());
   EXPECT_FALSE(pipeline.registrationMapSnapshot().empty());
@@ -120,8 +134,15 @@ TEST(FastLioPipelineTest, FailedRegistrationTransitionsToDegradedWithoutMapInser
                  stationaryImu(200 * kMillisecondNs)}));
 
   EXPECT_EQ(failed.status_after, EstimatorStatus::kDegraded);
-  EXPECT_FALSE(failed.has_corrected_odometry);
-  EXPECT_FALSE(failed.lidar_correction_successful);
+  EXPECT_EQ(failed.estimate_validity, EstimateValidity::kPredictedOnly);
+  EXPECT_EQ(failed.lidar_update_status, LidarUpdateStatus::kRejected);
+  EXPECT_TRUE(failed.hasPredictedOutput());
+  EXPECT_FALSE(failed.hasCorrectedOutput());
+  EXPECT_FALSE(failed.corrected_estimate.has_value());
+  EXPECT_TRUE(failed.registered_points_odom_m.empty());
+  EXPECT_TRUE(failed.diagnostics.output.predicted_estimate_valid);
+  EXPECT_FALSE(failed.diagnostics.output.corrected_estimate_valid);
+  EXPECT_FALSE(failed.diagnostics.output.registered_scan_valid);
   EXPECT_EQ(pipeline.registrationMapSnapshot().size(), map_size_before);
   EXPECT_EQ(failed.diagnostics.map.inserted_point_count, 0U);
 }

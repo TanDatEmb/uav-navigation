@@ -21,7 +21,7 @@ EvaluationMetrics OfflineEvaluator::run() {
   EvaluationMetrics metrics;
   const auto drain = [&]() {
     while (const auto result = pipeline.processNext()) {
-      if (result->has_corrected_odometry) {
+      if (result->hasCorrectedOutput()) {
         ++metrics.successful_correction_count;
       } else if (!result->rejection_reason.empty()) {
         ++metrics.rejected_scan_count;

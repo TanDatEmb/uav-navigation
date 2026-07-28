@@ -23,6 +23,22 @@ enum class EstimatorStatus {
 
 [[nodiscard]] const char* toString(EstimatorStatus status) noexcept;
 
+enum class EstimateValidity {
+  kUnavailable,
+  kPredictedOnly,
+  kCorrected,
+};
+
+[[nodiscard]] const char* toString(EstimateValidity validity) noexcept;
+
+enum class LidarUpdateStatus {
+  kNotAttempted,
+  kSucceeded,
+  kRejected,
+};
+
+[[nodiscard]] const char* toString(LidarUpdateStatus status) noexcept;
+
 struct SensorDiagnostics {
   std::size_t lidar_drop_count{0};
   std::size_t imu_drop_count{0};
@@ -93,6 +109,17 @@ struct StateDiagnostics {
   double correction_rotation_norm_rad{0.0};
 };
 
+struct OutputDiagnostics {
+  EstimateValidity estimate_validity{EstimateValidity::kUnavailable};
+  LidarUpdateStatus lidar_update_status{LidarUpdateStatus::kNotAttempted};
+  bool predicted_estimate_valid{false};
+  bool corrected_estimate_valid{false};
+  bool registered_scan_valid{false};
+  std::int64_t output_time_ns{-1};
+  std::int64_t last_lidar_correction_time_ns{-1};
+  std::string clock_domain;
+};
+
 struct EstimatorDiagnostics {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
   EstimatorStatus previous_status{EstimatorStatus::kWaitingForSensors};
@@ -106,6 +133,7 @@ struct EstimatorDiagnostics {
   RegistrationDiagnostics registration;
   MapDiagnostics map;
   StateDiagnostics state;
+  OutputDiagnostics output;
 };
 
 }  // namespace uav::nav::lio

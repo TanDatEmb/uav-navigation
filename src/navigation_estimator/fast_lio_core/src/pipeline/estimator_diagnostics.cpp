@@ -24,4 +24,28 @@ const char* toString(EstimatorStatus status) noexcept {
   return "UNKNOWN";
 }
 
+const char* toString(EstimateValidity validity) noexcept {
+  switch (validity) {
+    case EstimateValidity::kUnavailable:
+      return "UNAVAILABLE";
+    case EstimateValidity::kPredictedOnly:
+      return "PREDICTED_ONLY";
+    case EstimateValidity::kCorrected:
+      return "CORRECTED";
+  }
+  return "UNKNOWN";
+}
+
+const char* toString(LidarUpdateStatus status) noexcept {
+  switch (status) {
+    case LidarUpdateStatus::kNotAttempted:
+      return "NOT_ATTEMPTED";
+    case LidarUpdateStatus::kSucceeded:
+      return "SUCCEEDED";
+    case LidarUpdateStatus::kRejected:
+      return "REJECTED";
+  }
+  return "UNKNOWN";
+}
+
 }  // namespace uav::nav::lio

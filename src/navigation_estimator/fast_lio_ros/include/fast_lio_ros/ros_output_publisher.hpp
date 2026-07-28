@@ -21,6 +21,7 @@ class RosOutputPublisher {
   void publishDiagnostics(const ProcessResult& result, const builtin_interfaces::msg::Time& stamp);
 
   RosParameters parameters_;
+  rclcpp::Clock::SharedPtr clock_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr registered_points_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_;

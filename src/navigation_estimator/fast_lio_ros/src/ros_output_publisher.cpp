@@ -20,7 +20,7 @@ diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
 }  // namespace
 
 RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
-    : parameters_(std::move(parameters)) {
+    : parameters_(std::move(parameters)), clock_(node.get_clock()) {
   odometry_ = node.create_publisher<nav_msgs::msg::Odometry>("/lio/odometry",
                                                              QosProfiles::estimatorOutput());
   registered_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -56,19 +56,20 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
 }
 
 void RosOutputPublisher::publish(const ProcessResult& result) {
-  if (!result.scan_time) {
+  const auto diagnostics_stamp =
+      result.scan_time.has_value() ? RosTimeConverter::toRos(*result.scan_time)
+                                   : static_cast<builtin_interfaces::msg::Time>(clock_->now());
+  publishDiagnostics(result, diagnostics_stamp);
+  if (!result.hasCorrectedOutput()) {
     return;
   }
-  const auto stamp = RosTimeConverter::toRos(*result.scan_time);
-  publishDiagnostics(result, stamp);
-  if (!result.has_corrected_odometry) {
-    return;
-  }
+  const StateEstimate& corrected = *result.corrected_estimate;
+  const auto stamp = RosTimeConverter::toRos(corrected.time);
   nav_msgs::msg::Odometry odometry;
   odometry.header.stamp = stamp;
   odometry.header.frame_id = parameters_.odom_frame;
   odometry.child_frame_id = parameters_.base_frame;
-  const auto& state = result.corrected_state;
+  const auto& state = corrected.state;
   const auto& position = state.position_odom_imu_m();
   const auto& orientation = state.orientation_odom_imu();
   odometry.pose.pose.position.x = position.x();
@@ -83,7 +84,7 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
   odometry.twist.twist.linear.y = velocity.y();
   odometry.twist.twist.linear.z = velocity.z();
   odometry_->publish(odometry);
-  if (parameters_.publish_registered_points) {
+  if (parameters_.publish_registered_points && result.hasRegisteredScanOutput()) {
     registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));
   }
   if (parameters_.publish_local_map && !result.local_map_points_odom_m.empty()) {
@@ -98,15 +99,28 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "fast_lio/estimator";
   status.hardware_id = "lidar_imu";
-  status.level = result.status_after == EstimatorStatus::kTracking
-                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                     : (result.status_after == EstimatorStatus::kLost
-                            ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
-                            : diagnostic_msgs::msg::DiagnosticStatus::WARN);
+  status.level =
+      result.status_after == EstimatorStatus::kLost
+          ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
+          : (result.status_after == EstimatorStatus::kTracking && result.hasCorrectedOutput()
+                 ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                 : diagnostic_msgs::msg::DiagnosticStatus::WARN);
   status.message =
       result.rejection_reason.empty() ? result.diagnostics.reason : result.rejection_reason;
   status.values = {
       keyValue("status", toString(result.status_after)),
+      keyValue("estimate_validity", toString(result.estimate_validity)),
+      keyValue("lidar_update_status", toString(result.lidar_update_status)),
+      keyValue("predicted_estimate_valid",
+               result.diagnostics.output.predicted_estimate_valid ? "true" : "false"),
+      keyValue("corrected_estimate_valid",
+               result.diagnostics.output.corrected_estimate_valid ? "true" : "false"),
+      keyValue("registered_scan_valid",
+               result.diagnostics.output.registered_scan_valid ? "true" : "false"),
+      keyValue("output_time_ns", std::to_string(result.diagnostics.output.output_time_ns)),
+      keyValue("last_lidar_correction_time_ns",
+               std::to_string(result.diagnostics.output.last_lidar_correction_time_ns)),
+      keyValue("clock_domain", result.diagnostics.output.clock_domain),
       keyValue("deskew_applied", result.diagnostics.deskew.deskew_applied ? "true" : "false"),
       keyValue("imu_samples_per_scan",
                std::to_string(result.diagnostics.synchronization.imu_samples_per_scan)),
