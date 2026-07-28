@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(ikfom_vendor REQUIRED)
+find_package(ikd_tree_vendor REQUIRED)
 
 # Sources remain split by algorithm responsibility. CONFIGURE_DEPENDS makes
 # additions visible during this from-scratch milestone without maintaining a
@@ -20,7 +21,8 @@ add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
-target_link_libraries(${PROJECT_NAME} Eigen3::Eigen)
+target_link_libraries(${PROJECT_NAME}
+  Eigen3::Eigen ikd_tree_vendor::ikd_tree_vendor)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 ament_target_dependencies(${PROJECT_NAME} ikfom_vendor)
 
@@ -42,5 +44,5 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 ikfom_vendor)
+ament_export_dependencies(Eigen3 ikfom_vendor ikd_tree_vendor)
 ament_package()
