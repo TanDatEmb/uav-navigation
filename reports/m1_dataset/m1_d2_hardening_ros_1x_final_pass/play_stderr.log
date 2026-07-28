@@ -1,0 +1,11 @@
+[WARN] [1785256481.477083746] [rcl]: ROS_LOCALHOST_ONLY is deprecated but still honored if it is enabled. Use ROS_AUTOMATIC_DISCOVERY_RANGE and ROS_STATIC_PEERS instead.
+[WARN] [1785256481.477120454] [rcl]: 'localhost_only' is enabled, 'automatic_discovery_range' and 'static_peers' will be ignored.
+stdin is not a terminal device. Keyboard handling disabled.[INFO] [1785256481.501588223] [rosbag2_storage]: Opened database 'data/external/mid360/swarm_lio2_mutual_avoidance_uav1/converted/mutual_avoidance_uav1/mutual_avoidance_uav1.db3' for READ_ONLY.
+[INFO] [1785256481.501765212] [rosbag2_player]: Set rate to 1
+[INFO] [1785256481.506797939] [rosbag2_player]: Adding keyboard callbacks.
+[INFO] [1785256481.506839318] [rosbag2_player]: Press SPACE for Pause/Resume
+[INFO] [1785256481.506844595] [rosbag2_player]: Press CURSOR_RIGHT for Play Next Message
+[INFO] [1785256481.506849076] [rosbag2_player]: Press CURSOR_UP for Increase Rate 10%
+[INFO] [1785256481.506852288] [rosbag2_player]: Press CURSOR_DOWN for Decrease Rate 10%
+[INFO] [1785256481.508081130] [rosbag2_player]: Playback until timestamp: -1
+[INFO] [1785256481.508194181] [rosbag2_player]: Sleep 5000000000 ns

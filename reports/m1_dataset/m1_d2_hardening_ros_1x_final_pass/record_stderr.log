@@ -1,0 +1,18 @@
+[WARN] [1785256476.547902609] [rcl]: ROS_LOCALHOST_ONLY is deprecated but still honored if it is enabled. Use ROS_AUTOMATIC_DISCOVERY_RANGE and ROS_STATIC_PEERS instead.
+[WARN] [1785256476.547942285] [rcl]: 'localhost_only' is enabled, 'automatic_discovery_range' and 'static_peers' will be ignored.
+stdin is not a terminal device. Keyboard handling disabled.[INFO] [1785256476.561379231] [rosbag2_recorder]: Press SPACE for pausing/resuming
+[INFO] [1785256476.561394916] [rosbag2_recorder]: Event publisher thread: Started
+[INFO] [1785256476.564393394] [rosbag2_recorder]: Starting recording to 'reports/m1_dataset/m1_d2_hardening_ros_1x_final_pass/outputs'
+[INFO] [1785256476.565578901] [rosbag2_recorder]: Listening for topics...
+[INFO] [1785256476.565614819] [rosbag2_recorder]: Recording...
+[INFO] [1785256476.565628385] [rosbag2_recorder]: Topics discovery started.
+[INFO] [1785256476.670658630] [rosbag2_recorder]: Subscribed to topic '/lio/odometry'
+[INFO] [1785256476.673621265] [rosbag2_recorder]: Subscribed to topic '/lio/diagnostics'
+[INFO] [1785256476.675744599] [rosbag2_recorder]: Subscribed to topic '/lio/local_map'
+[INFO] [1785256476.676197800] [rosbag2_recorder]: Subscribed to topic '/lio/registered_points'
+[INFO] [1785256476.676218019] [rosbag2_recorder]: All requested topics are subscribed. Stopping discovery...
+[INFO] [1785256476.676221746] [rosbag2_recorder]: Topics discovery stopped.
+[INFO] [1785256552.854080376] [rosbag2_recorder]: Pausing recording.
+[INFO] [1785256552.854152154] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1785256552.856193096] [rosbag2_recorder]: Recording stopped
+[INFO] [1785256552.856649424] [rosbag2_recorder]: Event publisher thread: Exited

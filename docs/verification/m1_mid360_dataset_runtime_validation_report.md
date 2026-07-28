@@ -122,3 +122,99 @@ or:
 ```bash
 pcl_viewer reports/m1_dataset/m1_d2_ros_full_1x_acceptance/map_full.pcd
 ```
+
+## M1-D2 merge-hardening addendum
+
+### IKFoM dense/compact equivalence
+
+The compact production normal equations are now compared against the original
+dense measurement-space expression for `M = 5, 22, 23, 24, 50, 200`, with 20
+fixed seeds in well-conditioned, multi-scale-noise, near-degenerate-H and
+wide-spectrum-P groups. The test compares gain action, `K H`, tangent
+increment, corrected manifold state, covariance, convergence and final
+increment norm.
+
+Across the complete matrix, maximum observed errors were:
+
+| Quantity | Maximum absolute error |
+|---|---:|
+| `K * innovation` | 4.91992e-10 |
+| `K * H` | 4.00149e-10 |
+| tangent increment | 4.91748e-10 |
+| manifold state tangent difference | 4.71523e-10 |
+| corrected covariance | 6.64101e-8 |
+| final increment norm | 3.15416e-10 |
+
+The covariance maximum occurs in the deliberately ill-conditioned groups and
+is within the documented `1e-7` relative tolerance. Well-conditioned cases
+use `1e-9`. Production uses `LLT` for the required-SPD covariance solve and
+`LDLT` for the information solve. Solver or finite checks fail closed.
+
+### Canonical configuration
+
+Direct and ROS paths both use:
+
+```text
+src/navigation_estimator/fast_lio_ros/config/mid360_mutual_avoidance_uav1.yaml
+SHA-256 ee37646f3b4668f13cad1febce5b79dcaa5f896c91709a9ca80740c72dcb0a3e
+```
+
+`EstimatorProfile` is the shared typed mapping into `EstimatorConfig`. The
+direct runner no longer contains Mid-360 estimator constants. Direct
+`run_summary.json`, `run_manifest.json`, `map_metadata.json`, ROS diagnostics
+and exported ROS metadata all record the same path and SHA.
+
+### Overlapping scan policy and processing ratios
+
+ADR-009 locks M1 to fail-closed overlap rejection. Each rejection contains the
+previous synchronized end, current start/end, overlap duration and scan index.
+It does not advance the synchronized epoch or consume IMU; the next
+non-overlapping scan continues normally.
+
+The final direct and ROS acceptance counters agree:
+
+| Stage | Count | Ratio |
+|---|---:|---:|
+| raw LiDAR | 1,384 | — |
+| buffer accepted | 1,384 | 100.0000% |
+| synchronized groups | 1,002 | 72.3988% of buffer accepted |
+| overlap rejected | 380 | separately classified |
+| correction attempts | 974 | — |
+| correction successes | 973 | 99.8973% of attempts |
+| correction failures | 1 | — |
+
+The effective corrected output rate is `973 / 46.1256 s = 21.0946 Hz`.
+`99.8973%` therefore means `973 / 974` attempted updates, not all input scans.
+
+### Hardening rerun evidence
+
+Direct runs C and D retained 973 successful corrections, one failed correction,
+380 overlap rejections, 94,970 map points, and identical hashes:
+
+- trajectory:
+  `e30312d128861417549cf9ce2c61fecc78303bfc2c5cf468ba154272a5bdbc83`;
+- map:
+  `2d5bf6bf5009d755e6016ab44c2682377582b39f4d8f06a5a5bb671035a3579e`.
+
+The final ROS 1.0x replay used rosbag publisher delay to complete DDS matching
+before playback. It received and core-accepted all 8,000 IMU and 1,384 LiDAR
+messages, emitted 973 corrected odometry samples, rejected 380 overlaps, had
+one correction failure, and produced a 94,901-point map. Queue HWM was 12 and
+remained bounded.
+
+The development host was in Linux `powersave` governor with load average about
+4.3 during hardening reruns. Direct C/D p95 values were 40.734/37.650 ms and
+ROS p95 was 41.236 ms, versus earlier 34.012/32.331 ms baselines. The best
+direct p95 difference is 10.7%; the observed slowdown is reported, not hidden,
+and occurred without input loss or unbounded queue growth. No estimator
+threshold, residual gate, noise or convergence policy changed.
+
+Final artifacts:
+
+- `reports/m1_dataset/m1_d2_hardening_direct_c/`
+- `reports/m1_dataset/m1_d2_hardening_direct_d/`
+- `reports/m1_dataset/m1_d2_hardening_ros_1x_final_pass/`
+
+```bash
+make dataset-view RUN=m1_d2_hardening_ros_1x_final_pass
+```

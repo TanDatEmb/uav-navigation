@@ -1,0 +1,13 @@
+{
+  "total_processing_us": {
+    "count": 1345,
+    "mean": 20564.728,
+    "p50": 21024,
+    "p90": 33237,
+    "p95": 40734,
+    "p99": 48059,
+    "maximum": 60526
+  },
+  "cpu_governor": "powersave",
+  "config_SHA256": "ee37646f3b4668f13cad1febce5b79dcaa5f896c91709a9ca80740c72dcb0a3e"
+}
