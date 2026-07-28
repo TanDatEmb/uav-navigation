@@ -1,7 +1,8 @@
-# ADR-003: IKFoM-compatible state
+# ADR-003: upstream IKFoM state
 
-**Status:** accepted. The estimator state follows the FAST-LIO/IKFoM-compatible
-manifold model in one `ManifoldState` definition. We do not reimplement manifold
-math or introduce a custom 15-state. IKFoM and FAST-LIO reference commits are
-pinned in `ikfom_vendor/UPSTREAM.md`; any source import must preserve license
-and patch traceability.
+**Status:** accepted and implemented. The production estimator instantiates
+`esekfom::esekf` with the FAST-LIO2 state ordering in `ikfom_state.hpp`.
+`ManifoldState` is only an interchange/output view. We do not reimplement
+manifold math or retain a custom filter. IKFoM and FAST-LIO reference commits
+are pinned in `ikfom_vendor/UPSTREAM.md`; source and selective adaptations
+preserve license, provenance and patch traceability.
