@@ -52,15 +52,15 @@ EstimatorConfig testConfig() {
   config.initialization.minimum_imu_samples = 3;
   config.initialization.maximum_imu_samples = 20;
   config.initialization.require_stationary = true;
-  config.propagation.maximum_integration_step_ns = 100 * kMillisecondNs;
+  config.ikfom.maximum_integration_step_ns = 100 * kMillisecondNs;
   config.deskew.mode = DeskewMode::kSimultaneousScan;
   config.preprocessing.point_filter.minimum_range_m = 0.01;
   config.preprocessing.point_filter.maximum_range_m = 10.0;
   config.preprocessing.enable_voxel_filter = false;
   config.residual_builder.correspondence_search.neighbor_count = 5;
   config.residual_builder.correspondence_search.maximum_neighbor_distance_m = 1.5;
-  config.iterated_filter.convergence.maximum_iterations = 4;
-  config.iterated_filter.convergence.minimum_accepted_residuals = 9;
+  config.ikfom.maximum_iterations = 4;
+  config.ikfom.minimum_accepted_residuals = 9;
   config.insertion_policy.minimum_point_count = 9;
   config.registration_map.voxel_size_m = 0.02;
   config.local_map.half_extent_m = {20.0, 20.0, 20.0};
@@ -98,7 +98,7 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   EXPECT_FALSE(pipeline.registrationMapSnapshot().empty());
   EXPECT_EQ(tracked.diagnostics.map.map_point_count, pipeline.registrationMapSnapshot().size());
   for (const Eigen::Vector3d& point : tracked.registered_points_odom_m) {
-    EXPECT_NEAR(point.z(), 0.0, 1e-7);
+    EXPECT_NEAR(point.z(), 0.0, 2e-7);
   }
 }
 

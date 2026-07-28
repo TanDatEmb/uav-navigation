@@ -25,7 +25,7 @@ EstimatorConfig estimatorConfig(const RosParameters& parameters) {
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
   config.initialization.require_stationary = parameters.require_stationary;
-  config.iterated_filter.convergence.maximum_iterations =
+  config.ikfom.maximum_iterations =
       static_cast<std::size_t>(parameters.maximum_registration_iterations);
   config.extrinsic.estimate_online = parameters.estimate_extrinsic_online;
   config.extrinsic.translation_imu_lidar_m = {parameters.translation_imu_lidar_m[0],

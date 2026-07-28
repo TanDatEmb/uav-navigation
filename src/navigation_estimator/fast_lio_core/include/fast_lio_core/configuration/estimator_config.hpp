@@ -5,8 +5,7 @@
 #include <cstddef>
 
 #include "fast_lio_core/deskew/scan_deskewer.hpp"
-#include "fast_lio_core/estimation/imu_propagator.hpp"
-#include "fast_lio_core/estimation/iterated_kalman_filter.hpp"
+#include "fast_lio_core/estimation/ikfom_estimator.hpp"
 #include "fast_lio_core/initialization/imu_initializer.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
 #include "fast_lio_core/mapping/local_map_manager.hpp"
@@ -35,17 +34,15 @@ struct EstimatorConfig {
   MeasurementBufferConfig measurement_buffer{};
   MeasurementSynchronizerConfig synchronization{};
   ImuInitializerConfig initialization{};
-  ImuPropagatorConfig propagation{};
+  IkfomEstimatorConfig ikfom{};
   ScanDeskewerConfig deskew{};
   PointCloudPreprocessorConfig preprocessing{};
   ResidualBuilderConfig residual_builder{};
-  IteratedKalmanFilterConfig iterated_filter{};
   IkdTreeRegistrationMapConfig registration_map{};
   LocalMapManagerConfig local_map{};
   MapInsertionPolicyConfig insertion_policy{};
   ExtrinsicConfig extrinsic{};
   LifecycleConfig lifecycle{};
-  double initial_covariance{1e-3};
 };
 
 }  // namespace uav::nav::lio

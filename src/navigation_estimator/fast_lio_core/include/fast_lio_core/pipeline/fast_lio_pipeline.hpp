@@ -7,6 +7,7 @@
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/configuration/estimator_config.hpp"
+#include "fast_lio_core/estimation/ikfom_estimator.hpp"
 #include "fast_lio_core/estimation/manifold_state.hpp"
 #include "fast_lio_core/initialization/initialization_result.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
@@ -55,11 +56,9 @@ class FastLioPipeline {
   MeasurementBuffer buffer_;
   MeasurementSynchronizer synchronizer_;
   ImuInitializer initializer_;
-  ImuPropagator propagator_;
+  IkfomEstimator estimator_;
   ScanDeskewer deskewer_;
   PointCloudPreprocessor preprocessor_;
-  ResidualBuilder residual_builder_;
-  IteratedKalmanFilter filter_;
   IkdTreeRegistrationMap registration_map_;
   IkdTreeRegistrationMap bootstrap_map_;
   LocalMapManager local_map_manager_;

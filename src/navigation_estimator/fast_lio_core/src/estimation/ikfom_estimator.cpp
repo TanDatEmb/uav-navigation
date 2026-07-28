@@ -1,0 +1,357 @@
+#include "fast_lio_core/estimation/ikfom_estimator.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+
+namespace uav::nav::lio {
+namespace {
+
+[[nodiscard]] Result<ImuSample> interpolateSample(
+    std::span<const ImuSample> samples, const Timestamp& time) {
+  const auto upper = std::lower_bound(
+      samples.begin(), samples.end(), time.nanoseconds(),
+      [](const ImuSample& sample, std::int64_t nanoseconds) {
+        return sample.time.nanoseconds() < nanoseconds;
+      });
+  if (upper == samples.end()) {
+    return Status(StatusCode::kInsufficientData,
+                  "No IMU sample at or after IKFoM prediction boundary");
+  }
+  if (upper->time.nanoseconds() == time.nanoseconds()) {
+    return *upper;
+  }
+  if (upper == samples.begin()) {
+    return Status(StatusCode::kInsufficientData,
+                  "No IMU sample at or before IKFoM prediction boundary");
+  }
+  const auto lower = std::prev(upper);
+  const std::int64_t interval_ns =
+      upper->time.nanoseconds() - lower->time.nanoseconds();
+  if (interval_ns <= 0) {
+    return Status(StatusCode::kTimestampRegression,
+                  "IMU timestamps must be strictly increasing");
+  }
+  const double alpha =
+      static_cast<double>(time.nanoseconds() -
+                          lower->time.nanoseconds()) /
+      static_cast<double>(interval_ns);
+  return ImuSample{
+      time,
+      (1.0 - alpha) * lower->angular_velocity_imu_rad_s +
+          alpha * upper->angular_velocity_imu_rad_s,
+      (1.0 - alpha) * lower->linear_acceleration_imu_m_s2 +
+          alpha * upper->linear_acceleration_imu_m_s2};
+}
+
+[[nodiscard]] IkfomInput toIkfomInput(const ImuSample& previous,
+                                      const ImuSample& current) {
+  IkfomInput input;
+  input.gyro =
+      0.5 * (previous.angular_velocity_imu_rad_s +
+             current.angular_velocity_imu_rad_s);
+  input.acc =
+      0.5 * (previous.linear_acceleration_imu_m_s2 +
+             current.linear_acceleration_imu_m_s2);
+  return input;
+}
+
+[[nodiscard]] ImuTrajectoryState trajectoryState(
+    const ManifoldState& state, const Timestamp& time) {
+  return ImuTrajectoryState{time, state.orientation_odom_imu(),
+                            state.position_odom_imu_m(),
+                            state.velocity_odom_imu_m_s()};
+}
+
+[[nodiscard]] IkfomState toIkfomState(const ManifoldState& state) {
+  IkfomState output;
+  output.pos = state.position_odom_imu_m();
+  output.rot = IkfomSo3{state.orientation_odom_imu()};
+  output.offset_R_L_I = IkfomSo3{state.rotation_imu_lidar()};
+  output.offset_T_L_I = state.position_imu_lidar_m();
+  output.vel = state.velocity_odom_imu_m_s();
+  output.bg = state.gyro_bias_rad_s();
+  output.ba = state.accel_bias_m_s2();
+  output.grav = IkfomGravity{IkfomVector3{state.gravity_odom_m_s2()}};
+  return output;
+}
+
+[[nodiscard]] ManifoldState fromIkfomState(const IkfomState& state) {
+  ManifoldState output;
+  output.set_position_odom_imu_m(state.pos);
+  output.set_orientation_odom_imu(
+      Eigen::Quaterniond{state.rot.w(), state.rot.x(), state.rot.y(),
+                         state.rot.z()});
+  output.set_rotation_imu_lidar(
+      Eigen::Quaterniond{state.offset_R_L_I.w(),
+                         state.offset_R_L_I.x(),
+                         state.offset_R_L_I.y(),
+                         state.offset_R_L_I.z()});
+  output.set_position_imu_lidar_m(state.offset_T_L_I);
+  output.set_velocity_odom_imu_m_s(state.vel);
+  output.set_gyro_bias_rad_s(state.bg);
+  output.set_accel_bias_m_s2(state.ba);
+  output.set_gravity_odom_m_s2(state.grav.get_vect());
+  output.normalize();
+  return output;
+}
+
+}  // namespace
+
+thread_local IkfomEstimator* IkfomEstimator::active_estimator_ = nullptr;
+
+IkfomEstimator::IkfomEstimator(IkfomEstimatorConfig config,
+                               ResidualBuilderConfig residual_config)
+    : config_(config), residual_builder_(residual_config) {
+  if (config_.maximum_iterations == 0U ||
+      config_.minimum_accepted_residuals == 0U ||
+      config_.maximum_integration_step_ns <= 0 ||
+      !(config_.convergence_limit > 0.0) ||
+      !(config_.initial_covariance > 0.0) ||
+      config_.estimate_extrinsic) {
+    throw std::invalid_argument(
+        "IKFoM M1 configuration is invalid or requests online extrinsics");
+  }
+  std::array<double, IkfomState::DOF> limits{};
+  limits.fill(config_.convergence_limit);
+  filter_.init_dyn_share(ikfomProcessModel, ikfomProcessJacobianState,
+                         ikfomProcessJacobianNoise, measurementModel,
+                         static_cast<int>(config_.maximum_iterations),
+                         limits.data());
+}
+
+void IkfomEstimator::initialize(const ManifoldState& state) {
+  fixed_rotation_imu_lidar_ = state.rotation_imu_lidar();
+  fixed_position_imu_lidar_m_ = state.position_imu_lidar_m();
+  IkfomState upstream_state = toIkfomState(state);
+  filter_.change_x(upstream_state);
+  IkfomFilter::cov covariance =
+      config_.initial_covariance * IkfomFilter::cov::Identity();
+  covariance.block<3, 3>(6, 6) =
+      1e-12 * Eigen::Matrix3d::Identity();
+  covariance.block<3, 3>(9, 9) =
+      1e-12 * Eigen::Matrix3d::Identity();
+  filter_.change_P(covariance);
+}
+
+void IkfomEstimator::reset(const ManifoldState& state) { initialize(state); }
+
+Result<ImuTrajectory> IkfomEstimator::predict(
+    std::span<const ImuSample> samples, const Timestamp& start_time,
+    const Timestamp& end_time) {
+  const auto duration = checkedDifference(end_time, start_time);
+  if (!duration.ok()) {
+    return duration.status();
+  }
+  if (duration.value().nanoseconds() < 0) {
+    return Status(StatusCode::kTimestampRegression,
+                  "IKFoM prediction end precedes start");
+  }
+  if (samples.empty()) {
+    return Status(StatusCode::kInsufficientData,
+                  "No IMU samples supplied to IKFoM");
+  }
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    const Status validation = samples[index].validate();
+    if (!validation.ok()) {
+      return validation;
+    }
+    if (!samples[index].time.sameClockDomain(start_time)) {
+      return Status(StatusCode::kClockDomainMismatch,
+                    "IMU and IKFoM prediction use different clocks");
+    }
+    if (index > 0 &&
+        samples[index].time.nanoseconds() <=
+            samples[index - 1].time.nanoseconds()) {
+      return Status(StatusCode::kTimestampRegression,
+                    "IMU timestamps must be strictly increasing");
+    }
+  }
+
+  const auto start_sample = interpolateSample(samples, start_time);
+  const auto end_sample = interpolateSample(samples, end_time);
+  if (!start_sample.ok()) {
+    return start_sample.status();
+  }
+  if (!end_sample.ok()) {
+    return end_sample.status();
+  }
+
+  std::vector<ImuSample> integration_samples;
+  integration_samples.reserve(samples.size() + 2U);
+  integration_samples.push_back(start_sample.value());
+  for (const auto& sample : samples) {
+    if (sample.time.nanoseconds() > start_time.nanoseconds() &&
+        sample.time.nanoseconds() < end_time.nanoseconds()) {
+      integration_samples.push_back(sample);
+    }
+  }
+  if (end_time.nanoseconds() > start_time.nanoseconds()) {
+    integration_samples.push_back(end_sample.value());
+  }
+
+  ImuTrajectory trajectory;
+  Status trajectory_status =
+      trajectory.addState(trajectoryState(stateView(), start_time));
+  if (!trajectory_status.ok()) {
+    return trajectory_status;
+  }
+  auto noise = processNoise();
+  for (std::size_t index = 1; index < integration_samples.size(); ++index) {
+    const auto& previous = integration_samples[index - 1];
+    const auto& current = integration_samples[index];
+    const std::int64_t dt_ns =
+        current.time.nanoseconds() - previous.time.nanoseconds();
+    if (dt_ns <= 0 || dt_ns > config_.maximum_integration_step_ns) {
+      return Status(StatusCode::kInsufficientData,
+                    "IKFoM integration step is zero, negative or too large");
+    }
+    double dt_seconds = static_cast<double>(dt_ns) * 1e-9;
+    filter_.predict(dt_seconds, noise, toIkfomInput(previous, current));
+    const ManifoldState predicted = stateView();
+    if (!predicted.allFinite() || !filter_.get_P().allFinite()) {
+      return Status(StatusCode::kNumericalFailure,
+                    "IKFoM prediction produced non-finite state");
+    }
+    trajectory_status =
+        trajectory.addState(trajectoryState(predicted, current.time));
+    if (!trajectory_status.ok()) {
+      return trajectory_status;
+    }
+  }
+  return trajectory;
+}
+
+IkfomCorrectionResult IkfomEstimator::correct(
+    std::span<const Eigen::Vector3d> points_lidar_m,
+    const RegistrationMap& map) {
+  IkfomCorrectionResult result;
+  result.predicted_state = stateView();
+  IkfomState predicted_upstream_state = filter_.get_x();
+  IkfomFilter::cov predicted_covariance = filter_.get_P();
+  active_points_ = points_lidar_m;
+  active_map_ = &map;
+  measurement_call_count_ = 0U;
+  callback_reported_converged_ = false;
+  last_residual_build_ = {};
+
+  struct ActiveGuard {
+    explicit ActiveGuard(IkfomEstimator* estimator) {
+      if (IkfomEstimator::active_estimator_ != nullptr) {
+        throw std::logic_error("IKFoM measurement callback is not reentrant");
+      }
+      IkfomEstimator::active_estimator_ = estimator;
+    }
+    ~ActiveGuard() { IkfomEstimator::active_estimator_ = nullptr; }
+  } guard{this};
+
+  filter_.update_iterated_dyn_share();
+  if (!config_.estimate_extrinsic) {
+    IkfomState fixed_state = filter_.get_x();
+    fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
+    fixed_state.offset_T_L_I = fixed_position_imu_lidar_m_;
+    filter_.change_x(fixed_state);
+  }
+  result.corrected_state = stateView();
+  result.corrected_covariance = covariance();
+  result.residual_build = last_residual_build_;
+  result.iteration_count = measurement_call_count_;
+  result.finite = result.corrected_state.allFinite() &&
+                  result.corrected_covariance.allFinite();
+  result.converged =
+      callback_reported_converged_ &&
+      last_residual_build_.diagnostics.accepted_residual_count >=
+          config_.minimum_accepted_residuals;
+  result.successful = result.finite && result.converged;
+  result.reason = result.successful
+                      ? "IKFOM_LIDAR_UPDATE_CONVERGED"
+                      : (result.finite ? "IKFOM_LIDAR_UPDATE_NOT_CONVERGED"
+                                       : "IKFOM_LIDAR_UPDATE_NON_FINITE");
+  result.correction_translation_norm_m =
+      (result.corrected_state.position_odom_imu_m() -
+       result.predicted_state.position_odom_imu_m())
+          .norm();
+  result.correction_rotation_norm_rad =
+      result.predicted_state.orientation_odom_imu().angularDistance(
+          result.corrected_state.orientation_odom_imu());
+  if (!result.successful) {
+    // A rejected LiDAR update must not become the prior for the next IMU
+    // prediction. IKFoM updates in place, so restore the transactional prior.
+    filter_.change_x(predicted_upstream_state);
+    filter_.change_P(predicted_covariance);
+  }
+  active_points_ = {};
+  active_map_ = nullptr;
+  return result;
+}
+
+ManifoldState IkfomEstimator::stateView() const {
+  return fromIkfomState(filter_.get_x());
+}
+
+ManifoldState::Covariance IkfomEstimator::covariance() const {
+  return filter_.get_P();
+}
+
+const IkfomFilter& IkfomEstimator::upstreamFilter() const noexcept {
+  return filter_;
+}
+
+Eigen::VectorXd IkfomEstimator::measurementModel(
+    IkfomState& state, esekfom::dyn_share_datastruct<double>& data) {
+  if (active_estimator_ == nullptr) {
+    data.valid = false;
+    return {};
+  }
+  return active_estimator_->buildMeasurement(state, data);
+}
+
+Eigen::VectorXd IkfomEstimator::buildMeasurement(
+    IkfomState& state, esekfom::dyn_share_datastruct<double>& data) {
+  ++measurement_call_count_;
+  callback_reported_converged_ = data.converge;
+  if (active_map_ == nullptr) {
+    data.valid = false;
+    return {};
+  }
+  const ManifoldState view = fromIkfomState(state);
+  last_residual_build_ =
+      residual_builder_.build(active_points_, view, *active_map_);
+  const auto& measurement = last_residual_build_.measurement;
+  if (!measurement.valid() ||
+      static_cast<std::size_t>(measurement.residual_m.size()) <
+          config_.minimum_accepted_residuals) {
+    data.valid = false;
+    return {};
+  }
+  const Eigen::Index rows = measurement.residual_m.size();
+  data.valid = true;
+  data.h_x = measurement.jacobian;
+  data.h_v = Eigen::MatrixXd::Identity(rows, rows);
+  data.R = measurement.variance_m2.asDiagonal();
+  data.z = Eigen::VectorXd::Zero(rows);
+  return measurement.residual_m;
+}
+
+IkfomFilter::processnoisecovariance IkfomEstimator::processNoise() const {
+  IkfomFilter::processnoisecovariance covariance =
+      IkfomFilter::processnoisecovariance::Zero();
+  covariance.block<3, 3>(0, 0).diagonal().setConstant(
+      config_.gyro_noise_standard_deviation *
+      config_.gyro_noise_standard_deviation);
+  covariance.block<3, 3>(3, 3).diagonal().setConstant(
+      config_.accel_noise_standard_deviation *
+      config_.accel_noise_standard_deviation);
+  covariance.block<3, 3>(6, 6).diagonal().setConstant(
+      config_.gyro_bias_random_walk_standard_deviation *
+      config_.gyro_bias_random_walk_standard_deviation);
+  covariance.block<3, 3>(9, 9).diagonal().setConstant(
+      config_.accel_bias_random_walk_standard_deviation *
+      config_.accel_bias_random_walk_standard_deviation);
+  return covariance;
+}
+
+}  // namespace uav::nav::lio

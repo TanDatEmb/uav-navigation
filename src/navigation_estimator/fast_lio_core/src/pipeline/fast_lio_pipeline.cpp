@@ -16,7 +16,7 @@ namespace {
 
 EstimatorConfig normalizeConfig(EstimatorConfig config) {
   config.residual_builder.estimate_extrinsic = config.extrinsic.estimate_online;
-  config.iterated_filter.estimate_extrinsic = config.extrinsic.estimate_online;
+  config.ikfom.estimate_extrinsic = config.extrinsic.estimate_online;
   return config;
 }
 
@@ -55,17 +55,14 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       buffer_(config_.measurement_buffer),
       synchronizer_(config_.synchronization),
       initializer_(config_.initialization),
-      propagator_(config_.propagation),
+      estimator_(config_.ikfom, config_.residual_builder),
       deskewer_(config_.deskew),
       preprocessor_(config_.preprocessing),
-      residual_builder_(config_.residual_builder),
-      filter_(config_.iterated_filter),
       registration_map_(config_.registration_map),
       bootstrap_map_(config_.registration_map),
       local_map_manager_(config_.local_map),
       insertion_policy_(config_.insertion_policy) {
-  if (!(config_.initial_covariance > 0.0) || !std::isfinite(config_.initial_covariance) ||
-      !config_.extrinsic.rotation_imu_lidar.coeffs().allFinite() ||
+  if (!config_.extrinsic.rotation_imu_lidar.coeffs().allFinite() ||
       config_.extrinsic.rotation_imu_lidar.squaredNorm() < 1e-18 ||
       !config_.extrinsic.translation_imu_lidar_m.allFinite() ||
       config_.lifecycle.maximum_initial_map_registration_failures == 0U ||
@@ -75,9 +72,10 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.lifecycle.local_map_snapshot_period_scans == 0U) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
   }
-  covariance_ = config_.initial_covariance * ManifoldState::Covariance::Identity();
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
+  estimator_.initialize(state_);
+  covariance_ = estimator_.covariance();
   diagnostics_.status = status_;
   diagnostics_.previous_status = status_;
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
@@ -240,10 +238,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     return result;
   }
 
-  ManifoldState predicted_state = state_;
-  ManifoldState::Covariance predicted_covariance = covariance_;
-  auto trajectory = propagator_.propagate(predicted_state, predicted_covariance, group.imu_samples,
-                                          propagation_start, group.scan.end_time);
+  auto trajectory =
+      estimator_.predict(group.imu_samples, propagation_start,
+                         group.scan.end_time);
   if (!trajectory.ok()) {
     result.rejection_reason = trajectory.status().message();
     diagnostics_.reason = result.rejection_reason;
@@ -251,6 +248,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.diagnostics = diagnostics_;
     return result;
   }
+  const ManifoldState predicted_state = estimator_.stateView();
+  const ManifoldState::Covariance predicted_covariance =
+      estimator_.covariance();
   state_ = predicted_state;
   covariance_ = predicted_covariance;
   state_time_ = group.scan.end_time;
@@ -314,24 +314,26 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   const RegistrationMap& association_map =
       registration_map_.size() == 0U ? static_cast<const RegistrationMap&>(bootstrap_map_)
                                      : static_cast<const RegistrationMap&>(registration_map_);
-  ResidualBuildResult last_residual_build;
-  const CorrectionResult correction =
-      filter_.correct(predicted_state, predicted_covariance, [&](const ManifoldState& candidate) {
-        last_residual_build = residual_builder_.build(points_lidar_m, candidate, association_map);
-        return last_residual_build.measurement;
-      });
+  const IkfomCorrectionResult correction =
+      estimator_.correct(points_lidar_m, association_map);
 
-  diagnostics_.registration.query_count = last_residual_build.diagnostics.query_count;
-  diagnostics_.registration.valid_plane_count = last_residual_build.diagnostics.valid_plane_count;
-  diagnostics_.registration.accepted_residual_count = correction.accepted_residual_count;
-  diagnostics_.registration.rejected_residual_count = correction.rejected_residual_count;
-  diagnostics_.registration.residual_rms_m = correction.residual_rms_m;
-  diagnostics_.registration.iteration_count = correction.iterations.size();
+  diagnostics_.registration.query_count =
+      correction.residual_build.diagnostics.query_count;
+  diagnostics_.registration.valid_plane_count =
+      correction.residual_build.diagnostics.valid_plane_count;
+  diagnostics_.registration.accepted_residual_count =
+      correction.residual_build.diagnostics.accepted_residual_count;
+  diagnostics_.registration.rejected_residual_count =
+      correction.residual_build.diagnostics.rejected_residual_count;
+  diagnostics_.registration.residual_rms_m =
+      correction.residual_build.diagnostics.residual_rms_m;
+  diagnostics_.registration.iteration_count = correction.iteration_count;
   diagnostics_.registration.converged = correction.converged;
   diagnostics_.state.correction_translation_norm_m = correction.correction_translation_norm_m;
   diagnostics_.state.correction_rotation_norm_rad = correction.correction_rotation_norm_rad;
 
-  if (!correction.successful || !correction.finite || !correction.corrected_state.allFinite()) {
+  if (!correction.successful || !correction.finite ||
+      !correction.corrected_state.allFinite()) {
     ++consecutive_registration_failures_;
     diagnostics_.consecutive_registration_failure_count = consecutive_registration_failures_;
     if (status_ == EstimatorStatus::kInitializingMap) {
@@ -357,8 +359,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     return result;
   }
 
-  state_ = correction.corrected_state;
-  covariance_ = correction.corrected_covariance;
+  state_ = estimator_.stateView();
+  covariance_ = estimator_.covariance();
   last_correction_time_ = group.scan.end_time;
   consecutive_registration_failures_ = 0U;
   initial_map_registration_failures_ = 0U;
@@ -422,7 +424,8 @@ void FastLioPipeline::reset() {
   state_ = ManifoldState{};
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
-  covariance_ = config_.initial_covariance * ManifoldState::Covariance::Identity();
+  estimator_.reset(state_);
+  covariance_ = estimator_.covariance();
   state_time_.reset();
   last_initialization_imu_time_.reset();
   last_correction_time_.reset();
@@ -499,6 +502,8 @@ void FastLioPipeline::tryCompleteImuInitialization() {
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
   state_.normalize();
+  estimator_.initialize(state_);
+  covariance_ = estimator_.covariance();
   diagnostics_.initialization.initialization_status = "INITIALIZED";
   transitionTo(EstimatorStatus::kInitializingMap, "IMU_INITIALIZATION_ACCEPTED");
 }
