@@ -57,6 +57,57 @@ namespace esekfom {
 
 using namespace Eigen;
 
+namespace detail {
+
+template <typename Scalar, int StateDof>
+bool solve_compact_normal_equations(
+	const Eigen::Matrix<Scalar, StateDof, StateDof>& covariance,
+	const Eigen::Matrix<Scalar, Eigen::Dynamic, StateDof>& measurement_jacobian,
+	const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& variance,
+	Eigen::Matrix<Scalar, StateDof, Eigen::Dynamic>& gain)
+{
+	if (!covariance.allFinite() || !measurement_jacobian.allFinite() ||
+		!variance.allFinite() ||
+		(variance.array() <= Scalar(0)).any())
+	{
+		return false;
+	}
+
+	Eigen::LLT<Eigen::Matrix<Scalar, StateDof, StateDof>> covariance_solver(
+		covariance);
+	if (covariance_solver.info() != Eigen::Success)
+	{
+		return false;
+	}
+	const Eigen::Matrix<Scalar, StateDof, StateDof> covariance_inverse =
+		covariance_solver.solve(
+			Eigen::Matrix<Scalar, StateDof, StateDof>::Identity());
+	if (covariance_solver.info() != Eigen::Success ||
+		!covariance_inverse.allFinite())
+	{
+		return false;
+	}
+
+	const Eigen::Matrix<Scalar, Eigen::Dynamic, StateDof> weighted_jacobian =
+		(measurement_jacobian.array().colwise() / variance.array()).matrix();
+	const Eigen::Matrix<Scalar, StateDof, StateDof> information =
+		measurement_jacobian.transpose() * weighted_jacobian +
+		covariance_inverse;
+	Eigen::LDLT<Eigen::Matrix<Scalar, StateDof, StateDof>> information_solver(
+		information);
+	if (information_solver.info() != Eigen::Success ||
+		!information_solver.isPositive() ||
+		(information_solver.vectorD().array() <=
+		 std::numeric_limits<Scalar>::epsilon()).any())
+	{
+		return false;
+	}
+	gain = information_solver.solve(weighted_jacobian.transpose());
+	return information_solver.info() == Eigen::Success && gain.allFinite();
+}
+
+}  // namespace detail
+
 //used for iterated error state EKF update
 //for the aim to calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
 //applied for measurement as a manifold.
@@ -134,6 +185,7 @@ public:
 	struct dyn_share_update_result {
 		bool measurement_valid = false;
 		bool converged = false;
+		bool numerical_failure = false;
 		int iteration_count = 0;
 		scalar_type final_increment_norm = std::numeric_limits<scalar_type>::infinity();
 	};
@@ -1458,11 +1510,17 @@ public:
 						variance = compact_diagonal_noise
 							? Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.col(0))
 							: Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.diagonal());
-					Eigen::Matrix<scalar_type, Eigen::Dynamic, n> R_in_h =
-						variance.cwiseInverse().asDiagonal() * h_x;
-					cov information =
-						h_x.transpose() * R_in_h + P_.inverse();
-					K_ = information.inverse() * R_in_h.transpose();
+					Eigen::Matrix<scalar_type, n, Eigen::Dynamic> compact_gain;
+					if (!detail::solve_compact_normal_equations<scalar_type, n>(
+							P_, h_x, variance, compact_gain))
+					{
+						x_ = x_propagated;
+						P_ = P_propagated;
+						update_result.measurement_valid = false;
+						update_result.numerical_failure = true;
+						return update_result;
+					}
+					K_ = compact_gain;
 				}
 				else
 				{

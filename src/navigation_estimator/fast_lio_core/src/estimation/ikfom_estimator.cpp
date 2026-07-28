@@ -289,10 +289,13 @@ IkfomCorrectionResult IkfomEstimator::correct(
       last_residual_build_.diagnostics.accepted_residual_count >=
           config_.minimum_accepted_residuals;
   result.successful = result.finite && result.converged;
-  result.reason = result.successful
-                      ? "IKFOM_LIDAR_UPDATE_CONVERGED"
-                      : (result.finite ? "IKFOM_LIDAR_UPDATE_NOT_CONVERGED"
-                                       : "IKFOM_LIDAR_UPDATE_NON_FINITE");
+  result.reason =
+      result.successful
+          ? "IKFOM_LIDAR_UPDATE_CONVERGED"
+          : (update.numerical_failure
+                 ? "IKFOM_LIDAR_UPDATE_NUMERICAL_FAILURE"
+                 : (result.finite ? "IKFOM_LIDAR_UPDATE_NOT_CONVERGED"
+                                  : "IKFOM_LIDAR_UPDATE_NON_FINITE"));
   result.correction_translation_norm_m =
       (result.corrected_state.position_odom_imu_m() -
        result.predicted_state.position_odom_imu_m())

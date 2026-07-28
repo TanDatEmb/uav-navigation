@@ -40,6 +40,8 @@ if(BUILD_TESTING)
     get_filename_component(test_name "${test_source}" NAME_WE)
     ament_add_gtest(${test_name} "${test_source}")
     target_link_libraries(${test_name} ${PROJECT_NAME})
+    target_include_directories(${test_name} PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/test")
   endforeach()
 endif()
 
