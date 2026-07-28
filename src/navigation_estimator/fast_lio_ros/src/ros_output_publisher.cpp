@@ -68,7 +68,7 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
   nav_msgs::msg::Odometry odometry;
   odometry.header.stamp = stamp;
   odometry.header.frame_id = parameters_.odom_frame;
-  odometry.child_frame_id = parameters_.base_frame;
+  odometry.child_frame_id = parameters_.imu_frame;
   const auto& state = corrected.state;
   const auto& position = state.position_odom_imu_m();
   const auto& orientation = state.orientation_odom_imu();

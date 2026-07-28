@@ -17,7 +17,7 @@ void RosTransformPublisher::publish(const ProcessResult& result) {
   geometry_msgs::msg::TransformStamped transform;
   transform.header.stamp = RosTimeConverter::toRos(corrected.time);
   transform.header.frame_id = parameters_.odom_frame;
-  transform.child_frame_id = parameters_.base_frame;
+  transform.child_frame_id = parameters_.imu_frame;
   const auto& state = corrected.state;
   const auto& position = state.position_odom_imu_m();
   const auto& orientation = state.orientation_odom_imu();

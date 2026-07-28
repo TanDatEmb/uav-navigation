@@ -90,9 +90,10 @@ FastLioNode::FastLioNode()
                 const sensor_msgs::msg::PointCloud2::ConstSharedPtr
                     message) { onLidar(message); });
   }
-  RCLCPP_WARN(get_logger(),
-              "M1 baseline assumes base_link and imu_link origins coincide for public "
-              "odometry; replace placeholder calibration before real operation");
+  RCLCPP_INFO(get_logger(),
+              "Publishing the estimator state as odom -> %s; no base_link "
+              "transform is inferred from the IMU state",
+              parameters_.imu_frame.c_str());
 }
 
 void FastLioNode::onLivoxCustom(
