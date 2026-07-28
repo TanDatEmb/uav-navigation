@@ -10,12 +10,11 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <tuple>
-#include <unordered_set>
 #include <utility>
 
 namespace uav::nav::lio {
@@ -24,30 +23,6 @@ namespace {
 using UpstreamPoint = ikdTree_PointType;
 using UpstreamTree = KD_TREE<UpstreamPoint>;
 using UpstreamPointVector = UpstreamTree::PointVector;
-
-struct VoxelIndex {
-  std::int64_t x{0};
-  std::int64_t y{0};
-  std::int64_t z{0};
-
-  bool operator==(const VoxelIndex&) const = default;
-};
-
-struct VoxelIndexHash {
-  std::size_t operator()(const VoxelIndex& index) const noexcept {
-    constexpr std::size_t kMagic =
-        static_cast<std::size_t>(0x9e3779b97f4a7c15ULL);
-    std::size_t seed = 0U;
-    const auto mix = [&](std::uint64_t value) {
-      seed ^= static_cast<std::size_t>(value) + kMagic +
-              (seed << 6U) + (seed >> 2U);
-    };
-    mix(static_cast<std::uint64_t>(index.x));
-    mix(static_cast<std::uint64_t>(index.y));
-    mix(static_cast<std::uint64_t>(index.z));
-    return seed;
-  }
-};
 
 bool isRepresentableAsUpstreamPoint(const Eigen::Vector3d& point) {
   constexpr double kMaximumFloat =
@@ -80,18 +55,6 @@ bool upstreamPointLess(const UpstreamPoint& left,
          std::tie(right.x, right.y, right.z);
 }
 
-VoxelIndex voxelIndex(const UpstreamPoint& point,
-                      double voxel_size_m) {
-  return {
-      static_cast<std::int64_t>(
-          std::floor(static_cast<double>(point.x) / voxel_size_m)),
-      static_cast<std::int64_t>(
-          std::floor(static_cast<double>(point.y) / voxel_size_m)),
-      static_cast<std::int64_t>(
-          std::floor(static_cast<double>(point.z) / voxel_size_m)),
-  };
-}
-
 bool validConfig(const IkdTreeRegistrationMapConfig& config) {
   return config.voxel_size_m > 0.0 &&
          std::isfinite(config.voxel_size_m) &&
@@ -117,7 +80,7 @@ class IkdTreeRegistrationMap::Impl {
 
   [[nodiscard]] UpstreamPointVector snapshotUpstream() const {
     UpstreamPointVector points;
-    if (!built) {
+    if (!built || tree->validnum() == 0) {
       return points;
     }
     const BoxPointType range = tree->tree_range();
@@ -134,15 +97,7 @@ class IkdTreeRegistrationMap::Impl {
     return points;
   }
 
-  void rebuildVoxelMetadata(double voxel_size_m) {
-    represented_voxels.clear();
-    for (const UpstreamPoint& point : snapshotUpstream()) {
-      represented_voxels.insert(voxelIndex(point, voxel_size_m));
-    }
-  }
-
   std::unique_ptr<UpstreamTree> tree;
-  std::unordered_set<VoxelIndex, VoxelIndexHash> represented_voxels;
   bool built{false};
 };
 
@@ -176,7 +131,7 @@ NearestNeighborResult IkdTreeRegistrationMap::nearestNeighbors(
   }
 
   std::scoped_lock lock(mutex_);
-  if (!impl_->built || impl_->represented_voxels.empty()) {
+  if (!impl_->built || impl_->tree->validnum() == 0) {
     return result;
   }
 
@@ -241,23 +196,18 @@ std::size_t IkdTreeRegistrationMap::insert(
   std::sort(points.begin(), points.end(), upstreamPointLess);
 
   std::scoped_lock lock(mutex_);
-  const std::size_t size_before = impl_->represented_voxels.size();
-  if (!impl_->built || impl_->represented_voxels.empty()) {
+  const std::size_t size_before =
+      impl_->built ? static_cast<std::size_t>(impl_->tree->validnum()) : 0U;
+  if (!impl_->built || impl_->tree->validnum() == 0) {
     UpstreamPointVector initial_point{points.front()};
     impl_->tree->Build(initial_point);
     impl_->built = true;
-    impl_->represented_voxels.insert(
-        voxelIndex(points.front(), config_.voxel_size_m));
     points.erase(points.begin());
   }
   if (!points.empty()) {
     static_cast<void>(impl_->tree->Add_Points(points, true));
-    for (const UpstreamPoint& point : points) {
-      impl_->represented_voxels.insert(
-          voxelIndex(point, config_.voxel_size_m));
-    }
   }
-  return impl_->represented_voxels.size() - size_before;
+  return static_cast<std::size_t>(impl_->tree->validnum()) - size_before;
 }
 
 std::size_t IkdTreeRegistrationMap::cropLocal(
@@ -279,45 +229,75 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
   }
 
   std::scoped_lock lock(mutex_);
-  if (!impl_->built || impl_->represented_voxels.empty()) {
+  if (!impl_->built || impl_->tree->validnum() == 0) {
     return 0U;
   }
-  const std::size_t size_before = impl_->represented_voxels.size();
-  const UpstreamPointVector represented_points =
-      impl_->snapshotUpstream();
+  const std::size_t size_before =
+      static_cast<std::size_t>(impl_->tree->validnum());
+  const BoxPointType range = impl_->tree->tree_range();
+  const std::array<float, 3> tree_min{
+      range.vertex_min[0], range.vertex_min[1], range.vertex_min[2]};
+  const std::array<float, 3> tree_max{
+      std::nextafter(range.vertex_max[0],
+                     std::numeric_limits<float>::infinity()),
+      std::nextafter(range.vertex_max[1],
+                     std::numeric_limits<float>::infinity()),
+      std::nextafter(range.vertex_max[2],
+                     std::numeric_limits<float>::infinity())};
+  const std::array<float, 3> keep_min{
+      std::max(tree_min[0], static_cast<float>(minimum_odom_m.x())),
+      std::max(tree_min[1], static_cast<float>(minimum_odom_m.y())),
+      std::max(tree_min[2], static_cast<float>(minimum_odom_m.z()))};
+  const std::array<float, 3> keep_max{
+      std::min(tree_max[0],
+               std::nextafter(static_cast<float>(maximum_odom_m.x()),
+                              std::numeric_limits<float>::infinity())),
+      std::min(tree_max[1],
+               std::nextafter(static_cast<float>(maximum_odom_m.y()),
+                              std::numeric_limits<float>::infinity())),
+      std::min(tree_max[2],
+               std::nextafter(static_cast<float>(maximum_odom_m.z()),
+                              std::numeric_limits<float>::infinity()))};
+
   std::vector<BoxPointType> deletion_boxes;
-  deletion_boxes.reserve(represented_points.size());
-  for (const UpstreamPoint& point : represented_points) {
-    const Eigen::Vector3d point_odom_m = toEigenPoint(point);
-    if ((point_odom_m.array() >= minimum_odom_m.array()).all() &&
-        (point_odom_m.array() <= maximum_odom_m.array()).all()) {
-      continue;
+  deletion_boxes.reserve(6U);
+  const auto append_box = [&deletion_boxes](
+                              const std::array<float, 3>& box_min,
+                              const std::array<float, 3>& box_max) {
+    if (box_min[0] >= box_max[0] || box_min[1] >= box_max[1] ||
+        box_min[2] >= box_max[2]) {
+      return;
     }
     BoxPointType box{};
-    box.vertex_min[0] = point.x;
-    box.vertex_min[1] = point.y;
-    box.vertex_min[2] = point.z;
-    box.vertex_max[0] =
-        std::nextafter(point.x,
-                       std::numeric_limits<float>::infinity());
-    box.vertex_max[1] =
-        std::nextafter(point.y,
-                       std::numeric_limits<float>::infinity());
-    box.vertex_max[2] =
-        std::nextafter(point.z,
-                       std::numeric_limits<float>::infinity());
+    for (std::size_t axis = 0; axis < 3U; ++axis) {
+      box.vertex_min[axis] = box_min[axis];
+      box.vertex_max[axis] = box_max[axis];
+    }
     deletion_boxes.push_back(box);
-  }
+  };
+
+  // Partition the part of the old tree range outside the new local cube into
+  // at most six non-overlapping slabs. This is the FAST-LIO2 moving-cube
+  // deletion pattern and avoids an O(map-size) snapshot/per-point box pass.
+  append_box(tree_min, {keep_min[0], tree_max[1], tree_max[2]});
+  append_box({keep_max[0], tree_min[1], tree_min[2]}, tree_max);
+  append_box({keep_min[0], tree_min[1], tree_min[2]},
+             {keep_max[0], keep_min[1], tree_max[2]});
+  append_box({keep_min[0], keep_max[1], tree_min[2]},
+             {keep_max[0], tree_max[1], tree_max[2]});
+  append_box({keep_min[0], keep_min[1], tree_min[2]},
+             {keep_max[0], keep_max[1], keep_min[2]});
+  append_box({keep_min[0], keep_min[1], keep_max[2]},
+             {keep_max[0], keep_max[1], tree_max[2]});
 
   if (!deletion_boxes.empty()) {
-    static_cast<void>(
-        impl_->tree->Delete_Point_Boxes(deletion_boxes));
-    impl_->rebuildVoxelMetadata(config_.voxel_size_m);
-    if (impl_->represented_voxels.empty()) {
+    static_cast<void>(impl_->tree->Delete_Point_Boxes(deletion_boxes));
+    if (impl_->tree->validnum() == 0) {
       impl_->built = false;
     }
   }
-  return size_before - impl_->represented_voxels.size();
+  return size_before -
+         static_cast<std::size_t>(impl_->tree->validnum());
 }
 
 std::vector<Eigen::Vector3d>
@@ -336,7 +316,9 @@ IkdTreeRegistrationMap::snapshot() const {
 
 std::size_t IkdTreeRegistrationMap::size() const noexcept {
   std::scoped_lock lock(mutex_);
-  return impl_->represented_voxels.size();
+  return impl_->built
+             ? static_cast<std::size_t>(impl_->tree->validnum())
+             : 0U;
 }
 
 void IkdTreeRegistrationMap::clear() {
