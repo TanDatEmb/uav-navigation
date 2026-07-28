@@ -191,6 +191,7 @@ int run(const std::filesystem::path& bag_path,
                               .count();
   const auto map = pipeline.registrationMapSnapshot();
   writePcd(output_path / "map_full.pcd", map);
+  writePcd(output_path / "map_final_local.pcd", map);
   std::ofstream summary(output_path / "run_summary.json");
   summary << "{\n"
           << "  \"raw_dataset_imu_count\": " << counters.raw_imu << ",\n"

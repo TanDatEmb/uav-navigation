@@ -23,6 +23,7 @@ data/mid360_real/*/metadata.yaml
 data/external/mid360/*/original/
 data/external/mid360/*/converted/
 reports/m1_dataset/*/registered_scans/
+reports/m1_dataset/*/outputs/
 
 # Python build cache
 __pycache__/

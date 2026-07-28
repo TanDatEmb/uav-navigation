@@ -206,15 +206,39 @@ def export(bag: Path, output: Path) -> None:
         "map_backend": "upstream ikd-Tree",
     }
     (output / "map_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    last_diagnostic = diagnostics[-1] if diagnostics else {}
+    full_ingress = (
+        last_diagnostic.get("ros_received_imu_count") == "8000"
+        and last_diagnostic.get("ros_received_lidar_count") == "1384"
+        and last_diagnostic.get("core_accepted_imu_count") == "8000"
+        and last_diagnostic.get("core_accepted_lidar_count") == "1384"
+    )
+    finite_trajectory = all(
+        math.isfinite(value) for row in odometry for value in row[1:8]
+    )
     manifest = {
-        "result": "FAIL" if successful < 2 else "UNASSESSED",
+        "result": (
+            "PASS"
+            if successful > 100 and finite_trajectory and full_ingress
+            else "FAIL"
+        ),
         "production_output_bag": str(bag),
         "odometry_count": len(odometry),
         "diagnostic_count": len(diagnostics),
         "status_counts": dict(status_counts),
-        "finite_trajectory": all(
-            math.isfinite(value) for row in odometry for value in row[1:8]
-        ),
+        "finite_trajectory": finite_trajectory,
+        "full_ingress_and_core_acceptance": full_ingress,
+        "ingress_counters": {
+            key: last_diagnostic.get(key)
+            for key in (
+                "ros_received_imu_count",
+                "ros_received_lidar_count",
+                "core_accepted_imu_count",
+                "core_accepted_lidar_count",
+                "ros_maximum_imu_gap_ns",
+                "processing_queue_high_water_mark",
+            )
+        },
         "host": {
             "platform": platform.platform(),
             "cpu": platform.processor(),

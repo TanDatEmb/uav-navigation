@@ -31,8 +31,10 @@ case "$action" in
     ;;
   run)
     source /opt/ros/jazzy/setup.bash
-    colcon build --packages-up-to fast_lio_ros --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
-    echo "Use the checked production-node orchestration documented in docs/verification/m1_mid360_dataset_validation_report.md"
+    colcon build --packages-up-to fast_lio_tools --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    source install/setup.bash
+    ros2 run fast_lio_tools mid360_dataset_runner \
+      "${converted}" "${report}"
     ;;
   reference)
     echo "BLOCKED: ROS1 Noetic/container runtime is unavailable; see ${report}/comparison.md" >&2
