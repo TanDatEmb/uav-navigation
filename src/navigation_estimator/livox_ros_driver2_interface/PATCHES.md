@@ -1,8 +1,7 @@
-# Interface packaging differences
+# Local build patch
 
-The `.msg` files are unmodified.
-
-The upstream driver CMake and package manifests are not copied because they
-require Livox SDK2 and build a hardware driver. The local CMake/package files
-only generate the two official ROS interfaces and clearly identify this as an
-interface-only package.
+The complete pinned upstream source is present and the `.msg` files are
+unmodified. One CMake option, `LIVOX_BUILD_HARDWARE_DRIVER`, gates SDK discovery
+and compilation of the hardware node. It defaults off for deterministic
+offline dataset validation on hosts without Livox-SDK2. Setting it on restores
+the upstream driver build path. `package.xml` is the upstream ROS 2 manifest.
