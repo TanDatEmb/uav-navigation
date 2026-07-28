@@ -20,6 +20,9 @@ reports/simulation/*.json
 data/mid360_real/*/*.mcap
 data/mid360_real/*/*.db3
 data/mid360_real/*/metadata.yaml
+data/external/mid360/*/original/
+data/external/mid360/*/converted/
+reports/m1_dataset/*/registered_scans/
 
 # Python build cache
 __pycache__/

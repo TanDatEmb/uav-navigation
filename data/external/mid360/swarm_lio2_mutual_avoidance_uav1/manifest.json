@@ -1,0 +1,30 @@
+{
+  "dataset_id": "swarm_lio2_mutual_avoidance_uav1",
+  "source_project": "hku-mars/Swarm-LIO2",
+  "official_source_page": "https://drive.google.com/drive/folders/17e-Fe5h3LApskJFN_Z0GEGu4ZoavBZsr",
+  "download_timestamp": "2026-07-28T00:00:00+07:00",
+  "file_names": ["mutual_avoidance_uav1.bag"],
+  "file_sizes": [369481448],
+  "SHA256": ["43f25ac10deb11f8eed4febe33574b7c7bbc67171b5a93268931e827ad40cf24"],
+  "bag_format": "ROS1 bag v2.0; final index missing, valid chunks scanned sequentially",
+  "ROS_version": "ROS1 recording converted offline to ROS2 Jazzy sqlite3",
+  "duration": 46.126,
+  "start_time": 1701245214.258688450,
+  "end_time": 1701245260.384328573,
+  "topic_list": ["/livox/lidar", "/mavros/imu/data", "/quadstate_from_teammate", "/global_extrinsic_from_teammate"],
+  "message_types": {
+    "/livox/lidar": "livox_ros_driver/CustomMsg",
+    "/mavros/imu/data": "sensor_msgs/Imu"
+  },
+  "message_counts": {"/livox/lidar": 1384, "/mavros/imu/data": 8000},
+  "LiDAR_topic": "/livox/lidar",
+  "IMU_topic": "/mavros/imu/data",
+  "LiDAR_message_definition": "embedded in bag and archived in inspection message_definitions.json",
+  "IMU_message_definition": "sensor_msgs/Imu embedded in bag",
+  "frame_IDs": {"LiDAR": ["livox_frame"], "IMU": ["base_link"]},
+  "timebase_semantics": "CustomMsg.timebase is authoritative scan start in Unix nanoseconds",
+  "point_offset_semantics": "CustomPoint.offset_time is uint32 nanoseconds relative to timebase",
+  "extrinsic_source": "Swarm-LIO2 mid360.yaml at a5f751a797bb92baa3104cdd384a312d3c8e7744",
+  "license_usage_information": "Research dataset distributed by the upstream project; no additional license file was present in the linked folder",
+  "conversion_status": "completed; field and count verification passed"
+}
