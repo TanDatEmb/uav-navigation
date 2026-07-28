@@ -131,6 +131,13 @@ public:
 	typedef Eigen::Matrix<scalar_type, measurement_noise_dof, measurement_noise_dof> measurementnoisecovariance;
 	typedef Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> measurementnoisecovariance_dyn;
 
+	struct dyn_share_update_result {
+		bool measurement_valid = false;
+		bool converged = false;
+		int iteration_count = 0;
+		scalar_type final_increment_norm = std::numeric_limits<scalar_type>::infinity();
+	};
+
 	esekf(const state &x = state(),
 		const cov  &P = cov::Identity()): x_(x), P_(P){};
 
@@ -1302,9 +1309,10 @@ public:
 	}
 	//iterated error state EKF update for measurement as an Eigen matrix whose dimension is changing.
 	//calculate measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
-	void update_iterated_dyn_share() {
+	dyn_share_update_result update_iterated_dyn_share() {
 		
 		int t = 0;
+		dyn_share_update_result update_result;
 		dyn_share_datastruct<scalar_type> dyn_share;
 		dyn_share.valid = true;
 		dyn_share.converge = true;
@@ -1329,6 +1337,7 @@ public:
 			{
 				continue;
 			}
+			update_result.measurement_valid = true;
 
 			P_ = P_propagated;
 
@@ -1433,6 +1442,8 @@ public:
 			Matrix<scalar_type, n, 1> dx_ = K_ * (z - h) + (K_x - Matrix<scalar_type, n, n>::Identity()) * dx_new; 
 			state x_before = x_;
 			x_.boxplus(dx_);
+			update_result.iteration_count = i + 1;
+			update_result.final_increment_norm = dx_.norm();
 			dyn_share.converge = true;
 			for(int i = 0; i < n ; i++)
 			{
@@ -1445,8 +1456,8 @@ public:
 			if(dyn_share.converge) t++;
 			if(t > 1 || i == maximum_iter - 1)
 			{
+				update_result.converged = dyn_share.converge;
 				L_ = P_;
-				std::cout << "iteration time:" << t << "," << i << std::endl;
 				for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
 					int idx = (*it).first.first;
 					int dim = (*it).first.second;
@@ -1596,9 +1607,10 @@ public:
 				{
 					P_ = L_ - K_x * P_;
 				}
-				return;
+				return update_result;
 			}
 		}
+		return update_result;
 	}
 
 	//iterated error state EKF update for measurement as a dynamic manifold, whose dimension or type is changing.

@@ -235,7 +235,6 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_points_ = points_lidar_m;
   active_map_ = &map;
   measurement_call_count_ = 0U;
-  callback_reported_converged_ = false;
   last_residual_build_ = {};
 
   struct ActiveGuard {
@@ -248,7 +247,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
     ~ActiveGuard() { IkfomEstimator::active_estimator_ = nullptr; }
   } guard{this};
 
-  filter_.update_iterated_dyn_share();
+  const auto update = filter_.update_iterated_dyn_share();
   if (!config_.estimate_extrinsic) {
     IkfomState fixed_state = filter_.get_x();
     fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
@@ -258,11 +257,13 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
   result.residual_build = last_residual_build_;
-  result.iteration_count = measurement_call_count_;
+  result.iteration_count =
+      static_cast<std::size_t>(std::max(update.iteration_count, 0));
+  result.final_increment_norm = update.final_increment_norm;
   result.finite = result.corrected_state.allFinite() &&
                   result.corrected_covariance.allFinite();
   result.converged =
-      callback_reported_converged_ &&
+      update.measurement_valid && update.converged &&
       last_residual_build_.diagnostics.accepted_residual_count >=
           config_.minimum_accepted_residuals;
   result.successful = result.finite && result.converged;
@@ -312,7 +313,6 @@ Eigen::VectorXd IkfomEstimator::measurementModel(
 Eigen::VectorXd IkfomEstimator::buildMeasurement(
     IkfomState& state, esekfom::dyn_share_datastruct<double>& data) {
   ++measurement_call_count_;
-  callback_reported_converged_ = data.converge;
   if (active_map_ == nullptr) {
     data.valid = false;
     return {};

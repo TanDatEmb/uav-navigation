@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <cmath>
 #include <vector>
 
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
@@ -88,6 +89,45 @@ TEST(IkfomEstimatorTest, RejectedUpdateRestoresPredictionTransactionally) {
   EXPECT_LT(after.orientation_odom_imu().angularDistance(
                 before.orientation_odom_imu()),
             1e-12);
+}
+
+TEST(IkfomEstimatorTest, ReportsConvergenceFromFinalUpstreamIncrement) {
+  IkfomEstimatorConfig config;
+  config.maximum_iterations = 5;
+  config.minimum_accepted_residuals = 5;
+  config.convergence_limit = 1e-4;
+  ResidualBuilderConfig residual_config;
+  residual_config.correspondence_search.neighbor_count = 5;
+  residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
+  IkfomEstimator estimator(config, residual_config);
+  ManifoldState initial;
+  initial.set_position_odom_imu_m({0.0, 0.0, 0.05});
+  estimator.initialize(initial);
+
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> plane;
+  for (int x = -4; x <= 4; ++x) {
+    for (int y = -4; y <= 4; ++y) {
+      plane.emplace_back(0.2 * x, 0.2 * y, 0.0);
+    }
+  }
+  ASSERT_GT(map.insert(plane), 0U);
+  const std::vector<Eigen::Vector3d> scan{
+      {-0.5, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, -0.5, 0.0},
+      {-0.5, 0.0, 0.0},  {0.0, 0.0, 0.0},  {0.5, 0.0, 0.0},
+      {-0.5, 0.5, 0.0},  {0.0, 0.5, 0.0},  {0.5, 0.5, 0.0},
+  };
+
+  const auto correction = estimator.correct(scan, map);
+
+  EXPECT_TRUE(correction.successful) << correction.reason;
+  EXPECT_TRUE(correction.converged);
+  EXPECT_GE(correction.iteration_count, 2U);
+  EXPECT_LE(correction.iteration_count, config.maximum_iterations);
+  EXPECT_TRUE(std::isfinite(correction.final_increment_norm));
+  EXPECT_LT(correction.final_increment_norm, config.convergence_limit);
 }
 
 }  // namespace

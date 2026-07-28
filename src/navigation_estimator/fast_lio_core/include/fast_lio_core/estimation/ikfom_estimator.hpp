@@ -39,6 +39,7 @@ struct IkfomCorrectionResult {
       ManifoldState::Covariance::Identity()};
   ResidualBuildResult residual_build;
   std::size_t iteration_count{0};
+  double final_increment_norm{0.0};
   double correction_translation_norm_m{0.0};
   double correction_rotation_norm_rad{0.0};
 };
@@ -76,7 +77,6 @@ class IkfomEstimator {
   const RegistrationMap* active_map_{nullptr};
   ResidualBuildResult last_residual_build_;
   std::size_t measurement_call_count_{0};
-  bool callback_reported_converged_{false};
   Eigen::Quaterniond fixed_rotation_imu_lidar_{
       Eigen::Quaterniond::Identity()};
   Eigen::Vector3d fixed_position_imu_lidar_m_{Eigen::Vector3d::Zero()};
