@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset_id": "REPLACE_WITH_CAPTURE_ID",
+  "not_synthetic": true,
+  "source": {
+    "kind": "physical_capture",
+    "driver_version": "REPLACE_WITH_LIVOX_ROS_DRIVER2_VERSION_OR_COMMIT",
+    "operator": "REPLACE_WITH_OPERATOR_OR_REDACTED_ID",
+    "license": "capture owner must specify redistribution terms"
+  },
+  "topics": [
+    {"name": "/livox/lidar", "type": "livox_ros_driver2/msg/CustomMsg"},
+    {"name": "/livox/imu", "type": "sensor_msgs/msg/Imu"},
+    {"name": "/tf", "type": "tf2_msgs/msg/TFMessage"},
+    {"name": "/tf_static", "type": "tf2_msgs/msg/TFMessage"}
+  ],
+  "files": []
+}

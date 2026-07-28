@@ -13,6 +13,13 @@ log/
 # Generated evaluation artifacts and point clouds
 evaluation/
 *.pcd
+reports/benchmarks/*.json
+reports/simulation/*.json
+
+# Large source recordings are retained outside Git and verified by manifests.
+data/mid360_real/*/*.mcap
+data/mid360_real/*/*.db3
+data/mid360_real/*/metadata.yaml
 
 # Python build cache
 __pycache__/
