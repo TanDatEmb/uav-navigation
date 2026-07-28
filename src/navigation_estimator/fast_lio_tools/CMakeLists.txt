@@ -9,6 +9,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
 find_package(fast_lio_core REQUIRED)
+find_package(fast_lio_ros REQUIRED)
+find_package(livox_ros_driver2 REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rosbag2_cpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/dataset_reader.cpp
@@ -24,7 +29,12 @@ add_executable(fast_lio_offline_evaluator
   src/fast_lio_offline_evaluator.cpp)
 target_link_libraries(fast_lio_offline_evaluator PRIVATE ${PROJECT_NAME})
 
-install(TARGETS ${PROJECT_NAME} fast_lio_offline_evaluator
+add_executable(mid360_dataset_runner src/mid360_dataset_runner.cpp)
+target_compile_options(mid360_dataset_runner PRIVATE -Wall -Wextra -Wpedantic)
+ament_target_dependencies(mid360_dataset_runner
+  fast_lio_core fast_lio_ros livox_ros_driver2 rclcpp rosbag2_cpp sensor_msgs)
+
+install(TARGETS ${PROJECT_NAME} fast_lio_offline_evaluator mid360_dataset_runner
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
