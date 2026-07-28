@@ -48,7 +48,7 @@ EstimatorConfig datasetConfig() {
   config.preprocessing.voxel_filter.voxel_size_m = 0.2;
   config.initialization.minimum_imu_samples = 200;
   config.initialization.require_stationary = true;
-  config.ikfom.maximum_iterations = 4;
+  config.ikfom.maximum_iterations = 10;
   config.extrinsic.estimate_online = false;
   config.extrinsic.translation_imu_lidar_m =
       Eigen::Vector3d{-0.019391, -0.000278, 0.080926};
@@ -80,7 +80,8 @@ void writePcd(const std::filesystem::path& path,
 }
 
 int run(const std::filesystem::path& bag_path,
-        const std::filesystem::path& output_path) {
+        const std::filesystem::path& output_path,
+        std::size_t maximum_lidar_messages) {
   std::filesystem::create_directories(output_path);
   rosbag2_cpp::Reader reader;
   reader.open(bag_path.string());
@@ -94,7 +95,12 @@ int run(const std::filesystem::path& bag_path,
   std::ofstream diagnostics(output_path / "diagnostics.csv");
   std::ofstream trajectory(output_path / "trajectory.csv");
   std::ofstream corrections(output_path / "corrections.csv");
-  diagnostics << "record_index,reason,status,imu_samples,imu_gap_ns,map_points\n";
+  diagnostics << "record_index,reason,status,imu_samples,imu_gap_ns,"
+                 "input_points,filtered_points,queries,accepted_residuals,"
+                 "residual_rms,iterations,final_increment_norm,map_points,"
+                 "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
+                 "ikfom_update_us,map_insert_crop_us,snapshot_us,"
+                 "total_processing_us\n";
   trajectory << "time_ns,x,y,z,qx,qy,qz,qw\n";
   corrections << "time_ns,status,iterations,residual_rms,map_points\n";
   std::size_t record_index = 0;
@@ -125,7 +131,8 @@ int run(const std::filesystem::path& bag_path,
       } catch (const std::exception& error) {
         ++counters.rejected_lidar;
         diagnostics << record_index << ",adapter rejection: " << error.what()
-                    << ",ADAPTER_REJECTED,0,0,0\n";
+                    << ",ADAPTER_REJECTED,0,0,0,0,0,0,0,0,0,0,"
+                       "0,0,0,0,0,0,0,0\n";
       }
     } else {
       continue;
@@ -138,7 +145,22 @@ int run(const std::filesystem::path& bag_path,
                   << toString(diagnostic.status) << ','
                   << diagnostic.synchronization.imu_samples_per_scan << ','
                   << diagnostic.synchronization.imu_gap_max_ns << ','
-                  << diagnostic.map.map_point_count << '\n';
+                  << diagnostic.registration.input_point_count << ','
+                  << diagnostic.registration.filtered_point_count << ','
+                  << diagnostic.registration.query_count << ','
+                  << diagnostic.registration.accepted_residual_count << ','
+                  << diagnostic.registration.residual_rms_m << ','
+                  << diagnostic.registration.iteration_count << ','
+                  << diagnostic.registration.final_increment_norm << ','
+                  << diagnostic.map.map_point_count << ','
+                  << diagnostic.timing.imu_prediction_us << ','
+                  << diagnostic.timing.deskew_us << ','
+                  << diagnostic.timing.preprocessing_us << ','
+                  << diagnostic.timing.residual_build_us << ','
+                  << diagnostic.timing.ikfom_update_us << ','
+                  << diagnostic.timing.map_insert_crop_us << ','
+                  << diagnostic.timing.snapshot_us << ','
+                  << diagnostic.timing.total_processing_us << '\n';
       if (result->hasCorrectedOutput()) {
         ++counters.corrections;
         const auto& estimate = *result->corrected_estimate;
@@ -157,6 +179,10 @@ int run(const std::filesystem::path& bag_path,
       } else if (result->lidar_update_status == LidarUpdateStatus::kRejected) {
         ++counters.failed_corrections;
       }
+    }
+    if (maximum_lidar_messages > 0 &&
+        counters.raw_lidar >= maximum_lidar_messages) {
+      break;
     }
   }
 
@@ -183,7 +209,8 @@ int run(const std::filesystem::path& bag_path,
           << "  \"map_point_count\": " << map.size() << ",\n"
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
-  if (counters.raw_imu != 8000 || counters.raw_lidar != 1384) {
+  if (maximum_lidar_messages == 0 &&
+      (counters.raw_imu != 8000 || counters.raw_lidar != 1384)) {
     std::cerr << "record-count gate failed\n";
     return 2;
   }
@@ -194,12 +221,14 @@ int run(const std::filesystem::path& bag_path,
 }  // namespace uav::nav::lio
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::cerr << "usage: mid360_dataset_runner BAG_DIRECTORY OUTPUT_DIRECTORY\n";
+  if (argc != 3 && argc != 4) {
+    std::cerr << "usage: mid360_dataset_runner BAG_DIRECTORY OUTPUT_DIRECTORY [MAX_LIDAR]\n";
     return 64;
   }
   try {
-    return uav::nav::lio::run(argv[1], argv[2]);
+    const std::size_t maximum_lidar =
+        argc == 4 ? static_cast<std::size_t>(std::stoull(argv[3])) : 0U;
+    return uav::nav::lio::run(argv[1], argv[2], maximum_lidar);
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

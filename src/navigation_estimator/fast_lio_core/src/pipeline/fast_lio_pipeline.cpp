@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <Eigen/Eigenvalues>
 
 #include "fast_lio_core/geometry/frame_ids.hpp"
 #include "fast_lio_core/geometry/rigid_transform.hpp"
@@ -139,6 +140,7 @@ ProcessResult FastLioPipeline::process(const MeasurementGroup& group) {
 
 ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
                                                bool imu_samples_already_ingested) {
+  const auto total_started = std::chrono::steady_clock::now();
   ProcessResult result = makeBaseResult(group);
   diagnostics_.synchronization = result.diagnostics.synchronization;
   diagnostics_.synchronization.sync_rejection_reason.clear();
@@ -151,6 +153,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.registration.rejected_residual_count = 0U;
   diagnostics_.registration.residual_rms_m = 0.0;
   diagnostics_.registration.iteration_count = 0U;
+  diagnostics_.registration.final_increment_norm = 0.0;
   diagnostics_.registration.converged = false;
   const EstimatorStatus status_before = status_;
   result.status_before = status_before;
@@ -221,9 +224,14 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     return finalizeResult(std::move(result));
   }
 
+  const auto prediction_started = std::chrono::steady_clock::now();
   auto trajectory =
       estimator_.predict(group.imu_samples, propagation_start,
                          group.scan.end_time);
+  diagnostics_.timing.imu_prediction_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - prediction_started)
+          .count();
   if (!trajectory.ok()) {
     result.rejection_reason = trajectory.status().message();
     diagnostics_.reason = result.rejection_reason;
@@ -246,6 +254,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.deskew.deskew_runtime_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                               std::chrono::steady_clock::now() - deskew_started)
                                               .count();
+  diagnostics_.timing.deskew_us = diagnostics_.deskew.deskew_runtime_us;
   if (!deskewed.ok()) {
     result.rejection_reason = deskewed.status().message();
     diagnostics_.reason = result.rejection_reason;
@@ -257,7 +266,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.deskew.point_time_max_ns = deskewed.value().point_time_max_ns;
   diagnostics_.deskew.interpolation_failure_count = deskewed.value().interpolation_failure_count;
 
+  const auto preprocessing_started = std::chrono::steady_clock::now();
   auto preprocessed = preprocessor_.process(deskewed.value().scan);
+  diagnostics_.timing.preprocessing_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - preprocessing_started)
+          .count();
   if (!preprocessed.ok()) {
     result.rejection_reason = preprocessed.status().message();
     diagnostics_.reason = result.rejection_reason;
@@ -288,6 +302,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   result.lidar_update_status = LidarUpdateStatus::kRejected;
   const IkfomCorrectionResult correction =
       estimator_.correct(points_lidar_m, association_map);
+  diagnostics_.timing.residual_build_us =
+      correction.residual_build_runtime_us;
+  diagnostics_.timing.ikfom_update_us = correction.ikfom_update_runtime_us;
 
   diagnostics_.registration.query_count =
       correction.residual_build.diagnostics.query_count;
@@ -300,6 +317,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.registration.residual_rms_m =
       correction.residual_build.diagnostics.residual_rms_m;
   diagnostics_.registration.iteration_count = correction.iteration_count;
+  diagnostics_.registration.final_increment_norm =
+      correction.final_increment_norm;
   diagnostics_.registration.converged = correction.converged;
   diagnostics_.state.correction_translation_norm_m = correction.correction_translation_norm_m;
   diagnostics_.state.correction_rotation_norm_rad = correction.correction_rotation_norm_rad;
@@ -365,15 +384,26 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                               map_update_started)
             .count();
+    diagnostics_.timing.map_insert_crop_us =
+        diagnostics_.map.map_update_runtime_us;
   }
   diagnostics_.map.map_point_count = registration_map_.size();
   ++corrected_scan_count_;
   if (corrected_scan_count_ == 1U ||
       corrected_scan_count_ % config_.lifecycle.local_map_snapshot_period_scans == 0U) {
+    const auto snapshot_started = std::chrono::steady_clock::now();
     result.local_map_points_odom_m = registration_map_.snapshot();
+    diagnostics_.timing.snapshot_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - snapshot_started)
+            .count();
   }
 
   diagnostics_.reason = "LIDAR_CORRECTION_CONVERGED";
+  diagnostics_.timing.total_processing_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - total_started)
+          .count();
   return finalizeResult(std::move(result));
 }
 
@@ -535,6 +565,16 @@ void FastLioPipeline::fillStateDiagnostics(EstimatorDiagnostics& diagnostics) co
   diagnostics.state.accel_bias_m_s2 = state_.accel_bias_m_s2();
   diagnostics.state.gravity_odom_m_s2 = state_.gravity_odom_m_s2();
   diagnostics.state.covariance_trace = covariance_.trace();
+  diagnostics.state.covariance_maximum_asymmetry =
+      (covariance_ - covariance_.transpose()).cwiseAbs().maxCoeff();
+  const ManifoldState::Covariance symmetric =
+      0.5 * (covariance_ + covariance_.transpose());
+  Eigen::SelfAdjointEigenSolver<ManifoldState::Covariance> solver(
+      symmetric, Eigen::EigenvaluesOnly);
+  diagnostics.state.covariance_minimum_eigenvalue =
+      solver.info() == Eigen::Success
+          ? solver.eigenvalues().minCoeff()
+          : -std::numeric_limits<double>::infinity();
   if (last_correction_time_.has_value() && state_time_.has_value() &&
       last_correction_time_->sameClockDomain(*state_time_)) {
     diagnostics.state.last_lidar_correction_age_ns =

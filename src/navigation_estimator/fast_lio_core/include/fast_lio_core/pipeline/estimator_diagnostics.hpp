@@ -96,6 +96,7 @@ struct RegistrationDiagnostics {
   std::size_t rejected_residual_count{0};
   double residual_rms_m{0.0};
   std::size_t iteration_count{0};
+  double final_increment_norm{0.0};
   bool converged{false};
 };
 
@@ -114,6 +115,8 @@ struct StateDiagnostics {
   Eigen::Vector3d accel_bias_m_s2{Eigen::Vector3d::Zero()};
   Eigen::Vector3d gravity_odom_m_s2{Eigen::Vector3d::Zero()};
   double covariance_trace{0.0};
+  double covariance_minimum_eigenvalue{0.0};
+  double covariance_maximum_asymmetry{0.0};
   std::int64_t last_lidar_correction_age_ns{-1};
   double correction_translation_norm_m{0.0};
   double correction_rotation_norm_rad{0.0};
@@ -130,6 +133,18 @@ struct OutputDiagnostics {
   std::string clock_domain;
 };
 
+struct StageTimingDiagnostics {
+  std::int64_t synchronization_us{0};
+  std::int64_t imu_prediction_us{0};
+  std::int64_t deskew_us{0};
+  std::int64_t preprocessing_us{0};
+  std::int64_t residual_build_us{0};
+  std::int64_t ikfom_update_us{0};
+  std::int64_t map_insert_crop_us{0};
+  std::int64_t snapshot_us{0};
+  std::int64_t total_processing_us{0};
+};
+
 struct EstimatorDiagnostics {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
   EstimatorStatus previous_status{EstimatorStatus::kWaitingForSensors};
@@ -144,6 +159,7 @@ struct EstimatorDiagnostics {
   MapDiagnostics map;
   StateDiagnostics state;
   OutputDiagnostics output;
+  StageTimingDiagnostics timing;
 };
 
 }  // namespace uav::nav::lio

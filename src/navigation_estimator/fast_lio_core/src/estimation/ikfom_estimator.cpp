@@ -6,9 +6,24 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include <chrono>
+#include <Eigen/Eigenvalues>
 
 namespace uav::nav::lio {
 namespace {
+
+[[nodiscard]] bool covarianceValid(const IkfomFilter::cov& covariance) {
+  if (!covariance.allFinite() ||
+      (covariance - covariance.transpose()).cwiseAbs().maxCoeff() > 1e-8) {
+    return false;
+  }
+  const IkfomFilter::cov symmetric =
+      0.5 * (covariance + covariance.transpose());
+  Eigen::SelfAdjointEigenSolver<IkfomFilter::cov> solver(
+      symmetric, Eigen::EigenvaluesOnly);
+  return solver.info() == Eigen::Success &&
+         solver.eigenvalues().minCoeff() >= -1e-10;
+}
 
 [[nodiscard]] Result<ImuSample> interpolateSample(
     std::span<const ImuSample> samples, const Timestamp& time) {
@@ -212,7 +227,7 @@ Result<ImuTrajectory> IkfomEstimator::predict(
     double dt_seconds = static_cast<double>(dt_ns) * 1e-9;
     filter_.predict(dt_seconds, noise, toIkfomInput(previous, current));
     const ManifoldState predicted = stateView();
-    if (!predicted.allFinite() || !filter_.get_P().allFinite()) {
+    if (!predicted.allFinite() || !covarianceValid(filter_.get_P())) {
       return Status(StatusCode::kNumericalFailure,
                     "IKFoM prediction produced non-finite state");
     }
@@ -235,6 +250,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_points_ = points_lidar_m;
   active_map_ = &map;
   measurement_call_count_ = 0U;
+  active_residual_runtime_us_ = 0;
   last_residual_build_ = {};
 
   struct ActiveGuard {
@@ -247,7 +263,13 @@ IkfomCorrectionResult IkfomEstimator::correct(
     ~ActiveGuard() { IkfomEstimator::active_estimator_ = nullptr; }
   } guard{this};
 
+  const auto update_started = std::chrono::steady_clock::now();
   const auto update = filter_.update_iterated_dyn_share();
+  result.ikfom_update_runtime_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - update_started)
+          .count();
+  result.residual_build_runtime_us = active_residual_runtime_us_;
   if (!config_.estimate_extrinsic) {
     IkfomState fixed_state = filter_.get_x();
     fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
@@ -261,7 +283,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
       static_cast<std::size_t>(std::max(update.iteration_count, 0));
   result.final_increment_norm = update.final_increment_norm;
   result.finite = result.corrected_state.allFinite() &&
-                  result.corrected_covariance.allFinite();
+                  covarianceValid(result.corrected_covariance);
   result.converged =
       update.measurement_valid && update.converged &&
       last_residual_build_.diagnostics.accepted_residual_count >=
@@ -318,8 +340,13 @@ Eigen::VectorXd IkfomEstimator::buildMeasurement(
     return {};
   }
   const ManifoldState view = fromIkfomState(state);
+  const auto residual_started = std::chrono::steady_clock::now();
   last_residual_build_ =
       residual_builder_.build(active_points_, view, *active_map_);
+  active_residual_runtime_us_ +=
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - residual_started)
+          .count();
   const auto& measurement = last_residual_build_.measurement;
   if (!measurement.valid() ||
       static_cast<std::size_t>(measurement.residual_m.size()) <
@@ -330,8 +357,16 @@ Eigen::VectorXd IkfomEstimator::buildMeasurement(
   const Eigen::Index rows = measurement.residual_m.size();
   data.valid = true;
   data.h_x = measurement.jacobian;
-  data.h_v = Eigen::MatrixXd::Identity(rows, rows);
-  data.R = measurement.variance_m2.asDiagonal();
+  if (rows >= IkfomState::DOF) {
+    // This production measurement has independent scalar noise. Store only
+    // its diagonal; the patched IKFoM normal-equation branch consumes this
+    // compact representation without allocating two rows-by-rows matrices.
+    data.h_v.resize(0, 0);
+    data.R = measurement.variance_m2;
+  } else {
+    data.h_v = Eigen::MatrixXd::Identity(rows, rows);
+    data.R = measurement.variance_m2.asDiagonal();
+  }
   data.z = Eigen::VectorXd::Zero(rows);
   return measurement.residual_m;
 }

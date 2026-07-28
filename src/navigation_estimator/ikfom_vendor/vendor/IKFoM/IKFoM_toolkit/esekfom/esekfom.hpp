@@ -1434,8 +1434,43 @@ public:
 			}
 			else
 			{
-				Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> R_in = (h_v*R*h_v.transpose()).inverse();
-				K_ = (h_x.transpose() * R_in * h_x + P_.inverse()).inverse() * h_x.transpose() * R_in;
+				// FAST-LIO supplies h_v = I and diagonal per-residual R.  The
+				// original expression formed and inverted an MxM dense matrix
+				// (M is commonly 1k-3k), although the error state is only n=23.
+				// Preserve the same weighted normal equations while avoiding
+				// the cubic dense inverse.
+				const bool compact_diagonal_noise =
+					h_v.size() == 0 &&
+					R.cols() == 1 &&
+					R.rows() == dof_Measurement &&
+					(R.col(0).array() > scalar_type(0)).all();
+				const bool dense_diagonal_noise =
+					h_v.rows() == h_v.cols() &&
+					h_v.isIdentity(1e-12) &&
+					R.rows() == R.cols() &&
+					R.isDiagonal(1e-12) &&
+					(R.diagonal().array() > scalar_type(0)).all();
+				const bool diagonal_noise =
+					compact_diagonal_noise || dense_diagonal_noise;
+				if (diagonal_noise)
+				{
+					const Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>
+						variance = compact_diagonal_noise
+							? Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.col(0))
+							: Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.diagonal());
+					Eigen::Matrix<scalar_type, Eigen::Dynamic, n> R_in_h =
+						variance.cwiseInverse().asDiagonal() * h_x;
+					cov information =
+						h_x.transpose() * R_in_h + P_.inverse();
+					K_ = information.inverse() * R_in_h.transpose();
+				}
+				else
+				{
+					Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> R_in =
+						(h_v * R * h_v.transpose()).inverse();
+					K_ = (h_x.transpose() * R_in * h_x + P_.inverse()).inverse() *
+						h_x.transpose() * R_in;
+				}
 			}
 
 			cov K_x = K_ * h_x;

@@ -128,17 +128,44 @@ def export(bag: Path, output: Path) -> None:
         writer = csv.DictWriter(stream, fieldnames=diagnostic_columns)
         writer.writeheader()
         writer.writerows(diagnostics)
-    empty_artifacts = {
-        "state.csv": "time_ns,status\n",
-        "covariance.csv": "time_ns,trace,min_eigenvalue,max_asymmetry\n",
-        "corrections.csv": "time_ns,status,iteration_count,increment_norm\n",
-        "residuals.csv": "time_ns,count,rms_m\n",
-        "timing.csv": "time_ns,stage,duration_ns\n",
+    with (output / "state.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(columns[:8])
+        for row in odometry:
+            writer.writerow(row[:8])
+    derived_csv = {
+        "covariance.csv": (
+            ["record_time_ns", "trace", "minimum_eigenvalue", "maximum_asymmetry"],
+            ["covariance_trace", "covariance_minimum_eigenvalue",
+             "covariance_maximum_asymmetry"],
+        ),
+        "corrections.csv": (
+            ["record_time_ns", "status", "iteration_count",
+             "final_increment_norm"],
+            ["corrected_estimate_valid", "iteration_count",
+             "final_increment_norm"],
+        ),
+        "residuals.csv": (
+            ["record_time_ns", "accepted_count", "rms_m"],
+            ["accepted_residual_count", "residual_rms_m"],
+        ),
+        "timing.csv": (
+            ["record_time_ns", "prediction_us", "deskew_us",
+             "preprocessing_us", "residual_build_us", "ikfom_update_us",
+             "map_insert_crop_us", "snapshot_us", "total_processing_us"],
+            ["prediction_us", "deskew_us", "preprocessing_us",
+             "residual_build_us", "ikfom_update_us", "map_insert_crop_us",
+             "snapshot_us", "total_processing_us"],
+        ),
     }
-    for name, header in empty_artifacts.items():
-        # These schemas are intentionally empty when the corresponding
-        # production instrumentation did not emit samples.
-        (output / name).write_text(header)
+    for name, (header, keys) in derived_csv.items():
+        with (output / name).open("w", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(header)
+            for row in diagnostics:
+                if all(key in row for key in keys):
+                    writer.writerow([row["record_time_ns"]] +
+                                    [row[key] for key in keys])
     points = maps[-1] if maps else np.empty((0, 3))
     write_pcd(output / "map_full.pcd", points)
     write_pcd(output / "map_final_local.pcd", points)
@@ -169,6 +196,10 @@ def export(bag: Path, output: Path) -> None:
         "state_convention": "odom to imu_link",
         "number_of_inserted_scans": successful,
         "number_of_rejected_scans": rejected,
+        "correction_success_ratio": (
+            successful /
+            max(1, successful + status_counts["IKFOM_LIDAR_UPDATE_NOT_CONVERGED"])
+        ),
         "number_of_points": len(points),
         "bounding_box": bounds,
         "voxel_size_m": 0.2,

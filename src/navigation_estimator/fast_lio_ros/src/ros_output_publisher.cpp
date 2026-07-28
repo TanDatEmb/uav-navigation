@@ -148,6 +148,42 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       "processing_queue_high_water_mark",
       std::to_string(
           result.diagnostics.sensor.processing_queue_high_water_mark)));
+  status.values.push_back(keyValue(
+      "iteration_count",
+      std::to_string(result.diagnostics.registration.iteration_count)));
+  status.values.push_back(keyValue(
+      "final_increment_norm",
+      std::to_string(result.diagnostics.registration.final_increment_norm)));
+  status.values.push_back(keyValue(
+      "covariance_minimum_eigenvalue",
+      std::to_string(
+          result.diagnostics.state.covariance_minimum_eigenvalue)));
+  status.values.push_back(keyValue(
+      "covariance_maximum_asymmetry",
+      std::to_string(result.diagnostics.state.covariance_maximum_asymmetry)));
+  status.values.push_back(keyValue(
+      "prediction_us",
+      std::to_string(result.diagnostics.timing.imu_prediction_us)));
+  status.values.push_back(keyValue(
+      "deskew_us", std::to_string(result.diagnostics.timing.deskew_us)));
+  status.values.push_back(keyValue(
+      "preprocessing_us",
+      std::to_string(result.diagnostics.timing.preprocessing_us)));
+  status.values.push_back(keyValue(
+      "residual_build_us",
+      std::to_string(result.diagnostics.timing.residual_build_us)));
+  status.values.push_back(keyValue(
+      "ikfom_update_us",
+      std::to_string(result.diagnostics.timing.ikfom_update_us)));
+  status.values.push_back(keyValue(
+      "map_insert_crop_us",
+      std::to_string(result.diagnostics.timing.map_insert_crop_us)));
+  status.values.push_back(keyValue(
+      "snapshot_us",
+      std::to_string(result.diagnostics.timing.snapshot_us)));
+  status.values.push_back(keyValue(
+      "total_processing_us",
+      std::to_string(result.diagnostics.timing.total_processing_us)));
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }
