@@ -14,6 +14,9 @@ class RosOutputPublisher {
  public:
   RosOutputPublisher(rclcpp::Node& node, RosParameters parameters);
   void publish(const ProcessResult& result);
+  void publishTransportSnapshot(
+      const SensorDiagnostics& sensor,
+      const ProcessingStatistics& processing);
 
  private:
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(

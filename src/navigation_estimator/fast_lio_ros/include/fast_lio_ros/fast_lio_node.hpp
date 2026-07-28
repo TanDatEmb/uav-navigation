@@ -23,7 +23,7 @@ namespace uav::nav::lio {
 
 class FastLioNode : public rclcpp::Node {
  public:
-  FastLioNode();
+  explicit FastLioNode(const rclcpp::NodeOptions& options = {});
   ~FastLioNode() override;
 
  private:
@@ -35,8 +35,10 @@ class FastLioNode : public rclcpp::Node {
   void enqueue(InputMeasurement measurement);
   void processingLoop();
   void publishAvailableResults();
+  void publishTransportSnapshot();
 
   RosParameters parameters_;
+  EstimatorProfile profile_;
   FastLioPipeline pipeline_;
   RosImuAdapter imu_adapter_;
   RosLidarAdapter lidar_adapter_;
@@ -54,7 +56,9 @@ class FastLioNode : public rclcpp::Node {
   bool stopping_{false};
   std::thread processing_worker_;
   SensorDiagnostics ingress_diagnostics_;
+  ProcessingStatistics processing_statistics_;
   std::int64_t previous_ros_imu_ns_{-1};
+  rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;
 };
 
 }  // namespace uav::nav::lio

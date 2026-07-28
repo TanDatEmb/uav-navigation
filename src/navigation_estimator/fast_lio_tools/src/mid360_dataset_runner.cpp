@@ -17,8 +17,8 @@
 #include <rosbag2_cpp/reader.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
-#include "fast_lio_core/configuration/estimator_config.hpp"
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
+#include "fast_lio_ros/parameter_loader.hpp"
 #include "fast_lio_ros/ros_imu_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 
@@ -38,23 +38,6 @@ struct Counters {
   std::int64_t maximum_imu_gap_ns{};
   std::int64_t previous_imu_ns{-1};
 };
-
-EstimatorConfig datasetConfig() {
-  EstimatorConfig config;
-  config.synchronization.maximum_imu_gap_ns = 20'000'000;
-  config.deskew.mode = DeskewMode::kPerPoint;
-  config.preprocessing.point_filter.minimum_range_m = 0.1;
-  config.preprocessing.point_filter.maximum_range_m = 40.0;
-  config.preprocessing.voxel_filter.voxel_size_m = 0.2;
-  config.initialization.minimum_imu_samples = 200;
-  config.initialization.require_stationary = true;
-  config.ikfom.maximum_iterations = 10;
-  config.extrinsic.estimate_online = false;
-  config.extrinsic.translation_imu_lidar_m =
-      Eigen::Vector3d{-0.019391, -0.000278, 0.080926};
-  config.extrinsic.rotation_imu_lidar = Eigen::Quaterniond::Identity();
-  return config;
-}
 
 template <class Message>
 Message deserialize(const std::shared_ptr<rosbag2_storage::SerializedBagMessage>& bag_message) {
@@ -80,17 +63,20 @@ void writePcd(const std::filesystem::path& path,
 }
 
 int run(const std::filesystem::path& bag_path,
+        const std::filesystem::path& config_path,
         const std::filesystem::path& output_path,
         std::size_t maximum_lidar_messages) {
   std::filesystem::create_directories(output_path);
   rosbag2_cpp::Reader reader;
   reader.open(bag_path.string());
 
-  FastLioPipeline pipeline(datasetConfig());
-  RosImuAdapter imu_adapter("base_link", ClockDomain::kSensorTime);
+  const EstimatorProfile profile =
+      loadCanonicalEstimatorProfile(config_path.string());
+  FastLioPipeline pipeline(profile.estimator);
+  RosImuAdapter imu_adapter(profile.imu_input_frame, profile.clock_domain);
   RosLivoxCustomAdapter lidar_adapter(
-      "livox_frame", ClockDomain::kSensorTime,
-      LivoxTimestampPolicy::kTimebaseAuthoritative);
+      profile.lidar_input_frame, profile.clock_domain,
+      profile.timestamp_policy);
   Counters counters;
   std::ofstream diagnostics(output_path / "diagnostics.csv");
   std::ofstream trajectory(output_path / "trajectory.csv");
@@ -109,7 +95,7 @@ int run(const std::filesystem::path& bag_path,
   while (reader.has_next()) {
     const auto record = reader.read_next();
     ++record_index;
-    if (record->topic_name == "/mavros/imu/data") {
+    if (record->topic_name == profile.imu_topic) {
       ++counters.raw_imu;
       const auto message = deserialize<sensor_msgs::msg::Imu>(record);
       const auto sample = imu_adapter.convert(message);
@@ -121,7 +107,7 @@ int run(const std::filesystem::path& bag_path,
       counters.previous_imu_ns = sample.time.nanoseconds();
       const auto status = pipeline.pushImu(sample);
       status.ok() ? ++counters.accepted_imu : ++counters.rejected_imu;
-    } else if (record->topic_name == "/livox/lidar") {
+    } else if (record->topic_name == profile.lidar_topic) {
       ++counters.raw_lidar;
       try {
         const auto message =
@@ -192,8 +178,41 @@ int run(const std::filesystem::path& bag_path,
   const auto map = pipeline.registrationMapSnapshot();
   writePcd(output_path / "map_full.pcd", map);
   writePcd(output_path / "map_final_local.pcd", map);
-  std::ofstream summary(output_path / "run_summary.json");
-  summary << "{\n"
+  const auto write_run_metadata =
+      [&](const std::filesystem::path& path, bool include_map_frame) {
+    std::ofstream summary(path);
+    summary << "{\n"
+          << "  \"config_path\": \"" << profile.config_path << "\",\n"
+          << "  \"config_SHA256\": \"" << profile.config_sha256 << "\",\n"
+          << "  \"maximum_imu_gap_ns\": "
+          << profile.estimator.synchronization.maximum_imu_gap_ns << ",\n"
+          << "  \"deskew_mode\": \"" << profile.lidar_timing_mode << "\",\n"
+          << "  \"minimum_range_m\": "
+          << profile.estimator.preprocessing.point_filter.minimum_range_m
+          << ",\n"
+          << "  \"maximum_range_m\": "
+          << profile.estimator.preprocessing.point_filter.maximum_range_m
+          << ",\n"
+          << "  \"voxel_size_m\": "
+          << profile.estimator.preprocessing.voxel_filter.voxel_size_m << ",\n"
+          << "  \"minimum_imu_samples\": "
+          << profile.estimator.initialization.minimum_imu_samples << ",\n"
+          << "  \"maximum_ikfom_iterations\": "
+          << profile.estimator.ikfom.maximum_iterations << ",\n"
+          << "  \"extrinsic_translation_imu_lidar_m\": ["
+          << profile.estimator.extrinsic.translation_imu_lidar_m.x() << ", "
+          << profile.estimator.extrinsic.translation_imu_lidar_m.y() << ", "
+          << profile.estimator.extrinsic.translation_imu_lidar_m.z() << "],\n"
+          << "  \"extrinsic_rotation_imu_lidar_xyzw\": ["
+          << profile.estimator.extrinsic.rotation_imu_lidar.x() << ", "
+          << profile.estimator.extrinsic.rotation_imu_lidar.y() << ", "
+          << profile.estimator.extrinsic.rotation_imu_lidar.z() << ", "
+          << profile.estimator.extrinsic.rotation_imu_lidar.w() << "],\n";
+    if (include_map_frame) {
+      summary << "  \"frame\": \"odom\",\n"
+              << "  \"point_unit\": \"meter\",\n";
+    }
+    summary
           << "  \"raw_dataset_imu_count\": " << counters.raw_imu << ",\n"
           << "  \"raw_dataset_lidar_count\": " << counters.raw_lidar << ",\n"
           << "  \"core_accepted_imu_count\": " << counters.accepted_imu << ",\n"
@@ -210,6 +229,10 @@ int run(const std::filesystem::path& bag_path,
           << "  \"map_point_count\": " << map.size() << ",\n"
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
+  };
+  write_run_metadata(output_path / "run_summary.json", false);
+  write_run_metadata(output_path / "run_manifest.json", false);
+  write_run_metadata(output_path / "map_metadata.json", true);
   if (maximum_lidar_messages == 0 &&
       (counters.raw_imu != 8000 || counters.raw_lidar != 1384)) {
     std::cerr << "record-count gate failed\n";
@@ -222,15 +245,23 @@ int run(const std::filesystem::path& bag_path,
 }  // namespace uav::nav::lio
 
 int main(int argc, char** argv) {
-  if (argc != 3 && argc != 4) {
-    std::cerr << "usage: mid360_dataset_runner BAG_DIRECTORY OUTPUT_DIRECTORY [MAX_LIDAR]\n";
+  if (argc != 4 && argc != 5) {
+    std::cerr << "usage: mid360_dataset_runner BAG_DIRECTORY CONFIG_YAML "
+                 "OUTPUT_DIRECTORY [MAX_LIDAR]\n";
     return 64;
   }
   try {
+    rclcpp::init(argc, argv);
     const std::size_t maximum_lidar =
-        argc == 4 ? static_cast<std::size_t>(std::stoull(argv[3])) : 0U;
-    return uav::nav::lio::run(argv[1], argv[2], maximum_lidar);
+        argc == 5 ? static_cast<std::size_t>(std::stoull(argv[4])) : 0U;
+    const int result =
+        uav::nav::lio::run(argv[1], argv[2], argv[3], maximum_lidar);
+    rclcpp::shutdown();
+    return result;
   } catch (const std::exception& error) {
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
     std::cerr << error.what() << '\n';
     return 1;
   }

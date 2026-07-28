@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "fast_lio_core/deskew/deskew_mode.hpp"
 #include "fast_lio_ros/qos_profiles.hpp"
 
 namespace uav::nav::lio {
@@ -31,34 +30,13 @@ LivoxTimestampPolicy livoxTimestampPolicy(
   throw std::invalid_argument("unsupported Livox timestamp policy");
 }
 
-EstimatorConfig estimatorConfig(const RosParameters& parameters) {
-  EstimatorConfig config;
-  config.synchronization.maximum_imu_gap_ns = parameters.maximum_imu_gap_ns;
-  config.deskew.mode = parameters.lidar_timing_mode == "per_point" ? DeskewMode::kPerPoint
-                                                                   : DeskewMode::kSimultaneousScan;
-  config.preprocessing.point_filter.minimum_range_m = parameters.minimum_range_m;
-  config.preprocessing.point_filter.maximum_range_m = parameters.maximum_range_m;
-  config.preprocessing.voxel_filter.voxel_size_m = parameters.voxel_size_m;
-  config.initialization.minimum_imu_samples =
-      static_cast<std::size_t>(parameters.minimum_imu_samples);
-  config.initialization.require_stationary = parameters.require_stationary;
-  config.ikfom.maximum_iterations =
-      static_cast<std::size_t>(parameters.maximum_registration_iterations);
-  config.extrinsic.estimate_online = parameters.estimate_extrinsic_online;
-  config.extrinsic.translation_imu_lidar_m = {parameters.translation_imu_lidar_m[0],
-                                              parameters.translation_imu_lidar_m[1],
-                                              parameters.translation_imu_lidar_m[2]};
-  const auto& q = parameters.rotation_imu_lidar_xyzw;
-  config.extrinsic.rotation_imu_lidar = Eigen::Quaterniond{q[3], q[0], q[1], q[2]}.normalized();
-  return config;
-}
-
 }  // namespace
 
-FastLioNode::FastLioNode()
-    : Node("fast_lio"),
+FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
+    : Node("fast_lio", options),
       parameters_(ParameterLoader::declareAndLoad(*this)),
-      pipeline_(estimatorConfig(parameters_)),
+      profile_(makeEstimatorProfile(parameters_)),
+      pipeline_(profile_.estimator),
       imu_adapter_(parameters_.imu_input_frame,
                    parseClockDomain(parameters_.input_clock_domain)),
       lidar_adapter_(parameters_.lidar_input_frame, adapterTiming(parameters_),
@@ -93,8 +71,11 @@ FastLioNode::FastLioNode()
   }
   RCLCPP_INFO(get_logger(),
               "Publishing the estimator state as odom -> %s; no base_link "
-              "transform is inferred from the IMU state",
-              parameters_.imu_frame.c_str());
+              "transform is inferred from the IMU state; config_sha256=%s",
+              parameters_.imu_frame.c_str(), profile_.config_sha256.c_str());
+  transport_diagnostics_timer_ = create_wall_timer(
+      std::chrono::seconds(1),
+      [this] { publishTransportSnapshot(); });
   processing_worker_ = std::thread([this] { processingLoop(); });
 }
 
@@ -199,6 +180,10 @@ void FastLioNode::processingLoop() {
                   status.message().c_str());
     }
     publishAvailableResults();
+    {
+      std::lock_guard lock(input_mutex_);
+      processing_statistics_ = pipeline_.diagnostics().processing;
+    }
   }
 }
 
@@ -212,6 +197,17 @@ void FastLioNode::publishAvailableResults() {
     output_publisher_.publish(augmented);
     transform_publisher_.publish(augmented);
   }
+}
+
+void FastLioNode::publishTransportSnapshot() {
+  SensorDiagnostics sensor;
+  ProcessingStatistics processing;
+  {
+    std::lock_guard lock(input_mutex_);
+    sensor = ingress_diagnostics_;
+    processing = processing_statistics_;
+  }
+  output_publisher_.publishTransportSnapshot(sensor, processing);
 }
 
 }  // namespace uav::nav::lio

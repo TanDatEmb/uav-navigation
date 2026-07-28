@@ -109,6 +109,8 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       result.rejection_reason.empty() ? result.diagnostics.reason : result.rejection_reason;
   status.values = {
       keyValue("status", toString(result.status_after)),
+      keyValue("config_path", parameters_.config_path),
+      keyValue("config_sha256", parameters_.config_sha256),
       keyValue("estimate_validity", toString(result.estimate_validity)),
       keyValue("lidar_update_status", toString(result.lidar_update_status)),
       keyValue("predicted_estimate_valid",
@@ -184,6 +186,60 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.values.push_back(keyValue(
       "total_processing_us",
       std::to_string(result.diagnostics.timing.total_processing_us)));
+  array.status.push_back(std::move(status));
+  diagnostics_->publish(array);
+}
+
+void RosOutputPublisher::publishTransportSnapshot(
+    const SensorDiagnostics& sensor,
+    const ProcessingStatistics& processing) {
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = clock_->now();
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "fast_lio/transport";
+  status.hardware_id = "lidar_imu";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = "TRANSPORT_COUNTER_SNAPSHOT";
+  status.values = {
+      keyValue("config_path", parameters_.config_path),
+      keyValue("config_sha256", parameters_.config_sha256),
+      keyValue("ros_received_imu_count",
+               std::to_string(sensor.ros_received_imu_count)),
+      keyValue("ros_received_lidar_count",
+               std::to_string(sensor.ros_received_lidar_count)),
+      keyValue("core_accepted_imu_count",
+               std::to_string(sensor.core_accepted_imu_count)),
+      keyValue("core_accepted_lidar_count",
+               std::to_string(sensor.core_accepted_lidar_count)),
+      keyValue("ros_maximum_imu_gap_ns",
+               std::to_string(sensor.ros_maximum_imu_gap_ns)),
+      keyValue("processing_queue_high_water_mark",
+               std::to_string(sensor.processing_queue_high_water_mark)),
+      keyValue("raw_lidar_count",
+               std::to_string(processing.raw_lidar_count)),
+      keyValue("buffer_accepted_lidar_count",
+               std::to_string(processing.buffer_accepted_lidar_count)),
+      keyValue("overlap_rejected_count",
+               std::to_string(processing.overlap_rejected_count)),
+      keyValue("missing_bracket_rejected_count",
+               std::to_string(processing.missing_bracket_rejected_count)),
+      keyValue("invalid_timestamp_rejected_count",
+               std::to_string(processing.invalid_timestamp_rejected_count)),
+      keyValue("synchronized_group_count",
+               std::to_string(processing.synchronized_group_count)),
+      keyValue("correction_attempt_count",
+               std::to_string(processing.correction_attempt_count)),
+      keyValue("correction_success_count",
+               std::to_string(processing.correction_success_count)),
+      keyValue("correction_failure_count",
+               std::to_string(processing.correction_failure_count)),
+      keyValue("buffer_acceptance_ratio",
+               std::to_string(processing.bufferAcceptanceRatio())),
+      keyValue("synchronization_ratio",
+               std::to_string(processing.synchronizationRatio())),
+      keyValue("correction_success_ratio",
+               std::to_string(processing.correctionSuccessRatio())),
+  };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

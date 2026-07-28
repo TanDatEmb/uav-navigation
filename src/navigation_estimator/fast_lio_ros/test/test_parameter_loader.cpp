@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <rclcpp/rclcpp.hpp>
 
 #include "fast_lio_ros/parameter_loader.hpp"
@@ -52,6 +55,98 @@ TEST_F(ParameterLoaderTest, RejectsLivoxCustomWithoutPerPointTiming) {
   auto parameters = ParameterLoader::declareAndLoad(node);
   parameters.lidar_message_type = "livox_custom";
   parameters.lidar_timing_mode = "simultaneous_scan";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
+void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
+                                 const EstimatorConfig& ros) {
+  EXPECT_EQ(direct.synchronization.maximum_imu_gap_ns,
+            ros.synchronization.maximum_imu_gap_ns);
+  EXPECT_EQ(direct.deskew.mode, ros.deskew.mode);
+  EXPECT_DOUBLE_EQ(direct.preprocessing.point_filter.minimum_range_m,
+                   ros.preprocessing.point_filter.minimum_range_m);
+  EXPECT_DOUBLE_EQ(direct.preprocessing.point_filter.maximum_range_m,
+                   ros.preprocessing.point_filter.maximum_range_m);
+  EXPECT_DOUBLE_EQ(direct.preprocessing.voxel_filter.voxel_size_m,
+                   ros.preprocessing.voxel_filter.voxel_size_m);
+  EXPECT_EQ(direct.initialization.minimum_imu_samples,
+            ros.initialization.minimum_imu_samples);
+  EXPECT_EQ(direct.initialization.require_stationary,
+            ros.initialization.require_stationary);
+  EXPECT_EQ(direct.ikfom.maximum_iterations, ros.ikfom.maximum_iterations);
+  EXPECT_EQ(direct.extrinsic.estimate_online, ros.extrinsic.estimate_online);
+  EXPECT_LT((direct.extrinsic.translation_imu_lidar_m -
+             ros.extrinsic.translation_imu_lidar_m)
+                .norm(),
+            1e-15);
+  EXPECT_LT(direct.extrinsic.rotation_imu_lidar.angularDistance(
+                ros.extrinsic.rotation_imu_lidar),
+            1e-15);
+  EXPECT_DOUBLE_EQ(
+      direct.residual_builder.point_measurement_standard_deviation_m,
+      ros.residual_builder.point_measurement_standard_deviation_m);
+  EXPECT_DOUBLE_EQ(
+      direct.residual_builder.residual_gate.maximum_absolute_distance_m,
+      ros.residual_builder.residual_gate.maximum_absolute_distance_m);
+  EXPECT_EQ(direct.residual_builder.correspondence_search.neighbor_count,
+            ros.residual_builder.correspondence_search.neighbor_count);
+  EXPECT_EQ(direct.registration_map.voxel_size_m,
+            ros.registration_map.voxel_size_m);
+  EXPECT_TRUE(direct.local_map.half_extent_m.isApprox(
+      ros.local_map.half_extent_m, 0.0));
+}
+
+TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
+  const std::string path =
+      FAST_LIO_ROS_SOURCE_DIR
+      "/config/mid360_mutual_avoidance_uav1.yaml";
+  const auto profile = loadCanonicalEstimatorProfile(path);
+  EXPECT_EQ(profile.config_sha256, sha256File(path));
+  EXPECT_EQ(profile.config_sha256.size(), 64U);
+  EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 10U);
+  EXPECT_DOUBLE_EQ(
+      profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.2);
+}
+
+TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
+  const std::string path =
+      FAST_LIO_ROS_SOURCE_DIR
+      "/config/mid360_mutual_avoidance_uav1.yaml";
+  const auto direct = loadCanonicalEstimatorProfile(path);
+  rclcpp::NodeOptions options;
+  options.arguments({"--ros-args", "--params-file", path});
+  rclcpp::Node ros_node{"fast_lio", options};
+  const auto ros =
+      makeEstimatorProfile(ParameterLoader::declareAndLoad(ros_node));
+  expectEstimatorConfigsEqual(direct.estimator, ros.estimator);
+  EXPECT_EQ(direct.config_sha256, ros.config_sha256);
+  EXPECT_EQ(direct.lidar_topic, ros.lidar_topic);
+  EXPECT_EQ(direct.imu_topic, ros.imu_topic);
+  EXPECT_EQ(direct.lidar_input_frame, ros.lidar_input_frame);
+  EXPECT_EQ(direct.imu_input_frame, ros.imu_input_frame);
+  EXPECT_EQ(direct.clock_domain, ros.clock_domain);
+  EXPECT_EQ(direct.timestamp_policy, ros.timestamp_policy);
+}
+
+TEST_F(ParameterLoaderTest, InvalidConfigIsRejectedWithoutDefaults) {
+  const auto path =
+      std::filesystem::temp_directory_path() /
+      "m1_d2_missing_required_estimator_config.yaml";
+  {
+    std::ofstream stream(path);
+    stream << "fast_lio:\n  ros__parameters:\n"
+              "    frames: {odom: odom}\n";
+  }
+  EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
+               std::invalid_argument);
+  std::filesystem::remove(path);
+
+  rclcpp::Node node{"parameter_loader_invalid_numeric_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.voxel_size_m = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.voxel_size_m = 0.2;
+  parameters.rotation_imu_lidar_xyzw = {0.0, 0.0, 0.0, 2.0};
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 

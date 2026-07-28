@@ -8,6 +8,7 @@ root="data/external/mid360/${dataset}"
 report="reports/m1_dataset/${run}"
 bag="${root}/original/mutual_avoidance_uav1.bag"
 converted="${root}/converted/mutual_avoidance_uav1"
+config="src/navigation_estimator/fast_lio_ros/config/mid360_mutual_avoidance_uav1.yaml"
 file_id=1DVs5DGqGsBW-oNL9mj7bKIqIODFuQ2D7
 
 case "$action" in
@@ -34,7 +35,7 @@ case "$action" in
     colcon build --packages-up-to fast_lio_tools --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
     source install/setup.bash
     ros2 run fast_lio_tools mid360_dataset_runner \
-      "${converted}" "${report}"
+      "${converted}" "${config}" "${report}"
     ;;
   reference)
     echo "BLOCKED: ROS1 Noetic/container runtime is unavailable; see ${report}/comparison.md" >&2

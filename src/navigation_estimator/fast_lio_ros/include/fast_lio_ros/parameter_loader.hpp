@@ -5,11 +5,15 @@
 #include <string>
 #include <string_view>
 
+#include "fast_lio_core/configuration/estimator_config.hpp"
 #include "fast_lio_core/time/clock_domain.hpp"
+#include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 
 namespace uav::nav::lio {
 
 struct RosParameters {
+  std::string config_path;
+  std::string config_sha256;
   std::string odom_frame;
   std::string base_frame;
   std::string imu_frame;
@@ -38,7 +42,26 @@ struct RosParameters {
   double local_map_rate_hz{};
 };
 
+struct EstimatorProfile {
+  EstimatorConfig estimator;
+  std::string config_path;
+  std::string config_sha256;
+  std::string lidar_topic;
+  std::string imu_topic;
+  std::string lidar_input_frame;
+  std::string imu_input_frame;
+  std::string lidar_timing_mode;
+  ClockDomain clock_domain{ClockDomain::kRosTime};
+  LivoxTimestampPolicy timestamp_policy{
+      LivoxTimestampPolicy::kRequireHeaderMatchesTimebase};
+};
+
 [[nodiscard]] ClockDomain parseClockDomain(std::string_view value);
+[[nodiscard]] EstimatorProfile makeEstimatorProfile(
+    const RosParameters& parameters);
+[[nodiscard]] EstimatorProfile loadCanonicalEstimatorProfile(
+    const std::string& config_path);
+[[nodiscard]] std::string sha256File(const std::string& path);
 
 class ParameterLoader {
  public:
