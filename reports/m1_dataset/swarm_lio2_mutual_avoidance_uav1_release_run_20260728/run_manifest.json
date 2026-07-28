@@ -1,0 +1,22 @@
+{
+  "result": "FAIL",
+  "production_output_bag": "reports/m1_dataset/swarm_lio2_mutual_avoidance_uav1_release_run_20260728/production_outputs_valid",
+  "odometry_count": 1,
+  "diagnostic_count": 1384,
+  "status_counts": {
+    "No IMU sample at or before LiDAR scan start": 2,
+    "IMU_INITIALIZATION_NOT_READY": 26,
+    "LiDAR scans overlap a previously propagated interval": 9,
+    "SCAN_PRECEDES_IMU_INITIALIZATION_EPOCH": 1,
+    "INITIAL_MAP_REFERENCE_CAPTURED": 1,
+    "IKFOM_LIDAR_UPDATE_NOT_CONVERGED": 1,
+    "LIDAR_CORRECTION_CONVERGED": 1,
+    "IMU gap exceeds configured synchronization limit": 1343
+  },
+  "finite_trajectory": true,
+  "host": {
+    "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "cpu": "x86_64",
+    "logical_cores": 20
+  }
+}

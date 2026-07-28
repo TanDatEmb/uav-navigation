@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iterator>
 #include <mutex>
+#include <string>
 #include <utility>
 
 namespace uav::nav::lio {
@@ -86,7 +87,9 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_imu_gap;
     return Status(StatusCode::kInsufficientData,
-                  "IMU gap exceeds configured synchronization limit");
+                  "IMU gap exceeds configured synchronization limit: observed=" +
+                      std::to_string(maximum_gap_ns) + "ns limit=" +
+                      std::to_string(config_.maximum_imu_gap_ns) + "ns");
   }
 
   MeasurementGroup group;

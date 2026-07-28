@@ -1,0 +1,24 @@
+Panels:
+  - Class: rviz_common/Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: odom
+  Displays:
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Registered scans
+      Topic:
+        Value: /lio/registered_points
+      Size (Pixels): 2
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Local map
+      Topic:
+        Value: /lio/local_map
+      Size (Pixels): 2
+    - Class: rviz_default_plugins/Path
+      Name: Trajectory
+      Topic:
+        Value: /lio/path
+Window Geometry:
+  Width: 1280
+  Height: 800
