@@ -37,10 +37,11 @@ ament_target_dependencies(${PROJECT_NAME}
 add_executable(fast_lio_node src/fast_lio_node.cpp src/main.cpp)
 target_link_libraries(fast_lio_node ${PROJECT_NAME})
 
-install(TARGETS ${PROJECT_NAME} fast_lio_node
+install(TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
+  LIBRARY DESTINATION lib)
+install(TARGETS fast_lio_node
   RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
@@ -56,5 +57,7 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(fast_lio_core livox_ros_driver2)
+ament_export_dependencies(
+  diagnostic_msgs fast_lio_core geometry_msgs livox_ros_driver2 nav_msgs
+  rclcpp sensor_msgs tf2_ros)
 ament_package()

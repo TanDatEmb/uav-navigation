@@ -1,6 +1,7 @@
 #include "fast_lio_ros/fast_lio_node.hpp"
 
 #include <exception>
+#include <algorithm>
 #include <utility>
 
 #include "fast_lio_core/deskew/deskew_mode.hpp"
@@ -94,18 +95,24 @@ FastLioNode::FastLioNode()
               "Publishing the estimator state as odom -> %s; no base_link "
               "transform is inferred from the IMU state",
               parameters_.imu_frame.c_str());
+  processing_worker_ = std::thread([this] { processingLoop(); });
+}
+
+FastLioNode::~FastLioNode() {
+  {
+    std::lock_guard lock(input_mutex_);
+    stopping_ = true;
+  }
+  input_ready_.notify_all();
+  if (processing_worker_.joinable()) {
+    processing_worker_.join();
+  }
 }
 
 void FastLioNode::onLivoxCustom(
     const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message) {
   try {
-    const auto status =
-        pipeline_.pushLidar(livox_custom_adapter_.convert(*message));
-    if (!status.ok()) {
-      RCLCPP_WARN(get_logger(), "rejected Livox CustomMsg: %s",
-                  status.message().c_str());
-    }
-    drainPipeline();
+    enqueue(livox_custom_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid Livox CustomMsg: %s",
                 error.what());
@@ -114,11 +121,7 @@ void FastLioNode::onLivoxCustom(
 
 void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
   try {
-    const auto status = pipeline_.pushImu(imu_adapter_.convert(*message));
-    if (!status.ok()) {
-      RCLCPP_WARN(get_logger(), "rejected IMU: %s", status.message().c_str());
-    }
-    drainPipeline();
+    enqueue(imu_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid IMU message: %s", error.what());
   }
@@ -126,20 +129,88 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
 
 void FastLioNode::onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
   try {
-    const auto status = pipeline_.pushLidar(lidar_adapter_.convert(*message));
-    if (!status.ok()) {
-      RCLCPP_WARN(get_logger(), "rejected LiDAR: %s", status.message().c_str());
-    }
-    drainPipeline();
+    enqueue(lidar_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid LiDAR message: %s", error.what());
   }
 }
 
-void FastLioNode::drainPipeline() {
+void FastLioNode::enqueue(InputMeasurement measurement) {
+  {
+    std::lock_guard lock(input_mutex_);
+    const bool is_imu = std::holds_alternative<ImuSample>(measurement);
+    if (is_imu) {
+      ++ingress_diagnostics_.ros_received_imu_count;
+      const auto time_ns = std::get<ImuSample>(measurement).time.nanoseconds();
+      if (previous_ros_imu_ns_ >= 0) {
+        const auto gap_ns = time_ns - previous_ros_imu_ns_;
+        if (gap_ns <= 0) {
+          ++ingress_diagnostics_.timestamp_regression_count;
+        } else {
+          ingress_diagnostics_.ros_maximum_imu_gap_ns =
+              std::max(ingress_diagnostics_.ros_maximum_imu_gap_ns, gap_ns);
+        }
+      }
+      previous_ros_imu_ns_ = time_ns;
+    } else {
+      ++ingress_diagnostics_.ros_received_lidar_count;
+    }
+    if (input_queue_.size() >= kMaximumInputQueueSize) {
+      is_imu ? ++ingress_diagnostics_.imu_drop_count
+             : ++ingress_diagnostics_.lidar_drop_count;
+      RCLCPP_ERROR(get_logger(), "bounded estimator input queue overflow");
+      return;
+    }
+    input_queue_.push_back(std::move(measurement));
+    ingress_diagnostics_.processing_queue_high_water_mark =
+        std::max(ingress_diagnostics_.processing_queue_high_water_mark,
+                 input_queue_.size());
+  }
+  input_ready_.notify_one();
+}
+
+void FastLioNode::processingLoop() {
+  while (true) {
+    InputMeasurement measurement;
+    {
+      std::unique_lock lock(input_mutex_);
+      input_ready_.wait(lock,
+                        [this] { return stopping_ || !input_queue_.empty(); });
+      if (stopping_ && input_queue_.empty()) {
+        return;
+      }
+      measurement = std::move(input_queue_.front());
+      input_queue_.pop_front();
+    }
+    Status status;
+    if (std::holds_alternative<ImuSample>(measurement)) {
+      status = pipeline_.pushImu(std::get<ImuSample>(measurement));
+      std::lock_guard lock(input_mutex_);
+      status.ok() ? ++ingress_diagnostics_.core_accepted_imu_count
+                  : ++ingress_diagnostics_.imu_drop_count;
+    } else {
+      status = pipeline_.pushLidar(std::move(std::get<LidarScan>(measurement)));
+      std::lock_guard lock(input_mutex_);
+      status.ok() ? ++ingress_diagnostics_.core_accepted_lidar_count
+                  : ++ingress_diagnostics_.lidar_drop_count;
+    }
+    if (!status.ok()) {
+      RCLCPP_WARN(get_logger(), "core rejected queued measurement: %s",
+                  status.message().c_str());
+    }
+    publishAvailableResults();
+  }
+}
+
+void FastLioNode::publishAvailableResults() {
   while (const auto result = pipeline_.processNext()) {
-    output_publisher_.publish(*result);
-    transform_publisher_.publish(*result);
+    auto augmented = *result;
+    {
+      std::lock_guard lock(input_mutex_);
+      augmented.diagnostics.sensor = ingress_diagnostics_;
+    }
+    output_publisher_.publish(augmented);
+    transform_publisher_.publish(augmented);
   }
 }
 
