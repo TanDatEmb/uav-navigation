@@ -1,0 +1,13 @@
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(src|.*include)/.*'
+FormatStyle: file
+CheckOptions:
+  - key: modernize-use-trailing-return-type.IgnoreNonAutoTypes
+    value: 'true'

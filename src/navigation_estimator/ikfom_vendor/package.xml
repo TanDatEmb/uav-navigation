@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ikfom_vendor</name>
+  <version>0.1.0</version>
+  <description>Traceable IKFoM dependency metadata and CMake interface target.</description>
+  <maintainer email="maintainers@example.invalid">UAV Navigation contributors</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

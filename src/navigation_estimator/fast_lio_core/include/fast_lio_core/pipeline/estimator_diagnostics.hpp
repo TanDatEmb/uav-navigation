@@ -1,0 +1,111 @@
+#pragma once
+
+#include <Eigen/Core>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+#include "fast_lio_core/deskew/deskew_mode.hpp"
+#include "fast_lio_core/deskew/deskew_result.hpp"
+
+namespace uav::nav::lio {
+
+enum class EstimatorStatus {
+  kWaitingForSensors,
+  kCollectingImu,
+  kInitializingImu,
+  kInitializingMap,
+  kTracking,
+  kDegraded,
+  kLost,
+  kResetting,
+};
+
+[[nodiscard]] const char* toString(EstimatorStatus status) noexcept;
+
+struct SensorDiagnostics {
+  std::size_t lidar_drop_count{0};
+  std::size_t imu_drop_count{0};
+  std::size_t timestamp_regression_count{0};
+  std::size_t invalid_point_count{0};
+};
+
+struct SynchronizationDiagnostics {
+  std::int64_t scan_start_ns{0};
+  std::int64_t scan_end_ns{0};
+  std::int64_t scan_duration_ns{0};
+  std::size_t imu_samples_per_scan{0};
+  std::int64_t imu_gap_max_ns{0};
+  bool has_start_bracket{false};
+  bool has_end_bracket{false};
+  std::string sync_rejection_reason;
+};
+
+struct InitializationDiagnostics {
+  std::size_t samples_collected{0};
+  Eigen::Vector3d gyro_mean_rad_s{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d gyro_variance_rad2_s2{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d accel_mean_m_s2{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d accel_variance_m2_s4{Eigen::Vector3d::Zero()};
+  double gravity_norm_m_s2{0.0};
+  std::string initialization_status;
+};
+
+struct DeskewDiagnostics {
+  DeskewMode deskew_mode{DeskewMode::kPerPoint};
+  DeskewStatus deskew_status{DeskewStatus::kBypassedSimultaneousScan};
+  bool deskew_applied{false};
+  std::uint32_t point_time_min_ns{0};
+  std::uint32_t point_time_max_ns{0};
+  std::size_t interpolation_failure_count{0};
+  std::int64_t deskew_runtime_us{0};
+};
+
+struct RegistrationDiagnostics {
+  std::size_t input_point_count{0};
+  std::size_t filtered_point_count{0};
+  std::size_t query_count{0};
+  std::size_t valid_plane_count{0};
+  std::size_t accepted_residual_count{0};
+  std::size_t rejected_residual_count{0};
+  double residual_rms_m{0.0};
+  std::size_t iteration_count{0};
+  bool converged{false};
+};
+
+struct MapDiagnostics {
+  std::size_t map_point_count{0};
+  std::size_t inserted_point_count{0};
+  std::size_t removed_point_count{0};
+  Eigen::Vector3d local_map_center_odom_m{Eigen::Vector3d::Zero()};
+  std::int64_t map_update_runtime_us{0};
+};
+
+struct StateDiagnostics {
+  Eigen::Vector3d position_odom_imu_m{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d velocity_odom_imu_m_s{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d gyro_bias_rad_s{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d accel_bias_m_s2{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d gravity_odom_m_s2{Eigen::Vector3d::Zero()};
+  double covariance_trace{0.0};
+  std::int64_t last_lidar_correction_age_ns{-1};
+  double correction_translation_norm_m{0.0};
+  double correction_rotation_norm_rad{0.0};
+};
+
+struct EstimatorDiagnostics {
+  EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
+  EstimatorStatus previous_status{EstimatorStatus::kWaitingForSensors};
+  std::size_t status_transition_count{0};
+  std::size_t consecutive_registration_failure_count{0};
+  std::string reason;
+  SensorDiagnostics sensor;
+  SynchronizationDiagnostics synchronization;
+  InitializationDiagnostics initialization;
+  DeskewDiagnostics deskew;
+  RegistrationDiagnostics registration;
+  MapDiagnostics map;
+  StateDiagnostics state;
+};
+
+}  // namespace uav::nav::lio

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="uav_sensor_frames">
+  <!--
+    The numeric extrinsics below are explicit PLACEHOLDERS, not calibration.
+    Replace them with measured values and record their provenance before using
+    real sensor data. Their arrangement is the one source of truth for static
+    base_link -> imu_link and base_link -> lidar_link transforms.
+  -->
+  <xacro:arg name="imu_xyz" default="0 0 0"/>
+  <xacro:arg name="imu_rpy" default="0 0 0"/>
+  <xacro:arg name="lidar_xyz" default="0 0 0"/>
+  <xacro:arg name="lidar_rpy" default="0 0 0"/>
+
+  <!-- base_link origin: UAV reference, intended near the centre of mass. -->
+  <link name="base_link"/>
+  <!-- IMU sensing origin. Measurements reaching the estimator are FLU. -->
+  <link name="imu_link"/>
+  <!-- LiDAR point-cloud origin. Raw points reaching the estimator are FLU. -->
+  <link name="lidar_link"/>
+
+  <joint name="base_link_to_imu_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="$(arg imu_xyz)" rpy="$(arg imu_rpy)"/>
+  </joint>
+  <joint name="base_link_to_lidar_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="$(arg lidar_xyz)" rpy="$(arg lidar_rpy)"/>
+  </joint>
+</robot>

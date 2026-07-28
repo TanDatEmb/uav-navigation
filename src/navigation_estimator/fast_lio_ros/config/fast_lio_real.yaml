@@ -1,0 +1,26 @@
+fast_lio:
+  ros__parameters:
+    frames: {odom: odom, base: base_link, imu: imu_link, lidar: lidar_link}
+    input:
+      lidar_topic: /lidar/points
+      imu_topic: /lidar/imu
+      lidar_message_type: pointcloud2
+    timing:
+      lidar_mode: per_point
+      max_imu_gap_ns: 20000000
+      reject_timestamp_regression: true
+    extrinsic:
+      # PLACEHOLDER ONLY: operation is blocked until calibration is measured.
+      estimate_online: false
+      translation_imu_lidar: [0.0, 0.0, 0.0]
+      rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
+    initialization: {minimum_imu_samples: 200, require_stationary: true}
+    preprocessing:
+      minimum_range_m: 0.1
+      maximum_range_m: 40.0
+      voxel_size_m: 0.2
+    registration: {maximum_iterations: 4}
+    output:
+      publish_registered_points: true
+      publish_local_map: true
+      local_map_rate_hz: 1.0

@@ -1,0 +1,122 @@
+#include "fast_lio_ros/ros_output_publisher.hpp"
+
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
+#include "fast_lio_ros/qos_profiles.hpp"
+#include "fast_lio_ros/ros_time_converter.hpp"
+
+namespace uav::nav::lio {
+namespace {
+
+diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
+  diagnostic_msgs::msg::KeyValue result;
+  result.key = std::move(key);
+  result.value = std::move(value);
+  return result;
+}
+
+}  // namespace
+
+RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
+    : parameters_(std::move(parameters)) {
+  odometry_ = node.create_publisher<nav_msgs::msg::Odometry>("/lio/odometry",
+                                                             QosProfiles::estimatorOutput());
+  registered_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/lio/registered_points", QosProfiles::estimatorOutput());
+  local_map_ = node.create_publisher<sensor_msgs::msg::PointCloud2>("/lio/local_map",
+                                                                    QosProfiles::mapOutput());
+  diagnostics_ = node.create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "/lio/diagnostics", QosProfiles::estimatorOutput());
+}
+
+sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
+    const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const {
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = stamp;
+  cloud.header.frame_id = parameters_.odom_frame;
+  cloud.height = 1;
+  cloud.width = static_cast<std::uint32_t>(points.size());
+  sensor_msgs::PointCloud2Modifier modifier(cloud);
+  modifier.setPointCloud2FieldsByString(1, "xyz");
+  modifier.resize(points.size());
+  sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
+  sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
+  sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
+  for (const auto& point : points) {
+    *x = static_cast<float>(point.x());
+    *y = static_cast<float>(point.y());
+    *z = static_cast<float>(point.z());
+    ++x;
+    ++y;
+    ++z;
+  }
+  return cloud;
+}
+
+void RosOutputPublisher::publish(const ProcessResult& result) {
+  if (!result.scan_time) {
+    return;
+  }
+  const auto stamp = RosTimeConverter::toRos(*result.scan_time);
+  publishDiagnostics(result, stamp);
+  if (!result.has_corrected_odometry) {
+    return;
+  }
+  nav_msgs::msg::Odometry odometry;
+  odometry.header.stamp = stamp;
+  odometry.header.frame_id = parameters_.odom_frame;
+  odometry.child_frame_id = parameters_.base_frame;
+  const auto& state = result.corrected_state;
+  const auto& position = state.position_odom_imu_m();
+  const auto& orientation = state.orientation_odom_imu();
+  odometry.pose.pose.position.x = position.x();
+  odometry.pose.pose.position.y = position.y();
+  odometry.pose.pose.position.z = position.z();
+  odometry.pose.pose.orientation.x = orientation.x();
+  odometry.pose.pose.orientation.y = orientation.y();
+  odometry.pose.pose.orientation.z = orientation.z();
+  odometry.pose.pose.orientation.w = orientation.w();
+  const auto& velocity = state.velocity_odom_imu_m_s();
+  odometry.twist.twist.linear.x = velocity.x();
+  odometry.twist.twist.linear.y = velocity.y();
+  odometry.twist.twist.linear.z = velocity.z();
+  odometry_->publish(odometry);
+  if (parameters_.publish_registered_points) {
+    registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));
+  }
+  if (parameters_.publish_local_map && !result.local_map_points_odom_m.empty()) {
+    local_map_->publish(makeCloud(result.local_map_points_odom_m, stamp));
+  }
+}
+
+void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
+                                            const builtin_interfaces::msg::Time& stamp) {
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = stamp;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "fast_lio/estimator";
+  status.hardware_id = "lidar_imu";
+  status.level = result.status_after == EstimatorStatus::kTracking
+                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                     : (result.status_after == EstimatorStatus::kLost
+                            ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
+                            : diagnostic_msgs::msg::DiagnosticStatus::WARN);
+  status.message =
+      result.rejection_reason.empty() ? result.diagnostics.reason : result.rejection_reason;
+  status.values = {
+      keyValue("status", toString(result.status_after)),
+      keyValue("deskew_applied", result.diagnostics.deskew.deskew_applied ? "true" : "false"),
+      keyValue("imu_samples_per_scan",
+               std::to_string(result.diagnostics.synchronization.imu_samples_per_scan)),
+      keyValue("accepted_residual_count",
+               std::to_string(result.diagnostics.registration.accepted_residual_count)),
+      keyValue("residual_rms_m", std::to_string(result.diagnostics.registration.residual_rms_m)),
+      keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
+      keyValue("covariance_trace", std::to_string(result.diagnostics.state.covariance_trace))};
+  array.status.push_back(std::move(status));
+  diagnostics_->publish(array);
+}
+
+}  // namespace uav::nav::lio

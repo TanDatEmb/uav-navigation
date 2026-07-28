@@ -1,0 +1,19 @@
+# ROS 2 / colcon build products
+build/
+install/
+log/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Generated evaluation artifacts and point clouds
+evaluation/
+*.pcd
+
+# Python build cache
+__pycache__/
+*.py[cod]

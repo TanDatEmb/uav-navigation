@@ -1,0 +1,33 @@
+#include "fast_lio_ros/ros_transform_publisher.hpp"
+
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
+#include "fast_lio_ros/ros_time_converter.hpp"
+
+namespace uav::nav::lio {
+
+RosTransformPublisher::RosTransformPublisher(rclcpp::Node& node, RosParameters parameters)
+    : parameters_(std::move(parameters)), broadcaster_(node) {}
+
+void RosTransformPublisher::publish(const ProcessResult& result) {
+  if (!result.has_corrected_odometry || !result.scan_time) {
+    return;
+  }
+  geometry_msgs::msg::TransformStamped transform;
+  transform.header.stamp = RosTimeConverter::toRos(*result.scan_time);
+  transform.header.frame_id = parameters_.odom_frame;
+  transform.child_frame_id = parameters_.base_frame;
+  const auto& state = result.corrected_state;
+  const auto& position = state.position_odom_imu_m();
+  const auto& orientation = state.orientation_odom_imu();
+  transform.transform.translation.x = position.x();
+  transform.transform.translation.y = position.y();
+  transform.transform.translation.z = position.z();
+  transform.transform.rotation.x = orientation.x();
+  transform.transform.rotation.y = orientation.y();
+  transform.transform.rotation.z = orientation.z();
+  transform.transform.rotation.w = orientation.w();
+  broadcaster_.sendTransform(transform);
+}
+
+}  // namespace uav::nav::lio
