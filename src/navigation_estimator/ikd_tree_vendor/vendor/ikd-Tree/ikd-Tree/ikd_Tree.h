@@ -175,7 +175,9 @@ private:
     // Multi-thread Tree Rebuild
     bool termination_flag = false;
     bool rebuild_flag = false;
-    pthread_t rebuild_thread;
+    bool asynchronous_rebuild_enabled = true;
+    bool rebuild_thread_started = false;
+    pthread_t rebuild_thread{};
     pthread_mutex_t termination_flag_mutex_lock, rebuild_ptr_mutex_lock, working_flag_mutex, search_flag_mutex;
     pthread_mutex_t rebuild_logger_mutex_lock, points_deleted_rebuild_mutex_lock;
     // queue<Operation_Logger_Type> Rebuild_Logger;
@@ -223,7 +225,8 @@ private:
     static bool point_cmp_z(PointType a, PointType b); 
 
 public:
-    KD_TREE(float delete_param = 0.5, float balance_param = 0.6 , float box_length = 0.2);
+    KD_TREE(float delete_param = 0.5, float balance_param = 0.6,
+            float box_length = 0.2, bool enable_asynchronous_rebuild = true);
     ~KD_TREE();
     void Set_delete_criterion_param(float delete_param);
     void Set_balance_criterion_param(float balance_param);
@@ -247,5 +250,4 @@ public:
     KD_TREE_NODE * Root_Node = nullptr;
     int max_queue_size = 0;
 };
-
 

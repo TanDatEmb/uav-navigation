@@ -20,6 +20,9 @@ struct IkdTreeRegistrationMapConfig {
   double voxel_size_m{0.2};
   double deletion_rebuild_ratio{0.5};
   double balance_rebuild_ratio{0.6};
+  // M1 production default is deterministic. Async remains opt-in for
+  // controlled isolation and targeted stress testing only.
+  bool enable_asynchronous_rebuild{false};
 };
 
 // Production wrapper around the pinned hku-mars ikd-Tree KD_TREE.
@@ -28,7 +31,8 @@ struct IkdTreeRegistrationMapConfig {
 // KD_TREE is intentionally hidden behind a heap-allocated PIMPL. The wrapper
 // mutex is the sole project-side concurrency boundary around every upstream
 // call, including queries, incremental insertion, deletion, snapshots and
-// destruction/reset.
+// destruction/reset. Production selects the vendor's deterministic
+// synchronous rebuild mode.
 class IkdTreeRegistrationMap final : public RegistrationMap {
  public:
   explicit IkdTreeRegistrationMap(
@@ -57,7 +61,7 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
       std::size_t target_point_count,
       double distance_shell_size_m) override;
   [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
-  [[nodiscard]] std::size_t size() const noexcept override;
+  [[nodiscard]] std::size_t size() const override;
   void clear() override;
 
   [[nodiscard]] constexpr RegistrationMapBackend backend() const noexcept {

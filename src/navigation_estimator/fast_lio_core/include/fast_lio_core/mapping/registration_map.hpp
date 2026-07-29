@@ -42,7 +42,9 @@ class RegistrationMap {
       double distance_shell_size_m) = 0;
 
   [[nodiscard]] virtual std::vector<Eigen::Vector3d> snapshot() const = 0;
-  [[nodiscard]] virtual std::size_t size() const noexcept = 0;
+  // May throw when a backend cannot obtain a stable count before its bounded
+  // rebuild-state timeout. A busy backend must never be reported as size zero.
+  [[nodiscard]] virtual std::size_t size() const = 0;
   virtual void clear() = 0;
 
   [[nodiscard]] constexpr std::string_view frameId() const noexcept { return "odom"; }

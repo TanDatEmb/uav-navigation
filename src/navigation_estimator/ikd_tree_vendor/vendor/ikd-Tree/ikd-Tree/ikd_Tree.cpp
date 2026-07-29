@@ -7,12 +7,15 @@ email: yixicai@connect.hku.hk
 */
 
 template <typename PointType>
-KD_TREE<PointType>::KD_TREE(float delete_param, float balance_param, float box_length) {
+KD_TREE<PointType>::KD_TREE(float delete_param, float balance_param,
+                            float box_length,
+                            bool enable_asynchronous_rebuild) {
     delete_criterion_param = delete_param;
     balance_criterion_param = balance_param;
     downsample_size = box_length;
     Rebuild_Logger.clear();           
     termination_flag = false;
+    asynchronous_rebuild_enabled = enable_asynchronous_rebuild;
     start_thread();
 }
 
@@ -172,8 +175,12 @@ void KD_TREE<PointType>::start_thread(){
     pthread_mutex_init(&points_deleted_rebuild_mutex_lock, NULL); 
     pthread_mutex_init(&working_flag_mutex, NULL);
     pthread_mutex_init(&search_flag_mutex, NULL);
-    pthread_create(&rebuild_thread, NULL, multi_thread_ptr, (void*) this);
-    printf("Multi thread started \n");    
+    if (asynchronous_rebuild_enabled) {
+        rebuild_thread_started =
+            pthread_create(&rebuild_thread, NULL, multi_thread_ptr,
+                           (void*) this) == 0;
+        if (!rebuild_thread_started) asynchronous_rebuild_enabled = false;
+    }
 }
 
 template <typename PointType>
@@ -181,7 +188,7 @@ void KD_TREE<PointType>::stop_thread(){
     pthread_mutex_lock(&termination_flag_mutex_lock);
     termination_flag = true;
     pthread_mutex_unlock(&termination_flag_mutex_lock);
-    if (rebuild_thread) pthread_join(rebuild_thread, NULL);
+    if (rebuild_thread_started) pthread_join(rebuild_thread, NULL);
     pthread_mutex_destroy(&termination_flag_mutex_lock);
     pthread_mutex_destroy(&rebuild_logger_mutex_lock);
     pthread_mutex_destroy(&rebuild_ptr_mutex_lock);
@@ -284,7 +291,10 @@ void KD_TREE<PointType>::multi_thread_rebuild(){
             if (new_root_node != nullptr) new_root_node->father_ptr = father_ptr;
             (*Rebuild_Ptr) = new_root_node;
             int valid_old = old_root_node->TreeSize-old_root_node->invalid_point_num;
-            int valid_new = new_root_node->TreeSize-new_root_node->invalid_point_num;
+            int valid_new = new_root_node == nullptr
+                                ? 0
+                                : new_root_node->TreeSize -
+                                      new_root_node->invalid_point_num;
             if (father_ptr == STATIC_ROOT_NODE) Root_Node = STATIC_ROOT_NODE->left_son_ptr;
             KD_TREE_NODE * update_root = *Rebuild_Ptr;
             while (update_root != nullptr && update_root != Root_Node){
@@ -311,7 +321,6 @@ void KD_TREE<PointType>::multi_thread_rebuild(){
         pthread_mutex_unlock(&termination_flag_mutex_lock);
         usleep(100); 
     }
-    printf("Rebuild thread terminated normally\n");    
 }
 
 template <typename PointType>
@@ -624,7 +633,8 @@ void KD_TREE<PointType>::BuildTree(KD_TREE_NODE ** root, int l, int r, PointVect
 template <typename PointType>
 void KD_TREE<PointType>::Rebuild(KD_TREE_NODE ** root){    
     KD_TREE_NODE * father_ptr;
-    if ((*root)->TreeSize >= Multi_Thread_Rebuild_Point_Num) { 
+    if (asynchronous_rebuild_enabled &&
+        (*root)->TreeSize >= Multi_Thread_Rebuild_Point_Num) {
         if (!pthread_mutex_trylock(&rebuild_ptr_mutex_lock)){     
             if (Rebuild_Ptr == nullptr || ((*root)->TreeSize > (*Rebuild_Ptr)->TreeSize)) {
                 Rebuild_Ptr = root;          
@@ -632,6 +642,7 @@ void KD_TREE<PointType>::Rebuild(KD_TREE_NODE ** root){
             pthread_mutex_unlock(&rebuild_ptr_mutex_lock);
         }
     } else {
+        const bool rebuilding_root = (*root == Root_Node);
         father_ptr = (*root)->father_ptr;
         int size_rec = (*root)->TreeSize;
         PCL_Storage.clear();
@@ -639,7 +650,10 @@ void KD_TREE<PointType>::Rebuild(KD_TREE_NODE ** root){
         delete_tree_nodes(root);
         BuildTree(root, 0, PCL_Storage.size()-1, PCL_Storage);
         if (*root != nullptr) (*root)->father_ptr = father_ptr;
-        if (*root == Root_Node) STATIC_ROOT_NODE->left_son_ptr = *root;
+        if (rebuilding_root) {
+            Root_Node = *root;
+            STATIC_ROOT_NODE->left_son_ptr = *root;
+        }
     } 
     return;
 }
