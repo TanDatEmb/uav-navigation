@@ -1,31 +1,45 @@
-DATASET ?= swarm_lio2_mutual_avoidance_uav1
-RUN ?= swarm_lio2_mutual_avoidance_uav1_release_run_20260728
-DATA_ROOT := data/external/mid360/$(DATASET)
-INSPECTION := reports/m1_dataset/$(DATASET)_inspection_20260728
-PARAMS := src/navigation_estimator/fast_lio_ros/config/mid360_mutual_avoidance_uav1.yaml
+SHELL := /bin/bash
+DATASET ?=
+RATE ?= 1.0
+DATA_ROOT ?= data
+DATASET_TOOL := python3 tools/dev/dataset.py --data-root "$(DATA_ROOT)"
 
-.PHONY: dataset-download dataset-inspect dataset-convert dataset-sanitize dataset-run dataset-reference dataset-compare dataset-view
+.PHONY: help build test check clean clean-artifacts dataset-inspect dataset-smoke dataset-run dataset-ros dataset-view
 
-dataset-download:
-	tools/datasets/m1_mid360.sh download "$(DATASET)"
+help:
+	@$(DATASET_TOOL) help
+
+build:
+	@source /opt/ros/jazzy/setup.bash && colcon build --symlink-install
+
+test:
+	@source /opt/ros/jazzy/setup.bash && colcon test --event-handlers console_cohesion+
+
+check:
+	@source /opt/ros/jazzy/setup.bash && colcon test-result --verbose
+
+clean:
+	@$(DATASET_TOOL) clean
+
+clean-artifacts:
+	@$(DATASET_TOOL) clean-artifacts
 
 dataset-inspect:
-	python3 tools/datasets/m1_mid360_bag.py inspect --bag "$(DATA_ROOT)/original/mutual_avoidance_uav1.bag" --output "$(INSPECTION)"
+	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
+	@$(DATASET_TOOL) inspect --dataset "$(DATASET)"
 
-dataset-convert:
-	python3 tools/datasets/m1_mid360_bag.py convert --bag "$(DATA_ROOT)/original/mutual_avoidance_uav1.bag" --output "$(DATA_ROOT)/converted/mutual_avoidance_uav1" --livox-source src/navigation_estimator/livox_ros_driver2_interface
-
-dataset-sanitize:
-	tools/datasets/m1_mid360.sh sanitize "$(DATASET)"
+dataset-smoke:
+	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
+	@$(DATASET_TOOL) smoke --dataset "$(DATASET)"
 
 dataset-run:
-	tools/datasets/m1_mid360.sh run "$(DATASET)" "$(RUN)"
+	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
+	@$(DATASET_TOOL) run --dataset "$(DATASET)"
 
-dataset-reference:
-	tools/datasets/m1_mid360.sh reference "$(DATASET)" "$(RUN)"
-
-dataset-compare:
-	tools/datasets/m1_mid360.sh compare "$(DATASET)" "$(RUN)"
+dataset-ros:
+	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
+	@$(DATASET_TOOL) ros --dataset "$(DATASET)" --rate "$(RATE)"
 
 dataset-view:
-	tools/datasets/m1_mid360.sh view "$(RUN)"
+	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
+	@$(DATASET_TOOL) view --dataset "$(DATASET)"
