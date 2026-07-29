@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <sdf version="1.9">
-  <world name="m1_mid360_harness">
+  <world name="mid360_harness">
     <physics name="physics" type="ignored"><max_step_size>0.001</max_step_size><real_time_factor>1.0</real_time_factor></physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>

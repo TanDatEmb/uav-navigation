@@ -9,7 +9,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     world = PathJoinSubstitution(
-        [FindPackageShare("uav_simulation"), "worlds", "m1_mid360_harness.sdf"]
+        [FindPackageShare("uav_simulation"), "worlds", "mid360_harness.sdf"]
     )
     bridge_config = PathJoinSubstitution(
         [FindPackageShare("uav_simulation"), "bridge", "m1_sensor_bridge.yaml"]
@@ -27,7 +27,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "estimator_config",
                 default_value=PathJoinSubstitution(
-                    [FindPackageShare("fast_lio_ros"), "config", "fast_lio_sim.yaml"]
+                    [FindPackageShare("fast_lio_ros"), "config", "mid360-sim.yaml"]
                 ),
             ),
             IncludeLaunchDescription(

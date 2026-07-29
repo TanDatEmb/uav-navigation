@@ -7,7 +7,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    default_config = [FindPackageShare("fast_lio_ros"), "/config/fast_lio_sim.yaml"]
+    default_config = [FindPackageShare("fast_lio_ros"), "/config/mid360-sim.yaml"]
     frames_launch = [
         FindPackageShare("uav_description"),
         "/launch/publish_sensor_frames.launch.py",

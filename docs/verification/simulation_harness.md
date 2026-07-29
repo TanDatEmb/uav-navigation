@@ -11,7 +11,7 @@ and [sensor guide](https://gazebosim.org/docs/harmonic/sensors/).
 Start it without the estimator first:
 
 ```bash
-ros2 launch uav_simulation m1_mid360_harness.launch.py
+ros2 launch uav_simulation mid360_harness.launch.py
 python3 tools/simulation/run_m1_scenario.py static --output reports/simulation/static_commands.json
 python3 tools/simulation/verify_m1_sim_contract.py --output reports/simulation/static_contract.json
 ```

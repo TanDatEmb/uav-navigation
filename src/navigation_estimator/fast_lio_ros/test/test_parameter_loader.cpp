@@ -112,7 +112,7 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
 TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
   const std::string path =
       FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360_mutual_avoidance_uav1.yaml";
+      "/config/mid360-real.yaml";
   const auto profile = loadCanonicalEstimatorProfile(path);
   EXPECT_EQ(profile.config_sha256, sha256File(path));
   EXPECT_EQ(profile.config_sha256.size(), 64U);
@@ -124,7 +124,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
 TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
   const std::string path =
       FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360_mutual_avoidance_uav1.yaml";
+      "/config/mid360-real.yaml";
   const auto direct = loadCanonicalEstimatorProfile(path);
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", path});

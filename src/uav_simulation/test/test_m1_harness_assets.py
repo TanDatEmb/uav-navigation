@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_harness_world_has_real_sensor_types_and_bridge_topics():
-    world = element_tree.parse(ROOT / "worlds/m1_mid360_harness.sdf")
+    world = element_tree.parse(ROOT / "worlds/mid360_harness.sdf")
     assert world.find(".//include/uri").text == "model://mid360_imu_rig"
     rig = element_tree.parse(ROOT / "models/mid360_imu_rig/model.sdf")
     sensor_types = {sensor.attrib["type"] for sensor in rig.findall(".//sensor")}
@@ -20,7 +20,7 @@ def test_harness_world_has_real_sensor_types_and_bridge_topics():
 
 
 def test_harness_launch_is_parseable_and_keeps_estimator_opt_in():
-    launch = ROOT / "launch/m1_mid360_harness.launch.py"
+    launch = ROOT / "launch/mid360_harness.launch.py"
     ast.parse(launch.read_text(), filename=str(launch))
     source = launch.read_text()
     assert 'DeclareLaunchArgument("start_estimator", default_value="false")' in source

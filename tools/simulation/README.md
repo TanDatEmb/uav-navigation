@@ -3,7 +3,7 @@
 Start the harness in one terminal:
 
 ```bash
-ros2 launch uav_simulation m1_mid360_harness.launch.py
+ros2 launch uav_simulation mid360_harness.launch.py
 ```
 
 It starts actual Gazebo `gpu_lidar` and `imu` sensors, bridges them to

@@ -476,8 +476,8 @@ fast_lio_ros/
 │   └── main.cpp
 │
 ├── config/
-│   ├── fast_lio_sim.yaml
-│   └── fast_lio_real.yaml
+│   ├── mid360-sim.yaml
+│   └── mid360-real.yaml
 │
 ├── launch/
 │   ├── fast_lio_sim.launch.py
@@ -1335,7 +1335,7 @@ LidarScan
 convert to base_link       transform points to odom
           │                         │
           ▼                         ▼
- /lio/odometry       /lio/registered_points
+ /lio/odometry_corrected       /lio/registered_points
                                     │
                                     ▼
                        RegistrationMap insertion
@@ -1384,14 +1384,14 @@ Không dùng runtime generic type magic nếu hai adapter rõ ràng dễ kiểm 
 ## Output
 
 ```text
-/lio/odometry
+/lio/odometry_corrected
 /lio/registered_points
 /lio/local_map
 /lio/diagnostics
 /tf
 ```
 
-### `/lio/odometry`
+### `/lio/odometry_corrected`
 
 ```text
 type: nav_msgs/msg/Odometry
