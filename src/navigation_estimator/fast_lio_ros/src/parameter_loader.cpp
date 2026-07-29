@@ -203,6 +203,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "mapping.local_map.target_point_count_after_prune", 420000);
   result.local_map_distance_shell_size_m = node.declare_parameter(
       "mapping.local_map.distance_shell_size_m", 5.0);
+  result.dynamic_filter_enabled =
+      node.declare_parameter("mapping.dynamic_filter.enabled", false);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
   result.publish_registered_points =
@@ -266,6 +268,7 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.local_map_target_point_count_after_prune);
   config.local_map.distance_shell_size_m =
       parameters.local_map_distance_shell_size_m;
+  config.dynamic_filter.enabled = parameters.dynamic_filter_enabled;
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
   config.initialization.require_stationary = parameters.require_stationary;

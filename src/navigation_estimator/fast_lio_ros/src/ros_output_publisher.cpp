@@ -210,6 +210,9 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.values.push_back(keyValue("local_map_half_extent_y", std::to_string(map.local_map_half_extent_m.y())));
   status.values.push_back(keyValue("local_map_half_extent_z", std::to_string(map.local_map_half_extent_m.z())));
   status.values.push_back(keyValue("snapshot_point_count", std::to_string(map.snapshot_point_count)));
+  status.values.push_back(keyValue("dynamic_filter_enabled", map.dynamic_filter_enabled ? "true" : "false"));
+  status.values.push_back(keyValue("dynamic_evidence_voxel_count", std::to_string(map.dynamic_evidence_voxel_count)));
+  status.values.push_back(keyValue("dynamic_candidate_count", std::to_string(map.dynamic_candidate_count)));
   const auto& processing = result.diagnostics.processing;
   status.values.push_back(keyValue(
       "raw_lidar_count", std::to_string(processing.raw_lidar_count)));

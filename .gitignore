@@ -12,6 +12,7 @@ log/
 
 # Generated evaluation artifacts and point clouds
 .artifacts/
+symlink_install_manifest.txt
 evaluation/
 *.pcd
 reports/benchmarks/*.json

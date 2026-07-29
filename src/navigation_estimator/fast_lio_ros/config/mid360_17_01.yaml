@@ -30,6 +30,8 @@ fast_lio:
       voxel_size_m: 0.9
     registration: { maximum_iterations: 10 }
     mapping:
+      dynamic_filter:
+        enabled: false
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0

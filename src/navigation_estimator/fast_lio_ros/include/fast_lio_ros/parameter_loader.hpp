@@ -48,6 +48,7 @@ struct RosParameters {
   std::int64_t local_map_hard_point_limit{};
   std::int64_t local_map_target_point_count_after_prune{};
   double local_map_distance_shell_size_m{};
+  bool dynamic_filter_enabled{};
   std::int64_t maximum_registration_iterations{};
   bool publish_registered_points{};
   bool publish_local_map{};

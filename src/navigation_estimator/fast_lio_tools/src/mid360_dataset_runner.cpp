@@ -105,7 +105,9 @@ int run(const std::filesystem::path& bag_path,
                  "redundancy_pruned_count,map_size_after_maintenance,"
                  "local_map_center_x,local_map_center_y,local_map_center_z,"
                  "local_map_half_extent_x,local_map_half_extent_y,"
-                 "local_map_half_extent_z,snapshot_point_count\n";
+                 "local_map_half_extent_z,snapshot_point_count,"
+                 "dynamic_filter_enabled,dynamic_evidence_voxel_count,"
+                 "dynamic_candidate_count\n";
   trajectory << "time_ns,x,y,z,qx,qy,qz,qw\n";
   corrections << "time_ns,status,iterations,residual_rms,map_points\n";
   std::size_t record_index = 0;
@@ -199,7 +201,10 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.map.local_map_half_extent_m.x() << ','
                   << diagnostic.map.local_map_half_extent_m.y() << ','
                   << diagnostic.map.local_map_half_extent_m.z() << ','
-                  << diagnostic.map.snapshot_point_count << '\n';
+                  << diagnostic.map.snapshot_point_count << ','
+                  << (diagnostic.map.dynamic_filter_enabled ? 1 : 0) << ','
+                  << diagnostic.map.dynamic_evidence_voxel_count << ','
+                  << diagnostic.map.dynamic_candidate_count << '\n';
       if (diagnostic.deskew.deskew_applied) {
         ++counters.deskew_applied_count;
       }

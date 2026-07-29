@@ -62,7 +62,8 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       registration_map_(config_.registration_map),
       bootstrap_map_(config_.registration_map),
       local_map_manager_(config_.local_map),
-      insertion_policy_(config_.insertion_policy) {
+      insertion_policy_(config_.insertion_policy),
+      dynamic_map_evidence_(config_.dynamic_filter) {
   if (!config_.extrinsic.rotation_imu_lidar.coeffs().allFinite() ||
       config_.extrinsic.rotation_imu_lidar.squaredNorm() < 1e-18 ||
       !config_.extrinsic.translation_imu_lidar_m.allFinite() ||
@@ -80,6 +81,7 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
   diagnostics_.status = status_;
   diagnostics_.previous_status = status_;
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
+  diagnostics_.map.dynamic_filter_enabled = config_.dynamic_filter.enabled;
 }
 
 Status FastLioPipeline::pushImu(const ImuSample& sample) {
@@ -399,6 +401,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       bootstrap_map_.clear();
     }
     inserted += registration_map_.insert(result.registered_points_odom_m);
+    dynamic_map_evidence_.observeHits(result.registered_points_odom_m,
+                                      corrected_scan_count_ + 1U);
     diagnostics_.map.map_inserted_count = inserted;
     diagnostics_.map.map_size_after_insert = registration_map_.size();
     diagnostics_.map.map_size_before_maintenance = registration_map_.size();
@@ -424,6 +428,10 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     diagnostics_.map.removed_point_count = local_map_update.removed_point_count;
     diagnostics_.map.local_map_center_odom_m = local_map_update.center_odom_m;
     diagnostics_.map.local_map_half_extent_m = local_map_update.half_extent_m;
+    diagnostics_.map.dynamic_evidence_voxel_count =
+        dynamic_map_evidence_.voxelCount();
+    diagnostics_.map.dynamic_candidate_count =
+        dynamic_map_evidence_.candidateCount(corrected_scan_count_ + 1U);
     diagnostics_.map.map_update_runtime_us =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                               map_update_started)
@@ -463,6 +471,7 @@ void FastLioPipeline::reset() {
   registration_map_.clear();
   bootstrap_map_.clear();
   local_map_manager_.reset();
+  dynamic_map_evidence_.clear();
   state_ = ManifoldState{};
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);

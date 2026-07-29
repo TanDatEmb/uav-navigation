@@ -11,6 +11,7 @@
 #include "fast_lio_core/estimation/manifold_state.hpp"
 #include "fast_lio_core/initialization/initialization_result.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
+#include "fast_lio_core/mapping/dynamic_map_evidence.hpp"
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
 #include "fast_lio_core/pipeline/process_result.hpp"
 #include "fast_lio_core/sensor/imu_sample.hpp"
@@ -64,6 +65,7 @@ class FastLioPipeline {
   IkdTreeRegistrationMap bootstrap_map_;
   LocalMapManager local_map_manager_;
   MapInsertionPolicy insertion_policy_;
+  DynamicMapEvidence dynamic_map_evidence_;
 
   EstimatorStatus status_{EstimatorStatus::kWaitingForSensors};
   ManifoldState state_{};

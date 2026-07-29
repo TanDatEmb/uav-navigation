@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
 import os
@@ -207,8 +208,14 @@ def run_offline(args: argparse.Namespace, smoke: bool) -> int:
     if failed:
         raise DatasetError(f"dataset acceptance gates failed: {', '.join(failed)}")
     for csv_name in ("trajectory.csv", "corrections.csv", "diagnostics.csv"):
-        if "nan" in (output / csv_name).read_text(encoding="utf-8").lower():
-            raise DatasetError(f"non-finite value found in {csv_name}")
+        with (output / csv_name).open(encoding="utf-8", newline="") as stream:
+            for row in csv.reader(stream):
+                if any(
+                    value.strip().lower()
+                    in {"nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity"}
+                    for value in row
+                ):
+                    raise DatasetError(f"non-finite value found in {csv_name}")
     print(output)
     return 0
 

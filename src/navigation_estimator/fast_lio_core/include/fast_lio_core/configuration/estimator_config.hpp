@@ -8,6 +8,7 @@
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
 #include "fast_lio_core/initialization/imu_initializer.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
+#include "fast_lio_core/mapping/dynamic_map_evidence.hpp"
 #include "fast_lio_core/mapping/local_map_manager.hpp"
 #include "fast_lio_core/mapping/map_insertion_policy.hpp"
 #include "fast_lio_core/preprocessing/point_cloud_preprocessor.hpp"
@@ -40,6 +41,7 @@ struct EstimatorConfig {
   ResidualBuilderConfig residual_builder{};
   IkdTreeRegistrationMapConfig registration_map{};
   LocalMapManagerConfig local_map{};
+  DynamicFilterConfig dynamic_filter{};
   MapInsertionPolicyConfig insertion_policy{};
   ExtrinsicConfig extrinsic{};
   LifecycleConfig lifecycle{};
