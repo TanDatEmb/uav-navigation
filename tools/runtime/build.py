@@ -150,7 +150,16 @@ def main() -> int:
     if packages:
         command.extend(["--packages-select", *packages])
     print("+", shlex.join(command), flush=True)
-    return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+    result = subprocess.run(
+        command, cwd=ROOT, env=environment, check=False
+    ).returncode
+    if result == 0 and args.action == "check":
+        data_check = [sys.executable, str(ROOT / "tools" / "data.py"), "check"]
+        print("+", shlex.join(data_check), flush=True)
+        result = subprocess.run(
+            data_check, cwd=ROOT, env=environment, check=False
+        ).returncode
+    return result
 
 
 if __name__ == "__main__":

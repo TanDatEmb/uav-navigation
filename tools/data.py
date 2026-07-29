@@ -154,7 +154,7 @@ def download(entry: dict, home: Path) -> Path:
             url, headers={"Range": f"bytes={offset}-"} if offset else {}
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=300) as response:
                 status = getattr(response, "status", 200)
                 if offset and status != 206:
                     partial.unlink()
@@ -198,6 +198,10 @@ def tree_digest(directory: Path) -> str:
     return value.hexdigest()
 
 
+def tree_size(directory: Path) -> int:
+    return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+
+
 def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
     layout(home)
     blob = download(entry, home)
@@ -235,12 +239,28 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
             ],
             "conversion_tool": "tools/data.py",
             "derived_bag_sha256": tree_digest(lio),
+            "derived_bag_size_bytes": tree_size(lio),
             "note": "Source bag contains the requested LIO topics; copied as a "
                     "derived external bag. Topic filtering is required for "
                     "multi-sensor sources.",
         }
         (stage / "status.json").write_text(
             json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        config = (
+            ROOT / "src/navigation_estimator/fast_lio_ros/config/data"
+            / f"{entry['id']}.yaml"
+        )
+        workflow_manifest = {
+            "name": entry["id"],
+            "bag": "lio",
+            "config": {"path": str(config)},
+            "input": entry["input"],
+            "expected": {"lidar_count": None, "imu_count": None},
+        }
+        (stage / "dataset.yaml").write_text(
+            yaml.safe_dump(workflow_manifest, sort_keys=False),
             encoding="utf-8",
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -273,11 +293,29 @@ def check_tracked_blobs() -> list[str]:
     return violations
 
 
-def call_legacy(action: str, args: argparse.Namespace) -> int:
+def workflow_dataset(value: str, home: Path) -> str:
+    candidate = Path(value).expanduser()
+    if candidate.exists():
+        return str(candidate)
+    prepared = home / "datasets" / value
+    if (prepared / "dataset.yaml").is_file():
+        return str(prepared)
+    legacy = ROOT / "data" / value
+    if (legacy / "dataset.yaml").is_file():
+        return str(legacy)
+    if value == "aist-mid360-drive":
+        local = ROOT / "data" / "mid360_17_01"
+        if (local / "dataset.yaml").is_file():
+            return str(local)
+    raise DataError(f"{value} is not prepared in the external data home")
+
+
+def call_legacy(action: str, args: argparse.Namespace, home: Path) -> int:
     aliases = {"info": "inspect", "replay": "ros"}
     command = [
         sys.executable, str(ROOT / "tools" / "dev" / "dataset.py"),
-        aliases.get(action, action), "--dataset", args.dataset,
+        aliases.get(action, action), "--dataset",
+        workflow_dataset(args.dataset, home),
     ]
     if action == "smoke":
         command += ["--max-lidar", str(args.max_lidar)]
@@ -335,7 +373,7 @@ def main() -> int:
                 print(f"{dataset_id}\t{','.join(item['cases'])}")
         return 0
     if args.action in {"info", "view", "run", "replay", "smoke"}:
-        return call_legacy(args.action, args)
+        return call_legacy(args.action, args, home)
     if not args.dataset:
         raise DataError(f"{args.action} requires --dataset")
     entry = lookup(args.dataset)
