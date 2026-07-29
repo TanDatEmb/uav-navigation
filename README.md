@@ -31,11 +31,8 @@ calibration and must not be used for flight or real-data acceptance.
 - `uav_description`: source-of-truth sensor-frame URDF/Xacro.
 - `uav_simulation`: Gazebo Harmonic launch assets for simultaneous-scan testing.
 
-Read [the architecture documentation](docs/architecture/navigation_layers.md)
-before selecting sensor configuration. The M1 acceptance procedure is in
-[docs/verification/m1_acceptance_criteria.md](docs/verification/m1_acceptance_criteria.md).
-Simulation-interface checks, real Mid-360 acquisition and ikd-Tree benchmark
-procedures are documented under `docs/verification/`. Read
+Read the consolidated [FAST-LIO M1 guide](docs/fast_lio.md) before selecting a
+sensor configuration or running dataset acceptance. Read
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing artifacts:
 vendored GPL-2.0-only dependencies require a distribution-license review.
 
