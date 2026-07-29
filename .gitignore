@@ -24,6 +24,7 @@ data/mid360_real/*/*.db3
 data/mid360_real/*/metadata.yaml
 data/**/*.mcap
 data/**/*.db3
+data/**/bag/metadata.yaml
 data/external/mid360/*/original/
 data/external/mid360/*/converted/
 reports/m1_dataset/*/registered_scans/

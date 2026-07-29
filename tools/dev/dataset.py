@@ -10,8 +10,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from typing import Any
 
 import yaml
@@ -226,15 +228,61 @@ def run_ros(args: argparse.Namespace) -> int:
     counts = validate_topics(bag, manifest)
     output = new_run_directory(str(manifest["name"]), "ros")
     write_manifest(output, "ros", directory, bag, config, manifest, counts)
-    command = [
+    replay_command = [
         "ros2", "bag", "play", str(bag), "--rate", str(args.rate),
     ]
     with (output / "stdout.log").open("w", encoding="utf-8") as stdout, (
         output / "stderr.log"
     ).open("w", encoding="utf-8") as stderr:
-        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr)
-    if result.returncode:
-        raise DatasetError(f"ROS replay failed with exit code {result.returncode}: {output}")
+        node = subprocess.Popen(
+            [
+                "ros2", "run", "fast_lio_ros", "fast_lio_node",
+                "--ros-args", "--params-file", str(config),
+            ],
+            cwd=ROOT,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        try:
+            time.sleep(1.0)
+            if node.poll() is not None:
+                raise DatasetError(
+                    f"estimator node exited before replay with code {node.returncode}"
+                )
+            replay = subprocess.run(
+                replay_command, cwd=ROOT, stdout=stdout, stderr=stderr
+            )
+        finally:
+            if node.poll() is None:
+                node.send_signal(signal.SIGINT)
+                try:
+                    node.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    node.terminate()
+                    node.wait(timeout=5)
+    if replay.returncode:
+        raise DatasetError(
+            f"ROS replay failed with exit code {replay.returncode}: {output}"
+        )
+    if node.returncode not in (0, -signal.SIGINT, 130):
+        raise DatasetError(
+            f"estimator node failed with exit code {node.returncode}: {output}"
+        )
+    (output / "run_summary.json").write_text(
+        json.dumps(
+            {
+                "dataset": manifest["name"],
+                "rate": args.rate,
+                "replay_returncode": replay.returncode,
+                "estimator_returncode": node.returncode,
+                "note": "Detailed transport and estimator counters are published on /diagnostics.",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(output)
     return 0
 
