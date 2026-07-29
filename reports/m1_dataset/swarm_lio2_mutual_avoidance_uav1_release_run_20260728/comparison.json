@@ -1,8 +1,0 @@
-{
-  "status": "BLOCKED",
-  "project_corrected_poses": 1,
-  "reference_commit": "a5f751a797bb92baa3104cdd384a312d3c8e7744",
-  "reason": "ROS1 Noetic and container runtimes are unavailable on the development host",
-  "trajectory_metrics_computed": false,
-  "map_metrics_computed": false
-}

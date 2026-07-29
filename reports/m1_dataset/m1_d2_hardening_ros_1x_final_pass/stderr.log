@@ -1,4 +1,0 @@
-[WARN] [1785256471.377685993] [rcl]: ROS_LOCALHOST_ONLY is deprecated but still honored if it is enabled. Use ROS_AUTOMATIC_DISCOVERY_RANGE and ROS_STATIC_PEERS instead.
-[WARN] [1785256471.377723280] [rcl]: 'localhost_only' is enabled, 'automatic_discovery_range' and 'static_peers' will be ignored.
-[INFO] [1785256471.417614775] [fast_lio]: Publishing the estimator state as odom -> imu_link; no base_link transform is inferred from the IMU state; config_sha256=ee37646f3b4668f13cad1febce5b79dcaa5f896c91709a9ca80740c72dcb0a3e
-[INFO] [1785256552.854094611] [rclcpp]: signal_handler(SIGINT/SIGTERM)

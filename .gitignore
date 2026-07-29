@@ -11,6 +11,7 @@ log/
 .DS_Store
 
 # Generated evaluation artifacts and point clouds
+.artifacts/
 evaluation/
 *.pcd
 reports/benchmarks/*.json
@@ -20,6 +21,8 @@ reports/simulation/*.json
 data/mid360_real/*/*.mcap
 data/mid360_real/*/*.db3
 data/mid360_real/*/metadata.yaml
+data/**/*.mcap
+data/**/*.db3
 data/external/mid360/*/original/
 data/external/mid360/*/converted/
 reports/m1_dataset/*/registered_scans/
