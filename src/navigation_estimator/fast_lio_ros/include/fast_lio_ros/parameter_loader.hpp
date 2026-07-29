@@ -7,6 +7,7 @@
 
 #include "fast_lio_core/configuration/estimator_config.hpp"
 #include "fast_lio_core/time/clock_domain.hpp"
+#include "fast_lio_ros/ros_lidar_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 
 namespace uav::nav::lio {
@@ -55,7 +56,9 @@ struct EstimatorProfile {
   std::string imu_topic;
   std::string lidar_input_frame;
   std::string imu_input_frame;
+  std::string lidar_message_type;
   std::string lidar_timing_mode;
+  PointTimeConfig point_time;
   ClockDomain clock_domain{ClockDomain::kRosTime};
   LivoxTimestampPolicy timestamp_policy{
       LivoxTimestampPolicy::kRequireHeaderMatchesTimebase};

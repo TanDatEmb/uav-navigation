@@ -16,10 +16,12 @@
 #include <rclcpp/serialization.hpp>
 #include <rosbag2_cpp/reader.hpp>
 #include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
 #include "fast_lio_ros/ros_imu_adapter.hpp"
+#include "fast_lio_ros/ros_lidar_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 
 namespace uav::nav::lio {
@@ -35,6 +37,7 @@ struct Counters {
   std::size_t process_results{};
   std::size_t corrections{};
   std::size_t failed_corrections{};
+  std::size_t deskew_applied_count{};
   std::int64_t maximum_imu_gap_ns{};
   std::int64_t previous_imu_ns{-1};
   std::int64_t first_lidar_start_ns{-1};
@@ -76,9 +79,14 @@ int run(const std::filesystem::path& bag_path,
       loadCanonicalEstimatorProfile(config_path.string());
   FastLioPipeline pipeline(profile.estimator);
   RosImuAdapter imu_adapter(profile.imu_input_frame, profile.clock_domain);
-  RosLivoxCustomAdapter lidar_adapter(
+  RosLivoxCustomAdapter livox_adapter(
       profile.lidar_input_frame, profile.clock_domain,
       profile.timestamp_policy);
+  RosLidarAdapter pointcloud_adapter(
+      profile.lidar_input_frame,
+      profile.lidar_timing_mode == "per_point" ? LidarTimingMode::kPerPoint
+                                                : LidarTimingMode::kSimultaneousScan,
+      profile.clock_domain, profile.point_time);
   Counters counters;
   std::ofstream diagnostics(output_path / "diagnostics.csv");
   std::ofstream trajectory(output_path / "trajectory.csv");
@@ -86,6 +94,7 @@ int run(const std::filesystem::path& bag_path,
   diagnostics << "record_index,reason,status,imu_samples,imu_gap_ns,"
                  "input_points,filtered_points,queries,accepted_residuals,"
                  "residual_rms,iterations,final_increment_norm,map_points,"
+                 "deskew_applied,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
                  "ikfom_update_us,map_insert_crop_us,snapshot_us,"
                  "total_processing_us\n";
@@ -112,9 +121,16 @@ int run(const std::filesystem::path& bag_path,
     } else if (record->topic_name == profile.lidar_topic) {
       ++counters.raw_lidar;
       try {
-        const auto message =
-            deserialize<livox_ros_driver2::msg::CustomMsg>(record);
-        auto scan = lidar_adapter.convert(message);
+        LidarScan scan;
+        if (profile.lidar_message_type == "pointcloud2") {
+          scan = pointcloud_adapter.convert(
+              deserialize<sensor_msgs::msg::PointCloud2>(record));
+        } else if (profile.lidar_message_type == "livox_custom") {
+          scan = livox_adapter.convert(
+              deserialize<livox_ros_driver2::msg::CustomMsg>(record));
+        } else {
+          throw std::invalid_argument("unsupported configured LiDAR message type");
+        }
         if (counters.first_lidar_start_ns < 0) {
           counters.first_lidar_start_ns = scan.start_time.nanoseconds();
         }
@@ -146,6 +162,7 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.registration.iteration_count << ','
                   << diagnostic.registration.final_increment_norm << ','
                   << diagnostic.map.map_point_count << ','
+                  << (diagnostic.deskew.deskew_applied ? 1 : 0) << ','
                   << diagnostic.timing.imu_prediction_us << ','
                   << diagnostic.timing.deskew_us << ','
                   << diagnostic.timing.preprocessing_us << ','
@@ -154,6 +171,9 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.timing.map_insert_crop_us << ','
                   << diagnostic.timing.snapshot_us << ','
                   << diagnostic.timing.total_processing_us << '\n';
+      if (diagnostic.deskew.deskew_applied) {
+        ++counters.deskew_applied_count;
+      }
       if (result->hasCorrectedOutput()) {
         ++counters.corrections;
         const auto& estimate = *result->corrected_estimate;
@@ -196,8 +216,7 @@ int run(const std::filesystem::path& bag_path,
           ? static_cast<double>(processing.correction_success_count) /
                 dataset_duration_seconds
           : 0.0;
-  writePcd(output_path / "map_full.pcd", map);
-  writePcd(output_path / "map_final_local.pcd", map);
+  writePcd(output_path / "local_registration_map_final.pcd", map);
   const auto write_run_metadata =
       [&](const std::filesystem::path& path, bool include_map_frame) {
     std::ofstream summary(path);
@@ -246,6 +265,10 @@ int run(const std::filesystem::path& bag_path,
           << ",\n"
           << "  \"failed_correction_count\": " << counters.failed_corrections
           << ",\n"
+          << "  \"deskew_applied\": "
+          << (counters.deskew_applied_count > 0 ? "true" : "false") << ",\n"
+          << "  \"deskew_applied_count\": " << counters.deskew_applied_count
+          << ",\n"
           << "  \"overlap_rejected_count\": "
           << processing.overlap_rejected_count << ",\n"
           << "  \"missing_bracket_rejected_count\": "
@@ -271,13 +294,10 @@ int run(const std::filesystem::path& bag_path,
           << "}\n";
   };
   write_run_metadata(output_path / "run_summary.json", false);
-  write_run_metadata(output_path / "run_manifest.json", false);
-  write_run_metadata(output_path / "map_metadata.json", true);
-  if (maximum_lidar_messages == 0 &&
-      (counters.raw_imu != 8000 || counters.raw_lidar != 1384)) {
-    std::cerr << "record-count gate failed\n";
-    return 2;
+  if (!std::filesystem::exists(output_path / "run_manifest.json")) {
+    write_run_metadata(output_path / "run_manifest.json", false);
   }
+  write_run_metadata(output_path / "map_metadata.json", true);
   return 0;
 }
 

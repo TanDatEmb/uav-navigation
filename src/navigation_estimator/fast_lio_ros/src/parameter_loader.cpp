@@ -204,7 +204,23 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   profile.imu_topic = parameters.imu_topic;
   profile.lidar_input_frame = parameters.lidar_input_frame;
   profile.imu_input_frame = parameters.imu_input_frame;
+  profile.lidar_message_type = parameters.lidar_message_type;
   profile.lidar_timing_mode = parameters.lidar_timing_mode;
+  profile.point_time.field = parameters.point_time_field;
+  profile.point_time.encoding =
+      parameters.point_time_encoding == "float64_absolute_nanoseconds"
+          ? PointTimeEncoding::kFloat64AbsoluteNanoseconds
+          : PointTimeEncoding::kUint32RelativeNanoseconds;
+  profile.point_time.scan_reference =
+      parameters.point_time_scan_reference == "minimum_point_time"
+          ? ScanReference::kMinimumPointTime
+          : ScanReference::kHeaderStamp;
+  profile.point_time.maximum_scan_duration_ns =
+      parameters.maximum_scan_duration_ns;
+  profile.point_time.maximum_header_offset_ns =
+      parameters.maximum_header_offset_ns;
+  profile.point_time.reject_scan_timestamp_regression =
+      parameters.reject_timestamp_regression;
   profile.clock_domain = parseClockDomain(parameters.input_clock_domain);
   profile.timestamp_policy =
       parseTimestampPolicy(parameters.livox_timestamp_policy);

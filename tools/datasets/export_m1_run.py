@@ -176,8 +176,7 @@ def export(bag: Path, output: Path) -> None:
                     writer.writerow([row["record_time_ns"]] +
                                     [row[key] for key in keys])
     points = maps[-1] if maps else np.empty((0, 3))
-    write_pcd(output / "map_full.pcd", points)
-    write_pcd(output / "map_final_local.pcd", points)
+    write_pcd(output / "local_registration_map_final.pcd", points)
     write_pcd(output / "reference_map.pcd", np.empty((0, 3)))
     (output / "reference_trajectory.tum").write_text("")
     plot_map(points, output)

@@ -3,6 +3,7 @@ DATASET ?=
 RATE ?= 1.0
 DATA_ROOT ?= data
 DATASET_TOOL := python3 tools/dev/dataset.py --data-root "$(DATA_ROOT)"
+ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 
 .PHONY: help build test check clean clean-artifacts dataset-inspect dataset-smoke dataset-run dataset-ros dataset-view
 
@@ -30,15 +31,15 @@ dataset-inspect:
 
 dataset-smoke:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(DATASET_TOOL) smoke --dataset "$(DATASET)"
+	@$(ROS_ENV) $(DATASET_TOOL) smoke --dataset "$(DATASET)"
 
 dataset-run:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(DATASET_TOOL) run --dataset "$(DATASET)"
+	@$(ROS_ENV) $(DATASET_TOOL) run --dataset "$(DATASET)"
 
 dataset-ros:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(DATASET_TOOL) ros --dataset "$(DATASET)" --rate "$(RATE)"
+	@$(ROS_ENV) $(DATASET_TOOL) ros --dataset "$(DATASET)" --rate "$(RATE)"
 
 dataset-view:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }

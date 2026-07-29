@@ -193,6 +193,22 @@ def run_offline(args: argparse.Namespace, smoke: bool) -> int:
     missing = [name for name in REQUIRED_OUTPUTS if not (output / name).is_file()]
     if missing:
         raise DatasetError(f"runner omitted required outputs: {', '.join(missing)}")
+    summary = json.loads((output / "run_summary.json").read_text(encoding="utf-8"))
+    gates = {
+        "adapter rejection count": summary.get("core_rejected_lidar_count") == 0,
+        "invalid timestamp rejection count": summary.get(
+            "invalid_timestamp_rejected_count"
+        ) == 0,
+        "accepted LiDAR count": int(summary.get("core_accepted_lidar_count", 0)) > 0,
+        "correction output": int(summary.get("successful_correction_count", 0)) > 0,
+        "per-point deskew": bool(summary.get("deskew_applied")),
+    }
+    failed = [name for name, passed in gates.items() if not passed]
+    if failed:
+        raise DatasetError(f"dataset acceptance gates failed: {', '.join(failed)}")
+    for csv_name in ("trajectory.csv", "corrections.csv", "diagnostics.csv"):
+        if "nan" in (output / csv_name).read_text(encoding="utf-8").lower():
+            raise DatasetError(f"non-finite value found in {csv_name}")
     print(output)
     return 0
 
