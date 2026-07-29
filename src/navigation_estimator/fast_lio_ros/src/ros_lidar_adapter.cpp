@@ -1,6 +1,7 @@
 #include "fast_lio_ros/ros_lidar_adapter.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -37,10 +38,18 @@ T readScalar(const std::uint8_t* point, std::uint32_t offset, std::uint32_t poin
 
 RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
                                  LidarTimingMode timing_mode,
-                                 ClockDomain clock_domain)
+                                 ClockDomain clock_domain,
+                                 PointTimeConfig point_time)
     : expected_frame_(std::move(expected_frame)),
       timing_mode_(timing_mode),
-      clock_domain_(clock_domain) {}
+      clock_domain_(clock_domain),
+      point_time_(std::move(point_time)) {
+  if (point_time_.field.empty() ||
+      point_time_.maximum_scan_duration_ns <= 0 ||
+      point_time_.maximum_header_offset_ns < 0) {
+    throw std::invalid_argument("invalid PointCloud2 point-time configuration");
+  }
+}
 
 LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message) const {
   if (message.header.frame_id != expected_frame_) {
@@ -53,28 +62,37 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   const auto& y = requireField(message, "y", sensor_msgs::msg::PointField::FLOAT32);
   const auto& z = requireField(message, "z", sensor_msgs::msg::PointField::FLOAT32);
   const sensor_msgs::msg::PointField* time = nullptr;
-  for (const auto& field : message.fields) {
-    if (field.name == "time" || field.name == "t") {
-      if (field.datatype != sensor_msgs::msg::PointField::UINT32 || field.count != 1U) {
-        throw std::invalid_argument("point time must be uint32 nanoseconds");
-      }
-      time = &field;
-      break;
-    }
+  if (timing_mode_ == LidarTimingMode::kPerPoint) {
+    const auto datatype =
+        point_time_.encoding == PointTimeEncoding::kUint32RelativeNanoseconds
+            ? sensor_msgs::msg::PointField::UINT32
+            : sensor_msgs::msg::PointField::FLOAT64;
+    time = &requireField(message, point_time_.field, datatype);
   }
-  if (timing_mode_ == LidarTimingMode::kPerPoint && time == nullptr) {
-    throw std::invalid_argument("per_point timing requires uint32 time field");
-  }
-  if (message.row_step < message.point_step * static_cast<std::uint64_t>(message.width) ||
-      message.data.size() < message.row_step * static_cast<std::uint64_t>(message.height)) {
+  if (message.point_step == 0U ||
+      static_cast<std::uint64_t>(message.point_step) * message.width >
+          std::numeric_limits<std::uint32_t>::max() ||
+      message.row_step <
+          static_cast<std::uint64_t>(message.point_step) * message.width ||
+      static_cast<std::uint64_t>(message.row_step) * message.height >
+          message.data.size()) {
     throw std::invalid_argument("PointCloud2 storage layout is inconsistent");
   }
+  const auto point_count =
+      static_cast<std::size_t>(message.width) * message.height;
+  if (point_count == 0U) {
+    throw std::invalid_argument("PointCloud2 must contain at least one point");
+  }
 
-  const auto start_time =
+  const auto header_time =
       RosTimeConverter::fromRos(message.header.stamp, clock_domain_);
-  LidarScan scan{start_time, start_time, {}, time != nullptr};
-  scan.points.reserve(static_cast<std::size_t>(message.width) * message.height);
-  std::uint32_t maximum_relative_time = 0U;
+  std::vector<std::int64_t> absolute_times;
+  if (time != nullptr &&
+      point_time_.encoding == PointTimeEncoding::kFloat64AbsoluteNanoseconds) {
+    absolute_times.reserve(point_count);
+  }
+  LidarScan scan{header_time, header_time, {}, time != nullptr};
+  scan.points.reserve(point_count);
   for (std::uint32_t row = 0; row < message.height; ++row) {
     const auto* row_data = message.data.data() + row * message.row_step;
     for (std::uint32_t column = 0; column < message.width; ++column) {
@@ -83,15 +101,81 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
       converted.position_lidar_m = {readScalar<float>(point, x.offset, message.point_step),
                                     readScalar<float>(point, y.offset, message.point_step),
                                     readScalar<float>(point, z.offset, message.point_step)};
+      std::int64_t absolute_time = 0;
+      if (time != nullptr &&
+          point_time_.encoding == PointTimeEncoding::kUint32RelativeNanoseconds) {
+        converted.relative_time_ns =
+            readScalar<std::uint32_t>(point, time->offset, message.point_step);
+      } else if (time != nullptr) {
+        const double raw =
+            readScalar<double>(point, time->offset, message.point_step);
+        if (!std::isfinite(raw) ||
+            static_cast<long double>(raw) <
+                static_cast<long double>(std::numeric_limits<std::int64_t>::min()) ||
+            static_cast<long double>(raw) >
+                static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+          throw std::invalid_argument("point timestamp is non-finite or outside int64");
+        }
+        // std::round specifies half-away-from-zero; conversion happens before
+        // timestamp subtraction so absolute doubles never enter fast_lio_core.
+        absolute_time = static_cast<std::int64_t>(std::round(raw));
+      }
       if (!converted.position_lidar_m.allFinite()) {
         continue;
       }
-      converted.relative_time_ns =
-          time == nullptr ? 0U : readScalar<std::uint32_t>(point, time->offset, message.point_step);
-      maximum_relative_time = std::max(maximum_relative_time, converted.relative_time_ns);
+      if (time != nullptr &&
+          point_time_.encoding == PointTimeEncoding::kFloat64AbsoluteNanoseconds) {
+        absolute_times.push_back(absolute_time);
+      }
       scan.points.push_back(converted);
     }
   }
+  if (scan.points.empty()) {
+    throw std::invalid_argument("PointCloud2 contains no finite XYZ point");
+  }
+
+  std::int64_t scan_start_ns = header_time.nanoseconds();
+  if (!absolute_times.empty()) {
+    scan_start_ns = point_time_.scan_reference == ScanReference::kMinimumPointTime
+                        ? *std::min_element(absolute_times.begin(), absolute_times.end())
+                        : header_time.nanoseconds();
+    if (std::abs(static_cast<long double>(header_time.nanoseconds()) -
+                 static_cast<long double>(scan_start_ns)) >
+        point_time_.maximum_header_offset_ns) {
+      throw std::invalid_argument("PointCloud2 header/point timestamp offset exceeds limit");
+    }
+    for (std::size_t index = 0; index < scan.points.size(); ++index) {
+      const auto difference =
+          checkedDifference(Timestamp{absolute_times[index], clock_domain_},
+                            Timestamp{scan_start_ns, clock_domain_});
+      if (!difference.ok()) {
+        throw std::invalid_argument("point relative timestamp overflows int64");
+      }
+      const auto relative = difference.value().nanoseconds();
+      if (relative < 0 ||
+          relative > point_time_.maximum_scan_duration_ns ||
+          relative > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::invalid_argument("point relative timestamp is invalid");
+      }
+      scan.points[index].relative_time_ns =
+          static_cast<std::uint32_t>(relative);
+    }
+  }
+  std::uint32_t maximum_relative_time = 0U;
+  for (const auto& point : scan.points) {
+    maximum_relative_time =
+        std::max(maximum_relative_time, point.relative_time_ns);
+  }
+  if (maximum_relative_time >
+      static_cast<std::uint64_t>(point_time_.maximum_scan_duration_ns)) {
+    throw std::invalid_argument("PointCloud2 scan duration exceeds configured limit");
+  }
+  if (point_time_.reject_scan_timestamp_regression &&
+      previous_scan_start_ns_ >= 0 && scan_start_ns < previous_scan_start_ns_) {
+    throw std::invalid_argument("PointCloud2 scan timestamp regressed");
+  }
+  scan.start_time = Timestamp{scan_start_ns, clock_domain_};
+  previous_scan_start_ns_ = scan_start_ns;
   const auto end_time = checkedAdd(scan.start_time, Duration{maximum_relative_time});
   if (!end_time.ok()) {
     throw std::invalid_argument(end_time.status().message());

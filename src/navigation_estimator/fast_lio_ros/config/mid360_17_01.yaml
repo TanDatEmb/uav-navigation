@@ -7,8 +7,14 @@ fast_lio:
       lidar_frame: livox_frame
       imu_frame: livox_frame
       lidar_message_type: pointcloud2
+      point_time:
+        field: timestamp
+        encoding: float64_absolute_nanoseconds
+        scan_reference: minimum_point_time
+        maximum_scan_duration_ns: 200000000
+        maximum_header_offset_ns: 200000000
     timing:
-      lidar_mode: simultaneous_scan
+      lidar_mode: per_point
       clock_domain: sensor_time
       livox_timestamp_policy: timebase_authoritative
       max_imu_gap_ns: 20000000

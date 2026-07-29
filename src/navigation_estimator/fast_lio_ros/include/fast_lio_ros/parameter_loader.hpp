@@ -24,6 +24,11 @@ struct RosParameters {
   std::string imu_input_frame;
   std::string lidar_message_type;
   std::string lidar_timing_mode;
+  std::string point_time_field;
+  std::string point_time_encoding;
+  std::string point_time_scan_reference;
+  std::int64_t maximum_scan_duration_ns{};
+  std::int64_t maximum_header_offset_ns{};
   std::string input_clock_domain;
   std::string livox_timestamp_policy;
   std::int64_t maximum_imu_gap_ns{};

@@ -30,6 +30,24 @@ LivoxTimestampPolicy livoxTimestampPolicy(
   throw std::invalid_argument("unsupported Livox timestamp policy");
 }
 
+PointTimeConfig pointTimeConfig(const RosParameters& parameters) {
+  PointTimeConfig result;
+  result.field = parameters.point_time_field;
+  result.encoding =
+      parameters.point_time_encoding == "float64_absolute_nanoseconds"
+          ? PointTimeEncoding::kFloat64AbsoluteNanoseconds
+          : PointTimeEncoding::kUint32RelativeNanoseconds;
+  result.scan_reference =
+      parameters.point_time_scan_reference == "minimum_point_time"
+          ? ScanReference::kMinimumPointTime
+          : ScanReference::kHeaderStamp;
+  result.maximum_scan_duration_ns = parameters.maximum_scan_duration_ns;
+  result.maximum_header_offset_ns = parameters.maximum_header_offset_ns;
+  result.reject_scan_timestamp_regression =
+      parameters.reject_timestamp_regression;
+  return result;
+}
+
 }  // namespace
 
 FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
@@ -40,7 +58,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       imu_adapter_(parameters_.imu_input_frame,
                    parseClockDomain(parameters_.input_clock_domain)),
       lidar_adapter_(parameters_.lidar_input_frame, adapterTiming(parameters_),
-                     parseClockDomain(parameters_.input_clock_domain)),
+                     parseClockDomain(parameters_.input_clock_domain),
+                     pointTimeConfig(parameters_)),
       livox_custom_adapter_(
           parameters_.lidar_input_frame,
           parseClockDomain(parameters_.input_clock_domain),

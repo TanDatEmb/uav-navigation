@@ -151,6 +151,16 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("input.imu_frame", result.imu_frame);
   result.lidar_message_type = node.declare_parameter("input.lidar_message_type", "pointcloud2");
   result.lidar_timing_mode = node.declare_parameter("timing.lidar_mode", "simultaneous_scan");
+  result.point_time_field =
+      node.declare_parameter("input.point_time.field", "time");
+  result.point_time_encoding = node.declare_parameter(
+      "input.point_time.encoding", "uint32_relative_nanoseconds");
+  result.point_time_scan_reference =
+      node.declare_parameter("input.point_time.scan_reference", "header_stamp");
+  result.maximum_scan_duration_ns = node.declare_parameter<std::int64_t>(
+      "input.point_time.maximum_scan_duration_ns", 200'000'000);
+  result.maximum_header_offset_ns = node.declare_parameter<std::int64_t>(
+      "input.point_time.maximum_header_offset_ns", 200'000'000);
   result.input_clock_domain =
       node.declare_parameter("timing.clock_domain", "ros_time");
   result.livox_timestamp_policy = node.declare_parameter(
@@ -257,6 +267,14 @@ void ParameterLoader::validate(const RosParameters& p) {
   }
   if (p.lidar_timing_mode != "simultaneous_scan" && p.lidar_timing_mode != "per_point") {
     throw std::invalid_argument("production lidar timing must be simultaneous_scan or per_point");
+  }
+  if (p.point_time_field.empty() ||
+      (p.point_time_encoding != "uint32_relative_nanoseconds" &&
+       p.point_time_encoding != "float64_absolute_nanoseconds") ||
+      (p.point_time_scan_reference != "header_stamp" &&
+       p.point_time_scan_reference != "minimum_point_time") ||
+      p.maximum_scan_duration_ns <= 0 || p.maximum_header_offset_ns < 0) {
+    throw std::invalid_argument("invalid input.point_time configuration");
   }
   static_cast<void>(parseClockDomain(p.input_clock_domain));
   if (p.livox_timestamp_policy != "require_header_match" &&
