@@ -450,13 +450,16 @@ def git_short_sha() -> str:
     ).stdout.strip()
 
 
-def new_run_directory(dataset_id: str, action: str) -> Path:
+def new_run_directory(
+    dataset_id: str, action: str, *, create: bool = True
+) -> Path:
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     output = (
         ROOT / ".artifacts/datasets" / dataset_id
         / f"{git_short_sha()}-{action}-{stamp}"
     )
-    output.mkdir(parents=True, exist_ok=False)
+    if create:
+        output.mkdir(parents=True, exist_ok=False)
     return output
 
 
@@ -527,8 +530,9 @@ def run_offline(args: argparse.Namespace, home: Path, smoke: bool) -> int:
 def run_replay(args: argparse.Namespace, home: Path) -> int:
     context = dataset_context(args.dataset, home)
     counts = bag_topic_counts(context)
-    output = new_run_directory(context["id"], f"replay-{args.rate}x")
-    write_run_json(output, "replay", context, counts)
+    output = new_run_directory(
+        context["id"], f"replay-{args.rate}x", create=False
+    )
     command = [
         sys.executable, str(ROOT / "tools/runtime/ros_replay.py"), "run",
         "--bag", str(context["bag"]), "--config", str(context["config"]),
@@ -537,7 +541,10 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
         "--lidar-topic", str(context["input"]["lidar_topic"]),
         "--rate", str(args.rate),
     ]
-    return subprocess.run(command, cwd=ROOT).returncode
+    result = subprocess.run(command, cwd=ROOT)
+    if result.returncode == 0:
+        write_run_json(output, "replay", context, counts)
+    return result.returncode
 
 
 def view_latest(dataset_id: str) -> int:
