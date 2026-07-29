@@ -18,6 +18,12 @@ struct LocalMapManagerConfig {
 
 struct LocalMapUpdate {
   bool crop_performed{false};
+  bool soft_limit_triggered{false};
+  bool hard_limit_triggered{false};
+  bool hard_limit_recovery_failed{false};
+  std::size_t map_count_before{0};
+  std::size_t map_count_after_crop{0};
+  std::size_t map_count_after_prune{0};
   std::size_t removed_point_count{0};
   std::size_t distance_pruned_count{0};
   bool crop_triggered_by_motion{false};
@@ -38,6 +44,7 @@ class LocalMapManager {
   LocalMapManagerConfig config_;
   Eigen::Vector3d last_crop_center_odom_m_{Eigen::Vector3d::Zero()};
   bool has_crop_center_{false};
+  bool soft_maintenance_armed_{true};
 };
 
 }  // namespace uav::nav::lio

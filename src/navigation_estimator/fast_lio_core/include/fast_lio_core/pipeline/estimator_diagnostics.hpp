@@ -143,6 +143,12 @@ struct MapDiagnostics {
   std::size_t crop_removed_count{0};
   bool crop_triggered_by_motion{false};
   bool crop_triggered_by_point_threshold{false};
+  bool soft_limit_triggered{false};
+  bool hard_limit_triggered{false};
+  bool hard_limit_recovery_failed{false};
+  std::size_t map_count_before{0};
+  std::size_t map_count_after_crop{0};
+  std::size_t map_count_after_prune{0};
   std::size_t map_size_before_maintenance{0};
   std::size_t confidence_pruned_count{0};
   std::size_t distance_pruned_count{0};

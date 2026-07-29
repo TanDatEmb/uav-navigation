@@ -306,6 +306,11 @@ TEST(RegistrationMapTest,
   config.distance_shell_size_m = 1.0;
   LocalMapManager manager(config);
   const auto first = manager.update(map, {0.0, 0.0, 0.0});
+  EXPECT_TRUE(first.soft_limit_triggered);
+  EXPECT_TRUE(first.hard_limit_triggered);
+  EXPECT_FALSE(first.hard_limit_recovery_failed);
+  EXPECT_EQ(first.map_count_before, 10U);
+  EXPECT_EQ(first.map_count_after_prune, 3U);
   EXPECT_EQ(first.distance_pruned_count, 7U);
   EXPECT_EQ(first.removed_point_count, 7U);
   EXPECT_EQ(map.size(), 3U);
@@ -319,6 +324,36 @@ TEST(RegistrationMapTest,
                 ->norm(),
             2.01);
   const auto second = manager.update(map, {0.1, 0.0, 0.0});
+  EXPECT_FALSE(second.crop_performed);
+  EXPECT_EQ(second.distance_pruned_count, 0U);
+}
+
+TEST(RegistrationMapTest, SoftLimitRunsBudgetedCropWithoutDistancePrune) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.01;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> points;
+  for (int index = 0; index < 6; ++index) {
+    points.emplace_back(static_cast<double>(index), 0.0, 0.0);
+  }
+  ASSERT_EQ(map.insert(points), 6U);
+  LocalMapManagerConfig config;
+  config.half_extent_m = {100.0, 100.0, 100.0};
+  config.crop_trigger_distance_m = 1.0;
+  config.soft_point_limit = 5;
+  config.hard_point_limit = 8;
+  config.target_point_count_after_prune = 3;
+  LocalMapManager manager(config);
+
+  const auto first = manager.update(map, {0.0, 0.0, 0.0});
+  EXPECT_TRUE(first.soft_limit_triggered);
+  EXPECT_FALSE(first.hard_limit_triggered);
+  EXPECT_TRUE(first.crop_performed);
+  EXPECT_EQ(first.distance_pruned_count, 0U);
+  EXPECT_EQ(first.map_count_after_prune, 6U);
+
+  const auto second = manager.update(map, {0.1, 0.0, 0.0});
+  EXPECT_TRUE(second.soft_limit_triggered);
   EXPECT_FALSE(second.crop_performed);
   EXPECT_EQ(second.distance_pruned_count, 0U);
 }

@@ -424,6 +424,18 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         local_map_update.crop_triggered_by_motion;
     diagnostics_.map.crop_triggered_by_point_threshold =
         local_map_update.crop_triggered_by_point_threshold;
+    diagnostics_.map.soft_limit_triggered =
+        local_map_update.soft_limit_triggered;
+    diagnostics_.map.hard_limit_triggered =
+        local_map_update.hard_limit_triggered;
+    diagnostics_.map.hard_limit_recovery_failed =
+        local_map_update.hard_limit_recovery_failed;
+    diagnostics_.map.map_count_before =
+        local_map_update.map_count_before;
+    diagnostics_.map.map_count_after_crop =
+        local_map_update.map_count_after_crop;
+    diagnostics_.map.map_count_after_prune =
+        local_map_update.map_count_after_prune;
     diagnostics_.map.inserted_point_count = inserted;
     diagnostics_.map.removed_point_count = local_map_update.removed_point_count;
     diagnostics_.map.local_map_center_odom_m = local_map_update.center_odom_m;
