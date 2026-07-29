@@ -21,12 +21,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_OUTPUTS = (
-    "run_manifest.json",
-    "run_summary.json",
+    "run.json",
+    "summary.json",
     "diagnostics.csv",
     "trajectory.csv",
     "corrections.csv",
-    "local_registration_map_final.pcd",
+    "local_map.pcd",
     "stdout.log",
     "stderr.log",
 )
@@ -159,7 +159,7 @@ def write_manifest(
         "input": manifest["input"],
         "observed_counts": counts,
     }
-    (output / "run_manifest.json").write_text(
+    (output / "run.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
@@ -182,7 +182,7 @@ def run_offline(args: argparse.Namespace, smoke: bool) -> int:
     output = new_run_directory(str(manifest["name"]), action)
     write_manifest(output, action, directory, bag, config, manifest, counts)
     command = [
-        "ros2", "run", "fast_lio_tools", "mid360_dataset_runner",
+        "ros2", "run", "fast_lio_tools", "lio_offline",
         str(bag), str(config), str(output),
     ]
     if smoke:
@@ -196,7 +196,7 @@ def run_offline(args: argparse.Namespace, smoke: bool) -> int:
     missing = [name for name in REQUIRED_OUTPUTS if not (output / name).is_file()]
     if missing:
         raise DatasetError(f"runner omitted required outputs: {', '.join(missing)}")
-    summary = json.loads((output / "run_summary.json").read_text(encoding="utf-8"))
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
     gates = {
         "adapter rejection count": summary.get("core_rejected_lidar_count") == 0,
         "invalid timestamp rejection count": summary.get(
@@ -268,7 +268,7 @@ def run_ros(args: argparse.Namespace) -> int:
         raise DatasetError(
             f"estimator node failed with exit code {node.returncode}: {output}"
         )
-    (output / "run_summary.json").write_text(
+    (output / "summary.json").write_text(
         json.dumps(
             {
                 "dataset": manifest["name"],
@@ -290,7 +290,7 @@ def run_ros(args: argparse.Namespace) -> int:
 def view_dataset(args: argparse.Namespace) -> int:
     directory, manifest = resolve_dataset(args.dataset, args.data_root)
     base = ROOT / ".artifacts" / "datasets" / str(manifest["name"])
-    maps = sorted(base.glob("*/local_registration_map_final.pcd"), key=os.path.getmtime)
+    maps = sorted(base.glob("*/local_map.pcd"), key=os.path.getmtime)
     if not maps:
         raise DatasetError(f"no local registration map found under {base}")
     viewer = shutil.which("pcl_viewer")
@@ -336,11 +336,11 @@ def main() -> int:
         print(
             """UAV navigation developer targets:
   make build | test | check | clean | clean-artifacts
-  make dataset-inspect DATASET=mid360_17_01
-  make dataset-smoke DATASET=/absolute/or/relative/dataset
-  make dataset-run DATASET=mid360_17_01
-  make dataset-ros DATASET=mid360_17_01 RATE=1.0
-  make dataset-view DATASET=mid360_17_01"""
+  make data-info DATASET=aist-mid360-drive
+  make data-smoke DATASET=/absolute/or/relative/dataset
+  make data-run DATASET=aist-mid360-drive
+  make data-replay DATASET=aist-mid360-drive RATE=1.0
+  make data-view DATASET=aist-mid360-drive"""
         )
         return 0
     if args.action == "clean":

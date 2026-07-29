@@ -251,7 +251,7 @@ int run(const std::filesystem::path& bag_path,
           ? static_cast<double>(processing.correction_success_count) /
                 dataset_duration_seconds
           : 0.0;
-  writePcd(output_path / "local_registration_map_final.pcd", map);
+  writePcd(output_path / "local_map.pcd", map);
   const auto write_run_metadata =
       [&](const std::filesystem::path& path, bool include_map_frame) {
     std::ofstream summary(path);
@@ -344,9 +344,9 @@ int run(const std::filesystem::path& bag_path,
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
   };
-  write_run_metadata(output_path / "run_summary.json", false);
-  if (!std::filesystem::exists(output_path / "run_manifest.json")) {
-    write_run_metadata(output_path / "run_manifest.json", false);
+  write_run_metadata(output_path / "summary.json", false);
+  if (!std::filesystem::exists(output_path / "run.json")) {
+    write_run_metadata(output_path / "run.json", false);
   }
   write_run_metadata(output_path / "map_metadata.json", true);
   return 0;
@@ -357,7 +357,7 @@ int run(const std::filesystem::path& bag_path,
 
 int main(int argc, char** argv) {
   if (argc != 4 && argc != 5) {
-    std::cerr << "usage: mid360_dataset_runner BAG_DIRECTORY CONFIG_YAML "
+    std::cerr << "usage: lio_offline BAG_DIRECTORY CONFIG_YAML "
                  "OUTPUT_DIRECTORY [MAX_LIDAR]\n";
     return 64;
   }

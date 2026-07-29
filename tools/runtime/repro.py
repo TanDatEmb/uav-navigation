@@ -223,7 +223,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def extract_estimator_state(output: Path) -> dict[str, Any]:
-    runner = read_json(output / "run_summary.json")
+    runner = read_json(output / "summary.json")
     last_record = None
     last_map_before = runner.get("map_size_before_insert")
     last_map_after = runner.get("map_size_after_insert")
@@ -342,7 +342,7 @@ def main() -> int:
         parser().error("repeat must be positive and max-lidar nonnegative")
     output.mkdir(parents=True, exist_ok=False)
     command = args.runner or [
-        "ros2", "run", "fast_lio_tools", "mid360_dataset_runner",
+        "ros2", "run", "fast_lio_tools", "lio_offline",
         str(bag), str(config), "{output}",
     ]
     if args.max_lidar:

@@ -57,7 +57,7 @@ class ReproducerTest(unittest.TestCase):
     def test_extracts_last_known_estimator_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
-            (output / "run_summary.json").write_text(
+            (output / "summary.json").write_text(
                 json.dumps({
                     "raw_dataset_lidar_count": 7,
                     "successful_correction_count": 5,

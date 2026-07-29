@@ -29,12 +29,12 @@ add_executable(fast_lio_offline_evaluator
   src/fast_lio_offline_evaluator.cpp)
 target_link_libraries(fast_lio_offline_evaluator PRIVATE ${PROJECT_NAME})
 
-add_executable(mid360_dataset_runner src/mid360_dataset_runner.cpp)
-target_compile_options(mid360_dataset_runner PRIVATE -Wall -Wextra -Wpedantic)
-ament_target_dependencies(mid360_dataset_runner
+add_executable(lio_offline src/mid360_dataset_runner.cpp)
+target_compile_options(lio_offline PRIVATE -Wall -Wextra -Wpedantic)
+ament_target_dependencies(lio_offline
   fast_lio_core fast_lio_ros livox_ros_driver2 rclcpp rosbag2_cpp sensor_msgs)
 
-install(TARGETS ${PROJECT_NAME} fast_lio_offline_evaluator mid360_dataset_runner
+install(TARGETS ${PROJECT_NAME} fast_lio_offline_evaluator lio_offline
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
