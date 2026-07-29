@@ -9,7 +9,7 @@
 namespace uav::nav::lio {
 
 // M1's dependency-light adapter format is documented in
-// docs/verification/offline_evaluation.md. rosbag2 support can be added at this
+// docs/fast_lio.md. rosbag2 support can be added at this
 // boundary without introducing ROS into fast_lio_core.
 class DatasetReader {
  public:

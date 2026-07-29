@@ -66,8 +66,8 @@ void appendRuntimeValues(
 
 RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
     : parameters_(std::move(parameters)), clock_(node.get_clock()) {
-  odometry_ = node.create_publisher<nav_msgs::msg::Odometry>("/lio/odometry",
-                                                             QosProfiles::estimatorOutput());
+  odometry_ = node.create_publisher<nav_msgs::msg::Odometry>(
+      "/lio/odometry_corrected", QosProfiles::estimatorOutput());
   registered_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
       "/lio/registered_points", QosProfiles::estimatorOutput());
   local_map_ = node.create_publisher<sensor_msgs::msg::PointCloud2>("/lio/local_map",
@@ -124,10 +124,11 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
   odometry.pose.pose.orientation.y = orientation.y();
   odometry.pose.pose.orientation.z = orientation.z();
   odometry.pose.pose.orientation.w = orientation.w();
-  const auto& velocity = state.velocity_odom_imu_m_s();
-  odometry.twist.twist.linear.x = velocity.x();
-  odometry.twist.twist.linear.y = velocity.y();
-  odometry.twist.twist.linear.z = velocity.z();
+  const Eigen::Vector3d velocity_imu =
+      orientation.conjugate() * state.velocity_odom_imu_m_s();
+  odometry.twist.twist.linear.x = velocity_imu.x();
+  odometry.twist.twist.linear.y = velocity_imu.y();
+  odometry.twist.twist.linear.z = velocity_imu.z();
   odometry_->publish(odometry);
   if (parameters_.publish_registered_points && result.hasRegisteredScanOutput()) {
     registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));

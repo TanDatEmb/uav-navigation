@@ -253,7 +253,7 @@ int run(const std::filesystem::path& bag_path,
           : 0.0;
   writePcd(output_path / "local_map.pcd", map);
   const auto write_run_metadata =
-      [&](const std::filesystem::path& path, bool include_map_frame) {
+      [&](const std::filesystem::path& path) {
     std::ofstream summary(path);
     summary << "{\n"
           << "  \"config_path\": \"" << profile.config_path << "\",\n"
@@ -282,10 +282,6 @@ int run(const std::filesystem::path& bag_path,
           << profile.estimator.extrinsic.rotation_imu_lidar.y() << ", "
           << profile.estimator.extrinsic.rotation_imu_lidar.z() << ", "
           << profile.estimator.extrinsic.rotation_imu_lidar.w() << "],\n";
-    if (include_map_frame) {
-      summary << "  \"frame\": \"odom\",\n"
-              << "  \"point_unit\": \"meter\",\n";
-    }
     summary
           << "  \"raw_dataset_imu_count\": " << counters.raw_imu << ",\n"
           << "  \"raw_dataset_lidar_count\": " << counters.raw_lidar << ",\n"
@@ -344,11 +340,10 @@ int run(const std::filesystem::path& bag_path,
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
   };
-  write_run_metadata(output_path / "summary.json", false);
+  write_run_metadata(output_path / "summary.json");
   if (!std::filesystem::exists(output_path / "run.json")) {
-    write_run_metadata(output_path / "run.json", false);
+    write_run_metadata(output_path / "run.json");
   }
-  write_run_metadata(output_path / "map_metadata.json", true);
   return 0;
 }
 

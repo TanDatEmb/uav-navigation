@@ -87,7 +87,7 @@ def export(bag: Path, output: Path) -> None:
     with AnyReader([bag]) as reader:
         for connection, record_time, raw in reader.messages():
             message = reader.deserialize(raw, connection.msgtype)
-            if connection.topic == "/lio/odometry":
+            if connection.topic == "/lio/odometry_corrected":
                 pose = message.pose.pose
                 odometry.append([
                     message.header.stamp.sec * 1_000_000_000

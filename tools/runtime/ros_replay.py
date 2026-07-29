@@ -16,7 +16,7 @@ from typing import Any
 
 RECORDED_TOPICS = (
     "/lio/diagnostics",
-    "/lio/odometry",
+    "/lio/odometry_corrected",
     "/lio/registered_points",
     "/lio/local_map",
     "/tf",
