@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -23,10 +26,39 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "datasets" / "catalog"
 RAW_SUFFIXES = {".bag", ".mcap", ".db3"}
 GENERATED_LIMIT = 10 * 1024 * 1024
+MATRIX_SETS = {
+    "core": (
+        "aist-mid360-drive",
+        "local-mid360-static01",
+        "local-mid360-yaw01",
+    ),
+    "runtime": (
+        "aist-mid360-drive",
+        "m3dgr-mid360-dynamic01",
+    ),
+    "map": (
+        "m3dgr-mid360-dynamic01",
+        "m3dgr-mid360-corridor02",
+        "local-mid360-square01",
+    ),
+    "optional-uav": (
+        "tiers-mid360-updown01",
+        "tiers-mid360-square01",
+    ),
+}
 
 
 class DataError(RuntimeError):
     pass
+
+
+def atomic_json(path: Path, payload: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
 
 
 def data_home() -> Path:
@@ -310,17 +342,310 @@ def workflow_dataset(value: str, home: Path) -> str:
     raise DataError(f"{value} is not prepared in the external data home")
 
 
+def matrix_datasets(name: str) -> tuple[str, ...]:
+    if name == "all":
+        ordered: list[str] = []
+        for group in ("core", "runtime", "map"):
+            for dataset_id in MATRIX_SETS[group]:
+                if dataset_id not in ordered:
+                    ordered.append(dataset_id)
+        return tuple(ordered)
+    if name not in MATRIX_SETS:
+        raise DataError(f"unknown matrix set: {name}")
+    return MATRIX_SETS[name]
+
+
+def matrix_actions(repeat: int, margin: bool) -> tuple[tuple[str, ...], ...]:
+    if repeat <= 0:
+        raise DataError("matrix repeat must be positive")
+    actions: list[tuple[str, ...]] = [
+        ("info",),
+        ("smoke", "--max-lidar", "20"),
+        ("run",),
+    ]
+    actions.extend(("run",) for _ in range(repeat))
+    actions.extend(
+        [
+            ("replay", "--rate", "0.5"),
+            ("replay", "--rate", "1.0"),
+        ]
+    )
+    if margin:
+        actions.append(("replay", "--rate", "1.2"))
+    return tuple(actions)
+
+
+def read_trajectory(path: Path) -> list[tuple[int, tuple[float, ...]]]:
+    samples = []
+    with path.open(encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream):
+            samples.append((
+                int(row["time_ns"]),
+                tuple(float(row[key]) for key in (
+                    "x", "y", "z", "qx", "qy", "qz", "qw"
+                )),
+            ))
+    return samples
+
+
+def quaternion_multiply(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return (
+        lw * rx + lx * rw + ly * rz - lz * ry,
+        lw * ry - lx * rz + ly * rw + lz * rx,
+        lw * rz + lx * ry - ly * rx + lz * rw,
+        lw * rw - lx * rx - ly * ry - lz * rz,
+    )
+
+
+def quaternion_inverse(
+    value: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    x, y, z, w = value
+    norm_squared = x * x + y * y + z * z + w * w
+    return (-x / norm_squared, -y / norm_squared,
+            -z / norm_squared, w / norm_squared)
+
+
+def rotation_angle(value: tuple[float, float, float, float]) -> float:
+    norm = math.sqrt(sum(component * component for component in value))
+    return 2.0 * math.acos(min(1.0, max(-1.0, abs(value[3] / norm))))
+
+
+def trajectory_metrics(
+    estimate: list[tuple[int, tuple[float, ...]]],
+    truth: list[tuple[int, tuple[float, ...]]],
+    maximum_time_delta_ns: int,
+) -> dict:
+    if not estimate or not truth:
+        raise DataError("trajectory metrics require non-empty trajectories")
+    truth_by_time = sorted(truth)
+    matched = []
+    truth_index = 0
+    for estimate_sample in sorted(estimate):
+        while (
+            truth_index + 1 < len(truth_by_time)
+            and abs(truth_by_time[truth_index + 1][0] - estimate_sample[0])
+            <= abs(truth_by_time[truth_index][0] - estimate_sample[0])
+        ):
+            truth_index += 1
+        truth_sample = truth_by_time[truth_index]
+        if abs(truth_sample[0] - estimate_sample[0]) <= maximum_time_delta_ns:
+            matched.append((estimate_sample, truth_sample))
+    if not matched:
+        raise DataError("no estimate/ground-truth timestamps matched")
+    squared_position_errors = []
+    rpe_translation_squared = []
+    rpe_rotation_squared = []
+    for (_, estimate_value), (_, truth_value) in matched:
+        squared_position_errors.append(sum(
+            (estimate_value[index] - truth_value[index]) ** 2
+            for index in range(3)
+        ))
+    for index in range(1, len(matched)):
+        previous_estimate = matched[index - 1][0][1]
+        current_estimate = matched[index][0][1]
+        previous_truth = matched[index - 1][1][1]
+        current_truth = matched[index][1][1]
+        estimate_delta = tuple(
+            current_estimate[axis] - previous_estimate[axis]
+            for axis in range(3)
+        )
+        truth_delta = tuple(
+            current_truth[axis] - previous_truth[axis] for axis in range(3)
+        )
+        rpe_translation_squared.append(sum(
+            (estimate_delta[axis] - truth_delta[axis]) ** 2
+            for axis in range(3)
+        ))
+        estimate_rotation = quaternion_multiply(
+            quaternion_inverse(tuple(previous_estimate[3:7])),
+            tuple(current_estimate[3:7]),
+        )
+        truth_rotation = quaternion_multiply(
+            quaternion_inverse(tuple(previous_truth[3:7])),
+            tuple(current_truth[3:7]),
+        )
+        rotation_error = quaternion_multiply(
+            quaternion_inverse(truth_rotation), estimate_rotation
+        )
+        rpe_rotation_squared.append(rotation_angle(rotation_error) ** 2)
+    rms = lambda values: (
+        math.sqrt(sum(values) / len(values)) if values else None
+    )
+    return {
+        "ate_translation_rmse_m": rms(squared_position_errors),
+        "rpe_translation_rmse_m": rms(rpe_translation_squared),
+        "rpe_rotation_rmse_rad": rms(rpe_rotation_squared),
+        "trajectory_coverage": len(matched) / len(estimate),
+        "matched_pose_count": len(matched),
+        "estimate_pose_count": len(estimate),
+        "thresholds_applied": False,
+    }
+
+
+def ground_truth_metrics(
+    entry: dict, dataset_path: Path, run_output: Path
+) -> dict:
+    ground_truth = entry.get("ground_truth") or {}
+    if not ground_truth.get("available"):
+        return {"available": False}
+    relative = ground_truth.get("path")
+    if not relative:
+        return {
+            "available": True,
+            "computed": False,
+            "reason": "catalog has no prepared ground_truth.path",
+        }
+    if ground_truth.get("alignment") != "same_frame":
+        return {
+            "available": True,
+            "computed": False,
+            "reason": "ground-truth frame alignment is not verified",
+        }
+    metrics = trajectory_metrics(
+        read_trajectory(run_output / "trajectory.csv"),
+        read_trajectory(dataset_path / str(relative)),
+        int(ground_truth.get("maximum_time_delta_ns", 20_000_000)),
+    )
+    return {"available": True, "computed": True, **metrics}
+
+
+def run_matrix(args: argparse.Namespace, home: Path) -> int:
+    dataset_ids = matrix_datasets(args.case)
+    actions = matrix_actions(args.repeat, args.margin)
+    if args.plan_only:
+        for dataset_id in dataset_ids:
+            print(dataset_id)
+            for action in actions:
+                print("  " + " ".join(action))
+        return 0
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, text=True,
+        capture_output=True,
+    ).stdout.strip()
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = ROOT / ".artifacts" / "data-matrix" / args.case / f"{sha}-{stamp}"
+    output.mkdir(parents=True, exist_ok=False)
+    results = []
+    for dataset_id in dataset_ids:
+        try:
+            dataset_path = Path(workflow_dataset(dataset_id, home))
+        except DataError as error:
+            results.append({
+                "dataset": dataset_id,
+                "status": "unavailable",
+                "error": str(error),
+                "actions": [],
+            })
+            continue
+        action_results = []
+        full_run_output: Path | None = None
+        for action in actions:
+            command = [
+                sys.executable, str(Path(__file__).resolve()),
+                "--data-home", str(home), action[0],
+                "--dataset", dataset_id, *action[1:],
+            ]
+            completed = subprocess.run(
+                command, cwd=ROOT, text=True, capture_output=True
+            )
+            if completed.stdout:
+                print(completed.stdout, end="")
+            if completed.stderr:
+                print(completed.stderr, end="", file=sys.stderr)
+            output_path = None
+            for line in reversed(completed.stdout.splitlines()):
+                candidate = Path(line.strip())
+                if candidate.is_dir():
+                    output_path = str(candidate)
+                    break
+            action_result = {
+                "action": list(action),
+                "returncode": completed.returncode,
+                "output": output_path,
+            }
+            action_results.append(action_result)
+            if action == ("run",) and full_run_output is None and output_path:
+                full_run_output = Path(output_path)
+            if completed.returncode != 0:
+                break
+        entry = lookup(dataset_id)
+        metrics = (
+            ground_truth_metrics(entry, dataset_path, full_run_output)
+            if full_run_output is not None
+            else {"available": bool(
+                (entry.get("ground_truth") or {}).get("available")
+            ), "computed": False, "reason": "full offline run unavailable"}
+        )
+        results.append({
+            "dataset": dataset_id,
+            "status": (
+                "passed"
+                if len(action_results) == len(actions)
+                and all(item["returncode"] == 0 for item in action_results)
+                else "failed"
+            ),
+            "actions": action_results,
+            "ground_truth_metrics": metrics,
+        })
+        atomic_json(output / "summary.json", {
+            "schema_version": 1,
+            "set": args.case,
+            "git_sha": sha,
+            "datasets": results,
+        })
+    failures = [item for item in results if item["status"] != "passed"]
+    atomic_json(output / "summary.json", {
+        "schema_version": 1,
+        "set": args.case,
+        "git_sha": sha,
+        "datasets": results,
+        "failure_count": len(failures),
+    })
+    print(output)
+    return 1 if failures else 0
+
+
 def call_legacy(action: str, args: argparse.Namespace, home: Path) -> int:
+    dataset_path = Path(workflow_dataset(args.dataset, home))
+    if action == "replay":
+        manifest = load_yaml(dataset_path / "dataset.yaml")
+        bag = (dataset_path / str(manifest["bag"])).resolve()
+        config = Path(str(manifest["config"]["path"])).expanduser()
+        if not config.is_absolute():
+            config = (ROOT / config).resolve()
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, check=True,
+            text=True, capture_output=True,
+        ).stdout.strip()
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output = (
+            ROOT / ".artifacts" / "datasets" / str(manifest["name"])
+            / f"{sha}-replay-{args.rate}x-{stamp}"
+        )
+        input_config = manifest["input"]
+        command = [
+            sys.executable, str(ROOT / "tools/runtime/ros_replay.py"), "run",
+            "--bag", str(bag), "--config", str(config),
+            "--output", str(output),
+            "--imu-topic", str(input_config["imu_topic"]),
+            "--lidar-topic", str(input_config["lidar_topic"]),
+            "--rate", str(args.rate),
+        ]
+        return subprocess.run(command, cwd=ROOT).returncode
     aliases = {"info": "inspect", "replay": "ros"}
     command = [
         sys.executable, str(ROOT / "tools" / "dev" / "dataset.py"),
         aliases.get(action, action), "--dataset",
-        workflow_dataset(args.dataset, home),
+        str(dataset_path),
     ]
     if action == "smoke":
         command += ["--max-lidar", str(args.max_lidar)]
-    if action == "replay":
-        command += ["--rate", str(args.rate)]
     return subprocess.run(command, cwd=ROOT).returncode
 
 
@@ -335,7 +660,10 @@ def parser() -> argparse.ArgumentParser:
         if action == "prepare":
             child.add_argument("--keep-archive", choices=("0", "1"), default="1")
     matrix = sub.add_parser("matrix")
-    matrix.add_argument("--case")
+    matrix.add_argument("--case", required=True)
+    matrix.add_argument("--repeat", type=int, default=3)
+    matrix.add_argument("--margin", action="store_true")
+    matrix.add_argument("--plan-only", action="store_true")
     for action in ("info", "view", "run", "replay", "smoke"):
         child = sub.add_parser(action)
         child.add_argument("--dataset", required=True)
@@ -368,10 +696,7 @@ def main() -> int:
         print("dataset catalog and tracked-blob guard: OK")
         return 0
     if args.action == "matrix":
-        for dataset_id, (_, item) in entries().items():
-            if not args.case or args.case in item["cases"]:
-                print(f"{dataset_id}\t{','.join(item['cases'])}")
-        return 0
+        return run_matrix(args, home)
     if args.action in {"info", "view", "run", "replay", "smoke"}:
         return call_legacy(args.action, args, home)
     if not args.dataset:
