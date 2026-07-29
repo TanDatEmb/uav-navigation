@@ -58,6 +58,8 @@ void appendRuntimeValues(
                             std::to_string(runtime.worker_busy_ratio)));
   values.push_back(keyValue("overflow_detected",
                             runtime.overflow_detected ? "true" : "false"));
+  values.push_back(keyValue("processing_lag_exceeded",
+                            runtime.processing_lag_exceeded ? "true" : "false"));
 }
 
 }  // namespace
@@ -305,12 +307,14 @@ void RosOutputPublisher::publishTransportSnapshot(
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "fast_lio/transport";
   status.hardware_id = "lidar_imu";
-  status.level = runtime.overflow_detected
+  status.level = runtime.overflow_detected || runtime.processing_lag_exceeded
                      ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
                      : diagnostic_msgs::msg::DiagnosticStatus::OK;
   status.message = runtime.overflow_detected
                        ? "INPUT_QUEUE_OVERFLOW"
-                       : "TRANSPORT_COUNTER_SNAPSHOT";
+                       : (runtime.processing_lag_exceeded
+                              ? "PROCESSING_LAG_LIMIT_EXCEEDED"
+                              : "TRANSPORT_COUNTER_SNAPSHOT");
   status.values = {
       keyValue("config_path", parameters_.config_path),
       keyValue("config_sha256", parameters_.config_sha256),

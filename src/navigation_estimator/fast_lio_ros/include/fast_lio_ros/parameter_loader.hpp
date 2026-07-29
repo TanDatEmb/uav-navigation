@@ -53,6 +53,10 @@ struct RosParameters {
   bool publish_registered_points{};
   bool publish_local_map{};
   double local_map_rate_hz{};
+  std::int64_t imu_queue_capacity{};
+  std::int64_t lidar_queue_capacity{};
+  std::int64_t maximum_processing_lag_ms{};
+  std::string overload_policy;
 };
 
 struct EstimatorProfile {

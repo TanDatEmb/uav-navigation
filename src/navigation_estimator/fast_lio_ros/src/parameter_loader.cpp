@@ -211,6 +211,14 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("output.publish_registered_points", true);
   result.publish_local_map = node.declare_parameter("output.publish_local_map", true);
   result.local_map_rate_hz = node.declare_parameter("output.local_map_rate_hz", 1.0);
+  result.imu_queue_capacity =
+      node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
+  result.lidar_queue_capacity =
+      node.declare_parameter<std::int64_t>("runtime.lidar_queue_capacity", 8);
+  result.maximum_processing_lag_ms = node.declare_parameter<std::int64_t>(
+      "runtime.maximum_processing_lag_ms", 500);
+  result.overload_policy =
+      node.declare_parameter("runtime.overload_policy", "fail");
   validate(result);
   return result;
 }
@@ -361,6 +369,11 @@ void ParameterLoader::validate(const RosParameters& p) {
       !std::isfinite(p.maximum_range_m) || !std::isfinite(p.voxel_size_m) ||
       !std::isfinite(p.local_map_rate_hz)) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
+  }
+  if (p.imu_queue_capacity <= 0 || p.lidar_queue_capacity <= 0 ||
+      p.maximum_processing_lag_ms <= 0 || p.overload_policy != "fail") {
+    throw std::invalid_argument(
+        "runtime queues must be positive and overload_policy must be fail");
   }
   const Eigen::Map<const Eigen::Vector3d> local_half_extent(
       p.local_map_half_extent_m.data());

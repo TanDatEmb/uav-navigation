@@ -58,6 +58,8 @@ def acceptance_failures(state: dict[str, Any]) -> list[str]:
     failures = []
     if bool(state.get("overflow_detected")):
         failures.append("input queue overflow detected")
+    if bool(state.get("processing_lag_exceeded")):
+        failures.append("maximum processing lag exceeded")
     if int(state.get("imu_drop_count", 0)) != 0:
         failures.append("IMU messages dropped")
     if int(state.get("lidar_drop_count", 0)) != 0:

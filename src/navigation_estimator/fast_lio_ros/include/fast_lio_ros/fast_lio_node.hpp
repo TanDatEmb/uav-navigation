@@ -50,10 +50,10 @@ class FastLioNode : public rclcpp::Node {
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr
       livox_custom_subscription_;
-  static constexpr std::size_t kMaximumInputQueueSize = 16384;
   std::mutex input_mutex_;
   std::condition_variable input_ready_;
-  std::deque<InputMeasurement> input_queue_;
+  std::deque<ImuSample> imu_queue_;
+  std::deque<LidarScan> lidar_queue_;
   bool stopping_{false};
   std::thread processing_worker_;
   SensorDiagnostics ingress_diagnostics_;

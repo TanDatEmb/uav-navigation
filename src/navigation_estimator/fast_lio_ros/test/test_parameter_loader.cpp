@@ -29,12 +29,25 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.livox_timestamp_policy, "require_header_match");
   EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
+  EXPECT_EQ(parameters.imu_queue_capacity, 4096);
+  EXPECT_EQ(parameters.lidar_queue_capacity, 8);
+  EXPECT_EQ(parameters.overload_policy, "fail");
 }
 
 TEST_F(ParameterLoaderTest, RejectsAutoTimingForProductionNode) {
   rclcpp::Node node{"parameter_loader_auto_test"};
   auto parameters = ParameterLoader::declareAndLoad(node);
   parameters.lidar_timing_mode = "auto";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
+TEST_F(ParameterLoaderTest, RejectsInvalidRuntimeQueuePolicy) {
+  rclcpp::Node node{"parameter_loader_runtime_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.lidar_queue_capacity = 0;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.lidar_queue_capacity = 8;
+  parameters.overload_policy = "drop";
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 

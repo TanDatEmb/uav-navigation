@@ -163,7 +163,13 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
           runtime_diagnostics_.latest_received_time_ns,
           std::get<LidarScan>(measurement).end_time.nanoseconds());
     }
-    if (input_queue_.size() >= kMaximumInputQueueSize) {
+    const bool queue_full =
+        is_imu
+            ? imu_queue_.size() >=
+                  static_cast<std::size_t>(parameters_.imu_queue_capacity)
+            : lidar_queue_.size() >=
+                  static_cast<std::size_t>(parameters_.lidar_queue_capacity);
+    if (queue_full) {
       is_imu ? ++ingress_diagnostics_.imu_drop_count
              : ++ingress_diagnostics_.lidar_drop_count;
       is_imu ? ++runtime_diagnostics_.imu_drop_count
@@ -174,7 +180,11 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
           "bounded estimator input queue overflow; acceptance replay must fail");
       return;
     }
-    input_queue_.push_back(std::move(measurement));
+    if (is_imu) {
+      imu_queue_.push_back(std::move(std::get<ImuSample>(measurement)));
+    } else {
+      lidar_queue_.push_back(std::move(std::get<LidarScan>(measurement)));
+    }
     ++runtime_diagnostics_.current_input_queue_depth;
     is_imu ? ++runtime_diagnostics_.current_imu_queue_depth
            : ++runtime_diagnostics_.current_lidar_queue_depth;
@@ -183,7 +193,13 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
                  runtime_diagnostics_.current_input_queue_depth);
     ingress_diagnostics_.processing_queue_high_water_mark =
         std::max(ingress_diagnostics_.processing_queue_high_water_mark,
-                 input_queue_.size());
+                 imu_queue_.size() + lidar_queue_.size());
+    ingress_diagnostics_.imu_queue_high_water_mark =
+        std::max(ingress_diagnostics_.imu_queue_high_water_mark,
+                 imu_queue_.size());
+    ingress_diagnostics_.lidar_queue_high_water_mark =
+        std::max(ingress_diagnostics_.lidar_queue_high_water_mark,
+                 lidar_queue_.size());
   }
   input_ready_.notify_one();
 }
@@ -193,13 +209,24 @@ void FastLioNode::processingLoop() {
     InputMeasurement measurement;
     {
       std::unique_lock lock(input_mutex_);
-      input_ready_.wait(lock,
-                        [this] { return stopping_ || !input_queue_.empty(); });
-      if (stopping_ && input_queue_.empty()) {
+      input_ready_.wait(lock, [this] {
+        return stopping_ || !imu_queue_.empty() || !lidar_queue_.empty();
+      });
+      if (stopping_ && imu_queue_.empty() && lidar_queue_.empty()) {
         return;
       }
-      measurement = std::move(input_queue_.front());
-      input_queue_.pop_front();
+      const bool take_imu =
+          lidar_queue_.empty() ||
+          (!imu_queue_.empty() &&
+           imu_queue_.front().time.nanoseconds() <=
+               lidar_queue_.front().end_time.nanoseconds());
+      if (take_imu) {
+        measurement = std::move(imu_queue_.front());
+        imu_queue_.pop_front();
+      } else {
+        measurement = std::move(lidar_queue_.front());
+        lidar_queue_.pop_front();
+      }
       --runtime_diagnostics_.current_input_queue_depth;
       std::holds_alternative<ImuSample>(measurement)
           ? --runtime_diagnostics_.current_imu_queue_depth
@@ -245,6 +272,10 @@ void FastLioNode::processingLoop() {
       runtime_diagnostics_.processing_lag_ns = std::max<std::int64_t>(
           0, runtime_diagnostics_.latest_received_time_ns -
                  runtime_diagnostics_.latest_processed_time_ns);
+      runtime_diagnostics_.processing_lag_exceeded =
+          runtime_diagnostics_.processing_lag_exceeded ||
+          runtime_diagnostics_.processing_lag_ns >
+              parameters_.maximum_processing_lag_ms * 1'000'000;
       const auto elapsed = processing_finished - processing_started;
       runtime_statistics_.recordBusy(elapsed);
       if (!is_imu) {

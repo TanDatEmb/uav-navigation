@@ -41,6 +41,21 @@ class DrainTest(unittest.TestCase):
             ["input queue overflow detected", "IMU messages dropped"],
         )
 
+    def test_processing_lag_limit_fails_acceptance(self) -> None:
+        state = {
+            "current_input_queue_depth": 0,
+            "current_imu_queue_depth": 0,
+            "current_lidar_queue_depth": 0,
+            "received_imu_count": 1,
+            "processed_imu_count": 1,
+            "received_lidar_count": 1,
+            "processed_lidar_count": 1,
+            "processing_lag_exceeded": True,
+        }
+        self.assertEqual(
+            acceptance_failures(state), ["maximum processing lag exceeded"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

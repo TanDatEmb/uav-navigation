@@ -29,6 +29,7 @@ struct RuntimeDiagnostics {
   std::int64_t p99_scan_processing_us{0};
   double worker_busy_ratio{0.0};
   bool overflow_detected{false};
+  bool processing_lag_exceeded{false};
 };
 
 class RuntimeStatistics {
