@@ -234,6 +234,46 @@ def tree_size(directory: Path) -> int:
     return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
 
 
+def filter_ros2_bag(source: Path, destination: Path, topics: list[str]) -> dict[str, int]:
+    try:
+        import rosbag2_py
+    except ImportError as error:
+        raise DataError(
+            "ROS 2 Python bag support is required; source /opt/ros/jazzy/setup.bash"
+        ) from error
+
+    reader = rosbag2_py.SequentialReader()
+    reader.open(
+        rosbag2_py.StorageOptions(uri=str(source), storage_id="sqlite3"),
+        rosbag2_py.ConverterOptions("", ""),
+    )
+    available = {
+        metadata.name: metadata for metadata in reader.get_all_topics_and_types()
+    }
+    missing = [topic for topic in topics if topic not in available]
+    if missing:
+        raise DataError(f"source bag is missing selected topics: {missing}")
+
+    writer = rosbag2_py.SequentialWriter()
+    writer.open(
+        rosbag2_py.StorageOptions(uri=str(destination), storage_id="sqlite3"),
+        rosbag2_py.ConverterOptions("", ""),
+    )
+    for topic in topics:
+        writer.create_topic(available[topic])
+    counts = {topic: 0 for topic in topics}
+    selected = set(topics)
+    while reader.has_next():
+        topic, serialized, timestamp = reader.read_next()
+        if topic in selected:
+            writer.write(topic, serialized, timestamp)
+            counts[topic] += 1
+    del writer
+    if any(count == 0 for count in counts.values()):
+        raise DataError(f"selected topic contains no messages: {counts}")
+    return counts
+
+
 def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
     layout(home)
     blob = download(entry, home)
@@ -257,7 +297,10 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
             )
         source_bag = metadata_files[0].parent
         lio = stage / "lio"
-        shutil.copytree(source_bag, lio)
+        selected_topics = [
+            entry["input"]["lidar_topic"], entry["input"]["imu_topic"]
+        ]
+        selected_counts = filter_ros2_bag(source_bag, lio, selected_topics)
         provenance = {
             "schema_version": 1,
             "dataset": entry["id"],
@@ -266,15 +309,13 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
                 "checksum": entry["download"]["checksum"],
             },
             "source_bag_metadata": str(metadata_files[0].relative_to(stage)),
-            "selected_topics": [
-                entry["input"]["lidar_topic"], entry["input"]["imu_topic"]
-            ],
+            "selected_topics": selected_topics,
+            "selected_message_counts": selected_counts,
             "conversion_tool": "tools/data.py",
             "derived_bag_sha256": tree_digest(lio),
             "derived_bag_size_bytes": tree_size(lio),
-            "note": "Source bag contains the requested LIO topics; copied as a "
-                    "derived external bag. Topic filtering is required for "
-                    "multi-sensor sources.",
+            "note": "Derived ROS 2 bag contains only the selected LiDAR and IMU "
+                    "topics.",
         }
         (stage / "status.json").write_text(
             json.dumps(provenance, indent=2, sort_keys=True) + "\n",
