@@ -1,0 +1,27 @@
+id: aist-mid360-drive
+source: Driving SLAM Test with Livox MID360
+publisher: Kenji Koide, AIST; Zenodo
+landing_page: https://zenodo.org/records/14841855
+doi: 10.5281/zenodo.14841855
+license: null
+citation: Koide, Kenji (2025). Driving SLAM Test with Livox MID360. Zenodo.
+size_bytes: 517088133
+download:
+  mode: auto
+  urls:
+    - https://zenodo.org/api/records/14841855/files/rosbag2_2024_04_16-14_17_01.zip/content
+  checksum:
+    algorithm: md5
+    value: 0836c50859bb1af591966b69da166186
+archive:
+  format: zip
+  filename: rosbag2_2024_04_16-14_17_01.zip
+bag:
+  format: ros2
+input:
+  lidar_topic: /livox/lidar
+  imu_topic: /livox/imu
+  lidar_message_type: pointcloud2
+ground_truth:
+  available: false
+cases: [basic-driving, long-replay, realtime]

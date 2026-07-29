@@ -1,0 +1,24 @@
+id: hku-mid360-liveye
+source: LIV-Eye Mid-360 example
+publisher: HKU MaRS Lab
+landing_page: https://github.com/hku-mars/LIV-Eye
+doi: null
+license: null
+citation: null
+size_bytes: null
+download:
+  mode: manual
+  urls: []
+  checksum: null
+archive:
+  format: null
+  filename: null
+bag:
+  format: unknown
+input:
+  lidar_topic: /livox/lidar
+  imu_topic: /livox/imu
+  lidar_message_type: unknown
+ground_truth:
+  available: false
+cases: [portability]

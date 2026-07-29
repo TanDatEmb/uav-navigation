@@ -1,0 +1,79 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://github.com/TanDatEmb/uav-navigation/datasets/schema.yaml
+title: UAV navigation external dataset catalog entry
+type: object
+additionalProperties: false
+required:
+  - id
+  - source
+  - publisher
+  - landing_page
+  - license
+  - size_bytes
+  - download
+  - archive
+  - bag
+  - input
+  - ground_truth
+  - cases
+properties:
+  id:
+    type: string
+    pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+  source: {type: string, minLength: 1}
+  publisher: {type: string, minLength: 1}
+  landing_page: {type: [string, "null"], format: uri}
+  doi: {type: [string, "null"]}
+  license: {type: [string, "null"]}
+  citation: {type: [string, "null"]}
+  size_bytes: {type: [integer, "null"], minimum: 0}
+  download:
+    type: object
+    additionalProperties: false
+    required: [mode, urls, checksum]
+    properties:
+      mode: {enum: [auto, manual, local]}
+      urls:
+        type: array
+        items: {type: string, format: uri}
+      checksum:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [algorithm, value]
+        properties:
+          algorithm: {enum: [sha256, md5]}
+          value: {type: string, pattern: "^[a-fA-F0-9]+$"}
+  archive:
+    type: object
+    additionalProperties: false
+    required: [format]
+    properties:
+      format: {type: [string, "null"]}
+      filename: {type: [string, "null"]}
+  bag:
+    type: object
+    additionalProperties: true
+    required: [format]
+    properties:
+      format: {enum: [ros1, ros2, unknown]}
+  input:
+    type: object
+    additionalProperties: true
+    required: [lidar_topic, imu_topic, lidar_message_type]
+    properties:
+      lidar_topic: {type: [string, "null"]}
+      imu_topic: {type: [string, "null"]}
+      lidar_message_type:
+        enum: [pointcloud2, livox_custom, unknown]
+  ground_truth:
+    type: object
+    additionalProperties: true
+    required: [available]
+    properties:
+      available: {type: boolean}
+  cases:
+    type: array
+    items: {type: string, minLength: 1}
+  local_capture:
+    type: object
+    additionalProperties: true
