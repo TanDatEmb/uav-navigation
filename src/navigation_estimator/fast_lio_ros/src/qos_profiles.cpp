@@ -4,6 +4,10 @@ namespace uav::nav::lio {
 
 rclcpp::QoS QosProfiles::sensorInput() { return rclcpp::SensorDataQoS().keep_last(100); }
 
+rclcpp::QoS QosProfiles::reliableSensorInput() {
+  return rclcpp::QoS{rclcpp::KeepLast{100}}.reliable().durability_volatile();
+}
+
 rclcpp::QoS QosProfiles::livoxLidarInput() {
   return rclcpp::QoS{rclcpp::KeepLast{256}}.reliable().durability_volatile();
 }

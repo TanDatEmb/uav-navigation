@@ -219,6 +219,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "runtime.maximum_processing_lag_ms", 500);
   result.overload_policy =
       node.declare_parameter("runtime.overload_policy", "fail");
+  result.input_qos_reliability =
+      node.declare_parameter("input.qos_reliability", "best_effort");
   validate(result);
   return result;
 }
@@ -374,6 +376,11 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.maximum_processing_lag_ms <= 0 || p.overload_policy != "fail") {
     throw std::invalid_argument(
         "runtime queues must be positive and overload_policy must be fail");
+  }
+  if (p.input_qos_reliability != "best_effort" &&
+      p.input_qos_reliability != "reliable") {
+    throw std::invalid_argument(
+        "input.qos_reliability must be best_effort or reliable");
   }
   const Eigen::Map<const Eigen::Vector3d> local_half_extent(
       p.local_map_half_extent_m.data());

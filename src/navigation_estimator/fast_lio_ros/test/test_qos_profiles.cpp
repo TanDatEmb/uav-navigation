@@ -25,4 +25,12 @@ TEST(QosProfilesTest, LivoxImuMatchesDriverPublisherPolicy) {
   expectLivoxDriverCompatible(QosProfiles::livoxImuInput());
 }
 
+TEST(QosProfilesTest, ReliablePointCloudReplayIsExplicit) {
+  const auto& profile =
+      QosProfiles::reliableSensorInput().get_rmw_qos_profile();
+  EXPECT_EQ(profile.depth, 100U);
+  EXPECT_EQ(profile.reliability, RMW_QOS_POLICY_RELIABILITY_RELIABLE);
+  EXPECT_EQ(profile.durability, RMW_QOS_POLICY_DURABILITY_VOLATILE);
+}
+
 }  // namespace uav::nav::lio

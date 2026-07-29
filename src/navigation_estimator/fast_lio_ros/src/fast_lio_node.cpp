@@ -69,10 +69,14 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       transform_publisher_(*this, parameters_) {
   const bool livox_input =
       parameters_.lidar_message_type == "livox_custom";
+  const auto pointcloud_qos =
+      parameters_.input_qos_reliability == "reliable"
+          ? QosProfiles::reliableSensorInput()
+          : QosProfiles::sensorInput();
   imu_subscription_ = create_subscription<sensor_msgs::msg::Imu>(
       parameters_.imu_topic,
       livox_input ? QosProfiles::livoxImuInput()
-                  : QosProfiles::sensorInput(),
+                  : pointcloud_qos,
       [this](const sensor_msgs::msg::Imu::ConstSharedPtr message) { onImu(message); });
   if (livox_input) {
     livox_custom_subscription_ =
@@ -84,7 +88,7 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   } else {
     lidar_subscription_ =
         create_subscription<sensor_msgs::msg::PointCloud2>(
-            parameters_.lidar_topic, QosProfiles::sensorInput(),
+            parameters_.lidar_topic, pointcloud_qos,
             [this](
                 const sensor_msgs::msg::PointCloud2::ConstSharedPtr
                     message) { onLidar(message); });
