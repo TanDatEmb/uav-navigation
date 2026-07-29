@@ -1,0 +1,32 @@
+id: local-mid360-example
+source: Local Mid-360 recording
+publisher: Local operator
+landing_page: null
+license: null
+citation: null
+size_bytes: null
+download:
+  mode: local
+  urls: []
+  checksum: null
+archive:
+  format: null
+  filename: null
+bag:
+  format: ros2
+input:
+  lidar_topic: /livox/lidar
+  imu_topic: /livox/imu
+  lidar_message_type: pointcloud2
+ground_truth:
+  available: false
+cases: []
+local_capture:
+  scenario_procedure: null
+  expected_motion_direction: null
+  sensor_mounting: null
+  extrinsic_source: null
+  timestamp_mode: null
+  operator: null
+  capture_date: null
+  bag_checksum: null
