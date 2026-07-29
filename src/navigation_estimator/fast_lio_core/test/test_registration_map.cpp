@@ -191,6 +191,24 @@ TEST(RegistrationMapTest, ClearAllowsFreshUpstreamBuild) {
   EXPECT_NEAR(nearest.points_odom_m.front().x(), 5.0, 1e-6);
 }
 
+TEST(RegistrationMapTest, RepeatedLifecycleUsesStableSignedCounts) {
+  IkdTreeRegistrationMapConfig config;
+  config.voxel_size_m = 0.01;
+  for (int iteration = 0; iteration < 25; ++iteration) {
+    IkdTreeRegistrationMap map(config);
+    std::vector<Eigen::Vector3d> points;
+    points.reserve(2000U);
+    for (int index = 0; index < 2000; ++index) {
+      points.emplace_back(static_cast<double>(index) * 0.02,
+                          static_cast<double>(iteration), 0.0);
+    }
+    EXPECT_EQ(map.insert(points), points.size());
+    EXPECT_EQ(map.size(), points.size());
+    map.clear();
+    EXPECT_EQ(map.size(), 0U);
+  }
+}
+
 TEST(RegistrationMapTest, InsertRebuildsAfterCropDeletesEntireTree) {
   IkdTreeRegistrationMap map;
   const std::vector<Eigen::Vector3d> old_points{
