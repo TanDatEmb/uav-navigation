@@ -21,15 +21,7 @@ evaluation/
 reports/benchmarks/*.json
 reports/simulation/*.json
 
-# Large source recordings are retained outside Git and verified by manifests.
-data/mid360_real/*/*.mcap
-data/mid360_real/*/*.db3
-data/mid360_real/*/metadata.yaml
-data/**/*.mcap
-data/**/*.db3
-data/**/bag/metadata.yaml
-data/external/mid360/*/original/
-data/external/mid360/*/converted/
+# Large source recordings are retained in the external data home.
 reports/m1_dataset/*/registered_scans/
 reports/m1_dataset/*/outputs/
 
