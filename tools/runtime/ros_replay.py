@@ -181,11 +181,11 @@ def wait_for_drain(
 def stop(process: subprocess.Popen[Any], timeout: float = 10.0) -> None:
     if process.poll() is not None:
         return
-    process.send_signal(signal.SIGINT)
+    os.killpg(process.pid, signal.SIGINT)
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.terminate()
+        os.killpg(process.pid, signal.SIGTERM)
         process.wait(timeout=5)
 
 
@@ -207,6 +207,7 @@ def run(args: argparse.Namespace) -> int:
         ],
         stdout=log("node.stdout.log"),
         stderr=log("node.stderr.log"),
+        start_new_session=True,
     )
     processes.append(node)
     collector = subprocess.Popen(
@@ -217,6 +218,7 @@ def run(args: argparse.Namespace) -> int:
         ],
         stdout=log("collector.log"),
         stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
     processes.append(collector)
     recorder: subprocess.Popen[Any] | None = None
@@ -230,15 +232,20 @@ def run(args: argparse.Namespace) -> int:
             ["ros2", "bag", "record", "-o", str(args.output / "outputs"), *RECORDED_TOPICS],
             stdout=log("record.stdout.log"),
             stderr=log("record.stderr.log"),
+            start_new_session=True,
         )
         processes.append(recorder)
         wait_for_subscriber(
             "/lio/diagnostics", recorder, args.readiness_timeout, minimum_count=2
         )
         replay = subprocess.Popen(
-            ["ros2", "bag", "play", str(args.bag), "--rate", str(args.rate)],
+            [
+                "ros2", "bag", "play", str(args.bag), "--rate", str(args.rate),
+                "--delay", "5",
+            ],
             stdout=log("replay.stdout.log"),
             stderr=log("replay.stderr.log"),
+            start_new_session=True,
         )
         processes.append(replay)
         replay_returncode = replay.wait()
