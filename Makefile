@@ -2,8 +2,11 @@ SHELL := /bin/bash
 DATASET ?=
 RATE ?= 1.0
 DATA_ROOT ?= data
+MODE ?= release
+PACKAGES ?=
 DATASET_TOOL := python3 tools/dev/dataset.py --data-root "$(DATA_ROOT)"
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
+BUILD_TOOL := python3 tools/runtime/build.py --mode "$(MODE)"
 
 .PHONY: help build test check clean clean-artifacts dataset-inspect dataset-smoke dataset-run dataset-ros dataset-view
 
@@ -11,13 +14,13 @@ help:
 	@$(DATASET_TOOL) help
 
 build:
-	@source /opt/ros/jazzy/setup.bash && colcon build --symlink-install
+	@$(BUILD_TOOL) build $(if $(strip $(PACKAGES)),--packages $(PACKAGES),)
 
 test:
-	@source /opt/ros/jazzy/setup.bash && colcon test --event-handlers console_cohesion+
+	@$(BUILD_TOOL) test $(if $(strip $(PACKAGES)),--packages $(PACKAGES),)
 
 check:
-	@source /opt/ros/jazzy/setup.bash && colcon test-result --verbose
+	@$(BUILD_TOOL) check
 
 clean:
 	@$(DATASET_TOOL) clean
