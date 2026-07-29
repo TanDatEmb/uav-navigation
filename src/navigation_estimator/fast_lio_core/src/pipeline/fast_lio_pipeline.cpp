@@ -412,7 +412,10 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     diagnostics_.map.map_size_after_maintenance = registration_map_.size();
     diagnostics_.map.crop_performed = local_map_update.crop_performed;
     diagnostics_.map.crop_removed_count =
-        local_map_update.removed_point_count;
+        local_map_update.removed_point_count -
+        local_map_update.distance_pruned_count;
+    diagnostics_.map.distance_pruned_count =
+        local_map_update.distance_pruned_count;
     diagnostics_.map.crop_triggered_by_motion =
         local_map_update.crop_triggered_by_motion;
     diagnostics_.map.crop_triggered_by_point_threshold =

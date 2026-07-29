@@ -10,12 +10,16 @@ namespace uav::nav::lio {
 struct LocalMapManagerConfig {
   Eigen::Vector3d half_extent_m{Eigen::Vector3d(50.0, 50.0, 25.0)};
   double crop_trigger_distance_m{5.0};
-  std::size_t maximum_map_points{500000};
+  std::size_t soft_point_limit{450000};
+  std::size_t hard_point_limit{500000};
+  std::size_t target_point_count_after_prune{420000};
+  double distance_shell_size_m{5.0};
 };
 
 struct LocalMapUpdate {
   bool crop_performed{false};
   std::size_t removed_point_count{0};
+  std::size_t distance_pruned_count{0};
   bool crop_triggered_by_motion{false};
   bool crop_triggered_by_point_threshold{false};
   Eigen::Vector3d center_odom_m{Eigen::Vector3d::Zero()};

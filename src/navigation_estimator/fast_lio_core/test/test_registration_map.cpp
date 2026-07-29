@@ -251,5 +251,87 @@ TEST(RegistrationMapTest, LocalManagerReportsRemovedPoints) {
   EXPECT_EQ(map.size(), 1U);
 }
 
+TEST(RegistrationMapTest, LocalManagerLeavesMapBelowSoftLimitUntouched) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.01;
+  IkdTreeRegistrationMap map(map_config);
+  const std::vector<Eigen::Vector3d> points{
+      {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
+  ASSERT_EQ(map.insert(points), 3U);
+  LocalMapManagerConfig config;
+  config.half_extent_m = {100.0, 100.0, 100.0};
+  config.soft_point_limit = 5;
+  config.hard_point_limit = 8;
+  config.target_point_count_after_prune = 3;
+  LocalMapManager manager(config);
+  const auto update = manager.update(map, {0.0, 0.0, 0.0});
+  EXPECT_EQ(update.distance_pruned_count, 0U);
+  EXPECT_EQ(map.size(), 3U);
+}
+
+TEST(RegistrationMapTest,
+     LocalManagerPrunesFarthestToTargetAndUsesHysteresis) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.01;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> points;
+  for (int index = 0; index < 10; ++index) {
+    points.emplace_back(static_cast<double>(index), 0.0, 0.0);
+  }
+  ASSERT_EQ(map.insert(points), 10U);
+  LocalMapManagerConfig config;
+  config.half_extent_m = {100.0, 100.0, 100.0};
+  config.crop_trigger_distance_m = 1.0;
+  config.soft_point_limit = 5;
+  config.hard_point_limit = 8;
+  config.target_point_count_after_prune = 3;
+  config.distance_shell_size_m = 1.0;
+  LocalMapManager manager(config);
+  const auto first = manager.update(map, {0.0, 0.0, 0.0});
+  EXPECT_EQ(first.distance_pruned_count, 7U);
+  EXPECT_EQ(first.removed_point_count, 7U);
+  EXPECT_EQ(map.size(), 3U);
+  const auto remaining = map.snapshot();
+  ASSERT_EQ(remaining.size(), 3U);
+  EXPECT_LE(std::max_element(
+                remaining.begin(), remaining.end(),
+                [](const auto& left, const auto& right) {
+                  return left.norm() < right.norm();
+                })
+                ->norm(),
+            2.01);
+  const auto second = manager.update(map, {0.1, 0.0, 0.0});
+  EXPECT_FALSE(second.crop_performed);
+  EXPECT_EQ(second.distance_pruned_count, 0U);
+}
+
+TEST(RegistrationMapTest, LocalManagerDoesNotPruneAtInvalidPosition) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.01;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> points(10, Eigen::Vector3d::Zero());
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    points[index].x() = static_cast<double>(index);
+  }
+  static_cast<void>(map.insert(points));
+  LocalMapManagerConfig config;
+  config.soft_point_limit = 5;
+  config.hard_point_limit = 8;
+  config.target_point_count_after_prune = 3;
+  LocalMapManager manager(config);
+  const auto update = manager.update(
+      map, {std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0});
+  EXPECT_FALSE(update.crop_performed);
+  EXPECT_EQ(update.distance_pruned_count, 0U);
+  EXPECT_EQ(map.size(), 10U);
+}
+
+TEST(RegistrationMapTest, RejectsInvalidLocalMapLimitOrdering) {
+  LocalMapManagerConfig config;
+  config.target_point_count_after_prune = config.soft_point_limit;
+  EXPECT_THROW(static_cast<void>(LocalMapManager{config}),
+               std::invalid_argument);
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

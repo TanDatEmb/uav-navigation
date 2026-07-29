@@ -300,6 +300,45 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
          static_cast<std::size_t>(impl_->tree->validnum());
 }
 
+std::size_t IkdTreeRegistrationMap::pruneFarthest(
+    const Eigen::Vector3d& center_odom_m,
+    std::size_t target_point_count,
+    double distance_shell_size_m) {
+  if (!isRepresentableAsUpstreamPoint(center_odom_m) ||
+      target_point_count == 0U || !(distance_shell_size_m > 0.0) ||
+      !std::isfinite(distance_shell_size_m)) {
+    return 0U;
+  }
+  std::scoped_lock lock(mutex_);
+  if (!impl_->built ||
+      static_cast<std::size_t>(impl_->tree->validnum()) <= target_point_count) {
+    return 0U;
+  }
+  UpstreamPointVector points = impl_->snapshotUpstream();
+  const auto distance_key = [&](const UpstreamPoint& point) {
+    const double distance = (toEigenPoint(point) - center_odom_m).norm();
+    const auto shell =
+        static_cast<std::uint64_t>(std::floor(distance / distance_shell_size_m));
+    return std::pair{shell, distance};
+  };
+  std::nth_element(
+      points.begin(), points.begin() + static_cast<std::ptrdiff_t>(target_point_count),
+      points.end(), [&](const UpstreamPoint& left, const UpstreamPoint& right) {
+        return distance_key(left) < distance_key(right);
+      });
+  UpstreamPointVector points_to_delete(
+      points.begin() + static_cast<std::ptrdiff_t>(target_point_count),
+      points.end());
+  const std::size_t size_before =
+      static_cast<std::size_t>(impl_->tree->validnum());
+  impl_->tree->Delete_Points(points_to_delete);
+  if (impl_->tree->validnum() == 0) {
+    impl_->built = false;
+  }
+  return size_before -
+         static_cast<std::size_t>(impl_->tree->validnum());
+}
+
 std::vector<Eigen::Vector3d>
 IkdTreeRegistrationMap::snapshot() const {
   std::scoped_lock lock(mutex_);

@@ -34,6 +34,12 @@ class RegistrationMap {
   // of represented points removed.
   virtual std::size_t cropLocal(const Eigen::Vector3d& center_odom_m,
                                 const Eigen::Vector3d& half_extent_m) = 0;
+  // Threshold-triggered exact fallback. Implementations should use a partial
+  // selection and batch deletion rather than a full distance sort.
+  virtual std::size_t pruneFarthest(
+      const Eigen::Vector3d& center_odom_m,
+      std::size_t target_point_count,
+      double distance_shell_size_m) = 0;
 
   [[nodiscard]] virtual std::vector<Eigen::Vector3d> snapshot() const = 0;
   [[nodiscard]] virtual std::size_t size() const noexcept = 0;

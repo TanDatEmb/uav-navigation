@@ -185,6 +185,24 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.minimum_range_m = node.declare_parameter("preprocessing.minimum_range_m", 0.1);
   result.maximum_range_m = node.declare_parameter("preprocessing.maximum_range_m", 40.0);
   result.voxel_size_m = node.declare_parameter("preprocessing.voxel_size_m", 0.2);
+  const auto local_half_extent = node.declare_parameter<std::vector<double>>(
+      "mapping.local_map.half_extent_m", {50.0, 50.0, 25.0});
+  if (local_half_extent.size() != 3U) {
+    throw std::invalid_argument("mapping.local_map.half_extent_m must have size 3");
+  }
+  std::copy(local_half_extent.begin(), local_half_extent.end(),
+            result.local_map_half_extent_m.begin());
+  result.local_map_crop_trigger_distance_m = node.declare_parameter(
+      "mapping.local_map.crop_trigger_distance_m", 5.0);
+  result.local_map_soft_point_limit = node.declare_parameter<std::int64_t>(
+      "mapping.local_map.soft_point_limit", 450000);
+  result.local_map_hard_point_limit = node.declare_parameter<std::int64_t>(
+      "mapping.local_map.hard_point_limit", 500000);
+  result.local_map_target_point_count_after_prune =
+      node.declare_parameter<std::int64_t>(
+          "mapping.local_map.target_point_count_after_prune", 420000);
+  result.local_map_distance_shell_size_m = node.declare_parameter(
+      "mapping.local_map.distance_shell_size_m", 5.0);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
   result.publish_registered_points =
@@ -234,6 +252,20 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   config.preprocessing.point_filter.maximum_range_m =
       parameters.maximum_range_m;
   config.preprocessing.voxel_filter.voxel_size_m = parameters.voxel_size_m;
+  config.local_map.half_extent_m = {
+      parameters.local_map_half_extent_m[0],
+      parameters.local_map_half_extent_m[1],
+      parameters.local_map_half_extent_m[2]};
+  config.local_map.crop_trigger_distance_m =
+      parameters.local_map_crop_trigger_distance_m;
+  config.local_map.soft_point_limit =
+      static_cast<std::size_t>(parameters.local_map_soft_point_limit);
+  config.local_map.hard_point_limit =
+      static_cast<std::size_t>(parameters.local_map_hard_point_limit);
+  config.local_map.target_point_count_after_prune = static_cast<std::size_t>(
+      parameters.local_map_target_point_count_after_prune);
+  config.local_map.distance_shell_size_m =
+      parameters.local_map_distance_shell_size_m;
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
   config.initialization.require_stationary = parameters.require_stationary;
@@ -326,6 +358,19 @@ void ParameterLoader::validate(const RosParameters& p) {
       !std::isfinite(p.maximum_range_m) || !std::isfinite(p.voxel_size_m) ||
       !std::isfinite(p.local_map_rate_hz)) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
+  }
+  const Eigen::Map<const Eigen::Vector3d> local_half_extent(
+      p.local_map_half_extent_m.data());
+  if (!local_half_extent.allFinite() ||
+      (local_half_extent.array() <= 0.0).any() ||
+      !(p.local_map_crop_trigger_distance_m > 0.0) ||
+      !std::isfinite(p.local_map_crop_trigger_distance_m) ||
+      p.local_map_target_point_count_after_prune <= 0 ||
+      p.local_map_target_point_count_after_prune >= p.local_map_soft_point_limit ||
+      p.local_map_soft_point_limit >= p.local_map_hard_point_limit ||
+      !(p.local_map_distance_shell_size_m > 0.0) ||
+      !std::isfinite(p.local_map_distance_shell_size_m)) {
+    throw std::invalid_argument("invalid mapping.local_map configuration");
   }
 }
 

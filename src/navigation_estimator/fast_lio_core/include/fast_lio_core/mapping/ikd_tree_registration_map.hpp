@@ -52,6 +52,10 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
   std::size_t cropLocal(
       const Eigen::Vector3d& center_odom_m,
       const Eigen::Vector3d& half_extent_m) override;
+  std::size_t pruneFarthest(
+      const Eigen::Vector3d& center_odom_m,
+      std::size_t target_point_count,
+      double distance_shell_size_m) override;
   [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
   [[nodiscard]] std::size_t size() const noexcept override;
   void clear() override;
