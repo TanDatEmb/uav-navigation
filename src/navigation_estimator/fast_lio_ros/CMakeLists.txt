@@ -60,6 +60,8 @@ if(BUILD_TESTING)
         FAST_LIO_ROS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
   endforeach()
+  ament_add_gtest(test_runtime_diagnostics test/test_runtime_diagnostics.cpp)
+  target_link_libraries(test_runtime_diagnostics ${PROJECT_NAME})
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

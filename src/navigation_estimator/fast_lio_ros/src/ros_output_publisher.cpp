@@ -17,6 +17,49 @@ diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
   return result;
 }
 
+void appendRuntimeValues(
+    std::vector<diagnostic_msgs::msg::KeyValue>& values,
+    const RuntimeDiagnostics& runtime) {
+  values.push_back(keyValue("current_input_queue_depth",
+                            std::to_string(runtime.current_input_queue_depth)));
+  values.push_back(keyValue("current_imu_queue_depth",
+                            std::to_string(runtime.current_imu_queue_depth)));
+  values.push_back(keyValue("current_lidar_queue_depth",
+                            std::to_string(runtime.current_lidar_queue_depth)));
+  values.push_back(keyValue("maximum_queue_depth",
+                            std::to_string(runtime.maximum_queue_depth)));
+  values.push_back(keyValue("received_imu_count",
+                            std::to_string(runtime.received_imu_count)));
+  values.push_back(keyValue("received_lidar_count",
+                            std::to_string(runtime.received_lidar_count)));
+  values.push_back(keyValue("processed_imu_count",
+                            std::to_string(runtime.processed_imu_count)));
+  values.push_back(keyValue("processed_lidar_count",
+                            std::to_string(runtime.processed_lidar_count)));
+  values.push_back(
+      keyValue("imu_drop_count", std::to_string(runtime.imu_drop_count)));
+  values.push_back(
+      keyValue("lidar_drop_count", std::to_string(runtime.lidar_drop_count)));
+  values.push_back(keyValue("latest_received_time_ns",
+                            std::to_string(runtime.latest_received_time_ns)));
+  values.push_back(keyValue("latest_processed_time_ns",
+                            std::to_string(runtime.latest_processed_time_ns)));
+  values.push_back(keyValue("processing_lag_ns",
+                            std::to_string(runtime.processing_lag_ns)));
+  values.push_back(keyValue("last_scan_processing_us",
+                            std::to_string(runtime.last_scan_processing_us)));
+  values.push_back(keyValue("mean_scan_processing_us",
+                            std::to_string(runtime.mean_scan_processing_us)));
+  values.push_back(keyValue("p95_scan_processing_us",
+                            std::to_string(runtime.p95_scan_processing_us)));
+  values.push_back(keyValue("p99_scan_processing_us",
+                            std::to_string(runtime.p99_scan_processing_us)));
+  values.push_back(keyValue("worker_busy_ratio",
+                            std::to_string(runtime.worker_busy_ratio)));
+  values.push_back(keyValue("overflow_detected",
+                            runtime.overflow_detected ? "true" : "false"));
+}
+
 }  // namespace
 
 RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
@@ -255,14 +298,19 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
 
 void RosOutputPublisher::publishTransportSnapshot(
     const SensorDiagnostics& sensor,
-    const ProcessingStatistics& processing) {
+    const ProcessingStatistics& processing,
+    const RuntimeDiagnostics& runtime) {
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = clock_->now();
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "fast_lio/transport";
   status.hardware_id = "lidar_imu";
-  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
-  status.message = "TRANSPORT_COUNTER_SNAPSHOT";
+  status.level = runtime.overflow_detected
+                     ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
+                     : diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = runtime.overflow_detected
+                       ? "INPUT_QUEUE_OVERFLOW"
+                       : "TRANSPORT_COUNTER_SNAPSHOT";
   status.values = {
       keyValue("config_path", parameters_.config_path),
       keyValue("config_sha256", parameters_.config_sha256),
@@ -303,6 +351,7 @@ void RosOutputPublisher::publishTransportSnapshot(
       keyValue("correction_success_ratio",
                std::to_string(processing.correctionSuccessRatio())),
   };
+  appendRuntimeValues(status.values, runtime);
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

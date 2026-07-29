@@ -7,6 +7,7 @@
 
 #include "fast_lio_core/pipeline/process_result.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
+#include "fast_lio_ros/runtime_diagnostics.hpp"
 
 namespace uav::nav::lio {
 
@@ -16,7 +17,8 @@ class RosOutputPublisher {
   void publish(const ProcessResult& result);
   void publishTransportSnapshot(
       const SensorDiagnostics& sensor,
-      const ProcessingStatistics& processing);
+      const ProcessingStatistics& processing,
+      const RuntimeDiagnostics& runtime);
 
  private:
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(

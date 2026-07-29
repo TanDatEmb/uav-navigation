@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "fast_lio_ros/qos_profiles.hpp"
@@ -141,7 +142,10 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
     const bool is_imu = std::holds_alternative<ImuSample>(measurement);
     if (is_imu) {
       ++ingress_diagnostics_.ros_received_imu_count;
+      ++runtime_diagnostics_.received_imu_count;
       const auto time_ns = std::get<ImuSample>(measurement).time.nanoseconds();
+      runtime_diagnostics_.latest_received_time_ns =
+          std::max(runtime_diagnostics_.latest_received_time_ns, time_ns);
       if (previous_ros_imu_ns_ >= 0) {
         const auto gap_ns = time_ns - previous_ros_imu_ns_;
         if (gap_ns <= 0) {
@@ -154,14 +158,29 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
       previous_ros_imu_ns_ = time_ns;
     } else {
       ++ingress_diagnostics_.ros_received_lidar_count;
+      ++runtime_diagnostics_.received_lidar_count;
+      runtime_diagnostics_.latest_received_time_ns = std::max(
+          runtime_diagnostics_.latest_received_time_ns,
+          std::get<LidarScan>(measurement).end_time.nanoseconds());
     }
     if (input_queue_.size() >= kMaximumInputQueueSize) {
       is_imu ? ++ingress_diagnostics_.imu_drop_count
              : ++ingress_diagnostics_.lidar_drop_count;
-      RCLCPP_ERROR(get_logger(), "bounded estimator input queue overflow");
+      is_imu ? ++runtime_diagnostics_.imu_drop_count
+             : ++runtime_diagnostics_.lidar_drop_count;
+      runtime_diagnostics_.overflow_detected = true;
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "bounded estimator input queue overflow; acceptance replay must fail");
       return;
     }
     input_queue_.push_back(std::move(measurement));
+    ++runtime_diagnostics_.current_input_queue_depth;
+    is_imu ? ++runtime_diagnostics_.current_imu_queue_depth
+           : ++runtime_diagnostics_.current_lidar_queue_depth;
+    runtime_diagnostics_.maximum_queue_depth =
+        std::max(runtime_diagnostics_.maximum_queue_depth,
+                 runtime_diagnostics_.current_input_queue_depth);
     ingress_diagnostics_.processing_queue_high_water_mark =
         std::max(ingress_diagnostics_.processing_queue_high_water_mark,
                  input_queue_.size());
@@ -181,27 +200,58 @@ void FastLioNode::processingLoop() {
       }
       measurement = std::move(input_queue_.front());
       input_queue_.pop_front();
+      --runtime_diagnostics_.current_input_queue_depth;
+      std::holds_alternative<ImuSample>(measurement)
+          ? --runtime_diagnostics_.current_imu_queue_depth
+          : --runtime_diagnostics_.current_lidar_queue_depth;
     }
+    const auto processing_started = std::chrono::steady_clock::now();
+    const bool is_imu = std::holds_alternative<ImuSample>(measurement);
+    const auto measurement_time_ns =
+        is_imu ? std::get<ImuSample>(measurement).time.nanoseconds()
+               : std::get<LidarScan>(measurement).end_time.nanoseconds();
     Status status;
-    if (std::holds_alternative<ImuSample>(measurement)) {
+    if (is_imu) {
       status = pipeline_.pushImu(std::get<ImuSample>(measurement));
       std::lock_guard lock(input_mutex_);
       status.ok() ? ++ingress_diagnostics_.core_accepted_imu_count
                   : ++ingress_diagnostics_.imu_drop_count;
+      if (!status.ok()) {
+        ++runtime_diagnostics_.imu_drop_count;
+      }
     } else {
       status = pipeline_.pushLidar(std::move(std::get<LidarScan>(measurement)));
       std::lock_guard lock(input_mutex_);
       status.ok() ? ++ingress_diagnostics_.core_accepted_lidar_count
                   : ++ingress_diagnostics_.lidar_drop_count;
+      if (!status.ok()) {
+        ++runtime_diagnostics_.lidar_drop_count;
+      }
     }
     if (!status.ok()) {
       RCLCPP_WARN(get_logger(), "core rejected queued measurement: %s",
                   status.message().c_str());
     }
     publishAvailableResults();
+    const auto processing_finished = std::chrono::steady_clock::now();
     {
       std::lock_guard lock(input_mutex_);
       processing_statistics_ = pipeline_.diagnostics().processing;
+      is_imu ? ++runtime_diagnostics_.processed_imu_count
+             : ++runtime_diagnostics_.processed_lidar_count;
+      runtime_diagnostics_.latest_processed_time_ns =
+          std::max(runtime_diagnostics_.latest_processed_time_ns,
+                   measurement_time_ns);
+      runtime_diagnostics_.processing_lag_ns = std::max<std::int64_t>(
+          0, runtime_diagnostics_.latest_received_time_ns -
+                 runtime_diagnostics_.latest_processed_time_ns);
+      const auto elapsed = processing_finished - processing_started;
+      runtime_statistics_.recordBusy(elapsed);
+      if (!is_imu) {
+        runtime_statistics_.recordScan(
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed)
+                .count());
+      }
     }
   }
 }
@@ -221,12 +271,15 @@ void FastLioNode::publishAvailableResults() {
 void FastLioNode::publishTransportSnapshot() {
   SensorDiagnostics sensor;
   ProcessingStatistics processing;
+  RuntimeDiagnostics runtime;
   {
     std::lock_guard lock(input_mutex_);
     sensor = ingress_diagnostics_;
     processing = processing_statistics_;
+    runtime = runtime_diagnostics_;
+    runtime_statistics_.populate(runtime);
   }
-  output_publisher_.publishTransportSnapshot(sensor, processing);
+  output_publisher_.publishTransportSnapshot(sensor, processing, runtime);
 }
 
 }  // namespace uav::nav::lio

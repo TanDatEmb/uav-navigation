@@ -17,6 +17,7 @@
 #include "fast_lio_ros/ros_lidar_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 #include "fast_lio_ros/ros_output_publisher.hpp"
+#include "fast_lio_ros/runtime_diagnostics.hpp"
 #include "fast_lio_ros/ros_transform_publisher.hpp"
 
 namespace uav::nav::lio {
@@ -57,6 +58,8 @@ class FastLioNode : public rclcpp::Node {
   std::thread processing_worker_;
   SensorDiagnostics ingress_diagnostics_;
   ProcessingStatistics processing_statistics_;
+  RuntimeDiagnostics runtime_diagnostics_;
+  RuntimeStatistics runtime_statistics_;
   std::int64_t previous_ros_imu_ns_{-1};
   rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;
 };
