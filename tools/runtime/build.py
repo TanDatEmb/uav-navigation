@@ -149,6 +149,11 @@ def main() -> int:
     packages = getattr(args, "packages", None)
     if packages:
         command.extend(["--packages-select", *packages])
+    # GCC ThreadSanitizer can fail before main() under Linux's randomized
+    # address layout ("unexpected memory mapping").  Run only the test
+    # processes with ASLR disabled; the build itself remains unchanged.
+    if args.mode == "tsan" and args.action == "test":
+        command = ["setarch", os.uname().machine, "-R", *command]
     print("+", shlex.join(command), flush=True)
     result = subprocess.run(
         command, cwd=ROOT, env=environment, check=False
