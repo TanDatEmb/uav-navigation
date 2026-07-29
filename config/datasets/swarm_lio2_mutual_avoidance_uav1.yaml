@@ -1,8 +1,0 @@
-dataset:
-  id: swarm_lio2_mutual_avoidance_uav1
-  source_project: hku-mars/Swarm-LIO2
-  source_commit: a5f751a797bb92baa3104cdd384a312d3c8e7744
-  lidar_topic: /livox/lidar
-  imu_topic: /mavros/imu/data
-  canonical_estimator_config: >-
-    src/navigation_estimator/fast_lio_ros/config/mid360_mutual_avoidance_uav1.yaml

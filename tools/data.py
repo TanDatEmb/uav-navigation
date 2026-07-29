@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""External dataset registry, content cache, and legacy dataset workflow."""
+"""Single entrypoint for FAST-LIO dataset acquisition, validation, and runs."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import csv
 import datetime as dt
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import shutil
@@ -26,26 +25,16 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "datasets" / "catalog"
 RAW_SUFFIXES = {".bag", ".mcap", ".db3"}
 GENERATED_LIMIT = 10 * 1024 * 1024
-MATRIX_SETS = {
-    "core": (
-        "aist-mid360-drive",
-        "local-mid360-static01",
-        "local-mid360-yaw01",
-    ),
-    "runtime": (
-        "aist-mid360-drive",
-        "m3dgr-mid360-dynamic01",
-    ),
-    "map": (
-        "m3dgr-mid360-dynamic01",
-        "m3dgr-mid360-corridor02",
-        "local-mid360-square01",
-    ),
-    "optional-uav": (
-        "tiers-mid360-updown01",
-        "tiers-mid360-square01",
-    ),
-}
+REQUIRED_OFFLINE_OUTPUTS = (
+    "run.json",
+    "summary.json",
+    "diagnostics.csv",
+    "trajectory.csv",
+    "corrections.csv",
+    "local_map.pcd",
+    "stdout.log",
+    "stderr.log",
+)
 
 
 class DataError(RuntimeError):
@@ -321,10 +310,7 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
             json.dumps(provenance, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        config = (
-            ROOT / "src/navigation_estimator/fast_lio_ros/config/data"
-            / f"{entry['id']}.yaml"
-        )
+        config = config_path(entry["id"])
         workflow_manifest = {
             "name": entry["id"],
             "bag": "lio",
@@ -366,328 +352,334 @@ def check_tracked_blobs() -> list[str]:
     return violations
 
 
-def workflow_dataset(value: str, home: Path) -> str:
+def config_path(dataset_id: str) -> Path:
+    if dataset_id != "aist-mid360-drive":
+        raise DataError(f"no canonical M1 config is defined for {dataset_id}")
+    return ROOT / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
+
+
+def dataset_context(value: str, home: Path) -> dict:
     candidate = Path(value).expanduser()
     if candidate.exists():
-        return str(candidate)
+        directory = candidate.resolve()
+        manifest_path = directory / "dataset.yaml"
+        if manifest_path.is_file():
+            manifest = load_yaml(manifest_path)
+            bag = (directory / str(manifest["bag"])).resolve()
+            dataset_id = str(manifest["name"])
+            input_config = manifest["input"]
+            configured = Path(str(manifest["config"]["path"])).expanduser()
+            config = configured if configured.is_absolute() else (ROOT / configured)
+        elif (directory / "metadata.yaml").is_file():
+            entry = lookup("aist-mid360-drive")
+            dataset_id = entry["id"]
+            bag = directory
+            input_config = entry["input"]
+            config = config_path(dataset_id)
+        else:
+            raise DataError(
+                f"dataset path needs dataset.yaml or rosbag metadata.yaml: {directory}"
+            )
+        return {
+            "id": dataset_id,
+            "directory": directory,
+            "bag": bag.resolve(),
+            "config": config.resolve(),
+            "input": input_config,
+        }
+
+    entry = lookup(value)
     prepared = home / "datasets" / value
-    if (prepared / "dataset.yaml").is_file():
-        return str(prepared)
-    legacy = ROOT / "data" / value
-    if (legacy / "dataset.yaml").is_file():
-        return str(legacy)
-    if value == "aist-mid360-drive":
-        local = ROOT / "data" / "mid360_17_01"
-        if (local / "dataset.yaml").is_file():
-            return str(local)
-    raise DataError(f"{value} is not prepared in the external data home")
-
-
-def matrix_datasets(name: str) -> tuple[str, ...]:
-    if name == "all":
-        ordered: list[str] = []
-        for group in ("core", "runtime", "map"):
-            for dataset_id in MATRIX_SETS[group]:
-                if dataset_id not in ordered:
-                    ordered.append(dataset_id)
-        return tuple(ordered)
-    if name not in MATRIX_SETS:
-        raise DataError(f"unknown matrix set: {name}")
-    return MATRIX_SETS[name]
-
-
-def matrix_actions(repeat: int, margin: bool) -> tuple[tuple[str, ...], ...]:
-    if repeat <= 0:
-        raise DataError("matrix repeat must be positive")
-    actions: list[tuple[str, ...]] = [
-        ("info",),
-        ("smoke", "--max-lidar", "20"),
-        ("run",),
-    ]
-    actions.extend(("run",) for _ in range(repeat))
-    actions.extend(
-        [
-            ("replay", "--rate", "0.5"),
-            ("replay", "--rate", "1.0"),
-        ]
-    )
-    if margin:
-        actions.append(("replay", "--rate", "1.2"))
-    return tuple(actions)
-
-
-def read_trajectory(path: Path) -> list[tuple[int, tuple[float, ...]]]:
-    samples = []
-    with path.open(encoding="utf-8", newline="") as stream:
-        for row in csv.DictReader(stream):
-            samples.append((
-                int(row["time_ns"]),
-                tuple(float(row[key]) for key in (
-                    "x", "y", "z", "qx", "qy", "qz", "qw"
-                )),
-            ))
-    return samples
-
-
-def quaternion_multiply(
-    left: tuple[float, float, float, float],
-    right: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
-    lx, ly, lz, lw = left
-    rx, ry, rz, rw = right
-    return (
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    )
-
-
-def quaternion_inverse(
-    value: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
-    x, y, z, w = value
-    norm_squared = x * x + y * y + z * z + w * w
-    return (-x / norm_squared, -y / norm_squared,
-            -z / norm_squared, w / norm_squared)
-
-
-def rotation_angle(value: tuple[float, float, float, float]) -> float:
-    norm = math.sqrt(sum(component * component for component in value))
-    return 2.0 * math.acos(min(1.0, max(-1.0, abs(value[3] / norm))))
-
-
-def trajectory_metrics(
-    estimate: list[tuple[int, tuple[float, ...]]],
-    truth: list[tuple[int, tuple[float, ...]]],
-    maximum_time_delta_ns: int,
-) -> dict:
-    if not estimate or not truth:
-        raise DataError("trajectory metrics require non-empty trajectories")
-    truth_by_time = sorted(truth)
-    matched = []
-    truth_index = 0
-    for estimate_sample in sorted(estimate):
-        while (
-            truth_index + 1 < len(truth_by_time)
-            and abs(truth_by_time[truth_index + 1][0] - estimate_sample[0])
-            <= abs(truth_by_time[truth_index][0] - estimate_sample[0])
-        ):
-            truth_index += 1
-        truth_sample = truth_by_time[truth_index]
-        if abs(truth_sample[0] - estimate_sample[0]) <= maximum_time_delta_ns:
-            matched.append((estimate_sample, truth_sample))
-    if not matched:
-        raise DataError("no estimate/ground-truth timestamps matched")
-    squared_position_errors = []
-    rpe_translation_squared = []
-    rpe_rotation_squared = []
-    for (_, estimate_value), (_, truth_value) in matched:
-        squared_position_errors.append(sum(
-            (estimate_value[index] - truth_value[index]) ** 2
-            for index in range(3)
-        ))
-    for index in range(1, len(matched)):
-        previous_estimate = matched[index - 1][0][1]
-        current_estimate = matched[index][0][1]
-        previous_truth = matched[index - 1][1][1]
-        current_truth = matched[index][1][1]
-        estimate_delta = tuple(
-            current_estimate[axis] - previous_estimate[axis]
-            for axis in range(3)
-        )
-        truth_delta = tuple(
-            current_truth[axis] - previous_truth[axis] for axis in range(3)
-        )
-        rpe_translation_squared.append(sum(
-            (estimate_delta[axis] - truth_delta[axis]) ** 2
-            for axis in range(3)
-        ))
-        estimate_rotation = quaternion_multiply(
-            quaternion_inverse(tuple(previous_estimate[3:7])),
-            tuple(current_estimate[3:7]),
-        )
-        truth_rotation = quaternion_multiply(
-            quaternion_inverse(tuple(previous_truth[3:7])),
-            tuple(current_truth[3:7]),
-        )
-        rotation_error = quaternion_multiply(
-            quaternion_inverse(truth_rotation), estimate_rotation
-        )
-        rpe_rotation_squared.append(rotation_angle(rotation_error) ** 2)
-    rms = lambda values: (
-        math.sqrt(sum(values) / len(values)) if values else None
-    )
+    bag = prepared / "lio"
+    if not (prepared / "status.json").is_file() or not bag.is_dir():
+        raise DataError(f"{value} is not prepared; run make data-fetch DATASET={value}")
     return {
-        "ate_translation_rmse_m": rms(squared_position_errors),
-        "rpe_translation_rmse_m": rms(rpe_translation_squared),
-        "rpe_rotation_rmse_rad": rms(rpe_rotation_squared),
-        "trajectory_coverage": len(matched) / len(estimate),
-        "matched_pose_count": len(matched),
-        "estimate_pose_count": len(estimate),
-        "thresholds_applied": False,
+        "id": value,
+        "directory": prepared,
+        "bag": bag,
+        "config": config_path(value),
+        "input": entry["input"],
     }
 
 
-def ground_truth_metrics(
-    entry: dict, dataset_path: Path, run_output: Path
-) -> dict:
-    ground_truth = entry.get("ground_truth") or {}
-    if not ground_truth.get("available"):
-        return {"available": False}
-    relative = ground_truth.get("path")
-    if not relative:
-        return {
-            "available": True,
-            "computed": False,
-            "reason": "catalog has no prepared ground_truth.path",
-        }
-    if ground_truth.get("alignment") != "same_frame":
-        return {
-            "available": True,
-            "computed": False,
-            "reason": "ground-truth frame alignment is not verified",
-        }
-    metrics = trajectory_metrics(
-        read_trajectory(run_output / "trajectory.csv"),
-        read_trajectory(dataset_path / str(relative)),
-        int(ground_truth.get("maximum_time_delta_ns", 20_000_000)),
+def bag_topic_counts(context: dict) -> dict[str, int]:
+    bag = context["bag"]
+    config = context["config"]
+    if not (bag / "metadata.yaml").is_file():
+        raise DataError(f"invalid ROS 2 bag: {bag}")
+    if not config.is_file():
+        raise DataError(f"estimator config not found: {config}")
+    metadata = load_yaml(bag / "metadata.yaml")
+    topic_entries = metadata.get("rosbag2_bagfile_information", {}).get(
+        "topics_with_message_count", []
     )
-    return {"available": True, "computed": True, **metrics}
-
-
-def run_matrix(args: argparse.Namespace, home: Path) -> int:
-    dataset_ids = matrix_datasets(args.case)
-    actions = matrix_actions(args.repeat, args.margin)
-    if args.plan_only:
-        for dataset_id in dataset_ids:
-            print(dataset_id)
-            for action in actions:
-                print("  " + " ".join(action))
-        return 0
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, text=True,
-        capture_output=True,
-    ).stdout.strip()
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output = ROOT / ".artifacts" / "data-matrix" / args.case / f"{sha}-{stamp}"
-    output.mkdir(parents=True, exist_ok=False)
-    results = []
-    for dataset_id in dataset_ids:
-        try:
-            dataset_path = Path(workflow_dataset(dataset_id, home))
-        except DataError as error:
-            results.append({
-                "dataset": dataset_id,
-                "status": "unavailable",
-                "error": str(error),
-                "actions": [],
-            })
-            continue
-        action_results = []
-        full_run_output: Path | None = None
-        for action in actions:
-            command = [
-                sys.executable, str(Path(__file__).resolve()),
-                "--data-home", str(home), action[0],
-                "--dataset", dataset_id, *action[1:],
-            ]
-            completed = subprocess.run(
-                command, cwd=ROOT, text=True, capture_output=True
+    observed = {
+        str(item.get("topic_metadata", {}).get("name")): (
+            str(item.get("topic_metadata", {}).get("type")),
+            int(item.get("message_count", 0)),
+        )
+        for item in topic_entries
+    }
+    input_config = context["input"]
+    lidar_type = {
+        "pointcloud2": "sensor_msgs/msg/PointCloud2",
+        "livox_custom": "livox_ros_driver2/msg/CustomMsg",
+    }.get(str(input_config.get("lidar_message_type")))
+    required = {
+        str(input_config["lidar_topic"]): lidar_type,
+        str(input_config["imu_topic"]): "sensor_msgs/msg/Imu",
+    }
+    counts = {}
+    for topic, expected_type in required.items():
+        actual = observed.get(topic)
+        if actual is None or actual[0] != expected_type or actual[1] <= 0:
+            raise DataError(
+                f"invalid required topic {topic}: observed={actual}, "
+                f"expected_type={expected_type}"
             )
-            if completed.stdout:
-                print(completed.stdout, end="")
-            if completed.stderr:
-                print(completed.stderr, end="", file=sys.stderr)
-            output_path = None
-            for line in reversed(completed.stdout.splitlines()):
-                candidate = Path(line.strip())
-                if candidate.is_dir():
-                    output_path = str(candidate)
-                    break
-            action_result = {
-                "action": list(action),
-                "returncode": completed.returncode,
-                "output": output_path,
-            }
-            action_results.append(action_result)
-            if action == ("run",) and full_run_output is None and output_path:
-                full_run_output = Path(output_path)
-            if completed.returncode != 0:
-                break
-        entry = lookup(dataset_id)
-        metrics = (
-            ground_truth_metrics(entry, dataset_path, full_run_output)
-            if full_run_output is not None
-            else {"available": bool(
-                (entry.get("ground_truth") or {}).get("available")
-            ), "computed": False, "reason": "full offline run unavailable"}
-        )
-        results.append({
-            "dataset": dataset_id,
-            "status": (
-                "passed"
-                if len(action_results) == len(actions)
-                and all(item["returncode"] == 0 for item in action_results)
-                else "failed"
-            ),
-            "actions": action_results,
-            "ground_truth_metrics": metrics,
-        })
-        atomic_json(output / "summary.json", {
-            "schema_version": 1,
-            "set": args.case,
-            "git_sha": sha,
-            "datasets": results,
-        })
-    failures = [item for item in results if item["status"] != "passed"]
-    atomic_json(output / "summary.json", {
+        counts[topic] = actual[1]
+    if set(observed) != set(required):
+        raise DataError(f"derived bag is not LIO-only: {sorted(observed)}")
+    return counts
+
+
+def git_short_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, check=True,
+        text=True, capture_output=True,
+    ).stdout.strip()
+
+
+def new_run_directory(dataset_id: str, action: str) -> Path:
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    output = (
+        ROOT / ".artifacts/datasets" / dataset_id
+        / f"{git_short_sha()}-{action}-{stamp}"
+    )
+    output.mkdir(parents=True, exist_ok=False)
+    return output
+
+
+def write_run_json(
+    output: Path, action: str, context: dict, counts: dict[str, int]
+) -> None:
+    atomic_json(output / "run.json", {
         "schema_version": 1,
-        "set": args.case,
-        "git_sha": sha,
-        "datasets": results,
-        "failure_count": len(failures),
+        "action": action,
+        "dataset": context["id"],
+        "dataset_directory": str(context["directory"]),
+        "bag_directory": str(context["bag"]),
+        "config_path": str(context["config"]),
+        "git_short_sha": git_short_sha(),
+        "input": context["input"],
+        "observed_counts": counts,
     })
-    print(output)
-    return 1 if failures else 0
 
 
-def call_legacy(action: str, args: argparse.Namespace, home: Path) -> int:
-    dataset_path = Path(workflow_dataset(args.dataset, home))
-    if action == "replay":
-        manifest = load_yaml(dataset_path / "dataset.yaml")
-        bag = (dataset_path / str(manifest["bag"])).resolve()
-        config = Path(str(manifest["config"]["path"])).expanduser()
-        if not config.is_absolute():
-            config = (ROOT / config).resolve()
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, check=True,
-            text=True, capture_output=True,
-        ).stdout.strip()
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        output = (
-            ROOT / ".artifacts" / "datasets" / str(manifest["name"])
-            / f"{sha}-replay-{args.rate}x-{stamp}"
-        )
-        input_config = manifest["input"]
-        command = [
-            sys.executable, str(ROOT / "tools/runtime/ros_replay.py"), "run",
-            "--bag", str(bag), "--config", str(config),
-            "--output", str(output),
-            "--imu-topic", str(input_config["imu_topic"]),
-            "--lidar-topic", str(input_config["lidar_topic"]),
-            "--rate", str(args.rate),
-        ]
-        return subprocess.run(command, cwd=ROOT).returncode
-    aliases = {"info": "inspect", "replay": "ros"}
+def reject_non_finite_csv(output: Path) -> None:
+    invalid = {"nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity"}
+    for name in ("trajectory.csv", "corrections.csv", "diagnostics.csv"):
+        with (output / name).open(encoding="utf-8", newline="") as stream:
+            if any(value.strip().lower() in invalid for row in csv.reader(stream)
+                   for value in row):
+                raise DataError(f"non-finite value found in {name}")
+
+
+def run_offline(args: argparse.Namespace, home: Path, smoke: bool) -> int:
+    context = dataset_context(args.dataset, home)
+    counts = bag_topic_counts(context)
+    action = "smoke" if smoke else "run"
+    output = new_run_directory(context["id"], action)
+    write_run_json(output, action, context, counts)
     command = [
-        sys.executable, str(ROOT / "tools" / "dev" / "dataset.py"),
-        aliases.get(action, action), "--dataset",
-        str(dataset_path),
+        "ros2", "run", "fast_lio_tools", "lio_offline",
+        str(context["bag"]), str(context["config"]), str(output),
     ]
-    if action == "smoke":
-        command += ["--max-lidar", str(args.max_lidar)]
+    if smoke:
+        command.append(str(args.max_lidar))
+    with (output / "stdout.log").open("w", encoding="utf-8") as stdout, (
+        output / "stderr.log"
+    ).open("w", encoding="utf-8") as stderr:
+        result = subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr)
+    if result.returncode:
+        raise DataError(f"offline runner failed with {result.returncode}: {output}")
+    missing = [name for name in REQUIRED_OFFLINE_OUTPUTS
+               if not (output / name).is_file()]
+    if missing:
+        raise DataError(f"offline runner omitted: {', '.join(missing)}")
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    failures = []
+    if int(summary.get("core_rejected_lidar_count", 0)) != 0:
+        failures.append("LiDAR adapter rejection")
+    if int(summary.get("invalid_timestamp_rejected_count", 0)) != 0:
+        failures.append("invalid timestamp")
+    if int(summary.get("successful_correction_count", 0)) <= 0:
+        failures.append("no corrected output")
+    if not bool(summary.get("deskew_applied")):
+        failures.append("deskew not applied")
+    if failures:
+        raise DataError(f"offline gates failed: {', '.join(failures)}")
+    reject_non_finite_csv(output)
+    print(output)
+    return 0
+
+
+def run_replay(args: argparse.Namespace, home: Path) -> int:
+    context = dataset_context(args.dataset, home)
+    counts = bag_topic_counts(context)
+    output = new_run_directory(context["id"], f"replay-{args.rate}x")
+    write_run_json(output, "replay", context, counts)
+    command = [
+        sys.executable, str(ROOT / "tools/runtime/ros_replay.py"), "run",
+        "--bag", str(context["bag"]), "--config", str(context["config"]),
+        "--output", str(output),
+        "--imu-topic", str(context["input"]["imu_topic"]),
+        "--lidar-topic", str(context["input"]["lidar_topic"]),
+        "--rate", str(args.rate),
+    ]
     return subprocess.run(command, cwd=ROOT).returncode
+
+
+def view_latest(dataset_id: str) -> int:
+    maps = sorted(
+        (ROOT / ".artifacts/datasets" / dataset_id).glob("*/local_map.pcd"),
+        key=os.path.getmtime,
+    )
+    if not maps:
+        raise DataError(f"no local_map.pcd artifact for {dataset_id}")
+    viewer = shutil.which("pcl_viewer")
+    if viewer is None:
+        raise DataError("pcl_viewer is not installed")
+    return subprocess.run([viewer, str(maps[-1])], cwd=ROOT).returncode
+
+
+def percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[round((len(ordered) - 1) * fraction)]
+
+
+def distribution(rows: list[dict[str, str]], key: str) -> dict:
+    values = [float(row[key]) for row in rows if row.get(key) not in (None, "")]
+    return {
+        "p50": percentile(values, 0.50),
+        "p95": percentile(values, 0.95),
+        "p99": percentile(values, 0.99),
+        "max": max(values) if values else None,
+    }
+
+
+def report_latest(dataset_id: str) -> int:
+    base = ROOT / ".artifacts/datasets" / dataset_id
+    summaries = sorted(
+        (
+            path for path in base.glob("*/summary.json")
+            if (path.parent / "diagnostics.csv").is_file()
+        ),
+        key=os.path.getmtime,
+    )
+    if not summaries:
+        raise DataError(f"no offline run summary found for {dataset_id}")
+    summary_path = summaries[-1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    report = {"dataset": dataset_id, "artifact": str(summary_path.parent)}
+    diagnostics_csv = summary_path.parent / "diagnostics.csv"
+    with diagnostics_csv.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    corrected = [
+        row for row in rows
+        if row.get("status") == "corrected" or row.get("accepted_residuals", "0") != "0"
+    ]
+    residuals = [
+        float(row["residual_rms"]) for row in corrected
+        if row.get("residual_rms") not in (None, "")
+    ]
+    report.update({
+            "dataset_duration_s": summary.get("dataset_duration_seconds"),
+            "wall_runtime_s": float(summary.get("wall_runtime_us", 0)) / 1e6,
+            "realtime_factor": (
+                float(summary.get("dataset_duration_seconds", 0))
+                / max(float(summary.get("wall_runtime_us", 0)) / 1e6, 1e-9)
+            ),
+            "imu": {
+                "accepted": summary.get("core_accepted_imu_count"),
+                "rejected": summary.get("core_rejected_imu_count"),
+            },
+            "lidar": {
+                "accepted": summary.get("core_accepted_lidar_count"),
+                "rejected": summary.get("core_rejected_lidar_count"),
+            },
+            "corrections": {
+                "attempted": summary.get("correction_attempt_count"),
+                "succeeded": summary.get("successful_correction_count"),
+                "failed": summary.get("failed_correction_count"),
+            },
+            "deskew_count": summary.get("deskew_applied_count"),
+            "residual_rms": {
+                "p50": percentile(residuals, 0.50),
+                "p95": percentile(residuals, 0.95),
+                "p99": percentile(residuals, 0.99),
+                "max": max(residuals) if residuals else None,
+            },
+            "ikfom_iterations": distribution(corrected, "iterations"),
+            "total_processing_us": distribution(rows, "total_processing_us"),
+            "ikfom_update_us": distribution(rows, "ikfom_update_us"),
+            "map_update_us": distribution(rows, "map_insert_crop_us"),
+            "map_maintenance_us": distribution(rows, "map_maintenance_us"),
+            "map_points": {
+                "final": summary.get("map_point_count"),
+                "max": max(
+                    (int(row["map_points"]) for row in rows if row.get("map_points")),
+                    default=None,
+                ),
+            },
+    })
+    replay_summaries = sorted(
+        (
+            path for path in base.glob("*/summary.json")
+            if not (path.parent / "diagnostics.csv").is_file()
+            and "replay-" in path.parent.name
+        ),
+        key=os.path.getmtime,
+    )
+    if replay_summaries:
+        replay = json.loads(replay_summaries[-1].read_text(encoding="utf-8"))
+        runtime = replay.get("diagnostics", {})
+        report["replay"] = {
+            "artifact": str(replay_summaries[-1].parent),
+            "rate": replay.get("rate"),
+            "queue_depth_final": runtime.get("current_input_queue_depth"),
+            "queue_depth_max": runtime.get("maximum_queue_depth"),
+            "processing_lag_ns": runtime.get("processing_lag_ns"),
+            "imu_drop_count": runtime.get("imu_drop_count"),
+            "lidar_drop_count": runtime.get("lidar_drop_count"),
+        }
+    atomic_json(summary_path.parent / "report.json", report)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def run_data_test(args: argparse.Namespace, home: Path) -> int:
+    commands = [
+        ("check",),
+        ("smoke", "--max-lidar", str(args.max_lidar)),
+        ("run",),
+        ("replay", "--rate", "1.0"),
+        ("report",),
+    ]
+    for command in commands:
+        completed = subprocess.run(
+            [
+                sys.executable, str(Path(__file__).resolve()),
+                "--data-home", str(home), command[0],
+                "--dataset", args.dataset, *command[1:],
+            ],
+            cwd=ROOT,
+        )
+        if completed.returncode:
+            return completed.returncode
+    return 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -695,20 +687,15 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--data-home", type=Path, default=data_home())
     sub = result.add_subparsers(dest="action", required=True)
     sub.add_parser("list")
-    for action in ("get", "check", "prepare", "rm"):
+    sub.add_parser("clean")
+    sub.add_parser("clean-artifacts")
+    for action in ("fetch", "check"):
         child = sub.add_parser(action)
-        child.add_argument("--dataset")
-        if action == "prepare":
-            child.add_argument("--keep-archive", choices=("0", "1"), default="1")
-    matrix = sub.add_parser("matrix")
-    matrix.add_argument("--case", required=True)
-    matrix.add_argument("--repeat", type=int, default=3)
-    matrix.add_argument("--margin", action="store_true")
-    matrix.add_argument("--plan-only", action="store_true")
-    for action in ("info", "view", "run", "replay", "smoke"):
+        child.add_argument("--dataset", required=(action == "fetch"))
+    for action in ("view", "run", "replay", "smoke", "report", "test"):
         child = sub.add_parser(action)
         child.add_argument("--dataset", required=True)
-        if action == "smoke":
+        if action in ("smoke", "test"):
             child.add_argument("--max-lidar", type=int, default=20)
         if action == "replay":
             child.add_argument("--rate", type=float, default=1.0)
@@ -724,35 +711,59 @@ def main() -> int:
             print(f"{dataset_id}\t{item['download']['mode']}\t"
                   f"{'ready' if installed else 'absent'}")
         return 0
+    if args.action in {"clean", "clean-artifacts"}:
+        names = (
+            ("build", "install", "log")
+            if args.action == "clean" else (".artifacts",)
+        )
+        for name in names:
+            target = ROOT / name
+            if target.is_dir():
+                shutil.rmtree(target)
+        return 0
+    if args.action == "fetch":
+        print(prepare(lookup(args.dataset), home, True))
+        return 0
     if args.action == "check":
         entries()
         violations = check_tracked_blobs()
-        if args.dataset:
-            entry = lookup(args.dataset)
-            path = blob_path(home, entry) if entry["download"].get("checksum") else None
-            if path and path.exists():
-                verify_blob(path, entry["download"]["checksum"])
         if violations:
             raise DataError("; ".join(violations))
-        print("dataset catalog and tracked-blob guard: OK")
+        if not args.dataset:
+            print("dataset catalog and tracked-blob guard: OK")
+            return 0
+        entry = lookup(args.dataset)
+        path = blob_path(home, entry)
+        if not path.is_file():
+            raise DataError(f"source archive missing: run data-fetch for {args.dataset}")
+        verify_blob(path, entry["download"]["checksum"])
+        context = dataset_context(args.dataset, home)
+        counts = bag_topic_counts(context)
+        status = load_yaml(context["directory"] / "status.json")
+        expected = status.get("selected_message_counts", {})
+        if counts != expected:
+            raise DataError(f"prepared counts differ from provenance: {counts} != {expected}")
+        print(json.dumps({
+            "dataset": args.dataset,
+            "checksum": "verified",
+            "topics": counts,
+            "config": str(context["config"]),
+            "tracked_blob_guard": "ok",
+        }, sort_keys=True))
         return 0
-    if args.action == "matrix":
-        return run_matrix(args, home)
-    if args.action in {"info", "view", "run", "replay", "smoke"}:
-        return call_legacy(args.action, args, home)
-    if not args.dataset:
-        raise DataError(f"{args.action} requires --dataset")
-    entry = lookup(args.dataset)
-    if args.action == "get":
-        print(download(entry, home))
-    elif args.action == "prepare":
-        print(prepare(entry, home, args.keep_archive == "1"))
-    elif args.action == "rm":
-        target = home / "datasets" / entry["id"]
-        if target.exists():
-            shutil.rmtree(target)
-        print(target)
-    return 0
+    if args.action == "smoke":
+        return run_offline(args, home, True)
+    if args.action == "run":
+        return run_offline(args, home, False)
+    if args.action == "replay":
+        return run_replay(args, home)
+    if args.action == "view":
+        return view_latest(dataset_context(args.dataset, home)["id"])
+    if args.action == "report":
+        return report_latest(dataset_context(args.dataset, home)["id"])
+    if args.action == "test":
+        return run_data_test(args, home)
+    raise DataError(f"unsupported action: {args.action}")
 
 
 if __name__ == "__main__":

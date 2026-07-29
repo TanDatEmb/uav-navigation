@@ -17,8 +17,6 @@ import threading
 import time
 from typing import Any, Sequence
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -271,27 +269,17 @@ def resolve_dataset(dataset: str) -> tuple[Path, Path]:
             raise ValueError("dataset path must be a ROS bag directory")
         raise ValueError("--config is required when DATASET is a path")
 
-    legacy = ROOT / "data" / dataset / "dataset.yaml"
-    if legacy.is_file():
-        manifest = yaml.safe_load(legacy.read_text(encoding="utf-8"))
-        return legacy.parent / manifest["bag"], ROOT / manifest["config"]["path"]
-
     catalog_path = ROOT / "datasets" / "catalog" / f"{dataset}.yaml"
     if not catalog_path.is_file():
         raise ValueError(f"unknown dataset id: {dataset}")
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     external = data_home() / "datasets" / dataset / "lio"
-    config = ROOT / "src/navigation_estimator/fast_lio_ros/config/data" / f"{dataset}.yaml"
+    config = ROOT / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
     if external.is_dir():
         return external, config
 
-    archive_name = str(catalog.get("archive", {}).get("filename", ""))
-    identifying_token = Path(archive_name).stem.removeprefix("rosbag2_")
-    for metadata in sorted((ROOT / "data").glob("*/bag/metadata.yaml")):
-        if identifying_token and identifying_token in metadata.read_text(encoding="utf-8"):
-            return metadata.parent, config
     raise ValueError(
-        f"{dataset} is not prepared; run data-get/data-prepare or pass a bag path"
+        f"{dataset} is not prepared; run data-fetch or pass a bag path"
     )
 
 
