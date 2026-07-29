@@ -135,8 +135,24 @@ struct MapDiagnostics {
   std::size_t map_point_count{0};
   std::size_t inserted_point_count{0};
   std::size_t removed_point_count{0};
+  std::size_t map_size_before_insert{0};
+  std::size_t map_candidate_count{0};
+  std::size_t map_inserted_count{0};
+  std::size_t map_size_after_insert{0};
+  bool crop_performed{false};
+  std::size_t crop_removed_count{0};
+  bool crop_triggered_by_motion{false};
+  bool crop_triggered_by_point_threshold{false};
+  std::size_t map_size_before_maintenance{0};
+  std::size_t confidence_pruned_count{0};
+  std::size_t distance_pruned_count{0};
+  std::size_t redundancy_pruned_count{0};
+  std::size_t map_size_after_maintenance{0};
   Eigen::Vector3d local_map_center_odom_m{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d local_map_half_extent_m{Eigen::Vector3d::Zero()};
   std::int64_t map_update_runtime_us{0};
+  std::int64_t map_maintenance_us{0};
+  std::size_t snapshot_point_count{0};
 };
 
 struct StateDiagnostics {
@@ -172,6 +188,7 @@ struct StageTimingDiagnostics {
   std::int64_t residual_build_us{0};
   std::int64_t ikfom_update_us{0};
   std::int64_t map_insert_crop_us{0};
+  std::int64_t map_maintenance_us{0};
   std::int64_t snapshot_us{0};
   std::int64_t total_processing_us{0};
 };

@@ -16,7 +16,10 @@ struct LocalMapManagerConfig {
 struct LocalMapUpdate {
   bool crop_performed{false};
   std::size_t removed_point_count{0};
+  bool crop_triggered_by_motion{false};
+  bool crop_triggered_by_point_threshold{false};
   Eigen::Vector3d center_odom_m{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d half_extent_m{Eigen::Vector3d::Zero()};
 };
 
 class LocalMapManager {

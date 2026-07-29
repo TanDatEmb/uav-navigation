@@ -389,6 +389,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   insertion_context.filtered_point_count = points_lidar_m.size();
   if (insertion_policy_.permits(insertion_context)) {
     const auto map_update_started = std::chrono::steady_clock::now();
+    diagnostics_.map.map_size_before_insert = registration_map_.size();
+    diagnostics_.map.map_candidate_count =
+        result.registered_points_odom_m.size();
     std::size_t inserted = 0U;
     if (registration_map_.size() == 0U && !bootstrap_reference_points_odom_m_.empty()) {
       inserted += registration_map_.insert(bootstrap_reference_points_odom_m_);
@@ -396,17 +399,36 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       bootstrap_map_.clear();
     }
     inserted += registration_map_.insert(result.registered_points_odom_m);
+    diagnostics_.map.map_inserted_count = inserted;
+    diagnostics_.map.map_size_after_insert = registration_map_.size();
+    diagnostics_.map.map_size_before_maintenance = registration_map_.size();
+    const auto maintenance_started = std::chrono::steady_clock::now();
     const LocalMapUpdate local_map_update =
         local_map_manager_.update(registration_map_, state_.position_odom_imu_m());
+    diagnostics_.map.map_maintenance_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - maintenance_started)
+            .count();
+    diagnostics_.map.map_size_after_maintenance = registration_map_.size();
+    diagnostics_.map.crop_performed = local_map_update.crop_performed;
+    diagnostics_.map.crop_removed_count =
+        local_map_update.removed_point_count;
+    diagnostics_.map.crop_triggered_by_motion =
+        local_map_update.crop_triggered_by_motion;
+    diagnostics_.map.crop_triggered_by_point_threshold =
+        local_map_update.crop_triggered_by_point_threshold;
     diagnostics_.map.inserted_point_count = inserted;
     diagnostics_.map.removed_point_count = local_map_update.removed_point_count;
     diagnostics_.map.local_map_center_odom_m = local_map_update.center_odom_m;
+    diagnostics_.map.local_map_half_extent_m = local_map_update.half_extent_m;
     diagnostics_.map.map_update_runtime_us =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                               map_update_started)
             .count();
     diagnostics_.timing.map_insert_crop_us =
         diagnostics_.map.map_update_runtime_us;
+    diagnostics_.timing.map_maintenance_us =
+        diagnostics_.map.map_maintenance_us;
   }
   diagnostics_.map.map_point_count = registration_map_.size();
   ++corrected_scan_count_;
@@ -414,6 +436,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       corrected_scan_count_ % config_.lifecycle.local_map_snapshot_period_scans == 0U) {
     const auto snapshot_started = std::chrono::steady_clock::now();
     result.local_map_points_odom_m = registration_map_.snapshot();
+    diagnostics_.map.snapshot_point_count =
+        result.local_map_points_odom_m.size();
     diagnostics_.timing.snapshot_us =
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - snapshot_started)

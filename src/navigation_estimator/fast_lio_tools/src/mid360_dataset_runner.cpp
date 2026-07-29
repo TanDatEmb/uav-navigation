@@ -96,8 +96,16 @@ int run(const std::filesystem::path& bag_path,
                  "residual_rms,iterations,final_increment_norm,map_points,"
                  "deskew_applied,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
-                 "ikfom_update_us,map_insert_crop_us,snapshot_us,"
-                 "total_processing_us\n";
+                 "ikfom_update_us,map_insert_crop_us,map_maintenance_us,snapshot_us,"
+                 "total_processing_us,map_size_before_insert,map_candidate_count,"
+                 "map_inserted_count,map_size_after_insert,crop_performed,"
+                 "crop_removed_count,crop_triggered_by_motion,"
+                 "crop_triggered_by_point_threshold,map_size_before_maintenance,"
+                 "confidence_pruned_count,distance_pruned_count,"
+                 "redundancy_pruned_count,map_size_after_maintenance,"
+                 "local_map_center_x,local_map_center_y,local_map_center_z,"
+                 "local_map_half_extent_x,local_map_half_extent_y,"
+                 "local_map_half_extent_z,snapshot_point_count\n";
   trajectory << "time_ns,x,y,z,qx,qy,qz,qw\n";
   corrections << "time_ns,status,iterations,residual_rms,map_points\n";
   std::size_t record_index = 0;
@@ -169,8 +177,29 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.timing.residual_build_us << ','
                   << diagnostic.timing.ikfom_update_us << ','
                   << diagnostic.timing.map_insert_crop_us << ','
+                  << diagnostic.timing.map_maintenance_us << ','
                   << diagnostic.timing.snapshot_us << ','
-                  << diagnostic.timing.total_processing_us << '\n';
+                  << diagnostic.timing.total_processing_us << ','
+                  << diagnostic.map.map_size_before_insert << ','
+                  << diagnostic.map.map_candidate_count << ','
+                  << diagnostic.map.map_inserted_count << ','
+                  << diagnostic.map.map_size_after_insert << ','
+                  << (diagnostic.map.crop_performed ? 1 : 0) << ','
+                  << diagnostic.map.crop_removed_count << ','
+                  << (diagnostic.map.crop_triggered_by_motion ? 1 : 0) << ','
+                  << (diagnostic.map.crop_triggered_by_point_threshold ? 1 : 0) << ','
+                  << diagnostic.map.map_size_before_maintenance << ','
+                  << diagnostic.map.confidence_pruned_count << ','
+                  << diagnostic.map.distance_pruned_count << ','
+                  << diagnostic.map.redundancy_pruned_count << ','
+                  << diagnostic.map.map_size_after_maintenance << ','
+                  << diagnostic.map.local_map_center_odom_m.x() << ','
+                  << diagnostic.map.local_map_center_odom_m.y() << ','
+                  << diagnostic.map.local_map_center_odom_m.z() << ','
+                  << diagnostic.map.local_map_half_extent_m.x() << ','
+                  << diagnostic.map.local_map_half_extent_m.y() << ','
+                  << diagnostic.map.local_map_half_extent_m.z() << ','
+                  << diagnostic.map.snapshot_point_count << '\n';
       if (diagnostic.deskew.deskew_applied) {
         ++counters.deskew_applied_count;
       }
@@ -203,7 +232,8 @@ int run(const std::filesystem::path& bag_path,
                               std::chrono::steady_clock::now() - wall_start)
                               .count();
   const auto map = pipeline.registrationMapSnapshot();
-  const auto processing = pipeline.diagnostics().processing;
+  const auto final_diagnostics = pipeline.diagnostics();
+  const auto processing = final_diagnostics.processing;
   const double dataset_duration_seconds =
       counters.first_lidar_start_ns >= 0 &&
               counters.last_lidar_end_ns > counters.first_lidar_start_ns
@@ -290,6 +320,22 @@ int run(const std::filesystem::path& bag_path,
           << "  \"effective_corrected_output_rate_hz\": "
           << effective_corrected_output_rate_hz << ",\n"
           << "  \"map_point_count\": " << map.size() << ",\n"
+          << "  \"map_size_before_insert\": "
+          << final_diagnostics.map.map_size_before_insert << ",\n"
+          << "  \"map_candidate_count\": "
+          << final_diagnostics.map.map_candidate_count << ",\n"
+          << "  \"map_inserted_count\": "
+          << final_diagnostics.map.map_inserted_count << ",\n"
+          << "  \"map_size_after_insert\": "
+          << final_diagnostics.map.map_size_after_insert << ",\n"
+          << "  \"map_size_before_maintenance\": "
+          << final_diagnostics.map.map_size_before_maintenance << ",\n"
+          << "  \"map_size_after_maintenance\": "
+          << final_diagnostics.map.map_size_after_maintenance << ",\n"
+          << "  \"map_maintenance_us\": "
+          << final_diagnostics.map.map_maintenance_us << ",\n"
+          << "  \"snapshot_point_count\": "
+          << final_diagnostics.map.snapshot_point_count << ",\n"
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
   };

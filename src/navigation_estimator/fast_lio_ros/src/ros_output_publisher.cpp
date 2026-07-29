@@ -181,11 +181,35 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       "map_insert_crop_us",
       std::to_string(result.diagnostics.timing.map_insert_crop_us)));
   status.values.push_back(keyValue(
+      "map_maintenance_us",
+      std::to_string(result.diagnostics.timing.map_maintenance_us)));
+  status.values.push_back(keyValue(
       "snapshot_us",
       std::to_string(result.diagnostics.timing.snapshot_us)));
   status.values.push_back(keyValue(
       "total_processing_us",
       std::to_string(result.diagnostics.timing.total_processing_us)));
+  const auto& map = result.diagnostics.map;
+  status.values.push_back(keyValue("map_size_before_insert", std::to_string(map.map_size_before_insert)));
+  status.values.push_back(keyValue("map_candidate_count", std::to_string(map.map_candidate_count)));
+  status.values.push_back(keyValue("map_inserted_count", std::to_string(map.map_inserted_count)));
+  status.values.push_back(keyValue("map_size_after_insert", std::to_string(map.map_size_after_insert)));
+  status.values.push_back(keyValue("crop_performed", map.crop_performed ? "true" : "false"));
+  status.values.push_back(keyValue("crop_removed_count", std::to_string(map.crop_removed_count)));
+  status.values.push_back(keyValue("crop_triggered_by_motion", map.crop_triggered_by_motion ? "true" : "false"));
+  status.values.push_back(keyValue("crop_triggered_by_point_threshold", map.crop_triggered_by_point_threshold ? "true" : "false"));
+  status.values.push_back(keyValue("map_size_before_maintenance", std::to_string(map.map_size_before_maintenance)));
+  status.values.push_back(keyValue("confidence_pruned_count", std::to_string(map.confidence_pruned_count)));
+  status.values.push_back(keyValue("distance_pruned_count", std::to_string(map.distance_pruned_count)));
+  status.values.push_back(keyValue("redundancy_pruned_count", std::to_string(map.redundancy_pruned_count)));
+  status.values.push_back(keyValue("map_size_after_maintenance", std::to_string(map.map_size_after_maintenance)));
+  status.values.push_back(keyValue("local_map_center_x", std::to_string(map.local_map_center_odom_m.x())));
+  status.values.push_back(keyValue("local_map_center_y", std::to_string(map.local_map_center_odom_m.y())));
+  status.values.push_back(keyValue("local_map_center_z", std::to_string(map.local_map_center_odom_m.z())));
+  status.values.push_back(keyValue("local_map_half_extent_x", std::to_string(map.local_map_half_extent_m.x())));
+  status.values.push_back(keyValue("local_map_half_extent_y", std::to_string(map.local_map_half_extent_m.y())));
+  status.values.push_back(keyValue("local_map_half_extent_z", std::to_string(map.local_map_half_extent_m.z())));
+  status.values.push_back(keyValue("snapshot_point_count", std::to_string(map.snapshot_point_count)));
   const auto& processing = result.diagnostics.processing;
   status.values.push_back(keyValue(
       "raw_lidar_count", std::to_string(processing.raw_lidar_count)));

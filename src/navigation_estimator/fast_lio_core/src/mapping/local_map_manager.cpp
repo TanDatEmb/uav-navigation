@@ -17,6 +17,7 @@ LocalMapUpdate LocalMapManager::update(RegistrationMap& map,
                                        const Eigen::Vector3d& current_position_odom_m) {
   LocalMapUpdate update;
   update.center_odom_m = current_position_odom_m;
+  update.half_extent_m = config_.half_extent_m;
   if (!current_position_odom_m.allFinite()) {
     return update;
   }
@@ -30,6 +31,8 @@ LocalMapUpdate LocalMapManager::update(RegistrationMap& map,
   }
 
   update.crop_performed = true;
+  update.crop_triggered_by_motion = moved_beyond_trigger;
+  update.crop_triggered_by_point_threshold = map_over_limit;
   update.removed_point_count = map.cropLocal(current_position_odom_m, config_.half_extent_m);
   last_crop_center_odom_m_ = current_position_odom_m;
   has_crop_center_ = true;
