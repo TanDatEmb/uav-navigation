@@ -29,7 +29,10 @@ def diagnostics_values(message: Any) -> dict[str, Any]:
     for status in message.status:
         if status.name != "fast_lio/transport":
             continue
-        result["level"] = int(status.level)
+        level = status.level
+        if isinstance(level, (bytes, bytearray)):
+            level = level[0]
+        result["level"] = int(level)
         result["message"] = status.message
         for item in status.values:
             value: Any = item.value

@@ -3,12 +3,27 @@
 import unittest
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ros_replay import acceptance_failures, drained
+from ros_replay import acceptance_failures, diagnostics_values, drained
 
 
 class DrainTest(unittest.TestCase):
+    def test_parses_jazzy_byte_encoded_diagnostic_level(self) -> None:
+        message = SimpleNamespace(status=[
+            SimpleNamespace(
+                name="fast_lio/transport",
+                level=b"\x01",
+                message="lag",
+                values=[SimpleNamespace(key="imu_drop_count", value="0")],
+            )
+        ])
+        self.assertEqual(
+            diagnostics_values(message),
+            {"level": 1, "message": "lag", "imu_drop_count": 0},
+        )
+
     def test_requires_zero_queues_and_converged_counters(self) -> None:
         state = {
             "current_input_queue_depth": 0,
