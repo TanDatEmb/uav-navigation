@@ -51,6 +51,7 @@ class FastLioPipeline {
   void transitionTo(EstimatorStatus next, std::string reason);
   [[nodiscard]] ProcessResult makeBaseResult(const MeasurementGroup& group) const;
   [[nodiscard]] ProcessResult finalizeResult(ProcessResult result);
+  void resetTransientDiagnostics();
   void fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const;
   void updateInitializationDiagnostics();
 

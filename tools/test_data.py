@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import hashlib
+import csv
 from pathlib import Path
 import sys
 import tempfile
@@ -38,6 +39,61 @@ class DataRegistryTest(unittest.TestCase):
     def test_percentile_uses_nearest_rank_index(self) -> None:
         self.assertEqual(data.percentile([4.0, 1.0, 3.0, 2.0], 0.5), 3.0)
         self.assertIsNone(data.percentile([], 0.95))
+
+    def test_report_uses_explicit_stage_flags_and_excludes_rejections(self) -> None:
+        fixture = """reason,synchronized,deskew_attempted,deskew_applied,correction_attempted,correction_succeeded,map_update_performed,accepted_residuals,residual_rms,iterations,total_processing_us,ikfom_update_us,map_insert_crop_us,map_maintenance_us,map_points
+,1,1,1,1,1,1,12,0.2,3,100,40,20,5,10
+OVERLAPPING_LIDAR_INTERVAL,0,0,0,0,0,0,0,0,0,0,0,0,0,10
+MISSING_BRACKET,0,0,0,0,0,0,0,0,0,0,0,0,0,10
+MAP_ONLY,1,1,0,0,0,1,0,0,0,30,0,7,2,12
+"""
+        rows = list(csv.DictReader(fixture.splitlines()))
+        summary = {
+            "synchronized_group_count": 2,
+            "correction_attempt_count": 1,
+            "successful_correction_count": 1,
+            "failed_correction_count": 0,
+            "overlap_rejected_count": 1,
+            "missing_bracket_rejected_count": 1,
+            "invalid_timestamp_rejected_count": 0,
+            "raw_dataset_lidar_count": 4,
+            "core_accepted_lidar_count": 4,
+            "core_rejected_lidar_count": 0,
+            "dataset_duration_seconds": 2,
+            "effective_corrected_output_rate_hz": 0.5,
+            "wall_runtime_us": 1000,
+            "map_point_count": 12,
+        }
+        report = data.build_data_report(
+            "fixture", Path("/tmp/fixture"), summary, rows
+        )
+        self.assertEqual(report["deskew_count"], 1)
+        self.assertEqual(report["ikfom_update_us"]["sample_count"], 1)
+        self.assertEqual(report["map_update_us"]["sample_count"], 2)
+        self.assertEqual(report["total_processing_us"]["sample_count"], 2)
+        self.assertEqual(
+            report["rejection_reason_histogram"]["OVERLAPPING_LIDAR_INTERVAL"],
+            1,
+        )
+
+    def test_report_rejects_inconsistent_correction_counts(self) -> None:
+        rows = [{
+            "reason": "", "synchronized": "1",
+            "correction_attempted": "1", "correction_succeeded": "1",
+            "deskew_applied": "1", "map_update_performed": "0",
+            "accepted_residuals": "1", "residual_rms": "0.1",
+            "iterations": "1", "total_processing_us": "1",
+            "ikfom_update_us": "1", "map_insert_crop_us": "0",
+            "map_maintenance_us": "0", "map_points": "1",
+        }]
+        summary = {
+            "synchronized_group_count": 1,
+            "correction_attempt_count": 2,
+            "successful_correction_count": 1,
+            "failed_correction_count": 1,
+        }
+        with self.assertRaises(data.DataError):
+            data.build_data_report("fixture", Path("/tmp/fixture"), summary, rows)
 
 
 if __name__ == "__main__":

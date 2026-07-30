@@ -46,7 +46,9 @@ RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
       point_time_(std::move(point_time)) {
   if (point_time_.field.empty() ||
       point_time_.maximum_scan_duration_ns <= 0 ||
-      point_time_.maximum_header_offset_ns < 0) {
+      point_time_.maximum_header_offset_ns < 0 ||
+      point_time_.maximum_boundary_overlap_ns < 0 ||
+      point_time_.minimum_points_after_overlap_trim == 0U) {
     throw std::invalid_argument("invalid PointCloud2 point-time configuration");
   }
 }
@@ -133,6 +135,36 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   if (scan.points.empty()) {
     throw std::invalid_argument("PointCloud2 contains no finite XYZ point");
   }
+  normalization_statistics_.input_point_count += scan.points.size();
+
+  if (!absolute_times.empty() && previous_emitted_end_ns_ >= 0) {
+    const auto minimum_time =
+        *std::min_element(absolute_times.begin(), absolute_times.end());
+    const std::int64_t overlap_ns = previous_emitted_end_ns_ - minimum_time;
+    if (overlap_ns > 0 &&
+        overlap_ns <= point_time_.maximum_boundary_overlap_ns) {
+      std::vector<LidarPoint> emitted_points;
+      std::vector<std::int64_t> emitted_times;
+      emitted_points.reserve(scan.points.size());
+      emitted_times.reserve(absolute_times.size());
+      for (std::size_t index = 0; index < scan.points.size(); ++index) {
+        if (absolute_times[index] <= previous_emitted_end_ns_) {
+          ++normalization_statistics_.dropped_overlapping_point_count;
+          continue;
+        }
+        emitted_points.push_back(scan.points[index]);
+        emitted_times.push_back(absolute_times[index]);
+      }
+      if (emitted_points.size() <
+          point_time_.minimum_points_after_overlap_trim) {
+        throw std::invalid_argument(
+            "PointCloud2 overlap trim left too few points");
+      }
+      scan.points = std::move(emitted_points);
+      absolute_times = std::move(emitted_times);
+    }
+  }
+  normalization_statistics_.emitted_point_count += scan.points.size();
 
   std::int64_t scan_start_ns = header_time.nanoseconds();
   if (!absolute_times.empty()) {
@@ -181,7 +213,13 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
     throw std::invalid_argument(end_time.status().message());
   }
   scan.end_time = end_time.value();
+  previous_emitted_end_ns_ = scan.end_time.nanoseconds();
   return scan;
+}
+
+PointTimeNormalizationStatistics
+RosLidarAdapter::normalizationStatistics() const noexcept {
+  return normalization_statistics_;
 }
 
 }  // namespace uav::nav::lio

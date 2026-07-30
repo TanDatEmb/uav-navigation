@@ -8,6 +8,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -570,11 +571,135 @@ def percentile(values: list[float], fraction: float) -> float | None:
 def distribution(rows: list[dict[str, str]], key: str) -> dict:
     values = [float(row[key]) for row in rows if row.get(key) not in (None, "")]
     return {
+        "sample_count": len(values),
         "p50": percentile(values, 0.50),
         "p95": percentile(values, 0.95),
         "p99": percentile(values, 0.99),
         "max": max(values) if values else None,
     }
+
+
+def _flag(row: dict[str, str], key: str) -> bool:
+    return row.get(key, "").strip().lower() in {"1", "true", "yes"}
+
+
+def build_data_report(
+    dataset_id: str, artifact: Path, summary: dict,
+    rows: list[dict[str, str]],
+) -> dict:
+    synchronized = [row for row in rows if _flag(row, "synchronized")]
+    attempted = [row for row in rows if _flag(row, "correction_attempted")]
+    succeeded = [row for row in attempted if _flag(row, "correction_succeeded")]
+    failed = [row for row in attempted if not _flag(row, "correction_succeeded")]
+    map_updates = [row for row in rows if _flag(row, "map_update_performed")]
+    deskewed = [row for row in rows if _flag(row, "deskew_applied")]
+    processing_rows = [
+        row for row in rows
+        if float(row.get("total_processing_us") or 0) > 0
+    ]
+    residual_rows = [
+        row for row in attempted
+        if int(row.get("accepted_residuals") or 0) > 0
+        and math.isfinite(float(row.get("residual_rms") or "nan"))
+    ]
+    reasons: dict[str, int] = {}
+    for row in rows:
+        reason = (row.get("reason") or "").strip() or "SUCCESS"
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    expected = {
+        "synchronized": int(summary.get("synchronized_group_count", 0)),
+        "attempted": int(summary.get("correction_attempt_count", 0)),
+        "succeeded": int(summary.get("successful_correction_count", 0)),
+        "failed": int(summary.get("failed_correction_count", 0)),
+    }
+    observed = {
+        "synchronized": len(synchronized),
+        "attempted": len(attempted),
+        "succeeded": len(succeeded),
+        "failed": len(failed),
+    }
+    errors = []
+    if observed["succeeded"] + observed["failed"] != observed["attempted"]:
+        errors.append("succeeded + failed != correction attempted")
+    if observed["attempted"] > observed["synchronized"]:
+        errors.append("correction attempted exceeds synchronized groups")
+    for key in expected:
+        if observed[key] != expected[key]:
+            errors.append(
+                f"{key} rows {observed[key]} != summary {expected[key]}"
+            )
+    if errors:
+        raise DataError("data-report invariant failure: " + "; ".join(errors))
+
+    warnings = []
+    wall_runtime_us = float(summary.get("wall_runtime_us", 0))
+    processing_total_us = sum(
+        float(row.get("total_processing_us") or 0) for row in processing_rows
+    )
+    if wall_runtime_us > 0 and processing_total_us > wall_runtime_us * 1.25:
+        warnings.append(
+            "sum(total_processing_us) materially exceeds wall runtime"
+        )
+    duration = float(summary.get("dataset_duration_seconds", 0))
+    report = {
+        "dataset": dataset_id,
+        "artifact": str(artifact),
+        "dataset_duration_s": duration,
+        "wall_runtime_s": wall_runtime_us / 1e6,
+        "realtime_factor": duration / max(wall_runtime_us / 1e6, 1e-9),
+        "imu": {
+            "accepted": summary.get("core_accepted_imu_count"),
+            "rejected": summary.get("core_rejected_imu_count"),
+        },
+        "lidar": {
+            "raw": summary.get("raw_dataset_lidar_count"),
+            "buffer_accepted": summary.get("core_accepted_lidar_count"),
+            "rejected": summary.get("core_rejected_lidar_count"),
+        },
+        "synchronization": {
+            "synchronized_groups": observed["synchronized"],
+            "overlap_rejected": summary.get("overlap_rejected_count"),
+            "missing_bracket_rejected": summary.get(
+                "missing_bracket_rejected_count"
+            ),
+            "invalid_timestamp_rejected": summary.get(
+                "invalid_timestamp_rejected_count"
+            ),
+            "ratio": summary.get("synchronization_ratio"),
+        },
+        "corrections": observed | {
+            "effective_output_rate_hz": summary.get(
+                "effective_corrected_output_rate_hz"
+            )
+        },
+        "deskew_count": len(deskewed),
+        "rejection_reason_histogram": dict(sorted(reasons.items())),
+        "residual_rms": distribution(residual_rows, "residual_rms"),
+        "ikfom_iterations": distribution(attempted, "iterations"),
+        "total_processing_us": distribution(
+            processing_rows, "total_processing_us"
+        ),
+        "ikfom_update_us": distribution(attempted, "ikfom_update_us"),
+        "map_update_us": distribution(map_updates, "map_insert_crop_us"),
+        "map_maintenance_us": distribution(
+            map_updates, "map_maintenance_us"
+        ),
+        "map_points": {
+            "final": summary.get("map_point_count"),
+            "max": max(
+                (int(row["map_points"]) for row in rows if row.get("map_points")),
+                default=None,
+            ),
+        },
+        "consistency": {
+            "status": "warning" if warnings else "ok",
+            "warnings": warnings,
+            "processing_total_us": processing_total_us,
+            "wall_runtime_us": wall_runtime_us,
+        },
+    }
+    return report
 
 
 def report_latest(dataset_id: str) -> int:
@@ -590,58 +715,12 @@ def report_latest(dataset_id: str) -> int:
         raise DataError(f"no offline run summary found for {dataset_id}")
     summary_path = summaries[-1]
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    report = {"dataset": dataset_id, "artifact": str(summary_path.parent)}
     diagnostics_csv = summary_path.parent / "diagnostics.csv"
     with diagnostics_csv.open(encoding="utf-8", newline="") as stream:
         rows = list(csv.DictReader(stream))
-    corrected = [
-        row for row in rows
-        if row.get("status") == "corrected" or row.get("accepted_residuals", "0") != "0"
-    ]
-    residuals = [
-        float(row["residual_rms"]) for row in corrected
-        if row.get("residual_rms") not in (None, "")
-    ]
-    report.update({
-            "dataset_duration_s": summary.get("dataset_duration_seconds"),
-            "wall_runtime_s": float(summary.get("wall_runtime_us", 0)) / 1e6,
-            "realtime_factor": (
-                float(summary.get("dataset_duration_seconds", 0))
-                / max(float(summary.get("wall_runtime_us", 0)) / 1e6, 1e-9)
-            ),
-            "imu": {
-                "accepted": summary.get("core_accepted_imu_count"),
-                "rejected": summary.get("core_rejected_imu_count"),
-            },
-            "lidar": {
-                "accepted": summary.get("core_accepted_lidar_count"),
-                "rejected": summary.get("core_rejected_lidar_count"),
-            },
-            "corrections": {
-                "attempted": summary.get("correction_attempt_count"),
-                "succeeded": summary.get("successful_correction_count"),
-                "failed": summary.get("failed_correction_count"),
-            },
-            "deskew_count": summary.get("deskew_applied_count"),
-            "residual_rms": {
-                "p50": percentile(residuals, 0.50),
-                "p95": percentile(residuals, 0.95),
-                "p99": percentile(residuals, 0.99),
-                "max": max(residuals) if residuals else None,
-            },
-            "ikfom_iterations": distribution(corrected, "iterations"),
-            "total_processing_us": distribution(rows, "total_processing_us"),
-            "ikfom_update_us": distribution(rows, "ikfom_update_us"),
-            "map_update_us": distribution(rows, "map_insert_crop_us"),
-            "map_maintenance_us": distribution(rows, "map_maintenance_us"),
-            "map_points": {
-                "final": summary.get("map_point_count"),
-                "max": max(
-                    (int(row["map_points"]) for row in rows if row.get("map_points")),
-                    default=None,
-                ),
-            },
-    })
+    report = build_data_report(
+        dataset_id, summary_path.parent, summary, rows
+    )
     replay_summaries = sorted(
         (
             path for path in base.glob("*/summary.json")

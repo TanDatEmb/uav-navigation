@@ -31,6 +31,8 @@ struct RosParameters {
   std::string point_time_scan_reference;
   std::int64_t maximum_scan_duration_ns{};
   std::int64_t maximum_header_offset_ns{};
+  std::int64_t maximum_boundary_overlap_ns{};
+  std::int64_t minimum_points_after_overlap_trim{};
   std::string input_clock_domain;
   std::string livox_timestamp_policy;
   std::int64_t maximum_imu_gap_ns{};

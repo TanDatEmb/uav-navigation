@@ -161,6 +161,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "input.point_time.maximum_scan_duration_ns", 200'000'000);
   result.maximum_header_offset_ns = node.declare_parameter<std::int64_t>(
       "input.point_time.maximum_header_offset_ns", 200'000'000);
+  result.maximum_boundary_overlap_ns = node.declare_parameter<std::int64_t>(
+      "input.point_time.maximum_boundary_overlap_ns", 0);
+  result.minimum_points_after_overlap_trim = node.declare_parameter<std::int64_t>(
+      "input.point_time.minimum_points_after_overlap_trim", 1);
   result.input_clock_domain =
       node.declare_parameter("timing.clock_domain", "ros_time");
   result.livox_timestamp_policy = node.declare_parameter(
@@ -249,6 +253,10 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.maximum_scan_duration_ns;
   profile.point_time.maximum_header_offset_ns =
       parameters.maximum_header_offset_ns;
+  profile.point_time.maximum_boundary_overlap_ns =
+      parameters.maximum_boundary_overlap_ns;
+  profile.point_time.minimum_points_after_overlap_trim =
+      static_cast<std::size_t>(parameters.minimum_points_after_overlap_trim);
   profile.point_time.reject_scan_timestamp_regression =
       parameters.reject_timestamp_regression;
   profile.clock_domain = parseClockDomain(parameters.input_clock_domain);
@@ -334,7 +342,9 @@ void ParameterLoader::validate(const RosParameters& p) {
        p.point_time_encoding != "float64_absolute_nanoseconds") ||
       (p.point_time_scan_reference != "header_stamp" &&
        p.point_time_scan_reference != "minimum_point_time") ||
-      p.maximum_scan_duration_ns <= 0 || p.maximum_header_offset_ns < 0) {
+      p.maximum_scan_duration_ns <= 0 || p.maximum_header_offset_ns < 0 ||
+      p.maximum_boundary_overlap_ns < 0 ||
+      p.minimum_points_after_overlap_trim <= 0) {
     throw std::invalid_argument("invalid input.point_time configuration");
   }
   static_cast<void>(parseClockDomain(p.input_clock_domain));

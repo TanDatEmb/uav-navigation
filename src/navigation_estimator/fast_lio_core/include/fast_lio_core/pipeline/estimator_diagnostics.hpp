@@ -57,6 +57,7 @@ struct SensorDiagnostics {
 };
 
 struct SynchronizationDiagnostics {
+  bool synchronized{false};
   std::int64_t scan_start_ns{0};
   std::int64_t scan_end_ns{0};
   std::int64_t scan_duration_ns{0};
@@ -111,6 +112,7 @@ struct InitializationDiagnostics {
 struct DeskewDiagnostics {
   DeskewMode deskew_mode{DeskewMode::kPerPoint};
   DeskewStatus deskew_status{DeskewStatus::kBypassedSimultaneousScan};
+  bool deskew_attempted{false};
   bool deskew_applied{false};
   std::uint32_t point_time_min_ns{0};
   std::uint32_t point_time_max_ns{0};
@@ -119,6 +121,8 @@ struct DeskewDiagnostics {
 };
 
 struct RegistrationDiagnostics {
+  bool correction_attempted{false};
+  bool correction_succeeded{false};
   std::size_t input_point_count{0};
   std::size_t filtered_point_count{0};
   std::size_t query_count{0};
@@ -132,6 +136,7 @@ struct RegistrationDiagnostics {
 };
 
 struct MapDiagnostics {
+  bool map_update_performed{false};
   std::size_t map_point_count{0};
   std::size_t inserted_point_count{0};
   std::size_t removed_point_count{0};

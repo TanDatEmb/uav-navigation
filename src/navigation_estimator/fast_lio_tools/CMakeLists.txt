@@ -15,32 +15,12 @@ find_package(rclcpp REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
-add_library(${PROJECT_NAME}
-  src/dataset_reader.cpp
-  src/offline_evaluator.cpp
-  src/report_writer.cpp)
-target_include_directories(${PROJECT_NAME} PUBLIC
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>")
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
-ament_target_dependencies(${PROJECT_NAME} fast_lio_core)
-
-add_executable(fast_lio_offline_evaluator
-  src/fast_lio_offline_evaluator.cpp)
-target_link_libraries(fast_lio_offline_evaluator PRIVATE ${PROJECT_NAME})
-
 add_executable(lio_offline src/lio_offline.cpp)
 target_compile_options(lio_offline PRIVATE -Wall -Wextra -Wpedantic)
 ament_target_dependencies(lio_offline
   fast_lio_core fast_lio_ros livox_ros_driver2 rclcpp rosbag2_cpp sensor_msgs)
 
-install(TARGETS ${PROJECT_NAME} fast_lio_offline_evaluator lio_offline
-  EXPORT export_${PROJECT_NAME}
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
+install(TARGETS lio_offline
   RUNTIME DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
-ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(fast_lio_core)
 ament_package()

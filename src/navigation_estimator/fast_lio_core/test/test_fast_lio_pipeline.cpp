@@ -71,6 +71,27 @@ EstimatorConfig testConfig() {
   return config;
 }
 
+void expectTransientStagesCleared(const ProcessResult& result) {
+  EXPECT_FALSE(result.diagnostics.deskew.deskew_applied);
+  EXPECT_FALSE(result.diagnostics.registration.correction_attempted);
+  EXPECT_EQ(result.diagnostics.registration.residual_rms_m, 0.0);
+  EXPECT_EQ(result.diagnostics.registration.iteration_count, 0U);
+  EXPECT_EQ(result.diagnostics.timing.imu_prediction_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.deskew_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.preprocessing_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.residual_build_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.ikfom_update_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.map_insert_crop_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.map_maintenance_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.snapshot_us, 0);
+  EXPECT_EQ(result.diagnostics.timing.total_processing_us, 0);
+  EXPECT_FALSE(result.diagnostics.map.map_update_performed);
+  EXPECT_EQ(result.diagnostics.map.map_candidate_count, 0U);
+  EXPECT_EQ(result.diagnostics.map.map_inserted_count, 0U);
+  EXPECT_EQ(result.diagnostics.map.crop_removed_count, 0U);
+  EXPECT_EQ(result.diagnostics.map.snapshot_point_count, 0U);
+}
+
 TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoints) {
   FastLioPipeline pipeline(testConfig());
   const MeasurementGroup reference_group = makeGroup(
@@ -178,6 +199,92 @@ TEST(FastLioPipelineTest, QueuedRuntimePathDoesNotAddInitializationImuTwice) {
   EXPECT_EQ(result->status_after, EstimatorStatus::kInitializingMap);
   EXPECT_EQ(result->rejection_reason, "INITIAL_MAP_REFERENCE_CAPTURED");
   EXPECT_NE(result->rejection_reason, "timestamp must be strictly increasing");
+}
+
+TEST(FastLioPipelineTest, OverlapRejectionDoesNotRepeatCorrectedScanDiagnostics) {
+  FastLioPipeline pipeline(testConfig());
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  const auto direct_corrected = pipeline.process(
+      makeGroup(makePlanarScan(90 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(90 * kMillisecondNs)}));
+  ASSERT_TRUE(direct_corrected.hasCorrectedOutput());
+  for (const std::int64_t time_ns :
+       {90 * kMillisecondNs, 100 * kMillisecondNs,
+        110 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  auto corrected_scan = makePlanarScan(90 * kMillisecondNs);
+  corrected_scan.end_time = Timestamp(100 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(corrected_scan)).ok());
+  const auto corrected = pipeline.processNext();
+  ASSERT_TRUE(corrected.has_value());
+  ASSERT_TRUE(corrected->hasCorrectedOutput());
+  ASSERT_TRUE(corrected->diagnostics.registration.correction_attempted);
+
+  auto overlap = makePlanarScan(99 * kMillisecondNs);
+  overlap.end_time = Timestamp(110 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(overlap)).ok());
+  const auto rejected = pipeline.processNext();
+  ASSERT_TRUE(rejected.has_value());
+  EXPECT_NE(rejected->rejection_reason.find("OVERLAPPING_LIDAR_INTERVAL"),
+            std::string::npos);
+  EXPECT_FALSE(rejected->diagnostics.synchronization.synchronized);
+  expectTransientStagesCleared(*rejected);
+}
+
+TEST(FastLioPipelineTest, MissingBracketDoesNotRepeatCorrectedScanDiagnostics) {
+  FastLioPipeline pipeline(testConfig());
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  const auto corrected = pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)}));
+  ASSERT_TRUE(corrected.hasCorrectedOutput());
+
+  auto missing = makeGroup(
+      makePlanarScan(200 * kMillisecondNs), 100 * kMillisecondNs,
+      {stationaryImu(150 * kMillisecondNs),
+       stationaryImu(200 * kMillisecondNs)});
+  missing.has_start_bracket = false;
+  const auto rejected = pipeline.process(missing);
+  EXPECT_EQ(rejected.rejection_reason, "MEASUREMENT_GROUP_NOT_FULLY_BRACKETED");
+  expectTransientStagesCleared(rejected);
+}
+
+TEST(FastLioPipelineTest, CorrectedResultsOwnIndependentTimingSnapshots) {
+  FastLioPipeline pipeline(testConfig());
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  const ProcessResult first = pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)}));
+  ASSERT_TRUE(first.hasCorrectedOutput());
+  const auto first_timing = first.diagnostics.timing;
+  const ProcessResult second = pipeline.process(
+      makeGroup(makePlanarScan(200 * kMillisecondNs), 100 * kMillisecondNs,
+                {stationaryImu(100 * kMillisecondNs),
+                 stationaryImu(150 * kMillisecondNs),
+                 stationaryImu(200 * kMillisecondNs)}));
+  ASSERT_TRUE(second.hasCorrectedOutput());
+  EXPECT_EQ(first.diagnostics.timing.total_processing_us,
+            first_timing.total_processing_us);
+  EXPECT_TRUE(first.diagnostics.registration.correction_succeeded);
+  EXPECT_TRUE(second.diagnostics.registration.correction_succeeded);
+  EXPECT_TRUE(first.diagnostics.map.map_update_performed);
+  EXPECT_TRUE(second.diagnostics.map.map_update_performed);
 }
 
 }  // namespace

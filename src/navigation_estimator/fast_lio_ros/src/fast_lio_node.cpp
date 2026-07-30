@@ -44,6 +44,10 @@ PointTimeConfig pointTimeConfig(const RosParameters& parameters) {
           : ScanReference::kHeaderStamp;
   result.maximum_scan_duration_ns = parameters.maximum_scan_duration_ns;
   result.maximum_header_offset_ns = parameters.maximum_header_offset_ns;
+  result.maximum_boundary_overlap_ns =
+      parameters.maximum_boundary_overlap_ns;
+  result.minimum_points_after_overlap_trim =
+      static_cast<std::size_t>(parameters.minimum_points_after_overlap_trim);
   result.reject_scan_timestamp_regression =
       parameters.reject_timestamp_regression;
   return result;

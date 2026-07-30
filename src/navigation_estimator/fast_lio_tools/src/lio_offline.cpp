@@ -91,10 +91,12 @@ int run(const std::filesystem::path& bag_path,
   std::ofstream diagnostics(output_path / "diagnostics.csv");
   std::ofstream trajectory(output_path / "trajectory.csv");
   std::ofstream corrections(output_path / "corrections.csv");
-  diagnostics << "record_index,reason,status,imu_samples,imu_gap_ns,"
+  diagnostics << "record_index,reason,status,synchronized,deskew_attempted,"
+                 "deskew_applied,correction_attempted,correction_succeeded,"
+                 "map_update_performed,scan_start_ns,scan_end_ns,scan_duration_ns,"
+                 "imu_samples,imu_gap_ns,"
                  "input_points,filtered_points,queries,accepted_residuals,"
                  "residual_rms,iterations,final_increment_norm,map_points,"
-                 "deskew_applied,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
                  "ikfom_update_us,map_insert_crop_us,map_maintenance_us,snapshot_us,"
                  "total_processing_us,map_size_before_insert,map_candidate_count,"
@@ -162,6 +164,15 @@ int run(const std::filesystem::path& bag_path,
       const auto& diagnostic = result->diagnostics;
       diagnostics << record_index << ',' << result->rejection_reason << ','
                   << toString(diagnostic.status) << ','
+                  << (diagnostic.synchronization.synchronized ? 1 : 0) << ','
+                  << (diagnostic.deskew.deskew_attempted ? 1 : 0) << ','
+                  << (diagnostic.deskew.deskew_applied ? 1 : 0) << ','
+                  << (diagnostic.registration.correction_attempted ? 1 : 0) << ','
+                  << (diagnostic.registration.correction_succeeded ? 1 : 0) << ','
+                  << (diagnostic.map.map_update_performed ? 1 : 0) << ','
+                  << diagnostic.synchronization.scan_start_ns << ','
+                  << diagnostic.synchronization.scan_end_ns << ','
+                  << diagnostic.synchronization.scan_duration_ns << ','
                   << diagnostic.synchronization.imu_samples_per_scan << ','
                   << diagnostic.synchronization.imu_gap_max_ns << ','
                   << diagnostic.registration.input_point_count << ','
@@ -172,7 +183,6 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.registration.iteration_count << ','
                   << diagnostic.registration.final_increment_norm << ','
                   << diagnostic.map.map_point_count << ','
-                  << (diagnostic.deskew.deskew_applied ? 1 : 0) << ','
                   << diagnostic.timing.imu_prediction_us << ','
                   << diagnostic.timing.deskew_us << ','
                   << diagnostic.timing.preprocessing_us << ','
@@ -239,6 +249,8 @@ int run(const std::filesystem::path& bag_path,
   const auto map = pipeline.registrationMapSnapshot();
   const auto final_diagnostics = pipeline.diagnostics();
   const auto processing = final_diagnostics.processing;
+  const auto normalization =
+      pointcloud_adapter.normalizationStatistics();
   const double dataset_duration_seconds =
       counters.first_lidar_start_ns >= 0 &&
               counters.last_lidar_end_ns > counters.first_lidar_start_ns
@@ -289,6 +301,20 @@ int run(const std::filesystem::path& bag_path,
           << "  \"core_accepted_lidar_count\": " << counters.accepted_lidar << ",\n"
           << "  \"core_rejected_imu_count\": " << counters.rejected_imu << ",\n"
           << "  \"core_rejected_lidar_count\": " << counters.rejected_lidar << ",\n"
+          << "  \"normalization_input_point_count\": "
+          << normalization.input_point_count << ",\n"
+          << "  \"normalization_emitted_point_count\": "
+          << normalization.emitted_point_count << ",\n"
+          << "  \"normalization_dropped_overlapping_point_count\": "
+          << normalization.dropped_overlapping_point_count << ",\n"
+          << "  \"normalization_dropped_ratio\": "
+          << (normalization.input_point_count == 0
+                  ? 0.0
+                  : static_cast<double>(
+                        normalization.dropped_overlapping_point_count) /
+                        static_cast<double>(
+                            normalization.input_point_count))
+          << ",\n"
           << "  \"source_maximum_imu_gap_ns\": "
           << counters.maximum_imu_gap_ns << ",\n"
           << "  \"process_result_count\": " << counters.process_results << ",\n"

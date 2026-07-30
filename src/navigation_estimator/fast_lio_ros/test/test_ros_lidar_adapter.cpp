@@ -59,6 +59,15 @@ void setAbsolute(sensor_msgs::msg::PointCloud2& cloud, std::size_t index,
   std::memcpy(point + 16, &value, sizeof(value));
 }
 
+void setX(sensor_msgs::msg::PointCloud2& cloud, std::size_t index,
+          float value) {
+  const auto row = index / cloud.width;
+  const auto column = index % cloud.width;
+  auto* point = cloud.data.data() + row * cloud.row_step +
+                column * cloud.point_step;
+  std::memcpy(point, &value, sizeof(value));
+}
+
 }  // namespace
 
 TEST(RosLidarAdapterTest, SimultaneousScanDoesNotInventPointTime) {
@@ -139,6 +148,44 @@ TEST(RosLidarAdapterTest, AcceptsFloat64AbsoluteTimestampAndMinimumReference) {
   EXPECT_EQ(scan.start_time.nanoseconds(), 1'000'000'000);
   EXPECT_EQ(scan.points[0].relative_time_ns, 20U);
   EXPECT_EQ(scan.points[1].relative_time_ns, 0U);
+}
+
+TEST(RosLidarAdapterTest, PreservesTimestampIndexWhenNanXyzIsRemoved) {
+  auto cloud = makeCloud(3);
+  setAbsolute(cloud, 0, 1'000'000'000.0);
+  setAbsolute(cloud, 1, 1'000'000'010.0);
+  setAbsolute(cloud, 2, 1'000'000'020.0);
+  setX(cloud, 1, std::numeric_limits<float>::quiet_NaN());
+  const auto scan =
+      RosLidarAdapter{"lidar_link", LidarTimingMode::kPerPoint,
+                      ClockDomain::kRosTime, absoluteConfig()}
+          .convert(cloud);
+  ASSERT_EQ(scan.points.size(), 2U);
+  EXPECT_EQ(scan.points[0].relative_time_ns, 0U);
+  EXPECT_EQ(scan.points[1].relative_time_ns, 20U);
+}
+
+TEST(RosLidarAdapterTest, DeterministicallyTrimsBoundedBoundaryOverlap) {
+  auto config = absoluteConfig();
+  config.maximum_boundary_overlap_ns = 20;
+  config.minimum_points_after_overlap_trim = 1;
+  RosLidarAdapter adapter{"lidar_link", LidarTimingMode::kPerPoint,
+                          ClockDomain::kRosTime, config};
+  auto first = makeCloud();
+  setAbsolute(first, 0, 1'000'000'000.0);
+  setAbsolute(first, 1, 1'000'000'010.0);
+  static_cast<void>(adapter.convert(first));
+  auto second = makeCloud();
+  setAbsolute(second, 0, 1'000'000'005.0);
+  setAbsolute(second, 1, 1'000'000'020.0);
+  const auto scan = adapter.convert(second);
+  ASSERT_EQ(scan.points.size(), 1U);
+  EXPECT_EQ(scan.start_time.nanoseconds(), 1'000'000'020);
+  EXPECT_EQ(scan.points.front().relative_time_ns, 0U);
+  const auto stats = adapter.normalizationStatistics();
+  EXPECT_EQ(stats.input_point_count, 4U);
+  EXPECT_EQ(stats.emitted_point_count, 3U);
+  EXPECT_EQ(stats.dropped_overlapping_point_count, 1U);
 }
 
 TEST(RosLidarAdapterTest, RejectsNonFiniteAndOutOfRangeAbsoluteTimestamp) {

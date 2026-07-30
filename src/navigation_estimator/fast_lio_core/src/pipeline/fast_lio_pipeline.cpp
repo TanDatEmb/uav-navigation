@@ -126,6 +126,7 @@ Status FastLioPipeline::pushLidar(LidarScan scan) {
 }
 
 std::optional<ProcessResult> FastLioPipeline::processNext() {
+  resetTransientDiagnostics();
   auto synchronized = synchronizer_.synchronizeNext(buffer_);
   if (!synchronized.ok()) {
     ProcessResult result;
@@ -151,10 +152,13 @@ std::optional<ProcessResult> FastLioPipeline::processNext() {
     return std::nullopt;
   }
   ++diagnostics_.processing.synchronized_group_count;
+  diagnostics_.synchronization.synchronized = true;
   return processInternal(*synchronized.value(), true);
 }
 
 ProcessResult FastLioPipeline::process(const MeasurementGroup& group) {
+  resetTransientDiagnostics();
+  diagnostics_.synchronization.synchronized = true;
   return processInternal(group, false);
 }
 
@@ -163,18 +167,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   const auto total_started = std::chrono::steady_clock::now();
   ProcessResult result = makeBaseResult(group);
   diagnostics_.synchronization = result.diagnostics.synchronization;
+  diagnostics_.synchronization.synchronized = true;
   diagnostics_.synchronization.sync_rejection_reason.clear();
-  diagnostics_.map.inserted_point_count = 0U;
-  diagnostics_.map.removed_point_count = 0U;
-  diagnostics_.map.map_update_runtime_us = 0;
-  diagnostics_.registration.query_count = 0U;
-  diagnostics_.registration.valid_plane_count = 0U;
-  diagnostics_.registration.accepted_residual_count = 0U;
-  diagnostics_.registration.rejected_residual_count = 0U;
-  diagnostics_.registration.residual_rms_m = 0.0;
-  diagnostics_.registration.iteration_count = 0U;
-  diagnostics_.registration.final_increment_norm = 0.0;
-  diagnostics_.registration.converged = false;
   const EstimatorStatus status_before = status_;
   result.status_before = status_before;
 
@@ -270,6 +264,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   const RigidTransform T_imu_lidar(imuFrame(), lidarFrame(), predicted_state.rotation_imu_lidar(),
                                    predicted_state.position_imu_lidar_m());
   const auto deskew_started = std::chrono::steady_clock::now();
+  diagnostics_.deskew.deskew_attempted = true;
   auto deskewed = deskewer_.deskew(group.scan, trajectory.value(), T_imu_lidar);
   diagnostics_.deskew.deskew_runtime_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                               std::chrono::steady_clock::now() - deskew_started)
@@ -320,6 +315,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       registration_map_.size() == 0U ? static_cast<const RegistrationMap&>(bootstrap_map_)
                                      : static_cast<const RegistrationMap&>(registration_map_);
   result.lidar_update_status = LidarUpdateStatus::kRejected;
+  diagnostics_.registration.correction_attempted = true;
   ++diagnostics_.processing.correction_attempt_count;
   const IkfomCorrectionResult correction =
       estimator_.correct(points_lidar_m, association_map);
@@ -376,6 +372,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
 
   result.lidar_update_status = LidarUpdateStatus::kSucceeded;
+  diagnostics_.registration.correction_succeeded = true;
   ++diagnostics_.processing.correction_success_count;
   result.estimate_validity = EstimateValidity::kCorrected;
   result.scan_time = group.scan.end_time;
@@ -390,6 +387,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   insertion_context.transform_finite = state_.allFinite();
   insertion_context.filtered_point_count = points_lidar_m.size();
   if (insertion_policy_.permits(insertion_context)) {
+    diagnostics_.map.map_update_performed = true;
     const auto map_update_started = std::chrono::steady_clock::now();
     diagnostics_.map.map_size_before_insert = registration_map_.size();
     diagnostics_.map.map_candidate_count =
@@ -624,6 +622,32 @@ ProcessResult FastLioPipeline::finalizeResult(ProcessResult result) {
   diagnostics_.output = std::move(output);
   result.diagnostics = diagnostics_;
   return result;
+}
+
+void FastLioPipeline::resetTransientDiagnostics() {
+  diagnostics_.reason.clear();
+  diagnostics_.synchronization = SynchronizationDiagnostics{};
+
+  const DeskewMode deskew_mode = diagnostics_.deskew.deskew_mode;
+  diagnostics_.deskew = DeskewDiagnostics{};
+  diagnostics_.deskew.deskew_mode = deskew_mode;
+
+  diagnostics_.registration = RegistrationDiagnostics{};
+
+  const std::size_t map_point_count = registration_map_.size();
+  const bool dynamic_filter_enabled = diagnostics_.map.dynamic_filter_enabled;
+  const std::size_t dynamic_evidence_voxel_count =
+      diagnostics_.map.dynamic_evidence_voxel_count;
+  diagnostics_.map = MapDiagnostics{};
+  diagnostics_.map.map_point_count = map_point_count;
+  diagnostics_.map.dynamic_filter_enabled = dynamic_filter_enabled;
+  diagnostics_.map.dynamic_evidence_voxel_count =
+      dynamic_evidence_voxel_count;
+
+  diagnostics_.state.correction_translation_norm_m = 0.0;
+  diagnostics_.state.correction_rotation_norm_rad = 0.0;
+  diagnostics_.output = OutputDiagnostics{};
+  diagnostics_.timing = StageTimingDiagnostics{};
 }
 
 void FastLioPipeline::fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const {
