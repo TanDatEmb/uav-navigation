@@ -78,6 +78,34 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def process_start_ticks(pid: int) -> int:
+    stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    closing_parenthesis = stat.rfind(")")
+    if closing_parenthesis < 0:
+        raise RuntimeError(f"invalid /proc stat for pid {pid}")
+    fields_after_command = stat[closing_parenthesis + 2:].split()
+    return int(fields_after_command[19])
+
+
+def register_process(
+    registry_path: Path,
+    process: subprocess.Popen[Any],
+    role: str,
+    command: list[str],
+) -> None:
+    payload: dict[str, Any] = {"schema_version": 1, "processes": []}
+    if registry_path.is_file():
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    payload["processes"].append({
+        "role": role,
+        "pid": process.pid,
+        "process_group": os.getpgid(process.pid),
+        "start_ticks": process_start_ticks(process.pid),
+        "command": command,
+    })
+    atomic_json(registry_path, payload)
+
+
 def collect(output: Path, state_path: Path) -> int:
     import rclpy
     from diagnostic_msgs.msg import DiagnosticArray
@@ -102,7 +130,7 @@ def collect(output: Path, state_path: Path) -> int:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
     return 0
 
 
@@ -178,20 +206,66 @@ def wait_for_drain(
     )
 
 
+def process_group_exists(process_group: int) -> bool:
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8")
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        closing_parenthesis = stat.rfind(")")
+        if closing_parenthesis < 0:
+            continue
+        fields = stat[closing_parenthesis + 2:].split()
+        if fields[0] != "Z" and int(fields[2]) == process_group:
+            return True
+    return False
+
+
+def wait_for_process_group_exit(process_group: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not process_group_exists(process_group):
+            return True
+        time.sleep(0.05)
+    return not process_group_exists(process_group)
+
+
 def stop(process: subprocess.Popen[Any], timeout: float = 10.0) -> None:
-    if process.poll() is not None:
-        return
-    os.killpg(process.pid, signal.SIGINT)
+    process_group = process.pid
+    escalation = (
+        (signal.SIGINT, timeout),
+        (signal.SIGTERM, 5.0),
+        (signal.SIGKILL, 2.0),
+    )
+    for stop_signal, wait_timeout in escalation:
+        if not process_group_exists(process_group):
+            break
+        try:
+            os.killpg(process_group, stop_signal)
+        except ProcessLookupError:
+            break
+        if wait_for_process_group_exit(process_group, wait_timeout):
+            break
     try:
-        process.wait(timeout=timeout)
+        process.wait(timeout=0.1)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
+        pass
+    if process_group_exists(process_group):
+        raise RuntimeError(
+            f"process group {process_group} survived SIGKILL cleanup"
+        )
+
+
+class ReplayInterrupted(RuntimeError):
+    pass
 
 
 def run(args: argparse.Namespace) -> int:
     args.output.mkdir(parents=True, exist_ok=False)
     state_path = args.output / "diagnostics_state.json"
+    registry_path = args.output / "process_groups.json"
     logs: list[Any] = []
     processes: list[subprocess.Popen[Any]] = []
 
@@ -200,54 +274,74 @@ def run(args: argparse.Namespace) -> int:
         logs.append(stream)
         return stream
 
+    node_command = [
+        "ros2", "run", "fast_lio_ros", "fast_lio_node",
+        "--ros-args", "--params-file", str(args.config),
+    ]
     node = subprocess.Popen(
-        [
-            "ros2", "run", "fast_lio_ros", "fast_lio_node",
-            "--ros-args", "--params-file", str(args.config),
-        ],
+        node_command,
         stdout=log("node.stdout.log"),
         stderr=log("node.stderr.log"),
         start_new_session=True,
     )
     processes.append(node)
+    register_process(registry_path, node, "node", node_command)
+    collector_command = [
+        sys.executable, str(Path(__file__).resolve()), "collect",
+        "--output", str(args.output / "diagnostics.jsonl"),
+        "--state", str(state_path),
+    ]
     collector = subprocess.Popen(
-        [
-            sys.executable, str(Path(__file__).resolve()), "collect",
-            "--output", str(args.output / "diagnostics.jsonl"),
-            "--state", str(state_path),
-        ],
+        collector_command,
         stdout=log("collector.log"),
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
     processes.append(collector)
+    register_process(registry_path, collector, "collector", collector_command)
     recorder: subprocess.Popen[Any] | None = None
     replay: subprocess.Popen[Any] | None = None
     summary: dict[str, Any] = {"rate": args.rate}
+    previous_signal_handlers: dict[signal.Signals, Any] = {}
+
+    def interrupt(signum: int, _frame: Any) -> None:
+        raise ReplayInterrupted(f"replay interrupted by {signal.Signals(signum).name}")
+
+    for handled_signal in (signal.SIGINT, signal.SIGTERM):
+        previous_signal_handlers[handled_signal] = signal.signal(
+            handled_signal, interrupt
+        )
     try:
         wait_for_subscriber(args.imu_topic, node, args.readiness_timeout)
         wait_for_subscriber(args.lidar_topic, node, args.readiness_timeout)
         wait_for_state(state_path, node, args.readiness_timeout)
+        recorder_command = [
+            "ros2", "bag", "record", "-o",
+            str(args.output / "outputs"), *RECORDED_TOPICS,
+        ]
         recorder = subprocess.Popen(
-            ["ros2", "bag", "record", "-o", str(args.output / "outputs"), *RECORDED_TOPICS],
+            recorder_command,
             stdout=log("record.stdout.log"),
             stderr=log("record.stderr.log"),
             start_new_session=True,
         )
         processes.append(recorder)
+        register_process(registry_path, recorder, "recorder", recorder_command)
         wait_for_subscriber(
             "/lio/diagnostics", recorder, args.readiness_timeout, minimum_count=2
         )
+        replay_command = [
+            "ros2", "bag", "play", str(args.bag), "--rate", str(args.rate),
+            "--delay", "5",
+        ]
         replay = subprocess.Popen(
-            [
-                "ros2", "bag", "play", str(args.bag), "--rate", str(args.rate),
-                "--delay", "5",
-            ],
+            replay_command,
             stdout=log("replay.stdout.log"),
             stderr=log("replay.stderr.log"),
             start_new_session=True,
         )
         processes.append(replay)
+        register_process(registry_path, replay, "replay", replay_command)
         replay_returncode = replay.wait()
         summary["replay_returncode"] = replay_returncode
         if replay_returncode != 0:
@@ -267,7 +361,15 @@ def run(args: argparse.Namespace) -> int:
         summary["failures"] = [str(error)]
     finally:
         for process in reversed(processes):
-            stop(process)
+            try:
+                stop(process)
+            except Exception as error:
+                summary.setdefault("cleanup_failures", []).append(str(error))
+                summary.setdefault("failures", []).append(
+                    f"process cleanup failed: {error}"
+                )
+        for handled_signal, previous_handler in previous_signal_handlers.items():
+            signal.signal(handled_signal, previous_handler)
         summary["estimator_returncode"] = node.returncode
         atomic_json(args.output / "summary.json", summary)
         for stream in logs:

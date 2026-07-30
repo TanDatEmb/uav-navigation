@@ -3,13 +3,14 @@ DATASET ?=
 RATE ?= 1.0
 REPEAT ?= 1
 MAX_LIDAR ?= 0
+DRY_RUN ?= 0
 MODE ?= release
 PACKAGES ?=
 DATASET_TOOL := python3 tools/data.py
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_TOOL := python3 tools/runtime/build.py --mode "$(MODE)"
 
-.PHONY: help build test check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-view data-report data-test runtime-repro
+.PHONY: help build test check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-cleanup data-view data-report data-test runtime-repro
 
 help:
 	@$(DATASET_TOOL) --help
@@ -53,6 +54,9 @@ data-run:
 data-replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
 	@$(ROS_ENV) $(DATASET_TOOL) replay --dataset "$(DATASET)" --rate "$(RATE)"
+
+data-cleanup:
+	@python3 tools/runtime/cleanup_replay.py $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)
 
 data-view:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
