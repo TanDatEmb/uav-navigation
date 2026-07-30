@@ -35,7 +35,7 @@ LivoxTimestampPolicy parseTimestampPolicy(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 22> kRequired{
+  static constexpr std::array<std::string_view, 23> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -57,7 +57,8 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "initialization.require_stationary",
       "preprocessing.minimum_range_m",
       "preprocessing.maximum_range_m",
-      "preprocessing.voxel_size_m",
+      "preprocessing.scan_voxel_size_m",
+      "mapping.registration_map.voxel_size_m",
   };
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
@@ -188,7 +189,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.require_stationary = node.declare_parameter("initialization.require_stationary", true);
   result.minimum_range_m = node.declare_parameter("preprocessing.minimum_range_m", 0.1);
   result.maximum_range_m = node.declare_parameter("preprocessing.maximum_range_m", 40.0);
-  result.voxel_size_m = node.declare_parameter("preprocessing.voxel_size_m", 0.2);
+  result.scan_voxel_size_m =
+      node.declare_parameter("preprocessing.scan_voxel_size_m", 0.2);
+  result.registration_map_voxel_size_m =
+      node.declare_parameter("mapping.registration_map.voxel_size_m", 0.2);
   const auto local_half_extent = node.declare_parameter<std::vector<double>>(
       "mapping.local_map.half_extent_m", {50.0, 50.0, 25.0});
   if (local_half_extent.size() != 3U) {
@@ -214,7 +218,6 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.publish_registered_points =
       node.declare_parameter("output.publish_registered_points", true);
   result.publish_local_map = node.declare_parameter("output.publish_local_map", true);
-  result.local_map_rate_hz = node.declare_parameter("output.local_map_rate_hz", 1.0);
   result.imu_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
   result.lidar_queue_capacity =
@@ -271,7 +274,12 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.minimum_range_m;
   config.preprocessing.point_filter.maximum_range_m =
       parameters.maximum_range_m;
-  config.preprocessing.voxel_filter.voxel_size_m = parameters.voxel_size_m;
+  config.preprocessing.voxel_filter.voxel_size_m =
+      parameters.scan_voxel_size_m;
+  config.registration_map.voxel_size_m =
+      parameters.registration_map_voxel_size_m;
+  config.lifecycle.enable_periodic_local_map_snapshot =
+      parameters.publish_local_map;
   config.local_map.half_extent_m = {
       parameters.local_map_half_extent_m[0],
       parameters.local_map_half_extent_m[1],
@@ -374,12 +382,21 @@ void ParameterLoader::validate(const RosParameters& p) {
   if (p.estimate_extrinsic_online) {
     throw std::invalid_argument("M1 production baseline requires extrinsic.estimate_online=false");
   }
+  if (!(p.scan_voxel_size_m > 0.0) ||
+      !std::isfinite(p.scan_voxel_size_m)) {
+    throw std::invalid_argument(
+        "preprocessing.scan_voxel_size_m must be finite and positive");
+  }
+  if (!(p.registration_map_voxel_size_m > 0.0) ||
+      !std::isfinite(p.registration_map_voxel_size_m)) {
+    throw std::invalid_argument(
+        "mapping.registration_map.voxel_size_m must be finite and positive");
+  }
   if (p.maximum_imu_gap_ns <= 0 || p.minimum_imu_samples <= 0 ||
       p.maximum_registration_iterations <= 0 || p.minimum_range_m < 0.0 ||
-      p.maximum_range_m <= p.minimum_range_m || p.voxel_size_m <= 0.0 ||
-      p.local_map_rate_hz <= 0.0 || !std::isfinite(p.minimum_range_m) ||
-      !std::isfinite(p.maximum_range_m) || !std::isfinite(p.voxel_size_m) ||
-      !std::isfinite(p.local_map_rate_hz)) {
+      p.maximum_range_m <= p.minimum_range_m ||
+      !std::isfinite(p.minimum_range_m) ||
+      !std::isfinite(p.maximum_range_m)) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
   }
   if (p.imu_queue_capacity <= 0 || p.lidar_queue_capacity <= 0 ||

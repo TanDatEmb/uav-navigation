@@ -212,7 +212,7 @@ def export(bag: Path, output: Path) -> None:
         ),
         "number_of_points": len(points),
         "bounding_box": bounds,
-        "voxel_size_m": 0.2,
+        "registration_map_voxel_size_m": 0.2,
         "map_backend": "upstream ikd-Tree",
         "config_path": final_counters.get("config_path"),
         "config_SHA256": final_counters.get("config_sha256"),

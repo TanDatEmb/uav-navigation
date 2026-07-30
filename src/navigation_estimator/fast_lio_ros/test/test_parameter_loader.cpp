@@ -20,6 +20,22 @@ class ParameterLoaderTest : public ::testing::Test {
   static void TearDownTestSuite() { rclcpp::shutdown(); }
 };
 
+std::filesystem::path canonicalConfigWithout(std::string_view line,
+                                             std::string_view suffix) {
+  std::ifstream source(FAST_LIO_ROS_SOURCE_DIR "/config/mid360-real.yaml");
+  std::string contents((std::istreambuf_iterator<char>(source)),
+                       std::istreambuf_iterator<char>());
+  const auto position = contents.find(line);
+  if (position == std::string::npos) {
+    throw std::runtime_error("test fixture line was not found");
+  }
+  contents.erase(position, line.size());
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("fast_lio_missing_" + std::string(suffix) + ".yaml");
+  std::ofstream(path) << contents;
+  return path;
+}
+
 TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   rclcpp::Node node{"parameter_loader_test"};
   const auto parameters = ParameterLoader::declareAndLoad(node);
@@ -119,6 +135,40 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
   EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 10U);
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.2);
+  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
+}
+
+TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {
+  const auto profile = loadCanonicalEstimatorProfile(
+      FAST_LIO_ROS_SOURCE_DIR "/config/aist.yaml");
+  EXPECT_DOUBLE_EQ(
+      profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
+  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
+  EXPECT_TRUE(
+      profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
+}
+
+TEST_F(ParameterLoaderTest, PublishLocalMapControlsPeriodicCoreSnapshot) {
+  rclcpp::Node node{"parameter_loader_publish_map_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.publish_local_map = false;
+  const auto profile = makeEstimatorProfile(parameters);
+  EXPECT_FALSE(
+      profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
+}
+
+TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
+  for (const auto& [line, suffix] :
+       std::array<std::pair<std::string_view, std::string_view>, 2>{
+           std::pair{"      scan_voxel_size_m: 0.2\n", "scan_voxel"},
+           std::pair{"    mapping:\n"
+                     "      registration_map: {voxel_size_m: 0.2}\n",
+                     "registration_map_voxel"}}) {
+    const auto path = canonicalConfigWithout(line, suffix);
+    EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
+                 std::invalid_argument);
+    std::filesystem::remove(path);
+  }
 }
 
 TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
@@ -156,9 +206,27 @@ TEST_F(ParameterLoaderTest, InvalidConfigIsRejectedWithoutDefaults) {
 
   rclcpp::Node node{"parameter_loader_invalid_numeric_test"};
   auto parameters = ParameterLoader::declareAndLoad(node);
-  parameters.voxel_size_m = std::numeric_limits<double>::quiet_NaN();
+  parameters.scan_voxel_size_m = std::numeric_limits<double>::quiet_NaN();
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
-  parameters.voxel_size_m = 0.2;
+  parameters.scan_voxel_size_m = 0.0;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.scan_voxel_size_m = 0.2;
+  parameters.registration_map_voxel_size_m = 0.0;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.registration_map_voxel_size_m = -0.2;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.registration_map_voxel_size_m =
+      std::numeric_limits<double>::infinity();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.registration_map_voxel_size_m =
+      std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.registration_map_voxel_size_m = 0.2;
+  parameters.scan_voxel_size_m = -0.2;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.scan_voxel_size_m = std::numeric_limits<double>::infinity();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.scan_voxel_size_m = 0.2;
   parameters.rotation_imu_lidar_xyzw = {0.0, 0.0, 0.0, 2.0};
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }

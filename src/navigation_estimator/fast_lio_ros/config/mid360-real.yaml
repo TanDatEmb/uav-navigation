@@ -21,9 +21,10 @@ fast_lio:
     preprocessing:
       minimum_range_m: 0.1
       maximum_range_m: 40.0
-      voxel_size_m: 0.2
+      scan_voxel_size_m: 0.2
     registration: {maximum_iterations: 10}
+    mapping:
+      registration_map: {voxel_size_m: 0.2}
     output:
       publish_registered_points: true
       publish_local_map: true
-      local_map_rate_hz: 1.0

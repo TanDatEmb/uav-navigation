@@ -97,6 +97,23 @@ The local map is a bounded registration structure in `odom`, not a persistent
 world model. Soft point pressure runs budgeted crop work; hard pressure must
 recover to the configured target or report a hard recovery failure.
 
+`output.publish_local_map` controls the periodic debug snapshot end to end.
+When enabled, the pipeline takes a snapshot on the first successful LiDAR
+correction and then every 10 successful corrections, and the ROS adapter
+publishes it. Rejected or failed corrections do not advance this fixed
+cadence. When disabled, the runtime does not snapshot, copy, sort, or publish
+the debug map; `snapshot_us` and the snapshot point count remain zero. The
+offline final `local_map.pcd` is still obtained once from the registration map
+after processing and is unaffected by this flag.
+
+The two voxel parameters serve different stages. The
+`preprocessing.scan_voxel_size_m` filter reduces each incoming scan before
+registration, trading scan detail for per-correction work.
+`mapping.registration_map.voxel_size_m` controls insertion density in the
+registration map, trading map detail for memory and neighbor-search cost.
+Canonical profiles must specify both explicitly; changing one does not change
+the other.
+
 ## Known limitations
 
 - Corrected odometry only; there is no high-rate or IMU-only odometry output.

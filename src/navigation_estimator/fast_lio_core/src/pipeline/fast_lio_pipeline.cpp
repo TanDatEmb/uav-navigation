@@ -71,7 +71,8 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.lifecycle.degraded_after_registration_failures == 0U ||
       config_.lifecycle.lost_after_registration_failures <
           config_.lifecycle.degraded_after_registration_failures ||
-      config_.lifecycle.local_map_snapshot_period_scans == 0U) {
+      (config_.lifecycle.enable_periodic_local_map_snapshot &&
+       config_.lifecycle.local_map_snapshot_period_scans == 0U)) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
   }
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
@@ -453,8 +454,11 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
   diagnostics_.map.map_point_count = registration_map_.size();
   ++corrected_scan_count_;
-  if (corrected_scan_count_ == 1U ||
-      corrected_scan_count_ % config_.lifecycle.local_map_snapshot_period_scans == 0U) {
+  if (config_.lifecycle.enable_periodic_local_map_snapshot &&
+      (corrected_scan_count_ == 1U ||
+       corrected_scan_count_ %
+               config_.lifecycle.local_map_snapshot_period_scans ==
+           0U)) {
     const auto snapshot_started = std::chrono::steady_clock::now();
     result.local_map_points_odom_m = registration_map_.snapshot();
     diagnostics_.map.snapshot_point_count =

@@ -44,7 +44,8 @@ struct RosParameters {
   bool require_stationary{};
   double minimum_range_m{};
   double maximum_range_m{};
-  double voxel_size_m{};
+  double scan_voxel_size_m{};
+  double registration_map_voxel_size_m{};
   std::array<double, 3> local_map_half_extent_m{};
   double local_map_crop_trigger_distance_m{};
   std::int64_t local_map_soft_point_limit{};
@@ -55,7 +56,6 @@ struct RosParameters {
   std::int64_t maximum_registration_iterations{};
   bool publish_registered_points{};
   bool publish_local_map{};
-  double local_map_rate_hz{};
   std::int64_t imu_queue_capacity{};
   std::int64_t lidar_queue_capacity{};
   std::int64_t maximum_processing_lag_ms{};
