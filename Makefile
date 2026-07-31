@@ -11,7 +11,7 @@ DATASET_TOOL := python3 tools/data.py
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_TOOL := python3 tools/runtime/build.py --mode "$(MODE)"
 
-.PHONY: help build test check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-cleanup data-view data-report data-test runtime-repro
+.PHONY: help build test test-tools check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-cleanup data-view data-report data-test runtime-repro
 
 help:
 	@$(DATASET_TOOL) --help
@@ -21,6 +21,12 @@ build:
 
 test:
 	@$(BUILD_TOOL) test $(if $(strip $(PACKAGES)),--packages $(PACKAGES),)
+	@$(MAKE) test-tools
+
+test-tools:
+	@python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+	@python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
+	@python3 -m unittest discover -s tools/simulation/tests -p 'test_*.py' -v
 
 check:
 	@$(BUILD_TOOL) check

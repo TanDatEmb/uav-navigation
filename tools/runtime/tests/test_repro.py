@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import repro
 from repro import extract_estimator_state, run_iteration, sha256_path
 

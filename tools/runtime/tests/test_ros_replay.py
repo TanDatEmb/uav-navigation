@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ros_replay import (
     acceptance_failures,
     diagnostics_values,
