@@ -11,6 +11,20 @@
 namespace uav::nav::lio {
 namespace {
 
+void expectStateAndCovarianceEqual(
+    const ManifoldState& expected_state,
+    const ManifoldState::Covariance& expected_covariance,
+    const IkfomEstimator& estimator) {
+  const ManifoldState actual_state = estimator.stateView();
+  EXPECT_LT((actual_state.position_odom_imu_m() -
+             expected_state.position_odom_imu_m()).norm(), 1e-12);
+  EXPECT_LT(actual_state.orientation_odom_imu().angularDistance(
+                expected_state.orientation_odom_imu()), 1e-12);
+  EXPECT_LT((actual_state.velocity_odom_imu_m_s() -
+             expected_state.velocity_odom_imu_m_s()).norm(), 1e-12);
+  EXPECT_LT((estimator.covariance() - expected_covariance).norm(), 1e-12);
+}
+
 TEST(IkfomEstimatorTest, UsesUpstreamStateAndProcessJacobians) {
   static_assert(IkfomState::DOF == 23);
   static_assert(IkfomState::DIM == 24);
@@ -160,6 +174,61 @@ TEST(IkfomEstimatorTest, CovarianceRemainsSymmetricAndPsdAcrossHundredsOfPredict
     EXPECT_GE(solver.eigenvalues().minCoeff(), -1e-10);
     EXPECT_TRUE(std::isfinite(covariance.trace()));
   }
+}
+
+TEST(IkfomEstimatorTest, OversizedLaterIntervalDoesNotPartiallyPredict) {
+  IkfomEstimatorConfig config;
+  config.maximum_integration_step_ns = 20'000'000;
+  IkfomEstimator estimator(config, ResidualBuilderConfig{});
+  estimator.initialize(ManifoldState{});
+  const ManifoldState state_before = estimator.stateView();
+  const auto covariance_before = estimator.covariance();
+  std::vector<ImuSample> samples(3);
+  samples[0].time = Timestamp(0);
+  samples[1].time = Timestamp(10'000'000);
+  samples[2].time = Timestamp(40'000'000);
+  for (auto& sample : samples) {
+    sample.linear_acceleration_imu_m_s2 = {0.1, 0.0, 9.80665};
+  }
+
+  const auto result =
+      estimator.predict(samples, Timestamp(0), Timestamp(40'000'000));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.status().code(), StatusCode::kInsufficientData);
+  expectStateAndCovarianceEqual(state_before, covariance_before, estimator);
+}
+
+TEST(IkfomEstimatorTest, NumericalFailureRollsBackStateAndCovariance) {
+  IkfomEstimatorConfig config;
+  config.maximum_integration_step_ns = 20'000'000;
+  IkfomEstimator estimator(config, ResidualBuilderConfig{});
+  estimator.initialize(ManifoldState{});
+  const ManifoldState state_before = estimator.stateView();
+  const auto covariance_before = estimator.covariance();
+  std::vector<ImuSample> samples(3);
+  samples[0].time = Timestamp(0);
+  samples[1].time = Timestamp(10'000'000);
+  samples[2].time = Timestamp(20'000'000);
+  samples[0].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
+  samples[1].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
+  samples[2].linear_acceleration_imu_m_s2 = {
+      std::numeric_limits<double>::max(), 0.0, 9.80665};
+
+  const auto result =
+      estimator.predict(samples, Timestamp(0), Timestamp(20'000'000));
+
+  ASSERT_FALSE(result.ok());
+  EXPECT_EQ(result.status().code(), StatusCode::kNumericalFailure);
+  expectStateAndCovarianceEqual(state_before, covariance_before, estimator);
+
+  samples.resize(2);
+  samples[0].time = Timestamp(0);
+  samples[1].time = Timestamp(10'000'000);
+  samples[1].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
+  const auto recovery =
+      estimator.predict(samples, Timestamp(0), Timestamp(10'000'000));
+  ASSERT_TRUE(recovery.ok()) << recovery.status().message();
 }
 
 }  // namespace

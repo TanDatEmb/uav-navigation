@@ -208,32 +208,57 @@ Result<ImuTrajectory> IkfomEstimator::predict(
     integration_samples.push_back(end_sample.value());
   }
 
+  for (std::size_t index = 1; index < integration_samples.size(); ++index) {
+    const std::int64_t dt_ns =
+        integration_samples[index].time.nanoseconds() -
+        integration_samples[index - 1].time.nanoseconds();
+    if (dt_ns <= 0 || dt_ns > config_.maximum_integration_step_ns) {
+      return Status(StatusCode::kInsufficientData,
+                    "IKFoM integration step is zero, negative or too large");
+    }
+    const IkfomInput input =
+        toIkfomInput(integration_samples[index - 1],
+                     integration_samples[index]);
+    if (!input.gyro.allFinite() || !input.acc.allFinite()) {
+      return Status(StatusCode::kInvalidArgument,
+                    "IKFoM integration input is non-finite");
+    }
+  }
+
   ImuTrajectory trajectory;
   Status trajectory_status =
       trajectory.addState(trajectoryState(stateView(), start_time));
   if (!trajectory_status.ok()) {
     return trajectory_status;
   }
+  IkfomState state_before_prediction = filter_.get_x();
+  IkfomFilter::cov covariance_before_prediction = filter_.get_P();
+  bool filter_mutated = false;
+  const auto rollback = [&]() {
+    if (filter_mutated) {
+      filter_.change_x(state_before_prediction);
+      filter_.change_P(covariance_before_prediction);
+    }
+  };
   auto noise = processNoise();
   for (std::size_t index = 1; index < integration_samples.size(); ++index) {
     const auto& previous = integration_samples[index - 1];
     const auto& current = integration_samples[index];
     const std::int64_t dt_ns =
         current.time.nanoseconds() - previous.time.nanoseconds();
-    if (dt_ns <= 0 || dt_ns > config_.maximum_integration_step_ns) {
-      return Status(StatusCode::kInsufficientData,
-                    "IKFoM integration step is zero, negative or too large");
-    }
     double dt_seconds = static_cast<double>(dt_ns) * 1e-9;
     filter_.predict(dt_seconds, noise, toIkfomInput(previous, current));
+    filter_mutated = true;
     const ManifoldState predicted = stateView();
     if (!predicted.allFinite() || !covarianceValid(filter_.get_P())) {
+      rollback();
       return Status(StatusCode::kNumericalFailure,
                     "IKFoM prediction produced non-finite state");
     }
     trajectory_status =
         trajectory.addState(trajectoryState(predicted, current.time));
     if (!trajectory_status.ok()) {
+      rollback();
       return trajectory_status;
     }
   }
