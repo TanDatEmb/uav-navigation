@@ -51,6 +51,10 @@ make data-report DATASET=aist-mid360-drive
 make data-test DATASET=aist-mid360-drive
 ```
 
+`make data-replay` opens the canonical FAST-LIO RViz view by default. For CI,
+remote shells, and other headless runs, set `ENABLE_RVIZ=0`. The `data-test`
+and `runtime-repro` workflows always remain headless.
+
 `data-fetch` downloads with resume support, verifies the catalog checksum,
 extracts into a temporary directory, writes a LiDAR/IMU-only ROS bag, records
 provenance, and atomically installs the prepared dataset. `data-check`

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -104,6 +105,17 @@ def register_process(
         "command": command,
     })
     atomic_json(registry_path, payload)
+
+
+def track_process(
+    processes: list[subprocess.Popen[Any]],
+    registry_path: Path,
+    process: subprocess.Popen[Any],
+    role: str,
+    command: list[str],
+) -> None:
+    processes.append(process)
+    register_process(registry_path, process, role, command)
 
 
 def collect(output: Path, state_path: Path) -> int:
@@ -262,7 +274,27 @@ class ReplayInterrupted(RuntimeError):
     pass
 
 
+def rviz_command(
+    args: argparse.Namespace,
+    environment: dict[str, str] | None = None,
+) -> list[str] | None:
+    if not args.enable_rviz:
+        return None
+    executable = shutil.which("rviz2")
+    if executable is None:
+        raise RuntimeError("RViz requested but rviz2 is not installed or not on PATH")
+    if args.rviz_config is None or not args.rviz_config.is_file():
+        raise RuntimeError(f"RViz config does not exist: {args.rviz_config}")
+    display_environment = os.environ if environment is None else environment
+    if not (display_environment.get("DISPLAY") or display_environment.get("WAYLAND_DISPLAY")):
+        raise RuntimeError(
+            "RViz requested in a headless environment; DISPLAY or WAYLAND_DISPLAY is required"
+        )
+    return [executable, "-d", str(args.rviz_config)]
+
+
 def run(args: argparse.Namespace) -> int:
+    requested_rviz_command = rviz_command(args)
     args.output.mkdir(parents=True, exist_ok=False)
     state_path = args.output / "diagnostics_state.json"
     registry_path = args.output / "process_groups.json"
@@ -301,6 +333,7 @@ def run(args: argparse.Namespace) -> int:
     register_process(registry_path, collector, "collector", collector_command)
     recorder: subprocess.Popen[Any] | None = None
     replay: subprocess.Popen[Any] | None = None
+    rviz: subprocess.Popen[Any] | None = None
     summary: dict[str, Any] = {"rate": args.rate}
     previous_signal_handlers: dict[signal.Signals, Any] = {}
 
@@ -330,6 +363,22 @@ def run(args: argparse.Namespace) -> int:
         wait_for_subscriber(
             "/lio/diagnostics", recorder, args.readiness_timeout, minimum_count=2
         )
+        if requested_rviz_command is not None:
+            rviz = subprocess.Popen(
+                requested_rviz_command,
+                stdout=log("rviz.stdout.log"),
+                stderr=log("rviz.stderr.log"),
+                start_new_session=True,
+            )
+            track_process(
+                processes, registry_path, rviz, "rviz", requested_rviz_command
+            )
+            time.sleep(0.5)
+            if rviz.poll() is not None:
+                raise RuntimeError(
+                    f"RViz exited during startup with return code {rviz.returncode}; "
+                    f"see {args.output / 'rviz.stderr.log'}"
+                )
         replay_command = [
             "ros2", "bag", "play", str(args.bag), "--rate", str(args.rate),
             "--delay", "5",
@@ -392,6 +441,8 @@ def parser() -> argparse.ArgumentParser:
     replay.add_argument("--rate", type=float, default=1.0)
     replay.add_argument("--readiness-timeout", type=float, default=30.0)
     replay.add_argument("--drain-timeout", type=float, default=120.0)
+    replay.add_argument("--enable-rviz", action="store_true")
+    replay.add_argument("--rviz-config", type=Path)
     return result
 
 

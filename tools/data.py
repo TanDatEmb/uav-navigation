@@ -542,6 +542,12 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
         "--lidar-topic", str(context["input"]["lidar_topic"]),
         "--rate", str(args.rate),
     ]
+    if args.enable_rviz:
+        command.extend([
+            "--enable-rviz",
+            "--rviz-config",
+            str(ROOT / "src/navigation_estimator/fast_lio_ros/rviz/fast_lio.rviz"),
+        ])
     result = subprocess.run(command, cwd=ROOT)
     if result.returncode == 0:
         write_run_json(output, "replay", context, counts)
@@ -785,6 +791,7 @@ def parser() -> argparse.ArgumentParser:
             child.add_argument("--max-lidar", type=int, default=20)
         if action == "replay":
             child.add_argument("--rate", type=float, default=1.0)
+            child.add_argument("--enable-rviz", action="store_true")
     return result
 
 

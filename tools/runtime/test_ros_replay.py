@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -15,12 +16,66 @@ from ros_replay import (
     drained,
     process_group_exists,
     register_process,
+    rviz_command,
     stop,
+    track_process,
+    parser,
 )
 import cleanup_replay
 
 
 class DrainTest(unittest.TestCase):
+    def test_default_replay_does_not_enable_rviz(self) -> None:
+        args = parser().parse_args([
+            "run", "--bag", "/tmp/bag", "--config", "/tmp/config",
+            "--output", "/tmp/output", "--imu-topic", "/imu",
+            "--lidar-topic", "/lidar",
+        ])
+        self.assertFalse(args.enable_rviz)
+        self.assertIsNone(rviz_command(args))
+
+    def test_enable_rviz_builds_canonical_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "fast_lio.rviz"
+            config.touch()
+            args = SimpleNamespace(enable_rviz=True, rviz_config=config)
+            with mock.patch("ros_replay.shutil.which", return_value="/usr/bin/rviz2"):
+                self.assertEqual(
+                    rviz_command(args, {"DISPLAY": ":0"}),
+                    ["/usr/bin/rviz2", "-d", str(config)],
+                )
+
+    def test_missing_rviz2_is_rejected(self) -> None:
+        args = SimpleNamespace(enable_rviz=True, rviz_config=Path("/tmp/unused"))
+        with mock.patch("ros_replay.shutil.which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "rviz2"):
+                rviz_command(args, {"DISPLAY": ":0"})
+
+    def test_missing_rviz_config_is_rejected(self) -> None:
+        args = SimpleNamespace(enable_rviz=True, rviz_config=Path("/missing/config"))
+        with mock.patch("ros_replay.shutil.which", return_value="/usr/bin/rviz2"):
+            with self.assertRaisesRegex(RuntimeError, "config does not exist"):
+                rviz_command(args, {"DISPLAY": ":0"})
+
+    def test_headless_rviz_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "fast_lio.rviz"
+            config.touch()
+            args = SimpleNamespace(enable_rviz=True, rviz_config=config)
+            with mock.patch("ros_replay.shutil.which", return_value="/usr/bin/rviz2"):
+                with self.assertRaisesRegex(RuntimeError, "headless"):
+                    rviz_command(args, {})
+
+    def test_rviz_is_tracked_for_process_cleanup(self) -> None:
+        process = SimpleNamespace()
+        processes = []
+        with mock.patch("ros_replay.register_process") as register:
+            track_process(processes, Path("registry.json"), process, "rviz", ["rviz2"])
+        self.assertEqual(processes, [process])
+        register.assert_called_once_with(
+            Path("registry.json"), process, "rviz", ["rviz2"]
+        )
+
     def test_parses_jazzy_byte_encoded_diagnostic_level(self) -> None:
         message = SimpleNamespace(status=[
             SimpleNamespace(

@@ -21,6 +21,9 @@ operation additionally requires measured LiDAR/IMU extrinsics and confirmed
 sensor timestamp/frame semantics; defaults marked `PLACEHOLDER` are not a
 calibration and must not be used for flight or real-data acceptance.
 
+Interactive dataset replay opens RViz by default. Use
+`make data-replay DATASET=aist-mid360-drive ENABLE_RVIZ=0` for a headless run.
+
 ## Packages
 
 - `ikfom_vendor`: pinned IKFoM provenance and an explicit CMake interface target.

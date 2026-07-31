@@ -4,6 +4,7 @@ RATE ?= 1.0
 REPEAT ?= 1
 MAX_LIDAR ?= 0
 DRY_RUN ?= 0
+ENABLE_RVIZ ?= 1
 MODE ?= release
 PACKAGES ?=
 DATASET_TOOL := python3 tools/data.py
@@ -53,7 +54,8 @@ data-run:
 
 data-replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(DATASET_TOOL) replay --dataset "$(DATASET)" --rate "$(RATE)"
+	@$(ROS_ENV) $(DATASET_TOOL) replay --dataset "$(DATASET)" --rate "$(RATE)" \
+		$(if $(filter 1 true yes,$(ENABLE_RVIZ)),--enable-rviz,)
 
 data-cleanup:
 	@python3 tools/runtime/cleanup_replay.py $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)
@@ -84,7 +86,6 @@ KEEP_SESSIONS ?= 10
 OBSERVER_SAMPLE_HZ ?= 2
 POINTCLOUD_SAMPLE_EVERY ?= 10
 AUTO_SNAPSHOT ?= 1
-ENABLE_RVIZ ?= 1
 PUBLISH_LOCAL_MAP ?=
 
 .PHONY: sim-px4-mid360 sim-px4-mid360-headless sim-px4-mid360-check sim-px4-mid360-stop sim-px4-mid360-report sim-px4-mid360-clean sim-px4-mid360-test sim-px4-mid360-latest sim-px4-mid360-reset
