@@ -176,7 +176,9 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.name = "fast_lio/estimator";
   status.hardware_id = "lidar_imu";
   status.level =
-      result.status_after == EstimatorStatus::kLost
+      result.status_after == EstimatorStatus::kLost ||
+              result.diagnostics.last_update_failure_class ==
+                  LidarUpdateFailureClass::kStateCorruption
           ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
           : (result.status_after == EstimatorStatus::kTracking && result.hasCorrectedOutput()
                  ? diagnostic_msgs::msg::DiagnosticStatus::OK
@@ -206,7 +208,23 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
                std::to_string(result.diagnostics.registration.accepted_residual_count)),
       keyValue("residual_rms_m", std::to_string(result.diagnostics.registration.residual_rms_m)),
       keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
-      keyValue("covariance_trace", std::to_string(result.diagnostics.state.covariance_trace))};
+      keyValue("covariance_trace", std::to_string(result.diagnostics.state.covariance_trace)),
+      keyValue("consecutive_uncorrected_lidar_updates",
+               std::to_string(result.diagnostics.consecutive_uncorrected_lidar_updates)),
+      keyValue("consecutive_recovery_successes",
+               std::to_string(result.diagnostics.consecutive_recovery_successes)),
+      keyValue("recovery_confirmation_updates_required",
+               std::to_string(result.diagnostics.recovery_confirmation_updates_required)),
+      keyValue("map_insertion_frozen",
+               result.diagnostics.map_insertion_frozen ? "true" : "false"),
+      keyValue("navigation_valid",
+               result.diagnostics.navigation_valid ? "true" : "false"),
+      keyValue("last_update_failure_class",
+               toString(result.diagnostics.last_update_failure_class)),
+      keyValue("propagation_discontinuity_count",
+               std::to_string(result.diagnostics.propagation_discontinuity_count)),
+      keyValue("last_propagation_gap_ns",
+               std::to_string(result.diagnostics.last_propagation_gap_ns))};
   status.values.push_back(keyValue(
       "ros_received_imu_count",
       std::to_string(result.diagnostics.sensor.ros_received_imu_count)));

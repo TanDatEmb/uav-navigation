@@ -57,6 +57,7 @@ class FastLioPipeline {
   void resetTransientDiagnostics();
   void fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const;
   void updateInitializationDiagnostics();
+  void recordUncorrectedUpdate(LidarUpdateFailureClass failure_class);
   [[nodiscard]] ProcessResult recoverFromDiscontinuity(
       const PropagationDiscontinuity& discontinuity);
 
@@ -84,6 +85,9 @@ class FastLioPipeline {
   std::size_t consecutive_registration_failures_{0};
   std::size_t initial_map_registration_failures_{0};
   std::size_t corrected_scan_count_{0};
+  std::size_t consecutive_uncorrected_lidar_updates_{0};
+  std::size_t consecutive_recovery_successes_{0};
+  bool tracking_ever_confirmed_{false};
 };
 
 }  // namespace uav::nav::lio

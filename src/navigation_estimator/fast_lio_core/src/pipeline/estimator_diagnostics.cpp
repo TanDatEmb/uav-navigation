@@ -48,4 +48,28 @@ const char* toString(LidarUpdateStatus status) noexcept {
   return "UNKNOWN";
 }
 
+const char* toString(LidarUpdateFailureClass failure_class) noexcept {
+  switch (failure_class) {
+    case LidarUpdateFailureClass::kNone:
+      return "none";
+    case LidarUpdateFailureClass::kSynchronization:
+      return "synchronization";
+    case LidarUpdateFailureClass::kPrediction:
+      return "prediction";
+    case LidarUpdateFailureClass::kDeskew:
+      return "deskew";
+    case LidarUpdateFailureClass::kPreprocessing:
+      return "preprocessing";
+    case LidarUpdateFailureClass::kInsufficientPoints:
+      return "insufficient_points";
+    case LidarUpdateFailureClass::kRegistration:
+      return "registration";
+    case LidarUpdateFailureClass::kPropagationDiscontinuity:
+      return "propagation_discontinuity";
+    case LidarUpdateFailureClass::kStateCorruption:
+      return "state_corruption";
+  }
+  return "unknown";
+}
+
 }  // namespace uav::nav::lio

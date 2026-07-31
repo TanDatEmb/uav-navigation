@@ -236,6 +236,63 @@ TEST(FastLioPipelineTest,
   EXPECT_EQ(following->diagnostics.propagation_discontinuity_count, 1U);
 }
 
+TEST(FastLioPipelineTest,
+     RecoveryRequiresThreeCorrectionsAndQuarantinesMapUntilConfirmed) {
+  auto config = testConfig();
+  config.tracking.recovery_confirmation_updates = 3;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  static_cast<void>(pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)})));
+  const std::size_t confirmed_map_size =
+      pipeline.registrationMapSnapshot().size();
+
+  const ProcessResult failed = pipeline.process(
+      makeGroup(makePlanarScan(200 * kMillisecondNs, 1.0),
+                100 * kMillisecondNs,
+                {stationaryImu(100 * kMillisecondNs),
+                 stationaryImu(150 * kMillisecondNs),
+                 stationaryImu(200 * kMillisecondNs)}));
+  EXPECT_EQ(failed.status_after, EstimatorStatus::kDegraded);
+  EXPECT_EQ(failed.diagnostics.consecutive_uncorrected_lidar_updates, 1U);
+  EXPECT_TRUE(failed.diagnostics.map_insertion_frozen);
+  EXPECT_FALSE(failed.diagnostics.navigation_valid);
+  EXPECT_EQ(pipeline.registrationMapSnapshot().size(), confirmed_map_size);
+
+  for (std::size_t recovery_index = 1; recovery_index <= 3;
+       ++recovery_index) {
+    const std::int64_t start_ns =
+        (1 + static_cast<std::int64_t>(recovery_index)) *
+        100 * kMillisecondNs;
+    const std::int64_t end_ns = start_ns + 100 * kMillisecondNs;
+    const ProcessResult recovered = pipeline.process(
+        makeGroup(makePlanarScan(end_ns), start_ns,
+                  {stationaryImu(start_ns),
+                   stationaryImu(start_ns + 50 * kMillisecondNs),
+                   stationaryImu(end_ns)}));
+    ASSERT_EQ(recovered.lidar_update_status, LidarUpdateStatus::kSucceeded);
+    if (recovery_index < 3) {
+      EXPECT_EQ(recovered.status_after, EstimatorStatus::kDegraded);
+      EXPECT_EQ(recovered.diagnostics.consecutive_recovery_successes,
+                recovery_index);
+      EXPECT_TRUE(recovered.diagnostics.map_insertion_frozen);
+      EXPECT_EQ(pipeline.registrationMapSnapshot().size(),
+                confirmed_map_size);
+    } else {
+      EXPECT_EQ(recovered.status_after, EstimatorStatus::kTracking);
+      EXPECT_TRUE(recovered.diagnostics.navigation_valid);
+      EXPECT_FALSE(recovered.diagnostics.map_insertion_frozen);
+      EXPECT_TRUE(recovered.diagnostics.map.map_update_performed);
+    }
+  }
+}
+
 TEST(FastLioPipelineTest, ResetStopsPublishingAndClearsRegistrationMap) {
   FastLioPipeline pipeline(testConfig());
   static_cast<void>(

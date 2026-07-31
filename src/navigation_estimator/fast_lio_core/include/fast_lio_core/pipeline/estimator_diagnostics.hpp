@@ -39,6 +39,21 @@ enum class LidarUpdateStatus {
 
 [[nodiscard]] const char* toString(LidarUpdateStatus status) noexcept;
 
+enum class LidarUpdateFailureClass {
+  kNone,
+  kSynchronization,
+  kPrediction,
+  kDeskew,
+  kPreprocessing,
+  kInsufficientPoints,
+  kRegistration,
+  kPropagationDiscontinuity,
+  kStateCorruption,
+};
+
+[[nodiscard]] const char* toString(
+    LidarUpdateFailureClass failure_class) noexcept;
+
 struct SensorDiagnostics {
   std::size_t ros_received_imu_count{0};
   std::size_t ros_received_lidar_count{0};
@@ -214,6 +229,13 @@ struct EstimatorDiagnostics {
   std::size_t consecutive_registration_failure_count{0};
   std::size_t propagation_discontinuity_count{0};
   std::int64_t last_propagation_gap_ns{0};
+  std::size_t consecutive_uncorrected_lidar_updates{0};
+  std::size_t consecutive_recovery_successes{0};
+  std::size_t recovery_confirmation_updates_required{0};
+  bool map_insertion_frozen{false};
+  bool navigation_valid{false};
+  LidarUpdateFailureClass last_update_failure_class{
+      LidarUpdateFailureClass::kNone};
   std::string reason;
   SensorDiagnostics sensor;
   SynchronizationDiagnostics synchronization;

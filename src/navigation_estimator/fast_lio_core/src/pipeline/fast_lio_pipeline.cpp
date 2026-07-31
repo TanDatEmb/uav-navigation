@@ -140,6 +140,7 @@ std::optional<ProcessResult> FastLioPipeline::processNext() {
     result.rejection_reason = synchronized.status().message();
     diagnostics_.synchronization.sync_rejection_reason = synchronized.status().message();
     diagnostics_.reason = synchronized.status().message();
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
     if (synchronized.status().code() ==
         StatusCode::kOverlappingLidarInterval) {
       ++diagnostics_.processing.overlap_rejected_count;
@@ -185,6 +186,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.rejection_reason = "MEASUREMENT_GROUP_NOT_FULLY_BRACKETED";
     diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
     diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
     return finalizeResult(std::move(result));
   }
   if (status_ == EstimatorStatus::kWaitingForSensors) {
@@ -252,6 +254,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!trajectory.ok()) {
     result.rejection_reason = trajectory.status().message();
     diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
     return finalizeResult(std::move(result));
   }
   const ManifoldState predicted_state = estimator_.stateView();
@@ -276,6 +279,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!deskewed.ok()) {
     result.rejection_reason = deskewed.status().message();
     diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kDeskew);
     return finalizeResult(std::move(result));
   }
   diagnostics_.deskew.deskew_status = deskewed.value().status;
@@ -293,6 +297,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   if (!preprocessed.ok()) {
     result.rejection_reason = preprocessed.status().message();
     diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kPreprocessing);
     return finalizeResult(std::move(result));
   }
   diagnostics_.registration.input_point_count = preprocessed.value().stats.input_point_count;
@@ -302,6 +307,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.lidar_update_status = LidarUpdateStatus::kRejected;
     result.rejection_reason = "INSUFFICIENT_FILTERED_POINTS";
     diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kInsufficientPoints);
     return finalizeResult(std::move(result));
   }
 
@@ -354,13 +360,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
           config_.lifecycle.maximum_initial_map_registration_failures) {
         transitionTo(EstimatorStatus::kLost, "INITIAL_MAP_REGISTRATION_EXHAUSTED");
       }
-    } else if (consecutive_registration_failures_ >=
-               config_.lifecycle.lost_after_registration_failures) {
-      transitionTo(EstimatorStatus::kLost, "REGISTRATION_FAILURE_LIMIT_REACHED");
-    } else if (consecutive_registration_failures_ >=
-               config_.lifecycle.degraded_after_registration_failures) {
-      transitionTo(EstimatorStatus::kDegraded, "REGISTRATION_UPDATE_REJECTED");
     }
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kRegistration);
     result.rejection_reason = correction.reason;
     diagnostics_.reason = correction.reason;
     return finalizeResult(std::move(result));
@@ -372,7 +373,27 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   consecutive_registration_failures_ = 0U;
   initial_map_registration_failures_ = 0U;
   diagnostics_.consecutive_registration_failure_count = 0U;
-  transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
+  if (!tracking_ever_confirmed_) {
+    tracking_ever_confirmed_ = true;
+    consecutive_uncorrected_lidar_updates_ = 0U;
+    consecutive_recovery_successes_ = 0U;
+    transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
+  } else if (status_ == EstimatorStatus::kDegraded ||
+             status_ == EstimatorStatus::kLost) {
+    ++consecutive_recovery_successes_;
+    if (consecutive_recovery_successes_ >=
+        config_.tracking.recovery_confirmation_updates) {
+      consecutive_uncorrected_lidar_updates_ = 0U;
+      consecutive_recovery_successes_ = 0U;
+      transitionTo(EstimatorStatus::kTracking,
+                   "LIDAR_RECOVERY_CONFIRMED");
+    } else {
+      transitionTo(EstimatorStatus::kDegraded,
+                   "LIDAR_RECOVERY_CONFIRMATION_PENDING");
+    }
+  }
+  diagnostics_.last_update_failure_class =
+      LidarUpdateFailureClass::kNone;
 
   result.lidar_update_status = LidarUpdateStatus::kSucceeded;
   diagnostics_.registration.correction_succeeded = true;
@@ -500,6 +521,9 @@ void FastLioPipeline::reset() {
   consecutive_registration_failures_ = 0U;
   initial_map_registration_failures_ = 0U;
   corrected_scan_count_ = 0U;
+  consecutive_uncorrected_lidar_updates_ = 0U;
+  consecutive_recovery_successes_ = 0U;
+  tracking_ever_confirmed_ = false;
   diagnostics_ = EstimatorDiagnostics{};
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
   status_ = EstimatorStatus::kWaitingForSensors;
@@ -551,6 +575,8 @@ ProcessResult FastLioPipeline::recoverFromDiscontinuity(
       discontinuity.gap_duration_ns;
   diagnostics_.synchronization.sync_rejection_reason =
       result.rejection_reason;
+  recordUncorrectedUpdate(
+      LidarUpdateFailureClass::kPropagationDiscontinuity);
   ++diagnostics_.propagation_discontinuity_count;
   diagnostics_.last_propagation_gap_ns = discontinuity.gap_duration_ns;
 
@@ -702,6 +728,16 @@ void FastLioPipeline::resetTransientDiagnostics() {
 
 void FastLioPipeline::fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const {
   diagnostics.status = status_;
+  diagnostics.consecutive_uncorrected_lidar_updates =
+      consecutive_uncorrected_lidar_updates_;
+  diagnostics.consecutive_recovery_successes =
+      consecutive_recovery_successes_;
+  diagnostics.recovery_confirmation_updates_required =
+      config_.tracking.recovery_confirmation_updates;
+  diagnostics.map_insertion_frozen =
+      tracking_ever_confirmed_ && status_ != EstimatorStatus::kTracking;
+  diagnostics.navigation_valid =
+      tracking_ever_confirmed_ && status_ == EstimatorStatus::kTracking;
   diagnostics.state.position_odom_imu_m = state_.position_odom_imu_m();
   diagnostics.state.velocity_odom_imu_m_s = state_.velocity_odom_imu_m_s();
   diagnostics.state.gyro_bias_rad_s = state_.gyro_bias_rad_s();
@@ -741,6 +777,22 @@ void FastLioPipeline::updateInitializationDiagnostics() {
     diagnostics_.initialization.initialization_status = "STATIONARITY_GATE_REJECTED";
   } else {
     diagnostics_.initialization.initialization_status = "READY";
+  }
+}
+
+void FastLioPipeline::recordUncorrectedUpdate(
+    LidarUpdateFailureClass failure_class) {
+  diagnostics_.last_update_failure_class = failure_class;
+  if (!tracking_ever_confirmed_) {
+    return;
+  }
+  ++consecutive_uncorrected_lidar_updates_;
+  consecutive_recovery_successes_ = 0U;
+  if (consecutive_uncorrected_lidar_updates_ >=
+      config_.lifecycle.lost_after_registration_failures) {
+    transitionTo(EstimatorStatus::kLost, "LIDAR_UPDATE_FAILURE_LIMIT_REACHED");
+  } else if (status_ != EstimatorStatus::kLost) {
+    transitionTo(EstimatorStatus::kDegraded, "LIDAR_UPDATE_UNCORRECTED");
   }
 }
 
