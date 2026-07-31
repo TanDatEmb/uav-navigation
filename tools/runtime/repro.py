@@ -276,7 +276,7 @@ def resolve_dataset(dataset: str) -> tuple[Path, Path]:
         raise ValueError(f"unknown dataset id: {dataset}")
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     external = data_home() / "datasets" / dataset / "lio"
-    config = ROOT / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
+    config = ROOT / "src/navigation_estimator/fast_lio_ros/config/mid360_aist_replay.yaml"
     if external.is_dir():
         return external, config
 

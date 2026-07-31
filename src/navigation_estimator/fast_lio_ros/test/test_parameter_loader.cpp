@@ -22,7 +22,7 @@ class ParameterLoaderTest : public ::testing::Test {
 
 std::filesystem::path canonicalConfigWithout(std::string_view line,
                                              std::string_view suffix) {
-  std::ifstream source(FAST_LIO_ROS_SOURCE_DIR "/config/mid360-real.yaml");
+  std::ifstream source(FAST_LIO_ROS_SOURCE_DIR "/config/mid360_real.yaml");
   std::string contents((std::istreambuf_iterator<char>(source)),
                        std::istreambuf_iterator<char>());
   const auto position = contents.find(line);
@@ -134,7 +134,7 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
 TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
   const std::string path =
       FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360-real.yaml";
+      "/config/mid360_real.yaml";
   const auto profile = loadCanonicalEstimatorProfile(path);
   EXPECT_EQ(profile.config_sha256, sha256File(path));
   EXPECT_EQ(profile.config_sha256.size(), 64U);
@@ -146,7 +146,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
 
 TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {
   const auto profile = loadCanonicalEstimatorProfile(
-      FAST_LIO_ROS_SOURCE_DIR "/config/aist.yaml");
+      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
@@ -210,8 +210,8 @@ TEST_F(ParameterLoaderTest, RejectsInvalidTrackingRecoveryPolicy) {
 
 TEST_F(ParameterLoaderTest, LoadsEveryCanonicalEstimatorYaml) {
   for (const auto* filename :
-       {"aist.yaml", "mid360-real.yaml", "mid360-sim.yaml",
-        "mid360-px4-sim.yaml"}) {
+       {"mid360_aist_replay.yaml", "mid360_real.yaml",
+        "mid360_px4_gazebo.yaml"}) {
     EXPECT_NO_THROW(loadCanonicalEstimatorProfile(
         std::string{FAST_LIO_ROS_SOURCE_DIR "/config/"} + filename));
   }
@@ -220,7 +220,7 @@ TEST_F(ParameterLoaderTest, LoadsEveryCanonicalEstimatorYaml) {
 TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
   const std::string path =
       FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360-real.yaml";
+      "/config/mid360_real.yaml";
   const auto direct = loadCanonicalEstimatorProfile(path);
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", path});

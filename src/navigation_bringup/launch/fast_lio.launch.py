@@ -1,5 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -7,7 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    default_config = [FindPackageShare("fast_lio_ros"), "/config/mid360-sim.yaml"]
+    default_config = [FindPackageShare("fast_lio_ros"), "/config/mid360_real.yaml"]
     frames_launch = [
         FindPackageShare("uav_description"),
         "/launch/publish_sensor_frames.launch.py",
@@ -15,16 +16,19 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "estimator_config",
+                "config_file",
                 default_value=default_config,
-                description="Explicit fast_lio_ros YAML; sim default is simultaneous scan.",
+                description="Path to the fast_lio_ros parameter YAML.",
             ),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("publish_sensor_frames", default_value="true"),
             DeclareLaunchArgument("imu_xyz", default_value="0 0 0"),
             DeclareLaunchArgument("imu_rpy", default_value="0 0 0"),
             DeclareLaunchArgument("lidar_xyz", default_value="0 0 0"),
             DeclareLaunchArgument("lidar_rpy", default_value="0 0 0"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(frames_launch),
+                condition=IfCondition(LaunchConfiguration("publish_sensor_frames")),
                 launch_arguments={
                     "imu_xyz": LaunchConfiguration("imu_xyz"),
                     "imu_rpy": LaunchConfiguration("imu_rpy"),
@@ -37,7 +41,10 @@ def generate_launch_description():
                 executable="fast_lio_node",
                 name="fast_lio",
                 output="screen",
-                parameters=[LaunchConfiguration("estimator_config")],
+                parameters=[
+                    LaunchConfiguration("config_file"),
+                    {"use_sim_time": LaunchConfiguration("use_sim_time")},
+                ],
             ),
         ]
     )

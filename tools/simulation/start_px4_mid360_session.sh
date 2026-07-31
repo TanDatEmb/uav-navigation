@@ -63,7 +63,7 @@ until gz topic -l 2>/dev/null | grep -qx '/world/px4_lio_smoke/clock'; do
 done
 
 BRIDGE_CONFIG="${ROOT_DIR}/src/uav_simulation/bridge/px4_mid360_bridge.yaml"
-LIO_CONFIG="${ROOT_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360-px4-sim.yaml"
+LIO_CONFIG="${ROOT_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360_px4_gazebo.yaml"
 launch_terminal bridge "MID-360 bridge | $(basename "${SESSION_DIR}")" \
   ros2 run ros_gz_bridge parameter_bridge --ros-args -r __node:=px4_mid360_bridge \
   -p "config_file:=${BRIDGE_CONFIG}" -p use_sim_time:=true
@@ -85,7 +85,7 @@ launch_terminal status "PX4 MID-360 status | $(basename "${SESSION_DIR}")" \
   bash tools/simulation/live_px4_mid360_status.sh
 if [[ "${ENABLE_RVIZ}" == "1" && "${GZ_GUI}" == "1" ]]; then
   launch_terminal rviz "RViz PX4 MID-360 | $(basename "${SESSION_DIR}")" \
-    rviz2 -d "${ROOT_DIR}/src/uav_simulation/rviz/px4_mid360_lio.rviz"
+    rviz2 -d "${ROOT_DIR}/src/navigation_estimator/fast_lio_ros/rviz/fast_lio.rviz"
 fi
 echo "Session started: ${SESSION_DIR}"
 echo "Stop: make sim-px4-mid360-stop"

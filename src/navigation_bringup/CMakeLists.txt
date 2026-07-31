@@ -3,7 +3,7 @@ project(navigation_bringup)
 
 find_package(ament_cmake REQUIRED)
 
-install(DIRECTORY launch config
+install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 

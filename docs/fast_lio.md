@@ -1,6 +1,6 @@
-# FAST-LIO M1
+# FAST-LIO
 
-This repository closes M1 as a ROS 2 Jazzy LiDAR–IMU estimator. The
+This repository provides a ROS 2 Jazzy LiDAR–IMU estimator. The
 ROS-independent `fast_lio_core` owns synchronization, deskew, IKFoM correction,
 and the local ikd-Tree registration map. `fast_lio_ros` is a thin message,
 frame, time, QoS, and publication boundary. `fast_lio_tools` runs the same
@@ -8,11 +8,11 @@ pipeline offline.
 
 ## Modes and configuration
 
-- `mid360-real.yaml`: real Mid-360 topics, fixed production extrinsic, sensor
+- `mid360_real.yaml`: real Mid-360 topics, fixed production extrinsic, sensor
   time, and per-point timing.
-- `mid360-sim.yaml`: Gazebo PointCloud2 topics and explicit
+- `mid360_px4_gazebo.yaml`: PX4 Gazebo PointCloud2 topics and explicit
   `simultaneous_scan` timing.
-- `aist.yaml`: verified AIST PointCloud2 timestamp contract, extrinsic, topics,
+- `mid360_aist_replay.yaml`: verified AIST PointCloud2 timestamp contract, extrinsic, topics,
   and reliable replay QoS.
 
 All three profiles are under
@@ -35,7 +35,7 @@ differences.
 
 ## Dataset workflow
 
-The only dataset entrypoint is `tools/data.py`. M1 has one active catalog
+The only dataset entrypoint is `tools/data.py`. There is one active catalog
 entry: `aist-mid360-drive`. Archives, prepared bags, and provenance live under
 `$UAV_NAV_DATA_HOME`, or `$XDG_DATA_HOME/uav-nav` by default.
 
@@ -69,7 +69,7 @@ canonical config, provenance counts, and the Git raw-data guard.
   percentiles, queue depth, lag, and drops.
 - `/tf` and `/tf_static`: configured frame transforms.
 
-`trajectory.csv` has the same corrected-only semantic. M1 does not publish ROS
+`trajectory.csv` has the same corrected-only semantic. The estimator does not publish ROS
 pose/twist covariance; covariance health remains in diagnostics.
 
 ## Artifacts
@@ -120,6 +120,6 @@ the other.
 - No global SLAM or persistent global map.
 - No loop closure.
 - No relocalization or global localization.
-- No PX4 integration.
-- No multi-dataset accuracy acceptance; M1 closes on the verified AIST
+- No flight-controller control integration.
+- No multi-dataset accuracy acceptance; validation currently uses the AIST
   dataset, which has no ground truth.

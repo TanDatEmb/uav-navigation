@@ -95,7 +95,7 @@ unset PX4_SIM_MODEL PX4_GZ_MODEL 2>/dev/null || true
 
 echo
 echo "PX4 is attaching to the existing Gazebo model."
-echo "Other terminal: ros2 launch uav_simulation px4_mid360_lio.launch.py"
+echo "Other terminal: ros2 launch navigation_bringup fast_lio.launch.py config_file:=${WS_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360_px4_gazebo.yaml use_sim_time:=true"
 echo
 cd "${PX4_ROOTFS}"
 # A background/headless session must keep stdin open. With immediate EOF the

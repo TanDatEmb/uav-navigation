@@ -89,7 +89,7 @@ class ReproducerTest(unittest.TestCase):
             )
             config = (
                 root
-                / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
+                / "src/navigation_estimator/fast_lio_ros/config/mid360_aist_replay.yaml"
             )
             config.parent.mkdir(parents=True)
             config.write_text("fast_lio: {}\n", encoding="utf-8")

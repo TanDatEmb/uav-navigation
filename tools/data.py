@@ -356,7 +356,7 @@ def check_tracked_blobs() -> list[str]:
 def config_path(dataset_id: str) -> Path:
     if dataset_id != "aist-mid360-drive":
         raise DataError(f"no canonical M1 config is defined for {dataset_id}")
-    return ROOT / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
+    return ROOT / "src/navigation_estimator/fast_lio_ros/config/mid360_aist_replay.yaml"
 
 
 def dataset_context(value: str, home: Path) -> dict:

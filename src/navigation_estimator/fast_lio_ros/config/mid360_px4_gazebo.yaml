@@ -51,7 +51,7 @@ fast_lio:
         enabled: false
     output:
       publish_registered_points: true
-      publish_local_map: false
+      publish_local_map: true
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16

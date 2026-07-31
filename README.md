@@ -1,6 +1,6 @@
 # UAV Navigation
 
-ROS 2 Jazzy workspace for Milestone M1: reliable LiDAR–IMU odometry and an
+ROS 2 Jazzy workspace for reliable LiDAR–IMU odometry and an
 incremental **registration map** in `odom`. The present scope ends at corrected
 odometry, registered points, and a local registration map; it intentionally
 does not contain planning, occupancy/world modelling, safety, or PX4 integration.
@@ -31,7 +31,7 @@ calibration and must not be used for flight or real-data acceptance.
 - `uav_description`: source-of-truth sensor-frame URDF/Xacro.
 - `uav_simulation`: Gazebo Harmonic launch assets for simultaneous-scan testing.
 
-Read the consolidated [FAST-LIO M1 guide](docs/fast_lio.md) before selecting a
+Read the consolidated [FAST-LIO guide](docs/fast_lio.md) before selecting a
 sensor configuration or running dataset acceptance. Read
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing artifacts:
 vendored GPL-2.0-only dependencies require a distribution-license review.

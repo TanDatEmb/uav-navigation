@@ -1,4 +1,3 @@
-import ast
 import xml.etree.ElementTree as element_tree
 from pathlib import Path
 
@@ -36,8 +35,3 @@ def test_px4_lio_smoke_world_and_bridge_contract():
     assert "/world/px4_lio_smoke/clock" in bridge
     assert "/sim/mid360/scan/points" in bridge
     assert "/sim/mid360/imu" in bridge
-
-
-def test_px4_mid360_launch_is_parseable():
-    launch = ROOT / "launch/px4_mid360_lio.launch.py"
-    ast.parse(launch.read_text(), filename=str(launch))
