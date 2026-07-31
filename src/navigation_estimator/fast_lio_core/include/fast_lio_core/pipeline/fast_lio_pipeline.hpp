@@ -42,6 +42,9 @@ class FastLioPipeline {
   [[nodiscard]] const ManifoldState::Covariance& covariance() const noexcept;
   [[nodiscard]] EstimatorDiagnostics diagnostics() const;
   [[nodiscard]] std::vector<Eigen::Vector3d> registrationMapSnapshot() const;
+  [[nodiscard]] const std::optional<Timestamp>& stateTime() const noexcept;
+  [[nodiscard]] const std::optional<Timestamp>& synchronizationEpoch()
+      const noexcept;
 
  private:
   [[nodiscard]] Status addInitializationSample(const ImuSample& sample);
@@ -54,6 +57,8 @@ class FastLioPipeline {
   void resetTransientDiagnostics();
   void fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const;
   void updateInitializationDiagnostics();
+  [[nodiscard]] ProcessResult recoverFromDiscontinuity(
+      const PropagationDiscontinuity& discontinuity);
 
   EstimatorConfig config_;
   MeasurementBuffer buffer_;

@@ -32,6 +32,12 @@ struct LifecycleConfig {
   std::size_t local_map_snapshot_period_scans{10};
 };
 
+struct TrackingConfig {
+  std::int64_t maximum_recoverable_imu_gap_ns{50'000'000};
+  std::size_t recovery_confirmation_updates{3};
+  double discontinuity_covariance_inflation{10.0};
+};
+
 struct EstimatorConfig {
   MeasurementBufferConfig measurement_buffer{};
   MeasurementSynchronizerConfig synchronization{};
@@ -46,6 +52,7 @@ struct EstimatorConfig {
   MapInsertionPolicyConfig insertion_policy{};
   ExtrinsicConfig extrinsic{};
   LifecycleConfig lifecycle{};
+  TrackingConfig tracking{};
 };
 
 }  // namespace uav::nav::lio

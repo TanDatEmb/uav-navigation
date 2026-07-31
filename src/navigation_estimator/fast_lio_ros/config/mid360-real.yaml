@@ -13,6 +13,9 @@ fast_lio:
       livox_timestamp_policy: timebase_authoritative
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
+    tracking:
+      maximum_recoverable_imu_gap_ns: 50000000
+      recovery_confirmation_updates: 3
     extrinsic:
       estimate_online: false
       translation_imu_lidar: [-0.019391, -0.000278, 0.080926]

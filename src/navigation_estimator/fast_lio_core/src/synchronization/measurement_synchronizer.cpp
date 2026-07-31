@@ -11,12 +11,12 @@ namespace uav::nav::lio {
 MeasurementSynchronizer::MeasurementSynchronizer(MeasurementSynchronizerConfig config)
     : config_(config) {}
 
-Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext(
+Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
     MeasurementBuffer& buffer) {
   std::scoped_lock lock(buffer.mutex_);
   if (buffer.lidar_scans_.empty() || buffer.imu_samples_.empty()) {
     ++stats_.waiting_count;
-    return std::optional<MeasurementGroup>{};
+    return SynchronizationResult{};
   }
 
   const LidarScan& scan = buffer.lidar_scans_.front();
@@ -88,7 +88,7 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
                        });
   if (end_bracket == imu.end()) {
     ++stats_.waiting_count;
-    return std::optional<MeasurementGroup>{};
+    return SynchronizationResult{};
   }
 
   std::int64_t maximum_gap_ns = 0;
@@ -106,27 +106,33 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
     }
   }
   if (config_.maximum_imu_gap_ns > 0 && maximum_gap_ns > config_.maximum_imu_gap_ns) {
+    const Timestamp scan_start = scan.start_time;
+    const Timestamp scan_end = scan.end_time;
+    const Timestamp gap_begin(maximum_gap_previous_ns,
+                              scan.start_time.clock_domain());
+    const Timestamp gap_end(maximum_gap_current_ns,
+                            scan.start_time.clock_domain());
     buffer.lidar_scans_.pop_front();
     ++stats_.rejected_imu_gap;
-    return Status(StatusCode::kImuGap,
-                  "IMU_GAP previous_imu_ns=" +
-                      std::to_string(maximum_gap_previous_ns) +
-                      " current_imu_ns=" +
-                      std::to_string(maximum_gap_current_ns) +
-                      " observed_gap_ns=" + std::to_string(maximum_gap_ns) +
-                      " limit_ns=" +
-                      std::to_string(config_.maximum_imu_gap_ns) +
-                      " scan_start_ns=" +
-                      std::to_string(scan.start_time.nanoseconds()) +
-                      " scan_end_ns=" +
-                      std::to_string(scan.end_time.nanoseconds()) +
-                      " propagation_start_ns=" +
-                      std::to_string(propagation_start_time.nanoseconds()) +
-                      " buffer_front_imu_ns=" +
-                      std::to_string(imu.front().time.nanoseconds()) +
-                      " buffer_back_imu_ns=" +
-                      std::to_string(imu.back().time.nanoseconds()) +
-                      " buffer_imu_count=" + std::to_string(imu.size()));
+    const auto resume = std::lower_bound(
+        buffer.imu_samples_.begin(), buffer.imu_samples_.end(),
+        maximum_gap_current_ns,
+        [](const ImuSample& sample, std::int64_t time_ns) {
+          return sample.time.nanoseconds() < time_ns;
+        });
+    buffer.imu_samples_.erase(buffer.imu_samples_.begin(), resume);
+    last_synchronized_end_time_ = gap_end;
+    ++scan_index_;
+    SynchronizationResult result;
+    result.discontinuity = PropagationDiscontinuity{
+        SynchronizationFailureKind::kImuDiscontinuity,
+        gap_begin,
+        gap_end,
+        maximum_gap_ns,
+        scan_start,
+        scan_end,
+        gap_end};
+    return result;
   }
 
   MeasurementGroup group;
@@ -147,11 +153,17 @@ Result<std::optional<MeasurementGroup>> MeasurementSynchronizer::synchronizeNext
   last_synchronized_end_time_ = group.scan.end_time;
   ++scan_index_;
   ++stats_.synchronized_groups;
-  return std::optional<MeasurementGroup>(std::move(group));
+  SynchronizationResult result;
+  result.measurement_group = std::move(group);
+  return result;
 }
 
 const MeasurementSynchronizerStats& MeasurementSynchronizer::stats() const noexcept {
   return stats_;
+}
+
+const std::optional<Timestamp>& MeasurementSynchronizer::epoch() const noexcept {
+  return last_synchronized_end_time_;
 }
 
 void MeasurementSynchronizer::reset() noexcept {

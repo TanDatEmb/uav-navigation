@@ -172,6 +172,12 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "timing.livox_timestamp_policy", "require_header_match");
   result.maximum_imu_gap_ns =
       node.declare_parameter<std::int64_t>("timing.max_imu_gap_ns", 20'000'000);
+  result.maximum_recoverable_imu_gap_ns =
+      node.declare_parameter<std::int64_t>(
+          "tracking.maximum_recoverable_imu_gap_ns", 50'000'000);
+  result.recovery_confirmation_updates =
+      node.declare_parameter<std::int64_t>(
+          "tracking.recovery_confirmation_updates", 3);
   result.reject_timestamp_regression =
       node.declare_parameter("timing.reject_timestamp_regression", true);
   result.estimate_extrinsic_online = node.declare_parameter("extrinsic.estimate_online", false);
@@ -267,6 +273,10 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parseTimestampPolicy(parameters.livox_timestamp_policy);
   auto& config = profile.estimator;
   config.synchronization.maximum_imu_gap_ns = parameters.maximum_imu_gap_ns;
+  config.tracking.maximum_recoverable_imu_gap_ns =
+      parameters.maximum_recoverable_imu_gap_ns;
+  config.tracking.recovery_confirmation_updates =
+      static_cast<std::size_t>(parameters.recovery_confirmation_updates);
   config.deskew.mode = parameters.lidar_timing_mode == "per_point"
                            ? DeskewMode::kPerPoint
                            : DeskewMode::kSimultaneousScan;
@@ -392,7 +402,9 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument(
         "mapping.registration_map.voxel_size_m must be finite and positive");
   }
-  if (p.maximum_imu_gap_ns <= 0 || p.minimum_imu_samples <= 0 ||
+  if (p.maximum_imu_gap_ns <= 0 ||
+      p.maximum_recoverable_imu_gap_ns <= 0 ||
+      p.recovery_confirmation_updates <= 0 || p.minimum_imu_samples <= 0 ||
       p.maximum_registration_iterations <= 0 || p.minimum_range_m < 0.0 ||
       p.maximum_range_m <= p.minimum_range_m ||
       !std::isfinite(p.minimum_range_m) ||

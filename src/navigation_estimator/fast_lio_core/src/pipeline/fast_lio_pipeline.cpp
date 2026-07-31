@@ -23,7 +23,8 @@ EstimatorConfig normalizeConfig(EstimatorConfig config) {
 
 bool statusUsesEstimatorState(EstimatorStatus status) {
   return status == EstimatorStatus::kInitializingMap || status == EstimatorStatus::kTracking ||
-         status == EstimatorStatus::kDegraded;
+         status == EstimatorStatus::kDegraded ||
+         status == EstimatorStatus::kLost;
 }
 
 bool timestampLess(const Timestamp& left, const Timestamp& right) {
@@ -71,6 +72,10 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.lifecycle.degraded_after_registration_failures == 0U ||
       config_.lifecycle.lost_after_registration_failures <
           config_.lifecycle.degraded_after_registration_failures ||
+      config_.tracking.maximum_recoverable_imu_gap_ns <= 0 ||
+      config_.tracking.recovery_confirmation_updates == 0U ||
+      !std::isfinite(config_.tracking.discontinuity_covariance_inflation) ||
+      config_.tracking.discontinuity_covariance_inflation < 1.0 ||
       (config_.lifecycle.enable_periodic_local_map_snapshot &&
        config_.lifecycle.local_map_snapshot_period_scans == 0U)) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
@@ -149,12 +154,15 @@ std::optional<ProcessResult> FastLioPipeline::processNext() {
     }
     return finalizeResult(std::move(result));
   }
-  if (!synchronized.value().has_value()) {
+  if (synchronized.value().discontinuity.has_value()) {
+    return recoverFromDiscontinuity(*synchronized.value().discontinuity);
+  }
+  if (!synchronized.value().measurement_group.has_value()) {
     return std::nullopt;
   }
   ++diagnostics_.processing.synchronized_group_count;
   diagnostics_.synchronization.synchronized = true;
-  return processInternal(*synchronized.value(), true);
+  return processInternal(*synchronized.value().measurement_group, true);
 }
 
 ProcessResult FastLioPipeline::process(const MeasurementGroup& group) {
@@ -179,12 +187,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     diagnostics_.reason = result.rejection_reason;
     return finalizeResult(std::move(result));
   }
-  if (status_ == EstimatorStatus::kLost) {
-    result.rejection_reason = "ESTIMATOR_LOST_RESET_REQUIRED";
-    diagnostics_.reason = result.rejection_reason;
-    return finalizeResult(std::move(result));
-  }
-
   if (status_ == EstimatorStatus::kWaitingForSensors) {
     transitionTo(EstimatorStatus::kCollectingImu, "SYNCHRONIZED_MEASUREMENT_RECEIVED");
   }
@@ -523,6 +525,50 @@ EstimatorDiagnostics FastLioPipeline::diagnostics() const {
 
 std::vector<Eigen::Vector3d> FastLioPipeline::registrationMapSnapshot() const {
   return registration_map_.snapshot();
+}
+
+const std::optional<Timestamp>& FastLioPipeline::stateTime() const noexcept {
+  return state_time_;
+}
+
+const std::optional<Timestamp>&
+FastLioPipeline::synchronizationEpoch() const noexcept {
+  return synchronizer_.epoch();
+}
+
+ProcessResult FastLioPipeline::recoverFromDiscontinuity(
+    const PropagationDiscontinuity& discontinuity) {
+  ProcessResult result;
+  result.status_before = status_;
+  result.scan_time = discontinuity.scan_end;
+  result.lidar_update_status = LidarUpdateStatus::kRejected;
+  result.rejection_reason = "IMU_PROPAGATION_DISCONTINUITY";
+  diagnostics_.synchronization.scan_start_ns =
+      discontinuity.scan_start.nanoseconds();
+  diagnostics_.synchronization.scan_end_ns =
+      discontinuity.scan_end.nanoseconds();
+  diagnostics_.synchronization.imu_gap_max_ns =
+      discontinuity.gap_duration_ns;
+  diagnostics_.synchronization.sync_rejection_reason =
+      result.rejection_reason;
+  ++diagnostics_.propagation_discontinuity_count;
+  diagnostics_.last_propagation_gap_ns = discontinuity.gap_duration_ns;
+
+  if (statusUsesEstimatorState(status_) && state_time_.has_value()) {
+    covariance_ *= config_.tracking.discontinuity_covariance_inflation;
+    covariance_ = 0.5 * (covariance_ + covariance_.transpose());
+    estimator_.rebase(state_, covariance_);
+    state_time_ = discontinuity.resume_time;
+    if (discontinuity.gap_duration_ns >
+        config_.tracking.maximum_recoverable_imu_gap_ns) {
+      transitionTo(EstimatorStatus::kLost, "IMU_DISCONTINUITY_LOCAL_LOST");
+    } else if (status_ != EstimatorStatus::kInitializingMap) {
+      transitionTo(EstimatorStatus::kDegraded,
+                   "IMU_DISCONTINUITY_RECOVERY_REBASE");
+    }
+  }
+  diagnostics_.reason = result.rejection_reason;
+  return finalizeResult(std::move(result));
 }
 
 Status FastLioPipeline::addInitializationSample(const ImuSample& sample) {

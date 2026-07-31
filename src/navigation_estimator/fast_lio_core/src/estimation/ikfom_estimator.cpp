@@ -154,6 +154,15 @@ void IkfomEstimator::initialize(const ManifoldState& state) {
 
 void IkfomEstimator::reset(const ManifoldState& state) { initialize(state); }
 
+void IkfomEstimator::rebase(
+    const ManifoldState& state,
+    const ManifoldState::Covariance& covariance) {
+  IkfomState upstream_state = toIkfomState(state);
+  IkfomFilter::cov upstream_covariance = covariance;
+  filter_.change_x(upstream_state);
+  filter_.change_P(upstream_covariance);
+}
+
 Result<ImuTrajectory> IkfomEstimator::predict(
     std::span<const ImuSample> samples, const Timestamp& start_time,
     const Timestamp& end_time) {

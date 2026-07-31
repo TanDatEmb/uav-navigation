@@ -212,6 +212,8 @@ struct EstimatorDiagnostics {
   EstimatorStatus previous_status{EstimatorStatus::kWaitingForSensors};
   std::size_t status_transition_count{0};
   std::size_t consecutive_registration_failure_count{0};
+  std::size_t propagation_discontinuity_count{0};
+  std::int64_t last_propagation_gap_ns{0};
   std::string reason;
   SensorDiagnostics sensor;
   SynchronizationDiagnostics synchronization;

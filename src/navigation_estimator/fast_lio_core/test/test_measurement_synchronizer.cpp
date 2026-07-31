@@ -97,15 +97,33 @@ TEST(MeasurementSynchronizerTest, RejectsPermanentlyMissingStartBracket) {
 TEST(MeasurementSynchronizerTest, RejectsExcessiveImuGap) {
   MeasurementBuffer buffer;
   ASSERT_TRUE(buffer.pushLidar(syncScan(100, 200)).ok());
+  ASSERT_TRUE(buffer.pushLidar(syncScan(220, 260)).ok());
   ASSERT_TRUE(buffer.pushImu(syncImu(90)).ok());
   ASSERT_TRUE(buffer.pushImu(syncImu(210)).ok());
+  ASSERT_TRUE(buffer.pushImu(syncImu(230)).ok());
+  ASSERT_TRUE(buffer.pushImu(syncImu(270)).ok());
   MeasurementSynchronizerConfig config;
   config.maximum_imu_gap_ns = 50;
   MeasurementSynchronizer synchronizer(config);
   const auto result = synchronizer.synchronizeNext(buffer);
-  ASSERT_FALSE(result.ok());
+  ASSERT_TRUE(result.ok());
   EXPECT_EQ(synchronizer.stats().rejected_imu_gap, 1U);
-  EXPECT_EQ(result.status().code(), StatusCode::kImuGap);
+  ASSERT_TRUE(result.value().discontinuity.has_value());
+  const auto& discontinuity = *result.value().discontinuity;
+  EXPECT_EQ(discontinuity.failure_kind,
+            SynchronizationFailureKind::kImuDiscontinuity);
+  EXPECT_EQ(discontinuity.gap_begin.nanoseconds(), 90);
+  EXPECT_EQ(discontinuity.gap_end.nanoseconds(), 210);
+  EXPECT_EQ(discontinuity.gap_duration_ns, 120);
+  EXPECT_EQ(discontinuity.resume_time.nanoseconds(), 210);
+  ASSERT_TRUE(synchronizer.epoch().has_value());
+  EXPECT_EQ(synchronizer.epoch()->nanoseconds(), 210);
+
+  const auto following = synchronizer.synchronizeNext(buffer);
+  ASSERT_TRUE(following.ok());
+  ASSERT_TRUE(following.value().has_value());
+  EXPECT_EQ(following.value()->propagation_start_time.nanoseconds(), 210);
+  EXPECT_EQ(synchronizer.stats().rejected_imu_gap, 1U);
 }
 
 TEST(MeasurementSynchronizerTest, Mid360ConsecutiveScansRemainBelowGapLimit) {

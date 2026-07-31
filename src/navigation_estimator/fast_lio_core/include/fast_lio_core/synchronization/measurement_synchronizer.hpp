@@ -23,15 +23,54 @@ struct MeasurementSynchronizerStats {
   std::size_t rejected_scan_overlap{0};
 };
 
+enum class SynchronizationFailureKind {
+  kNone,
+  kImuDiscontinuity,
+};
+
+struct PropagationDiscontinuity {
+  SynchronizationFailureKind failure_kind{
+      SynchronizationFailureKind::kImuDiscontinuity};
+  Timestamp gap_begin;
+  Timestamp gap_end;
+  std::int64_t gap_duration_ns{0};
+  Timestamp scan_start;
+  Timestamp scan_end;
+  Timestamp resume_time;
+};
+
+struct SynchronizationResult {
+  std::optional<MeasurementGroup> measurement_group;
+  std::optional<PropagationDiscontinuity> discontinuity;
+
+  [[nodiscard]] bool has_value() const noexcept {
+    return measurement_group.has_value();
+  }
+  [[nodiscard]] MeasurementGroup* operator->() noexcept {
+    return &measurement_group.value();
+  }
+  [[nodiscard]] const MeasurementGroup* operator->() const noexcept {
+    return &measurement_group.value();
+  }
+  [[nodiscard]] MeasurementGroup& operator*() {
+    return measurement_group.value();
+  }
+  [[nodiscard]] const MeasurementGroup& operator*() const {
+    return measurement_group.value();
+  }
+};
+
 class MeasurementSynchronizer {
  public:
   explicit MeasurementSynchronizer(MeasurementSynchronizerConfig config = {});
 
   // A successful empty optional means more data is required. An error means
   // the front scan was permanently invalid and has been removed.
-  [[nodiscard]] Result<std::optional<MeasurementGroup>> synchronizeNext(MeasurementBuffer& buffer);
+  [[nodiscard]] Result<SynchronizationResult> synchronizeNext(
+      MeasurementBuffer& buffer);
 
   [[nodiscard]] const MeasurementSynchronizerStats& stats() const noexcept;
+  [[nodiscard]] const std::optional<Timestamp>& epoch() const noexcept;
   void reset() noexcept;
 
  private:

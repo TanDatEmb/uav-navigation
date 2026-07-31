@@ -53,6 +53,8 @@ class IkfomEstimator {
 
   void initialize(const ManifoldState& state);
   void reset(const ManifoldState& state);
+  void rebase(const ManifoldState& state,
+              const ManifoldState::Covariance& covariance);
 
   [[nodiscard]] Result<ImuTrajectory> predict(
       std::span<const ImuSample> samples, const Timestamp& start_time,
