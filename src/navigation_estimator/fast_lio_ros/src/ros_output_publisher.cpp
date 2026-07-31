@@ -28,6 +28,14 @@ void appendRuntimeValues(
                             std::to_string(runtime.current_lidar_queue_depth)));
   values.push_back(keyValue("maximum_queue_depth",
                             std::to_string(runtime.maximum_queue_depth)));
+  values.push_back(keyValue("maximum_imu_queue_depth",
+                            std::to_string(runtime.maximum_imu_queue_depth)));
+  values.push_back(keyValue("maximum_lidar_queue_depth",
+                            std::to_string(runtime.maximum_lidar_queue_depth)));
+  values.push_back(keyValue("imu_queue_capacity",
+                            std::to_string(runtime.imu_queue_capacity)));
+  values.push_back(keyValue("lidar_queue_capacity",
+                            std::to_string(runtime.lidar_queue_capacity)));
   values.push_back(keyValue("received_imu_count",
                             std::to_string(runtime.received_imu_count)));
   values.push_back(keyValue("received_lidar_count",
@@ -40,12 +48,34 @@ void appendRuntimeValues(
       keyValue("imu_drop_count", std::to_string(runtime.imu_drop_count)));
   values.push_back(
       keyValue("lidar_drop_count", std::to_string(runtime.lidar_drop_count)));
+  values.push_back(keyValue("reject_reason_imu_buffer_full",
+                            std::to_string(runtime.reject_reason_imu_buffer_full)));
+  values.push_back(keyValue("reject_reason_lidar_buffer_full",
+                            std::to_string(runtime.reject_reason_lidar_buffer_full)));
+  values.push_back(keyValue("reject_reason_nonfinite_xyz",
+                            std::to_string(runtime.reject_reason_nonfinite_xyz)));
+  values.push_back(keyValue("reject_reason_invalid_point_time",
+                            std::to_string(runtime.reject_reason_invalid_point_time)));
+  values.push_back(keyValue("reject_reason_too_few_points",
+                            std::to_string(runtime.reject_reason_too_few_points)));
+  values.push_back(keyValue("reject_reason_imu_gap",
+                            std::to_string(runtime.reject_reason_imu_gap)));
+  values.push_back(keyValue("reject_reason_timestamp_regression",
+                            std::to_string(runtime.reject_reason_timestamp_regression)));
+  values.push_back(keyValue("reject_reason_not_initialized",
+                            std::to_string(runtime.reject_reason_not_initialized)));
+  values.push_back(keyValue("reject_reason_correction_failed",
+                            std::to_string(runtime.reject_reason_correction_failed)));
   values.push_back(keyValue("latest_received_time_ns",
                             std::to_string(runtime.latest_received_time_ns)));
   values.push_back(keyValue("latest_processed_time_ns",
                             std::to_string(runtime.latest_processed_time_ns)));
   values.push_back(keyValue("processing_lag_ns",
                             std::to_string(runtime.processing_lag_ns)));
+  values.push_back(keyValue("worker_heartbeat",
+                            std::to_string(runtime.worker_heartbeat)));
+  values.push_back(keyValue("worker_last_progress_wall_time_ns",
+                            std::to_string(runtime.worker_last_progress_wall_time_ns)));
   values.push_back(keyValue("last_scan_processing_us",
                             std::to_string(runtime.last_scan_processing_us)));
   values.push_back(keyValue("mean_scan_processing_us",

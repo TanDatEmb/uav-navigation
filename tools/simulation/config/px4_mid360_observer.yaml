@@ -1,0 +1,39 @@
+streams:
+  imu: {topic: /lidar/imu, expected_hz: 200.0, warn_below_hz: 180.0, stale_after_s: 0.10}
+  lidar: {topic: /lidar/points, expected_hz: 10.0, warn_below_hz: 9.0, stale_after_s: 0.50}
+  odometry: {topic: /lio/odometry_corrected, stale_after_s: 1.0}
+  registered_points: {topic: /lio/registered_points, stale_after_s: 1.0}
+  local_map: {topic: /lio/local_map, stale_after_s: 30.0}
+  diagnostics: {topic: /lio/diagnostics, stale_after_s: 5.0, check_header_regression: false}
+  tf: {topic: /tf, stale_after_s: 2.0}
+  clock: {topic: /clock, stale_after_s: 0.5}
+pointcloud:
+  sample_every_n_scans: 10
+  maximum_sampled_points: 2048
+  warn_finite_ratio_below: 0.50
+  error_finite_ratio_below: 0.10
+  minimum_range_m: 0.10
+  maximum_range_m: 40.0
+system:
+  warn_cpu_total_percent: 90
+  warn_swap_growth_mb_per_minute: 256
+  warn_real_time_factor_below: 0.80
+  error_real_time_factor_below: 0.50
+snapshot:
+  cooldown_s: 30
+  auto_gdb: false
+observer:
+  sample_hz: 2.0
+  startup_grace_s: 8.0
+  short_window_s: 5.0
+  long_window_s: 30.0
+  event_persist_s: 10.0
+gazebo:
+  world: px4_lio_smoke
+  sample_period_s: 2.0
+  topics:
+    imu: /sim/mid360/imu
+    raw_scan: /sim/mid360/scan
+    pointcloud: /sim/mid360/scan/points
+    clock: /world/px4_lio_smoke/clock
+    stats: /world/px4_lio_smoke/stats

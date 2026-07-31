@@ -1,0 +1,55 @@
+fast_lio:
+  ros__parameters:
+    frames:
+      odom: odom
+      base: base_link
+      imu: mid360_imu_frame
+      lidar: mid360_lidar_frame
+    input:
+      lidar_topic: /lidar/points
+      imu_topic: /lidar/imu
+      lidar_frame: mid360_lidar_frame
+      imu_frame: mid360_imu_frame
+      lidar_message_type: pointcloud2
+      qos_reliability: best_effort
+    timing:
+      # Gazebo GPU lidar is one simultaneous raster cloud, not real Livox timing.
+      lidar_mode: simultaneous_scan
+      clock_domain: simulation_time
+      livox_timestamp_policy: require_header_match
+      max_imu_gap_ns: 20000000
+      reject_timestamp_regression: true
+    extrinsic:
+      # Sensor origins are colocated. The 0.28 m mount is base-to-sensor, not IMU-to-LiDAR.
+      estimate_online: false
+      translation_imu_lidar: [0.0, 0.0, 0.0]
+      rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
+    initialization:
+      minimum_imu_samples: 200
+      require_stationary: true
+    preprocessing:
+      minimum_range_m: 0.1
+      maximum_range_m: 40.0
+      scan_voxel_size_m: 0.2
+    registration:
+      maximum_iterations: 4
+    mapping:
+      registration_map:
+        voxel_size_m: 0.2
+      local_map:
+        half_extent_m: [30.0, 30.0, 15.0]
+        crop_trigger_distance_m: 5.0
+        soft_point_limit: 250000
+        hard_point_limit: 300000
+        target_point_count_after_prune: 220000
+        distance_shell_size_m: 5.0
+      dynamic_filter:
+        enabled: false
+    output:
+      publish_registered_points: true
+      publish_local_map: false
+    runtime:
+      imu_queue_capacity: 4096
+      lidar_queue_capacity: 16
+      maximum_processing_lag_ms: 500
+      overload_policy: fail

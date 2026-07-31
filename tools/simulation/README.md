@@ -1,26 +1,29 @@
-# M1 Gazebo Harmonic harness
+# PX4 MID-360 Flight Observability Harness
 
-Start the harness in one terminal:
-
-```bash
-ros2 launch uav_simulation mid360_harness.launch.py
-```
-
-It starts actual Gazebo `gpu_lidar` and `imu` sensors, bridges them to
-`/lidar/points` (`PointCloud2`) and `/lidar/imu` (`Imu`), publishes simulated
-clock, and starts static sensor TF. It deliberately does **not** publish Livox
-`CustomMsg` and is not a real Mid-360 dataset or calibration.
-
-In a second terminal, execute a scenario and then check the contract:
+Each start creates an isolated directory under
+`.artifacts/simulation/px4-mid360-YYYYMMDD-HHMMSS/`; `latest` is an atomic
+symlink to the newest session. Historical sessions are not removed on start.
 
 ```bash
-python3 tools/simulation/run_m1_scenario.py yaw --output reports/simulation/yaw_commands.json
-python3 tools/simulation/verify_m1_sim_contract.py --output reports/simulation/yaw_contract.json
+make sim-px4-mid360
+make sim-px4-mid360-check
+make sim-px4-mid360-stop
+make sim-px4-mid360-report
 ```
 
-The checker exits non-zero on wrong topic type/frame, missing messages, zero or
-non-monotonic timestamps, or missing static TF. Add `--require-dynamic-odom-tf`
-only when `start_estimator:=true` is used and a successful correction is expected.
-Scenario traces record commands, not ground truth; do not use them to claim
-odometry accuracy. Use the resulting report as a gate before manual RViz and
-estimator acceptance checks.
+Use `make sim-px4-mid360-headless` without Gazebo GUI/RViz. Prune explicitly
+with `make sim-px4-mid360-clean KEEP_SESSIONS=10`.
+
+The implementation is split by responsibility:
+
+- `session_manager.py` and the start/stop scripts own lifecycle and PID groups.
+- `sim_observer.py` is the ROS boundary and continuously writes stream/sync CSV.
+- `pointcloud_probe.py` performs bounded layout-aware XYZ sampling.
+- `gazebo_probe.py`, `process_probe.py`, and `ros_graph_probe.py` collect
+  subsystem-specific evidence.
+- `observer_core.py` contains the pure state machine and event lifecycle.
+- `snapshot_collector.py` captures best-effort evidence without GDB by default.
+- `report_generator.py` creates `summary.json` and `REPORT.md`.
+
+Thresholds are centralized in `config/px4_mid360_observer.yaml`. Generated
+sessions are machine-local evidence and remain intentionally untracked.

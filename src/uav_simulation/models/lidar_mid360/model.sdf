@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Gazebo Harmonic geometric approximation of a Livox MID-360.
+
+  Intended for frame, timing, estimator, map-alignment and PX4-motion tests.
+  It does not reproduce the real Livox scan pattern, packets, per-point timing,
+  reflectivity, tags or hardware clock behaviour.
+
+  Gazebo scan:        /sim/mid360/scan
+  Gazebo point cloud: /sim/mid360/scan/points
+  Gazebo IMU:         /sim/mid360/imu
+-->
+<sdf version="1.11">
+  <model name="lidar_mid360">
+    <static>false</static>
+    <self_collide>false</self_collide>
+    <link name="mid360_link">
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.265</mass>
+        <inertia>
+          <ixx>0.00028</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.00028</iyy><iyz>0</iyz><izz>0.00040</izz>
+        </inertia>
+      </inertial>
+      <visual name="housing_visual">
+        <geometry><cylinder><radius>0.055</radius><length>0.060</length></cylinder></geometry>
+        <material><ambient>0.08 0.08 0.08 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material>
+      </visual>
+      <collision name="housing_collision">
+        <geometry><cylinder><radius>0.055</radius><length>0.060</length></cylinder></geometry>
+      </collision>
+
+      <sensor name="lidar" type="gpu_lidar">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/sim/mid360/scan</topic>
+        <gz_frame_id>mid360_lidar_frame</gz_frame_id>
+        <always_on>true</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>720</samples><resolution>1</resolution>
+              <min_angle>-3.141592653589793</min_angle>
+              <max_angle>3.141592653589793</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>28</samples><resolution>1</resolution>
+              <min_angle>-0.122173047639603</min_angle>
+              <max_angle>0.907571211037051</max_angle>
+            </vertical>
+          </scan>
+          <range><min>0.1</min><max>40.0</max><resolution>0.01</resolution></range>
+          <noise><type>gaussian</type><mean>0.0</mean><stddev>0.02</stddev></noise>
+        </lidar>
+      </sensor>
+
+      <sensor name="mid360_imu" type="imu">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/sim/mid360/imu</topic>
+        <gz_frame_id>mid360_imu_frame</gz_frame_id>
+        <always_on>true</always_on>
+        <update_rate>200</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.001</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.001</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.001</stddev></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+    </link>
+    <frame name="mid360_lidar_frame" attached_to="mid360_link"><pose>0 0 0 0 0 0</pose></frame>
+    <frame name="mid360_imu_frame" attached_to="mid360_link"><pose>0 0 0 0 0 0</pose></frame>
+  </model>
+</sdf>

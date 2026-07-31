@@ -53,6 +53,36 @@ PointTimeConfig pointTimeConfig(const RosParameters& parameters) {
   return result;
 }
 
+void countRejection(RuntimeDiagnostics& diagnostics, const Status& status,
+                    bool is_imu) {
+  switch (status.code()) {
+    case StatusCode::kBufferFull:
+      is_imu ? ++diagnostics.reject_reason_imu_buffer_full
+             : ++diagnostics.reject_reason_lidar_buffer_full;
+      break;
+    case StatusCode::kTimestampRegression:
+      ++diagnostics.reject_reason_timestamp_regression;
+      break;
+    case StatusCode::kImuGap:
+      ++diagnostics.reject_reason_imu_gap;
+      break;
+    case StatusCode::kNotReady:
+    case StatusCode::kInitializationRejected:
+      ++diagnostics.reject_reason_not_initialized;
+      break;
+    case StatusCode::kInsufficientData:
+      ++diagnostics.reject_reason_too_few_points;
+      break;
+    default:
+      if (status.message().find("non-finite") != std::string::npos) {
+        ++diagnostics.reject_reason_nonfinite_xyz;
+      } else if (status.message().find("relative time") != std::string::npos) {
+        ++diagnostics.reject_reason_invalid_point_time;
+      }
+      break;
+  }
+}
+
 }  // namespace
 
 FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
@@ -71,6 +101,10 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           livoxTimestampPolicy(parameters_)),
       output_publisher_(*this, parameters_),
       transform_publisher_(*this, parameters_) {
+  runtime_diagnostics_.imu_queue_capacity =
+      static_cast<std::size_t>(parameters_.imu_queue_capacity);
+  runtime_diagnostics_.lidar_queue_capacity =
+      static_cast<std::size_t>(parameters_.lidar_queue_capacity);
   const bool livox_input =
       parameters_.lidar_message_type == "livox_custom";
   const auto pointcloud_qos =
@@ -183,9 +217,20 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
       is_imu ? ++runtime_diagnostics_.imu_drop_count
              : ++runtime_diagnostics_.lidar_drop_count;
       runtime_diagnostics_.overflow_detected = true;
+      is_imu ? ++runtime_diagnostics_.reject_reason_imu_buffer_full
+             : ++runtime_diagnostics_.reject_reason_lidar_buffer_full;
       RCLCPP_ERROR_THROTTLE(
-          get_logger(), *get_clock(), 5000,
-          "bounded estimator input queue overflow; acceptance replay must fail");
+          get_logger(), *get_clock(), 1000,
+          "%s queue full: total_rejected=%zu current_depth=%zu capacity=%zu "
+          "last_processed_stamp=%ld last_received_stamp=%ld",
+          is_imu ? "IMU" : "LiDAR",
+          is_imu ? runtime_diagnostics_.reject_reason_imu_buffer_full
+                 : runtime_diagnostics_.reject_reason_lidar_buffer_full,
+          is_imu ? imu_queue_.size() : lidar_queue_.size(),
+          is_imu ? runtime_diagnostics_.imu_queue_capacity
+                 : runtime_diagnostics_.lidar_queue_capacity,
+          runtime_diagnostics_.latest_processed_time_ns,
+          runtime_diagnostics_.latest_received_time_ns);
       return;
     }
     if (is_imu) {
@@ -199,6 +244,12 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
     runtime_diagnostics_.maximum_queue_depth =
         std::max(runtime_diagnostics_.maximum_queue_depth,
                  runtime_diagnostics_.current_input_queue_depth);
+    runtime_diagnostics_.maximum_imu_queue_depth =
+        std::max(runtime_diagnostics_.maximum_imu_queue_depth,
+                 runtime_diagnostics_.current_imu_queue_depth);
+    runtime_diagnostics_.maximum_lidar_queue_depth =
+        std::max(runtime_diagnostics_.maximum_lidar_queue_depth,
+                 runtime_diagnostics_.current_lidar_queue_depth);
     ingress_diagnostics_.processing_queue_high_water_mark =
         std::max(ingress_diagnostics_.processing_queue_high_water_mark,
                  imu_queue_.size() + lidar_queue_.size());
@@ -253,6 +304,7 @@ void FastLioNode::processingLoop() {
                   : ++ingress_diagnostics_.imu_drop_count;
       if (!status.ok()) {
         ++runtime_diagnostics_.imu_drop_count;
+        countRejection(runtime_diagnostics_, status, true);
       }
     } else {
       status = pipeline_.pushLidar(std::move(std::get<LidarScan>(measurement)));
@@ -261,11 +313,17 @@ void FastLioNode::processingLoop() {
                   : ++ingress_diagnostics_.lidar_drop_count;
       if (!status.ok()) {
         ++runtime_diagnostics_.lidar_drop_count;
+        countRejection(runtime_diagnostics_, status, false);
       }
     }
     if (!status.ok()) {
-      RCLCPP_WARN(get_logger(), "core rejected queued measurement: %s",
-                  status.message().c_str());
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "core rejected queued measurement: %s; total_imu_rejected=%zu "
+          "total_lidar_rejected=%zu current_depth=%zu",
+          status.message().c_str(), runtime_diagnostics_.imu_drop_count,
+          runtime_diagnostics_.lidar_drop_count,
+          runtime_diagnostics_.current_input_queue_depth);
     }
     publishAvailableResults();
     const auto processing_finished = std::chrono::steady_clock::now();
@@ -284,6 +342,10 @@ void FastLioNode::processingLoop() {
           runtime_diagnostics_.processing_lag_exceeded ||
           runtime_diagnostics_.processing_lag_ns >
               parameters_.maximum_processing_lag_ms * 1'000'000;
+      ++runtime_diagnostics_.worker_heartbeat;
+      runtime_diagnostics_.worker_last_progress_wall_time_ns =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              processing_finished.time_since_epoch()).count();
       const auto elapsed = processing_finished - processing_started;
       runtime_statistics_.recordBusy(elapsed);
       if (!is_imu) {

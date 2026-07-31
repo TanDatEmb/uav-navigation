@@ -1,0 +1,18 @@
+# Gazebo Harmonic -> ROS 2 Jazzy bridge for PX4 x500 MID-360 smoke test.
+- ros_topic_name: /clock
+  gz_topic_name: /world/px4_lio_smoke/clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: gz.msgs.Clock
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /lidar/points
+  gz_topic_name: /sim/mid360/scan/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /lidar/imu
+  gz_topic_name: /sim/mid360/imu
+  ros_type_name: sensor_msgs/msg/Imu
+  gz_type_name: gz.msgs.IMU
+  direction: GZ_TO_ROS

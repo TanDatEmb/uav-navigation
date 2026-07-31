@@ -4,15 +4,29 @@
 <package format="3">
   <name>uav_simulation</name>
   <version>0.1.0</version>
-  <description>Gazebo Harmonic test environment for M1 simultaneous-scan validation.</description>
-  <maintainer email="maintainers@example.invalid">UAV Navigation contributors</maintainer>
+
+  <description>
+    Gazebo Harmonic simulation assets and ROS 2 bridges for UAV navigation,
+    MID-360 LiDAR and PX4 SITL integration.
+  </description>
+
+  <maintainer email="maintainers@example.invalid">
+    UAV Navigation contributors
+  </maintainer>
+
   <license>MIT</license>
+
   <buildtool_depend>ament_cmake</buildtool_depend>
+
   <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>uav_description</exec_depend>
+
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>
