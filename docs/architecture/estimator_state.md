@@ -17,4 +17,4 @@ manifold retraction. Extrinsics exist in the upstream state but default to fixed
 
 Initialization collects stationary IMU data, gates quality using sample count
 and variance, estimates gravity/biases, and reports its reason/status. Online
-extrinsic estimation is outside the M1 baseline.
+extrinsic estimation is outside the current runtime capability.

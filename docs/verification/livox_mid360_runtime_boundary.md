@@ -16,11 +16,10 @@ This package therefore provides no network transport, device configuration,
 launch file, or `livox_ros_driver2_node` executable. It must not be represented
 as a working sensor driver.
 
-For hardware deployment, replace the interface-only directory with the full
-pinned upstream source after installing its SDK dependency. The interface-only
-package and full driver cannot coexist in one colcon workspace because both
-correctly use the same ROS package identity. FAST-LIO consumers need no source
-changes after that replacement.
+For hardware deployment, install and run the full pinned driver in a separate
+deployment workspace with its SDK dependency. Do not overlay both packages in
+one colcon workspace because they correctly share the same ROS package identity.
+FAST-LIO consumers keep the same message contract.
 
 ## Message and time semantics
 

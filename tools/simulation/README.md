@@ -13,6 +13,8 @@ make sim-px4-mid360-report
 
 Use `make sim-px4-mid360-headless` without Gazebo GUI/RViz. Prune explicitly
 with `make sim-px4-mid360-clean KEEP_SESSIONS=10`.
+Interactive simulation uses the same canonical
+`src/navigation_estimator/fast_lio_ros/rviz/fast_lio.rviz` view as dataset replay.
 
 The implementation is split by responsibility:
 

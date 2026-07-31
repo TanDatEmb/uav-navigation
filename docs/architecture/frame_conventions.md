@@ -1,8 +1,8 @@
 # Frame conventions
 
-M1 follows ROS REP-103: SI units and right-handed FLU axes. The TF tree is
+The estimator follows ROS REP-103: SI units and right-handed FLU axes. The TF tree is
 `odom -> base_link -> {imu_link, lidar_link}`. `odom` is a continuous local LIO
-world frame with possible drift; it is not a global `map`, and M1 never publishes
+world frame with possible drift; it is not a global `map`, and the estimator never publishes
 `map -> odom`.
 
 | Frame | Parent | Axes/origin | Transform source | Dynamic |

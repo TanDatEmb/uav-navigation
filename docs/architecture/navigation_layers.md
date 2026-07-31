@@ -1,7 +1,8 @@
-# Navigation layers and M1 boundary
+# Navigation estimator boundary
 
 The long-term navigation system separates estimator, world model, planner,
-safety, and PX4 integration. M1 implements only the estimator layer:
+safety, and flight-controller integration. This repository currently implements
+the estimator layer and its replay/simulation validation tools:
 
 ```text
 LiDAR + IMU -> FastLioPipeline -> corrected odometry + registered points
@@ -10,7 +11,7 @@ LiDAR + IMU -> FastLioPipeline -> corrected odometry + registered points
 
 The registration map supports scan matching only. It is not an occupancy map,
 world model, planning input, obstacle representation, or safety authority.
-No NED/FRD or PX4 conversion is performed in M1.
+No NED/FRD or flight-controller conversion is performed in the estimator.
 
 The package dependency direction is `ikfom_vendor -> fast_lio_core ->
 fast_lio_ros -> navigation_bringup`, with `fast_lio_tools` also consuming the
