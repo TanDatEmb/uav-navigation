@@ -5,7 +5,7 @@ The benchmark builds the pinned upstream `ikd_Tree.cpp`, then directly invokes
 reference implementation is involved. Run:
 
 ```bash
-bash tools/benchmarks/run_ikd_tree_benchmark.sh reports/benchmarks/ikd_tree.json
+bash tools/benchmarks/run_ikd_tree_benchmark.sh .artifacts/benchmarks/ikd_tree.json
 ```
 
 It writes a raw measurement and an analysis report. The report requires at least

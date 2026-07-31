@@ -18,12 +18,11 @@ log-*/
 symlink_install_manifest.txt
 evaluation/
 *.pcd
-reports/benchmarks/*.json
-reports/simulation/*.json
 
 # Large source recordings are retained in the external data home.
-reports/m1_dataset/*/registered_scans/
-reports/m1_dataset/*/outputs/
+*.bag
+*.db3
+*.mcap
 
 # Python build cache
 __pycache__/

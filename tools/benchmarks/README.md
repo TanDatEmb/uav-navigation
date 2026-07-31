@@ -5,7 +5,7 @@ calls `Build`, `Nearest_Search`, `Add_Points`, and `Delete_Point_Boxes` directly
 It does not benchmark the removed/reference voxel implementation.
 
 ```bash
-tools/benchmarks/run_ikd_tree_benchmark.sh reports/benchmarks/ikd_tree.json
+tools/benchmarks/run_ikd_tree_benchmark.sh .artifacts/benchmarks/ikd_tree.json
 ```
 
 The companion report gates measured query-time scaling across at least three
