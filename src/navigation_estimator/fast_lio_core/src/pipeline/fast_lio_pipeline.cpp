@@ -76,6 +76,9 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.tracking.recovery_confirmation_updates == 0U ||
       !std::isfinite(config_.tracking.discontinuity_covariance_inflation) ||
       config_.tracking.discontinuity_covariance_inflation < 1.0 ||
+      config_.tracking.discontinuity_covariance_inflation > 1000.0 ||
+      config_.tracking.maximum_recoverable_imu_gap_ns <
+          config_.synchronization.maximum_imu_gap_ns ||
       (config_.lifecycle.enable_periodic_local_map_snapshot &&
        config_.lifecycle.local_map_snapshot_period_scans == 0U)) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
@@ -575,25 +578,40 @@ ProcessResult FastLioPipeline::recoverFromDiscontinuity(
       discontinuity.gap_duration_ns;
   diagnostics_.synchronization.sync_rejection_reason =
       result.rejection_reason;
-  recordUncorrectedUpdate(
-      LidarUpdateFailureClass::kPropagationDiscontinuity);
   ++diagnostics_.propagation_discontinuity_count;
   diagnostics_.last_propagation_gap_ns = discontinuity.gap_duration_ns;
 
   if (statusUsesEstimatorState(status_) && state_time_.has_value()) {
+    const bool long_gap =
+        discontinuity.gap_duration_ns >
+        config_.tracking.maximum_recoverable_imu_gap_ns;
     covariance_ *= config_.tracking.discontinuity_covariance_inflation;
     covariance_ = 0.5 * (covariance_ + covariance_.transpose());
     estimator_.rebase(state_, covariance_);
     state_time_ = discontinuity.resume_time;
-    if (discontinuity.gap_duration_ns >
-        config_.tracking.maximum_recoverable_imu_gap_ns) {
+    recordUncorrectedUpdate(
+        LidarUpdateFailureClass::kPropagationDiscontinuity);
+    if (!tracking_ever_confirmed_) {
+      if (long_gap) {
+        bootstrap_map_.clear();
+        bootstrap_reference_points_odom_m_.clear();
+        initial_map_registration_failures_ = 0U;
+        transitionTo(EstimatorStatus::kInitializingMap,
+                     registration_map_.size() == 0U
+                         ? "INITIAL_MAP_RESTART_AFTER_LONG_IMU_DISCONTINUITY"
+                         : "INITIAL_MAP_REGISTRATION_MAP_INVARIANT_VIOLATION");
+      } else {
+        transitionTo(
+            EstimatorStatus::kInitializingMap,
+            "INITIAL_MAP_RECOVERY_AFTER_SHORT_IMU_DISCONTINUITY");
+      }
+    } else if (long_gap) {
       transitionTo(EstimatorStatus::kLost, "IMU_DISCONTINUITY_LOCAL_LOST");
-    } else if (status_ != EstimatorStatus::kInitializingMap) {
-      transitionTo(EstimatorStatus::kDegraded,
-                   "IMU_DISCONTINUITY_RECOVERY_REBASE");
+    } else {
+      diagnostics_.reason = "IMU_DISCONTINUITY_RECOVERY_REBASE";
     }
   }
-  diagnostics_.reason = result.rejection_reason;
+  result.rejection_reason = diagnostics_.reason;
   return finalizeResult(std::move(result));
 }
 

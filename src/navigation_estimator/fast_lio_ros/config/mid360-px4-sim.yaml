@@ -19,6 +19,10 @@ fast_lio:
       livox_timestamp_policy: require_header_match
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
+    tracking:
+      maximum_recoverable_imu_gap_ns: 50000000
+      recovery_confirmation_updates: 3
+      discontinuity_covariance_inflation: 10.0
     extrinsic:
       # Sensor origins are colocated. The 0.28 m mount is base-to-sensor, not IMU-to-LiDAR.
       estimate_online: false

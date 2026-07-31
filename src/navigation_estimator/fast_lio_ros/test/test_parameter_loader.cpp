@@ -91,6 +91,12 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
                                  const EstimatorConfig& ros) {
   EXPECT_EQ(direct.synchronization.maximum_imu_gap_ns,
             ros.synchronization.maximum_imu_gap_ns);
+  EXPECT_EQ(direct.tracking.maximum_recoverable_imu_gap_ns,
+            ros.tracking.maximum_recoverable_imu_gap_ns);
+  EXPECT_EQ(direct.tracking.recovery_confirmation_updates,
+            ros.tracking.recovery_confirmation_updates);
+  EXPECT_DOUBLE_EQ(direct.tracking.discontinuity_covariance_inflation,
+                   ros.tracking.discontinuity_covariance_inflation);
   EXPECT_EQ(direct.deskew.mode, ros.deskew.mode);
   EXPECT_DOUBLE_EQ(direct.preprocessing.point_filter.minimum_range_m,
                    ros.preprocessing.point_filter.minimum_range_m);
@@ -168,6 +174,46 @@ TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
     EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
                  std::invalid_argument);
     std::filesystem::remove(path);
+  }
+}
+
+TEST_F(ParameterLoaderTest, CanonicalConfigRequiresTrackingPolicyFields) {
+  for (const auto& [line, suffix] :
+       std::array<std::pair<std::string_view, std::string_view>, 3>{
+           std::pair{"      maximum_recoverable_imu_gap_ns: 50000000\n",
+                     "recoverable_gap"},
+           std::pair{"      recovery_confirmation_updates: 3\n",
+                     "recovery_updates"},
+           std::pair{"      discontinuity_covariance_inflation: 10.0\n",
+                     "covariance_inflation"}}) {
+    const auto path = canonicalConfigWithout(line, suffix);
+    EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
+                 std::invalid_argument);
+    std::filesystem::remove(path);
+  }
+}
+
+TEST_F(ParameterLoaderTest, RejectsInvalidTrackingRecoveryPolicy) {
+  rclcpp::Node node{"parameter_loader_tracking_policy_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  for (const double inflation :
+       {0.5, 1000.1, std::numeric_limits<double>::infinity()}) {
+    parameters.discontinuity_covariance_inflation = inflation;
+    EXPECT_THROW(ParameterLoader::validate(parameters),
+                 std::invalid_argument);
+  }
+  parameters.discontinuity_covariance_inflation = 10.0;
+  parameters.maximum_recoverable_imu_gap_ns =
+      parameters.maximum_imu_gap_ns - 1;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
+TEST_F(ParameterLoaderTest, LoadsEveryCanonicalEstimatorYaml) {
+  for (const auto* filename :
+       {"aist.yaml", "mid360-real.yaml", "mid360-sim.yaml",
+        "mid360-px4-sim.yaml"}) {
+    EXPECT_NO_THROW(loadCanonicalEstimatorProfile(
+        std::string{FAST_LIO_ROS_SOURCE_DIR "/config/"} + filename));
   }
 }
 

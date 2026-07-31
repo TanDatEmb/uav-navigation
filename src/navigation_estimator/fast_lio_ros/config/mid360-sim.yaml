@@ -17,6 +17,7 @@ fast_lio:
     tracking:
       maximum_recoverable_imu_gap_ns: 50000000
       recovery_confirmation_updates: 3
+      discontinuity_covariance_inflation: 10.0
     extrinsic:
       # Existing kinematic harness: lidar_link is 0.15 m above imu_link.
       estimate_online: false

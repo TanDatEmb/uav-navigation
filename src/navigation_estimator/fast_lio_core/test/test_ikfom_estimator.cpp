@@ -22,6 +22,16 @@ void expectStateAndCovarianceEqual(
                 expected_state.orientation_odom_imu()), 1e-12);
   EXPECT_LT((actual_state.velocity_odom_imu_m_s() -
              expected_state.velocity_odom_imu_m_s()).norm(), 1e-12);
+  EXPECT_LT((actual_state.gyro_bias_rad_s() -
+             expected_state.gyro_bias_rad_s()).norm(), 1e-12);
+  EXPECT_LT((actual_state.accel_bias_m_s2() -
+             expected_state.accel_bias_m_s2()).norm(), 1e-12);
+  EXPECT_LT((actual_state.gravity_odom_m_s2() -
+             expected_state.gravity_odom_m_s2()).norm(), 1e-12);
+  EXPECT_LT(actual_state.rotation_imu_lidar().angularDistance(
+                expected_state.rotation_imu_lidar()), 1e-12);
+  EXPECT_LT((actual_state.position_imu_lidar_m() -
+             expected_state.position_imu_lidar_m()).norm(), 1e-12);
   EXPECT_LT((estimator.covariance() - expected_covariance).norm(), 1e-12);
 }
 

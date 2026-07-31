@@ -38,6 +38,7 @@ struct RosParameters {
   std::int64_t maximum_imu_gap_ns{};
   std::int64_t maximum_recoverable_imu_gap_ns{};
   std::int64_t recovery_confirmation_updates{};
+  double discontinuity_covariance_inflation{};
   bool reject_timestamp_regression{};
   bool estimate_extrinsic_online{};
   std::array<double, 3> translation_imu_lidar_m{};

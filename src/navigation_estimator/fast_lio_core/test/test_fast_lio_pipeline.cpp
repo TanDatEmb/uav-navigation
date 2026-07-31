@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 #include <cstdint>
 #include <vector>
 
@@ -218,7 +219,7 @@ TEST(FastLioPipelineTest,
   ASSERT_TRUE(discontinuity.has_value());
   EXPECT_EQ(discontinuity->status_after, EstimatorStatus::kDegraded);
   EXPECT_EQ(discontinuity->rejection_reason,
-            "IMU_PROPAGATION_DISCONTINUITY");
+            "IMU_DISCONTINUITY_RECOVERY_REBASE");
   EXPECT_EQ(discontinuity->diagnostics.propagation_discontinuity_count, 1U);
   EXPECT_EQ(discontinuity->diagnostics.last_propagation_gap_ns,
             80 * kMillisecondNs);
@@ -291,6 +292,241 @@ TEST(FastLioPipelineTest,
       EXPECT_TRUE(recovered.diagnostics.map.map_update_performed);
     }
   }
+}
+
+TEST(FastLioPipelineTest, ShortGapAtFailureThresholdStaysLost) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  config.tracking.maximum_recoverable_imu_gap_ns = 100 * kMillisecondNs;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  static_cast<void>(pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)})));
+  for (std::int64_t end_ns : {200 * kMillisecondNs,
+                              300 * kMillisecondNs}) {
+    const std::int64_t start_ns = end_ns - 100 * kMillisecondNs;
+    static_cast<void>(pipeline.process(
+        makeGroup(makePlanarScan(end_ns, 1.0), start_ns,
+                  {stationaryImu(start_ns),
+                   stationaryImu(start_ns + 50 * kMillisecondNs),
+                   stationaryImu(end_ns)})));
+  }
+  ASSERT_EQ(pipeline.status(), EstimatorStatus::kDegraded);
+  const std::size_t map_size = pipeline.registrationMapSnapshot().size();
+  for (const auto time_ns :
+       {300 * kMillisecondNs, 310 * kMillisecondNs,
+        390 * kMillisecondNs, 400 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  LidarScan crossing = makePlanarScan(305 * kMillisecondNs);
+  crossing.end_time = Timestamp(400 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
+
+  const auto result = pipeline.processNext();
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->status_after, EstimatorStatus::kLost);
+  EXPECT_EQ(result->diagnostics.consecutive_uncorrected_lidar_updates, 3U);
+  EXPECT_FALSE(result->diagnostics.navigation_valid);
+  EXPECT_TRUE(result->diagnostics.map_insertion_frozen);
+  EXPECT_EQ(pipeline.registrationMapSnapshot().size(), map_size);
+
+  for (const auto time_ns :
+       {410 * kMillisecondNs, 490 * kMillisecondNs,
+        500 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  LidarScan while_lost = makePlanarScan(405 * kMillisecondNs);
+  while_lost.end_time = Timestamp(500 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(while_lost)).ok());
+  const auto still_lost = pipeline.processNext();
+  ASSERT_TRUE(still_lost.has_value());
+  EXPECT_EQ(still_lost->status_after, EstimatorStatus::kLost);
+  EXPECT_EQ(still_lost->diagnostics.consecutive_uncorrected_lidar_updates,
+            4U);
+}
+
+TEST(FastLioPipelineTest, LongGapLostRecoveryRequiresConfirmation) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  config.tracking.maximum_recoverable_imu_gap_ns = 50 * kMillisecondNs;
+  config.tracking.recovery_confirmation_updates = 3;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  static_cast<void>(pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)})));
+  const std::size_t map_size = pipeline.registrationMapSnapshot().size();
+  for (const auto time_ns :
+       {100 * kMillisecondNs, 110 * kMillisecondNs,
+        200 * kMillisecondNs, 210 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  LidarScan crossing = makePlanarScan(105 * kMillisecondNs);
+  crossing.end_time = Timestamp(210 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
+  const auto lost = pipeline.processNext();
+  ASSERT_TRUE(lost.has_value());
+  EXPECT_EQ(lost->status_after, EstimatorStatus::kLost);
+  EXPECT_EQ(pipeline.registrationMapSnapshot().size(), map_size);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  ASSERT_TRUE(pipeline.synchronizationEpoch().has_value());
+  EXPECT_EQ(*pipeline.stateTime(), *pipeline.synchronizationEpoch());
+
+  std::int64_t start_ns = 200 * kMillisecondNs;
+  const auto process_scan = [&](double z_m) {
+    const std::int64_t end_ns = start_ns + 100 * kMillisecondNs;
+    ProcessResult result = pipeline.process(
+        makeGroup(makePlanarScan(end_ns, z_m), start_ns,
+                  {stationaryImu(start_ns),
+                   stationaryImu(start_ns + 50 * kMillisecondNs),
+                   stationaryImu(end_ns)}));
+    start_ns = end_ns;
+    return result;
+  };
+  for (std::size_t recovery_index = 1; recovery_index <= 2;
+       ++recovery_index) {
+    const ProcessResult recovered = process_scan(0.0);
+    ASSERT_EQ(recovered.lidar_update_status, LidarUpdateStatus::kSucceeded);
+    EXPECT_EQ(recovered.status_after, EstimatorStatus::kDegraded);
+    EXPECT_EQ(recovered.diagnostics.consecutive_recovery_successes,
+              recovery_index);
+    EXPECT_EQ(pipeline.registrationMapSnapshot().size(), map_size);
+  }
+  const ProcessResult interrupted = process_scan(1.0);
+  EXPECT_EQ(interrupted.lidar_update_status, LidarUpdateStatus::kRejected);
+  EXPECT_EQ(interrupted.status_after, EstimatorStatus::kDegraded);
+  EXPECT_EQ(interrupted.diagnostics.consecutive_recovery_successes, 0U);
+
+  for (std::size_t recovery_index = 1; recovery_index <= 3;
+       ++recovery_index) {
+    const ProcessResult recovered = process_scan(0.0);
+    ASSERT_EQ(recovered.lidar_update_status, LidarUpdateStatus::kSucceeded);
+    EXPECT_EQ(recovered.status_after,
+              recovery_index < 3 ? EstimatorStatus::kDegraded
+                                 : EstimatorStatus::kTracking);
+    EXPECT_EQ(recovered.diagnostics.consecutive_recovery_successes,
+              recovery_index < 3 ? recovery_index : 0U);
+    EXPECT_EQ(recovered.diagnostics.map.map_update_performed,
+              recovery_index == 3);
+  }
+}
+
+TEST(FastLioPipelineTest, RepeatedDiscontinuityInflationRemainsValid) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  config.tracking.maximum_recoverable_imu_gap_ns = 50 * kMillisecondNs;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  static_cast<void>(pipeline.process(
+      makeGroup(makePlanarScan(100 * kMillisecondNs), 0,
+                {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+                 stationaryImu(100 * kMillisecondNs)})));
+
+  std::int64_t epoch_ns = 100 * kMillisecondNs;
+  for (std::size_t index = 0; index < 5; ++index) {
+    const std::int64_t before_gap_ns = epoch_ns + 10 * kMillisecondNs;
+    const std::int64_t resume_ns = epoch_ns + 40 * kMillisecondNs;
+    const std::int64_t end_ns = epoch_ns + 50 * kMillisecondNs;
+    if (index == 0U) {
+      ASSERT_TRUE(pipeline.pushImu(stationaryImu(epoch_ns)).ok());
+      ASSERT_TRUE(pipeline.pushImu(stationaryImu(before_gap_ns)).ok());
+    }
+    for (const auto time_ns : {resume_ns, end_ns}) {
+      ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+    }
+    LidarScan crossing = makePlanarScan(epoch_ns + 5 * kMillisecondNs);
+    crossing.end_time = Timestamp(end_ns);
+    ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
+    ASSERT_TRUE(pipeline.processNext().has_value());
+    const auto covariance = pipeline.covariance();
+    EXPECT_TRUE(covariance.allFinite());
+    EXPECT_LT((covariance - covariance.transpose()).cwiseAbs().maxCoeff(),
+              1e-8);
+    Eigen::SelfAdjointEigenSolver<ManifoldState::Covariance> solver(
+        0.5 * (covariance + covariance.transpose()),
+        Eigen::EigenvaluesOnly);
+    ASSERT_EQ(solver.info(), Eigen::Success);
+    EXPECT_GE(solver.eigenvalues().minCoeff(), -1e-10);
+    epoch_ns = resume_ns;
+  }
+}
+
+TEST(FastLioPipelineTest, InitialMapShortGapKeepsBootstrapForCorrection) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  config.tracking.maximum_recoverable_imu_gap_ns = 50 * kMillisecondNs;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  for (const auto time_ns :
+       {std::int64_t{0}, 10 * kMillisecondNs, 40 * kMillisecondNs,
+        50 * kMillisecondNs, 60 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  LidarScan crossing = makePlanarScan(5 * kMillisecondNs);
+  crossing.end_time = Timestamp(45 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
+  ASSERT_TRUE(pipeline.processNext().has_value());
+  ASSERT_EQ(pipeline.status(), EstimatorStatus::kInitializingMap);
+  ASSERT_TRUE(
+      pipeline.pushLidar(makePlanarScan(60 * kMillisecondNs)).ok());
+
+  const auto following = pipeline.processNext();
+
+  ASSERT_TRUE(following.has_value());
+  EXPECT_TRUE(following->diagnostics.registration.correction_attempted);
+}
+
+TEST(FastLioPipelineTest, InitialMapLongGapRestartsBootstrapAcquisition) {
+  auto config = testConfig();
+  config.synchronization.maximum_imu_gap_ns = 20 * kMillisecondNs;
+  config.tracking.maximum_recoverable_imu_gap_ns = 50 * kMillisecondNs;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(
+      pipeline.process(makeGroup(makePlanarScan(0), 0,
+                                 {stationaryImu(-20 * kMillisecondNs),
+                                  stationaryImu(-10 * kMillisecondNs),
+                                  stationaryImu(0)})));
+  for (const auto time_ns :
+       {std::int64_t{0}, 10 * kMillisecondNs, 100 * kMillisecondNs,
+        110 * kMillisecondNs, 120 * kMillisecondNs}) {
+    ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
+  }
+  LidarScan crossing = makePlanarScan(5 * kMillisecondNs);
+  crossing.end_time = Timestamp(105 * kMillisecondNs);
+  ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
+  const auto discontinuity = pipeline.processNext();
+  ASSERT_TRUE(discontinuity.has_value());
+  EXPECT_EQ(discontinuity->status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(discontinuity->rejection_reason,
+            "INITIAL_MAP_RESTART_AFTER_LONG_IMU_DISCONTINUITY");
+  ASSERT_TRUE(
+      pipeline.pushLidar(makePlanarScan(120 * kMillisecondNs)).ok());
+
+  const auto reference = pipeline.processNext();
+
+  ASSERT_TRUE(reference.has_value());
+  EXPECT_EQ(reference->rejection_reason, "INITIAL_MAP_REFERENCE_CAPTURED");
+  EXPECT_FALSE(reference->diagnostics.registration.correction_attempted);
 }
 
 TEST(FastLioPipelineTest, ResetStopsPublishingAndClearsRegistrationMap) {

@@ -35,7 +35,7 @@ LivoxTimestampPolicy parseTimestampPolicy(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 23> kRequired{
+  static constexpr std::array<std::string_view, 26> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -50,6 +50,9 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "timing.livox_timestamp_policy",
       "timing.max_imu_gap_ns",
       "timing.reject_timestamp_regression",
+      "tracking.maximum_recoverable_imu_gap_ns",
+      "tracking.recovery_confirmation_updates",
+      "tracking.discontinuity_covariance_inflation",
       "extrinsic.estimate_online",
       "extrinsic.translation_imu_lidar",
       "extrinsic.rotation_imu_lidar_xyzw",
@@ -178,6 +181,9 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.recovery_confirmation_updates =
       node.declare_parameter<std::int64_t>(
           "tracking.recovery_confirmation_updates", 3);
+  result.discontinuity_covariance_inflation =
+      node.declare_parameter<double>(
+          "tracking.discontinuity_covariance_inflation", 10.0);
   result.reject_timestamp_regression =
       node.declare_parameter("timing.reject_timestamp_regression", true);
   result.estimate_extrinsic_online = node.declare_parameter("extrinsic.estimate_online", false);
@@ -277,6 +283,8 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.maximum_recoverable_imu_gap_ns;
   config.tracking.recovery_confirmation_updates =
       static_cast<std::size_t>(parameters.recovery_confirmation_updates);
+  config.tracking.discontinuity_covariance_inflation =
+      parameters.discontinuity_covariance_inflation;
   config.deskew.mode = parameters.lidar_timing_mode == "per_point"
                            ? DeskewMode::kPerPoint
                            : DeskewMode::kSimultaneousScan;
@@ -410,6 +418,18 @@ void ParameterLoader::validate(const RosParameters& p) {
       !std::isfinite(p.minimum_range_m) ||
       !std::isfinite(p.maximum_range_m)) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
+  }
+  if (p.maximum_recoverable_imu_gap_ns < p.maximum_imu_gap_ns) {
+    throw std::invalid_argument(
+        "tracking.maximum_recoverable_imu_gap_ns must be greater than or "
+        "equal to timing.max_imu_gap_ns");
+  }
+  if (!std::isfinite(p.discontinuity_covariance_inflation) ||
+      p.discontinuity_covariance_inflation < 1.0 ||
+      p.discontinuity_covariance_inflation > 1000.0) {
+    throw std::invalid_argument(
+        "tracking.discontinuity_covariance_inflation must be finite and in "
+        "[1, 1000]");
   }
   if (p.imu_queue_capacity <= 0 || p.lidar_queue_capacity <= 0 ||
       p.maximum_processing_lag_ms <= 0 || p.overload_policy != "fail") {
