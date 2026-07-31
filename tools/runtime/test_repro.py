@@ -6,8 +6,10 @@ import signal
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import repro
 from repro import extract_estimator_state, run_iteration, sha256_path
 
 
@@ -74,6 +76,34 @@ class ReproducerTest(unittest.TestCase):
             self.assertEqual(state["last_lidar_scan"], 7)
             self.assertEqual(state["map_size_after_insert"], 12)
             self.assertTrue(state["crop_prune_state"]["crop_performed"])
+
+    def test_resolve_dataset_loads_catalog_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = "fixture"
+            catalog = root / "datasets" / "catalog"
+            catalog.mkdir(parents=True)
+            (catalog / f"{dataset}.yaml").write_text(
+                "id: fixture\nsource:\n  type: rosbag2\n",
+                encoding="utf-8",
+            )
+            config = (
+                root
+                / "src/navigation_estimator/fast_lio_ros/config/aist.yaml"
+            )
+            config.parent.mkdir(parents=True)
+            config.write_text("fast_lio: {}\n", encoding="utf-8")
+            data_root = root / "external"
+            bag = data_root / "datasets" / dataset / "lio"
+            bag.mkdir(parents=True)
+
+            with mock.patch.object(repro, "ROOT", root), mock.patch.object(
+                repro, "data_home", return_value=data_root
+            ):
+                resolved_bag, resolved_config = repro.resolve_dataset(dataset)
+
+            self.assertEqual(resolved_bag, bag)
+            self.assertEqual(resolved_config, config)
 
 
 if __name__ == "__main__":

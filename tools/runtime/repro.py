@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any, Sequence
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
