@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <pthread.h>
 #include <stdexcept>
 #include <utility>
+#include <cmath>
 
 namespace uav::nav::lio {
 
@@ -17,6 +19,11 @@ PropagatedOdometryWorker::PropagatedOdometryWorker(
       config_.maximum_correction_age_ns <= 0) {
     throw std::invalid_argument("Propagated odometry worker config is invalid");
   }
+  if (!(config_.publish_rate_hz > 0.0) || !std::isfinite(config_.publish_rate_hz)) {
+    throw std::invalid_argument("Propagated odometry publish rate is invalid");
+  }
+  publish_period_ns_ = static_cast<std::int64_t>(
+      std::llround(1e9 / config_.publish_rate_hz));
 }
 
 PropagatedOdometryWorker::~PropagatedOdometryWorker() { stop(); }
@@ -90,6 +97,7 @@ bool PropagatedOdometryWorker::enqueue(PropagatedOdometryEvent event) {
 }
 
 void PropagatedOdometryWorker::run() {
+  (void)pthread_setname_np(pthread_self(), "lio_propagated");
   while (true) {
     PropagatedOdometryEvent event;
     {
@@ -121,7 +129,7 @@ void PropagatedOdometryWorker::process(ImuEvent event) {
   EstimatorStatus main_status = EstimatorStatus::kWaitingForSensors;
   {
     std::lock_guard lock(mutex_);
-    last_correction_time = diagnostics_.last_correction_time;
+    last_correction_time = diagnostics_.last_applied_correction_time;
     navigation_valid = diagnostics_.navigation_valid;
     main_status = diagnostics_.main_status;
   }
@@ -141,12 +149,10 @@ void PropagatedOdometryWorker::process(ImuEvent event) {
   }
   const bool main_valid = navigation_valid &&
                           main_status == EstimatorStatus::kTracking;
-  std::optional<StateEstimate> output;
   if (status.ok() && main_valid && propagator_.valid()) {
-    output = propagator_.estimate();
-  }
-  if (imu_processed_callback_) {
-    imu_processed_callback_(output);
+    maybePublishOnImu(event.sample);
+  } else {
+    ++publication_skip_count_;
   }
 }
 
@@ -159,7 +165,10 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
         std::max(diagnostics_.correction_sequence,
                  update.correction_sequence);
     if (update.corrected_estimate.has_value()) {
-      diagnostics_.last_correction_time = update.corrected_estimate->time;
+    diagnostics_.last_correction_time = update.corrected_estimate->time;
+    diagnostics_.last_received_correction_sequence =
+        std::max(diagnostics_.last_received_correction_sequence,
+                 update.correction_sequence);
     }
   }
   if (update.status != EstimatorStatus::kTracking || !update.navigation_valid) {
@@ -167,7 +176,8 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
   }
   if (update.corrected_estimate.has_value()) {
     const auto started = std::chrono::steady_clock::now();
-    (void)propagator_.reanchorAndReplay(*update.corrected_estimate);
+    const Status replay_status =
+        propagator_.reanchorAndReplay(*update.corrected_estimate);
     const auto runtime_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                 std::chrono::steady_clock::now() - started)
                                 .count();
@@ -177,15 +187,52 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
       diagnostics_.maximum_replay_runtime_us =
           std::max(diagnostics_.maximum_replay_runtime_us, runtime_us);
     }
+    if (replay_status.ok()) {
+      std::lock_guard lock(mutex_);
+      diagnostics_.last_applied_correction_time = update.corrected_estimate->time;
+      diagnostics_.last_applied_correction_sequence =
+          update.correction_sequence;
+    }
     if (update.status != EstimatorStatus::kTracking || !update.navigation_valid) {
       propagator_.invalidate(PropagatedOdometryStatus::kMainEstimatorInvalid);
     }
   }
 }
 
+void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
+  if (!next_publish_deadline_.has_value()) {
+    next_publish_deadline_ = sample.time;
+  }
+  if (sample.time.nanoseconds() < next_publish_deadline_->nanoseconds()) {
+    ++publication_skip_count_;
+    return;
+  }
+  const auto estimate = propagator_.estimate();
+  if (!estimate.has_value() ||
+      (last_published_time_.has_value() &&
+       estimate->time.nanoseconds() <= last_published_time_->nanoseconds())) {
+    ++publication_skip_count_;
+    return;
+  }
+  if (imu_processed_callback_) {
+    imu_processed_callback_(estimate);
+  }
+  last_published_time_ = estimate->time;
+  ++publication_count_;
+  do {
+    next_publish_deadline_ = Timestamp(
+        next_publish_deadline_->nanoseconds() + publish_period_ns_,
+        next_publish_deadline_->clock_domain());
+  } while (next_publish_deadline_->nanoseconds() <= sample.time.nanoseconds());
+}
+
 void PropagatedOdometryWorker::updateSnapshot() {
   std::lock_guard lock(mutex_);
   diagnostics_.propagator = propagator_.diagnostics();
+  diagnostics_.last_published_time = last_published_time_;
+  diagnostics_.next_publish_deadline = next_publish_deadline_;
+  diagnostics_.publication_count = publication_count_;
+  diagnostics_.publication_skip_count = publication_skip_count_;
 }
 
 }  // namespace uav::nav::lio

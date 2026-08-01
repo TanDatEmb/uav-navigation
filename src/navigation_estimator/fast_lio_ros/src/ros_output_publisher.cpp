@@ -436,10 +436,10 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
   };
   std::int64_t correction_age_ns = 0;
   if (propagated.propagator.propagated_time.has_value() &&
-      propagated.last_correction_time.has_value()) {
+      propagated.last_applied_correction_time.has_value()) {
     correction_age_ns =
         propagated.propagator.propagated_time->nanoseconds() -
-        propagated.last_correction_time->nanoseconds();
+        propagated.last_applied_correction_time->nanoseconds();
   }
   const auto& core = propagated.propagator;
   status.values = {
@@ -448,11 +448,13 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("navigation_valid", propagated.navigation_valid ? "true" : "false"),
       keyValue("latest_imu_time_ns", timeNs(core.latest_imu_time)),
       keyValue("propagated_time_ns", timeNs(core.propagated_time)),
-      keyValue("last_correction_time_ns", timeNs(propagated.last_correction_time)),
+      keyValue("last_received_correction_time_ns", timeNs(propagated.last_correction_time)),
+      keyValue("last_applied_correction_time_ns", timeNs(propagated.last_applied_correction_time)),
       keyValue("correction_age_ns", std::to_string(correction_age_ns)),
       keyValue("last_published_time_ns", timeNs(last_published_time)),
       keyValue("next_publish_deadline_ns", timeNs(next_publish_deadline)),
-      keyValue("correction_sequence", std::to_string(propagated.correction_sequence)),
+      keyValue("last_received_correction_sequence", std::to_string(propagated.last_received_correction_sequence)),
+      keyValue("last_applied_correction_sequence", std::to_string(propagated.last_applied_correction_sequence)),
       keyValue("reanchor_count", std::to_string(core.reanchor_count)),
       keyValue("replay_count", std::to_string(core.replay_count)),
       keyValue("last_replay_sample_count", std::to_string(core.last_replay_sample_count)),

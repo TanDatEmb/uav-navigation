@@ -10,6 +10,7 @@
 #include <optional>
 #include <thread>
 #include <variant>
+#include <chrono>
 
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
 #include "fast_lio_core/propagation/imu_state_propagator.hpp"
@@ -20,6 +21,7 @@ struct PropagatedOdometryWorkerConfig {
   ImuStatePropagatorConfig propagator{};
   std::size_t event_queue_capacity{4096U};
   std::int64_t maximum_correction_age_ns{300'000'000};
+  double publish_rate_hz{50.0};
 };
 
 struct ImuEvent {
@@ -42,6 +44,9 @@ struct PropagatedOdometryWorkerDiagnostics {
   bool navigation_valid{false};
   EstimatorStatus main_status{EstimatorStatus::kWaitingForSensors};
   std::optional<Timestamp> last_correction_time;
+  std::optional<Timestamp> last_applied_correction_time;
+  std::uint64_t last_received_correction_sequence{0U};
+  std::uint64_t last_applied_correction_sequence{0U};
   std::uint64_t correction_sequence{0U};
   std::uint64_t queue_overflow_count{0U};
   std::uint64_t stale_stop_count{0U};
@@ -49,6 +54,10 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::int64_t maximum_replay_runtime_us{0};
   std::size_t current_event_queue_depth{0U};
   std::size_t maximum_event_queue_depth{0U};
+  std::optional<Timestamp> last_published_time;
+  std::optional<Timestamp> next_publish_deadline;
+  std::uint64_t publication_count{0U};
+  std::uint64_t publication_skip_count{0U};
 };
 
 class PropagatedOdometryWorker {
@@ -76,6 +85,7 @@ class PropagatedOdometryWorker {
   void process(ImuEvent event);
   void process(EstimatorStateUpdate update);
   void updateSnapshot();
+  void maybePublishOnImu(const ImuSample& sample);
 
   PropagatedOdometryWorkerConfig config_;
   ImuStatePropagator propagator_;
@@ -89,6 +99,11 @@ class PropagatedOdometryWorker {
   bool stop_enqueued_{false};
   std::thread thread_;
   std::atomic<bool> overflow_pending_{false};
+  std::int64_t publish_period_ns_{20'000'000};
+  std::optional<Timestamp> last_published_time_;
+  std::optional<Timestamp> next_publish_deadline_;
+  std::uint64_t publication_count_{0U};
+  std::uint64_t publication_skip_count_{0U};
 };
 
 }  // namespace uav::nav::lio

@@ -3,6 +3,7 @@
 #include <exception>
 #include <algorithm>
 #include <chrono>
+#include <pthread.h>
 #include <utility>
 
 #include "fast_lio_ros/qos_profiles.hpp"
@@ -118,9 +119,13 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
         parameters_.propagated_odometry_event_queue_capacity);
     worker_config.maximum_correction_age_ns =
         parameters_.propagated_odometry_maximum_correction_age_ns;
+    worker_config.publish_rate_hz =
+        parameters_.propagated_odometry_publish_rate_hz;
     propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
         worker_config, [this](const std::optional<StateEstimate>& estimate) {
-          propagated_odometry_publisher_->onImuEstimate(estimate);
+          if (estimate.has_value()) {
+            propagated_odometry_publisher_->publish(*estimate);
+          }
         });
     propagated_odometry_worker_->start();
   }
@@ -299,6 +304,7 @@ bool FastLioNode::enqueue(InputMeasurement measurement) {
 }
 
 void FastLioNode::processingLoop() {
+  (void)pthread_setname_np(pthread_self(), "fast_lio_main");
   while (true) {
     InputMeasurement measurement;
     {
@@ -436,12 +442,11 @@ void FastLioNode::publishTransportSnapshot() {
   }
   output_publisher_.publishTransportSnapshot(sensor, processing, runtime);
   if (propagated_odometry_worker_ && propagated_odometry_publisher_) {
+    const auto propagated = propagated_odometry_worker_->diagnostics();
     output_publisher_.publishPropagatedOdometryDiagnostics(
-        propagated_odometry_worker_->diagnostics(),
-        propagated_odometry_publisher_->publicationCount(),
-        propagated_odometry_publisher_->publicationSkipCount(),
-        propagated_odometry_publisher_->lastPublishedTime(),
-        propagated_odometry_publisher_->nextPublishDeadline());
+        propagated, propagated.publication_count,
+        propagated.publication_skip_count, propagated.last_published_time,
+        propagated.next_publish_deadline);
   } else {
     output_publisher_.publishPropagatedOdometryDiagnostics(
         PropagatedOdometryWorkerDiagnostics{}, 0U, 0U, std::nullopt,
