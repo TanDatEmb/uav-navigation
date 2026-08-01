@@ -23,6 +23,11 @@ calibration and must not be used for flight or real-data acceptance.
 
 Interactive dataset replay opens RViz by default. Use
 `make data-replay DATASET=aist-mid360-drive ENABLE_RVIZ=0` for a headless run.
+Replay owns its node, recorder, rosbag, collector, and RViz process groups and
+closes them after completion or interruption. If a terminal is lost or replay
+hangs, run `make data-replay-stop` (or `make replay-stop`) to stop only the
+registered replay processes from this repository. The default replay timeout
+is 900 seconds; override it with `REPLAY_TIMEOUT=...`.
 
 ## Packages
 

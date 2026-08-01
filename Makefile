@@ -1,6 +1,9 @@
 SHELL := /bin/bash
 DATASET ?=
 RATE ?= 1.0
+REPLAY_TIMEOUT ?= 900
+REPLAY_READINESS_TIMEOUT ?= 30
+REPLAY_DRAIN_TIMEOUT ?= 120
 REPEAT ?= 1
 MAX_LIDAR ?= 0
 DRY_RUN ?= 0
@@ -11,7 +14,7 @@ DATASET_TOOL := python3 tools/data.py
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_TOOL := python3 tools/runtime/build.py --mode "$(MODE)"
 
-.PHONY: help build test test-tools check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-cleanup data-view data-report data-test runtime-repro
+.PHONY: help build test test-tools check clean clean-artifacts vendor-check data-list data-fetch data-check data-smoke data-run data-replay data-replay-stop replay-stop data-cleanup data-view data-report data-test runtime-repro
 
 help:
 	@$(DATASET_TOOL) --help
@@ -60,8 +63,17 @@ data-run:
 
 data-replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(DATASET_TOOL) replay --dataset "$(DATASET)" --rate "$(RATE)" \
+	@trap 'python3 tools/runtime/cleanup_replay.py >/dev/null 2>&1 || true' EXIT; \
+		$(ROS_ENV) $(DATASET_TOOL) replay --dataset "$(DATASET)" --rate "$(RATE)" \
+		--replay-timeout "$(REPLAY_TIMEOUT)" \
+		--readiness-timeout "$(REPLAY_READINESS_TIMEOUT)" \
+		--drain-timeout "$(REPLAY_DRAIN_TIMEOUT)" \
 		$(if $(filter 1 true yes,$(ENABLE_RVIZ)),--enable-rviz,)
+
+data-replay-stop:
+	@python3 tools/runtime/cleanup_replay.py $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)
+
+replay-stop: data-replay-stop
 
 data-cleanup:
 	@python3 tools/runtime/cleanup_replay.py $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run,)

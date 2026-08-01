@@ -18,6 +18,7 @@ from ros_replay import (
     register_process,
     rviz_command,
     stop,
+    wait_for_replay,
     track_process,
     parser,
 )
@@ -25,6 +26,19 @@ import cleanup_replay
 
 
 class DrainTest(unittest.TestCase):
+    def test_replay_timeout_is_enforced(self) -> None:
+        process = mock.Mock()
+        process.wait.side_effect = subprocess.TimeoutExpired("ros2 bag play", 5.0)
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            wait_for_replay(process, 5.0)
+        process.wait.assert_called_once_with(timeout=5.0)
+
+    def test_non_positive_replay_timeout_allows_unbounded_wait(self) -> None:
+        process = mock.Mock()
+        process.wait.return_value = 0
+        self.assertEqual(wait_for_replay(process, 0.0), 0)
+        process.wait.assert_called_once_with()
+
     def test_default_replay_does_not_enable_rviz(self) -> None:
         args = parser().parse_args([
             "run", "--bag", "/tmp/bag", "--config", "/tmp/config",

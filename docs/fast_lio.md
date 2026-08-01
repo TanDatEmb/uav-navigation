@@ -51,6 +51,23 @@ make data-report DATASET=aist-mid360-drive
 make data-test DATASET=aist-mid360-drive
 ```
 
+`data-replay` automatically closes the FAST-LIO node, rosbag recorder,
+rosbag player, diagnostics collector, and RViz after the bag drains or the
+run is interrupted. A replay is limited to 900 seconds by default; tune it
+with `REPLAY_TIMEOUT`, `REPLAY_READINESS_TIMEOUT`, and
+`REPLAY_DRAIN_TIMEOUT`. If the terminal or replay wrapper is killed, clean up
+only the repository-owned registered process groups with:
+
+```bash
+make data-replay-stop
+# alias:
+make replay-stop
+```
+
+Use `DRY_RUN=1 make data-replay-stop` to inspect the groups before signaling
+them. The cleanup uses the per-run process-group registry and never performs a
+global `pkill` of unrelated ROS or RViz processes.
+
 `make data-replay` opens the canonical FAST-LIO RViz view by default. For CI,
 remote shells, and other headless runs, set `ENABLE_RVIZ=0`. The `data-test`
 and `runtime-repro` workflows always remain headless.

@@ -270,6 +270,17 @@ def stop(process: subprocess.Popen[Any], timeout: float = 10.0) -> None:
         )
 
 
+def wait_for_replay(process: subprocess.Popen[Any], timeout: float) -> int:
+    if timeout <= 0.0:
+        return process.wait()
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"rosbag replay timed out after {timeout:.1f} seconds"
+        ) from error
+
+
 class ReplayInterrupted(RuntimeError):
     pass
 
@@ -391,7 +402,7 @@ def run(args: argparse.Namespace) -> int:
         )
         processes.append(replay)
         register_process(registry_path, replay, "replay", replay_command)
-        replay_returncode = replay.wait()
+        replay_returncode = wait_for_replay(replay, args.replay_timeout)
         summary["replay_returncode"] = replay_returncode
         if replay_returncode != 0:
             raise RuntimeError(f"rosbag replay failed with {replay_returncode}")
@@ -441,6 +452,7 @@ def parser() -> argparse.ArgumentParser:
     replay.add_argument("--rate", type=float, default=1.0)
     replay.add_argument("--readiness-timeout", type=float, default=30.0)
     replay.add_argument("--drain-timeout", type=float, default=120.0)
+    replay.add_argument("--replay-timeout", type=float, default=900.0)
     replay.add_argument("--enable-rviz", action="store_true")
     replay.add_argument("--rviz-config", type=Path)
     return result

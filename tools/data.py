@@ -548,6 +548,11 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
             "--rviz-config",
             str(ROOT / "src/navigation_estimator/fast_lio_ros/rviz/fast_lio.rviz"),
         ])
+    command.extend([
+        "--replay-timeout", str(args.replay_timeout),
+        "--readiness-timeout", str(args.readiness_timeout),
+        "--drain-timeout", str(args.drain_timeout),
+    ])
     result = subprocess.run(command, cwd=ROOT)
     if result.returncode == 0:
         write_run_json(output, "replay", context, counts)
@@ -792,6 +797,9 @@ def parser() -> argparse.ArgumentParser:
         if action == "replay":
             child.add_argument("--rate", type=float, default=1.0)
             child.add_argument("--enable-rviz", action="store_true")
+            child.add_argument("--replay-timeout", type=float, default=900.0)
+            child.add_argument("--readiness-timeout", type=float, default=30.0)
+            child.add_argument("--drain-timeout", type=float, default=120.0)
     return result
 
 
