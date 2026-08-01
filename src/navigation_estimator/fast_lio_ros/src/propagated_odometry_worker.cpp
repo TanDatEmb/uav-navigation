@@ -1,6 +1,7 @@
 #include "fast_lio_ros/propagated_odometry_worker.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -154,7 +155,9 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
     std::lock_guard lock(mutex_);
     diagnostics_.main_status = update.status;
     diagnostics_.navigation_valid = update.navigation_valid;
-    diagnostics_.correction_sequence = update.correction_sequence;
+    diagnostics_.correction_sequence =
+        std::max(diagnostics_.correction_sequence,
+                 update.correction_sequence);
     if (update.corrected_estimate.has_value()) {
       diagnostics_.last_correction_time = update.corrected_estimate->time;
     }
@@ -163,7 +166,17 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
     propagator_.invalidate(PropagatedOdometryStatus::kMainEstimatorInvalid);
   }
   if (update.corrected_estimate.has_value()) {
+    const auto started = std::chrono::steady_clock::now();
     (void)propagator_.reanchorAndReplay(*update.corrected_estimate);
+    const auto runtime_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+    {
+      std::lock_guard lock(mutex_);
+      diagnostics_.last_replay_runtime_us = runtime_us;
+      diagnostics_.maximum_replay_runtime_us =
+          std::max(diagnostics_.maximum_replay_runtime_us, runtime_us);
+    }
     if (update.status != EstimatorStatus::kTracking || !update.navigation_valid) {
       propagator_.invalidate(PropagatedOdometryStatus::kMainEstimatorInvalid);
     }

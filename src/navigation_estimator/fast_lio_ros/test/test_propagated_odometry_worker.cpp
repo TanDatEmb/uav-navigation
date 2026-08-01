@@ -122,5 +122,66 @@ TEST(PropagatedOdometryWorkerTest, StopDrainsEventsInEnqueueOrder) {
   EXPECT_EQ(collector.outputs.size(), 20U);
 }
 
+TEST(PropagatedOdometryWorkerTest, RecoversOnlyOnImuAfterNewCorrection) {
+  OutputCollector collector;
+  PropagatedOdometryWorkerConfig config;
+  config.maximum_correction_age_ns = 15'000'000;
+  PropagatedOdometryWorker worker(
+      config, [&](const auto& output) { collector.push(output); });
+  worker.start();
+  ASSERT_TRUE(worker.enqueueImu(sample(0)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(worker.enqueueEstimatorState(
+      {EstimatorStatus::kTracking, true, correction(0), 1U}));
+  ASSERT_TRUE(worker.enqueueImu(sample(20'000'000)));
+  ASSERT_TRUE(collector.waitFor(3U));
+  ASSERT_TRUE(worker.enqueueEstimatorState(
+      {EstimatorStatus::kTracking, true, correction(15'000'000), 2U}));
+  {
+    std::lock_guard lock(collector.mutex);
+    EXPECT_EQ(collector.outputs.size(), 3U);
+  }
+  ASSERT_TRUE(worker.enqueueImu(sample(30'000'000)));
+  ASSERT_TRUE(collector.waitFor(4U));
+  worker.stop();
+  std::lock_guard lock(collector.mutex);
+  EXPECT_FALSE(collector.outputs[2].has_value());
+  EXPECT_TRUE(collector.outputs[3].has_value());
+}
+
+TEST(PropagatedOdometryWorkerTest, QueueOverflowInvalidatesWithoutBlocking) {
+  PropagatedOdometryWorkerConfig config;
+  config.event_queue_capacity = 1U;
+  std::mutex callback_mutex;
+  std::condition_variable callback_ready;
+  bool callback_entered = false;
+  bool release_callback = false;
+  PropagatedOdometryWorker worker(
+      config, [&](const auto&) {
+        std::unique_lock lock(callback_mutex);
+        callback_entered = true;
+        callback_ready.notify_all();
+        callback_ready.wait(lock, [&] { return release_callback; });
+      });
+  worker.start();
+  ASSERT_TRUE(worker.enqueueImu(sample(0)));
+  {
+    std::unique_lock lock(callback_mutex);
+    ASSERT_TRUE(callback_ready.wait_for(lock, 2s,
+                                        [&] { return callback_entered; }));
+  }
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  EXPECT_FALSE(worker.enqueueImu(sample(20'000'000)));
+  EXPECT_EQ(worker.diagnostics().queue_overflow_count, 1U);
+  {
+    std::lock_guard lock(callback_mutex);
+    release_callback = true;
+  }
+  callback_ready.notify_all();
+  worker.stop();
+  EXPECT_EQ(worker.diagnostics().propagator.status,
+            PropagatedOdometryStatus::kQueueOverflow);
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

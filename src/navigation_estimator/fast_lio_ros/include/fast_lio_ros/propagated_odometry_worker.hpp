@@ -45,6 +45,8 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t correction_sequence{0U};
   std::uint64_t queue_overflow_count{0U};
   std::uint64_t stale_stop_count{0U};
+  std::int64_t last_replay_runtime_us{0};
+  std::int64_t maximum_replay_runtime_us{0};
   std::size_t current_event_queue_depth{0U};
   std::size_t maximum_event_queue_depth{0U};
 };

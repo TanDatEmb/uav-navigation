@@ -187,8 +187,14 @@ void FastLioNode::onLivoxCustom(
 void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
   try {
     const ImuSample sample = imu_adapter_.convert(*message);
-    if (enqueue(InputMeasurement{sample}) && propagated_odometry_worker_) {
-      (void)propagated_odometry_worker_->enqueueImu(sample);
+    const bool main_accepted = enqueue(InputMeasurement{sample});
+    if (propagated_odometry_worker_) {
+      if (main_accepted) {
+        (void)propagated_odometry_worker_->enqueueImu(sample);
+      } else {
+        (void)propagated_odometry_worker_->enqueueEstimatorState(
+            {EstimatorStatus::kDegraded, false, std::nullopt, 0U});
+      }
     }
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid IMU message: %s", error.what());
@@ -346,6 +352,10 @@ void FastLioNode::processingLoop() {
       }
     }
     if (!status.ok()) {
+      if (is_imu && propagated_odometry_worker_) {
+        (void)propagated_odometry_worker_->enqueueEstimatorState(
+            {EstimatorStatus::kDegraded, false, std::nullopt, 0U});
+      }
       RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 1000,
           "core rejected queued measurement: %s; total_imu_rejected=%zu "
@@ -425,6 +435,18 @@ void FastLioNode::publishTransportSnapshot() {
     runtime_statistics_.populate(runtime);
   }
   output_publisher_.publishTransportSnapshot(sensor, processing, runtime);
+  if (propagated_odometry_worker_ && propagated_odometry_publisher_) {
+    output_publisher_.publishPropagatedOdometryDiagnostics(
+        propagated_odometry_worker_->diagnostics(),
+        propagated_odometry_publisher_->publicationCount(),
+        propagated_odometry_publisher_->publicationSkipCount(),
+        propagated_odometry_publisher_->lastPublishedTime(),
+        propagated_odometry_publisher_->nextPublishDeadline());
+  } else {
+    output_publisher_.publishPropagatedOdometryDiagnostics(
+        PropagatedOdometryWorkerDiagnostics{}, 0U, 0U, std::nullopt,
+        std::nullopt);
+  }
 }
 
 }  // namespace uav::nav::lio

@@ -15,7 +15,7 @@
 covariance. `hasRegisteredScanOutput()` additionally requires a non-empty
 registered scan.
 
-ROS odometry, `odom -> base_link`, registered points, and local-map snapshots
+ROS odometry, `odom -> imu_frame`, registered points, and local-map snapshots
 are gated by this corrected-output contract. A rejected update may retain a
 valid predicted state internally and expose it for diagnostics/offline
 reasoning, but it does not publish that state as corrected odometry and does

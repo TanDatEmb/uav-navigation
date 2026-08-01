@@ -409,4 +409,69 @@ void RosOutputPublisher::publishTransportSnapshot(
   diagnostics_->publish(array);
 }
 
+void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
+    const PropagatedOdometryWorkerDiagnostics& propagated,
+    std::uint64_t publication_count,
+    std::uint64_t publication_skip_count,
+    std::optional<Timestamp> last_published_time,
+    std::optional<Timestamp> next_publish_deadline) {
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = propagated.propagator.latest_imu_time.has_value()
+                           ? RosTimeConverter::toRos(
+                                 *propagated.propagator.latest_imu_time)
+                           : static_cast<builtin_interfaces::msg::Time>(
+                                 clock_->now());
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "fast_lio/propagated_odometry";
+  status.hardware_id = "lidar_imu";
+  status.level = !parameters_.propagated_odometry_enabled
+                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                 : propagated.propagator.status ==
+                           PropagatedOdometryStatus::kReady
+                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                     : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  status.message = toString(propagated.propagator.status);
+  const auto timeNs = [](const std::optional<Timestamp>& time) {
+    return std::to_string(time.has_value() ? time->nanoseconds() : 0);
+  };
+  std::int64_t correction_age_ns = 0;
+  if (propagated.propagator.propagated_time.has_value() &&
+      propagated.last_correction_time.has_value()) {
+    correction_age_ns =
+        propagated.propagator.propagated_time->nanoseconds() -
+        propagated.last_correction_time->nanoseconds();
+  }
+  const auto& core = propagated.propagator;
+  status.values = {
+      keyValue("status", toString(core.status)),
+      keyValue("enabled", parameters_.propagated_odometry_enabled ? "true" : "false"),
+      keyValue("navigation_valid", propagated.navigation_valid ? "true" : "false"),
+      keyValue("latest_imu_time_ns", timeNs(core.latest_imu_time)),
+      keyValue("propagated_time_ns", timeNs(core.propagated_time)),
+      keyValue("last_correction_time_ns", timeNs(propagated.last_correction_time)),
+      keyValue("correction_age_ns", std::to_string(correction_age_ns)),
+      keyValue("last_published_time_ns", timeNs(last_published_time)),
+      keyValue("next_publish_deadline_ns", timeNs(next_publish_deadline)),
+      keyValue("correction_sequence", std::to_string(propagated.correction_sequence)),
+      keyValue("reanchor_count", std::to_string(core.reanchor_count)),
+      keyValue("replay_count", std::to_string(core.replay_count)),
+      keyValue("last_replay_sample_count", std::to_string(core.last_replay_sample_count)),
+      keyValue("last_replay_runtime_us", std::to_string(propagated.last_replay_runtime_us)),
+      keyValue("maximum_replay_runtime_us", std::to_string(propagated.maximum_replay_runtime_us)),
+      keyValue("timestamp_regression_count", std::to_string(core.timestamp_regression_count)),
+      keyValue("imu_gap_count", std::to_string(core.imu_gap_count)),
+      keyValue("missing_bracket_count", std::to_string(core.missing_bracket_count)),
+      keyValue("queue_overflow_count", std::to_string(propagated.queue_overflow_count)),
+      keyValue("stale_stop_count", std::to_string(propagated.stale_stop_count)),
+      keyValue("invalid_state_count", std::to_string(core.invalid_state_count)),
+      keyValue("publication_count", std::to_string(publication_count)),
+      keyValue("publication_skip_count", std::to_string(publication_skip_count)),
+      keyValue("current_event_queue_depth", std::to_string(propagated.current_event_queue_depth)),
+      keyValue("maximum_event_queue_depth", std::to_string(propagated.maximum_event_queue_depth)),
+      keyValue("current_imu_history_size", std::to_string(core.current_imu_history_size)),
+      keyValue("maximum_imu_history_size", std::to_string(core.maximum_imu_history_size))};
+  array.status.push_back(std::move(status));
+  diagnostics_->publish(array);
+}
+
 }  // namespace uav::nav::lio
