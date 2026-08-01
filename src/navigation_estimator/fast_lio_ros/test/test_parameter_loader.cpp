@@ -162,7 +162,7 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
       FAST_LIO_ROS_SOURCE_DIR "/config/mid360_real.yaml";
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", path});
-  rclcpp::Node node{"fast_lio_real_profile_test", options};
+  rclcpp::Node node{"fast_lio", options};
   const auto parameters = ParameterLoader::declareAndLoad(node);
   const auto profile = makeEstimatorProfile(parameters);
 
