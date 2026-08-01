@@ -54,6 +54,15 @@ ImuStatePropagator::ImuStatePropagator(ImuStatePropagatorConfig config)
 }
 
 Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
+  return validateAndRecordImu(sample, true);
+}
+
+Status ImuStatePropagator::recordImuForReplay(const ImuSample& sample) {
+  return validateAndRecordImu(sample, false);
+}
+
+Status ImuStatePropagator::validateAndRecordImu(
+    const ImuSample& sample, const bool append_pending_prediction) {
   const Status sample_status = sample.validate();
   if (!sample_status.ok()) {
     setFailure(sample_status);
@@ -73,8 +82,7 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
       setFailure(failure);
       return failure;
     }
-    if (diagnostics_.propagated_time.has_value() &&
-        sample.time.nanoseconds() -
+    if (sample.time.nanoseconds() -
                 diagnostics_.latest_imu_time->nanoseconds() >
             config_.ikfom.maximum_integration_step_ns) {
       const Status failure(StatusCode::kInsufficientData,
@@ -92,7 +100,7 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
     previous_imu_sample_ = sample;
   }
 
-  if (diagnostics_.propagated_time.has_value()) {
+  if (append_pending_prediction && diagnostics_.propagated_time.has_value()) {
     pending_prediction_samples_.push_back(sample);
   }
   pruneHistory();
@@ -191,6 +199,7 @@ Status ImuStatePropagator::reanchorAndReplay(
 
 void ImuStatePropagator::invalidate(PropagatedOdometryStatus status) noexcept {
   valid_ = false;
+  pending_prediction_samples_.clear();
   diagnostics_.status = status;
 }
 

@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 #include <chrono>
 
@@ -28,6 +29,14 @@ struct EstimatorStateUpdate {
   bool navigation_valid{false};
   std::optional<StateEstimate> corrected_estimate;
   std::uint64_t correction_sequence{0U};
+};
+
+struct PendingCorrection {
+  StateEstimate estimate;
+  EstimatorStatus status{EstimatorStatus::kTracking};
+  bool navigation_valid{true};
+  std::uint64_t correction_sequence{0U};
+  std::uint64_t control_generation{0U};
 };
 
 struct PropagatedOdometryWorkerDiagnostics {
@@ -59,6 +68,7 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t publication_skip_count{0U};
   std::uint64_t load_shedding_count{0U};
   std::uint64_t correction_coalesced_count{0U};
+  std::uint64_t stale_generation_correction_drop_count{0U};
 };
 
 class PropagatedOdometryWorker {
@@ -83,8 +93,11 @@ class PropagatedOdometryWorker {
 
  private:
   void run();
-  void process(ImuSample event);
-  void process(EstimatorStateUpdate update);
+  void processImuBatch(std::span<const ImuSample> batch);
+  [[nodiscard]] std::optional<Timestamp> processPendingCorrection();
+  [[nodiscard]] std::optional<PendingCorrection>
+  takePendingCorrectionLocked();
+  void discardPendingCorrectionLocked(bool stale_generation);
   void updateSnapshot();
   void maybePublishOnImu(const ImuSample& sample);
 
@@ -94,15 +107,17 @@ class PropagatedOdometryWorker {
   mutable std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<ImuSample> imu_ingress_;
-  std::optional<EstimatorStateUpdate> pending_correction_;
+  std::optional<PendingCorrection> pending_correction_;
   PropagatedOdometryWorkerDiagnostics diagnostics_;
   bool started_{false};
   bool accepting_{false};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> load_shed_requested_{false};
   std::atomic<bool> invalidation_requested_{false};
-  bool suspended_{false};
+  std::atomic<bool> correction_requested_{false};
+  std::atomic<bool> suspended_{false};
   std::uint64_t control_generation_{0U};
+  std::optional<std::uint64_t> waiting_correction_sequence_;
   std::thread thread_;
   std::int64_t publish_period_ns_{20'000'000};
   std::optional<Timestamp> last_published_time_;

@@ -24,6 +24,20 @@ IMU event, and requires a timestamp strictly greater than the prior output. If
 processing misses deadlines, only the newest state is published; the publisher
 does not emit a catch-up burst or synthesize timestamps.
 
+The propagated worker uses split channels: IMU ingress is drained as a batch,
+while estimator control and correction state use a coalescing mailbox. Taking a
+correction moves its value and clears the mailbox in the same critical section.
+Corrections carry the current control generation, so invalidation and load
+shedding cannot be reversed by an older replay. A correction without a retained
+history bracket remains pending and is retried after later IMU history arrives;
+it is not treated as a terminal replay failure.
+
+When suspended, IMU samples continue through validation into bounded replay
+history without invoking prediction or appending active prediction samples.
+Recovery requires a current-generation valid main state and a successful
+correction replay. A drained non-empty IMU batch produces at most one propagated
+publication, and a correction alone never publishes.
+
 ## Correction, replay, and validity
 
 A successful corrected state reanchors the independent propagation filter.

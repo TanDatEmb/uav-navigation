@@ -54,6 +54,7 @@ class ImuStatePropagator {
   explicit ImuStatePropagator(ImuStatePropagatorConfig config);
 
   [[nodiscard]] Status acceptImu(const ImuSample& sample);
+  [[nodiscard]] Status recordImuForReplay(const ImuSample& sample);
   [[nodiscard]] Status flushPendingPrediction();
   [[nodiscard]] Status reanchorAndReplay(const StateEstimate& corrected);
   void invalidate(PropagatedOdometryStatus status) noexcept;
@@ -64,6 +65,8 @@ class ImuStatePropagator {
 
  private:
   [[nodiscard]] Status validateState() const;
+  [[nodiscard]] Status validateAndRecordImu(const ImuSample& sample,
+                                             bool append_pending_prediction);
   [[nodiscard]] Status bracketHistory(const Timestamp& boundary,
                                       std::size_t& first_index) const;
   void pruneHistory();
