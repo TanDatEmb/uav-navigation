@@ -3,9 +3,9 @@ fast_lio:
     frames: {odom: odom, base: base_link, imu: imu_link, lidar: lidar_link}
     input:
       lidar_topic: /livox/lidar
-      imu_topic: /mavros/imu/data
+      imu_topic: /livox/imu
       lidar_frame: livox_frame
-      imu_frame: base_link
+      imu_frame: livox_frame
       lidar_message_type: livox_custom
     timing:
       lidar_mode: per_point
@@ -25,15 +25,20 @@ fast_lio:
     preprocessing:
       minimum_range_m: 0.1
       maximum_range_m: 40.0
-      scan_voxel_size_m: 0.2
+      scan_voxel_size_m: 0.9
     registration: {maximum_iterations: 10}
     mapping:
       registration_map: {voxel_size_m: 0.2}
     output:
       publish_registered_points: true
-      publish_local_map: true
+      publish_local_map: false
+    runtime:
+      imu_queue_capacity: 4096
+      lidar_queue_capacity: 16
+      maximum_processing_lag_ms: 500
+      overload_policy: fail
     propagated_odometry:
-      enabled: false
+      enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
