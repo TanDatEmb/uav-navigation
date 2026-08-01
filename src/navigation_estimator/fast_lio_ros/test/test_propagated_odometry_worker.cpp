@@ -163,5 +163,26 @@ TEST(PropagatedOdometryWorkerTest, QueueOverflowInvalidatesWithoutBlocking) {
             PropagatedOdometryStatus::kQueueOverflow);
 }
 
+TEST(PropagatedOdometryWorkerTest, FailedReplayDoesNotBecomeAppliedCorrection) {
+  OutputCollector collector;
+  PropagatedOdometryWorkerConfig config;
+  config.propagator.imu_history_duration_ns = 30'000'000;
+  PropagatedOdometryWorker worker(
+      config, [&](const auto& output) { collector.push(output); });
+  worker.start();
+  for (std::int64_t time_ns = 0; time_ns <= 100'000'000;
+       time_ns += 10'000'000) {
+    ASSERT_TRUE(worker.enqueueImu(sample(time_ns)));
+  }
+  ASSERT_TRUE(worker.enqueueEstimatorState(
+      {EstimatorStatus::kTracking, true, correction(20'000'000), 7U}));
+  worker.stop();
+  const auto diagnostics = worker.diagnostics();
+  ASSERT_TRUE(diagnostics.last_correction_time.has_value());
+  EXPECT_EQ(diagnostics.last_received_correction_sequence, 7U);
+  EXPECT_FALSE(diagnostics.last_applied_correction_time.has_value());
+  EXPECT_EQ(diagnostics.last_applied_correction_sequence, 0U);
+}
+
 }  // namespace
 }  // namespace uav::nav::lio
