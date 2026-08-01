@@ -63,6 +63,10 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t correction_waiting_for_bracket_count{0U};
   std::uint64_t correction_missing_end_wait_count{0U};
   std::uint64_t correction_missing_start_drop_count{0U};
+  std::uint64_t old_sequence_correction_drop_count{0U};
+  std::uint64_t old_timestamp_correction_drop_count{0U};
+  std::uint64_t duplicate_correction_drop_count{0U};
+  std::uint64_t correction_superseded_during_replay_count{0U};
   std::uint64_t load_shedding_transition_count{0U};
   std::uint64_t suspended_imu_drop_count{0U};
   std::optional<Timestamp> last_published_time;
@@ -100,6 +104,7 @@ class PropagatedOdometryWorker {
  private:
   void run();
   void processImuBatch(std::span<const ImuSample> batch);
+  void handleContinuityReset();
   [[nodiscard]] std::optional<Timestamp> processPendingCorrection();
   [[nodiscard]] std::optional<PendingCorrection>
   takePendingCorrectionLocked();

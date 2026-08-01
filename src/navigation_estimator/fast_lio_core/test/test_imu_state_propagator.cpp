@@ -45,9 +45,10 @@ TEST(ImuStatePropagatorTest, RejectsTimestampRegressionAndInvalidatesOutput) {
   ASSERT_TRUE(propagator.reanchorAndReplay(correction(0)).ok());
   ASSERT_TRUE(propagator.valid());
 
-  const Status rejected = propagator.acceptImu(sample(10'000'000));
+  const auto rejected = propagator.acceptImu(sample(10'000'000));
   EXPECT_EQ(rejected.code(), StatusCode::kTimestampRegression);
   EXPECT_FALSE(propagator.valid());
+  EXPECT_TRUE(propagator.diagnostics().requires_reanchor);
   EXPECT_FALSE(propagator.estimate().has_value());
   EXPECT_EQ(propagator.diagnostics().timestamp_regression_count, 1U);
 }
@@ -96,14 +97,104 @@ TEST(ImuStatePropagatorTest, ReplayGapRollsBackStateAndCovariance) {
   ASSERT_TRUE(failure.ok()) << failure.message();
   ASSERT_TRUE(propagator.estimate().has_value());
 
-  // A later oversized interval is rejected transactionally by IKFoM.
+  // A later oversized interval starts a new continuity epoch and is retained.
   const auto state_before_gap = propagator.estimate();
-  const Status gap = propagator.acceptImu(sample(80'000'001));
-  EXPECT_EQ(gap.code(), StatusCode::kInsufficientData);
+  const auto gap = propagator.acceptImu(sample(80'000'001));
+  EXPECT_EQ(gap.code(), StatusCode::kImuGap);
+  EXPECT_EQ(gap.disposition, ImuRecordDisposition::kContinuityRestarted);
   EXPECT_FALSE(propagator.valid());
   EXPECT_FALSE(propagator.estimate().has_value());
-  EXPECT_EQ(propagator.diagnostics().propagated_time->nanoseconds(),
+  EXPECT_FALSE(propagator.diagnostics().propagated_time.has_value());
+  EXPECT_NE(propagator.diagnostics().latest_imu_time->nanoseconds(),
             state_before_gap->time.nanoseconds());
+  EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 1U);
+}
+
+TEST(ImuStatePropagatorTest, ForwardGapStartsNewContinuityEpoch) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(10'000'000)).ok());
+  ASSERT_TRUE(propagator.reanchorAndReplay(correction(0)).ok());
+  ASSERT_TRUE(propagator.valid());
+
+  const auto restart = propagator.acceptImu(sample(40'000'000));
+  EXPECT_EQ(restart.disposition, ImuRecordDisposition::kContinuityRestarted);
+  EXPECT_EQ(restart.code(), StatusCode::kImuGap);
+  EXPECT_FALSE(propagator.valid());
+  EXPECT_TRUE(propagator.diagnostics().requires_reanchor);
+  EXPECT_EQ(propagator.diagnostics().continuity_epoch, 1U);
+  EXPECT_EQ(propagator.diagnostics().continuity_reset_count, 1U);
+  ASSERT_TRUE(propagator.diagnostics().last_continuity_reset_time.has_value());
+  EXPECT_EQ(propagator.diagnostics().last_continuity_reset_time->nanoseconds(),
+            40'000'000);
+  EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
+            40'000'000);
+  EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 1U);
+}
+
+TEST(ImuStatePropagatorTest, SampleAfterGapIsRecordedAsNewEpochStart) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(40'000'000)).disposition ==
+              ImuRecordDisposition::kContinuityRestarted);
+  ASSERT_TRUE(propagator.acceptImu(sample(50'000'000)).ok());
+  ASSERT_TRUE(propagator.recordImuForReplay(sample(60'000'000)).ok());
+  EXPECT_EQ(propagator.diagnostics().continuity_epoch, 1U);
+  EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
+            60'000'000);
+  EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 3U);
+  EXPECT_FALSE(propagator.diagnostics().propagated_time.has_value());
+}
+
+TEST(ImuStatePropagatorTest, SamplesContinueAdvancingAfterGap) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_EQ(propagator.acceptImu(sample(40'000'000)).disposition,
+             ImuRecordDisposition::kContinuityRestarted);
+  for (const std::int64_t time_ns : {50'000'000LL, 60'000'000LL}) {
+    EXPECT_EQ(propagator.acceptImu(sample(time_ns)).disposition,
+              ImuRecordDisposition::kRecorded);
+  }
+  EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
+            60'000'000);
+}
+
+TEST(ImuStatePropagatorTest, GapRequiresNewCorrectionBeforePrediction) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(10'000'000)).ok());
+  ASSERT_TRUE(propagator.reanchorAndReplay(correction(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(40'000'000)).disposition ==
+              ImuRecordDisposition::kContinuityRestarted);
+  ASSERT_TRUE(propagator.acceptImu(sample(50'000'000)).ok());
+  EXPECT_TRUE(propagator.flushPendingPrediction().ok());
+  EXPECT_FALSE(propagator.valid());
+  EXPECT_FALSE(propagator.estimate().has_value());
+}
+
+TEST(ImuStatePropagatorTest, SuccessfulCorrectionClearsRequiresReanchor) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(10'000'000)).ok());
+  ASSERT_TRUE(propagator.reanchorAndReplay(correction(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(40'000'000)).disposition ==
+              ImuRecordDisposition::kContinuityRestarted);
+  ASSERT_TRUE(propagator.acceptImu(sample(50'000'000)).ok());
+  ASSERT_TRUE(propagator.reanchorAndReplay(correction(40'000'000)).ok());
+  EXPECT_FALSE(propagator.diagnostics().requires_reanchor);
+  EXPECT_TRUE(propagator.valid());
+  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 50'000'000);
+}
+
+TEST(ImuStatePropagatorTest, FlushCannotRestoreValidityWithoutCorrection) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_EQ(propagator.acceptImu(sample(40'000'000)).disposition,
+             ImuRecordDisposition::kContinuityRestarted);
+  ASSERT_TRUE(propagator.acceptImu(sample(50'000'000)).ok());
+  EXPECT_TRUE(propagator.flushPendingPrediction().ok());
+  EXPECT_TRUE(propagator.diagnostics().requires_reanchor);
+  EXPECT_FALSE(propagator.valid());
 }
 
 TEST(ImuStatePropagatorTest, PruningRetainsSampleBeforeCutoff) {

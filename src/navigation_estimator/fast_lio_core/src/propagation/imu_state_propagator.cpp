@@ -53,42 +53,40 @@ ImuStatePropagator::ImuStatePropagator(ImuStatePropagatorConfig config)
   }
 }
 
-Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
+ImuRecordResult ImuStatePropagator::acceptImu(const ImuSample& sample) {
   return validateAndRecordImu(sample, true);
 }
 
-Status ImuStatePropagator::recordImuForReplay(const ImuSample& sample) {
+ImuRecordResult ImuStatePropagator::recordImuForReplay(
+    const ImuSample& sample) {
   return validateAndRecordImu(sample, false);
 }
 
-Status ImuStatePropagator::validateAndRecordImu(
+ImuRecordResult ImuStatePropagator::validateAndRecordImu(
     const ImuSample& sample, const bool append_pending_prediction) {
   const Status sample_status = sample.validate();
   if (!sample_status.ok()) {
     setFailure(sample_status);
-    return sample_status;
+    return {sample_status, ImuRecordDisposition::kRejected};
   }
   if (diagnostics_.latest_imu_time.has_value()) {
     if (!sample.time.sameClockDomain(*diagnostics_.latest_imu_time)) {
       const Status failure(StatusCode::kClockDomainMismatch,
                            "Propagated IMU clock domain changed");
       setFailure(failure);
-      return failure;
+      return {failure, ImuRecordDisposition::kRejected};
     }
     if (sample.time.nanoseconds() <=
         diagnostics_.latest_imu_time->nanoseconds()) {
       const Status failure(StatusCode::kTimestampRegression,
                            "Propagated IMU timestamp is not increasing");
       setFailure(failure);
-      return failure;
+      return {failure, ImuRecordDisposition::kRejected};
     }
     if (sample.time.nanoseconds() -
                 diagnostics_.latest_imu_time->nanoseconds() >
             config_.ikfom.maximum_integration_step_ns) {
-      const Status failure(StatusCode::kInsufficientData,
-                           "IMU integration gap exceeds configured maximum");
-      setFailure(failure);
-      return failure;
+      return restartContinuity(sample);
     }
   }
 
@@ -100,18 +98,48 @@ Status ImuStatePropagator::validateAndRecordImu(
     previous_imu_sample_ = sample;
   }
 
-  if (append_pending_prediction && diagnostics_.propagated_time.has_value()) {
+  if (append_pending_prediction && !requires_reanchor_ &&
+      diagnostics_.propagated_time.has_value()) {
     pending_prediction_samples_.push_back(sample);
   }
   pruneHistory();
   diagnostics_.current_imu_history_size = history_.size();
-  return Status::Ok();
+  return {Status::Ok(), ImuRecordDisposition::kRecorded};
+}
+
+ImuRecordResult ImuStatePropagator::restartContinuity(const ImuSample& sample) {
+  const Status restart(StatusCode::kImuGap,
+                       "IMU integration gap started a new continuity epoch");
+  valid_ = false;
+  requires_reanchor_ = true;
+  diagnostics_.requires_reanchor = true;
+  ++continuity_epoch_;
+  diagnostics_.continuity_epoch = continuity_epoch_;
+  ++diagnostics_.continuity_reset_count;
+  diagnostics_.last_continuity_reset_time = sample.time;
+  ++diagnostics_.imu_gap_count;
+  diagnostics_.status = PropagatedOdometryStatus::kImuGap;
+  history_.clear();
+  pending_prediction_samples_.clear();
+  previous_imu_sample_ = sample;
+  diagnostics_.anchor_time.reset();
+  diagnostics_.propagated_time.reset();
+  diagnostics_.latest_imu_time = sample.time;
+  history_.push_back(sample);
+  diagnostics_.maximum_imu_history_size =
+      std::max(diagnostics_.maximum_imu_history_size, history_.size());
+  diagnostics_.current_imu_history_size = history_.size();
+  return {restart, ImuRecordDisposition::kContinuityRestarted};
 }
 
 Status ImuStatePropagator::flushPendingPrediction() {
   if (!diagnostics_.propagated_time.has_value() ||
       pending_prediction_samples_.empty()) {
     return Status::Ok();
+  }
+  if (requires_reanchor_) {
+    return Status(StatusCode::kNotReady,
+                  "Propagated output requires a successful correction replay");
   }
   std::vector<ImuSample> samples;
   samples.reserve(pending_prediction_samples_.size() + 1U);
@@ -129,6 +157,8 @@ Status ImuStatePropagator::flushPendingPrediction() {
   previous_imu_sample_ = pending_prediction_samples_.back();
   pending_prediction_samples_.clear();
   valid_ = true;
+  requires_reanchor_ = false;
+  diagnostics_.requires_reanchor = false;
   diagnostics_.status = PropagatedOdometryStatus::kReady;
   return Status::Ok();
 }
@@ -188,6 +218,8 @@ Status ImuStatePropagator::reanchorAndReplay(
     return state_status;
   }
   valid_ = true;
+  requires_reanchor_ = false;
+  diagnostics_.requires_reanchor = false;
   diagnostics_.status = PropagatedOdometryStatus::kReady;
   ++diagnostics_.reanchor_count;
   ++diagnostics_.replay_count;
@@ -199,6 +231,8 @@ Status ImuStatePropagator::reanchorAndReplay(
 
 void ImuStatePropagator::invalidate(PropagatedOdometryStatus status) noexcept {
   valid_ = false;
+  requires_reanchor_ = true;
+  diagnostics_.requires_reanchor = true;
   pending_prediction_samples_.clear();
   diagnostics_.status = status;
 }
@@ -267,6 +301,9 @@ void ImuStatePropagator::pruneHistory() {
 
 void ImuStatePropagator::setFailure(const Status& failure) {
   valid_ = false;
+  requires_reanchor_ = true;
+  diagnostics_.requires_reanchor = true;
+  pending_prediction_samples_.clear();
   switch (failure.code()) {
     case StatusCode::kTimestampRegression:
       diagnostics_.status = PropagatedOdometryStatus::kTimestampRegression;

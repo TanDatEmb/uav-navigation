@@ -107,6 +107,37 @@ bool PropagatedOdometryWorker::enqueueEstimatorState(
       discardPendingCorrectionLocked(true);
       invalidation_requested_.store(true, std::memory_order_release);
     } else if (update.corrected_estimate.has_value()) {
+      const auto& estimate = *update.corrected_estimate;
+      const bool old_sequence =
+          diagnostics_.last_applied_correction_sequence != 0U &&
+          update.correction_sequence <
+              diagnostics_.last_applied_correction_sequence;
+      const bool old_timestamp =
+          diagnostics_.last_applied_correction_time.has_value() &&
+          estimate.time.nanoseconds() <
+              diagnostics_.last_applied_correction_time->nanoseconds();
+      const bool duplicate =
+          (diagnostics_.last_applied_correction_sequence != 0U &&
+           update.correction_sequence ==
+               diagnostics_.last_applied_correction_sequence) ||
+          (diagnostics_.last_applied_correction_time.has_value() &&
+           estimate.time.nanoseconds() ==
+               diagnostics_.last_applied_correction_time->nanoseconds());
+      if (old_sequence) {
+        ++diagnostics_.old_sequence_correction_drop_count;
+      }
+      if (old_timestamp) {
+        ++diagnostics_.old_timestamp_correction_drop_count;
+      }
+      if (duplicate) {
+        ++diagnostics_.duplicate_correction_drop_count;
+      }
+      if (old_sequence || old_timestamp || duplicate) {
+        diagnostics_.last_received_correction_sequence =
+            std::max(diagnostics_.last_received_correction_sequence,
+                     update.correction_sequence);
+        return true;
+      }
       diagnostics_.last_received_correction_sequence =
           std::max(diagnostics_.last_received_correction_sequence,
                    update.correction_sequence);
@@ -219,10 +250,19 @@ void PropagatedOdometryWorker::processImuBatch(
 
   Status status = Status::Ok();
   std::optional<ImuSample> latest_recorded_sample;
+  bool batch_suspended = suspended;
   for (const auto& sample : batch) {
-    status = suspended ? propagator_.recordImuForReplay(sample)
-                       : propagator_.acceptImu(sample);
-    if (!status.ok()) {
+    const ImuRecordResult record =
+        batch_suspended ? propagator_.recordImuForReplay(sample)
+                        : propagator_.acceptImu(sample);
+    if (record.disposition == ImuRecordDisposition::kContinuityRestarted) {
+      handleContinuityReset();
+      batch_suspended = true;
+      latest_recorded_sample = sample;
+      continue;
+    }
+    if (!record.ok()) {
+      status = record.status;
       break;
     }
     latest_recorded_sample = sample;
@@ -283,7 +323,9 @@ void PropagatedOdometryWorker::processImuBatch(
         publication_transition_pending ||
         control_generation_ != cycle_generation ||
         diagnostics_.main_status != EstimatorStatus::kTracking ||
-        !diagnostics_.navigation_valid;
+        !diagnostics_.navigation_valid || pending_correction_.has_value() ||
+        diagnostics_.replay_in_progress ||
+        correction_requested_.load(std::memory_order_acquire);
     navigation_valid = diagnostics_.navigation_valid;
     main_status = diagnostics_.main_status;
   }
@@ -300,6 +342,14 @@ void PropagatedOdometryWorker::processImuBatch(
   } else {
     ++publication_skip_count_;
   }
+}
+
+void PropagatedOdometryWorker::handleContinuityReset() {
+  std::lock_guard lock(mutex_);
+  suspended_.store(true, std::memory_order_release);
+  ++control_generation_;
+  diagnostics_.control_generation = control_generation_;
+  discardPendingCorrectionLocked(true);
 }
 
 std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
@@ -356,6 +406,19 @@ std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
   }
 
   if (replay_status.ok()) {
+    const bool newer_pending_correction =
+        pending_correction_.has_value() &&
+        pending_correction_->control_generation == correction.control_generation &&
+        pending_correction_->correction_sequence >
+            correction.correction_sequence &&
+        pending_correction_->estimate.time.nanoseconds() >=
+            correction.estimate.time.nanoseconds();
+    if (newer_pending_correction) {
+      ++diagnostics_.correction_superseded_during_replay_count;
+      suspended_.store(true, std::memory_order_release);
+      propagator_.invalidate(PropagatedOdometryStatus::kWaitingForCorrection);
+      return std::nullopt;
+    }
     waiting_correction_sequence_.reset();
     suspended_.store(false, std::memory_order_release);
     diagnostics_.last_applied_correction_time = correction.estimate.time;
@@ -414,6 +477,19 @@ void PropagatedOdometryWorker::discardPendingCorrectionLocked(
 
 void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
   if (stop_requested_.load(std::memory_order_acquire)) {
+    return;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (pending_correction_.has_value() ||
+        correction_requested_.load(std::memory_order_acquire) ||
+        diagnostics_.replay_in_progress) {
+      ++publication_skip_count_;
+      return;
+    }
+  }
+  if (propagator_.diagnostics().requires_reanchor) {
+    ++publication_skip_count_;
     return;
   }
   if (!next_publish_deadline_.has_value()) {

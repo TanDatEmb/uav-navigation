@@ -315,6 +315,117 @@ TEST(PropagatedOdometryWorkerTest, RecoveryRequiresCurrentGenerationCorrection) 
   worker.stop();
 }
 
+TEST(PropagatedOdometryWorkerTest,
+     ContinuityGapSuspendsWorkerAndRequiresCurrentGenerationCorrection) {
+  OutputCollector collector;
+  PropagatedOdometryWorker worker(
+      PropagatedOdometryWorkerConfig{},
+      [&](const auto& output) { collector.push(output); });
+  worker.start();
+  ASSERT_TRUE(worker.enqueueImu(sample(0)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.last_applied_correction_sequence == 1U;
+  }));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.publication_count >= 1U;
+  }));
+  const auto baseline_publications = worker.diagnostics().publication_count;
+
+  ASSERT_TRUE(worker.enqueueImu(sample(100'000'000)));
+  ASSERT_TRUE(worker.enqueueImu(sample(110'000'000)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.propagator.continuity_epoch == 1U &&
+           diagnostics.propagator.latest_imu_time.has_value() &&
+           diagnostics.propagator.latest_imu_time->nanoseconds() ==
+               110'000'000 &&
+           diagnostics.propagator.requires_reanchor &&
+           diagnostics.control_generation == 1U;
+  }));
+  {
+    std::lock_guard lock(collector.mutex);
+    EXPECT_EQ(collector.outputs.size(), baseline_publications);
+  }
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(100'000'000, 2U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.last_applied_correction_sequence == 2U &&
+           !diagnostics.propagator.requires_reanchor;
+  }));
+  {
+    std::lock_guard lock(collector.mutex);
+    EXPECT_EQ(collector.outputs.size(), baseline_publications);
+  }
+  ASSERT_TRUE(worker.enqueueImu(sample(120'000'000)));
+  ASSERT_TRUE(collector.waitFor(baseline_publications + 1U));
+  worker.stop();
+  std::lock_guard lock(collector.mutex);
+  ASSERT_EQ(collector.outputs.size(), baseline_publications + 1U);
+  ASSERT_TRUE(collector.outputs.back().has_value());
+  EXPECT_EQ(collector.outputs.back()->time.nanoseconds(), 120'000'000);
+}
+
+TEST(PropagatedOdometryWorkerTest, OlderCorrectionsAreDroppedAgainstAppliedState) {
+  PropagatedOdometryWorker worker(PropagatedOdometryWorkerConfig{});
+  worker.start();
+  ASSERT_TRUE(worker.enqueueImu(sample(0)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(10'000'000, 2U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.last_applied_correction_sequence == 2U;
+  }));
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(20'000'000, 1U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.old_sequence_correction_drop_count == 1U;
+  }));
+  EXPECT_EQ(worker.diagnostics().last_applied_correction_sequence, 2U);
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 3U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.old_timestamp_correction_drop_count == 1U;
+  }));
+  EXPECT_EQ(worker.diagnostics().last_applied_correction_sequence, 2U);
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(20'000'000, 2U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.duplicate_correction_drop_count == 1U;
+  }));
+  EXPECT_EQ(worker.diagnostics().last_applied_correction_sequence, 2U);
+  worker.stop();
+}
+
+TEST(PropagatedOdometryWorkerTest,
+     NewerCorrectionSupersedesReplayWithoutCommittingOldState) {
+  PropagatedOdometryWorkerConfig config;
+  config.imu_ingress_capacity = 20'000U;
+  config.propagator.imu_history_duration_ns = 1'000'000'000'000LL;
+  PropagatedOdometryWorker worker(config);
+  worker.start();
+  constexpr std::size_t kHistorySamples = 10'000U;
+  for (std::size_t index = 0U; index < kHistorySamples; ++index) {
+    ASSERT_TRUE(worker.enqueueImu(
+        sample(static_cast<std::int64_t>(index) * 1'000'000)));
+  }
+  ASSERT_TRUE(waitForDiagnostics(worker, [kHistorySamples](const auto& diagnostics) {
+    return diagnostics.total_imu_samples_drained == kHistorySamples;
+  }));
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.replay_in_progress;
+  }, 5s));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1'000'000, 2U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.correction_superseded_during_replay_count == 1U &&
+           !diagnostics.replay_in_progress &&
+           diagnostics.last_applied_correction_sequence == 2U;
+  }, 5s));
+  EXPECT_EQ(worker.diagnostics().correction_superseded_during_replay_count, 1U);
+  worker.stop();
+}
+
 TEST(PropagatedOdometryWorkerTest, WorkerProcessesOnePublicationPerDrainedBatch) {
   OutputCollector collector;
   PropagatedOdometryWorker worker(

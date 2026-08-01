@@ -6,6 +6,7 @@
 #include <optional>
 #include <array>
 #include <span>
+#include <string>
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
@@ -32,6 +33,23 @@ struct ImuStatePropagatorConfig {
   std::int64_t imu_history_duration_ns{1'000'000'000};
 };
 
+enum class ImuRecordDisposition {
+  kRecorded,
+  kContinuityRestarted,
+  kRejected,
+};
+
+struct ImuRecordResult {
+  Status status;
+  ImuRecordDisposition disposition{ImuRecordDisposition::kRejected};
+
+  [[nodiscard]] bool ok() const noexcept { return status.ok(); }
+  [[nodiscard]] StatusCode code() const noexcept { return status.code(); }
+  [[nodiscard]] const std::string& message() const noexcept {
+    return status.message();
+  }
+};
+
 struct ImuStatePropagatorDiagnostics {
   PropagatedOdometryStatus status{
       PropagatedOdometryStatus::kWaitingForCorrection};
@@ -47,14 +65,18 @@ struct ImuStatePropagatorDiagnostics {
   std::uint64_t imu_gap_count{0U};
   std::uint64_t missing_bracket_count{0U};
   std::uint64_t invalid_state_count{0U};
+  bool requires_reanchor{true};
+  std::uint64_t continuity_epoch{0U};
+  std::uint64_t continuity_reset_count{0U};
+  std::optional<Timestamp> last_continuity_reset_time;
 };
 
 class ImuStatePropagator {
  public:
   explicit ImuStatePropagator(ImuStatePropagatorConfig config);
 
-  [[nodiscard]] Status acceptImu(const ImuSample& sample);
-  [[nodiscard]] Status recordImuForReplay(const ImuSample& sample);
+  [[nodiscard]] ImuRecordResult acceptImu(const ImuSample& sample);
+  [[nodiscard]] ImuRecordResult recordImuForReplay(const ImuSample& sample);
   [[nodiscard]] Status flushPendingPrediction();
   [[nodiscard]] Status reanchorAndReplay(const StateEstimate& corrected);
   void invalidate(PropagatedOdometryStatus status) noexcept;
@@ -65,8 +87,9 @@ class ImuStatePropagator {
 
  private:
   [[nodiscard]] Status validateState() const;
-  [[nodiscard]] Status validateAndRecordImu(const ImuSample& sample,
-                                             bool append_pending_prediction);
+  [[nodiscard]] ImuRecordResult validateAndRecordImu(
+      const ImuSample& sample, bool append_pending_prediction);
+  [[nodiscard]] ImuRecordResult restartContinuity(const ImuSample& sample);
   [[nodiscard]] Status bracketHistory(const Timestamp& boundary,
                                       std::size_t& first_index) const;
   void pruneHistory();
@@ -79,6 +102,8 @@ class ImuStatePropagator {
   bool valid_{false};
   std::optional<ImuSample> previous_imu_sample_;
   std::deque<ImuSample> pending_prediction_samples_;
+  bool requires_reanchor_{true};
+  std::uint64_t continuity_epoch_{0U};
 };
 
 [[nodiscard]] const char* toString(PropagatedOdometryStatus status) noexcept;

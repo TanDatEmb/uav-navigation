@@ -39,6 +39,23 @@ observation; it must not prevent IMU ingress or diagnostics snapshots.
 Worker instances are single-use after `stop()`; runtime history and
 diagnostics are not reset for a second start.
 
+An accepted IMU sample is first offered to the main estimator. The propagated
+fanout then always attempts the same sample when the main path accepted it;
+load shedding is requested independently when the overload threshold is
+reached or auxiliary ingress rejects the sample. A main-path rejection requests
+shedding and skips fanout. Load-shedding requests are idempotent and do not
+silently discard an IMU sample that the main path accepted.
+
+An accepted forward interval larger than
+`ikfom.maximum_integration_step_ns` starts a new continuity epoch. The gap
+sample is retained as the first sample of the new epoch, old history and
+pending prediction state are cleared, and the worker increments its control
+generation and suspends publication. Remaining samples in the same drained
+batch are still recorded into the new epoch; they are never predicted across
+the gap. `requires_reanchor=true` remains fail-closed until a current-generation
+correction successfully replays the new history. The epoch, reset count, and
+reset timestamp are exported in diagnostics.
+
 When suspended, IMU samples continue through validation into bounded replay
 history without invoking prediction or appending active prediction samples.
 Recovery requires a current-generation valid main state and a successful
@@ -63,6 +80,14 @@ loss, timestamp regression, an excessive IMU integration interval, missing
 history bracket, numerical failure, or propagated IMU-ingress overflow stops
 publication fail-closed. A new confirmed tracking correction can recover the
 path, again only on the following IMU event.
+
+Corrections are monotonic against the last applied correction. Older sequence
+numbers, older timestamps, and duplicates are dropped and counted. If a newer
+same-generation correction arrives while replay is outside the worker mutex,
+the in-flight result is invalidated instead of being committed; the newer
+correction remains pending and is the only state eligible for recovery. No
+propagated output is published while a correction is pending, replay is in
+progress, a generation transition is observed, or re-anchor is required.
 
 ## Covariance and deferred integration
 
