@@ -110,6 +110,8 @@ class PropagatedOdometryWorker {
   takePendingCorrectionLocked();
   void requeuePendingCorrectionLocked(PendingCorrection correction);
   void discardPendingCorrectionLocked(bool stale_generation);
+  [[nodiscard]] bool rejectCorrectionNotNewerThanAppliedLocked(
+      std::uint64_t correction_sequence, const Timestamp& correction_time);
   void updateSnapshot();
   void maybePublishOnImu(const ImuSample& sample);
 

@@ -108,31 +108,8 @@ bool PropagatedOdometryWorker::enqueueEstimatorState(
       invalidation_requested_.store(true, std::memory_order_release);
     } else if (update.corrected_estimate.has_value()) {
       const auto& estimate = *update.corrected_estimate;
-      const bool old_sequence =
-          diagnostics_.last_applied_correction_sequence != 0U &&
-          update.correction_sequence <
-              diagnostics_.last_applied_correction_sequence;
-      const bool old_timestamp =
-          diagnostics_.last_applied_correction_time.has_value() &&
-          estimate.time.nanoseconds() <
-              diagnostics_.last_applied_correction_time->nanoseconds();
-      const bool duplicate =
-          (diagnostics_.last_applied_correction_sequence != 0U &&
-           update.correction_sequence ==
-               diagnostics_.last_applied_correction_sequence) ||
-          (diagnostics_.last_applied_correction_time.has_value() &&
-           estimate.time.nanoseconds() ==
-               diagnostics_.last_applied_correction_time->nanoseconds());
-      if (old_sequence) {
-        ++diagnostics_.old_sequence_correction_drop_count;
-      }
-      if (old_timestamp) {
-        ++diagnostics_.old_timestamp_correction_drop_count;
-      }
-      if (duplicate) {
-        ++diagnostics_.duplicate_correction_drop_count;
-      }
-      if (old_sequence || old_timestamp || duplicate) {
+      if (rejectCorrectionNotNewerThanAppliedLocked(
+              update.correction_sequence, estimate.time)) {
         diagnostics_.last_received_correction_sequence =
             std::max(diagnostics_.last_received_correction_sequence,
                      update.correction_sequence);
@@ -368,6 +345,10 @@ std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
       }
       return std::nullopt;
     }
+    if (rejectCorrectionNotNewerThanAppliedLocked(
+            pending->correction_sequence, pending->estimate.time)) {
+      return std::nullopt;
+    }
     diagnostics_.correction_sequence =
         std::max(diagnostics_.correction_sequence,
                  pending->correction_sequence);
@@ -424,6 +405,13 @@ std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
     diagnostics_.last_applied_correction_time = correction.estimate.time;
     diagnostics_.last_applied_correction_sequence =
         correction.correction_sequence;
+    if (pending_correction_.has_value() &&
+        pending_correction_->control_generation == correction.control_generation &&
+        rejectCorrectionNotNewerThanAppliedLocked(
+            pending_correction_->correction_sequence,
+            pending_correction_->estimate.time)) {
+      pending_correction_.reset();
+    }
     return correction.estimate.time;
   }
 
@@ -473,6 +461,34 @@ void PropagatedOdometryWorker::discardPendingCorrectionLocked(
   }
   pending_correction_.reset();
   waiting_correction_sequence_.reset();
+}
+
+bool PropagatedOdometryWorker::rejectCorrectionNotNewerThanAppliedLocked(
+    const std::uint64_t correction_sequence,
+    const Timestamp& correction_time) {
+  const bool old_sequence =
+      diagnostics_.last_applied_correction_sequence != 0U &&
+      correction_sequence < diagnostics_.last_applied_correction_sequence;
+  const bool old_timestamp =
+      diagnostics_.last_applied_correction_time.has_value() &&
+      correction_time.nanoseconds() <
+          diagnostics_.last_applied_correction_time->nanoseconds();
+  const bool duplicate =
+      (diagnostics_.last_applied_correction_sequence != 0U &&
+       correction_sequence == diagnostics_.last_applied_correction_sequence) ||
+      (diagnostics_.last_applied_correction_time.has_value() &&
+       correction_time.nanoseconds() ==
+           diagnostics_.last_applied_correction_time->nanoseconds());
+  if (old_sequence) {
+    ++diagnostics_.old_sequence_correction_drop_count;
+  }
+  if (old_timestamp) {
+    ++diagnostics_.old_timestamp_correction_drop_count;
+  }
+  if (duplicate) {
+    ++diagnostics_.duplicate_correction_drop_count;
+  }
+  return old_sequence || old_timestamp || duplicate;
 }
 
 void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {

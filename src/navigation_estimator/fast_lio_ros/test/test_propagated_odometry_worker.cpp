@@ -426,6 +426,41 @@ TEST(PropagatedOdometryWorkerTest,
   worker.stop();
 }
 
+TEST(PropagatedOdometryWorkerTest,
+     CorrectionQueuedDuringReplayCannotRewindAppliedCorrection) {
+  PropagatedOdometryWorkerConfig config;
+  config.imu_ingress_capacity = 20'000U;
+  config.propagator.imu_history_duration_ns = 1'000'000'000'000LL;
+  PropagatedOdometryWorker worker(config);
+  worker.start();
+  constexpr std::size_t kHistorySamples = 10'000U;
+  for (std::size_t index = 0U; index < kHistorySamples; ++index) {
+    ASSERT_TRUE(worker.enqueueImu(
+        sample(static_cast<std::int64_t>(index) * 1'000'000)));
+  }
+  ASSERT_TRUE(waitForDiagnostics(worker, [kHistorySamples](const auto& diagnostics) {
+    return diagnostics.total_imu_samples_drained == kHistorySamples;
+  }));
+
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.last_applied_correction_sequence == 1U;
+  }, 5s));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1'000'000, 3U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.replay_in_progress;
+  }, 5s));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(2'000'000, 2U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.last_applied_correction_sequence == 3U &&
+           diagnostics.old_sequence_correction_drop_count == 1U &&
+           !diagnostics.replay_in_progress;
+  }, 5s));
+  std::this_thread::sleep_for(20ms);
+  EXPECT_EQ(worker.diagnostics().last_applied_correction_sequence, 3U);
+  worker.stop();
+}
+
 TEST(PropagatedOdometryWorkerTest, WorkerProcessesOnePublicationPerDrainedBatch) {
   OutputCollector collector;
   PropagatedOdometryWorker worker(
