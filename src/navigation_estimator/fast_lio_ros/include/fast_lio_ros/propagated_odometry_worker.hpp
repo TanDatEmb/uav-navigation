@@ -59,6 +59,7 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t publication_count{0U};
   std::uint64_t publication_skip_count{0U};
   std::uint64_t load_shedding_count{0U};
+  std::uint64_t correction_coalesced_count{0U};
 };
 
 class PropagatedOdometryWorker {

@@ -67,6 +67,27 @@ bool PropagatedOdometryWorker::enqueueImu(const ImuSample& sample) {
 
 bool PropagatedOdometryWorker::enqueueEstimatorState(
     EstimatorStateUpdate update) {
+  if (update.corrected_estimate.has_value() && update.navigation_valid &&
+      update.status == EstimatorStatus::kTracking) {
+    std::lock_guard lock(mutex_);
+    if (!accepting_) {
+      return false;
+    }
+    for (auto it = queue_.rbegin(); it != queue_.rend(); ++it) {
+      auto* pending = std::get_if<EstimatorStateUpdate>(&*it);
+      if (pending == nullptr || !pending->corrected_estimate.has_value()) {
+        continue;
+      }
+      if (update.correction_sequence > pending->correction_sequence &&
+          update.corrected_estimate->time.nanoseconds() >=
+              pending->corrected_estimate->time.nanoseconds()) {
+        *pending = std::move(update);
+        ++diagnostics_.correction_coalesced_count;
+        return true;
+      }
+      break;
+    }
+  }
   return enqueue(std::move(update));
 }
 
