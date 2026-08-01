@@ -9,7 +9,6 @@
 #include <mutex>
 #include <optional>
 #include <thread>
-#include <variant>
 #include <chrono>
 
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
@@ -24,20 +23,12 @@ struct PropagatedOdometryWorkerConfig {
   double publish_rate_hz{50.0};
 };
 
-struct ImuEvent {
-  ImuSample sample;
-};
-
 struct EstimatorStateUpdate {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
   bool navigation_valid{false};
   std::optional<StateEstimate> corrected_estimate;
   std::uint64_t correction_sequence{0U};
 };
-
-struct StopEvent {};
-using PropagatedOdometryEvent =
-    std::variant<ImuEvent, EstimatorStateUpdate, StopEvent>;
 
 struct PropagatedOdometryWorkerDiagnostics {
   ImuStatePropagatorDiagnostics propagator;
@@ -54,6 +45,14 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::int64_t maximum_replay_runtime_us{0};
   std::size_t current_event_queue_depth{0U};
   std::size_t maximum_event_queue_depth{0U};
+  std::uint64_t worker_wakeup_count{0U};
+  std::uint64_t imu_batch_count{0U};
+  std::uint64_t total_imu_samples_drained{0U};
+  std::size_t maximum_imu_batch_size{0U};
+  std::uint64_t control_generation{0U};
+  std::uint64_t correction_waiting_for_bracket_count{0U};
+  std::uint64_t load_shedding_transition_count{0U};
+  std::uint64_t suspended_imu_drop_count{0U};
   std::optional<Timestamp> last_published_time;
   std::optional<Timestamp> next_publish_deadline;
   std::uint64_t publication_count{0U};
@@ -79,13 +78,12 @@ class PropagatedOdometryWorker {
   void stop();
   [[nodiscard]] bool enqueueImu(const ImuSample& sample);
   [[nodiscard]] bool enqueueEstimatorState(EstimatorStateUpdate update);
-  void shedLoad();
+  void requestLoadShedding() noexcept;
   [[nodiscard]] PropagatedOdometryWorkerDiagnostics diagnostics() const;
 
  private:
-  [[nodiscard]] bool enqueue(PropagatedOdometryEvent event);
   void run();
-  void process(ImuEvent event);
+  void process(ImuSample event);
   void process(EstimatorStateUpdate update);
   void updateSnapshot();
   void maybePublishOnImu(const ImuSample& sample);
@@ -95,14 +93,17 @@ class PropagatedOdometryWorker {
   ImuProcessedCallback imu_processed_callback_;
   mutable std::mutex mutex_;
   std::condition_variable ready_;
-  std::deque<PropagatedOdometryEvent> queue_;
+  std::deque<ImuSample> imu_ingress_;
+  std::optional<EstimatorStateUpdate> pending_correction_;
   PropagatedOdometryWorkerDiagnostics diagnostics_;
   bool started_{false};
   bool accepting_{false};
-  bool stop_enqueued_{false};
+  std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> load_shed_requested_{false};
+  std::atomic<bool> invalidation_requested_{false};
+  bool suspended_{false};
+  std::uint64_t control_generation_{0U};
   std::thread thread_;
-  std::atomic<bool> overflow_pending_{false};
-  std::atomic<bool> load_shed_pending_{false};
   std::int64_t publish_period_ns_{20'000'000};
   std::optional<Timestamp> last_published_time_;
   std::optional<Timestamp> next_publish_deadline_;

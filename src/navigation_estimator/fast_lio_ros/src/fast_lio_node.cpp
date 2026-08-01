@@ -205,15 +205,12 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
                          parameters_.lidar_queue_capacity / 2));
         }
         if (shed) {
-          propagated_odometry_worker_->shedLoad();
-          (void)propagated_odometry_worker_->enqueueEstimatorState(
-              {EstimatorStatus::kDegraded, false, std::nullopt, 0U});
+          propagated_odometry_worker_->requestLoadShedding();
         } else {
           (void)propagated_odometry_worker_->enqueueImu(sample);
         }
       } else {
-        (void)propagated_odometry_worker_->enqueueEstimatorState(
-            {EstimatorStatus::kDegraded, false, std::nullopt, 0U});
+        propagated_odometry_worker_->requestLoadShedding();
       }
     }
   } catch (const std::exception& error) {

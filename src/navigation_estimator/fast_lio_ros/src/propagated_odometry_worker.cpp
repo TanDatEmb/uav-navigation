@@ -45,13 +45,7 @@ void PropagatedOdometryWorker::stop() {
       return;
     }
     accepting_ = false;
-    if (!stop_enqueued_) {
-      queue_.push_back(StopEvent{});
-      stop_enqueued_ = true;
-      diagnostics_.current_event_queue_depth = queue_.size();
-      diagnostics_.maximum_event_queue_depth =
-          std::max(diagnostics_.maximum_event_queue_depth, queue_.size());
-    }
+    stop_requested_.store(true, std::memory_order_release);
   }
   ready_.notify_one();
   if (thread_.joinable()) {
@@ -62,50 +56,62 @@ void PropagatedOdometryWorker::stop() {
 }
 
 bool PropagatedOdometryWorker::enqueueImu(const ImuSample& sample) {
-  return enqueue(ImuEvent{sample});
+  bool notify = false;
+  {
+    std::lock_guard lock(mutex_);
+    if (!accepting_) return false;
+    if (imu_ingress_.size() >= config_.event_queue_capacity) {
+      ++diagnostics_.queue_overflow_count;
+      load_shed_requested_.store(true, std::memory_order_release);
+      ready_.notify_one();
+      return false;
+    }
+    notify = imu_ingress_.empty() && !suspended_;
+    imu_ingress_.push_back(sample);
+    diagnostics_.current_event_queue_depth = imu_ingress_.size();
+    diagnostics_.maximum_event_queue_depth =
+        std::max(diagnostics_.maximum_event_queue_depth, imu_ingress_.size());
+  }
+  if (notify) ready_.notify_one();
+  return true;
 }
 
 bool PropagatedOdometryWorker::enqueueEstimatorState(
     EstimatorStateUpdate update) {
-  if (update.corrected_estimate.has_value() && update.navigation_valid &&
-      update.status == EstimatorStatus::kTracking) {
+  {
     std::lock_guard lock(mutex_);
-    if (!accepting_) {
-      return false;
-    }
-    for (auto it = queue_.rbegin(); it != queue_.rend(); ++it) {
-      auto* pending = std::get_if<EstimatorStateUpdate>(&*it);
-      if (pending == nullptr || !pending->corrected_estimate.has_value()) {
-        continue;
-      }
-      if (update.correction_sequence > pending->correction_sequence &&
-          update.corrected_estimate->time.nanoseconds() >=
-              pending->corrected_estimate->time.nanoseconds()) {
-        *pending = std::move(update);
+    if (!accepting_) return false;
+    diagnostics_.main_status = update.status;
+    diagnostics_.navigation_valid = update.navigation_valid;
+    if (update.status != EstimatorStatus::kTracking || !update.navigation_valid) {
+      ++control_generation_;
+      diagnostics_.control_generation = control_generation_;
+      pending_correction_.reset();
+      invalidation_requested_.store(true, std::memory_order_release);
+    } else if (update.corrected_estimate.has_value()) {
+      diagnostics_.last_received_correction_sequence =
+          std::max(diagnostics_.last_received_correction_sequence,
+                   update.correction_sequence);
+      if (pending_correction_.has_value()) {
+        if (update.correction_sequence <= pending_correction_->correction_sequence ||
+            update.corrected_estimate->time.nanoseconds() <
+                pending_correction_->corrected_estimate->time.nanoseconds()) {
+          return true;
+        }
         ++diagnostics_.correction_coalesced_count;
-        return true;
       }
-      break;
+      pending_correction_ = std::move(update);
+      diagnostics_.last_correction_time =
+          pending_correction_->corrected_estimate->time;
     }
   }
-  return enqueue(std::move(update));
+  ready_.notify_one();
+  return true;
 }
 
-void PropagatedOdometryWorker::shedLoad() {
-  std::lock_guard lock(mutex_);
-  std::size_t removed = 0U;
-  for (auto it = queue_.begin(); it != queue_.end();) {
-    if (std::holds_alternative<ImuEvent>(*it)) {
-      it = queue_.erase(it);
-      ++removed;
-    } else {
-      ++it;
-    }
-  }
-  if (removed != 0U) {
-    ++diagnostics_.load_shedding_count;
-    diagnostics_.current_event_queue_depth = queue_.size();
-    load_shed_pending_.store(true, std::memory_order_release);
+void PropagatedOdometryWorker::requestLoadShedding() noexcept {
+  if (!load_shed_requested_.exchange(true, std::memory_order_acq_rel)) {
+    ready_.notify_one();
   }
 }
 
@@ -115,61 +121,49 @@ PropagatedOdometryWorker::diagnostics() const {
   return diagnostics_;
 }
 
-bool PropagatedOdometryWorker::enqueue(PropagatedOdometryEvent event) {
-  {
-    std::lock_guard lock(mutex_);
-    if (!accepting_) {
-      return false;
-    }
-    if (queue_.size() >= config_.event_queue_capacity) {
-      ++diagnostics_.queue_overflow_count;
-      overflow_pending_.store(true, std::memory_order_release);
-      return false;
-    }
-    queue_.push_back(std::move(event));
-    diagnostics_.current_event_queue_depth = queue_.size();
-    diagnostics_.maximum_event_queue_depth =
-        std::max(diagnostics_.maximum_event_queue_depth, queue_.size());
-  }
-  ready_.notify_one();
-  return true;
-}
-
 void PropagatedOdometryWorker::run() {
   (void)pthread_setname_np(pthread_self(), "lio_propagated");
   while (true) {
-    PropagatedOdometryEvent event;
+    std::deque<ImuSample> batch;
+    std::optional<EstimatorStateUpdate> correction;
     {
       std::unique_lock lock(mutex_);
-      ready_.wait(lock, [this] { return !queue_.empty(); });
-      event = std::move(queue_.front());
-      queue_.pop_front();
-      diagnostics_.current_event_queue_depth = queue_.size();
+      ready_.wait(lock, [this] { return stop_requested_.load() ||
+                                        !imu_ingress_.empty() || pending_correction_.has_value() ||
+                                        load_shed_requested_.load() ||
+                                        invalidation_requested_.load(); });
+      if (stop_requested_.load()) return;
+      ++diagnostics_.worker_wakeup_count;
+      batch.swap(imu_ingress_);
+      correction = std::move(pending_correction_);
+      diagnostics_.current_event_queue_depth = imu_ingress_.size();
     }
-    if (std::holds_alternative<StopEvent>(event)) {
-      return;
-    }
-    if (overflow_pending_.exchange(false, std::memory_order_acq_rel)) {
+    if (load_shed_requested_.exchange(false, std::memory_order_acq_rel)) {
+      if (!suspended_) {
+        suspended_ = true;
+        ++control_generation_;
+        ++diagnostics_.load_shedding_count;
+        ++diagnostics_.load_shedding_transition_count;
+      }
       propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
     }
-    if (load_shed_pending_.exchange(false, std::memory_order_acq_rel)) {
-      propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
+    if (invalidation_requested_.exchange(false, std::memory_order_acq_rel)) {
+      propagator_.invalidate(PropagatedOdometryStatus::kMainEstimatorInvalid);
     }
-    if (auto* imu = std::get_if<ImuEvent>(&event)) {
-      process(std::move(*imu));
-    } else {
-      process(std::move(std::get<EstimatorStateUpdate>(event)));
+    if (correction.has_value()) process(std::move(*correction));
+    if (!suspended_) {
+      for (auto& sample : batch) process(std::move(sample));
     }
     updateSnapshot();
   }
 }
 
-void PropagatedOdometryWorker::process(ImuEvent event) {
-  const Status accepted = propagator_.acceptImu(event.sample);
+void PropagatedOdometryWorker::process(ImuSample event) {
+  const Status accepted = propagator_.acceptImu(event);
   Status status = accepted;
   if (accepted.ok() &&
       (!next_publish_deadline_.has_value() ||
-       event.sample.time.nanoseconds() >= next_publish_deadline_->nanoseconds())) {
+       event.time.nanoseconds() >= next_publish_deadline_->nanoseconds())) {
     status = propagator_.flushPendingPrediction();
   }
   std::optional<Timestamp> last_correction_time;
@@ -198,7 +192,7 @@ void PropagatedOdometryWorker::process(ImuEvent event) {
   const bool main_valid = navigation_valid &&
                           main_status == EstimatorStatus::kTracking;
   if (status.ok() && main_valid && propagator_.valid()) {
-    maybePublishOnImu(event.sample);
+    maybePublishOnImu(event);
   } else {
     ++publication_skip_count_;
   }
@@ -236,6 +230,7 @@ void PropagatedOdometryWorker::process(EstimatorStateUpdate update) {
           std::max(diagnostics_.maximum_replay_runtime_us, runtime_us);
     }
     if (replay_status.ok()) {
+      suspended_ = false;
       std::lock_guard lock(mutex_);
       diagnostics_.last_applied_correction_time = update.corrected_estimate->time;
       diagnostics_.last_applied_correction_sequence =
