@@ -70,6 +70,25 @@ bool PropagatedOdometryWorker::enqueueEstimatorState(
   return enqueue(std::move(update));
 }
 
+void PropagatedOdometryWorker::shedLoad() {
+  std::lock_guard lock(mutex_);
+  std::size_t removed = 0U;
+  for (auto it = queue_.begin(); it != queue_.end();) {
+    if (std::holds_alternative<ImuEvent>(*it)) {
+      it = queue_.erase(it);
+      ++removed;
+    } else {
+      ++it;
+    }
+  }
+  if (removed != 0U) {
+    ++diagnostics_.load_shedding_count;
+    diagnostics_.current_event_queue_depth = queue_.size();
+    propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
+    overflow_pending_.store(false, std::memory_order_release);
+  }
+}
+
 PropagatedOdometryWorkerDiagnostics
 PropagatedOdometryWorker::diagnostics() const {
   std::lock_guard lock(mutex_);

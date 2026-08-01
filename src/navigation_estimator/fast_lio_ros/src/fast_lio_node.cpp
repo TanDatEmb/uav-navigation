@@ -195,7 +195,22 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
     const bool main_accepted = enqueue(InputMeasurement{sample});
     if (propagated_odometry_worker_) {
       if (main_accepted) {
-        (void)propagated_odometry_worker_->enqueueImu(sample);
+        bool shed = false;
+        {
+          std::lock_guard lock(input_mutex_);
+          shed = imu_queue_.size() + lidar_queue_.size() >=
+                     static_cast<std::size_t>(parameters_.imu_queue_capacity / 8) ||
+                 lidar_queue_.size() >=
+                     static_cast<std::size_t>(std::max<std::int64_t>(1,
+                         parameters_.lidar_queue_capacity / 2));
+        }
+        if (shed) {
+          propagated_odometry_worker_->shedLoad();
+          (void)propagated_odometry_worker_->enqueueEstimatorState(
+              {EstimatorStatus::kDegraded, false, std::nullopt, 0U});
+        } else {
+          (void)propagated_odometry_worker_->enqueueImu(sample);
+        }
       } else {
         (void)propagated_odometry_worker_->enqueueEstimatorState(
             {EstimatorStatus::kDegraded, false, std::nullopt, 0U});

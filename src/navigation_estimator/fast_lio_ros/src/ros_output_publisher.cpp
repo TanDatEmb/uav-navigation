@@ -464,6 +464,7 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("imu_gap_count", std::to_string(core.imu_gap_count)),
       keyValue("missing_bracket_count", std::to_string(core.missing_bracket_count)),
       keyValue("queue_overflow_count", std::to_string(propagated.queue_overflow_count)),
+      keyValue("load_shedding_count", std::to_string(propagated.load_shedding_count)),
       keyValue("stale_stop_count", std::to_string(propagated.stale_stop_count)),
       keyValue("invalid_state_count", std::to_string(core.invalid_state_count)),
       keyValue("publication_count", std::to_string(publication_count)),

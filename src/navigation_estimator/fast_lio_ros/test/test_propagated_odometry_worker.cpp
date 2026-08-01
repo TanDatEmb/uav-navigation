@@ -184,5 +184,6 @@ TEST(PropagatedOdometryWorkerTest, FailedReplayDoesNotBecomeAppliedCorrection) {
   EXPECT_EQ(diagnostics.last_applied_correction_sequence, 0U);
 }
 
+
 }  // namespace
 }  // namespace uav::nav::lio

@@ -58,6 +58,7 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::optional<Timestamp> next_publish_deadline;
   std::uint64_t publication_count{0U};
   std::uint64_t publication_skip_count{0U};
+  std::uint64_t load_shedding_count{0U};
 };
 
 class PropagatedOdometryWorker {
@@ -77,6 +78,7 @@ class PropagatedOdometryWorker {
   void stop();
   [[nodiscard]] bool enqueueImu(const ImuSample& sample);
   [[nodiscard]] bool enqueueEstimatorState(EstimatorStateUpdate update);
+  void shedLoad();
   [[nodiscard]] PropagatedOdometryWorkerDiagnostics diagnostics() const;
 
  private:
