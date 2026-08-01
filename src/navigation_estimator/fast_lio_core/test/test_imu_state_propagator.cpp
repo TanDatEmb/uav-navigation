@@ -52,6 +52,19 @@ TEST(ImuStatePropagatorTest, RejectsTimestampRegressionAndInvalidatesOutput) {
   EXPECT_EQ(propagator.diagnostics().timestamp_regression_count, 1U);
 }
 
+TEST(ImuStatePropagatorTest, RecordsReplayImuWithoutPrediction) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.recordImuForReplay(sample(0)).ok());
+  ASSERT_TRUE(propagator.recordImuForReplay(sample(10'000'000)).ok());
+  EXPECT_FALSE(propagator.valid());
+  EXPECT_FALSE(propagator.estimate().has_value());
+  ASSERT_TRUE(propagator.diagnostics().latest_imu_time.has_value());
+  EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
+            10'000'000);
+  EXPECT_FALSE(propagator.diagnostics().propagated_time.has_value());
+  EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 2U);
+}
+
 TEST(ImuStatePropagatorTest, MissingBracketInvalidatesWithoutChangingState) {
   ImuStatePropagatorConfig config;
   config.imu_history_duration_ns = 30'000'000;
