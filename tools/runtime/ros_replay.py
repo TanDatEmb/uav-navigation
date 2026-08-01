@@ -153,6 +153,15 @@ def collect(output: Path, state_path: Path) -> int:
         state = diagnostics_values(message)
         if not state:
             return
+        if state_path.is_file():
+            combined = json.loads(state_path.read_text(encoding="utf-8"))
+            if "propagated_odometry" in state:
+                combined["propagated_odometry"] = state["propagated_odometry"]
+            combined.update({
+                key: value for key, value in state.items()
+                if key != "propagated_odometry"
+            })
+            state = combined
         state["collector_wall_time_ns"] = time.time_ns()
         with output.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(state, sort_keys=True) + "\n")
