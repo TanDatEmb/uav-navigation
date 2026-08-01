@@ -25,26 +25,33 @@ RECORDED_TOPICS = (
 )
 
 
+def diagnostic_status_values(status: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    level = status.level
+    if isinstance(level, (bytes, bytearray)):
+        level = level[0]
+    result["level"] = int(level)
+    result["message"] = status.message
+    for item in status.values:
+        value: Any = item.value
+        if value in ("true", "false"):
+            value = value == "true"
+        else:
+            try:
+                value = float(value) if "." in value else int(value)
+            except ValueError:
+                pass
+        result[item.key] = value
+    return result
+
+
 def diagnostics_values(message: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for status in message.status:
-        if status.name != "fast_lio/transport":
-            continue
-        level = status.level
-        if isinstance(level, (bytes, bytearray)):
-            level = level[0]
-        result["level"] = int(level)
-        result["message"] = status.message
-        for item in status.values:
-            value: Any = item.value
-            if value in ("true", "false"):
-                value = value == "true"
-            else:
-                try:
-                    value = float(value) if "." in value else int(value)
-                except ValueError:
-                    pass
-            result[item.key] = value
+        if status.name == "fast_lio/transport":
+            result.update(diagnostic_status_values(status))
+        elif status.name == "fast_lio/propagated_odometry":
+            result["propagated_odometry"] = diagnostic_status_values(status)
     return result
 
 
@@ -70,6 +77,22 @@ def acceptance_failures(state: dict[str, Any]) -> list[str]:
         failures.append("LiDAR messages dropped")
     if not drained(state):
         failures.append("estimator queue did not drain")
+    propagated = state.get("propagated_odometry", {})
+    if propagated.get("enabled") is True:
+        if propagated.get("timestamp_regression_count", 0) != 0:
+            failures.append("propagated timestamp regression detected")
+        if propagated.get("duplicate_correction_drop_count", 0) != 0:
+            failures.append("propagated duplicate correction detected")
+        if propagated.get("queue_overflow_count", 0) != 0:
+            failures.append("propagated auxiliary queue overflow detected")
+        if propagated.get("load_shedding_count", 0) != 0:
+            failures.append("propagated load shedding detected")
+        if propagated.get("continuity_reset_count", 0) != 0:
+            failures.append("propagated continuity reset detected")
+        if propagated.get("requires_reanchor") is True:
+            failures.append("propagated continuity requires reanchor")
+        if propagated.get("publication_count", 0) <= 0:
+            failures.append("propagated odometry was not published")
     return failures
 
 

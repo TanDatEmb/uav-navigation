@@ -97,11 +97,57 @@ class DrainTest(unittest.TestCase):
                 level=b"\x01",
                 message="lag",
                 values=[SimpleNamespace(key="imu_drop_count", value="0")],
+            ),
+            SimpleNamespace(
+                name="fast_lio/propagated_odometry",
+                level=0,
+                message="READY",
+                values=[
+                    SimpleNamespace(key="enabled", value="true"),
+                    SimpleNamespace(key="publication_count", value="12"),
+                    SimpleNamespace(key="requires_reanchor", value="false"),
+                ],
             )
         ])
         self.assertEqual(
             diagnostics_values(message),
-            {"level": 1, "message": "lag", "imu_drop_count": 0},
+            {
+                "level": 1,
+                "message": "lag",
+                "imu_drop_count": 0,
+                "propagated_odometry": {
+                    "level": 0,
+                    "message": "READY",
+                    "enabled": True,
+                    "publication_count": 12,
+                    "requires_reanchor": False,
+                },
+            },
+        )
+
+    def test_enabled_propagated_metrics_are_acceptance_checked(self) -> None:
+        state = {
+            "current_input_queue_depth": 0,
+            "current_imu_queue_depth": 0,
+            "current_lidar_queue_depth": 0,
+            "received_imu_count": 1,
+            "processed_imu_count": 1,
+            "received_lidar_count": 1,
+            "processed_lidar_count": 1,
+            "propagated_odometry": {
+                "enabled": True,
+                "timestamp_regression_count": 1,
+                "publication_count": 0,
+                "requires_reanchor": True,
+            },
+        }
+        self.assertEqual(
+            acceptance_failures(state),
+            [
+                "propagated timestamp regression detected",
+                "propagated continuity requires reanchor",
+                "propagated odometry was not published",
+            ],
         )
 
     def test_requires_zero_queues_and_converged_counters(self) -> None:
