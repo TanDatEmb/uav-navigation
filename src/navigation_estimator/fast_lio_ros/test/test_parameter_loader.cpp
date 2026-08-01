@@ -153,8 +153,59 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
   EXPECT_EQ(profile.config_sha256.size(), 64U);
   EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 10U);
   EXPECT_DOUBLE_EQ(
-      profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.2);
+      profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
+}
+
+TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
+  const std::string path =
+      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_real.yaml";
+  rclcpp::NodeOptions options;
+  options.arguments({"--ros-args", "--params-file", path});
+  rclcpp::Node node{"fast_lio_real_profile_test", options};
+  const auto parameters = ParameterLoader::declareAndLoad(node);
+  const auto profile = makeEstimatorProfile(parameters);
+
+  EXPECT_EQ(parameters.lidar_topic, "/livox/lidar");
+  EXPECT_EQ(parameters.imu_topic, "/livox/imu");
+  EXPECT_EQ(parameters.lidar_input_frame, "livox_frame");
+  EXPECT_EQ(parameters.imu_input_frame, "livox_frame");
+  EXPECT_EQ(parameters.lidar_message_type, "livox_custom");
+  EXPECT_EQ(profile.lidar_timing_mode, "per_point");
+  EXPECT_EQ(profile.clock_domain, ClockDomain::kSensorTime);
+  EXPECT_EQ(profile.timestamp_policy,
+            LivoxTimestampPolicy::kTimebaseAuthoritative);
+  EXPECT_TRUE(parameters.reject_timestamp_regression);
+  EXPECT_EQ(parameters.maximum_imu_gap_ns, 20'000'000);
+  EXPECT_EQ(parameters.maximum_recoverable_imu_gap_ns, 50'000'000);
+  EXPECT_EQ(parameters.recovery_confirmation_updates, 3);
+  EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
+  EXPECT_FALSE(parameters.estimate_extrinsic_online);
+  EXPECT_EQ(parameters.translation_imu_lidar_m,
+            (std::array<double, 3>{-0.019391, -0.000278, 0.080926}));
+  EXPECT_EQ(parameters.rotation_imu_lidar_xyzw,
+            (std::array<double, 4>{0.0, 0.0, 0.0, 1.0}));
+  EXPECT_EQ(parameters.minimum_imu_samples, 200);
+  EXPECT_TRUE(parameters.require_stationary);
+  EXPECT_DOUBLE_EQ(parameters.minimum_range_m, 0.1);
+  EXPECT_DOUBLE_EQ(parameters.maximum_range_m, 40.0);
+  EXPECT_DOUBLE_EQ(parameters.scan_voxel_size_m, 0.9);
+  EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.2);
+  EXPECT_EQ(parameters.maximum_registration_iterations, 10);
+  EXPECT_TRUE(parameters.publish_registered_points);
+  EXPECT_FALSE(parameters.publish_local_map);
+  EXPECT_EQ(parameters.imu_queue_capacity, 4096);
+  EXPECT_EQ(parameters.lidar_queue_capacity, 16);
+  EXPECT_EQ(parameters.maximum_processing_lag_ms, 500);
+  EXPECT_EQ(parameters.overload_policy, "fail");
+  EXPECT_EQ(parameters.input_qos_reliability, "best_effort");
+  EXPECT_TRUE(parameters.propagated_odometry_enabled);
+  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
+  EXPECT_EQ(parameters.propagated_odometry_imu_ingress_capacity, 4096);
+  EXPECT_EQ(parameters.propagated_odometry_imu_history_duration_ns,
+            1'000'000'000);
+  EXPECT_EQ(parameters.propagated_odometry_maximum_correction_age_ns,
+            300'000'000);
 }
 
 TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {
@@ -179,7 +230,7 @@ TEST_F(ParameterLoaderTest, PublishLocalMapControlsPeriodicCoreSnapshot) {
 TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
   for (const auto& [line, suffix] :
        std::array<std::pair<std::string_view, std::string_view>, 2>{
-           std::pair{"      scan_voxel_size_m: 0.2\n", "scan_voxel"},
+           std::pair{"      scan_voxel_size_m: 0.9\n", "scan_voxel"},
            std::pair{"    mapping:\n"
                      "      registration_map: {voxel_size_m: 0.2}\n",
                      "registration_map_voxel"}}) {

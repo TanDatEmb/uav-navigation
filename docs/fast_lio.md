@@ -84,14 +84,24 @@ canonical config, provenance counts, and the Git raw-data guard.
   after a successful LiDAR correction. Its pose is the IMU pose in `odom`;
   `header.frame_id=odom`, `child_frame_id=imu_link`. Linear twist is expressed
   in the IMU child frame, as required by the message contract.
+- `/lio/odometry_propagated`: high-rate propagated `nav_msgs/msg/Odometry`
+  produced from the latest committed correction and the IMU stream. It is a
+  low-latency prediction between corrected outputs, not an independent global
+  estimate; continuity and correction-age status are reported in
+  `/lio/diagnostics`.
 - `/lio/registered_points`: corrected registered scan in `odom`.
 - `/lio/local_map`: local registration-map snapshot in `odom`.
 - `/lio/diagnostics`: estimator and transport counters, processing
   percentiles, queue depth, lag, and drops.
 - `/tf` and `/tf_static`: configured frame transforms.
 
-`trajectory.csv` has the same corrected-only semantic. The estimator does not publish ROS
-pose/twist covariance; covariance health remains in diagnostics.
+`trajectory.csv` has the same corrected-only semantic. The estimator does not
+publish ROS pose/twist covariance; covariance health remains in diagnostics.
+The real Mid-360 profile uses `/livox/imu` and `/livox/lidar`, `livox_custom`
+per-point sensor timing, the pinned hardware extrinsic, bounded runtime
+queues, and propagated odometry enabled at 50 Hz. This configuration is ready
+for a real-hardware test; repository acceptance does not claim that hardware
+has been validated.
 
 ## Artifacts
 
@@ -137,7 +147,8 @@ the other.
 
 ## Known limitations
 
-- Corrected odometry only; there is no high-rate or IMU-only odometry output.
+- Propagated odometry is a high-rate prediction between corrections; corrected
+  odometry remains the authoritative LiDAR-corrected output.
 - No global SLAM or persistent global map.
 - No loop closure.
 - No relocalization or global localization.
