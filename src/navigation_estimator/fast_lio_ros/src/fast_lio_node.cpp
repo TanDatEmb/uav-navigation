@@ -105,6 +105,25 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
   runtime_diagnostics_.lidar_queue_capacity =
       static_cast<std::size_t>(parameters_.lidar_queue_capacity);
+  if (parameters_.propagated_odometry_enabled) {
+    propagated_odometry_publisher_ =
+        std::make_unique<RosPropagatedOdometryPublisher>(*this, parameters_);
+    PropagatedOdometryWorkerConfig worker_config;
+    worker_config.propagator.ikfom = profile_.estimator.ikfom;
+    worker_config.propagator.residual_builder =
+        profile_.estimator.residual_builder;
+    worker_config.propagator.imu_history_duration_ns =
+        parameters_.propagated_odometry_imu_history_duration_ns;
+    worker_config.event_queue_capacity = static_cast<std::size_t>(
+        parameters_.propagated_odometry_event_queue_capacity);
+    worker_config.maximum_correction_age_ns =
+        parameters_.propagated_odometry_maximum_correction_age_ns;
+    propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
+        worker_config, [this](const std::optional<StateEstimate>& estimate) {
+          propagated_odometry_publisher_->onImuEstimate(estimate);
+        });
+    propagated_odometry_worker_->start();
+  }
   const bool livox_input =
       parameters_.lidar_message_type == "livox_custom";
   const auto pointcloud_qos =
@@ -147,6 +166,9 @@ FastLioNode::~FastLioNode() {
     stopping_ = true;
   }
   input_ready_.notify_all();
+  if (propagated_odometry_worker_) {
+    propagated_odometry_worker_->stop();
+  }
   if (processing_worker_.joinable()) {
     processing_worker_.join();
   }
@@ -155,7 +177,7 @@ FastLioNode::~FastLioNode() {
 void FastLioNode::onLivoxCustom(
     const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message) {
   try {
-    enqueue(livox_custom_adapter_.convert(*message));
+    (void)enqueue(livox_custom_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid Livox CustomMsg: %s",
                 error.what());
@@ -164,7 +186,10 @@ void FastLioNode::onLivoxCustom(
 
 void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
   try {
-    enqueue(imu_adapter_.convert(*message));
+    const ImuSample sample = imu_adapter_.convert(*message);
+    if (enqueue(InputMeasurement{sample}) && propagated_odometry_worker_) {
+      (void)propagated_odometry_worker_->enqueueImu(sample);
+    }
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid IMU message: %s", error.what());
   }
@@ -172,15 +197,18 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
 
 void FastLioNode::onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
   try {
-    enqueue(lidar_adapter_.convert(*message));
+    (void)enqueue(lidar_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid LiDAR message: %s", error.what());
   }
 }
 
-void FastLioNode::enqueue(InputMeasurement measurement) {
+bool FastLioNode::enqueue(InputMeasurement measurement) {
   {
     std::lock_guard lock(input_mutex_);
+    if (stopping_) {
+      return false;
+    }
     const bool is_imu = std::holds_alternative<ImuSample>(measurement);
     if (is_imu) {
       ++ingress_diagnostics_.ros_received_imu_count;
@@ -231,7 +259,7 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
                  : runtime_diagnostics_.lidar_queue_capacity,
           runtime_diagnostics_.latest_processed_time_ns,
           runtime_diagnostics_.latest_received_time_ns);
-      return;
+      return false;
     }
     if (is_imu) {
       imu_queue_.push_back(std::move(std::get<ImuSample>(measurement)));
@@ -261,6 +289,7 @@ void FastLioNode::enqueue(InputMeasurement measurement) {
                  lidar_queue_.size());
   }
   input_ready_.notify_one();
+  return true;
 }
 
 void FastLioNode::processingLoop() {
@@ -366,6 +395,21 @@ void FastLioNode::publishAvailableResults() {
     }
     output_publisher_.publish(augmented);
     transform_publisher_.publish(augmented);
+    if (propagated_odometry_worker_) {
+      const bool corrected = augmented.hasCorrectedOutput();
+      if (corrected) {
+        ++correction_sequence_;
+      }
+      EstimatorStateUpdate update;
+      update.status = augmented.status_after;
+      update.navigation_valid = augmented.diagnostics.navigation_valid;
+      if (corrected) {
+        update.corrected_estimate = augmented.corrected_estimate;
+      }
+      update.correction_sequence = correction_sequence_;
+      (void)propagated_odometry_worker_->enqueueEstimatorState(
+          std::move(update));
+    }
   }
 }
 

@@ -26,6 +26,7 @@ add_library(${PROJECT_NAME}
   src/ros_lidar_adapter.cpp
   src/ros_livox_custom_adapter.cpp
   src/ros_output_publisher.cpp
+  src/ros_propagated_odometry_publisher.cpp
   src/ros_time_converter.cpp
   src/ros_transform_publisher.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -66,6 +67,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_propagated_odometry_worker
     test/test_propagated_odometry_worker.cpp)
   target_link_libraries(test_propagated_odometry_worker ${PROJECT_NAME})
+  ament_add_gtest(test_ros_propagated_odometry_publisher
+    test/test_ros_propagated_odometry_publisher.cpp)
+  target_link_libraries(test_ros_propagated_odometry_publisher
+    ${PROJECT_NAME})
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

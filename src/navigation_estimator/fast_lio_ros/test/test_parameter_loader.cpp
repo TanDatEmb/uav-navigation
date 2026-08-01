@@ -48,6 +48,19 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 8);
   EXPECT_EQ(parameters.overload_policy, "fail");
+  EXPECT_FALSE(parameters.propagated_odometry_enabled);
+  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
+}
+
+TEST_F(ParameterLoaderTest, RejectsInvalidPropagatedOdometryPolicy) {
+  rclcpp::Node node{"parameter_loader_propagated_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.propagated_odometry_publish_rate_hz = 0.0;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.propagated_odometry_publish_rate_hz = 50.0;
+  parameters.propagated_odometry_imu_history_duration_ns =
+      parameters.propagated_odometry_maximum_correction_age_ns;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 
 TEST_F(ParameterLoaderTest, RejectsAutoTimingForProductionNode) {

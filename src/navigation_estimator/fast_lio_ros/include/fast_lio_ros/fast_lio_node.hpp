@@ -13,10 +13,12 @@
 
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
+#include "fast_lio_ros/propagated_odometry_worker.hpp"
 #include "fast_lio_ros/ros_imu_adapter.hpp"
 #include "fast_lio_ros/ros_lidar_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 #include "fast_lio_ros/ros_output_publisher.hpp"
+#include "fast_lio_ros/ros_propagated_odometry_publisher.hpp"
 #include "fast_lio_ros/runtime_diagnostics.hpp"
 #include "fast_lio_ros/ros_transform_publisher.hpp"
 
@@ -33,7 +35,7 @@ class FastLioNode : public rclcpp::Node {
   void onLivoxCustom(
       const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message);
   using InputMeasurement = std::variant<ImuSample, LidarScan>;
-  void enqueue(InputMeasurement measurement);
+  [[nodiscard]] bool enqueue(InputMeasurement measurement);
   void processingLoop();
   void publishAvailableResults();
   void publishTransportSnapshot();
@@ -46,6 +48,9 @@ class FastLioNode : public rclcpp::Node {
   RosLivoxCustomAdapter livox_custom_adapter_;
   RosOutputPublisher output_publisher_;
   RosTransformPublisher transform_publisher_;
+  std::unique_ptr<RosPropagatedOdometryPublisher>
+      propagated_odometry_publisher_;
+  std::unique_ptr<PropagatedOdometryWorker> propagated_odometry_worker_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr
@@ -61,6 +66,7 @@ class FastLioNode : public rclcpp::Node {
   RuntimeDiagnostics runtime_diagnostics_;
   RuntimeStatistics runtime_statistics_;
   std::int64_t previous_ros_imu_ns_{-1};
+  std::uint64_t correction_sequence_{0U};
   rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;
 };
 

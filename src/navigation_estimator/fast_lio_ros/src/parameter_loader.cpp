@@ -240,6 +240,19 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("runtime.overload_policy", "fail");
   result.input_qos_reliability =
       node.declare_parameter("input.qos_reliability", "best_effort");
+  result.propagated_odometry_enabled =
+      node.declare_parameter("propagated_odometry.enabled", false);
+  result.propagated_odometry_publish_rate_hz =
+      node.declare_parameter("propagated_odometry.publish_rate_hz", 50.0);
+  result.propagated_odometry_event_queue_capacity =
+      node.declare_parameter<std::int64_t>(
+          "propagated_odometry.event_queue_capacity", 4096);
+  result.propagated_odometry_imu_history_duration_ns =
+      node.declare_parameter<std::int64_t>(
+          "propagated_odometry.imu_history_duration_ns", 1'000'000'000);
+  result.propagated_odometry_maximum_correction_age_ns =
+      node.declare_parameter<std::int64_t>(
+          "propagated_odometry.maximum_correction_age_ns", 300'000'000);
   validate(result);
   return result;
 }
@@ -440,6 +453,15 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.input_qos_reliability != "reliable") {
     throw std::invalid_argument(
         "input.qos_reliability must be best_effort or reliable");
+  }
+  if (!(p.propagated_odometry_publish_rate_hz > 0.0) ||
+      !std::isfinite(p.propagated_odometry_publish_rate_hz) ||
+      p.propagated_odometry_event_queue_capacity <= 0 ||
+      p.propagated_odometry_imu_history_duration_ns <= 0 ||
+      p.propagated_odometry_maximum_correction_age_ns <= 0 ||
+      p.propagated_odometry_imu_history_duration_ns <=
+          p.propagated_odometry_maximum_correction_age_ns) {
+    throw std::invalid_argument("invalid propagated_odometry configuration");
   }
   const Eigen::Map<const Eigen::Vector3d> local_half_extent(
       p.local_map_half_extent_m.data());
