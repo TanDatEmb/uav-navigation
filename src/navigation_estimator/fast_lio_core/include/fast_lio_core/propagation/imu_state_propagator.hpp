@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <array>
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
@@ -71,6 +72,7 @@ class ImuStatePropagator {
   std::deque<ImuSample> history_;
   ImuStatePropagatorDiagnostics diagnostics_;
   bool valid_{false};
+  std::optional<ImuSample> previous_imu_sample_;
 };
 
 [[nodiscard]] const char* toString(PropagatedOdometryStatus status) noexcept;

@@ -79,18 +79,14 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
   diagnostics_.latest_imu_time = sample.time;
   diagnostics_.maximum_imu_history_size =
       std::max(diagnostics_.maximum_imu_history_size, history_.size());
+  if (!previous_imu_sample_.has_value()) {
+    previous_imu_sample_ = sample;
+  }
 
   if (diagnostics_.propagated_time.has_value()) {
-    std::size_t first_index = 0U;
-    const Status bracket = bracketHistory(*diagnostics_.propagated_time,
-                                          first_index);
-    if (!bracket.ok()) {
-      setFailure(bracket);
-      pruneHistory();
-      return bracket;
-    }
-    const std::vector<ImuSample> samples(history_.begin() + first_index,
-                                         history_.end());
+    const std::array<ImuSample, 2> incremental_samples{
+        *previous_imu_sample_, sample};
+    const std::span<const ImuSample> samples(incremental_samples);
     const auto prediction = estimator_.predict(
         samples, *diagnostics_.propagated_time, sample.time);
     if (!prediction.ok()) {
@@ -99,12 +95,7 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
       return prediction.status();
     }
     diagnostics_.propagated_time = sample.time;
-    const Status state_status = validateState();
-    if (!state_status.ok()) {
-      setFailure(state_status);
-      pruneHistory();
-      return state_status;
-    }
+    previous_imu_sample_ = sample;
   }
   pruneHistory();
   diagnostics_.current_imu_history_size = history_.size();
@@ -154,6 +145,7 @@ Status ImuStatePropagator::reanchorAndReplay(
     return replay.status();
   }
   diagnostics_.propagated_time = diagnostics_.latest_imu_time;
+  previous_imu_sample_ = history_.back();
   const Status state_status = validateState();
   if (!state_status.ok()) {
     estimator_.rebase(previous_state, previous_covariance);
