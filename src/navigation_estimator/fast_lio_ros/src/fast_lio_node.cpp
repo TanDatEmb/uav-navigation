@@ -115,8 +115,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
         profile_.estimator.residual_builder;
     worker_config.propagator.imu_history_duration_ns =
         parameters_.propagated_odometry_imu_history_duration_ns;
-    worker_config.event_queue_capacity = static_cast<std::size_t>(
-        parameters_.propagated_odometry_event_queue_capacity);
+    worker_config.imu_ingress_capacity = static_cast<std::size_t>(
+        parameters_.propagated_odometry_imu_ingress_capacity);
     worker_config.maximum_correction_age_ns =
         parameters_.propagated_odometry_maximum_correction_age_ns;
     worker_config.publish_rate_hz =

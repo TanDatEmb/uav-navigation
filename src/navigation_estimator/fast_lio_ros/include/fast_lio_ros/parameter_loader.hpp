@@ -65,7 +65,7 @@ struct RosParameters {
   std::string overload_policy;
   bool propagated_odometry_enabled{false};
   double propagated_odometry_publish_rate_hz{50.0};
-  std::int64_t propagated_odometry_event_queue_capacity{4096};
+  std::int64_t propagated_odometry_imu_ingress_capacity{4096};
   std::int64_t propagated_odometry_imu_history_duration_ns{1'000'000'000};
   std::int64_t propagated_odometry_maximum_correction_age_ns{300'000'000};
 };

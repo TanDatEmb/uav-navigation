@@ -19,7 +19,7 @@ namespace uav::nav::lio {
 
 struct PropagatedOdometryWorkerConfig {
   ImuStatePropagatorConfig propagator{};
-  std::size_t event_queue_capacity{4096U};
+  std::size_t imu_ingress_capacity{4096U};
   std::int64_t maximum_correction_age_ns{300'000'000};
   double publish_rate_hz{50.0};
 };
@@ -52,14 +52,17 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t stale_stop_count{0U};
   std::int64_t last_replay_runtime_us{0};
   std::int64_t maximum_replay_runtime_us{0};
-  std::size_t current_event_queue_depth{0U};
-  std::size_t maximum_event_queue_depth{0U};
+  bool replay_in_progress{false};
+  std::size_t current_imu_ingress_depth{0U};
+  std::size_t maximum_imu_ingress_depth{0U};
   std::uint64_t worker_wakeup_count{0U};
   std::uint64_t imu_batch_count{0U};
   std::uint64_t total_imu_samples_drained{0U};
   std::size_t maximum_imu_batch_size{0U};
   std::uint64_t control_generation{0U};
   std::uint64_t correction_waiting_for_bracket_count{0U};
+  std::uint64_t correction_missing_end_wait_count{0U};
+  std::uint64_t correction_missing_start_drop_count{0U};
   std::uint64_t load_shedding_transition_count{0U};
   std::uint64_t suspended_imu_drop_count{0U};
   std::optional<Timestamp> last_published_time;
@@ -84,6 +87,9 @@ class PropagatedOdometryWorker {
   PropagatedOdometryWorker(const PropagatedOdometryWorker&) = delete;
   PropagatedOdometryWorker& operator=(const PropagatedOdometryWorker&) = delete;
 
+  // A worker is single-use: stop() is terminal and start() may not be called
+  // again because the ingress, propagator history, and runtime diagnostics
+  // intentionally retain their lifetime state.
   void start();
   void stop();
   [[nodiscard]] bool enqueueImu(const ImuSample& sample);
@@ -97,6 +103,7 @@ class PropagatedOdometryWorker {
   [[nodiscard]] std::optional<Timestamp> processPendingCorrection();
   [[nodiscard]] std::optional<PendingCorrection>
   takePendingCorrectionLocked();
+  void requeuePendingCorrectionLocked(PendingCorrection correction);
   void discardPendingCorrectionLocked(bool stale_generation);
   void updateSnapshot();
   void maybePublishOnImu(const ImuSample& sample);
@@ -110,6 +117,7 @@ class PropagatedOdometryWorker {
   std::optional<PendingCorrection> pending_correction_;
   PropagatedOdometryWorkerDiagnostics diagnostics_;
   bool started_{false};
+  bool ever_started_{false};
   bool accepting_{false};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> load_shed_requested_{false};

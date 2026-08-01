@@ -35,6 +35,6 @@ fast_lio:
     propagated_odometry:
       enabled: false
       publish_rate_hz: 50.0
-      event_queue_capacity: 4096
+      imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
       maximum_correction_age_ns: 300000000

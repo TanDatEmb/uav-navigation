@@ -29,8 +29,15 @@ while estimator control and correction state use a coalescing mailbox. Taking a
 correction moves its value and clears the mailbox in the same critical section.
 Corrections carry the current control generation, so invalidation and load
 shedding cannot be reversed by an older replay. A correction without a retained
-history bracket remains pending and is retried after later IMU history arrives;
-it is not treated as a terminal replay failure.
+history end bracket remains pending and is retried after later IMU history
+arrives. A correction whose start bracket has already been pruned is terminal:
+it is dropped and counted rather than retried indefinitely. The worker takes a
+correction under its control lock, performs replay without that lock, and
+revalidates generation and main-estimator state before committing the result.
+The `replay_in_progress` diagnostic exposes this interval for runtime
+observation; it must not prevent IMU ingress or diagnostics snapshots.
+Worker instances are single-use after `stop()`; runtime history and
+diagnostics are not reset for a second start.
 
 When suspended, IMU samples continue through validation into bounded replay
 history without invoking prediction or appending active prediction samples.
@@ -53,7 +60,7 @@ requires main estimator status `Tracking`, `navigation_valid=true`, a valid
 propagated state/covariance, continuous IMU timestamps, and correction age no
 greater than `maximum_correction_age_ns`. Stale correction, main degradation or
 loss, timestamp regression, an excessive IMU integration interval, missing
-history bracket, numerical failure, or propagated event-queue overflow stops
+history bracket, numerical failure, or propagated IMU-ingress overflow stops
 publication fail-closed. A new confirmed tracking correction can recover the
 path, again only on the following IMU event.
 

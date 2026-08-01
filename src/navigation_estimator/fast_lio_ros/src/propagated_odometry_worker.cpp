@@ -16,7 +16,7 @@ PropagatedOdometryWorker::PropagatedOdometryWorker(
     : config_(std::move(config)),
       propagator_(config_.propagator),
       imu_processed_callback_(std::move(imu_processed_callback)) {
-  if (config_.event_queue_capacity == 0U ||
+  if (config_.imu_ingress_capacity == 0U ||
       config_.maximum_correction_age_ns <= 0) {
     throw std::invalid_argument("Propagated odometry worker config is invalid");
   }
@@ -35,10 +35,15 @@ void PropagatedOdometryWorker::start() {
   if (started_) {
     return;
   }
+  if (ever_started_) {
+    throw std::logic_error(
+        "Propagated odometry worker instances are single-use");
+  }
   stop_requested_.store(false, std::memory_order_release);
   load_shed_requested_.store(false, std::memory_order_release);
   invalidation_requested_.store(false, std::memory_order_release);
   correction_requested_.store(false, std::memory_order_release);
+  ever_started_ = true;
   started_ = true;
   accepting_ = true;
   thread_ = std::thread([this] { run(); });
@@ -68,7 +73,7 @@ bool PropagatedOdometryWorker::enqueueImu(const ImuSample& sample) {
     if (!accepting_) {
       return false;
     }
-    if (imu_ingress_.size() >= config_.event_queue_capacity) {
+    if (imu_ingress_.size() >= config_.imu_ingress_capacity) {
       ++diagnostics_.queue_overflow_count;
       load_shed_requested_.store(true, std::memory_order_release);
       ready_.notify_one();
@@ -76,9 +81,9 @@ bool PropagatedOdometryWorker::enqueueImu(const ImuSample& sample) {
     }
     notify = imu_ingress_.empty();
     imu_ingress_.push_back(sample);
-    diagnostics_.current_event_queue_depth = imu_ingress_.size();
-    diagnostics_.maximum_event_queue_depth =
-        std::max(diagnostics_.maximum_event_queue_depth, imu_ingress_.size());
+    diagnostics_.current_imu_ingress_depth = imu_ingress_.size();
+    diagnostics_.maximum_imu_ingress_depth =
+        std::max(diagnostics_.maximum_imu_ingress_depth, imu_ingress_.size());
   }
   if (notify) {
     ready_.notify_one();
@@ -168,7 +173,7 @@ void PropagatedOdometryWorker::run() {
         diagnostics_.maximum_imu_batch_size =
             std::max(diagnostics_.maximum_imu_batch_size, batch.size());
       }
-      diagnostics_.current_event_queue_depth = imu_ingress_.size();
+      diagnostics_.current_imu_ingress_depth = imu_ingress_.size();
     }
 
     if (load_shed_requested_.exchange(false, std::memory_order_acq_rel)) {
@@ -266,9 +271,27 @@ void PropagatedOdometryWorker::processImuBatch(
     }
   }
 
+  // Recheck the control channel immediately before publication. A producer
+  // may have requested invalidation or load shedding while replay/flush was
+  // running; that transition must make this cycle fail closed.
+  bool publication_transition_pending =
+      load_shed_requested_.load(std::memory_order_acquire) ||
+      invalidation_requested_.load(std::memory_order_acquire);
+  {
+    std::lock_guard lock(mutex_);
+    publication_transition_pending =
+        publication_transition_pending ||
+        control_generation_ != cycle_generation ||
+        diagnostics_.main_status != EstimatorStatus::kTracking ||
+        !diagnostics_.navigation_valid;
+    navigation_valid = diagnostics_.navigation_valid;
+    main_status = diagnostics_.main_status;
+  }
+  suspended = suspended_.load(std::memory_order_acquire);
   const bool main_valid = navigation_valid &&
                           main_status == EstimatorStatus::kTracking;
-  if (!transition_pending && !suspended && status.ok() && main_valid &&
+  if (!publication_transition_pending && !suspended && status.ok() &&
+      main_valid &&
       propagator_.valid() && latest_recorded_sample.has_value() &&
       (!applied_correction_time.has_value() ||
        latest_recorded_sample->time.nanoseconds() >
@@ -280,53 +303,78 @@ void PropagatedOdometryWorker::processImuBatch(
 }
 
 std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
-  std::unique_lock lock(mutex_);
-  const auto correction = takePendingCorrectionLocked();
-  if (!correction.has_value()) {
-    return std::nullopt;
-  }
-  if (correction->control_generation != control_generation_ ||
-      diagnostics_.main_status != EstimatorStatus::kTracking ||
-      !diagnostics_.navigation_valid) {
-    if (correction->control_generation != control_generation_) {
-      ++diagnostics_.stale_generation_correction_drop_count;
+  PendingCorrection correction;
+  {
+    std::lock_guard lock(mutex_);
+    const auto pending = takePendingCorrectionLocked();
+    if (!pending.has_value()) {
+      return std::nullopt;
     }
-    return std::nullopt;
+    if (pending->control_generation != control_generation_ ||
+        diagnostics_.main_status != EstimatorStatus::kTracking ||
+        !diagnostics_.navigation_valid) {
+      if (pending->control_generation != control_generation_) {
+        ++diagnostics_.stale_generation_correction_drop_count;
+      }
+      return std::nullopt;
+    }
+    diagnostics_.correction_sequence =
+        std::max(diagnostics_.correction_sequence,
+                 pending->correction_sequence);
+    correction = *pending;
+    diagnostics_.replay_in_progress = true;
   }
 
-  diagnostics_.correction_sequence =
-      std::max(diagnostics_.correction_sequence,
-               correction->correction_sequence);
+  // Replay is intentionally outside mutex_. Producers must remain able to
+  // enqueue IMU/state updates and read diagnostics while replay is running.
   const auto started = std::chrono::steady_clock::now();
   const Status replay_status =
-      propagator_.reanchorAndReplay(correction->estimate);
+      propagator_.reanchorAndReplay(correction.estimate);
   const auto runtime_us = std::chrono::duration_cast<std::chrono::microseconds>(
                               std::chrono::steady_clock::now() - started)
                               .count();
+  std::lock_guard lock(mutex_);
+  diagnostics_.replay_in_progress = false;
   diagnostics_.last_replay_runtime_us = runtime_us;
   diagnostics_.maximum_replay_runtime_us =
       std::max(diagnostics_.maximum_replay_runtime_us, runtime_us);
+
+  const bool generation_stable =
+      control_generation_ == correction.control_generation;
+  const bool main_state_valid =
+      diagnostics_.main_status == EstimatorStatus::kTracking &&
+      diagnostics_.navigation_valid;
+  const bool transition_pending =
+      load_shed_requested_.load(std::memory_order_acquire) ||
+      invalidation_requested_.load(std::memory_order_acquire);
+  if (!generation_stable) {
+    ++diagnostics_.stale_generation_correction_drop_count;
+    return std::nullopt;
+  }
+  if (!main_state_valid || transition_pending) {
+    return std::nullopt;
+  }
+
   if (replay_status.ok()) {
     waiting_correction_sequence_.reset();
     suspended_.store(false, std::memory_order_release);
-    diagnostics_.last_applied_correction_time = correction->estimate.time;
+    diagnostics_.last_applied_correction_time = correction.estimate.time;
     diagnostics_.last_applied_correction_sequence =
-        correction->correction_sequence;
-    return correction->estimate.time;
+        correction.correction_sequence;
+    return correction.estimate.time;
   }
 
-  if (replay_status.code() == StatusCode::kMissingStartBracket ||
-      replay_status.code() == StatusCode::kMissingEndBracket) {
+  if (replay_status.code() == StatusCode::kMissingEndBracket) {
     if (!waiting_correction_sequence_.has_value() ||
-        *waiting_correction_sequence_ != correction->correction_sequence) {
+        *waiting_correction_sequence_ != correction.correction_sequence) {
       ++diagnostics_.correction_waiting_for_bracket_count;
-      waiting_correction_sequence_ = correction->correction_sequence;
+      ++diagnostics_.correction_missing_end_wait_count;
+      waiting_correction_sequence_ = correction.correction_sequence;
     }
-    if (control_generation_ == correction->control_generation &&
-        diagnostics_.main_status == EstimatorStatus::kTracking &&
-        diagnostics_.navigation_valid) {
-      pending_correction_ = *correction;
-    }
+    requeuePendingCorrectionLocked(std::move(correction));
+  } else if (replay_status.code() == StatusCode::kMissingStartBracket) {
+    ++diagnostics_.correction_missing_start_drop_count;
+    waiting_correction_sequence_.reset();
   }
   return std::nullopt;
 }
@@ -339,6 +387,20 @@ PropagatedOdometryWorker::takePendingCorrectionLocked() {
   auto correction = std::move(pending_correction_);
   pending_correction_.reset();
   return correction;
+}
+
+void PropagatedOdometryWorker::requeuePendingCorrectionLocked(
+    PendingCorrection correction) {
+  if (pending_correction_.has_value()) {
+    if (correction.correction_sequence <=
+            pending_correction_->correction_sequence ||
+        correction.estimate.time.nanoseconds() <
+            pending_correction_->estimate.time.nanoseconds()) {
+      return;
+    }
+    ++diagnostics_.correction_coalesced_count;
+  }
+  pending_correction_ = std::move(correction);
 }
 
 void PropagatedOdometryWorker::discardPendingCorrectionLocked(

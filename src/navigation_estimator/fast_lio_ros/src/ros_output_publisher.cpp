@@ -460,6 +460,7 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("last_replay_sample_count", std::to_string(core.last_replay_sample_count)),
       keyValue("last_replay_runtime_us", std::to_string(propagated.last_replay_runtime_us)),
       keyValue("maximum_replay_runtime_us", std::to_string(propagated.maximum_replay_runtime_us)),
+      keyValue("replay_in_progress", propagated.replay_in_progress ? "true" : "false"),
       keyValue("timestamp_regression_count", std::to_string(core.timestamp_regression_count)),
       keyValue("imu_gap_count", std::to_string(core.imu_gap_count)),
       keyValue("missing_bracket_count", std::to_string(core.missing_bracket_count)),
@@ -472,6 +473,8 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("total_imu_samples_drained", std::to_string(propagated.total_imu_samples_drained)),
       keyValue("maximum_imu_batch_size", std::to_string(propagated.maximum_imu_batch_size)),
       keyValue("correction_waiting_for_bracket_count", std::to_string(propagated.correction_waiting_for_bracket_count)),
+      keyValue("correction_missing_end_wait_count", std::to_string(propagated.correction_missing_end_wait_count)),
+      keyValue("correction_missing_start_drop_count", std::to_string(propagated.correction_missing_start_drop_count)),
       keyValue("correction_coalesced_count", std::to_string(propagated.correction_coalesced_count)),
       keyValue("stale_generation_correction_drop_count", std::to_string(propagated.stale_generation_correction_drop_count)),
       keyValue("suspended_imu_drop_count", std::to_string(propagated.suspended_imu_drop_count)),
@@ -479,8 +482,8 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("invalid_state_count", std::to_string(core.invalid_state_count)),
       keyValue("publication_count", std::to_string(publication_count)),
       keyValue("publication_skip_count", std::to_string(publication_skip_count)),
-      keyValue("current_event_queue_depth", std::to_string(propagated.current_event_queue_depth)),
-      keyValue("maximum_event_queue_depth", std::to_string(propagated.maximum_event_queue_depth)),
+      keyValue("current_imu_ingress_depth", std::to_string(propagated.current_imu_ingress_depth)),
+      keyValue("maximum_imu_ingress_depth", std::to_string(propagated.maximum_imu_ingress_depth)),
       keyValue("current_imu_history_size", std::to_string(core.current_imu_history_size)),
       keyValue("maximum_imu_history_size", std::to_string(core.maximum_imu_history_size))};
   array.status.push_back(std::move(status));
