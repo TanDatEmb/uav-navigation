@@ -246,13 +246,6 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("propagated_odometry.publish_rate_hz", 50.0);
   result.propagated_odometry_imu_ingress_capacity = node.declare_parameter<std::int64_t>(
       "propagated_odometry.imu_ingress_capacity", 4096);
-  const auto legacy_event_queue_capacity = node.declare_parameter<std::int64_t>(
-      "propagated_odometry.event_queue_capacity", -1);
-  if (result.propagated_odometry_imu_ingress_capacity == 4096 &&
-      legacy_event_queue_capacity > 0) {
-    result.propagated_odometry_imu_ingress_capacity =
-        legacy_event_queue_capacity;
-  }
   result.propagated_odometry_imu_history_duration_ns =
       node.declare_parameter<std::int64_t>(
           "propagated_odometry.imu_history_duration_ns", 1'000'000'000);
