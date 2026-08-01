@@ -19,6 +19,9 @@ enum class PropagatedOdometryStatus {
   kImuGap,
   kMissingBracket,
   kInvalidState,
+  kStaleCorrection,
+  kMainEstimatorInvalid,
+  kQueueOverflow,
 };
 
 struct ImuStatePropagatorConfig {

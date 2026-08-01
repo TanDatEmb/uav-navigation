@@ -35,6 +35,12 @@ const char* toString(PropagatedOdometryStatus status) noexcept {
       return "MISSING_BRACKET";
     case PropagatedOdometryStatus::kInvalidState:
       return "INVALID_STATE";
+    case PropagatedOdometryStatus::kStaleCorrection:
+      return "STALE_CORRECTION";
+    case PropagatedOdometryStatus::kMainEstimatorInvalid:
+      return "MAIN_ESTIMATOR_INVALID";
+    case PropagatedOdometryStatus::kQueueOverflow:
+      return "QUEUE_OVERFLOW";
   }
   return "UNKNOWN";
 }
