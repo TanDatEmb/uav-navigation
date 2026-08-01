@@ -64,6 +64,8 @@ if(BUILD_TESTING)
   endforeach()
   ament_add_gtest(test_runtime_diagnostics test/test_runtime_diagnostics.cpp)
   target_link_libraries(test_runtime_diagnostics ${PROJECT_NAME})
+  ament_add_gtest(test_fast_lio_node_fanout test/test_fast_lio_node_fanout.cpp)
+  target_link_libraries(test_fast_lio_node_fanout ${PROJECT_NAME})
   ament_add_gtest(test_propagated_odometry_worker
     test/test_propagated_odometry_worker.cpp)
   target_link_libraries(test_propagated_odometry_worker ${PROJECT_NAME})

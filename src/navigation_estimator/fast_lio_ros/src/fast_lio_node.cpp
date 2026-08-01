@@ -194,6 +194,7 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
     const ImuSample sample = imu_adapter_.convert(*message);
     const bool main_accepted = enqueue(InputMeasurement{sample});
     if (propagated_odometry_worker_) {
+      bool overload_threshold_reached = false;
       if (main_accepted) {
         bool shed = false;
         {
@@ -204,13 +205,20 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
                      static_cast<std::size_t>(std::max<std::int64_t>(1,
                          parameters_.lidar_queue_capacity / 2));
         }
-        if (shed) {
-          propagated_odometry_worker_->requestLoadShedding();
-        } else {
-          (void)propagated_odometry_worker_->enqueueImu(sample);
-        }
-      } else {
+        overload_threshold_reached = shed;
+      }
+      const auto action = propagatedImuFanoutAction(
+          main_accepted, overload_threshold_reached);
+      if (action == PropagatedImuFanoutAction::kRequestLoadSheddingOnly ||
+          action ==
+              PropagatedImuFanoutAction::kRequestLoadSheddingAndEnqueue) {
         propagated_odometry_worker_->requestLoadShedding();
+      }
+      if (action == PropagatedImuFanoutAction::kEnqueue ||
+          action == PropagatedImuFanoutAction::kRequestLoadSheddingAndEnqueue) {
+        if (!propagated_odometry_worker_->enqueueImu(sample)) {
+          propagated_odometry_worker_->requestLoadShedding();
+        }
       }
     }
   } catch (const std::exception& error) {

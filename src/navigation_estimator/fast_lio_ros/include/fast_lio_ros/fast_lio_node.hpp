@@ -24,6 +24,22 @@
 
 namespace uav::nav::lio {
 
+enum class PropagatedImuFanoutAction {
+  kRequestLoadSheddingOnly,
+  kEnqueue,
+  kRequestLoadSheddingAndEnqueue,
+};
+
+[[nodiscard]] constexpr PropagatedImuFanoutAction propagatedImuFanoutAction(
+    const bool main_accepted, const bool overload_threshold_reached) noexcept {
+  if (!main_accepted) {
+    return PropagatedImuFanoutAction::kRequestLoadSheddingOnly;
+  }
+  return overload_threshold_reached
+             ? PropagatedImuFanoutAction::kRequestLoadSheddingAndEnqueue
+             : PropagatedImuFanoutAction::kEnqueue;
+}
+
 class FastLioNode : public rclcpp::Node {
  public:
   explicit FastLioNode(const rclcpp::NodeOptions& options = {});
