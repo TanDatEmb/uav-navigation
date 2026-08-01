@@ -84,8 +84,7 @@ void PropagatedOdometryWorker::shedLoad() {
   if (removed != 0U) {
     ++diagnostics_.load_shedding_count;
     diagnostics_.current_event_queue_depth = queue_.size();
-    propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
-    overflow_pending_.store(false, std::memory_order_release);
+    load_shed_pending_.store(true, std::memory_order_release);
   }
 }
 
@@ -132,6 +131,9 @@ void PropagatedOdometryWorker::run() {
     if (overflow_pending_.exchange(false, std::memory_order_acq_rel)) {
       propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
     }
+    if (load_shed_pending_.exchange(false, std::memory_order_acq_rel)) {
+      propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
+    }
     if (auto* imu = std::get_if<ImuEvent>(&event)) {
       process(std::move(*imu));
     } else {
@@ -142,7 +144,13 @@ void PropagatedOdometryWorker::run() {
 }
 
 void PropagatedOdometryWorker::process(ImuEvent event) {
-  const Status status = propagator_.acceptImu(event.sample);
+  const Status accepted = propagator_.acceptImu(event.sample);
+  Status status = accepted;
+  if (accepted.ok() &&
+      (!next_publish_deadline_.has_value() ||
+       event.sample.time.nanoseconds() >= next_publish_deadline_->nanoseconds())) {
+    status = propagator_.flushPendingPrediction();
+  }
   std::optional<Timestamp> last_correction_time;
   bool navigation_valid = false;
   EstimatorStatus main_status = EstimatorStatus::kWaitingForSensors;
@@ -152,10 +160,10 @@ void PropagatedOdometryWorker::process(ImuEvent event) {
     navigation_valid = diagnostics_.navigation_valid;
     main_status = diagnostics_.main_status;
   }
-  if (status.ok() && propagator_.diagnostics().propagated_time.has_value() &&
+  if (status.ok() && propagator_.diagnostics().latest_imu_time.has_value() &&
       last_correction_time.has_value()) {
     const std::int64_t correction_age =
-        propagator_.diagnostics().propagated_time->nanoseconds() -
+        propagator_.diagnostics().latest_imu_time->nanoseconds() -
         last_correction_time->nanoseconds();
     if (correction_age > config_.maximum_correction_age_ns) {
       if (propagator_.diagnostics().status !=

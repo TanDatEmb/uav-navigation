@@ -5,6 +5,7 @@
 #include <deque>
 #include <optional>
 #include <array>
+#include <span>
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
@@ -53,6 +54,7 @@ class ImuStatePropagator {
   explicit ImuStatePropagator(ImuStatePropagatorConfig config);
 
   [[nodiscard]] Status acceptImu(const ImuSample& sample);
+  [[nodiscard]] Status flushPendingPrediction();
   [[nodiscard]] Status reanchorAndReplay(const StateEstimate& corrected);
   void invalidate(PropagatedOdometryStatus status) noexcept;
 
@@ -73,6 +75,7 @@ class ImuStatePropagator {
   ImuStatePropagatorDiagnostics diagnostics_;
   bool valid_{false};
   std::optional<ImuSample> previous_imu_sample_;
+  std::deque<ImuSample> pending_prediction_samples_;
 };
 
 [[nodiscard]] const char* toString(PropagatedOdometryStatus status) noexcept;

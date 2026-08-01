@@ -101,6 +101,7 @@ class PropagatedOdometryWorker {
   bool stop_enqueued_{false};
   std::thread thread_;
   std::atomic<bool> overflow_pending_{false};
+  std::atomic<bool> load_shed_pending_{false};
   std::int64_t publish_period_ns_{20'000'000};
   std::optional<Timestamp> last_published_time_;
   std::optional<Timestamp> next_publish_deadline_;

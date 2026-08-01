@@ -34,6 +34,7 @@ TEST(ImuStatePropagatorTest, ReanchorsBetweenSamplesAndPropagatesForward) {
   EXPECT_EQ(propagator.diagnostics().last_replay_sample_count, 6U);
 
   ASSERT_TRUE(propagator.acceptImu(sample(110'000'000)).ok());
+  ASSERT_TRUE(propagator.flushPendingPrediction().ok());
   EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 110'000'000);
 }
 

@@ -73,6 +73,15 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
       setFailure(failure);
       return failure;
     }
+    if (diagnostics_.propagated_time.has_value() &&
+        sample.time.nanoseconds() -
+                diagnostics_.latest_imu_time->nanoseconds() >
+            config_.ikfom.maximum_integration_step_ns) {
+      const Status failure(StatusCode::kInsufficientData,
+                           "IMU integration gap exceeds configured maximum");
+      setFailure(failure);
+      return failure;
+    }
   }
 
   history_.push_back(sample);
@@ -84,21 +93,35 @@ Status ImuStatePropagator::acceptImu(const ImuSample& sample) {
   }
 
   if (diagnostics_.propagated_time.has_value()) {
-    const std::array<ImuSample, 2> incremental_samples{
-        *previous_imu_sample_, sample};
-    const std::span<const ImuSample> samples(incremental_samples);
-    const auto prediction = estimator_.predict(
-        samples, *diagnostics_.propagated_time, sample.time);
-    if (!prediction.ok()) {
-      setFailure(prediction.status());
-      pruneHistory();
-      return prediction.status();
-    }
-    diagnostics_.propagated_time = sample.time;
-    previous_imu_sample_ = sample;
+    pending_prediction_samples_.push_back(sample);
   }
   pruneHistory();
   diagnostics_.current_imu_history_size = history_.size();
+  return Status::Ok();
+}
+
+Status ImuStatePropagator::flushPendingPrediction() {
+  if (!diagnostics_.propagated_time.has_value() ||
+      pending_prediction_samples_.empty()) {
+    return Status::Ok();
+  }
+  std::vector<ImuSample> samples;
+  samples.reserve(pending_prediction_samples_.size() + 1U);
+  samples.push_back(*previous_imu_sample_);
+  samples.insert(samples.end(), pending_prediction_samples_.begin(),
+                 pending_prediction_samples_.end());
+  const auto prediction = estimator_.predict(
+      std::span<const ImuSample>(samples), *diagnostics_.propagated_time,
+      pending_prediction_samples_.back().time);
+  if (!prediction.ok()) {
+    setFailure(prediction.status());
+    return prediction.status();
+  }
+  diagnostics_.propagated_time = pending_prediction_samples_.back().time;
+  previous_imu_sample_ = pending_prediction_samples_.back();
+  pending_prediction_samples_.clear();
+  valid_ = true;
+  diagnostics_.status = PropagatedOdometryStatus::kReady;
   return Status::Ok();
 }
 
@@ -146,6 +169,7 @@ Status ImuStatePropagator::reanchorAndReplay(
   }
   diagnostics_.propagated_time = diagnostics_.latest_imu_time;
   previous_imu_sample_ = history_.back();
+  pending_prediction_samples_.clear();
   const Status state_status = validateState();
   if (!state_status.ok()) {
     estimator_.rebase(previous_state, previous_covariance);
