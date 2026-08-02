@@ -12,8 +12,12 @@ def test_sensor_xacro_has_canonical_chain_and_required_mount():
     args = {arg.attrib["name"]: arg for arg in tree.findall(f"{XACRO_NS}arg")}
     assert "livox_mount_xyz" in args
     assert "livox_mount_rpy" in args
-    assert "default" not in args["livox_mount_xyz"].attrib
-    assert "default" not in args["livox_mount_rpy"].attrib
+    assert args["livox_mount_xyz"].attrib["default"] == (
+        "__required_livox_mount_xyz__"
+    )
+    assert args["livox_mount_rpy"].attrib["default"] == (
+        "__required_livox_mount_rpy__"
+    )
     assert args["livox_lidar_to_imu_xyz"].attrib["default"] == (
         "0.011 0.02329 -0.04412"
     )

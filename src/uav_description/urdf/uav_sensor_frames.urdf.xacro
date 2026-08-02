@@ -6,9 +6,13 @@
     real sensor data. The arrangement is the one source of truth for the
     standalone base_link -> livox_frame -> livox_imu_frame tree.
   -->
-  <!-- The vehicle mount is required; zero is not a valid fallback. -->
-  <xacro:arg name="livox_mount_xyz"/>
-  <xacro:arg name="livox_mount_rpy"/>
+  <!--
+    Xacro requires every arg declaration to carry a default. These sentinels
+    are deliberately invalid URDF values, so omitting the launch mount fails
+    URDF validation instead of silently creating a zero mount.
+  -->
+  <xacro:arg name="livox_mount_xyz" default="__required_livox_mount_xyz__"/>
+  <xacro:arg name="livox_mount_rpy" default="__required_livox_mount_rpy__"/>
   <xacro:arg name="livox_lidar_to_imu_xyz" default="0.011 0.02329 -0.04412"/>
   <xacro:arg name="livox_lidar_to_imu_rpy" default="0 0 0"/>
 

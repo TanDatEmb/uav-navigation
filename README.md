@@ -21,6 +21,10 @@ operation additionally requires measured LiDAR/IMU extrinsics and confirmed
 sensor timestamp/frame semantics; defaults marked `PLACEHOLDER` are not a
 calibration and must not be used for flight or real-data acceptance.
 
+The canonical sensor tree is `base_link -> livox_frame -> livox_imu_frame`.
+The real profile uses factory nominal LiDAR-to-IMU geometry, while the AIST
+profile retains its explicitly dataset-specific extrinsic.
+
 Interactive dataset replay opens RViz by default. Use
 `make data-replay DATASET=aist-mid360-drive ENABLE_RVIZ=0` for a headless run.
 Replay owns its node, recorder, rosbag, collector, and RViz process groups and
