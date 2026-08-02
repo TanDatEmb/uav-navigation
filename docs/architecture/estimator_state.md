@@ -18,3 +18,23 @@ manifold retraction. Extrinsics exist in the upstream state but default to fixed
 Initialization collects stationary IMU data, gates quality using sample count
 and variance, estimates gravity/biases, and reports its reason/status. Online
 extrinsic estimation is outside the M1 baseline.
+
+## Error-state index contract
+
+The 23-dimensional IKFoM tangent covariance uses the following fixed ordering:
+
+| Offset | Dimension | Block |
+|---:|---:|---|
+| 0 | 3 | position `p_odom_imu` |
+| 3 | 3 | orientation `R_odom_imu` |
+| 6 | 3 | LiDAR-IMU extrinsic rotation |
+| 9 | 3 | LiDAR-IMU extrinsic translation |
+| 12 | 3 | velocity `v_odom_imu` |
+| 15 | 3 | gyro bias |
+| 18 | 3 | accelerometer bias |
+| 21 | 2 | gravity on `S2` |
+
+These offsets are exposed by `ManifoldState` constants and must be used by
+downstream covariance projection code. IKFoM's `SO3::boxplus` is right-local:
+`R' = R * Exp(delta_theta)`. The covariance remains an IMU-origin tangent
+covariance until a validated output-frame projection is available.

@@ -5,10 +5,11 @@ published only after a successful LiDAR correction and its timestamp remains
 the scan end time. `/lio/odometry_propagated` is an optional, higher-rate view
 of an independent IKFoM filter propagated with canonical IMU samples.
 
-Both topics express `T_odom_imu`: `header.frame_id` is the configured odom
-frame, `child_frame_id` is the configured IMU frame, and linear velocity uses
-the same child-frame convention as corrected odometry. Propagated odometry
-does not publish TF.
+Both topics express the P0.3 base-link contract: `header.frame_id` is the
+configured odom frame, `child_frame_id` is the configured `base_link`, and
+linear/angular velocity use the base child-frame convention. Dynamic TF
+ownership remains exclusive between corrected and propagated output according
+to the P0.3 owner policy.
 
 ## Sensor-time timeline
 
@@ -92,11 +93,13 @@ progress, a generation transition is observed, or re-anchor is required.
 ## Covariance and deferred integration
 
 The IKFoM covariance is a 23-DoF manifold error-state covariance and cannot be
-copied directly into `nav_msgs/msg/Odometry`. The propagated message therefore
-uses the ROS unknown-covariance sentinel (`covariance[0] = -1`) for pose and
-twist. A verified tangent-state projection, including orientation-velocity
-cross-covariance and an angular-velocity model, is required before this topic
-is suitable as a PX4 external-vision input.
+copied directly into `nav_msgs/msg/Odometry`. P0.5 must project it into pose
+error `[delta p_odom_base, delta theta_odom_base]` in `odom` and twist error
+`[delta v_base, delta omega_base]` in `base_link`, including full cross terms
+and raw gyro measurement uncertainty. P0.5 is currently `BLOCKED`: AIST
+messages carry an all-zero gyro covariance and REAL has no authoritative
+per-sample source. The current transitional zero covariance is unavailable,
+not a valid known covariance, and must not be used for PX4 input.
 
 PX4 bridging, VehicleOdometry, time synchronization, ENU/FLU to NED/FRD
 conversion, propagated TF, covariance projection, and correction smoothing are

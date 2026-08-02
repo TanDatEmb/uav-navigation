@@ -88,22 +88,25 @@ rebuilt atomically by the next `data-fetch`; the normalizer changes only
 ## ROS topics
 
 - `/lio/odometry_corrected`: corrected `nav_msgs/msg/Odometry`, published only
-  after a successful LiDAR correction. Its pose is the IMU pose in `odom`;
-  `header.frame_id=odom`, `child_frame_id=livox_imu_frame`. Linear twist is expressed
-  in the IMU child frame, as required by the message contract.
+  after a successful LiDAR correction. Its pose is the converted base pose in
+  `odom`; `header.frame_id=odom`, `child_frame_id=base_link`. Linear and
+  angular twist are expressed in the `base_link` child frame.
 - `/lio/odometry_propagated`: high-rate propagated `nav_msgs/msg/Odometry`
   produced from the latest committed correction and the IMU stream. It is a
   low-latency prediction between corrected outputs, not an independent global
-  estimate; continuity and correction-age status are reported in
-  `/lio/diagnostics`.
+  estimate; it uses the same `odom`/`base_link` contract when enabled, and
+  continuity and correction-age status are reported in `/lio/diagnostics`.
 - `/lio/registered_points`: corrected registered scan in `odom`.
 - `/lio/local_map`: local registration-map snapshot in `odom`.
 - `/lio/diagnostics`: estimator and transport counters, processing
   percentiles, queue depth, lag, and drops.
 - `/tf` and `/tf_static`: configured frame transforms.
 
-`trajectory.csv` has the same corrected-only semantic. The estimator does not
-publish ROS pose/twist covariance; covariance health remains in diagnostics.
+`trajectory.csv` has the same corrected-only semantic. ROS pose/twist
+covariance projection is not yet valid: P0.5 is blocked because AIST exposes
+an all-zero raw gyro covariance and REAL has no authoritative per-sample
+source. The existing transitional zero covariance must not be interpreted as
+known covariance.
 The real Mid-360 profile uses `/livox/imu` and `/livox/lidar`, `livox_custom`
 per-point sensor timing, the pinned hardware extrinsic, bounded runtime
 queues, and propagated odometry enabled at 50 Hz. This configuration is ready

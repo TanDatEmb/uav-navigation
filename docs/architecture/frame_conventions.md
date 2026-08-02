@@ -27,3 +27,17 @@ requires separate provenance. In SIM, `[0, 0, 0.28] m` is the vehicle mount
 `base_link -> livox_frame`; it is not the internal LiDAR-to-IMU transform.
 Future PX4
 NED/FRD conversion is confined to a future PX4 boundary, not this repository.
+
+## Odometry covariance contract
+
+The P0.3 odometry topics use `header.frame_id=odom` and
+`child_frame_id=base_link`. A future valid covariance projection must express
+pose error as `[delta p_odom_base, delta theta_odom_base]` in `odom` and twist
+error as `[delta v_base, delta omega_base]` in `base_link`. It must project the
+full IKFoM 23-DoF covariance and include the raw gyro measurement covariance
+for the angular-rate model; the internal covariance must not be relabeled.
+
+P0.5 is currently `BLOCKED` pending an authoritative per-sample gyro
+covariance source for the AIST and REAL profiles. `T_base_imu` is deterministic
+static calibration and is resolved once/cached; it has no modeled calibration
+uncertainty in this contract.
