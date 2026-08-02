@@ -1,14 +1,36 @@
-# P0.5 Covariance Projection
+# P0.5 Covariance Projection — superseded by P0.5R
+
+## Roadmap correction
+
+The original P0.5 requirement to obtain authoritative per-sample raw gyro
+covariance before projecting odometry covariance is `INVALID / OVERSPECIFIED`.
+It is superseded by `P0.5R — State covariance projection`.
+
+`P0.5A` per-sample gyro covariance is `DEFERRED / NOT REQUIRED FOR CORE
+ROADMAP`. No calibration artifact, bag rewrite, ROS message covariance
+fallback, or fake covariance was added. AIST all-zero covariance remains the
+normal unknown/unavailable ROS message condition; it does not prevent
+FAST-LIO propagation, deskew, correction, or P0.4 epoch pairing.
+
+`P0.5R` is `READY` for a separate implementation task. Its required output is
+pose covariance at `base_link` expressed in `odom`, and base linear-velocity
+covariance expressed in `base_link`, both projected from the full IKFoM
+23-state covariance with full cross terms and analytical/numerical Jacobian
+validation.
+
+The conditional velocity covariance must not independently add a calibrated
+`Qgyro` term. The current filter does not maintain the state/current-input
+cross covariance needed to justify that addition, and adding it could
+double-count process noise already represented in `P_state`.
 
 ## Result
 
-`BLOCKED`
+`SUPERSEDED`
 
-The mandatory audit found no authoritative raw gyro measurement covariance for
-the AIST or REAL canonical profiles. P0.5 cannot publish a valid twist
-covariance without that source, and the task explicitly forbids treating the
-IKFoM process-noise parameter or an all-zero ROS covariance as a measurement
-covariance. No covariance projector or ROS covariance wiring was implemented.
+The historical audit correctly found no authoritative raw gyro covariance for
+AIST or REAL, but that absence does not block state covariance projection. The
+old conclusion that P0.5 required such a source was too strong. No covariance
+projector or ROS covariance wiring was implemented on this revision.
 
 ## Revision
 
@@ -19,8 +41,10 @@ covariance. No covariance projector or ROS covariance wiring was implemented.
 ## Scope
 
 - Implemented: mandatory state/frame/noise audit and runtime source checks.
-- Deferred: all P0.5 analytical projection, ROS serialization, diagnostics,
-  covariance tests, dataset acceptance, and SIM covariance acceptance.
+- Deferred: P0.5R implementation, ROS serialization, diagnostics, covariance
+  tests, dataset acceptance, and SIM covariance acceptance.
+- Explicitly not started: P0.5A per-sample gyro covariance calibration/source
+  work.
 
 ## State index mapping
 
@@ -94,7 +118,7 @@ output residuals from this convention rather than assuming a left perturbation.
 
 ## Output convention
 
-The required, not-yet-implemented P0.5 convention is:
+The P0.5R convention is:
 
 ### Pose
 
@@ -104,24 +128,24 @@ The required, not-yet-implemented P0.5 convention is:
   `Log(R_perturbed * R_nominal.transpose())` in `odom`, with the analytical
   Jacobian derived consistently from the right-local IKFoM state perturbation.
 
-### Twist
+### Base linear velocity
 
-- Error vector: `[δv_base, δω_base]`.
+- Error vector: `δv_base`.
 - Expression frame: `base_link`.
-- The covariance must describe velocity at the base origin and angular rate in
-  `base_link`, including raw gyro measurement uncertainty and lever-arm terms.
+- The linear-velocity covariance describes velocity at the base origin in
+  `base_link`, conditional on the resolved bias-corrected gyro measurement at
+  the output epoch. Angular-rate covariance is not a P0.5R acceptance gate.
 
 ## Analytical Jacobians
 
-Not implemented because the raw gyro covariance blocker prevents a valid full
-P0.5 ROS result. The eventual implementation must use the cached P0.2
+Not implemented on this documentation-only correction. P0.5R must use the cached P0.2
 `BaseLinkStateConverter` geometry, fixed-size Eigen matrices, the full 23x23
 covariance including cross terms, and no TF lookup or numerical Jacobian in
 production.
 
 ## Numerical Jacobian validation
 
-Not run. No projector exists on this blocked revision. The required test must
+Not run. No projector exists on this superseded audit revision. The required test must
 use the repository's `IkfomState::boxplus`, central differences over all 23
 columns, pose Lie-log residuals, full twist recomputation, and report epsilon,
 maximum error, and worst block.
@@ -135,11 +159,11 @@ absolute-eigenvalue repair and arbitrary diagonal epsilon are prohibited.
 
 ## Unavailable policy
 
-P0.5 must fail closed when source covariance or gyro covariance is unavailable
-or invalid. It must not publish an odometry sample carrying all-zero or fake
-covariance. Dynamic TF may continue from a valid state, with state validity and
-covariance validity kept separate. This policy is not yet wired into the ROS
-publisher because the required source contract is not available.
+P0.5R must fail closed when the state covariance or projected output is
+unavailable or invalid. It must not publish an odometry sample carrying
+all-zero or fake state covariance. Dynamic TF may continue from a valid state,
+with state validity and covariance validity kept separate. Angular-rate
+covariance may remain unavailable in diagnostics and is not a PX4 egress gate.
 
 ## Corrected integration
 
@@ -148,14 +172,16 @@ epoch contract, but its covariance remains transitional/unavailable.
 
 ## Propagated integration
 
-Not implemented. The propagated state, angular rate, covariance, and raw gyro
+Not implemented. The propagated state, resolved angular rate, and state
 covariance must later be carried as one exact epoch/generation snapshot and
-must use the same projector as corrected output.
+must use the same P0.5R projector as corrected output. A raw gyro covariance is
+not part of that snapshot contract.
 
 ## ROS serialization
 
-Not implemented. The eventual serializer must fill all 36 pose and 36 twist
-entries row-major, preserve cross terms, and reject all-zero covariance.
+Not implemented. The eventual serializer must fill the valid pose and linear
+velocity covariance blocks row-major, preserve cross terms, leave angular-rate
+covariance explicitly unavailable, and reject all-zero state covariance.
 
 ## Diagnostics
 
@@ -213,14 +239,15 @@ not modified or investigated.
 
 ## Files changed
 
-- `docs/verification/p0_5_covariance_projection.md` — this blocked audit.
+- `docs/verification/p0_5_covariance_projection.md` — this superseded audit and
+  P0.5R roadmap correction.
 - `docs/architecture/estimator_state.md` — confirmed 23-DoF mapping and
   right-local perturbation convention.
 - `docs/architecture/frame_conventions.md` — documented output covariance
   frames and the fixed-transform condition.
 - `docs/fast_lio.md` and
   `docs/verification/propagated_odometry_semantics.md` — corrected current
-  P0.3 output/covariance documentation and recorded the P0.5 blocker.
+  P0.3 output/covariance documentation and recorded the P0.5R correction.
 
 No source, config, test, Makefile, SDF, URDF, or YAML file was changed.
 
@@ -245,7 +272,8 @@ authority change, or covariance tuning was started.
 - [x] No fabricated covariance or partial PASS was introduced.
 - [x] P0.0-F01 and P0.0-F02 were left unchanged.
 - [x] P0.6 was not started.
-- [ ] Raw gyro covariance source exists for AIST and REAL canonical profiles.
+- [x] P0.5A per-sample gyro covariance is explicitly deferred.
+- [x] Missing AIST/REAL raw gyro covariance does not block P0.5R.
 - [ ] Analytical projector implemented.
 - [ ] Numerical Jacobian acceptance passed.
 - [ ] Corrected and propagated ROS covariance serialization passed.
@@ -254,14 +282,16 @@ authority change, or covariance tuning was started.
 ## Final conclusion
 
 ```text
-P0.5 status: BLOCKED
+P0.5 old specification: INVALID / OVERSPECIFIED
 
-The mandatory audit confirmed the 23-DoF IKFoM state layout, right-local
-orientation perturbation, IMU-origin covariance semantics, and the cached
-base-link geometry contract. SIM provides a documented gyro covariance, but
-AIST exposes an all-zero covariance and REAL has no authoritative source.
-Using the IKFoM process-noise standard deviation or inventing a covariance
-would violate the P0.5 acceptance. No projector or ROS covariance change was
-made. P0.6 must not start until an authoritative per-sample gyro covariance
-source is provided for the missing profiles and P0.5 is resumed.
+P0.5A status: DEFERRED / NOT REQUIRED FOR CORE ROADMAP
+
+P0.5R status: READY
+
+The audit confirmed the 23-DoF IKFoM state layout, right-local orientation
+perturbation, IMU-origin covariance semantics, and cached base-link geometry.
+The next task is P0.5R: project pose and conditional base linear-velocity
+covariance from `filter_.get_P()` with full cross terms. Do not block that work
+on AIST/REAL per-sample gyro covariance and do not start P0.6 until P0.5R is
+accepted.
 ```

@@ -32,12 +32,12 @@ NED/FRD conversion is confined to a future PX4 boundary, not this repository.
 
 The P0.3 odometry topics use `header.frame_id=odom` and
 `child_frame_id=base_link`. A future valid covariance projection must express
-pose error as `[delta p_odom_base, delta theta_odom_base]` in `odom` and twist
-error as `[delta v_base, delta omega_base]` in `base_link`. It must project the
-full IKFoM 23-DoF covariance and include the raw gyro measurement covariance
-for the angular-rate model; the internal covariance must not be relabeled.
+pose error as `[delta p_odom_base, delta theta_odom_base]` in `odom` and linear
+velocity error as `delta v_base` in `base_link`. It must project the full IKFoM
+23-DoF covariance; the internal covariance must not be relabeled. The velocity
+projection is conditional on the resolved bias-corrected gyro sample at the
+output epoch. Angular-rate covariance is not a P0.5R acceptance gate.
 
-P0.5 is currently `BLOCKED` pending an authoritative per-sample gyro
-covariance source for the AIST and REAL profiles. `T_base_imu` is deterministic
-static calibration and is resolved once/cached; it has no modeled calibration
-uncertainty in this contract.
+The old P0.5A per-sample gyro covariance requirement is deferred and does not
+block P0.5R. `T_base_imu` is deterministic static calibration and is resolved
+once/cached; it has no modeled calibration uncertainty in this contract.

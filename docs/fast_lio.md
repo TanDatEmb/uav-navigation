@@ -102,11 +102,12 @@ rebuilt atomically by the next `data-fetch`; the normalizer changes only
   percentiles, queue depth, lag, and drops.
 - `/tf` and `/tf_static`: configured frame transforms.
 
-`trajectory.csv` has the same corrected-only semantic. ROS pose/twist
-covariance projection is not yet valid: P0.5 is blocked because AIST exposes
-an all-zero raw gyro covariance and REAL has no authoritative per-sample
-source. The existing transitional zero covariance must not be interpreted as
-known covariance.
+`trajectory.csv` has the same corrected-only semantic. ROS pose/base-linear-
+velocity covariance projection is not yet implemented: P0.5R is ready as the
+next implementation task and must project the full state covariance with
+conditional velocity semantics. The deferred per-sample gyro covariance
+source is not a gate for this work. The existing transitional zero covariance
+must not be interpreted as known covariance.
 The real Mid-360 profile uses `/livox/imu` and `/livox/lidar`, `livox_custom`
 per-point sensor timing, the pinned hardware extrinsic, bounded runtime
 queues, and propagated odometry enabled at 50 Hz. This configuration is ready

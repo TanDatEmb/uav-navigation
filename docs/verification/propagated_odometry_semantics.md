@@ -93,13 +93,13 @@ progress, a generation transition is observed, or re-anchor is required.
 ## Covariance and deferred integration
 
 The IKFoM covariance is a 23-DoF manifold error-state covariance and cannot be
-copied directly into `nav_msgs/msg/Odometry`. P0.5 must project it into pose
-error `[delta p_odom_base, delta theta_odom_base]` in `odom` and twist error
-`[delta v_base, delta omega_base]` in `base_link`, including full cross terms
-and raw gyro measurement uncertainty. P0.5 is currently `BLOCKED`: AIST
-messages carry an all-zero gyro covariance and REAL has no authoritative
-per-sample source. The current transitional zero covariance is unavailable,
-not a valid known covariance, and must not be used for PX4 input.
+copied directly into `nav_msgs/msg/Odometry`. P0.5R must project it into pose
+error `[delta p_odom_base, delta theta_odom_base]` in `odom` and base linear
+velocity error `delta v_base` in `base_link`, including full cross terms. The
+velocity result is conditional on the resolved bias-corrected gyro sample at
+the output epoch. AIST all-zero gyro covariance and missing REAL per-sample
+covariance do not block this projection; angular-rate covariance remains
+unavailable unless a later hardware profile supplies it.
 
 PX4 bridging, VehicleOdometry, time synchronization, ENU/FLU to NED/FRD
 conversion, propagated TF, covariance projection, and correction smoothing are
