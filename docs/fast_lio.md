@@ -19,6 +19,10 @@ All three profiles are under
 `src/navigation_estimator/fast_lio_ros/config/`. Scenario names belong in
 dataset metadata, not estimator configuration.
 
+All canonical profiles use `base_link -> livox_frame -> livox_imu_frame`.
+FAST-LIO continues to publish the transitional dynamic edge
+`odom -> livox_imu_frame`; P0.1 does not introduce `odom -> base_link`.
+
 ## Build and test
 
 ```bash
@@ -76,13 +80,16 @@ and `runtime-repro` workflows always remain headless.
 extracts into a temporary directory, writes a LiDAR/IMU-only ROS bag, records
 provenance, and atomically installs the prepared dataset. `data-check`
 validates the catalog, archive checksum, bag topics and message types,
-canonical config, provenance counts, and the Git raw-data guard.
+canonical config, provenance counts, canonical sensor header frames, and the
+Git raw-data guard. Prepared schema v1 bags are rejected by `data-check` and
+rebuilt atomically by the next `data-fetch`; the normalizer changes only
+`header.frame_id` and records source/canonical frame IDs in `status.json`.
 
 ## ROS topics
 
 - `/lio/odometry_corrected`: corrected `nav_msgs/msg/Odometry`, published only
   after a successful LiDAR correction. Its pose is the IMU pose in `odom`;
-  `header.frame_id=odom`, `child_frame_id=imu_link`. Linear twist is expressed
+  `header.frame_id=odom`, `child_frame_id=livox_imu_frame`. Linear twist is expressed
   in the IMU child frame, as required by the message contract.
 - `/lio/odometry_propagated`: high-rate propagated `nav_msgs/msg/Odometry`
   produced from the latest committed correction and the IMU stream. It is a
