@@ -5,6 +5,7 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include "fast_lio_ros/qos_profiles.hpp"
+#include "fast_lio_ros/ros_odometry_serializer.hpp"
 #include "fast_lio_ros/ros_time_converter.hpp"
 
 namespace uav::nav::lio {
@@ -90,6 +91,17 @@ void appendRuntimeValues(
                             runtime.overflow_detected ? "true" : "false"));
   values.push_back(keyValue("processing_lag_exceeded",
                             runtime.processing_lag_exceeded ? "true" : "false"));
+  values.push_back(keyValue("static_geometry_ready",
+                            runtime.static_geometry_ready ? "true" : "false"));
+  values.push_back(keyValue("static_geometry_source",
+                            runtime.static_geometry_source));
+  values.push_back(keyValue("dynamic_tf_owner", runtime.dynamic_tf_owner));
+  values.push_back(keyValue("dynamic_tf_publication_count",
+                            std::to_string(runtime.dynamic_tf_publication_count)));
+  values.push_back(keyValue("dynamic_tf_timestamp_suppressed_count",
+                            std::to_string(runtime.dynamic_tf_timestamp_suppressed_count)));
+  values.push_back(keyValue("dynamic_tf_conversion_failure_count",
+                            std::to_string(runtime.dynamic_tf_conversion_failure_count)));
 }
 
 }  // namespace
@@ -104,6 +116,11 @@ RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters paramet
                                                                     QosProfiles::mapOutput());
   diagnostics_ = node.create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/lio/diagnostics", QosProfiles::estimatorOutput());
+}
+
+void RosOutputPublisher::setBaseLinkConverter(
+    std::shared_ptr<const BaseLinkStateConverter> converter) {
+  base_link_converter_ = std::move(converter);
 }
 
 sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
@@ -135,31 +152,23 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
       result.scan_time.has_value() ? RosTimeConverter::toRos(*result.scan_time)
                                    : static_cast<builtin_interfaces::msg::Time>(clock_->now());
   publishDiagnostics(result, diagnostics_stamp);
-  if (!result.hasCorrectedOutput()) {
+  if (!result.hasCorrectedOutput() ||
+      !result.corrected_kinematic_estimate.has_value() ||
+      !base_link_converter_) {
     return;
   }
-  const StateEstimate& corrected = *result.corrected_estimate;
-  const auto stamp = RosTimeConverter::toRos(corrected.time);
-  nav_msgs::msg::Odometry odometry;
-  odometry.header.stamp = stamp;
-  odometry.header.frame_id = parameters_.odom_frame;
-  odometry.child_frame_id = parameters_.imu_frame;
-  const auto& state = corrected.state;
-  const auto& position = state.position_odom_imu_m();
-  const auto& orientation = state.orientation_odom_imu();
-  odometry.pose.pose.position.x = position.x();
-  odometry.pose.pose.position.y = position.y();
-  odometry.pose.pose.position.z = position.z();
-  odometry.pose.pose.orientation.x = orientation.x();
-  odometry.pose.pose.orientation.y = orientation.y();
-  odometry.pose.pose.orientation.z = orientation.z();
-  odometry.pose.pose.orientation.w = orientation.w();
-  const Eigen::Vector3d velocity_imu =
-      orientation.conjugate() * state.velocity_odom_imu_m_s();
-  odometry.twist.twist.linear.x = velocity_imu.x();
-  odometry.twist.twist.linear.y = velocity_imu.y();
-  odometry.twist.twist.linear.z = velocity_imu.z();
-  odometry_->publish(odometry);
+  const auto converted = base_link_converter_->convert(
+      result.corrected_kinematic_estimate->estimate,
+      result.corrected_kinematic_estimate->angular_velocity_imu_rad_s);
+  if (!converted.ok()) {
+    return;
+  }
+  const auto odometry = RosOdometrySerializer::serialize(converted.value(), parameters_);
+  if (!odometry.ok()) {
+    return;
+  }
+  const auto stamp = odometry.value().header.stamp;
+  odometry_->publish(odometry.value());
   if (parameters_.publish_registered_points && result.hasRegisteredScanOutput()) {
     registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));
   }
@@ -224,7 +233,26 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("propagation_discontinuity_count",
                std::to_string(result.diagnostics.propagation_discontinuity_count)),
       keyValue("last_propagation_gap_ns",
-               std::to_string(result.diagnostics.last_propagation_gap_ns))};
+               std::to_string(result.diagnostics.last_propagation_gap_ns)),
+      keyValue("corrected_angular_velocity_available",
+               result.diagnostics.corrected_angular_velocity.angular_velocity_available
+                   ? "true"
+                   : "false"),
+      keyValue("corrected_angular_velocity_exact_sample_count",
+               std::to_string(
+                   result.diagnostics.corrected_angular_velocity.exact_sample_count)),
+      keyValue("corrected_angular_velocity_interpolated_count",
+               std::to_string(
+                   result.diagnostics.corrected_angular_velocity.interpolated_count)),
+      keyValue("corrected_angular_velocity_missing_bracket_count",
+               std::to_string(result.diagnostics.corrected_angular_velocity
+                                  .missing_bracket_count)),
+      keyValue("corrected_angular_velocity_timestamp_mismatch_count",
+               std::to_string(result.diagnostics.corrected_angular_velocity
+                                  .timestamp_mismatch_count)),
+      keyValue("corrected_angular_velocity_nonfinite_reject_count",
+               std::to_string(result.diagnostics.corrected_angular_velocity
+                                  .nonfinite_reject_count))};
   status.values.push_back(keyValue(
       "ros_received_imu_count",
       std::to_string(result.diagnostics.sensor.ros_received_imu_count)));
@@ -494,6 +522,24 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("maximum_imu_ingress_depth", std::to_string(propagated.maximum_imu_ingress_depth)),
       keyValue("current_imu_history_size", std::to_string(core.current_imu_history_size)),
       keyValue("maximum_imu_history_size", std::to_string(core.maximum_imu_history_size))};
+  status.values.push_back(keyValue(
+      "angular_velocity_available",
+      core.angular_velocity.angular_velocity_available ? "true" : "false"));
+  status.values.push_back(keyValue(
+      "angular_velocity_exact_sample_count",
+      std::to_string(core.angular_velocity.exact_sample_count)));
+  status.values.push_back(keyValue(
+      "angular_velocity_interpolated_count",
+      std::to_string(core.angular_velocity.interpolated_count)));
+  status.values.push_back(keyValue(
+      "angular_velocity_missing_bracket_count",
+      std::to_string(core.angular_velocity.missing_bracket_count)));
+  status.values.push_back(keyValue(
+      "angular_velocity_timestamp_mismatch_count",
+      std::to_string(core.angular_velocity.timestamp_mismatch_count)));
+  status.values.push_back(keyValue(
+      "angular_velocity_nonfinite_reject_count",
+      std::to_string(core.angular_velocity.nonfinite_reject_count)));
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

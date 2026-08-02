@@ -36,6 +36,5 @@ def test_standalone_and_canonical_launch_mount_policy():
     ).read_text()
     assert '"livox_mount_xyz"' in standalone
     assert '"livox_mount_rpy"' in standalone
-    assert 'DeclareLaunchArgument("publish_sensor_frames", default_value="true")' not in bringup
-    assert 'default_value="false"' in bringup
-    assert "Temporarily disabled until P0.3 makes odom -> base_link" in bringup
+    assert 'default_value="true"' in bringup
+    assert "canonical static base_link -> livox_frame ->" in bringup

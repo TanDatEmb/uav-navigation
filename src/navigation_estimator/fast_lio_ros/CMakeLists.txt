@@ -16,6 +16,7 @@ find_package(nav_msgs REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(${PROJECT_NAME}
@@ -25,8 +26,10 @@ add_library(${PROJECT_NAME}
   src/ros_imu_adapter.cpp
   src/ros_lidar_adapter.cpp
   src/ros_livox_custom_adapter.cpp
+  src/ros_odometry_serializer.cpp
   src/ros_output_publisher.cpp
   src/ros_propagated_odometry_publisher.cpp
+  src/ros_static_transform_resolver.cpp
   src/ros_time_converter.cpp
   src/ros_transform_publisher.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -36,7 +39,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(${PROJECT_NAME} OpenSSL::Crypto)
 ament_target_dependencies(${PROJECT_NAME}
   diagnostic_msgs fast_lio_core geometry_msgs livox_ros_driver2 nav_msgs
-  rclcpp sensor_msgs tf2_ros)
+  rclcpp sensor_msgs tf2 tf2_ros)
 
 add_executable(fast_lio_node src/fast_lio_node.cpp src/main.cpp)
 target_link_libraries(fast_lio_node ${PROJECT_NAME})
@@ -73,10 +76,13 @@ if(BUILD_TESTING)
     test/test_ros_propagated_odometry_publisher.cpp)
   target_link_libraries(test_ros_propagated_odometry_publisher
     ${PROJECT_NAME})
+  ament_add_gtest(test_ros_odometry_serializer
+    test/test_ros_odometry_serializer.cpp)
+  target_link_libraries(test_ros_odometry_serializer ${PROJECT_NAME})
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   diagnostic_msgs fast_lio_core geometry_msgs livox_ros_driver2 nav_msgs
-  OpenSSL rclcpp sensor_msgs tf2_ros)
+  OpenSSL rclcpp sensor_msgs tf2 tf2_ros)
 ament_package()

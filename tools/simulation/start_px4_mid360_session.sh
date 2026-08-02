@@ -68,8 +68,9 @@ launch_terminal bridge "MID-360 bridge | $(basename "${SESSION_DIR}")" \
   ros2 run ros_gz_bridge parameter_bridge --ros-args -r __node:=px4_mid360_bridge \
   -p "config_file:=${BRIDGE_CONFIG}" -p use_sim_time:=true
 launch_terminal fast_lio "FAST-LIO | $(basename "${SESSION_DIR}")" \
-  ros2 run fast_lio_ros fast_lio_node --ros-args -r __node:=fast_lio \
-  --params-file "${LIO_CONFIG}" -p use_sim_time:=true
+  ros2 launch navigation_bringup fast_lio.launch.py \
+  config_file:="${LIO_CONFIG}" use_sim_time:=true \
+  livox_mount_xyz:="0 0 0.28" livox_mount_rpy:="0 0 0"
 
 deadline=$((SECONDS+45))
 until ros2 topic list 2>/dev/null | grep -qx '/lidar/imu' &&

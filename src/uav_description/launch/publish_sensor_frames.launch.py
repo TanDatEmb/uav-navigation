@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -28,19 +29,23 @@ def generate_launch_description():
                 name="robot_state_publisher",
                 parameters=[
                     {
-                        "robot_description": Command(
-                            [
+                        "robot_description": ParameterValue(
+                            Command(
+                                [
                                 "xacro ",
                                 *xacro_file,
-                                " livox_mount_xyz:=",
+                                " livox_mount_xyz:=\"",
                                 LaunchConfiguration("livox_mount_xyz"),
-                                " livox_mount_rpy:=",
+                                "\" livox_mount_rpy:=\"",
                                 LaunchConfiguration("livox_mount_rpy"),
-                                " livox_lidar_to_imu_xyz:=",
+                                "\" livox_lidar_to_imu_xyz:=\"",
                                 LaunchConfiguration("livox_lidar_to_imu_xyz"),
-                                " livox_lidar_to_imu_rpy:=",
+                                "\" livox_lidar_to_imu_rpy:=\"",
                                 LaunchConfiguration("livox_lidar_to_imu_rpy"),
-                            ]
+                                    "\"",
+                                ]
+                            ),
+                            value_type=str,
                         )
                     }
                 ],

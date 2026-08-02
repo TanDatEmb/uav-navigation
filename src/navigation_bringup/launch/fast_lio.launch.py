@@ -23,10 +23,10 @@ def generate_launch_description():
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument(
                 "publish_sensor_frames",
-                default_value="false",
+                default_value="true",
                 description=(
-                    "Temporarily disabled until P0.3 makes odom -> base_link "
-                    "the sole dynamic edge."
+                    "Publish the canonical static base_link -> livox_frame -> "
+                    "livox_imu_frame tree."
                 ),
             ),
             DeclareLaunchArgument("livox_mount_xyz"),

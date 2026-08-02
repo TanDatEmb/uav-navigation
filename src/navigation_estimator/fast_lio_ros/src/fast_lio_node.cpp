@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "fast_lio_ros/qos_profiles.hpp"
+#include "fast_lio_ros/ros_static_transform_resolver.hpp"
 
 namespace uav::nav::lio {
 namespace {
@@ -106,9 +107,30 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
   runtime_diagnostics_.lidar_queue_capacity =
       static_cast<std::size_t>(parameters_.lidar_queue_capacity);
+  RosStaticTransformResolver static_tf(*this);
+  const auto base_to_imu = static_tf.resolve(parameters_.base_frame,
+                                             parameters_.imu_frame);
+  if (!base_to_imu.ok()) {
+    throw std::runtime_error("P0.3 static sensor geometry unavailable: " +
+                             base_to_imu.status().message());
+  }
+  const auto converter = BaseLinkStateConverter::Create(base_to_imu.value());
+  if (!converter.ok()) {
+    throw std::runtime_error("invalid base-link static geometry: " +
+                             converter.status().message());
+  }
+  base_link_converter_ = std::make_shared<const BaseLinkStateConverter>(
+      converter.value());
+  runtime_diagnostics_.static_geometry_ready = true;
+  runtime_diagnostics_.static_geometry_source = "robot_state_publisher:/tf_static";
+  runtime_diagnostics_.dynamic_tf_owner =
+      parameters_.propagated_odometry_enabled ? "propagated" : "corrected";
+  output_publisher_.setBaseLinkConverter(base_link_converter_);
+  transform_publisher_.setBaseLinkConverter(base_link_converter_);
   if (parameters_.propagated_odometry_enabled) {
     propagated_odometry_publisher_ =
         std::make_unique<RosPropagatedOdometryPublisher>(*this, parameters_);
+    propagated_odometry_publisher_->setBaseLinkConverter(base_link_converter_);
     PropagatedOdometryWorkerConfig worker_config;
     worker_config.propagator.ikfom = profile_.estimator.ikfom;
     worker_config.propagator.residual_builder =
@@ -124,7 +146,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
     propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
         worker_config, [this](const std::optional<KinematicStateEstimate>& estimate) {
           if (estimate.has_value()) {
-            propagated_odometry_publisher_->publish(estimate->estimate);
+            propagated_odometry_publisher_->publish(*estimate);
+            transform_publisher_.publishPropagated(*estimate);
           }
         });
     propagated_odometry_worker_->start();
@@ -156,9 +179,13 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
                     message) { onLidar(message); });
   }
   RCLCPP_INFO(get_logger(),
-              "Publishing the estimator state as odom -> %s; no base_link "
-              "transform is inferred from the IMU state; config_sha256=%s",
-              parameters_.imu_frame.c_str(), profile_.config_sha256.c_str());
+              "Publishing corrected and propagated odometry in odom -> %s; "
+              "dynamic TF owner=%s; static geometry resolved from %s -> %s; "
+              "config_sha256=%s",
+              parameters_.base_frame.c_str(),
+              parameters_.propagated_odometry_enabled ? "propagated" : "corrected",
+              parameters_.base_frame.c_str(), parameters_.imu_frame.c_str(),
+              profile_.config_sha256.c_str());
   transport_diagnostics_timer_ = create_wall_timer(
       std::chrono::seconds(1),
       [this] { publishTransportSnapshot(); });
@@ -430,7 +457,10 @@ void FastLioNode::publishAvailableResults() {
       augmented.diagnostics.sensor = ingress_diagnostics_;
     }
     output_publisher_.publish(augmented);
-    transform_publisher_.publish(augmented);
+    if (augmented.corrected_kinematic_estimate.has_value()) {
+      transform_publisher_.publishCorrected(
+          *augmented.corrected_kinematic_estimate);
+    }
     if (propagated_odometry_worker_) {
       const bool corrected = augmented.hasCorrectedOutput();
       if (corrected) {
@@ -459,6 +489,12 @@ void FastLioNode::publishTransportSnapshot() {
     processing = processing_statistics_;
     runtime = runtime_diagnostics_;
     runtime_statistics_.populate(runtime);
+    const auto tf = transform_publisher_.diagnostics();
+    runtime.dynamic_tf_publication_count = tf.publication_count;
+    runtime.dynamic_tf_timestamp_suppressed_count =
+        tf.timestamp_suppressed_count;
+    runtime.dynamic_tf_conversion_failure_count =
+        tf.conversion_failure_count;
   }
   output_publisher_.publishTransportSnapshot(sensor, processing, runtime);
   if (propagated_odometry_worker_ && propagated_odometry_publisher_) {

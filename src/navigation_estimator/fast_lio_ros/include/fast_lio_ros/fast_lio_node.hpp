@@ -12,6 +12,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
+#include "fast_lio_core/navigation/base_link_state_converter.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
 #include "fast_lio_ros/propagated_odometry_worker.hpp"
 #include "fast_lio_ros/ros_imu_adapter.hpp"
@@ -81,6 +82,7 @@ class FastLioNode : public rclcpp::Node {
   ProcessingStatistics processing_statistics_;
   RuntimeDiagnostics runtime_diagnostics_;
   RuntimeStatistics runtime_statistics_;
+  std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::int64_t previous_ros_imu_ns_{-1};
   std::uint64_t correction_sequence_{0U};
   rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;

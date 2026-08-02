@@ -1,11 +1,15 @@
 #pragma once
 
+#include <memory>
+#include <optional>
+
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/node.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include "fast_lio_core/pipeline/process_result.hpp"
+#include "fast_lio_core/navigation/base_link_state_converter.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
 #include "fast_lio_ros/propagated_odometry_worker.hpp"
 #include "fast_lio_ros/runtime_diagnostics.hpp"
@@ -15,6 +19,7 @@ namespace uav::nav::lio {
 class RosOutputPublisher {
  public:
   RosOutputPublisher(rclcpp::Node& node, RosParameters parameters);
+  void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
   void publish(const ProcessResult& result);
   void publishTransportSnapshot(
       const SensorDiagnostics& sensor,
@@ -38,6 +43,7 @@ class RosOutputPublisher {
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr registered_points_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
+  std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
 };
 
 }  // namespace uav::nav::lio

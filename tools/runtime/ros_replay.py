@@ -349,6 +349,19 @@ def run(args: argparse.Namespace) -> int:
         logs.append(stream)
         return stream
 
+    static_tf_command = [
+        "ros2", "launch", "uav_description", "publish_sensor_frames.launch.py",
+        f"livox_mount_xyz:={args.static_mount_xyz}",
+        f"livox_mount_rpy:={args.static_mount_rpy}",
+    ]
+    static_tf = subprocess.Popen(
+        static_tf_command,
+        stdout=log("static_tf.stdout.log"),
+        stderr=log("static_tf.stderr.log"),
+        start_new_session=True,
+    )
+    processes.append(static_tf)
+    register_process(registry_path, static_tf, "static_tf", static_tf_command)
     node_command = [
         "ros2", "run", "fast_lio_ros", "fast_lio_node",
         "--ros-args", "--params-file", str(args.config),
@@ -487,6 +500,14 @@ def parser() -> argparse.ArgumentParser:
     replay.add_argument("--replay-timeout", type=float, default=900.0)
     replay.add_argument("--enable-rviz", action="store_true")
     replay.add_argument("--rviz-config", type=Path)
+    replay.add_argument(
+        "--static-mount-xyz", default="0 0 0",
+        help="Explicit replay fixture base_link to livox_frame translation",
+    )
+    replay.add_argument(
+        "--static-mount-rpy", default="0 0 0",
+        help="Explicit replay fixture base_link to livox_frame rotation",
+    )
     return result
 
 

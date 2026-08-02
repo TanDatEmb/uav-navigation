@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <string>
 #include <vector>
 
 namespace uav::nav::lio {
@@ -45,6 +46,12 @@ struct RuntimeDiagnostics {
   double worker_busy_ratio{0.0};
   bool overflow_detected{false};
   bool processing_lag_exceeded{false};
+  bool static_geometry_ready{false};
+  std::string static_geometry_source;
+  std::string dynamic_tf_owner;
+  std::size_t dynamic_tf_publication_count{0};
+  std::size_t dynamic_tf_timestamp_suppressed_count{0};
+  std::size_t dynamic_tf_conversion_failure_count{0};
 };
 
 class RuntimeStatistics {

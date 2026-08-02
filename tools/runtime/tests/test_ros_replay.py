@@ -47,6 +47,8 @@ class DrainTest(unittest.TestCase):
         ])
         self.assertFalse(args.enable_rviz)
         self.assertIsNone(rviz_command(args))
+        self.assertEqual(args.static_mount_xyz, "0 0 0")
+        self.assertEqual(args.static_mount_rpy, "0 0 0")
 
     def test_enable_rviz_builds_canonical_command(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
