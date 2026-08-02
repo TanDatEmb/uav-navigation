@@ -16,7 +16,8 @@ at the ROS boundary and publishes the corrected/propagated base-link contract.
 - Commits:
   - `56c2d6e feat(lio): provide exact-epoch angular velocity`
   - `06be0c3 feat(ros): publish corrected and propagated base odometry`
-  - `docs(verification): validate base odometry contract` (this report)
+  - `c0fd7c8 docs(verification): validate base odometry contract`
+  - `docs(verification): correct P0.3 cloud frame result` (this amendment)
 
 ## Dependency rationale
 
@@ -123,8 +124,15 @@ The Xacro expansion and `check_urdf` validation passed. No `imu_link`,
 `lidar_link`, `mid360_lidar_frame`, or `mid360_imu_frame` appears in the
 canonical tree.
 
-- Registered points frame: `livox_frame`.
+- Registered points frame: `odom`.
 - Local map frame: `odom`.
+- Input `/lidar/points` frame: `livox_frame`.
+
+The input sensor frame is intentionally distinct from the output cloud frame.
+`RosOutputPublisher::makeCloud()` publishes both
+`registered_points_odom_m` and `local_map_points_odom_m` with
+`parameters_.odom_frame`; the base-link converter is not used on this point
+path.
 
 ## Covariance unavailable policy
 
@@ -181,13 +189,33 @@ The session report is:
 
 `.artifacts/simulation/px4-mid360-20260802-185455/REPORT.md`
 
+The focused frame snapshot was captured from session
+`.artifacts/simulation/px4-mid360-20260802-190442` using:
+
+```bash
+ros2 topic echo /lio/registered_points --once --field header.frame_id
+ros2 topic echo /lio/local_map --once --field header.frame_id
+```
+
 The report recorded no process crash. Corrected odometry, registered points,
 and dynamic TF continued to publish; the stream counts were 330 odometry,
 330 registered-points, and 330 TF messages. The observer sampled 38 scans and
 reported finite ratio `0.40478515625`, below the warning threshold `0.5` (error
 threshold `0.1`), with no NaN XYZ values, 46,246 positive-Inf XYZ values, and
-76 negative-Inf XYZ values in the sampled scans. The sampled point-cloud
-frame was `livox_frame`.
+76 negative-Inf XYZ values in the sampled scans. The sampled input point cloud
+`/lidar/points` had frame `livox_frame`; this is not the output registered-cloud
+frame.
+
+The focused runtime frame snapshot, taken while the headless session was
+active, returned:
+
+```text
+/lio/registered_points = odom
+/lio/local_map = odom
+```
+
+This confirms that the P0.3 output frame contract is `odom` and that no point
+cloud transform or frame relabeling regression is present.
 
 ```text
 SIM workflow completed and cleaned up successfully. The finite-point condition is retained as a baseline warning for later investigation.
@@ -249,6 +277,7 @@ started.
 - [x] Twist values are expressed in the `base_link` body frame.
 - [x] Dynamic TF ownership is exclusive for both enabled and disabled modes.
 - [x] Duplicate and regressed TF timestamps are suppressed.
+- [x] Registered points and local map headers are both `odom`.
 - [x] Canonical static tree and sensor-frame launch contract validated.
 - [x] Covariance remains explicitly unavailable for P0.5.
 - [x] Full build, test, check, vendor, dataset, and SIM gates completed.
