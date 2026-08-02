@@ -48,7 +48,7 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 8);
   EXPECT_EQ(parameters.overload_policy, "fail");
-  EXPECT_FALSE(parameters.propagated_odometry_enabled);
+  EXPECT_TRUE(parameters.propagated_odometry_enabled);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
 }
 

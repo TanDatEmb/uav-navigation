@@ -22,7 +22,7 @@ fast_lio:
     initial_prior:
       source: zero
       context: ground_startup
-      components: {position: true, velocity: true, attitude: yaw_only}
+      components: { position: true, velocity: true, attitude: yaw_only }
       topic: /initial_state_prior
       topic_wait_timeout_ns: 2000000000
       maximum_topic_prior_age_ns: 500000000
@@ -68,7 +68,7 @@ fast_lio:
       publish_registered_points: true
       publish_local_map: true
     propagated_odometry:
-      enabled: false
+      enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
