@@ -14,7 +14,7 @@
   <model name="lidar_mid360">
     <static>false</static>
     <self_collide>false</self_collide>
-    <link name="mid360_link">
+    <link name="livox_frame">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
         <mass>0.265</mass>
@@ -34,7 +34,7 @@
       <sensor name="lidar" type="gpu_lidar">
         <pose>0 0 0 0 0 0</pose>
         <topic>/sim/mid360/scan</topic>
-        <gz_frame_id>mid360_lidar_frame</gz_frame_id>
+        <gz_frame_id>livox_frame</gz_frame_id>
         <always_on>true</always_on>
         <update_rate>10</update_rate>
         <visualize>false</visualize>
@@ -57,9 +57,9 @@
       </sensor>
 
       <sensor name="mid360_imu" type="imu">
-        <pose>0 0 0 0 0 0</pose>
+        <pose>0.011 0.02329 -0.04412 0 0 0</pose>
         <topic>/sim/mid360/imu</topic>
-        <gz_frame_id>mid360_imu_frame</gz_frame_id>
+        <gz_frame_id>livox_imu_frame</gz_frame_id>
         <always_on>true</always_on>
         <update_rate>200</update_rate>
         <imu>
@@ -76,7 +76,5 @@
         </imu>
       </sensor>
     </link>
-    <frame name="mid360_lidar_frame" attached_to="mid360_link"><pose>0 0 0 0 0 0</pose></frame>
-    <frame name="mid360_imu_frame" attached_to="mid360_link"><pose>0 0 0 0 0 0</pose></frame>
   </model>
 </sdf>

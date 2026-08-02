@@ -11,8 +11,13 @@ def test_mid360_model_contract():
     assert sensors["mid360_imu"].attrib["type"] == "imu"
     assert sensors["lidar"].findtext("topic") == "/sim/mid360/scan"
     assert sensors["mid360_imu"].findtext("topic") == "/sim/mid360/imu"
-    assert sensors["lidar"].findtext("gz_frame_id") == "mid360_lidar_frame"
-    assert sensors["mid360_imu"].findtext("gz_frame_id") == "mid360_imu_frame"
+    assert sensors["lidar"].findtext("gz_frame_id") == "livox_frame"
+    assert sensors["mid360_imu"].findtext("gz_frame_id") == "livox_imu_frame"
+    assert sensors["lidar"].findtext("pose") == "0 0 0 0 0 0"
+    assert sensors["mid360_imu"].findtext("pose") == (
+        "0.011 0.02329 -0.04412 0 0 0"
+    )
+    assert model.find(".//frame") is None
     assert sensors["lidar"].find("lidar") is not None
 
 
@@ -25,7 +30,7 @@ def test_x500_mid360_mount_contract():
     assert joint is not None
     assert joint.attrib["type"] == "fixed"
     assert joint.findtext("parent") == "base_link"
-    assert joint.findtext("child") == "mid360_link"
+    assert joint.findtext("child") == "livox_frame"
 
 
 def test_px4_lio_smoke_world_and_bridge_contract():
