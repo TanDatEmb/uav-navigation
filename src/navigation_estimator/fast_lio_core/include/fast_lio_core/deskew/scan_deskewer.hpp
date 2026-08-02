@@ -19,7 +19,7 @@ class ScanDeskewer {
   explicit ScanDeskewer(ScanDeskewerConfig config = {});
 
   // T_imu_lidar must represent ^I T_L. Applied output points remain in
-  // lidar_link, but all are expressed at the selected common reference time.
+  // livox_frame, but all are expressed at the selected common reference time.
   [[nodiscard]] Result<DeskewResult> deskew(const LidarScan& scan,
                                             const ImuTrajectory& imu_trajectory,
                                             const RigidTransform& T_imu_lidar) const;

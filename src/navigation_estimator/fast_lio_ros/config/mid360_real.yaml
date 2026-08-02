@@ -1,11 +1,11 @@
 fast_lio:
   ros__parameters:
-    frames: {odom: odom, base: base_link, imu: imu_link, lidar: lidar_link}
+    frames: {odom: odom, base: base_link, imu: livox_imu_frame, lidar: livox_frame}
     input:
       lidar_topic: /livox/lidar
       imu_topic: /livox/imu
       lidar_frame: livox_frame
-      imu_frame: livox_frame
+      imu_frame: livox_imu_frame
       lidar_message_type: livox_custom
     timing:
       lidar_mode: per_point
@@ -19,7 +19,8 @@ fast_lio:
       discontinuity_covariance_inflation: 10.0
     extrinsic:
       estimate_online: false
-      translation_imu_lidar: [-0.019391, -0.000278, 0.080926]
+      # Factory nominal inverse T_I_L; not unit calibration.
+      translation_imu_lidar: [-0.011, -0.02329, 0.04412]
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
     initialization: {minimum_imu_samples: 200, require_stationary: true}
     preprocessing:

@@ -168,8 +168,10 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
 
   EXPECT_EQ(parameters.lidar_topic, "/livox/lidar");
   EXPECT_EQ(parameters.imu_topic, "/livox/imu");
+  EXPECT_EQ(parameters.lidar_frame, "livox_frame");
+  EXPECT_EQ(parameters.imu_frame, "livox_imu_frame");
   EXPECT_EQ(parameters.lidar_input_frame, "livox_frame");
-  EXPECT_EQ(parameters.imu_input_frame, "livox_frame");
+  EXPECT_EQ(parameters.imu_input_frame, "livox_imu_frame");
   EXPECT_EQ(parameters.lidar_message_type, "livox_custom");
   EXPECT_EQ(profile.lidar_timing_mode, "per_point");
   EXPECT_EQ(profile.clock_domain, ClockDomain::kSensorTime);
@@ -182,7 +184,7 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
   EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
   EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.translation_imu_lidar_m,
-            (std::array<double, 3>{-0.019391, -0.000278, 0.080926}));
+            (std::array<double, 3>{-0.011, -0.02329, 0.04412}));
   EXPECT_EQ(parameters.rotation_imu_lidar_xyzw,
             (std::array<double, 4>{0.0, 0.0, 0.0, 1.0}));
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
@@ -206,6 +208,30 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
             1'000'000'000);
   EXPECT_EQ(parameters.propagated_odometry_maximum_correction_age_ns,
             300'000'000);
+}
+
+TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
+  const auto profile = loadCanonicalEstimatorProfile(
+      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
+  RosParameters parameters;
+  parameters.imu_frame = "livox_imu_frame";
+  parameters.lidar_frame = "livox_frame";
+  parameters.imu_input_frame = profile.imu_input_frame;
+  parameters.lidar_input_frame = profile.lidar_input_frame;
+
+  EXPECT_NO_THROW(ParameterLoader::validateCanonicalFrameContract(parameters));
+  parameters.imu_input_frame = parameters.lidar_input_frame;
+  EXPECT_THROW(ParameterLoader::validateCanonicalFrameContract(parameters),
+               std::invalid_argument);
+}
+
+TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
+  const auto profile = loadCanonicalEstimatorProfile(
+      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
+  EXPECT_EQ(profile.lidar_input_frame, "livox_frame");
+  EXPECT_EQ(profile.imu_input_frame, "livox_imu_frame");
+  EXPECT_EQ(profile.estimator.extrinsic.translation_imu_lidar_m,
+            (Eigen::Vector3d{-0.019391, -0.000278, 0.080926}));
 }
 
 TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {

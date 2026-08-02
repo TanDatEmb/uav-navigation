@@ -27,7 +27,7 @@ TEST_F(RosPropagatedOdometryPublisherTest, ConvertsAndPublishesOwnedEstimate) {
   rclcpp::Node node("propagated_publisher_test");
   RosParameters parameters;
   parameters.odom_frame = "odom";
-  parameters.imu_frame = "imu_link";
+  parameters.imu_frame = "livox_imu_frame";
   RosPropagatedOdometryPublisher publisher(node, parameters);
   EXPECT_NO_THROW(publisher.publish(estimateAt(20'000'000)));
 }

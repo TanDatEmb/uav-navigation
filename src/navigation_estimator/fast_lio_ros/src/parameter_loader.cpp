@@ -145,8 +145,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   }
   result.odom_frame = node.declare_parameter("frames.odom", "odom");
   result.base_frame = node.declare_parameter("frames.base", "base_link");
-  result.imu_frame = node.declare_parameter("frames.imu", "imu_link");
-  result.lidar_frame = node.declare_parameter("frames.lidar", "lidar_link");
+  result.imu_frame = node.declare_parameter("frames.imu", "livox_imu_frame");
+  result.lidar_frame = node.declare_parameter("frames.lidar", "livox_frame");
   result.lidar_topic = node.declare_parameter("input.lidar_topic", "/lidar/points");
   result.imu_topic = node.declare_parameter("input.imu_topic", "/lidar/imu");
   result.lidar_input_frame =
@@ -354,7 +354,9 @@ EstimatorProfile loadCanonicalEstimatorProfile(const std::string& config_path) {
        std::filesystem::absolute(config_path).lexically_normal().string()});
   rclcpp::Node node("fast_lio", options);
   requireCanonicalFields(node);
-  return makeEstimatorProfile(ParameterLoader::declareAndLoad(node));
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  ParameterLoader::validateCanonicalFrameContract(parameters);
+  return makeEstimatorProfile(parameters);
 }
 
 void ParameterLoader::validate(const RosParameters& p) {
@@ -474,6 +476,28 @@ void ParameterLoader::validate(const RosParameters& p) {
       !(p.local_map_distance_shell_size_m > 0.0) ||
       !std::isfinite(p.local_map_distance_shell_size_m)) {
     throw std::invalid_argument("invalid mapping.local_map configuration");
+  }
+}
+
+void ParameterLoader::validateCanonicalFrameContract(const RosParameters& p) {
+  if (p.lidar_frame != "livox_frame" ||
+      p.imu_frame != "livox_imu_frame" ||
+      p.lidar_input_frame != "livox_frame" ||
+      p.imu_input_frame != "livox_imu_frame") {
+    throw std::invalid_argument(
+        "canonical profiles require livox_frame and livox_imu_frame at both "
+        "the estimator and input boundaries");
+  }
+  if (p.imu_frame == p.lidar_frame ||
+      p.imu_input_frame == p.lidar_input_frame) {
+    throw std::invalid_argument(
+        "canonical profiles require distinct LiDAR and IMU frames at both "
+        "the estimator and input boundaries");
+  }
+  if (p.imu_frame != p.imu_input_frame || p.lidar_frame != p.lidar_input_frame) {
+    throw std::invalid_argument(
+        "canonical profiles require input frames to match their estimator "
+        "sensor frames");
   }
 }
 

@@ -12,7 +12,7 @@ sensor_msgs::msg::PointCloud2 makeCloud(std::uint32_t width = 2U,
                                         std::uint32_t height = 1U,
                                         std::uint32_t padding = 0U) {
   sensor_msgs::msg::PointCloud2 cloud;
-  cloud.header.frame_id = "lidar_link";
+  cloud.header.frame_id = "livox_frame";
   cloud.header.stamp.sec = 1;
   cloud.height = height;
   cloud.width = width;
@@ -72,7 +72,7 @@ void setX(sensor_msgs::msg::PointCloud2& cloud, std::size_t index,
 
 TEST(RosLidarAdapterTest, SimultaneousScanDoesNotInventPointTime) {
   sensor_msgs::msg::PointCloud2 cloud;
-  cloud.header.frame_id = "lidar_link";
+  cloud.header.frame_id = "livox_frame";
   cloud.height = 1;
   cloud.width = 1;
   cloud.point_step = 12;
@@ -96,7 +96,7 @@ TEST(RosLidarAdapterTest, SimultaneousScanDoesNotInventPointTime) {
   const float coordinates[3]{1.0F, 2.0F, 3.0F};
   std::memcpy(cloud.data.data(), coordinates, sizeof(coordinates));
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kSimultaneousScan,
+      RosLidarAdapter{"livox_frame", LidarTimingMode::kSimultaneousScan,
                       ClockDomain::kSimulationTime}
           .convert(cloud);
   ASSERT_EQ(scan.points.size(), 1U);
@@ -107,7 +107,7 @@ TEST(RosLidarAdapterTest, SimultaneousScanDoesNotInventPointTime) {
 
 TEST(RosLidarAdapterTest, RealModeRequiresPerPointTime) {
   sensor_msgs::msg::PointCloud2 cloud;
-  cloud.header.frame_id = "lidar_link";
+  cloud.header.frame_id = "livox_frame";
   cloud.height = 1;
   cloud.width = 0;
   cloud.point_step = 12;
@@ -126,13 +126,13 @@ TEST(RosLidarAdapterTest, RealModeRequiresPerPointTime) {
                       .set__offset(8)
                       .set__datatype(sensor_msgs::msg::PointField::FLOAT32)
                       .set__count(1)};
-  const RosLidarAdapter adapter{"lidar_link", LidarTimingMode::kPerPoint};
+  const RosLidarAdapter adapter{"livox_frame", LidarTimingMode::kPerPoint};
   EXPECT_THROW(static_cast<void>(adapter.convert(cloud)), std::invalid_argument);
 }
 
 TEST(RosLidarAdapterTest, AcceptsConfiguredUint32RelativeNanoseconds) {
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kPerPoint}.convert(makeCloud());
+      RosLidarAdapter{"livox_frame", LidarTimingMode::kPerPoint}.convert(makeCloud());
   ASSERT_EQ(scan.points.size(), 2U);
   EXPECT_EQ(scan.points[1].relative_time_ns, 10U);
 }
@@ -142,7 +142,7 @@ TEST(RosLidarAdapterTest, AcceptsFloat64AbsoluteTimestampAndMinimumReference) {
   setAbsolute(cloud, 0, 1'000'000'020.0);
   setAbsolute(cloud, 1, 1'000'000'000.0);
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kPerPoint,
+      RosLidarAdapter{"livox_frame", LidarTimingMode::kPerPoint,
                       ClockDomain::kRosTime, absoluteConfig()}
           .convert(cloud);
   EXPECT_EQ(scan.start_time.nanoseconds(), 1'000'000'000);
@@ -157,7 +157,7 @@ TEST(RosLidarAdapterTest, PreservesTimestampIndexWhenNanXyzIsRemoved) {
   setAbsolute(cloud, 2, 1'000'000'020.0);
   setX(cloud, 1, std::numeric_limits<float>::quiet_NaN());
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kPerPoint,
+      RosLidarAdapter{"livox_frame", LidarTimingMode::kPerPoint,
                       ClockDomain::kRosTime, absoluteConfig()}
           .convert(cloud);
   ASSERT_EQ(scan.points.size(), 2U);
@@ -169,7 +169,7 @@ TEST(RosLidarAdapterTest, DeterministicallyTrimsBoundedBoundaryOverlap) {
   auto config = absoluteConfig();
   config.maximum_boundary_overlap_ns = 20;
   config.minimum_points_after_overlap_trim = 1;
-  RosLidarAdapter adapter{"lidar_link", LidarTimingMode::kPerPoint,
+  RosLidarAdapter adapter{"livox_frame", LidarTimingMode::kPerPoint,
                           ClockDomain::kRosTime, config};
   auto first = makeCloud();
   setAbsolute(first, 0, 1'000'000'000.0);
@@ -195,7 +195,7 @@ TEST(RosLidarAdapterTest, RejectsNonFiniteAndOutOfRangeAbsoluteTimestamp) {
     auto cloud = makeCloud();
     setAbsolute(cloud, 0, invalid);
     EXPECT_THROW(
-        RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint,
+        RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
                         ClockDomain::kRosTime, absoluteConfig()).convert(cloud),
         std::invalid_argument);
   }
@@ -207,7 +207,7 @@ TEST(RosLidarAdapterTest, RejectsNegativeRelativeTimestampWithHeaderReference) {
   auto cloud = makeCloud();
   setAbsolute(cloud, 0, 999'999'999.0);
   EXPECT_THROW(
-      RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint,
+      RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
                       ClockDomain::kRosTime, config).convert(cloud),
       std::invalid_argument);
 }
@@ -216,7 +216,7 @@ TEST(RosLidarAdapterTest, RejectsDurationAndHeaderOffsetBeyondLimits) {
   auto cloud = makeCloud();
   setAbsolute(cloud, 1, 1'300'000'000.0);
   EXPECT_THROW(
-      RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint,
+      RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
                       ClockDomain::kRosTime, absoluteConfig()).convert(cloud),
       std::invalid_argument);
   auto config = absoluteConfig();
@@ -224,14 +224,14 @@ TEST(RosLidarAdapterTest, RejectsDurationAndHeaderOffsetBeyondLimits) {
   setAbsolute(cloud, 0, 1'000'000'010.0);
   setAbsolute(cloud, 1, 1'000'000'020.0);
   EXPECT_THROW(
-      RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint,
+      RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
                       ClockDomain::kRosTime, config).convert(cloud),
       std::invalid_argument);
 }
 
 TEST(RosLidarAdapterTest, SupportsOrganizedCloudWithRowPadding) {
   const auto scan =
-      RosLidarAdapter{"lidar_link", LidarTimingMode::kPerPoint}
+      RosLidarAdapter{"livox_frame", LidarTimingMode::kPerPoint}
           .convert(makeCloud(2, 2, 16));
   EXPECT_EQ(scan.points.size(), 4U);
 }
@@ -239,26 +239,26 @@ TEST(RosLidarAdapterTest, SupportsOrganizedCloudWithRowPadding) {
 TEST(RosLidarAdapterTest, RejectsInvalidStorageAndEmptyCloud) {
   auto cloud = makeCloud();
   cloud.row_step = cloud.width * cloud.point_step - 1;
-  EXPECT_THROW(RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint).convert(cloud),
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(cloud),
                std::invalid_argument);
   cloud = makeCloud();
   cloud.point_step = 8;
-  EXPECT_THROW(RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint).convert(cloud),
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(cloud),
                std::invalid_argument);
   cloud = makeCloud(0);
-  EXPECT_THROW(RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint).convert(cloud),
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(cloud),
                std::invalid_argument);
 }
 
 TEST(RosLidarAdapterTest, RejectsFrameMismatch) {
   auto cloud = makeCloud();
   cloud.header.frame_id = "wrong";
-  EXPECT_THROW(RosLidarAdapter("lidar_link", LidarTimingMode::kPerPoint).convert(cloud),
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(cloud),
                std::invalid_argument);
 }
 
 TEST(RosLidarAdapterTest, RejectsScanLevelTimestampRegression) {
-  RosLidarAdapter adapter{"lidar_link", LidarTimingMode::kPerPoint,
+  RosLidarAdapter adapter{"livox_frame", LidarTimingMode::kPerPoint,
                           ClockDomain::kRosTime, absoluteConfig()};
   auto first = makeCloud();
   setAbsolute(first, 0, 1'000'000'100.0);

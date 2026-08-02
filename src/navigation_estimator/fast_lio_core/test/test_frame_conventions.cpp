@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include <Eigen/Geometry>
 
 #include "fast_lio_core/geometry/frame_ids.hpp"
@@ -11,10 +13,35 @@ namespace {
 TEST(FrameConventionsTest, ExtrinsicIsImuTargetLidarSource) {
   const RigidTransform T_imu_lidar(imuFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
                                    Eigen::Vector3d(0.1, -0.2, 0.3));
-  EXPECT_EQ(T_imu_lidar.targetFrame().name(), "imu_link");
-  EXPECT_EQ(T_imu_lidar.sourceFrame().name(), "lidar_link");
+  EXPECT_EQ(T_imu_lidar.targetFrame().name(), "livox_imu_frame");
+  EXPECT_EQ(T_imu_lidar.sourceFrame().name(), "livox_frame");
   EXPECT_TRUE(
       T_imu_lidar.apply(Eigen::Vector3d::Zero()).isApprox(Eigen::Vector3d(0.1, -0.2, 0.3), 1e-12));
+}
+
+TEST(FrameConventionsTest, FactoryNominalLivoxExtrinsicHasExactInverse) {
+  const Eigen::Vector3d factory_translation{0.011, 0.02329, -0.04412};
+  const RigidTransform T_L_I(
+      lidarFrame(), imuFrame(), Eigen::Quaterniond::Identity(), factory_translation);
+  const RigidTransform T_I_L = T_L_I.inverse();
+
+  EXPECT_EQ(T_L_I.targetFrame().name(), "livox_frame");
+  EXPECT_EQ(T_L_I.sourceFrame().name(), "livox_imu_frame");
+  EXPECT_EQ(T_I_L.targetFrame().name(), "livox_imu_frame");
+  EXPECT_EQ(T_I_L.sourceFrame().name(), "livox_frame");
+
+  const std::array<Eigen::Vector3d, 5> points_lidar{
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(),
+      Eigen::Vector3d::UnitY(), Eigen::Vector3d::UnitZ(),
+      Eigen::Vector3d(0.37, -1.2, 2.05)};
+  for (const Eigen::Vector3d& point_lidar : points_lidar) {
+    const Eigen::Vector3d point_imu = T_I_L.apply(point_lidar);
+    EXPECT_TRUE(T_L_I.apply(point_imu).isApprox(point_lidar, 1e-12));
+    EXPECT_TRUE(T_I_L.apply(T_L_I.apply(point_lidar)).isApprox(point_lidar, 1e-12));
+  }
+
+  EXPECT_TRUE(T_I_L.apply(Eigen::Vector3d::Zero()).isApprox(
+      Eigen::Vector3d(-0.011, -0.02329, 0.04412), 1e-12));
 }
 
 TEST(FrameConventionsTest, FluBasisIsNotSilentlySwapped) {

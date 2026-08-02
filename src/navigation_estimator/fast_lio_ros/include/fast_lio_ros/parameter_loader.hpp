@@ -97,6 +97,7 @@ class ParameterLoader {
  public:
   [[nodiscard]] static RosParameters declareAndLoad(rclcpp::Node& node);
   static void validate(const RosParameters& parameters);
+  static void validateCanonicalFrameContract(const RosParameters& parameters);
 };
 
 }  // namespace uav::nav::lio

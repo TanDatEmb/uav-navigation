@@ -3,13 +3,13 @@ fast_lio:
     frames:
       odom: odom
       base: base_link
-      imu: mid360_imu_frame
-      lidar: mid360_lidar_frame
+      imu: livox_imu_frame
+      lidar: livox_frame
     input:
       lidar_topic: /lidar/points
       imu_topic: /lidar/imu
-      lidar_frame: mid360_lidar_frame
-      imu_frame: mid360_imu_frame
+      lidar_frame: livox_frame
+      imu_frame: livox_imu_frame
       lidar_message_type: pointcloud2
       qos_reliability: best_effort
     timing:
@@ -24,9 +24,10 @@ fast_lio:
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
     extrinsic:
-      # Sensor origins are colocated. The 0.28 m mount is base-to-sensor, not IMU-to-LiDAR.
+      # Factory nominal inverse T_I_L. The 0.28 m mount is base-to-sensor,
+      # not IMU-to-LiDAR.
       estimate_online: false
-      translation_imu_lidar: [0.0, 0.0, 0.0]
+      translation_imu_lidar: [-0.011, -0.02329, 0.04412]
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
     initialization:
       minimum_imu_samples: 200
