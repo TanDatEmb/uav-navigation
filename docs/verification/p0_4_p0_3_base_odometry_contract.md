@@ -134,12 +134,15 @@ The input sensor frame is intentionally distinct from the output cloud frame.
 `parameters_.odom_frame`; the base-link converter is not used on this point
 path.
 
-## Covariance unavailable policy
+## Covariance policy after P0.5R
 
-The odometry serializer preserves zero covariance arrays as an explicit
-transitional `unavailable` representation. No covariance relabeling,
-rotation, or projection is claimed in P0.3. Covariance projection is deferred
-to P0.5.
+The shared odometry serializer now receives validated P0.5R output. Pose
+covariance is expressed in `odom`; twist covariance is expressed in
+`base_link`; both are projected from the full 23-state IKFoM covariance with
+cross terms preserved. Invalid source or projected covariance fails closed for
+odometry publication while the corrected point-cloud path and dynamic TF
+authority remain independent. Angular-rate covariance is not part of this
+contract.
 
 ## Test results
 

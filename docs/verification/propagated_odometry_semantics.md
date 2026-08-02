@@ -102,5 +102,7 @@ covariance do not block this projection; angular-rate covariance remains
 unavailable unless a later hardware profile supplies it.
 
 PX4 bridging, VehicleOdometry, time synchronization, ENU/FLU to NED/FRD
-conversion, propagated TF, covariance projection, and correction smoothing are
-intentionally deferred.
+conversion, and correction smoothing are intentionally deferred. P0.5R
+covariance projection is implemented at the shared corrected/propagated ROS
+boundary; propagated runtime acceptance remains dependent on the enabled
+propagated-output profile.

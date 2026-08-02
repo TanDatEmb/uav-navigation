@@ -102,12 +102,13 @@ rebuilt atomically by the next `data-fetch`; the normalizer changes only
   percentiles, queue depth, lag, and drops.
 - `/tf` and `/tf_static`: configured frame transforms.
 
-`trajectory.csv` has the same corrected-only semantic. ROS pose/base-linear-
-velocity covariance projection is not yet implemented: P0.5R is ready as the
-next implementation task and must project the full state covariance with
-conditional velocity semantics. The deferred per-sample gyro covariance
-source is not a gate for this work. The existing transitional zero covariance
-must not be interpreted as known covariance.
+`trajectory.csv` has the same corrected-only semantic. P0.5R now exports pose
+and conditional base-link twist covariance from the full 23-state covariance
+through the shared corrected/propagated serializer. Pose covariance is
+expressed in `odom`; twist covariance is expressed in `base_link`. A resolved,
+bias-corrected gyro at the exact output epoch is part of the conditional
+velocity semantics. The deferred per-sample gyro covariance source is not a
+gate, and angular-rate covariance remains outside this contract.
 The real Mid-360 profile uses `/livox/imu` and `/livox/lidar`, `livox_custom`
 per-point sensor timing, the pinned hardware extrinsic, bounded runtime
 queues, and propagated odometry enabled at 50 Hz. This configuration is ready

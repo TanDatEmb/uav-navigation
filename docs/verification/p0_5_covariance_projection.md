@@ -1,5 +1,11 @@
 # P0.5 Covariance Projection — superseded by P0.5R
 
+This document records the historical P0.5/P0.5A audit at the pre-implementation
+baseline. The state-conditional projection described here as a future task is
+now implemented and verified in
+`docs/verification/p0_5r_state_covariance_projection.md`; the deferred
+per-sample gyro covariance decision remains unchanged.
+
 ## Roadmap correction
 
 The original P0.5 requirement to obtain authoritative per-sample raw gyro

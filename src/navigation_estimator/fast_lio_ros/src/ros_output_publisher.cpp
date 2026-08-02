@@ -2,6 +2,7 @@
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
+#include <chrono>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include "fast_lio_ros/qos_profiles.hpp"
@@ -102,12 +103,108 @@ void appendRuntimeValues(
                             std::to_string(runtime.dynamic_tf_timestamp_suppressed_count)));
   values.push_back(keyValue("dynamic_tf_conversion_failure_count",
                             std::to_string(runtime.dynamic_tf_conversion_failure_count)));
+  const auto& covariance = runtime.covariance_projection;
+  values.push_back(keyValue("covariance_semantic",
+                            "state_conditional_on_resolved_gyro"));
+  values.push_back(keyValue("pose_covariance_available",
+                            covariance.pose_covariance_available ? "true" : "false"));
+  values.push_back(keyValue("twist_covariance_available",
+                            covariance.twist_covariance_available ? "true" : "false"));
+  values.push_back(keyValue("pose_covariance_expression_frame", "odom"));
+  values.push_back(keyValue("twist_covariance_expression_frame", "base_link"));
+  values.push_back(keyValue("covariance_projection_success_count",
+                            std::to_string(covariance.projection_success_count)));
+  values.push_back(keyValue("covariance_projection_failure_count",
+                            std::to_string(covariance.projection_failure_count)));
+  values.push_back(keyValue("source_covariance_nonfinite_count",
+                            std::to_string(covariance.source_nonfinite_count)));
+  values.push_back(keyValue("source_covariance_asymmetry_count",
+                            std::to_string(covariance.source_asymmetry_count)));
+  values.push_back(keyValue("source_covariance_non_psd_count",
+                            std::to_string(covariance.source_non_psd_count)));
+  values.push_back(keyValue("source_covariance_zero_count",
+                            std::to_string(covariance.source_zero_count)));
+  values.push_back(keyValue("output_pose_covariance_nonfinite_count",
+                            std::to_string(covariance.output_pose_nonfinite_count)));
+  values.push_back(keyValue("output_twist_covariance_nonfinite_count",
+                            std::to_string(covariance.output_twist_nonfinite_count)));
+  values.push_back(keyValue("output_pose_covariance_non_psd_count",
+                            std::to_string(covariance.output_pose_non_psd_count)));
+  values.push_back(keyValue("output_twist_covariance_non_psd_count",
+                            std::to_string(covariance.output_twist_non_psd_count)));
+  values.push_back(keyValue("covariance_roundoff_repair_count",
+                            std::to_string(covariance.roundoff_repair_count)));
+  values.push_back(keyValue("pose_covariance_trace",
+                            std::to_string(covariance.pose_covariance_trace)));
+  values.push_back(keyValue("twist_covariance_trace",
+                            std::to_string(covariance.twist_covariance_trace)));
+  values.push_back(keyValue("pose_covariance_minimum_eigenvalue",
+                            std::to_string(covariance.pose_covariance_minimum_eigenvalue)));
+  values.push_back(keyValue("twist_covariance_minimum_eigenvalue",
+                            std::to_string(covariance.twist_covariance_minimum_eigenvalue)));
+  values.push_back(keyValue("covariance_projection_us",
+                            std::to_string(covariance.covariance_projection_us)));
+  values.push_back(keyValue("maximum_covariance_projection_us",
+                            std::to_string(covariance.maximum_covariance_projection_us)));
+  values.push_back(keyValue("mean_covariance_projection_us",
+                            std::to_string(covariance.mean_covariance_projection_us)));
+}
+
+void appendCovarianceProjectionValues(
+    std::vector<diagnostic_msgs::msg::KeyValue>& values,
+    const CovarianceProjectionRuntimeSnapshot& covariance) {
+  values.push_back(keyValue("covariance_semantic",
+                            "state_conditional_on_resolved_gyro"));
+  values.push_back(keyValue("pose_covariance_available",
+                            covariance.pose_covariance_available ? "true" : "false"));
+  values.push_back(keyValue("twist_covariance_available",
+                            covariance.twist_covariance_available ? "true" : "false"));
+  values.push_back(keyValue("pose_covariance_expression_frame", "odom"));
+  values.push_back(keyValue("twist_covariance_expression_frame", "base_link"));
+  values.push_back(keyValue("covariance_projection_success_count",
+                            std::to_string(covariance.projection_success_count)));
+  values.push_back(keyValue("covariance_projection_failure_count",
+                            std::to_string(covariance.projection_failure_count)));
+  values.push_back(keyValue("source_covariance_nonfinite_count",
+                            std::to_string(covariance.source_nonfinite_count)));
+  values.push_back(keyValue("source_covariance_asymmetry_count",
+                            std::to_string(covariance.source_asymmetry_count)));
+  values.push_back(keyValue("source_covariance_non_psd_count",
+                            std::to_string(covariance.source_non_psd_count)));
+  values.push_back(keyValue("source_covariance_zero_count",
+                            std::to_string(covariance.source_zero_count)));
+  values.push_back(keyValue("output_pose_covariance_nonfinite_count",
+                            std::to_string(covariance.output_pose_nonfinite_count)));
+  values.push_back(keyValue("output_twist_covariance_nonfinite_count",
+                            std::to_string(covariance.output_twist_nonfinite_count)));
+  values.push_back(keyValue("output_pose_covariance_non_psd_count",
+                            std::to_string(covariance.output_pose_non_psd_count)));
+  values.push_back(keyValue("output_twist_covariance_non_psd_count",
+                            std::to_string(covariance.output_twist_non_psd_count)));
+  values.push_back(keyValue("covariance_roundoff_repair_count",
+                            std::to_string(covariance.roundoff_repair_count)));
+  values.push_back(keyValue("pose_covariance_trace",
+                            std::to_string(covariance.pose_covariance_trace)));
+  values.push_back(keyValue("twist_covariance_trace",
+                            std::to_string(covariance.twist_covariance_trace)));
+  values.push_back(keyValue("pose_covariance_minimum_eigenvalue",
+                            std::to_string(covariance.pose_covariance_minimum_eigenvalue)));
+  values.push_back(keyValue("twist_covariance_minimum_eigenvalue",
+                            std::to_string(covariance.twist_covariance_minimum_eigenvalue)));
+  values.push_back(keyValue("covariance_projection_us",
+                            std::to_string(covariance.covariance_projection_us)));
+  values.push_back(keyValue("maximum_covariance_projection_us",
+                            std::to_string(covariance.maximum_covariance_projection_us)));
+  values.push_back(keyValue("mean_covariance_projection_us",
+                            std::to_string(covariance.mean_covariance_projection_us)));
 }
 
 }  // namespace
 
 RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
-    : parameters_(std::move(parameters)), clock_(node.get_clock()) {
+    : parameters_(std::move(parameters)),
+      clock_(node.get_clock()),
+      covariance_runtime_(std::make_shared<CovarianceProjectionRuntime>()) {
   odometry_ = node.create_publisher<nav_msgs::msg::Odometry>(
       "/lio/odometry_corrected", QosProfiles::estimatorOutput());
   registered_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -120,6 +217,9 @@ RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters paramet
 
 void RosOutputPublisher::setBaseLinkConverter(
     std::shared_ptr<const BaseLinkStateConverter> converter) {
+  if (converter) {
+    covariance_projector_.emplace(converter->baseToImu());
+  }
   base_link_converter_ = std::move(converter);
 }
 
@@ -151,30 +251,48 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
   const auto diagnostics_stamp =
       result.scan_time.has_value() ? RosTimeConverter::toRos(*result.scan_time)
                                    : static_cast<builtin_interfaces::msg::Time>(clock_->now());
-  publishDiagnostics(result, diagnostics_stamp);
   if (!result.hasCorrectedOutput() ||
       !result.corrected_kinematic_estimate.has_value() ||
       !base_link_converter_) {
+    publishDiagnostics(result, diagnostics_stamp);
     return;
   }
   const auto converted = base_link_converter_->convert(
       result.corrected_kinematic_estimate->estimate,
       result.corrected_kinematic_estimate->angular_velocity_imu_rad_s);
   if (!converted.ok()) {
+    publishDiagnostics(result, diagnostics_stamp);
     return;
   }
-  const auto odometry = RosOdometrySerializer::serialize(converted.value(), parameters_);
-  if (!odometry.ok()) {
-    return;
+  std::optional<builtin_interfaces::msg::Time> odometry_stamp;
+  if (covariance_projector_.has_value() && covariance_runtime_) {
+    BaseLinkCovarianceProjectionDiagnostics projection_diagnostics;
+    const auto projection_started = std::chrono::steady_clock::now();
+    const auto covariance = covariance_projector_->project(
+        *result.corrected_kinematic_estimate, converted.value(),
+        &projection_diagnostics);
+    const auto projection_elapsed =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - projection_started)
+            .count();
+    covariance_runtime_->record(projection_diagnostics, projection_elapsed);
+    if (covariance.ok()) {
+      const auto odometry = RosOdometrySerializer::serialize(
+          converted.value(), covariance.value(), parameters_);
+      if (odometry.ok()) {
+        odometry_stamp = odometry.value().header.stamp;
+        odometry_->publish(odometry.value());
+      }
+    }
   }
-  const auto stamp = odometry.value().header.stamp;
-  odometry_->publish(odometry.value());
+  const auto stamp = odometry_stamp.value_or(diagnostics_stamp);
   if (parameters_.publish_registered_points && result.hasRegisteredScanOutput()) {
     registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));
   }
   if (parameters_.publish_local_map && !result.local_map_points_odom_m.empty()) {
     local_map_->publish(makeCloud(result.local_map_points_odom_m, stamp));
   }
+  publishDiagnostics(result, diagnostics_stamp);
 }
 
 void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
@@ -371,6 +489,8 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.values.push_back(keyValue(
       "correction_success_ratio",
       std::to_string(processing.correctionSuccessRatio())));
+  appendCovarianceProjectionValues(
+      status.values, covariance_runtime_->snapshot());
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

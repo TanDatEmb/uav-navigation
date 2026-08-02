@@ -5,7 +5,9 @@
 namespace uav::nav::lio {
 
 Result<nav_msgs::msg::Odometry> RosOdometrySerializer::serialize(
-    const RigidBodyState& state, const RosParameters& parameters) {
+    const RigidBodyState& state,
+    const BaseLinkNavigationCovariance& covariance,
+    const RosParameters& parameters) {
   if (!state.allFinite() || !state.angular_velocity_body_rad_s.has_value()) {
     return Status(StatusCode::kNumericalFailure,
                   "base-link odometry requires a finite angular velocity");
@@ -14,6 +16,10 @@ Result<nav_msgs::msg::Odometry> RosOdometrySerializer::serialize(
       state.body_frame != FrameId(parameters.base_frame)) {
     return Status(StatusCode::kFrameMismatch,
                   "converted odometry frames do not match ROS parameters");
+  }
+  if (!covariance.allFinite()) {
+    return Status(StatusCode::kNumericalFailure,
+                  "base-link odometry covariance is not finite");
   }
 
   nav_msgs::msg::Odometry odometry;
@@ -33,8 +39,16 @@ Result<nav_msgs::msg::Odometry> RosOdometrySerializer::serialize(
   odometry.twist.twist.angular.x = state.angular_velocity_body_rad_s->x();
   odometry.twist.twist.angular.y = state.angular_velocity_body_rad_s->y();
   odometry.twist.twist.angular.z = state.angular_velocity_body_rad_s->z();
-  // Covariance projection is intentionally not part of P0.3.  The zero
-  // arrays are a documented transitional "unavailable" representation.
+  for (std::size_t row = 0; row < 6U; ++row) {
+    for (std::size_t column = 0; column < 6U; ++column) {
+      odometry.pose.covariance[row * 6U + column] =
+          covariance.pose_covariance_odom(static_cast<Eigen::Index>(row),
+                                          static_cast<Eigen::Index>(column));
+      odometry.twist.covariance[row * 6U + column] =
+          covariance.twist_covariance_base(static_cast<Eigen::Index>(row),
+                                           static_cast<Eigen::Index>(column));
+    }
+  }
   return odometry;
 }
 

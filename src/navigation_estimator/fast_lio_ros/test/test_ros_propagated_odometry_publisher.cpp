@@ -31,7 +31,8 @@ TEST_F(RosPropagatedOdometryPublisherTest, ConvertsAndPublishesOwnedEstimate) {
   parameters.odom_frame = "odom";
   parameters.base_frame = "base_link";
   parameters.imu_frame = "livox_imu_frame";
-  RosPropagatedOdometryPublisher publisher(node, parameters);
+  auto covariance_runtime = std::make_shared<CovarianceProjectionRuntime>();
+  RosPropagatedOdometryPublisher publisher(node, parameters, covariance_runtime);
   publisher.setBaseLinkConverter(std::make_shared<const BaseLinkStateConverter>(
       RigidTransform(baseFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                      Eigen::Vector3d::Zero())));

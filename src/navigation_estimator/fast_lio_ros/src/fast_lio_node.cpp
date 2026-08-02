@@ -129,7 +129,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   transform_publisher_.setBaseLinkConverter(base_link_converter_);
   if (parameters_.propagated_odometry_enabled) {
     propagated_odometry_publisher_ =
-        std::make_unique<RosPropagatedOdometryPublisher>(*this, parameters_);
+        std::make_unique<RosPropagatedOdometryPublisher>(
+            *this, parameters_, output_publisher_.covarianceProjectionRuntime());
     propagated_odometry_publisher_->setBaseLinkConverter(base_link_converter_);
     PropagatedOdometryWorkerConfig worker_config;
     worker_config.propagator.ikfom = profile_.estimator.ikfom;
@@ -488,6 +489,8 @@ void FastLioNode::publishTransportSnapshot() {
     sensor = ingress_diagnostics_;
     processing = processing_statistics_;
     runtime = runtime_diagnostics_;
+    runtime.covariance_projection =
+        output_publisher_.covarianceProjectionRuntime()->snapshot();
     runtime_statistics_.populate(runtime);
     const auto tf = transform_publisher_.diagnostics();
     runtime.dynamic_tf_publication_count = tf.publication_count;

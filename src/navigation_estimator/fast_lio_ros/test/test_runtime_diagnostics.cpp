@@ -35,5 +35,36 @@ TEST(RuntimeStatisticsTest, EmptyStatisticsAreZero) {
   EXPECT_DOUBLE_EQ(diagnostics.worker_busy_ratio, 0.0);
 }
 
+TEST(CovarianceProjectionRuntimeTest, RecordsAvailabilityFailuresAndTiming) {
+  CovarianceProjectionRuntime runtime;
+  BaseLinkCovarianceProjectionDiagnostics success;
+  success.success = true;
+  success.pose_covariance_trace = 12.0;
+  success.twist_covariance_trace = 8.0;
+  success.pose_covariance_minimum_eigenvalue = 0.2;
+  success.twist_covariance_minimum_eigenvalue = 0.3;
+  runtime.record(success, 17);
+
+  BaseLinkCovarianceProjectionDiagnostics failure;
+  failure.source_non_psd = true;
+  failure.source_zero = true;
+  failure.output_pose_non_psd = true;
+  runtime.record(failure, 23);
+
+  const auto snapshot = runtime.snapshot();
+  EXPECT_FALSE(snapshot.pose_covariance_available);
+  EXPECT_FALSE(snapshot.twist_covariance_available);
+  EXPECT_EQ(snapshot.projection_success_count, 1U);
+  EXPECT_EQ(snapshot.projection_failure_count, 1U);
+  EXPECT_EQ(snapshot.source_non_psd_count, 1U);
+  EXPECT_EQ(snapshot.source_zero_count, 1U);
+  EXPECT_EQ(snapshot.output_pose_non_psd_count, 1U);
+  EXPECT_EQ(snapshot.covariance_projection_us, 23);
+  EXPECT_EQ(snapshot.maximum_covariance_projection_us, 23);
+  EXPECT_DOUBLE_EQ(snapshot.mean_covariance_projection_us, 20.0);
+  EXPECT_DOUBLE_EQ(snapshot.pose_covariance_trace, 0.0);
+  EXPECT_DOUBLE_EQ(snapshot.twist_covariance_trace, 0.0);
+}
+
 }  // namespace
 }  // namespace uav::nav::lio
