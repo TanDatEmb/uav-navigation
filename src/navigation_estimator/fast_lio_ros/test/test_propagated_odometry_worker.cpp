@@ -49,7 +49,7 @@ bool waitForDiagnostics(
 }
 
 struct OutputCollector {
-  void push(const std::optional<StateEstimate>& estimate) {
+  void push(const std::optional<KinematicStateEstimate>& estimate) {
     std::lock_guard lock(mutex);
     outputs.push_back(estimate);
     ready.notify_all();
@@ -62,7 +62,7 @@ struct OutputCollector {
 
   std::mutex mutex;
   std::condition_variable ready;
-  std::vector<std::optional<StateEstimate>> outputs;
+  std::vector<std::optional<KinematicStateEstimate>> outputs;
 };
 
 TEST(PropagatedOdometryWorkerTest, PendingCorrectionMailboxIsClearedAfterTake) {
@@ -120,7 +120,7 @@ TEST(PropagatedOdometryWorkerTest,
   std::lock_guard lock(collector.mutex);
   ASSERT_EQ(collector.outputs.size(), 1U);
   ASSERT_TRUE(collector.outputs.front().has_value());
-  EXPECT_EQ(collector.outputs.front()->time.nanoseconds(), 10'000'000);
+  EXPECT_EQ(collector.outputs.front()->estimate.time.nanoseconds(), 10'000'000);
 }
 
 TEST(PropagatedOdometryWorkerTest, StaleCorrectionStopsOnImuEvent) {
@@ -363,7 +363,7 @@ TEST(PropagatedOdometryWorkerTest,
   std::lock_guard lock(collector.mutex);
   ASSERT_EQ(collector.outputs.size(), baseline_publications + 1U);
   ASSERT_TRUE(collector.outputs.back().has_value());
-  EXPECT_EQ(collector.outputs.back()->time.nanoseconds(), 120'000'000);
+  EXPECT_EQ(collector.outputs.back()->estimate.time.nanoseconds(), 120'000'000);
 }
 
 TEST(PropagatedOdometryWorkerTest, OlderCorrectionsAreDroppedAgainstAppliedState) {

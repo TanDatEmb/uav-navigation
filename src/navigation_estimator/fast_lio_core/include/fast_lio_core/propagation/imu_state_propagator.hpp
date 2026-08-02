@@ -10,6 +10,7 @@
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
+#include "fast_lio_core/navigation/angular_velocity_resolver.hpp"
 #include "fast_lio_core/pipeline/process_result.hpp"
 #include "fast_lio_core/sensor/imu_sample.hpp"
 
@@ -69,6 +70,7 @@ struct ImuStatePropagatorDiagnostics {
   std::uint64_t continuity_epoch{0U};
   std::uint64_t continuity_reset_count{0U};
   std::optional<Timestamp> last_continuity_reset_time;
+  AngularVelocityDiagnostics angular_velocity;
 };
 
 class ImuStatePropagator {
@@ -83,6 +85,7 @@ class ImuStatePropagator {
 
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] std::optional<StateEstimate> estimate() const;
+  [[nodiscard]] std::optional<KinematicStateEstimate> kinematicEstimate();
   [[nodiscard]] const ImuStatePropagatorDiagnostics& diagnostics() const noexcept;
 
  private:

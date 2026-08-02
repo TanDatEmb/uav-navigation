@@ -38,6 +38,20 @@ TEST(ImuStatePropagatorTest, ReanchorsBetweenSamplesAndPropagatesForward) {
   EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 110'000'000);
 }
 
+TEST(ImuStatePropagatorTest, KinematicEstimatePairsLatestStateWithExactImuSample) {
+  ImuStatePropagator propagator(ImuStatePropagatorConfig{});
+  ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());
+  ASSERT_TRUE(propagator.acceptImu(sample(10'000'000)).ok());
+  ASSERT_TRUE(propagator.reanchorAndReplay(correction(0)).ok());
+
+  const auto kinematic = propagator.kinematicEstimate();
+  ASSERT_TRUE(kinematic.has_value());
+  EXPECT_EQ(kinematic->estimate.time.nanoseconds(), 10'000'000);
+  EXPECT_TRUE(kinematic->angular_velocity_imu_rad_s.isApprox(
+      Eigen::Vector3d(0.01, -0.02, 0.03)));
+  EXPECT_EQ(propagator.diagnostics().angular_velocity.exact_sample_count, 1U);
+}
+
 TEST(ImuStatePropagatorTest, RejectsTimestampRegressionAndInvalidatesOutput) {
   ImuStatePropagator propagator(ImuStatePropagatorConfig{});
   ASSERT_TRUE(propagator.acceptImu(sample(0)).ok());

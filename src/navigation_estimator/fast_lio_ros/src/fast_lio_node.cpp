@@ -122,9 +122,9 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
     worker_config.publish_rate_hz =
         parameters_.propagated_odometry_publish_rate_hz;
     propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
-        worker_config, [this](const std::optional<StateEstimate>& estimate) {
+        worker_config, [this](const std::optional<KinematicStateEstimate>& estimate) {
           if (estimate.has_value()) {
-            propagated_odometry_publisher_->publish(*estimate);
+            propagated_odometry_publisher_->publish(estimate->estimate);
           }
         });
     propagated_odometry_worker_->start();

@@ -404,6 +404,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   result.estimate_validity = EstimateValidity::kCorrected;
   result.scan_time = group.scan.end_time;
   result.corrected_estimate = StateEstimate{group.scan.end_time, state_, covariance_};
+  const auto kinematic = AngularVelocityResolver::resolve(
+      *result.corrected_estimate, group.imu_samples,
+      &diagnostics_.corrected_angular_velocity);
+  if (kinematic.ok()) {
+    result.corrected_kinematic_estimate = kinematic.value();
+  }
   result.registered_points_odom_m = transformPointsToOdom(points_lidar_m, state_);
 
   MapInsertionContext insertion_context;

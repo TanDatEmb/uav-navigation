@@ -143,6 +143,13 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   EXPECT_TRUE(tracked.hasCorrectedOutput());
   ASSERT_TRUE(tracked.corrected_estimate.has_value());
   EXPECT_EQ(tracked.corrected_estimate->time, tracking_group.scan.end_time);
+  ASSERT_TRUE(tracked.corrected_kinematic_estimate.has_value());
+  EXPECT_EQ(tracked.corrected_kinematic_estimate->estimate.time,
+            tracking_group.scan.end_time);
+  EXPECT_TRUE(tracked.corrected_kinematic_estimate->angular_velocity_imu_rad_s
+                  .allFinite());
+  EXPECT_EQ(tracked.diagnostics.corrected_angular_velocity.exact_sample_count,
+            1U);
   EXPECT_TRUE(tracked.diagnostics.output.corrected_estimate_valid);
   EXPECT_TRUE(tracked.diagnostics.output.registered_scan_valid);
   EXPECT_EQ(tracked.diagnostics.output.last_lidar_correction_time_ns,

@@ -515,17 +515,18 @@ void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
     ++publication_skip_count_;
     return;
   }
-  const auto estimate = propagator_.estimate();
+  const auto estimate = propagator_.kinematicEstimate();
   if (!estimate.has_value() ||
       (last_published_time_.has_value() &&
-       estimate->time.nanoseconds() <= last_published_time_->nanoseconds())) {
+       estimate->estimate.time.nanoseconds() <=
+           last_published_time_->nanoseconds())) {
     ++publication_skip_count_;
     return;
   }
   if (imu_processed_callback_) {
     imu_processed_callback_(estimate);
   }
-  last_published_time_ = estimate->time;
+  last_published_time_ = estimate->estimate.time;
   ++publication_count_;
   do {
     next_publish_deadline_ = Timestamp(

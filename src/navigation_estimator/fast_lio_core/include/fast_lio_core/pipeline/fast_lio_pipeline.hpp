@@ -12,6 +12,7 @@
 #include "fast_lio_core/initialization/initialization_result.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
 #include "fast_lio_core/mapping/dynamic_map_evidence.hpp"
+#include "fast_lio_core/navigation/angular_velocity_resolver.hpp"
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
 #include "fast_lio_core/pipeline/process_result.hpp"
 #include "fast_lio_core/sensor/imu_sample.hpp"

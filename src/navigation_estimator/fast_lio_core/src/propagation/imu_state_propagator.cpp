@@ -247,6 +247,24 @@ std::optional<StateEstimate> ImuStatePropagator::estimate() const {
                        estimator_.covariance()};
 }
 
+std::optional<KinematicStateEstimate>
+ImuStatePropagator::kinematicEstimate() {
+  const auto state_estimate = estimate();
+  if (!state_estimate.has_value() || history_.empty() ||
+      history_.back().time != state_estimate->time) {
+    if (!history_.empty() && state_estimate.has_value()) {
+      ++diagnostics_.angular_velocity.timestamp_mismatch_count;
+    }
+    return std::nullopt;
+  }
+  const auto resolved = AngularVelocityResolver::resolveExact(
+      *state_estimate, history_.back(), &diagnostics_.angular_velocity);
+  if (!resolved.ok()) {
+    return std::nullopt;
+  }
+  return resolved.value();
+}
+
 const ImuStatePropagatorDiagnostics& ImuStatePropagator::diagnostics() const noexcept {
   return diagnostics_;
 }

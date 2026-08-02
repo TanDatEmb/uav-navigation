@@ -81,7 +81,7 @@ struct PropagatedOdometryWorkerDiagnostics {
 class PropagatedOdometryWorker {
  public:
   using ImuProcessedCallback =
-      std::function<void(const std::optional<StateEstimate>&)>;
+      std::function<void(const std::optional<KinematicStateEstimate>&)>;
 
   explicit PropagatedOdometryWorker(
       PropagatedOdometryWorkerConfig config,

@@ -7,6 +7,7 @@
 
 #include "fast_lio_core/deskew/deskew_mode.hpp"
 #include "fast_lio_core/deskew/deskew_result.hpp"
+#include "fast_lio_core/navigation/angular_velocity_resolver.hpp"
 
 namespace uav::nav::lio {
 
@@ -245,6 +246,7 @@ struct EstimatorDiagnostics {
   RegistrationDiagnostics registration;
   MapDiagnostics map;
   StateDiagnostics state;
+  AngularVelocityDiagnostics corrected_angular_velocity;
   OutputDiagnostics output;
   StageTimingDiagnostics timing;
 };

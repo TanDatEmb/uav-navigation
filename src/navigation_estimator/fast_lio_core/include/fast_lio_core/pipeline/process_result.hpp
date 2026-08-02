@@ -5,21 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "fast_lio_core/estimation/manifold_state.hpp"
+#include "fast_lio_core/estimation/state_estimate.hpp"
+#include "fast_lio_core/navigation/kinematic_state_estimate.hpp"
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
-#include "fast_lio_core/time/timestamp.hpp"
 
 namespace uav::nav::lio {
-
-struct StateEstimate {
-  Timestamp time;
-  ManifoldState state;
-  ManifoldState::Covariance covariance{ManifoldState::Covariance::Identity()};
-
-  [[nodiscard]] bool allFinite() const noexcept {
-    return state.allFinite() && covariance.allFinite();
-  }
-};
 
 struct ProcessResult {
   EstimatorStatus status_before{EstimatorStatus::kWaitingForSensors};
@@ -29,6 +19,7 @@ struct ProcessResult {
   LidarUpdateStatus lidar_update_status{LidarUpdateStatus::kNotAttempted};
   std::optional<StateEstimate> predicted_estimate;
   std::optional<StateEstimate> corrected_estimate;
+  std::optional<KinematicStateEstimate> corrected_kinematic_estimate;
   std::optional<Timestamp> last_lidar_correction_time;
   // Both point arrays are explicitly expressed in odom.
   std::vector<Eigen::Vector3d> registered_points_odom_m;
