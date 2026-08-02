@@ -64,7 +64,10 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       bootstrap_map_(config_.registration_map),
       local_map_manager_(config_.local_map),
       insertion_policy_(config_.insertion_policy),
-      dynamic_map_evidence_(config_.dynamic_filter) {
+      dynamic_map_evidence_(config_.dynamic_filter),
+      initial_prior_applicator_(RigidTransform(baseFrame(), imuFrame(),
+                                               Eigen::Quaterniond::Identity(),
+                                               Eigen::Vector3d::Zero())) {
   if (!config_.extrinsic.rotation_imu_lidar.coeffs().allFinite() ||
       config_.extrinsic.rotation_imu_lidar.squaredNorm() < 1e-18 ||
       !config_.extrinsic.translation_imu_lidar_m.allFinite() ||
@@ -83,14 +86,25 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
        config_.lifecycle.local_map_snapshot_period_scans == 0U)) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
   }
+  const Status prior_status = config_.initial_prior.validate();
+  if (!prior_status.ok()) {
+    throw std::invalid_argument(prior_status.message());
+  }
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
-  estimator_.initialize(state_);
-  covariance_ = estimator_.covariance();
   diagnostics_.status = status_;
   diagnostics_.previous_status = status_;
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
   diagnostics_.map.dynamic_filter_enabled = config_.dynamic_filter.enabled;
+  diagnostics_.initial_prior.source = config_.initial_prior.source;
+  diagnostics_.initial_prior.context = config_.initial_prior.context;
+  diagnostics_.initial_prior.attitude_mode = config_.initial_prior.mask.attitude;
+  diagnostics_.initial_prior.position_enabled = config_.initial_prior.mask.position;
+  diagnostics_.initial_prior.velocity_enabled = config_.initial_prior.mask.velocity;
+  diagnostics_.initial_prior.status =
+      config_.initial_prior.source == InitialStatePriorSource::kZero
+          ? InitialPriorStatus::kNotRequired
+          : InitialPriorStatus::kWaiting;
 }
 
 Status FastLioPipeline::pushImu(const ImuSample& sample) {
@@ -112,9 +126,54 @@ Status FastLioPipeline::pushImu(const ImuSample& sample) {
       diagnostics_.reason = initialization_status.message();
       return initialization_status;
     }
-    tryCompleteImuInitialization();
+    tryCompleteImuInitialization(sample.time);
   }
   return Status::Ok();
+}
+
+Status FastLioPipeline::submitInitialStatePrior(InitialStatePrior prior) {
+  std::scoped_lock lock(initial_prior_mutex_);
+  ++prior_candidate_count_;
+  if (initial_prior_gate_closed_ || estimator_initialized_) {
+    ++prior_late_rejected_count_;
+    ++prior_rejected_count_;
+    return Status(StatusCode::kNotReady, "initial-state prior gate is closed");
+  }
+  if (prior.source != InitialStatePriorSource::kTopic ||
+      prior.context != config_.initial_prior.context ||
+      prior.reference_frame != odomFrame() || prior.body_frame != baseFrame()) {
+    ++prior_frame_rejected_count_;
+    ++prior_rejected_count_;
+    return Status(StatusCode::kFrameMismatch, "initial-state topic prior contract rejected");
+  }
+  if (prior.sample_time.nanoseconds() == 0 || !prior.allFinite()) {
+    ++prior_invalid_value_count_;
+    ++prior_rejected_count_;
+    return Status(StatusCode::kInvalidArgument, "initial-state topic prior is zero or non-finite");
+  }
+  if (last_prior_candidate_time_.has_value()) {
+    if (!prior.sample_time.sameClockDomain(*last_prior_candidate_time_)) {
+      ++prior_timestamp_rejected_count_;
+      ++prior_rejected_count_;
+      return Status(StatusCode::kClockDomainMismatch, "initial-state prior clock domain changed");
+    }
+    if (prior.sample_time.nanoseconds() <= last_prior_candidate_time_->nanoseconds()) {
+      ++prior_timestamp_rejected_count_;
+      ++prior_rejected_count_;
+      return Status(StatusCode::kTimestampRegression, "initial-state prior timestamp is not monotonic");
+    }
+  }
+  last_prior_candidate_time_ = prior.sample_time;
+  initial_prior_candidate_ = std::move(prior);
+  ++prior_accepted_count_;
+  return Status::Ok();
+}
+
+Status FastLioPipeline::setInitialStatePriorGeometry(RigidTransform base_to_imu) {
+  if (estimator_initialized_ || initial_prior_gate_closed_) {
+    return Status(StatusCode::kNotReady, "initial-state prior geometry can only be set before startup");
+  }
+  return initial_prior_applicator_.setGeometry(std::move(base_to_imu));
 }
 
 Status FastLioPipeline::pushLidar(LidarScan scan) {
@@ -136,6 +195,10 @@ Status FastLioPipeline::pushLidar(LidarScan scan) {
 
 std::optional<ProcessResult> FastLioPipeline::processNext() {
   resetTransientDiagnostics();
+  if (imu_initialization_result_.has_value() && !estimator_initialized_ &&
+      config_.initial_prior.source == InitialStatePriorSource::kTopic) {
+    return std::nullopt;
+  }
   auto synchronized = synchronizer_.synchronizeNext(buffer_);
   if (!synchronized.ok()) {
     ProcessResult result;
@@ -206,9 +269,14 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         }
       }
     }
-    tryCompleteImuInitialization();
+    const std::optional<Timestamp> progress_time =
+        group.imu_samples.empty() ? last_initialization_imu_time_
+                                   : std::optional<Timestamp>(group.imu_samples.back().time);
+    tryCompleteImuInitialization(progress_time);
     if (status_ != EstimatorStatus::kInitializingMap) {
-      result.rejection_reason = "IMU_INITIALIZATION_NOT_READY";
+      result.rejection_reason =
+          imu_initialization_result_.has_value() ? "INITIAL_STATE_PRIOR_PENDING"
+                                                 : "IMU_INITIALIZATION_NOT_READY";
       diagnostics_.reason = result.rejection_reason;
       return finalizeResult(std::move(result));
     }
@@ -247,6 +315,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
 
   const auto prediction_started = std::chrono::steady_clock::now();
+  initial_prior_gate_closed_ = true;
+  diagnostics_.initial_prior.status = InitialPriorStatus::kClosed;
   auto trajectory =
       estimator_.predict(group.imu_samples, propagation_start,
                          group.scan.end_time);
@@ -319,6 +389,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     static_cast<void>(bootstrap_map_.insert(bootstrap_reference_points_odom_m_));
     result.rejection_reason = "INITIAL_MAP_REFERENCE_CAPTURED";
     diagnostics_.reason = result.rejection_reason;
+    diagnostics_.initial_prior.bootstrap_map_after_prior = diagnostics_.initial_prior.applied;
     diagnostics_.map.map_point_count = registration_map_.size();
     return finalizeResult(std::move(result));
   }
@@ -522,6 +593,26 @@ void FastLioPipeline::reset() {
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
   estimator_.reset(state_);
+  {
+    std::scoped_lock lock(initial_prior_mutex_);
+    initial_prior_candidate_.reset();
+    last_prior_candidate_time_.reset();
+    prior_candidate_count_ = 0;
+    prior_accepted_count_ = 0;
+    prior_rejected_count_ = 0;
+    prior_late_rejected_count_ = 0;
+    prior_stale_rejected_count_ = 0;
+    prior_future_rejected_count_ = 0;
+    prior_frame_rejected_count_ = 0;
+    prior_timestamp_rejected_count_ = 0;
+    prior_invalid_value_count_ = 0;
+  }
+  imu_initialization_result_.reset();
+  prior_wait_start_time_.reset();
+  estimator_initialized_ = false;
+  initial_prior_gate_closed_ = false;
+  initial_prior_applied_ = false;
+  initial_prior_fallback_applied_ = false;
   covariance_ = estimator_.covariance();
   state_time_.reset();
   last_initialization_imu_time_.reset();
@@ -535,6 +626,15 @@ void FastLioPipeline::reset() {
   tracking_ever_confirmed_ = false;
   diagnostics_ = EstimatorDiagnostics{};
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
+  diagnostics_.initial_prior.source = config_.initial_prior.source;
+  diagnostics_.initial_prior.context = config_.initial_prior.context;
+  diagnostics_.initial_prior.attitude_mode = config_.initial_prior.mask.attitude;
+  diagnostics_.initial_prior.position_enabled = config_.initial_prior.mask.position;
+  diagnostics_.initial_prior.velocity_enabled = config_.initial_prior.mask.velocity;
+  diagnostics_.initial_prior.status =
+      config_.initial_prior.source == InitialStatePriorSource::kZero
+          ? InitialPriorStatus::kNotRequired
+          : InitialPriorStatus::kWaiting;
   status_ = EstimatorStatus::kWaitingForSensors;
   diagnostics_.status = status_;
   diagnostics_.previous_status = EstimatorStatus::kResetting;
@@ -552,8 +652,28 @@ const ManifoldState::Covariance& FastLioPipeline::covariance() const noexcept {
 
 EstimatorDiagnostics FastLioPipeline::diagnostics() const {
   EstimatorDiagnostics output = diagnostics_;
+  copyInitialPriorMailboxDiagnostics(output);
   fillStateDiagnostics(output);
   return output;
+}
+
+std::size_t FastLioPipeline::pendingLidarCount() const { return buffer_.lidarSize(); }
+
+void FastLioPipeline::copyInitialPriorMailboxDiagnostics(
+    EstimatorDiagnostics& output) const {
+  std::scoped_lock lock(initial_prior_mutex_);
+  if (initial_prior_candidate_.has_value() && !output.initial_prior.applied) {
+    output.initial_prior.status = InitialPriorStatus::kCandidateAvailable;
+  }
+  output.initial_prior.candidate_count = prior_candidate_count_;
+  output.initial_prior.accepted_count = prior_accepted_count_;
+  output.initial_prior.rejected_count = prior_rejected_count_;
+  output.initial_prior.late_rejected_count = prior_late_rejected_count_;
+  output.initial_prior.stale_rejected_count = prior_stale_rejected_count_;
+  output.initial_prior.future_rejected_count = prior_future_rejected_count_;
+  output.initial_prior.frame_rejected_count = prior_frame_rejected_count_;
+  output.initial_prior.timestamp_rejected_count = prior_timestamp_rejected_count_;
+  output.initial_prior.invalid_value_count = prior_invalid_value_count_;
 }
 
 std::vector<Eigen::Vector3d> FastLioPipeline::registrationMapSnapshot() const {
@@ -642,31 +762,187 @@ Status FastLioPipeline::addInitializationSample(const ImuSample& sample) {
   return status;
 }
 
-void FastLioPipeline::tryCompleteImuInitialization() {
+void FastLioPipeline::tryCompleteImuInitialization(
+    const std::optional<Timestamp>& progress_time) {
   if (!initializer_.hasEnoughSamples() || status_ == EstimatorStatus::kInitializingMap ||
-      status_ == EstimatorStatus::kTracking) {
+      status_ == EstimatorStatus::kTracking || status_ == EstimatorStatus::kDegraded ||
+      status_ == EstimatorStatus::kLost) {
     return;
   }
-  transitionTo(EstimatorStatus::kInitializingImu, "EVALUATING_IMU_INITIALIZATION");
-  auto initialized = initializer_.tryInitialize();
-  updateInitializationDiagnostics();
-  if (!initialized.ok()) {
-    diagnostics_.initialization.initialization_status = initialized.status().message();
-    diagnostics_.reason = initialized.status().message();
+  if (!imu_initialization_result_.has_value()) {
+    transitionTo(EstimatorStatus::kInitializingImu, "EVALUATING_IMU_INITIALIZATION");
+    auto initialized = initializer_.tryInitialize();
+    updateInitializationDiagnostics();
+    if (!initialized.ok()) {
+      diagnostics_.initialization.initialization_status = initialized.status().message();
+      diagnostics_.reason = initialized.status().message();
+      return;
+    }
+    imu_initialization_result_ = initialized.value();
+    prior_wait_start_time_ = progress_time.has_value() ? progress_time : last_initialization_imu_time_;
+    diagnostics_.initial_prior.application_timestamp_ns =
+        prior_wait_start_time_.has_value() ? prior_wait_start_time_->nanoseconds() : 0;
+  }
+
+  const Timestamp application_time = progress_time.value_or(
+      prior_wait_start_time_.value_or(last_initialization_imu_time_.value_or(Timestamp{})));
+  if (!resolveInitialStatePrior(application_time)) {
     return;
   }
 
-  state_.set_orientation_odom_imu(initialized.value().orientation_odom_imu);
-  state_.set_gyro_bias_rad_s(initialized.value().gyro_bias_rad_s);
-  state_.set_accel_bias_m_s2(initialized.value().accel_bias_m_s2);
-  state_.set_gravity_odom_m_s2(initialized.value().gravity_odom_m_s2);
+  state_.set_orientation_odom_imu(imu_initialization_result_->orientation_odom_imu);
+  state_.set_gyro_bias_rad_s(imu_initialization_result_->gyro_bias_rad_s);
+  state_.set_accel_bias_m_s2(imu_initialization_result_->accel_bias_m_s2);
+  state_.set_gravity_odom_m_s2(imu_initialization_result_->gravity_odom_m_s2);
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
-  state_.normalize();
+  ManifoldState prior_state;
+  prior_state.set_orientation_odom_imu(imu_initialization_result_->orientation_odom_imu);
+  prior_state.set_gyro_bias_rad_s(imu_initialization_result_->gyro_bias_rad_s);
+  prior_state.set_accel_bias_m_s2(imu_initialization_result_->accel_bias_m_s2);
+  prior_state.set_gravity_odom_m_s2(imu_initialization_result_->gravity_odom_m_s2);
+  prior_state.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
+  prior_state.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
+  prior_state.normalize();
+
+  InitialStatePrior prior;
+  {
+    std::scoped_lock lock(initial_prior_mutex_);
+    if (config_.initial_prior.source == InitialStatePriorSource::kTopic &&
+        initial_prior_candidate_.has_value()) {
+      prior = *initial_prior_candidate_;
+    }
+  }
+  if (config_.initial_prior.source == InitialStatePriorSource::kZero) {
+    prior = makeZeroPrior(application_time);
+  } else if (config_.initial_prior.source == InitialStatePriorSource::kFixed) {
+    prior = makeFixedPrior(application_time);
+  } else if (initial_prior_fallback_applied_) {
+    prior = config_.initial_prior.ground_fallback == InitialPriorFallback::kFixed
+                ? makeFixedPrior(application_time)
+                : makeZeroPrior(application_time);
+  }
+  ManifoldState applied_state;
+  const Status apply_status = initial_prior_applicator_.apply(
+      prior, prior_state, config_.initial_prior.maximum_full_attitude_tilt_disagreement_rad,
+      applied_state);
+  if (!apply_status.ok()) {
+    diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+    diagnostics_.initial_prior.reason = apply_status.message();
+    diagnostics_.reason = apply_status.message();
+    return;
+  }
+  state_ = applied_state;
   estimator_.initialize(state_);
+  estimator_initialized_ = true;
   covariance_ = estimator_.covariance();
   diagnostics_.initialization.initialization_status = "INITIALIZED";
-  transitionTo(EstimatorStatus::kInitializingMap, "IMU_INITIALIZATION_ACCEPTED");
+  diagnostics_.initial_prior.applied = true;
+  diagnostics_.initial_prior.fallback_applied = initial_prior_fallback_applied_;
+  diagnostics_.initial_prior.covariance_applied = false;
+  transitionTo(EstimatorStatus::kInitializingMap,
+               initial_prior_fallback_applied_ ? "IMU_INITIALIZATION_PRIOR_FALLBACK_ACCEPTED"
+                                               : "IMU_INITIALIZATION_PRIOR_ACCEPTED");
+}
+
+InitialStatePrior FastLioPipeline::makeZeroPrior(const Timestamp& sample_time) const {
+  InitialStatePrior prior;
+  prior.sample_time = sample_time;
+  prior.source = InitialStatePriorSource::kZero;
+  prior.context = config_.initial_prior.context;
+  prior.mask = config_.initial_prior.mask;
+  prior.provenance = "zero";
+  prior.linear_velocity_base_m_s = Eigen::Vector3d::Zero();
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d::Zero();
+  return prior;
+}
+
+InitialStatePrior FastLioPipeline::makeFixedPrior(const Timestamp& sample_time) const {
+  InitialStatePrior prior = config_.initial_prior.fixed_prior;
+  prior.sample_time = sample_time;
+  prior.source = InitialStatePriorSource::kFixed;
+  prior.context = config_.initial_prior.context;
+  prior.mask = config_.initial_prior.mask;
+  return prior;
+}
+
+bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time) {
+  const auto source = config_.initial_prior.source;
+  if (source == InitialStatePriorSource::kZero || source == InitialStatePriorSource::kFixed) {
+    diagnostics_.initial_prior.status = InitialPriorStatus::kApplied;
+    if (source == InitialStatePriorSource::kFixed) {
+      diagnostics_.initial_prior.reason = "FIXED_PRIOR_ACCEPTED";
+    } else {
+      diagnostics_.initial_prior.reason = "ZERO_PRIOR_ACCEPTED";
+    }
+    initial_prior_applied_ = true;
+    return true;
+  }
+
+  std::optional<InitialStatePrior> candidate;
+  {
+    std::scoped_lock lock(initial_prior_mutex_);
+    candidate = initial_prior_candidate_;
+  }
+  if (candidate.has_value()) {
+    if (!candidate->sample_time.sameClockDomain(application_time)) {
+      std::scoped_lock lock(initial_prior_mutex_);
+      ++prior_timestamp_rejected_count_;
+      ++prior_rejected_count_;
+      initial_prior_candidate_.reset();
+      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_CLOCK_DOMAIN_MISMATCH";
+    } else if (candidate->sample_time.nanoseconds() > application_time.nanoseconds()) {
+      std::scoped_lock lock(initial_prior_mutex_);
+      ++prior_future_rejected_count_;
+      ++prior_rejected_count_;
+      initial_prior_candidate_.reset();
+      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_IS_FUTURE";
+    } else {
+      const std::int64_t age = application_time.nanoseconds() - candidate->sample_time.nanoseconds();
+      diagnostics_.initial_prior.candidate_age_ns = age;
+      diagnostics_.initial_prior.candidate_timestamp_ns = candidate->sample_time.nanoseconds();
+      if (age <= config_.initial_prior.maximum_topic_prior_age_ns) {
+        diagnostics_.initial_prior.status = InitialPriorStatus::kApplied;
+        diagnostics_.initial_prior.reason = "TOPIC_PRIOR_ACCEPTED";
+        initial_prior_applied_ = true;
+        return true;
+      }
+      std::scoped_lock lock(initial_prior_mutex_);
+      ++prior_stale_rejected_count_;
+      ++prior_rejected_count_;
+      initial_prior_candidate_.reset();
+      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_STALE";
+    }
+  }
+
+  diagnostics_.initial_prior.status = InitialPriorStatus::kWaiting;
+  const Timestamp wait_start = prior_wait_start_time_.value_or(application_time);
+  if (!wait_start.sameClockDomain(application_time)) {
+    diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAIT_CLOCK_DOMAIN_MISMATCH";
+    return false;
+  }
+  const std::int64_t elapsed = application_time.nanoseconds() - wait_start.nanoseconds();
+  if (elapsed < config_.initial_prior.topic_wait_timeout_ns) {
+    return false;
+  }
+  ++diagnostics_.initial_prior.wait_timeout_count;
+  if (config_.initial_prior.context == InitialStatePriorContext::kInFlightReinitialization ||
+      config_.initial_prior.ground_fallback == InitialPriorFallback::kReject) {
+    diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_TIMEOUT_REJECTED";
+    return false;
+  }
+  initial_prior_fallback_applied_ = true;
+  diagnostics_.initial_prior.status = InitialPriorStatus::kFallbackApplied;
+  if (config_.initial_prior.ground_fallback == InitialPriorFallback::kFixed) {
+    ++diagnostics_.initial_prior.fixed_fallback_count;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_TIMEOUT_FIXED_FALLBACK";
+  } else {
+    ++diagnostics_.initial_prior.zero_fallback_count;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_TIMEOUT_ZERO_FALLBACK";
+  }
+  return true;
 }
 
 void FastLioPipeline::transitionTo(EstimatorStatus next, std::string reason) {

@@ -8,6 +8,7 @@
 #include "fast_lio_core/deskew/deskew_mode.hpp"
 #include "fast_lio_core/deskew/deskew_result.hpp"
 #include "fast_lio_core/navigation/angular_velocity_resolver.hpp"
+#include "fast_lio_core/initialization/initial_state_prior.hpp"
 
 namespace uav::nav::lio {
 
@@ -123,6 +124,35 @@ struct InitializationDiagnostics {
   Eigen::Vector3d accel_variance_m2_s4{Eigen::Vector3d::Zero()};
   double gravity_norm_m_s2{0.0};
   std::string initialization_status;
+};
+
+struct InitialPriorDiagnostics {
+  InitialPriorStatus status{InitialPriorStatus::kNotRequired};
+  InitialStatePriorSource source{InitialStatePriorSource::kZero};
+  InitialStatePriorContext context{InitialStatePriorContext::kGroundStartup};
+  PriorAttitudeMode attitude_mode{PriorAttitudeMode::kNone};
+  bool position_enabled{false};
+  bool velocity_enabled{false};
+  bool applied{false};
+  bool fallback_applied{false};
+  bool covariance_applied{false};
+  bool bootstrap_map_after_prior{false};
+  std::int64_t candidate_timestamp_ns{0};
+  std::int64_t application_timestamp_ns{0};
+  std::int64_t candidate_age_ns{0};
+  std::size_t candidate_count{0};
+  std::size_t accepted_count{0};
+  std::size_t rejected_count{0};
+  std::size_t late_rejected_count{0};
+  std::size_t stale_rejected_count{0};
+  std::size_t future_rejected_count{0};
+  std::size_t frame_rejected_count{0};
+  std::size_t timestamp_rejected_count{0};
+  std::size_t invalid_value_count{0};
+  std::size_t wait_timeout_count{0};
+  std::size_t zero_fallback_count{0};
+  std::size_t fixed_fallback_count{0};
+  std::string reason;
 };
 
 struct DeskewDiagnostics {
@@ -242,6 +272,7 @@ struct EstimatorDiagnostics {
   SynchronizationDiagnostics synchronization;
   ProcessingStatistics processing;
   InitializationDiagnostics initialization;
+  InitialPriorDiagnostics initial_prior;
   DeskewDiagnostics deskew;
   RegistrationDiagnostics registration;
   MapDiagnostics map;

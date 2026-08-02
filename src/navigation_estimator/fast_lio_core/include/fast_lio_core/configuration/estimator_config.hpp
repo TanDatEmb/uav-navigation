@@ -7,6 +7,7 @@
 #include "fast_lio_core/deskew/scan_deskewer.hpp"
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
 #include "fast_lio_core/initialization/imu_initializer.hpp"
+#include "fast_lio_core/initialization/initial_state_prior_policy.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
 #include "fast_lio_core/mapping/dynamic_map_evidence.hpp"
 #include "fast_lio_core/mapping/local_map_manager.hpp"
@@ -42,6 +43,7 @@ struct EstimatorConfig {
   MeasurementBufferConfig measurement_buffer{};
   MeasurementSynchronizerConfig synchronization{};
   ImuInitializerConfig initialization{};
+  InitialStatePriorPolicy initial_prior{};
   IkfomEstimatorConfig ikfom{};
   ScanDeskewerConfig deskew{};
   PointCloudPreprocessorConfig preprocessing{};

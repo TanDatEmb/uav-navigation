@@ -122,6 +122,14 @@ std::size_t MeasurementBuffer::lidarSize() const {
   return lidar_scans_.size();
 }
 
+std::optional<Timestamp> MeasurementBuffer::nextLidarStartTime() const {
+  std::scoped_lock lock(mutex_);
+  if (lidar_scans_.empty()) {
+    return std::nullopt;
+  }
+  return lidar_scans_.front().start_time;
+}
+
 std::size_t MeasurementBuffer::imuSize() const {
   std::scoped_lock lock(mutex_);
   return imu_samples_.size();

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <optional>
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/sensor/imu_sample.hpp"
@@ -37,6 +38,7 @@ class MeasurementBuffer {
   [[nodiscard]] Status pushImu(ImuSample sample);
 
   [[nodiscard]] std::size_t lidarSize() const;
+  [[nodiscard]] std::optional<Timestamp> nextLidarStartTime() const;
   [[nodiscard]] std::size_t imuSize() const;
   [[nodiscard]] bool empty() const;
   [[nodiscard]] MeasurementBufferStats stats() const;
