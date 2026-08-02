@@ -9,10 +9,19 @@ def generate_launch_description():
     xacro_file = [FindPackageShare("uav_description"), "/urdf/uav_sensor_frames.urdf.xacro"]
     return LaunchDescription(
         [
-            DeclareLaunchArgument("imu_xyz", default_value="0 0 0"),
-            DeclareLaunchArgument("imu_rpy", default_value="0 0 0"),
-            DeclareLaunchArgument("lidar_xyz", default_value="0 0 0"),
-            DeclareLaunchArgument("lidar_rpy", default_value="0 0 0"),
+            DeclareLaunchArgument(
+                "livox_mount_xyz",
+                description="Required base_link to livox_frame translation.",
+            ),
+            DeclareLaunchArgument(
+                "livox_mount_rpy",
+                description="Required base_link to livox_frame rotation.",
+            ),
+            DeclareLaunchArgument(
+                "livox_lidar_to_imu_xyz",
+                default_value="0.011 0.02329 -0.04412",
+            ),
+            DeclareLaunchArgument("livox_lidar_to_imu_rpy", default_value="0 0 0"),
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
@@ -23,14 +32,14 @@ def generate_launch_description():
                             [
                                 "xacro ",
                                 *xacro_file,
-                                " imu_xyz:=",
-                                LaunchConfiguration("imu_xyz"),
-                                " imu_rpy:=",
-                                LaunchConfiguration("imu_rpy"),
-                                " lidar_xyz:=",
-                                LaunchConfiguration("lidar_xyz"),
-                                " lidar_rpy:=",
-                                LaunchConfiguration("lidar_rpy"),
+                                " livox_mount_xyz:=",
+                                LaunchConfiguration("livox_mount_xyz"),
+                                " livox_mount_rpy:=",
+                                LaunchConfiguration("livox_mount_rpy"),
+                                " livox_lidar_to_imu_xyz:=",
+                                LaunchConfiguration("livox_lidar_to_imu_xyz"),
+                                " livox_lidar_to_imu_rpy:=",
+                                LaunchConfiguration("livox_lidar_to_imu_rpy"),
                             ]
                         )
                     }

@@ -3,29 +3,30 @@
   <!--
     The numeric extrinsics below are explicit PLACEHOLDERS, not calibration.
     Replace them with measured values and record their provenance before using
-    real sensor data. Their arrangement is the one source of truth for static
-    base_link -> imu_link and base_link -> lidar_link transforms.
+    real sensor data. The arrangement is the one source of truth for the
+    standalone base_link -> livox_frame -> livox_imu_frame tree.
   -->
-  <xacro:arg name="imu_xyz" default="0 0 0"/>
-  <xacro:arg name="imu_rpy" default="0 0 0"/>
-  <xacro:arg name="lidar_xyz" default="0 0 0"/>
-  <xacro:arg name="lidar_rpy" default="0 0 0"/>
+  <!-- The vehicle mount is required; zero is not a valid fallback. -->
+  <xacro:arg name="livox_mount_xyz"/>
+  <xacro:arg name="livox_mount_rpy"/>
+  <xacro:arg name="livox_lidar_to_imu_xyz" default="0.011 0.02329 -0.04412"/>
+  <xacro:arg name="livox_lidar_to_imu_rpy" default="0 0 0"/>
 
   <!-- base_link origin: UAV reference, intended near the centre of mass. -->
   <link name="base_link"/>
-  <!-- IMU sensing origin. Measurements reaching the estimator are FLU. -->
-  <link name="imu_link"/>
-  <!-- LiDAR point-cloud origin. Raw points reaching the estimator are FLU. -->
-  <link name="lidar_link"/>
+  <!-- Livox LiDAR sensing origin. Raw points reaching the estimator are FLU. -->
+  <link name="livox_frame"/>
+  <!-- Livox IMU sensing origin. Measurements reaching the estimator are FLU. -->
+  <link name="livox_imu_frame"/>
 
-  <joint name="base_link_to_imu_link" type="fixed">
+  <joint name="base_link_to_livox_frame" type="fixed">
     <parent link="base_link"/>
-    <child link="imu_link"/>
-    <origin xyz="$(arg imu_xyz)" rpy="$(arg imu_rpy)"/>
+    <child link="livox_frame"/>
+    <origin xyz="$(arg livox_mount_xyz)" rpy="$(arg livox_mount_rpy)"/>
   </joint>
-  <joint name="base_link_to_lidar_link" type="fixed">
-    <parent link="base_link"/>
-    <child link="lidar_link"/>
-    <origin xyz="$(arg lidar_xyz)" rpy="$(arg lidar_rpy)"/>
+  <joint name="livox_frame_to_livox_imu_frame" type="fixed">
+    <parent link="livox_frame"/>
+    <child link="livox_imu_frame"/>
+    <origin xyz="$(arg livox_lidar_to_imu_xyz)" rpy="$(arg livox_lidar_to_imu_rpy)"/>
   </joint>
 </robot>

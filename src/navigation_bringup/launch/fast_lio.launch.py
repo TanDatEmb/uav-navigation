@@ -21,19 +21,32 @@ def generate_launch_description():
                 description="Path to the fast_lio_ros parameter YAML.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
-            DeclareLaunchArgument("publish_sensor_frames", default_value="true"),
-            DeclareLaunchArgument("imu_xyz", default_value="0 0 0"),
-            DeclareLaunchArgument("imu_rpy", default_value="0 0 0"),
-            DeclareLaunchArgument("lidar_xyz", default_value="0 0 0"),
-            DeclareLaunchArgument("lidar_rpy", default_value="0 0 0"),
+            DeclareLaunchArgument(
+                "publish_sensor_frames",
+                default_value="false",
+                description=(
+                    "Temporarily disabled until P0.3 makes odom -> base_link "
+                    "the sole dynamic edge."
+                ),
+            ),
+            DeclareLaunchArgument("livox_mount_xyz"),
+            DeclareLaunchArgument("livox_mount_rpy"),
+            DeclareLaunchArgument(
+                "livox_lidar_to_imu_xyz", default_value="0.011 0.02329 -0.04412"
+            ),
+            DeclareLaunchArgument("livox_lidar_to_imu_rpy", default_value="0 0 0"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(frames_launch),
                 condition=IfCondition(LaunchConfiguration("publish_sensor_frames")),
                 launch_arguments={
-                    "imu_xyz": LaunchConfiguration("imu_xyz"),
-                    "imu_rpy": LaunchConfiguration("imu_rpy"),
-                    "lidar_xyz": LaunchConfiguration("lidar_xyz"),
-                    "lidar_rpy": LaunchConfiguration("lidar_rpy"),
+                    "livox_mount_xyz": LaunchConfiguration("livox_mount_xyz"),
+                    "livox_mount_rpy": LaunchConfiguration("livox_mount_rpy"),
+                    "livox_lidar_to_imu_xyz": LaunchConfiguration(
+                        "livox_lidar_to_imu_xyz"
+                    ),
+                    "livox_lidar_to_imu_rpy": LaunchConfiguration(
+                        "livox_lidar_to_imu_rpy"
+                    ),
                 }.items(),
             ),
             Node(

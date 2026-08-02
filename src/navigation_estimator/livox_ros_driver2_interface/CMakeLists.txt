@@ -339,6 +339,12 @@ else(ROS_EDITION STREQUAL "ROS2")
     ament_lint_auto_find_test_dependencies()
   endif()
 
+  if(BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_add_gtest(test_frame_id_contract test/test_frame_id_contract.cpp)
+    target_include_directories(test_frame_id_contract PRIVATE src)
+  endif()
+
   ament_auto_package(INSTALL_TO_SHARE
     config
     launch_ROS2
