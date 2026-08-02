@@ -1,5 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <px4_msgs/msg/timesync_status.hpp>
+#include <px4_msgs/msg/vehicle_attitude.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
+
 #include "px4_odometry_bridge/frame_converter.hpp"
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
 #include "px4_odometry_bridge/reset_compensator.hpp"
@@ -28,6 +33,21 @@ TEST(Px4TopicVersion, KeepsZeroUnversionedAndSuffixesPositiveVersions) {
             "/fmu/out/vehicle_odometry");
   EXPECT_EQ(px4_odometry_bridge::versioned_topic<V2>("/fmu/out/vehicle_local_position"),
             "/fmu/out/vehicle_local_position_v2");
+}
+
+TEST(Px4TopicVersion, UsesRealV117GeneratedMessageDefinitions) {
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<px4_msgs::msg::VehicleOdometry>(
+                "/fmu/out/vehicle_odometry"),
+            "/fmu/out/vehicle_odometry");
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<px4_msgs::msg::VehicleLocalPosition>(
+                "/fmu/out/vehicle_local_position"),
+            "/fmu/out/vehicle_local_position_v1");
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<px4_msgs::msg::VehicleAttitude>(
+                "/fmu/out/vehicle_attitude"),
+            "/fmu/out/vehicle_attitude");
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<px4_msgs::msg::TimesyncStatus>(
+                "/fmu/out/timesync_status"),
+            "/fmu/out/timesync_status");
 }
 
 TEST(Px4FrameConverter, ConvertsNedPositionAndBodyVelocity) {

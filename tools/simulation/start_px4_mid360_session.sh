@@ -16,7 +16,7 @@ PUBLISH_LOCAL_MAP="${PUBLISH_LOCAL_MAP:-}"
 export OBSERVER_SAMPLE_HZ POINTCLOUD_SAMPLE_EVERY AUTO_SNAPSHOT ENABLE_RVIZ PUBLISH_LOCAL_MAP
 CONFIG="${ROOT_DIR}/tools/simulation/config/px4_mid360_observer.yaml"
 
-for command_name in ros2 python3 gz; do
+for command_name in ros2 python3 gz MicroXRCEAgent; do
   command -v "${command_name}" >/dev/null || { echo "Missing command: ${command_name}" >&2; exit 127; }
 done
 [[ -x "${PX4_DIR}/build/px4_sitl_default/bin/px4" ]] || {
@@ -56,6 +56,9 @@ launch_terminal() {
 launch_terminal px4 "PX4 + Gazebo | $(basename "${SESSION_DIR}")" \
   bash tools/simulation/run_px4_mid360.sh
 
+launch_terminal xrce_agent "Micro XRCE-DDS Agent | $(basename "${SESSION_DIR}")" \
+  MicroXRCEAgent udp4 -p 8888
+
 deadline=$((SECONDS+60))
 until gz topic -l 2>/dev/null | grep -qx '/world/px4_lio_smoke/clock'; do
   (( SECONDS < deadline )) || { echo "Gazebo clock startup timeout" >&2; exit 70; }
@@ -67,6 +70,16 @@ LIO_CONFIG="${ROOT_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360_px4_
 launch_terminal bridge "MID-360 bridge | $(basename "${SESSION_DIR}")" \
   ros2 run ros_gz_bridge parameter_bridge --ros-args -r __node:=px4_mid360_bridge \
   -p "config_file:=${BRIDGE_CONFIG}" -p use_sim_time:=true
+launch_terminal px4_ingress "PX4 odometry ingress | $(basename "${SESSION_DIR}")" \
+  ros2 run px4_odometry_bridge px4_odometry_bridge_node --ros-args \
+  -p use_sim_time:=true -p simulation_clock:=true
+
+deadline=$((SECONDS+45))
+until ros2 topic list 2>/dev/null | grep -qx '/px4/odometry_ros'; do
+  (( SECONDS < deadline )) || { echo "PX4 odometry bridge startup timeout" >&2; exit 70; }
+  sleep 1
+done
+
 launch_terminal fast_lio "FAST-LIO | $(basename "${SESSION_DIR}")" \
   ros2 launch navigation_bringup fast_lio.launch.py \
   config_file:="${LIO_CONFIG}" use_sim_time:=true \
