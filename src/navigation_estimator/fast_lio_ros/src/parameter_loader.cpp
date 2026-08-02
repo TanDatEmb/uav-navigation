@@ -34,8 +34,37 @@ LivoxTimestampPolicy parseTimestampPolicy(std::string_view value) {
   throw std::invalid_argument("unsupported timing.livox_timestamp_policy");
 }
 
+InitialStatePriorSource parsePriorSource(std::string_view value) {
+  if (value == "zero") return InitialStatePriorSource::kZero;
+  if (value == "fixed") return InitialStatePriorSource::kFixed;
+  if (value == "topic") return InitialStatePriorSource::kTopic;
+  throw std::invalid_argument("unsupported initial_prior.source");
+}
+
+InitialStatePriorContext parsePriorContext(std::string_view value) {
+  if (value == "ground_startup") return InitialStatePriorContext::kGroundStartup;
+  if (value == "in_flight_reinitialization") {
+    return InitialStatePriorContext::kInFlightReinitialization;
+  }
+  throw std::invalid_argument("unsupported initial_prior.context");
+}
+
+PriorAttitudeMode parsePriorAttitude(std::string_view value) {
+  if (value == "none") return PriorAttitudeMode::kNone;
+  if (value == "yaw_only") return PriorAttitudeMode::kYawOnly;
+  if (value == "full") return PriorAttitudeMode::kFull;
+  throw std::invalid_argument("unsupported initial_prior.components.attitude");
+}
+
+InitialPriorFallback parsePriorFallback(std::string_view value) {
+  if (value == "reject") return InitialPriorFallback::kReject;
+  if (value == "zero") return InitialPriorFallback::kZero;
+  if (value == "fixed") return InitialPriorFallback::kFixed;
+  throw std::invalid_argument("unsupported initial_prior.ground_fallback");
+}
+
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 26> kRequired{
+  static constexpr std::array<std::string_view, 31> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -48,6 +77,11 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "timing.lidar_mode",
       "timing.clock_domain",
       "timing.livox_timestamp_policy",
+      "initial_prior.source",
+      "initial_prior.context",
+      "initial_prior.components.position",
+      "initial_prior.components.velocity",
+      "initial_prior.components.attitude",
       "timing.max_imu_gap_ns",
       "timing.reject_timestamp_regression",
       "tracking.maximum_recoverable_imu_gap_ns",
@@ -171,6 +205,43 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "input.point_time.minimum_points_after_overlap_trim", 1);
   result.input_clock_domain =
       node.declare_parameter("timing.clock_domain", "ros_time");
+  result.initial_prior_source =
+      node.declare_parameter("initial_prior.source", "zero");
+  result.initial_prior_context =
+      node.declare_parameter("initial_prior.context", "ground_startup");
+  result.initial_prior_position_enabled = node.declare_parameter(
+      "initial_prior.components.position", true);
+  result.initial_prior_velocity_enabled = node.declare_parameter(
+      "initial_prior.components.velocity", true);
+  result.initial_prior_attitude =
+      node.declare_parameter("initial_prior.components.attitude", "yaw_only");
+  result.initial_prior_topic = node.declare_parameter(
+      "initial_prior.topic", "/initial_state_prior");
+  result.initial_prior_wait_timeout_ns = node.declare_parameter<std::int64_t>(
+      "initial_prior.topic_wait_timeout_ns", 2'000'000'000);
+  result.initial_prior_maximum_age_ns = node.declare_parameter<std::int64_t>(
+      "initial_prior.maximum_topic_prior_age_ns", 500'000'000);
+  result.initial_prior_fallback = node.declare_parameter(
+      "initial_prior.ground_fallback", "zero");
+  result.initial_prior_maximum_full_tilt_disagreement_rad = node.declare_parameter(
+      "initial_prior.maximum_full_attitude_tilt_disagreement_rad",
+      0.17453292519943295);
+  const auto fixed_position = node.declare_parameter<std::vector<double>>(
+      "initial_prior.fixed.position_m", {0.0, 0.0, 0.0});
+  const auto fixed_orientation = node.declare_parameter<std::vector<double>>(
+      "initial_prior.fixed.orientation_xyzw", {0.0, 0.0, 0.0, 1.0});
+  const auto fixed_linear_velocity = node.declare_parameter<std::vector<double>>(
+      "initial_prior.fixed.linear_velocity_m_s", {0.0, 0.0, 0.0});
+  const auto fixed_angular_velocity = node.declare_parameter<std::vector<double>>(
+      "initial_prior.fixed.angular_velocity_rad_s", {0.0, 0.0, 0.0});
+  if (fixed_position.size() != 3U || fixed_orientation.size() != 4U ||
+      fixed_linear_velocity.size() != 3U || fixed_angular_velocity.size() != 3U) {
+    throw std::invalid_argument("initial_prior fixed arrays have invalid sizes");
+  }
+  std::copy(fixed_position.begin(), fixed_position.end(), result.initial_prior_fixed_position_m.begin());
+  std::copy(fixed_orientation.begin(), fixed_orientation.end(), result.initial_prior_fixed_orientation_xyzw.begin());
+  std::copy(fixed_linear_velocity.begin(), fixed_linear_velocity.end(), result.initial_prior_fixed_linear_velocity_m_s.begin());
+  std::copy(fixed_angular_velocity.begin(), fixed_angular_velocity.end(), result.initial_prior_fixed_angular_velocity_rad_s.begin());
   result.livox_timestamp_policy = node.declare_parameter(
       "timing.livox_timestamp_policy", "require_header_match");
   result.maximum_imu_gap_ns =
@@ -328,6 +399,36 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
   config.initialization.require_stationary = parameters.require_stationary;
+  config.initial_prior.source = parsePriorSource(parameters.initial_prior_source);
+  config.initial_prior.context = parsePriorContext(parameters.initial_prior_context);
+  config.initial_prior.mask.position = parameters.initial_prior_position_enabled;
+  config.initial_prior.mask.velocity = parameters.initial_prior_velocity_enabled;
+  config.initial_prior.mask.attitude = parsePriorAttitude(parameters.initial_prior_attitude);
+  config.initial_prior.topic_wait_timeout_ns = parameters.initial_prior_wait_timeout_ns;
+  config.initial_prior.maximum_topic_prior_age_ns = parameters.initial_prior_maximum_age_ns;
+  config.initial_prior.ground_fallback = parsePriorFallback(parameters.initial_prior_fallback);
+  config.initial_prior.maximum_full_attitude_tilt_disagreement_rad =
+      parameters.initial_prior_maximum_full_tilt_disagreement_rad;
+  config.initial_prior.fixed_prior.source = InitialStatePriorSource::kFixed;
+  config.initial_prior.fixed_prior.context = config.initial_prior.context;
+  config.initial_prior.fixed_prior.mask = config.initial_prior.mask;
+  config.initial_prior.fixed_prior.reference_frame = FrameId(parameters.odom_frame);
+  config.initial_prior.fixed_prior.body_frame = FrameId(parameters.base_frame);
+  config.initial_prior.fixed_prior.position_odom_base_m = {
+      parameters.initial_prior_fixed_position_m[0], parameters.initial_prior_fixed_position_m[1],
+      parameters.initial_prior_fixed_position_m[2]};
+  const auto& fixed_orientation = parameters.initial_prior_fixed_orientation_xyzw;
+  config.initial_prior.fixed_prior.orientation_odom_base =
+      Eigen::Quaterniond{fixed_orientation[3], fixed_orientation[0], fixed_orientation[1],
+                         fixed_orientation[2]};
+  config.initial_prior.fixed_prior.linear_velocity_base_m_s = Eigen::Vector3d{
+      parameters.initial_prior_fixed_linear_velocity_m_s[0],
+      parameters.initial_prior_fixed_linear_velocity_m_s[1],
+      parameters.initial_prior_fixed_linear_velocity_m_s[2]};
+  config.initial_prior.fixed_prior.angular_velocity_base_rad_s = Eigen::Vector3d{
+      parameters.initial_prior_fixed_angular_velocity_rad_s[0],
+      parameters.initial_prior_fixed_angular_velocity_rad_s[1],
+      parameters.initial_prior_fixed_angular_velocity_rad_s[2]};
   config.ikfom.maximum_iterations =
       static_cast<std::size_t>(parameters.maximum_registration_iterations);
   config.extrinsic.estimate_online = parameters.estimate_extrinsic_online;

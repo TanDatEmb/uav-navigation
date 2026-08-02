@@ -10,6 +10,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
 #include "fast_lio_core/navigation/base_link_state_converter.hpp"
@@ -51,6 +52,7 @@ class FastLioNode : public rclcpp::Node {
   void onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
   void onLivoxCustom(
       const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message);
+  void onInitialStatePrior(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
   using InputMeasurement = std::variant<ImuSample, LidarScan>;
   [[nodiscard]] bool enqueue(InputMeasurement measurement);
   void processingLoop();
@@ -72,6 +74,8 @@ class FastLioNode : public rclcpp::Node {
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr
       livox_custom_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
+      initial_state_prior_subscription_;
   std::mutex input_mutex_;
   std::condition_variable input_ready_;
   std::deque<ImuSample> imu_queue_;

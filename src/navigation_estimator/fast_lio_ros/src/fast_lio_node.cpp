@@ -33,6 +33,12 @@ LivoxTimestampPolicy livoxTimestampPolicy(
   throw std::invalid_argument("unsupported Livox timestamp policy");
 }
 
+PriorAttitudeMode initialPriorAttitude(std::string_view value) {
+  if (value == "none") return PriorAttitudeMode::kNone;
+  if (value == "full") return PriorAttitudeMode::kFull;
+  return PriorAttitudeMode::kYawOnly;
+}
+
 PointTimeConfig pointTimeConfig(const RosParameters& parameters) {
   PointTimeConfig result;
   result.field = parameters.point_time_field;
@@ -114,6 +120,12 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
     throw std::runtime_error("P0.3 static sensor geometry unavailable: " +
                              base_to_imu.status().message());
   }
+  const Status prior_geometry_status =
+      pipeline_.setInitialStatePriorGeometry(base_to_imu.value());
+  if (!prior_geometry_status.ok()) {
+    throw std::runtime_error("invalid initial-state prior geometry: " +
+                             prior_geometry_status.message());
+  }
   const auto converter = BaseLinkStateConverter::Create(base_to_imu.value());
   if (!converter.ok()) {
     throw std::runtime_error("invalid base-link static geometry: " +
@@ -179,6 +191,12 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
                 const sensor_msgs::msg::PointCloud2::ConstSharedPtr
                     message) { onLidar(message); });
   }
+  initial_state_prior_subscription_ =
+      create_subscription<nav_msgs::msg::Odometry>(
+          parameters_.initial_prior_topic, QosProfiles::reliableSensorInput(),
+          [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
+            onInitialStatePrior(message);
+          });
   RCLCPP_INFO(get_logger(),
               "Publishing corrected and propagated odometry in odom -> %s; "
               "dynamic TF owner=%s; static geometry resolved from %s -> %s; "
@@ -259,6 +277,45 @@ void FastLioNode::onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& m
     (void)enqueue(lidar_adapter_.convert(*message));
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid LiDAR message: %s", error.what());
+  }
+}
+
+void FastLioNode::onInitialStatePrior(
+    const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
+  InitialStatePrior prior;
+  const auto clock_domain = parseClockDomain(parameters_.input_clock_domain);
+  prior.sample_time = Timestamp(
+      static_cast<std::int64_t>(message->header.stamp.sec) * 1'000'000'000LL +
+          static_cast<std::int64_t>(message->header.stamp.nanosec),
+      clock_domain);
+  prior.reference_frame = FrameId(message->header.frame_id);
+  prior.body_frame = FrameId(message->child_frame_id);
+  prior.source = InitialStatePriorSource::kTopic;
+  prior.context = InitialStatePriorContext::kGroundStartup;
+  if (parameters_.initial_prior_context == "in_flight_reinitialization") {
+    prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  }
+  prior.mask.position = parameters_.initial_prior_position_enabled;
+  prior.mask.velocity = parameters_.initial_prior_velocity_enabled;
+  prior.mask.attitude = initialPriorAttitude(parameters_.initial_prior_attitude);
+  prior.position_odom_base_m = Eigen::Vector3d(message->pose.pose.position.x,
+                                               message->pose.pose.position.y,
+                                               message->pose.pose.position.z);
+  prior.orientation_odom_base = Eigen::Quaterniond(
+      message->pose.pose.orientation.w, message->pose.pose.orientation.x,
+      message->pose.pose.orientation.y, message->pose.pose.orientation.z);
+  prior.linear_velocity_base_m_s = Eigen::Vector3d(
+      message->twist.twist.linear.x, message->twist.twist.linear.y,
+      message->twist.twist.linear.z);
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d(
+      message->twist.twist.angular.x, message->twist.twist.angular.y,
+      message->twist.twist.angular.z);
+  prior.provenance = "topic:" + parameters_.initial_prior_topic;
+  const Status status = pipeline_.submitInitialStatePrior(std::move(prior));
+  if (!status.ok()) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "initial-state prior rejected: %s",
+                         status.message().c_str());
   }
 }
 

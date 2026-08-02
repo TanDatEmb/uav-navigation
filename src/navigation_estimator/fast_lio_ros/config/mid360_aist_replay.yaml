@@ -22,6 +22,20 @@ fast_lio:
       livox_timestamp_policy: timebase_authoritative
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
+    initial_prior:
+      source: zero
+      context: ground_startup
+      components: {position: true, velocity: true, attitude: yaw_only}
+      topic: /initial_state_prior
+      topic_wait_timeout_ns: 2000000000
+      maximum_topic_prior_age_ns: 500000000
+      ground_fallback: zero
+      maximum_full_attitude_tilt_disagreement_rad: 0.1745329252
+      fixed:
+        position_m: [0.0, 0.0, 0.0]
+        orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+        linear_velocity_m_s: [0.0, 0.0, 0.0]
+        angular_velocity_rad_s: [0.0, 0.0, 0.0]
     tracking:
       maximum_recoverable_imu_gap_ns: 50000000
       recovery_confirmation_updates: 3
