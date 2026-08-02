@@ -12,6 +12,9 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PARALLEL_WORKERS = os.environ.get("PARALLEL_WORKERS", "1")
+MAKE_JOBS = os.environ.get("MAKE_JOBS", "1")
+COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
 MODES = {
     "release": {
         "build_type": "RelWithDebInfo",
@@ -43,9 +46,9 @@ MODES = {
 def mode_paths(mode: str) -> tuple[Path, Path, Path]:
     suffix = "" if mode == "release" else f"-{mode}"
     return (
-        ROOT / f"build{suffix}",
-        ROOT / f"install{suffix}",
-        ROOT / f"log{suffix}",
+        Path(os.environ.get("BUILD_BASE", ROOT / f"build{suffix}")),
+        Path(os.environ.get("INSTALL_BASE", ROOT / f"install{suffix}")),
+        Path(os.environ.get("LOG_BASE", ROOT / f"log{suffix}")),
     )
 
 
@@ -107,11 +110,17 @@ def main() -> int:
             "--log-base",
             str(log),
             "build",
+            "--base-paths",
+            "src",
             "--build-base",
             str(build),
             "--install-base",
             str(install),
             "--symlink-install",
+            "--parallel-workers",
+            PARALLEL_WORKERS,
+            "--executor",
+            "sequential",
             "--cmake-args",
             f"-DCMAKE_BUILD_TYPE={spec['build_type']}",
         ]
@@ -124,6 +133,7 @@ def main() -> int:
                     f"-DCMAKE_SHARED_LINKER_FLAGS={compile_flags}",
                 ]
             )
+        command.extend(COLCON_FLAGS)
     elif args.action == "test":
         command = [
             "colcon",
@@ -155,6 +165,8 @@ def main() -> int:
     if args.mode == "tsan" and args.action == "test":
         command = ["setarch", os.uname().machine, "-R", *command]
     print("+", shlex.join(command), flush=True)
+    if args.action == "build":
+        environment["MAKEFLAGS"] = f"-j{MAKE_JOBS}"
     result = subprocess.run(
         command, cwd=ROOT, env=environment, check=False
     ).returncode
