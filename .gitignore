@@ -6,6 +6,10 @@ build-*/
 install-*/
 log-*/
 
+# Upstream repositories imported by vcstool
+src/external/*
+!src/external/README.md
+
 # Editor and operating-system files
 .vscode/
 .idea/

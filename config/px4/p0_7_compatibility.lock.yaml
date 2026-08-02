@@ -1,29 +1,24 @@
 schema_version: 1
-audited_date: 2026-08-02
 
-canonical:
-  px4:
-    ref: v1.17.0
-    sha: d6f12ad1c4f70ad3230afd7d86e971421e02fef4
-  px4_msgs:
-    ref: release/1.17
-    sha: 86d8239e962f6939e05c3737784f60c02fa884db
-  px4_ros2_interface_lib:
-    ref: release/1.17
-    sha: 4a3370f084ac6f1ef001a4afa2b007845ffd0837
-  micro_xrce_dds_agent:
-    ref: v2.4.3
+px4:
+  ref: v1.17.0
+  sha: d6f12ad1c4f70ad3230afd7d86e971421e02fef4
 
-compatibility:
-  px4:
-    ref: release/1.18
-    sha: 55a549a75abe59aaf1cf21cf32a3b892a88e346c
-  px4_beta_tag:
-    ref: v1.18.0-beta1
-    sha: fd132028513748238be1762e57893bbca9fcf179
-  px4_msgs:
-    ref: release/1.18
-    sha: 598c7aad7b2386f9406ebd2a2f841619fddc3c78
-  px4_ros2_interface_lib:
-    ref: release/1.18
-    sha: c3e410f035806e8c56246708432ded09c976434b
+px4_msgs:
+  manifest: dependencies/px4/px4_msgs.repos
+  ref: release/1.17
+  sha: 86d8239e962f6939e05c3737784f60c02fa884db
+
+messages:
+  VehicleOdometry:
+    version: 0
+    topic: /fmu/out/vehicle_odometry
+  VehicleLocalPosition:
+    version: 1
+    topic: /fmu/out/vehicle_local_position_v1
+  VehicleAttitude:
+    version: 0
+    topic: /fmu/out/vehicle_attitude
+  TimesyncStatus:
+    version: 0
+    topic: /fmu/out/timesync_status
