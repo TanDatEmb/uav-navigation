@@ -42,3 +42,28 @@ Angular-rate covariance is not a P0.5R acceptance gate.
 The old P0.5A per-sample gyro covariance requirement is deferred and does not
 block P0.5R. `T_base_imu` is deterministic static calibration and is resolved
 once/cached; it has no modeled calibration uncertainty in this contract.
+
+## Initial-state prior contract
+
+P0.6 accepts an optional generic initial-state prior with public semantics
+`odom -> base_link`. The internal IKFoM nominal state remains expressed at
+`livox_imu_frame`; the prior is converted through the cached
+`T_base_imu = ^base_link T_livox_imu_frame` geometry before the one-time
+estimator initialization. For a base prior `(p_OB, v_OB, omega_B)`, the
+conversion is:
+
+```text
+R_OB = R_OI R_IB
+p_OI = p_OB + R_OB r_BI
+v_OI = R_OB v_B + R_OB (omega_B x r_BI)
+```
+
+Zero position means `p_OB = 0`, not `p_OI = 0`. The prior can provide zero,
+fixed, or `nav_msgs/msg/Odometry` topic values; topic timestamps are sensor
+timestamps from the message header and are never replaced with callback time.
+Ground-startup timeout fallback is explicit in configuration. In-flight
+reinitialization is defined and unit-tested as reject-on-timeout only; it is
+not runtime-wired by P0.6. Position, velocity, and attitude components are
+independently masked. Yaw-only changes world-Z yaw while preserving IMU
+gravity-derived roll/pitch; full attitude is accepted only when its gravity
+tilt agrees with the IMU initialization threshold.

@@ -2,6 +2,10 @@
 
 These items are intentionally not implemented in M1.
 
+P0.6 generic initial-state prior is implemented separately from this deferred
+M1 backlog. It is limited to estimator startup; no PX4/NED/FRD or controller
+integration is included.
+
 | Problem | Reference source | Expected benefit | Risk | Effort | Dependencies | Recommended milestone |
 | --- | --- | --- | --- | --- | --- | --- |
 | Initialization assumes a stationary interval | FAST-LIO initialization literature | Start while moving | High: observability and false convergence | Large | validated real bags and ground truth | M2 |

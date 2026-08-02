@@ -100,6 +100,9 @@ rebuilt atomically by the next `data-fetch`; the normalizer changes only
 - `/lio/local_map`: local registration-map snapshot in `odom`.
 - `/lio/diagnostics`: estimator and transport counters, processing
   percentiles, queue depth, lag, and drops.
+- `/initial_state_prior`: optional generic `nav_msgs/msg/Odometry` prior input.
+  Its required frames are `odom` and `base_link`; the header timestamp is used
+  for acceptance and the topic is consumed only before the first prediction.
 - `/tf` and `/tf_static`: configured frame transforms.
 
 `trajectory.csv` has the same corrected-only semantic. P0.5R now exports pose
