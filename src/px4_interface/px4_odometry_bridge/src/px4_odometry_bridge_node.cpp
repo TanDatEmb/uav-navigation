@@ -1,9 +1,11 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -28,6 +30,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
  public:
   using SampleService = navigation_interfaces::srv::SampleOdometryAtTime;
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
+  using VehicleLocalPosition = px4_msgs::msg::VehicleLocalPosition;
+  using VehicleAttitude = px4_msgs::msg::VehicleAttitude;
+  using TimesyncStatus = px4_msgs::msg::TimesyncStatus;
 
   Px4OdometryBridgeNode() : Node("px4_odometry_bridge") {
     simulation_clock_ = declare_parameter<bool>("simulation_clock", false);
@@ -35,18 +40,22 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     output_ = create_publisher<nav_msgs::msg::Odometry>("/px4/odometry_ros", 10);
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
         "/px4/diagnostics", rclcpp::QoS(1).transient_local());
+    const auto px4_output_qos = rclcpp::QoS(1).best_effort();
     odometry_sub_ = create_subscription<VehicleOdometry>(
-        versioned_topic<VehicleOdometry>("/fmu/out/vehicle_odometry"), 10,
+        versioned_topic<VehicleOdometry>("/fmu/out/vehicle_odometry"), px4_output_qos,
         [this](VehicleOdometry::ConstSharedPtr message) { on_odometry(*message); });
-    local_position_sub_ = create_subscription<px4_msgs::msg::VehicleLocalPosition>(
-        versioned_topic<px4_msgs::msg::VehicleLocalPosition>("/fmu/out/vehicle_local_position"),
-        10, [this](auto message) { latest_detail_timestamp_us_ = message->timestamp_sample; });
-    attitude_sub_ = create_subscription<px4_msgs::msg::VehicleAttitude>(
-        versioned_topic<px4_msgs::msg::VehicleAttitude>("/fmu/out/vehicle_attitude"), 10,
-        [this](auto message) { latest_detail_timestamp_us_ = message->timestamp_sample; });
-    timesync_sub_ = create_subscription<px4_msgs::msg::TimesyncStatus>(
-        "/fmu/out/timesync_status", 10,
-        [this](auto message) {
+    local_position_sub_ = create_subscription<VehicleLocalPosition>(
+        versioned_topic<VehicleLocalPosition>("/fmu/out/vehicle_local_position"), px4_output_qos,
+        [this](VehicleLocalPosition::ConstSharedPtr message) {
+          latest_detail_timestamp_us_ = message->timestamp_sample;
+        });
+    attitude_sub_ = create_subscription<VehicleAttitude>(
+        versioned_topic<VehicleAttitude>("/fmu/out/vehicle_attitude"), px4_output_qos,
+        [this](VehicleAttitude::ConstSharedPtr message) {
+          latest_detail_timestamp_us_ = message->timestamp_sample;
+        });
+    timesync_sub_ = create_subscription<TimesyncStatus>(
+        "/fmu/out/timesync_status", px4_output_qos, [this](TimesyncStatus::ConstSharedPtr message) {
           last_timesync_timestamp_us_ = message->timestamp;
           timesync_seen_ = true;
         });
@@ -71,7 +80,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
           }
           response->success = true;
           response->reason = "";
-          response->odometry = to_ros(*result);
+          response->odometry = to_ros(result->value);
           response->interpolated = result->interpolated;
           response->reset_generation = result->value.reset_generation;
           response->time_generation = result->value.time_generation;
@@ -125,14 +134,20 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     status.name = "px4_odometry_bridge";
     status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
     status.message = message;
-    status.values.push_back({"state", state});
-    status.values.push_back({"source", "VehicleOdometry"});
-    status.values.push_back({"output_frame", "odom"});
-    status.values.push_back({"output_child_frame", "base_link"});
-    status.values.push_back({"simulation_clock", simulation_clock_ ? "true" : "false"});
-    status.values.push_back({"xrce_synchronized", xrce_synchronized_ ? "true" : "false"});
-    status.values.push_back({"timesync_seen", timesync_seen_ ? "true" : "false"});
-    status.values.push_back({"buffer_size", std::to_string(history_.size())});
+    const auto add_value = [&status](std::string key, std::string value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = std::move(key);
+      item.value = std::move(value);
+      status.values.push_back(std::move(item));
+    };
+    add_value("state", state);
+    add_value("source", "VehicleOdometry");
+    add_value("output_frame", "odom");
+    add_value("output_child_frame", "base_link");
+    add_value("simulation_clock", simulation_clock_ ? "true" : "false");
+    add_value("xrce_synchronized", xrce_synchronized_ ? "true" : "false");
+    add_value("timesync_seen", timesync_seen_ ? "true" : "false");
+    add_value("buffer_size", std::to_string(history_.size()));
     array.status.push_back(status);
     diagnostics_->publish(array);
   }
@@ -165,9 +180,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr output_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
   rclcpp::Subscription<VehicleOdometry>::SharedPtr odometry_sub_;
-  rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr local_position_sub_;
-  rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr attitude_sub_;
-  rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr timesync_sub_;
+  rclcpp::Subscription<VehicleLocalPosition>::SharedPtr local_position_sub_;
+  rclcpp::Subscription<VehicleAttitude>::SharedPtr attitude_sub_;
+  rclcpp::Subscription<TimesyncStatus>::SharedPtr timesync_sub_;
   rclcpp::Service<SampleService>::SharedPtr service_;
   FrameConverter converter_;
   ResetCompensator reset_compensator_;

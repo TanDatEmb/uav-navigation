@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PARALLEL_WORKERS = os.environ.get("PARALLEL_WORKERS", "1")
 MAKE_JOBS = os.environ.get("MAKE_JOBS", "1")
 COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
+STANDALONE_EXCLUDED_PACKAGES = ("px4_msgs", "px4_odometry_bridge")
 MODES = {
     "release": {
         "build_type": "RelWithDebInfo",
@@ -140,6 +141,8 @@ def main() -> int:
             "--log-base",
             str(log),
             "test",
+            "--base-paths",
+            "src",
             "--build-base",
             str(build),
             "--install-base",
@@ -157,6 +160,8 @@ def main() -> int:
         ]
 
     packages = getattr(args, "packages", None)
+    if args.action in {"build", "test"}:
+        command.extend(["--packages-skip", *STANDALONE_EXCLUDED_PACKAGES])
     if packages:
         command.extend(["--packages-select", *packages])
     # GCC ThreadSanitizer can fail before main() under Linux's randomized
