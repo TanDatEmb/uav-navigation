@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import data
@@ -39,6 +40,21 @@ class DataRegistryTest(unittest.TestCase):
     def test_percentile_uses_nearest_rank_index(self) -> None:
         self.assertEqual(data.percentile([4.0, 1.0, 3.0, 2.0], 0.5), 3.0)
         self.assertIsNone(data.percentile([], 0.95))
+
+    def test_frame_normalization_changes_only_header_frame_id(self) -> None:
+        message = SimpleNamespace(
+            header=SimpleNamespace(frame_id="legacy_sensor", stamp=(12, 34)),
+            payload=b"serialized-payload",
+        )
+        source = data.normalize_message_frame(message, data.CANONICAL_LIDAR_FRAME)
+        self.assertEqual(source, "legacy_sensor")
+        self.assertEqual(message.header.frame_id, "livox_frame")
+        self.assertEqual(message.header.stamp, (12, 34))
+        self.assertEqual(message.payload, b"serialized-payload")
+
+    def test_prepared_schema_rejects_old_provenance(self) -> None:
+        with self.assertRaises(data.DataError):
+            data.prepared_status_schema({"schema_version": 1})
 
     def test_report_uses_explicit_stage_flags_and_excludes_rejections(self) -> None:
         fixture = """reason,synchronized,deskew_attempted,deskew_applied,correction_attempted,correction_succeeded,map_update_performed,accepted_residuals,residual_rms,iterations,total_processing_us,ikfom_update_us,map_insert_crop_us,map_maintenance_us,map_points

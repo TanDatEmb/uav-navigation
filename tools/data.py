@@ -36,6 +36,9 @@ REQUIRED_OFFLINE_OUTPUTS = (
     "stdout.log",
     "stderr.log",
 )
+PREPARED_SCHEMA_VERSION = 2
+CANONICAL_LIDAR_FRAME = "livox_frame"
+CANONICAL_IMU_FRAME = "livox_imu_frame"
 
 
 class DataError(RuntimeError):
@@ -224,12 +227,59 @@ def tree_size(directory: Path) -> int:
     return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
 
 
-def filter_ros2_bag(source: Path, destination: Path, topics: list[str]) -> dict[str, int]:
+def normalize_message_frame(message: object, canonical_frame: str) -> str:
+    header = getattr(message, "header", None)
+    if header is None or not hasattr(header, "frame_id"):
+        raise DataError("selected ROS message has no header.frame_id")
+    source_frame = str(header.frame_id)
+    if not source_frame:
+        raise DataError("selected ROS message has an empty header.frame_id")
+    header.frame_id = canonical_frame
+    return source_frame
+
+
+def prepared_status_schema(status: dict, *, path: Path | None = None) -> None:
+    observed = status.get("schema_version")
+    if observed != PREPARED_SCHEMA_VERSION:
+        location = f" in {path}" if path is not None else ""
+        raise DataError(
+            f"prepared dataset schema{location} is {observed!r}; "
+            f"expected {PREPARED_SCHEMA_VERSION}; run make data-fetch to rebuild"
+        )
+
+
+def _ros_message_class(type_name: str):
+    if type_name == "sensor_msgs/msg/PointCloud2":
+        from sensor_msgs.msg import PointCloud2
+
+        return PointCloud2
+    if type_name == "sensor_msgs/msg/Imu":
+        from sensor_msgs.msg import Imu
+
+        return Imu
+    raise DataError(
+        "frame normalization supports only sensor_msgs/msg/PointCloud2 and "
+        f"sensor_msgs/msg/Imu, not {type_name}"
+    )
+
+
+def filter_ros2_bag(
+    source: Path,
+    destination: Path,
+    topics: list[str],
+    canonical_frames: dict[str, str],
+) -> tuple[dict[str, int], dict[str, dict]]:
     try:
         import rosbag2_py
     except ImportError as error:
         raise DataError(
             "ROS 2 Python bag support is required; source /opt/ros/jazzy/setup.bash"
+        ) from error
+    try:
+        from rclpy.serialization import deserialize_message, serialize_message
+    except ImportError as error:
+        raise DataError(
+            "ROS 2 Python serialization support is required; source /opt/ros/jazzy/setup.bash"
         ) from error
 
     reader = rosbag2_py.SequentialReader()
@@ -252,16 +302,30 @@ def filter_ros2_bag(source: Path, destination: Path, topics: list[str]) -> dict[
     for topic in topics:
         writer.create_topic(available[topic])
     counts = {topic: 0 for topic in topics}
+    frame_stats = {
+        topic: {
+            "canonical_frame": canonical_frames[topic],
+            "source_frame_ids": {},
+            "normalized_message_count": 0,
+        }
+        for topic in topics
+    }
     selected = set(topics)
     while reader.has_next():
         topic, serialized, timestamp = reader.read_next()
         if topic in selected:
-            writer.write(topic, serialized, timestamp)
+            message_type = _ros_message_class(available[topic].type)
+            message = deserialize_message(serialized, message_type)
+            source_frame = normalize_message_frame(message, canonical_frames[topic])
+            source_counts = frame_stats[topic]["source_frame_ids"]
+            source_counts[source_frame] = source_counts.get(source_frame, 0) + 1
+            frame_stats[topic]["normalized_message_count"] += 1
+            writer.write(topic, serialize_message(message), timestamp)
             counts[topic] += 1
     del writer
     if any(count == 0 for count in counts.values()):
         raise DataError(f"selected topic contains no messages: {counts}")
-    return counts
+    return counts, frame_stats
 
 
 def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
@@ -269,7 +333,9 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
     blob = download(entry, home)
     destination = home / "datasets" / entry["id"]
     if (destination / "status.json").is_file():
-        return destination
+        status = load_yaml(destination / "status.json")
+        if status.get("schema_version") == PREPARED_SCHEMA_VERSION:
+            return destination
     with tempfile.TemporaryDirectory(dir=home / "tmp") as temporary:
         stage = Path(temporary) / entry["id"]
         source = stage / "source"
@@ -290,9 +356,15 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
         selected_topics = [
             entry["input"]["lidar_topic"], entry["input"]["imu_topic"]
         ]
-        selected_counts = filter_ros2_bag(source_bag, lio, selected_topics)
+        canonical_frames = {
+            entry["input"]["lidar_topic"]: CANONICAL_LIDAR_FRAME,
+            entry["input"]["imu_topic"]: CANONICAL_IMU_FRAME,
+        }
+        selected_counts, frame_stats = filter_ros2_bag(
+            source_bag, lio, selected_topics, canonical_frames
+        )
         provenance = {
-            "schema_version": 1,
+            "schema_version": PREPARED_SCHEMA_VERSION,
             "dataset": entry["id"],
             "source_archive": {
                 "path": str(blob),
@@ -302,6 +374,17 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
             "selected_topics": selected_topics,
             "selected_message_counts": selected_counts,
             "conversion_tool": "tools/data.py",
+            "normalization_tool_version": "tools/data.py/prepared-schema-2",
+            "frame_normalization": {
+                "policy": "rewrite only header.frame_id; preserve topic, type, "
+                           "message header timestamp, bag timestamp, and payload",
+                "canonical_frames": canonical_frames,
+                "modified_fields": [
+                    "sensor_msgs/msg/PointCloud2.header.frame_id",
+                    "sensor_msgs/msg/Imu.header.frame_id",
+                ],
+                "topics": frame_stats,
+            },
             "derived_bag_sha256": tree_digest(lio),
             "derived_bag_size_bytes": tree_size(lio),
             "note": "Derived ROS 2 bag contains only the selected LiDAR and IMU "
@@ -324,7 +407,26 @@ def prepare(entry: dict, home: Path, keep_archive: bool) -> Path:
             encoding="utf-8",
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(stage, destination)
+        backup_root = None
+        backup = None
+        if destination.exists():
+            backup_root = Path(
+                tempfile.mkdtemp(
+                    dir=destination.parent, prefix=f".{entry['id']}.old-"
+                )
+            )
+            backup = backup_root / destination.name
+            os.replace(destination, backup)
+        try:
+            os.replace(stage, destination)
+        except OSError:
+            if backup is not None:
+                os.replace(backup, destination)
+            raise
+        else:
+            if backup is not None:
+                shutil.rmtree(backup)
+                backup_root.rmdir()
     if not keep_archive:
         verify_blob(blob, entry["download"]["checksum"])
         blob.unlink()
@@ -394,6 +496,9 @@ def dataset_context(value: str, home: Path) -> dict:
     bag = prepared / "lio"
     if not (prepared / "status.json").is_file() or not bag.is_dir():
         raise DataError(f"{value} is not prepared; run make data-fetch DATASET={value}")
+    prepared_status_schema(
+        load_yaml(prepared / "status.json"), path=prepared / "status.json"
+    )
     return {
         "id": value,
         "directory": prepared,
@@ -841,6 +946,7 @@ def main() -> int:
         context = dataset_context(args.dataset, home)
         counts = bag_topic_counts(context)
         status = load_yaml(context["directory"] / "status.json")
+        prepared_status_schema(status, path=context["directory"] / "status.json")
         expected = status.get("selected_message_counts", {})
         if counts != expected:
             raise DataError(f"prepared counts differ from provenance: {counts} != {expected}")
