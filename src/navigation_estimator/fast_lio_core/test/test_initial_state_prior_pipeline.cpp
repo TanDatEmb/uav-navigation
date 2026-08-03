@@ -86,6 +86,8 @@ TEST(InitialStatePriorPipelineTest, ValidTopicPriorAppliesOnceBeforeMapBootstrap
   EXPECT_EQ(applied.diagnostics.initial_prior.status, InitialPriorStatus::kClosed)
       << applied.diagnostics.initial_prior.reason;
   EXPECT_TRUE(applied.diagnostics.initial_prior.applied);
+  EXPECT_EQ(applied.diagnostics.initial_prior.candidate_count, 1U);
+  EXPECT_EQ(applied.diagnostics.initial_prior.accepted_count, 1U);
   EXPECT_TRUE(applied.diagnostics.initial_prior.bootstrap_map_after_prior)
       << applied.rejection_reason << " / " << applied.diagnostics.reason;
   EXPECT_TRUE(pipeline.state().position_odom_imu_m().isApprox(
@@ -93,6 +95,12 @@ TEST(InitialStatePriorPipelineTest, ValidTopicPriorAppliesOnceBeforeMapBootstrap
 
   const Status late = pipeline.submitInitialStatePrior(topicPrior(1'100'000'000));
   EXPECT_EQ(late.code(), StatusCode::kNotReady);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.late_rejected_count, 1U);
+  const Status ignored = pipeline.submitInitialStatePrior(
+      topicPrior(1'200'000'000), InitialStatePriorLateSubmissionPolicy::kIgnore);
+  EXPECT_EQ(ignored.code(), StatusCode::kNotReady);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.candidate_count, 2U);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.rejected_count, 1U);
   EXPECT_EQ(pipeline.diagnostics().initial_prior.late_rejected_count, 1U);
 }
 

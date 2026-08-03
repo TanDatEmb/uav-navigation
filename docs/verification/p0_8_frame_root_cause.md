@@ -71,6 +71,39 @@ snapshot with arrays that did not contain the estimator status, producing a
 false `LIO_DIAGNOSTIC_SCHEMA_MISMATCH`. The subscriber now updates a snapshot
 only when the named status is present.
 
+## Initial-state prior runtime root cause
+
+The reported `initial-state prior rejected` failure was not one defect. The
+first source-clean runtime accepted the topic prior, then kept the PX4
+odometry subscription alive after the one-shot startup gate had closed. That
+caused one late callback per second to enter the core and emit the same
+`gate is closed` warning. In
+`.artifacts/simulation/px4-mid360-20260803-231947/logs/ros/fast_lio_node_196005_1785774001437.log`
+there were 77 such warnings, while the JSONL diagnostic still reported
+`TOPIC_PRIOR_ACCEPTED` and estimator `TRACKING`.
+
+The boundary fix is now explicit: create the topic subscription only for the
+topic source, use an ignore-after-gate submission policy for the ROS callback,
+copy mailbox counters into every result, publish the accepted/late/frame/value
+counters, and remove the subscription once the startup prior or configured
+fallback has been applied. The focused runtime at
+`.artifacts/verification/p0.8-motion/20260803-233547-yaw-initial-prior-fix.jsonl`
+reported `TOPIC_PRIOR_ACCEPTED`, `candidate_count=101`, no warning lines, and
+only the single stream-close info line; the remaining one late counter in that
+intermediate run exposed the callback/gate race and is handled by the
+ignore-after-gate policy in the current source.
+
+A separate startup race was then isolated: `topic_wait_timeout_ns` is measured
+in simulation time, while DDS discovery is wall-time. With accelerated Gazebo,
+the worker could process enough sensor time to apply
+`TOPIC_PRIOR_TIMEOUT_ZERO_FALLBACK` before the volatile
+`/px4/estimator_odometry` subscription had matched. The affected runs had
+`candidate_count=0`; they are not evidence of a frame rejection. The current
+ROS boundary starts the estimator worker only after the parsed topic
+subscription reports a publisher match, so the core timeout cannot run before
+the transport contract exists. Runs that failed before that startup gate are
+kept as harness failures, not counted as estimator passes.
+
 ## Architecture decision
 
 Option A was selected: keep PX4 and LIO world frames distinct and add one

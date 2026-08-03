@@ -131,14 +131,20 @@ Status FastLioPipeline::pushImu(const ImuSample& sample) {
   return Status::Ok();
 }
 
-Status FastLioPipeline::submitInitialStatePrior(InitialStatePrior prior) {
+Status FastLioPipeline::submitInitialStatePrior(
+    InitialStatePrior prior,
+    const InitialStatePriorLateSubmissionPolicy late_submission_policy) {
   std::scoped_lock lock(initial_prior_mutex_);
-  ++prior_candidate_count_;
   if (initial_prior_gate_closed_ || estimator_initialized_) {
-    ++prior_late_rejected_count_;
-    ++prior_rejected_count_;
+    if (late_submission_policy ==
+        InitialStatePriorLateSubmissionPolicy::kRecordRejection) {
+      ++prior_candidate_count_;
+      ++prior_late_rejected_count_;
+      ++prior_rejected_count_;
+    }
     return Status(StatusCode::kNotReady, "initial-state prior gate is closed");
   }
+  ++prior_candidate_count_;
   if (prior.source != InitialStatePriorSource::kTopic ||
       prior.context != config_.initial_prior.context ||
       prior.reference_frame != lioOdomFrame() || prior.body_frame != baseFrame()) {
@@ -992,6 +998,7 @@ ProcessResult FastLioPipeline::finalizeResult(ProcessResult result) {
   result.status_after = status_;
   result.last_lidar_correction_time = last_correction_time_;
   fillStateDiagnostics(diagnostics_);
+  copyInitialPriorMailboxDiagnostics(diagnostics_);
 
   OutputDiagnostics output;
   output.estimate_validity = result.estimate_validity;

@@ -191,12 +191,16 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
                 const sensor_msgs::msg::PointCloud2::ConstSharedPtr
                     message) { onLidar(message); });
   }
-  initial_state_prior_subscription_ =
-      create_subscription<nav_msgs::msg::Odometry>(
-          parameters_.initial_prior_topic, QosProfiles::reliableSensorInput(),
-          [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
-            onInitialStatePrior(message);
-          });
+  if (profile_.estimator.initial_prior.source == InitialStatePriorSource::kTopic) {
+    initial_state_prior_subscription_ =
+        create_subscription<nav_msgs::msg::Odometry>(
+            parameters_.initial_prior_topic, QosProfiles::reliableSensorInput(),
+            [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) {
+              onInitialStatePrior(message);
+            });
+    RCLCPP_INFO(get_logger(), "Initial-state prior topic subscription: %s",
+                parameters_.initial_prior_topic.c_str());
+  }
   RCLCPP_INFO(get_logger(),
               "Publishing corrected and propagated odometry in %s -> %s; "
               "dynamic TF owner=%s; static geometry resolved from %s -> %s; "
@@ -209,10 +213,19 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   transport_diagnostics_timer_ = create_wall_timer(
       std::chrono::seconds(1),
       [this] { publishTransportSnapshot(); });
-  processing_worker_ = std::thread([this] { processingLoop(); });
+  if (profile_.estimator.initial_prior.source == InitialStatePriorSource::kTopic) {
+    initial_prior_startup_timer_ = create_wall_timer(
+        std::chrono::milliseconds(10),
+        [this] { startProcessingWorkerWhenPriorPublisherMatches(); });
+  } else {
+    startProcessingWorker();
+  }
 }
 
 FastLioNode::~FastLioNode() {
+  if (initial_prior_startup_timer_) {
+    initial_prior_startup_timer_->cancel();
+  }
   {
     std::lock_guard lock(input_mutex_);
     stopping_ = true;
@@ -221,8 +234,16 @@ FastLioNode::~FastLioNode() {
   if (propagated_odometry_worker_) {
     propagated_odometry_worker_->stop();
   }
-  if (processing_worker_.joinable()) {
-    processing_worker_.join();
+  std::thread processing_worker;
+  {
+    std::lock_guard lock(processing_worker_start_mutex_);
+    processing_worker_start_closed_ = true;
+    if (processing_worker_.joinable()) {
+      processing_worker = std::move(processing_worker_);
+    }
+  }
+  if (processing_worker.joinable()) {
+    processing_worker.join();
   }
 }
 
@@ -332,7 +353,12 @@ void FastLioNode::onInitialStatePrior(
                      "|transform=" + parameters_.initial_prior_source_frame_transform;
   const auto prior_target_frame = std::string(prior.reference_frame.name());
   const auto prior_body_frame = std::string(prior.body_frame.name());
-  const Status status = pipeline_.submitInitialStatePrior(std::move(prior));
+  const Status status = pipeline_.submitInitialStatePrior(
+      std::move(prior), InitialStatePriorLateSubmissionPolicy::kIgnore);
+  if (status.code() == StatusCode::kNotReady) {
+    closeInitialStatePriorStream();
+    return;
+  }
   if (!status.ok()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                          "initial-state prior rejected: %s "
@@ -341,6 +367,40 @@ void FastLioNode::onInitialStatePrior(
                          prior_target_frame.c_str(), prior_body_frame.c_str(),
                          parameters_.odom_frame.c_str());
   }
+}
+
+void FastLioNode::closeInitialStatePriorStream() {
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription;
+  {
+    std::lock_guard lock(initial_state_prior_subscription_mutex_);
+    subscription = std::move(initial_state_prior_subscription_);
+  }
+  if (subscription) {
+    subscription.reset();
+    RCLCPP_INFO_ONCE(get_logger(),
+                     "initial-state prior stream closed after startup gate");
+  }
+}
+
+void FastLioNode::startProcessingWorker() {
+  std::lock_guard lock(processing_worker_start_mutex_);
+  if (processing_worker_start_closed_ || processing_worker_.joinable()) {
+    return;
+  }
+  processing_worker_ = std::thread([this] { processingLoop(); });
+}
+
+void FastLioNode::startProcessingWorkerWhenPriorPublisherMatches() {
+  if (!initial_state_prior_subscription_ ||
+      initial_state_prior_subscription_->get_publisher_count() == 0U) {
+    return;
+  }
+  if (initial_prior_startup_timer_) {
+    initial_prior_startup_timer_->cancel();
+  }
+  RCLCPP_INFO(get_logger(),
+              "Initial-state prior publisher matched; starting estimator worker");
+  startProcessingWorker();
 }
 
 bool FastLioNode::enqueue(InputMeasurement measurement) {
@@ -558,6 +618,9 @@ void FastLioNode::publishAvailableResults() {
       augmented.diagnostics.sensor = ingress_diagnostics_;
     }
     output_publisher_.publish(augmented);
+    if (augmented.diagnostics.initial_prior.applied) {
+      closeInitialStatePriorStream();
+    }
     if (augmented.corrected_kinematic_estimate.has_value()) {
       transform_publisher_.publishCorrected(
           *augmented.corrected_kinematic_estimate);

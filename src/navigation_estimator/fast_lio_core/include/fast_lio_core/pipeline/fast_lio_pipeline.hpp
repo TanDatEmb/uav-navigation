@@ -28,13 +28,21 @@
 
 namespace uav::nav::lio {
 
+enum class InitialStatePriorLateSubmissionPolicy {
+  kRecordRejection,
+  kIgnore,
+};
+
 class FastLioPipeline {
  public:
   explicit FastLioPipeline(EstimatorConfig config = {});
 
   [[nodiscard]] Status pushImu(const ImuSample& sample);
   [[nodiscard]] Status pushLidar(LidarScan scan);
-  [[nodiscard]] Status submitInitialStatePrior(InitialStatePrior prior);
+  [[nodiscard]] Status submitInitialStatePrior(
+      InitialStatePrior prior,
+      InitialStatePriorLateSubmissionPolicy late_submission_policy =
+          InitialStatePriorLateSubmissionPolicy::kRecordRejection);
   [[nodiscard]] Status setInitialStatePriorGeometry(RigidTransform base_to_imu);
 
   // Returns nullopt while waiting for a complete synchronized group. Permanent

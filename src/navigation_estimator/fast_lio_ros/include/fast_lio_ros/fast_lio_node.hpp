@@ -54,6 +54,9 @@ class FastLioNode : public rclcpp::Node {
   void onLivoxCustom(
       const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message);
   void onInitialStatePrior(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
+  void closeInitialStatePriorStream();
+  void startProcessingWorker();
+  void startProcessingWorkerWhenPriorPublisherMatches();
   using InputMeasurement = std::variant<ImuSample, LidarScan>;
   [[nodiscard]] bool enqueue(InputMeasurement measurement);
   void processingLoop();
@@ -82,6 +85,10 @@ class FastLioNode : public rclcpp::Node {
       livox_custom_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
       initial_state_prior_subscription_;
+  std::mutex initial_state_prior_subscription_mutex_;
+  rclcpp::TimerBase::SharedPtr initial_prior_startup_timer_;
+  std::mutex processing_worker_start_mutex_;
+  bool processing_worker_start_closed_{false};
   std::mutex input_mutex_;
   std::condition_variable input_ready_;
   std::deque<ImuSample> imu_queue_;
