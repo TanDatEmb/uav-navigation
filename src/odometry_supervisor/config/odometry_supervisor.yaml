@@ -1,0 +1,39 @@
+odometry_supervisor:
+  ros__parameters:
+    reference_mode: independent
+    evaluation_rate_hz: 20.0
+    alignment:
+      maximum_gap_ns: 50000000
+      service_timeout_ns: 100000000
+    freshness:
+      propagated_max_age_ns: 120000000
+      corrected_max_age_ns: 350000000
+      px4_max_age_ns: 250000000
+      diagnostics_max_age_ns: 500000000
+    thresholds:
+      suspect:
+        position_m: 0.30
+        velocity_m_s: 0.30
+        orientation_rad: 0.2094395102
+        yaw_rad: 0.1396263402
+      degraded:
+        position_m: 0.75
+        velocity_m_s: 0.75
+        orientation_rad: 0.5235987756
+        yaw_rad: 0.3490658504
+      diverged:
+        position_m: 1.50
+        velocity_m_s: 1.50
+        orientation_rad: 1.0471975512
+        yaw_rad: 0.6981317008
+    hysteresis:
+      clear_ratio: 0.70
+    persistence:
+      suspect_enter_ns: 300000000
+      degraded_enter_ns: 750000000
+      diverged_enter_ns: 1500000000
+      recovery_confirm_ns: 2000000000
+      reset_grace_ns: 500000000
+    actions:
+      suspect_speed_limit_m_s: 2.0
+      degraded_speed_limit_m_s: 0.5
