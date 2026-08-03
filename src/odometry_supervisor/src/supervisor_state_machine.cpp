@@ -146,6 +146,7 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool comparison_valid = input.px4_available && input.px4_fresh &&
                                 input.px4_continuity_valid && input.diagnostics_valid &&
                                 input.origin_aligned && input.residual.valid &&
+                                input.propagated_fresh && input.corrected_fresh &&
                                 input.alignment_gap_ns >= 0 &&
                                 input.alignment_gap_ns <= config_.maximum_alignment_gap_ns &&
                                 !in_reset_grace && !time_generation_changed &&
@@ -200,8 +201,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
       suspect_since_ns_.reset();
     }
     if (state_ == HealthState::kSuspect || state_ == HealthState::kDegraded) {
-      if (comparison_valid && below(input.residual, config_.suspect, config_.clear_ratio) &&
-          !corrected_stale) {
+      if (comparison_valid && input.lio_valid && input.propagated_fresh &&
+          input.corrected_fresh && below(input.residual, config_.suspect, config_.clear_ratio)) {
         if (!recovery_since_ns_) recovery_since_ns_ = input.evaluation_time_ns;
         if (input.evaluation_time_ns - *recovery_since_ns_ >= config_.recovery_confirm_ns) {
           transition(HealthState::kHealthy, kReasonHealthy, "HEALTHY_RECOVERED");

@@ -130,6 +130,22 @@ TEST(OdometrySupervisorStateMachine, StalePropagatedLioEventuallyClosesGate) {
   EXPECT_FALSE(output.external_odometry_allowed);
 }
 
+TEST(OdometrySupervisorStateMachine, StalePropagatedLioCannotRecoverOnHeldResidual) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  evaluate(machine, 1'000'000'000);
+  auto input = healthy_input(1'100'000'000);
+  input.propagated_fresh = false;
+  input.lio_valid = false;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+  input.evaluation_time_ns = 1'900'000'000;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kDegraded);
+  input.evaluation_time_ns = 5'000'000'000;
+  const auto output = machine.evaluate(input);
+  EXPECT_EQ(output.health, odometry_supervisor::HealthState::kDegraded);
+  EXPECT_FALSE(output.comparison_valid);
+  EXPECT_FALSE(output.external_odometry_allowed);
+}
+
 TEST(OdometrySupervisorStateMachine, CorrelatedAgreementCannotOverrideLioLost) {
   odometry_supervisor::SupervisorConfig config;
   config.reference_mode = odometry_supervisor::ReferenceMode::kCorrelated;
