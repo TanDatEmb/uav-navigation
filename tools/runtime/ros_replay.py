@@ -52,6 +52,8 @@ def diagnostics_values(message: Any) -> dict[str, Any]:
             result.update(diagnostic_status_values(status))
         elif status.name == "fast_lio/propagated_odometry":
             result["propagated_odometry"] = diagnostic_status_values(status)
+        elif status.name == "fast_lio/estimator":
+            result["estimator"] = diagnostic_status_values(status)
     return result
 
 
@@ -155,11 +157,12 @@ def collect(output: Path, state_path: Path) -> int:
             return
         if state_path.is_file():
             combined = json.loads(state_path.read_text(encoding="utf-8"))
-            if "propagated_odometry" in state:
-                combined["propagated_odometry"] = state["propagated_odometry"]
+            for nested in ("propagated_odometry", "estimator"):
+                if nested in state:
+                    combined[nested] = state[nested]
             combined.update({
                 key: value for key, value in state.items()
-                if key != "propagated_odometry"
+                if key not in {"propagated_odometry", "estimator"}
             })
             state = combined
         state["collector_wall_time_ns"] = time.time_ns()
