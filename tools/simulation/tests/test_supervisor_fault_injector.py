@@ -1,13 +1,20 @@
-import importlib.util
+import ast
 import json
 import unittest
 from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "odometry_supervisor_fault_injector.py"
-SPEC = importlib.util.spec_from_file_location("p0_8_fault_injector", MODULE_PATH)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+
+def scenario_catalog():
+    tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "SCENARIOS"
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError("fault injector scenario catalog is missing")
 
 
 class SupervisorFaultInjectorTest(unittest.TestCase):
@@ -18,7 +25,7 @@ class SupervisorFaultInjectorTest(unittest.TestCase):
             "lio_corrected_stale", "px4_reset_generation", "clock_pause",
             "diagnostic_schema_corruption", "correlated_unhealthy",
         }
-        self.assertTrue(required.issubset(set(MODULE.SCENARIOS)))
+        self.assertTrue(required.issubset(set(scenario_catalog())))
 
     def test_artifact_schema_is_machine_readable(self):
         artifact = {"scenario": "single_position_jump", "inputs": [], "supervisor_status": []}
