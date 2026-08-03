@@ -209,6 +209,13 @@ def coefficient(values: list[float]) -> float:
     return statistics.stdev(values) / mean if len(values) > 1 and mean else 0.0
 
 
+def percentile_values(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, max(0, int(quantile * len(ordered))))]
+
+
 def collect_runs(root: Path, role: str) -> list[dict[str, Any]]:
     runs = []
     for path in sorted((root / role).glob("run-*")):
@@ -216,8 +223,64 @@ def collect_runs(root: Path, role: str) -> list[dict[str, Any]]:
             continue
         summary = load_summary(path)
         run = json.loads((path / "run.json").read_text(encoding="utf-8"))
-        runs.append({"path": str(path), "summary": summary, "run": run})
+        item = {"path": str(path), "summary": summary, "run": run}
+        item["resources"] = resource_snapshot(path)
+        runs.append(item)
     return runs
+
+
+def elapsed_seconds(value: str) -> float:
+    parts = value.strip().split(":")
+    if len(parts) == 2:
+        return float(parts[0]) * 60.0 + float(parts[1])
+    if len(parts) == 3:
+        return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+    return float(value)
+
+
+def resource_snapshot(path: Path) -> dict[str, Any]:
+    time_path = path.parent / f"{path.name}.time.txt"
+    if not time_path.is_file():
+        raise RuntimeError(f"missing /usr/bin/time artifact: {time_path}")
+    labels = {
+        "Elapsed (wall clock) time": "wall_time_s",
+        "User time (seconds)": "user_cpu_s",
+        "System time (seconds)": "system_cpu_s",
+        "Maximum resident set size (kbytes)": "peak_rss_bytes",
+        "Voluntary context switches": "voluntary_context_switches",
+        "Involuntary context switches": "involuntary_context_switches",
+    }
+    values: dict[str, Any] = {}
+    for raw_line in time_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        for label, key in labels.items():
+            prefix = f"{label}:"
+            if key == "wall_time_s" and line.startswith(label):
+                raw = line.split("): ", 1)[-1].strip()
+                values[key] = elapsed_seconds(raw)
+            elif line.startswith(prefix):
+                raw = line[len(prefix):].strip()
+                values[key] = elapsed_seconds(raw) if key == "wall_time_s" else float(raw)
+    missing = set(labels.values()) - set(values)
+    if missing:
+        raise RuntimeError(f"incomplete resource artifact {time_path}: {sorted(missing)}")
+    values["peak_rss_bytes"] *= 1024.0
+    process_path = path / "process.csv"
+    if not process_path.is_file():
+        raise RuntimeError(f"missing process sampler artifact: {process_path}")
+    with process_path.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    cpu = [float(row["cpu_percent_one_logical_core"]) for row in rows]
+    rss = [float(row["rss_bytes"]) for row in rows]
+    values.update({
+        "sampler_count": len(rows),
+        "cpu_percent_mean": statistics.mean(cpu) if cpu else 0.0,
+        "cpu_percent_p95": percentile_values(cpu, 0.95),
+        "cpu_percent_max": max(cpu, default=0.0),
+        "sampler_peak_rss_bytes": max(rss, default=0.0),
+        "cpu_seconds": values["user_cpu_s"] + values["system_cpu_s"],
+    })
+    return values
 
 
 def statistics_for(runs: list[dict[str, Any]], metric: str) -> dict[str, Any]:
@@ -262,6 +325,7 @@ def dataset_compare(args: argparse.Namespace) -> int:
         "p95_registration_update_us", "p99_registration_update_us",
         "p95_result_processing_us", "p99_result_processing_us",
         "maximum_queue_depth", "worker_busy_ratio",
+        "wall_time_s", "peak_rss_bytes", "cpu_seconds",
     ]
     comparison: dict[str, Any] = {
         "schema_version": 2,
@@ -293,6 +357,14 @@ def dataset_compare(args: argparse.Namespace) -> int:
                 "candidate": [float(x["summary"]["diagnostics"][metric]) for x in candidate],
             }
             stats = {side: {"count": len(items), "values": items, "median": statistics.median(items)} for side, items in values.items()}
+        elif metric in {"wall_time_s", "peak_rss_bytes", "cpu_seconds"}:
+            values = {side: [float(x["resources"][metric]) for x in runs]
+                      for side, runs in (("baseline", baseline), ("candidate", candidate))}
+            stats = {side: {
+                "count": len(items), "values": items, "median": statistics.median(items),
+                "minimum": min(items), "maximum": max(items),
+                "coefficient_of_variation": coefficient(items),
+            } for side, items in values.items()}
         else:
             stats = {"baseline": statistics_for(baseline, metric), "candidate": statistics_for(candidate, metric)}
         b = stats["baseline"]["median"]
@@ -422,6 +494,10 @@ def report(args: argparse.Namespace) -> int:
     for name, path in (("dataset", args.dataset), ("sitl", args.sitl), ("memory", args.memory)):
         if path is not None:
             sections[name] = _load_json(path.resolve())
+    if args.stress:
+        sections["stress"] = {
+            str(path.resolve()): _load_json(path.resolve()) for path in args.stress
+        }
     if not sections:
         raise RuntimeError("report requires at least one measured qualification artifact")
     result = {"schema_version": 1, "qualification": "p0.8-performance", "sections": sections}
@@ -476,6 +552,7 @@ def parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--dataset", type=Path)
     report_parser.add_argument("--sitl", type=Path)
     report_parser.add_argument("--memory", type=Path)
+    report_parser.add_argument("--stress", type=Path, action="append")
     report_parser.add_argument("--output", type=Path, required=True)
     return result
 
