@@ -119,12 +119,18 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     lio_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
         "/lio/diagnostics", rclcpp::QoS(10).reliable(),
         [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
-          lio_diagnostics_ = selectDiagnostic(*message, "fast_lio/estimator");
+          const auto snapshot = selectDiagnostic(*message, "fast_lio/estimator");
+          // FAST-LIO emits estimator, transport, and propagated-worker
+          // diagnostics as separate DiagnosticArray messages on this topic.
+          // A non-estimator array must not erase the last valid estimator
+          // snapshot and create a false schema mismatch.
+          if (snapshot.found) lio_diagnostics_ = snapshot;
         });
     px4_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
         "/px4/diagnostics", rclcpp::QoS(10).reliable(),
         [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
-          px4_diagnostics_ = selectDiagnostic(*message, "px4_odometry_bridge");
+          const auto snapshot = selectDiagnostic(*message, "px4_odometry_bridge");
+          if (snapshot.found) px4_diagnostics_ = snapshot;
         });
     query_client_ = create_client<QueryService>("/px4/sample_odometry_at_time");
     const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
