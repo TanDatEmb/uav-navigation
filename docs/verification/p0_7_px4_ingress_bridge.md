@@ -385,5 +385,15 @@ contract are reproducible. The P0.6 topic prior is accepted in the same
 simulation epoch without fallback, the dataset gate passes, and the required
 architecture remediation is complete. The SIM finite-point condition remains
 a baseline warning for later investigation; it is not assigned a root cause
-and does not invalidate P0.7. P0.8 has not started.
+and does not invalidate P0.7. P0.8 was subsequently completed from this
+frozen parent; its separate report records the implementation and validation.
+
+## P0.8 addendum
+
+P0.8 result: **PASS**. The detailed validation is in
+[`p0_8_odometry_supervisor.md`](p0_8_odometry_supervisor.md). The P0.8 prerequisite hardening and odometry supervisor
+were added without rewriting P0.7 history. The P0.7 PX4 v1.17 boundary, clock
+authority, frame contract, and propagated-output ownership remain unchanged.
+The P0.0 dataset processing-lag failure and retained SIM finite-point warning
+remain carried findings and are not attributed to P0.8.
 ```
