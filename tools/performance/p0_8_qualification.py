@@ -28,6 +28,7 @@ sys.path.insert(0, str(TOOLS))
 from data import bag_topic_counts, data_home, dataset_context  # noqa: E402
 
 from p0_8_provenance import make_provenance, write_json  # noqa: E402
+from p0_8_sitl_orchestrator import robust_rss_growth  # noqa: E402
 
 
 def load_summary(path: Path) -> dict[str, Any]:
@@ -421,72 +422,82 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def sitl_ab(args: argparse.Namespace) -> int:
     root = args.root.resolve()
-    sides = {side: sorted((root / side).glob("run-*.json")) for side in ("off", "on")}
-    if any(len(paths) < args.min_runs for paths in sides.values()):
-        raise RuntimeError("SITL A/B requires three valid runs per side")
-    off_required = {
-        "supervisor_metrics_applicable", "fast_lio_corrected_p95_us",
-        "fast_lio_max_queue_depth", "bridge_peak_rss_bytes", "fast_lio_peak_rss_bytes",
+    run_paths = sorted(root.rglob("run.json"))
+    runs = [_load_json(path) | {"_path": str(path)} for path in run_paths]
+    runs = [run for run in runs if run.get("mode") in {"sitl-off", "sitl-on"}]
+    expected = ["sitl-off", "sitl-on"] * args.min_runs
+    if len(runs) < len(expected):
+        raise RuntimeError("canonical SITL A/B requires three OFF/ON pairs")
+    runs = runs[:len(expected)]
+    if [run.get("mode") for run in runs] != expected:
+        raise RuntimeError("canonical SITL A/B order is not OFF-1, ON-1, OFF-2, ON-2, OFF-3, ON-3")
+    if any(run.get("outcome") != "PASS" or not run.get("cleanup", {}).get("complete", False)
+           for run in runs):
+        raise RuntimeError("canonical SITL A/B contains a failed or uncleared run")
+    provenance_keys = ("product_base_sha", "qualification_harness_sha", "px4", "px4_msgs", "config_hashes")
+    provenance = {key: runs[0].get(key) for key in provenance_keys}
+    if any({json.dumps(run.get(key), sort_keys=True) for run in runs} !=
+           {json.dumps(provenance[key], sort_keys=True)} for key in provenance_keys):
+        raise RuntimeError("canonical SITL A/B provenance differs between runs")
+
+    def measurement(run: dict[str, Any]) -> dict[str, Any]:
+        value = run.get("measurement")
+        if not isinstance(value, dict):
+            raise RuntimeError(f"missing canonical measurement: {run['_path']}")
+        return value
+
+    def metric(run: dict[str, Any], key: str) -> Any:
+        return measurement(run).get("fast_lio_metrics", {}).get(key)
+
+    sides = {"off": runs[0::2], "on": runs[1::2]}
+    result: dict[str, Any] = {
+        "schema_version": 2, "execution_path": "tools/performance/p0_8_sitl_orchestrator.py",
+        "warmup_s": args.warmup_s, "measurement_s": args.measure_s,
+        "sequence": [{"mode": run["mode"], "path": run["_path"]} for run in runs],
+        "provenance": provenance, "runs": sides, "metrics": {},
     }
-    on_required = off_required | {
-        "comparison_valid_ratio", "monitoring_available_ratio", "query_timeout_count",
-        "query_generation_mismatch_count", "query_rtt_p95_ms", "query_rtt_p99_ms",
-        "alignment_gap_p99_ms", "aligned_comparison_age_p99_ms", "supervisor_cpu_p95_percent",
-        "supervisor_peak_rss_bytes",
-    }
-    loaded = {side: [_load_json(path) for path in paths[:args.min_runs]] for side, paths in sides.items()}
-    missing = sorted((off_required - set(loaded["off"][0])) | (on_required - set(loaded["on"][0])))
-    if missing:
-        raise RuntimeError(f"SITL metrics not instrumented: {', '.join(missing)}")
-    def median(side: str, key: str) -> float:
-        return statistics.median(float(item[key]) for item in loaded[side])
-    result = {"schema_version": 1, "warmup_s": args.warmup_s, "measurement_s": args.measure_s,
-              "runs": {side: loaded[side] for side in loaded}, "metrics": {}}
-    for key in sorted(on_required - {"supervisor_metrics_applicable"}):
+    keys = ("p95_corrected_scan_end_to_end_us", "maximum_queue_depth")
+    for key in keys:
         result["metrics"][key] = {
-            side: [item[key] for item in loaded[side]] for side in loaded
+            "off": [metric(run, key) for run in sides["off"]],
+            "on": [metric(run, key) for run in sides["on"]],
         }
-        result["metrics"][key]["median_off"] = median("off", key) if all(
-            item[key] is not None for item in loaded["off"]
-        ) else None
-        result["metrics"][key]["median_on"] = median("on", key) if all(
-            item[key] is not None for item in loaded["on"]
-        ) else None
-    result["metrics"]["supervisor_metrics_applicable"] = {
-        side: [item["supervisor_metrics_applicable"] for item in loaded[side]]
-        for side in loaded
-    }
+        result["metrics"][key]["median_off"] = statistics.median(result["metrics"][key]["off"])
+        result["metrics"][key]["median_on"] = statistics.median(result["metrics"][key]["on"])
+    off_measurements = [measurement(run) for run in sides["off"]]
+    on_measurements = [measurement(run) for run in sides["on"]]
     off_correct = all(
-        item["supervisor_metrics_applicable"] is False and
-        item["comparison_valid_ratio"] is None and
-        item["monitoring_available_ratio"] is None and
-        item["query_timeout_count"] is None and
-        item["query_generation_mismatch_count"] is None and
-        item["fast_lio_corrected_p95_us"] is not None and
-        item["fast_lio_max_queue_depth"] is not None and
-        item["bridge_peak_rss_bytes"] is not None and
-        item["fast_lio_peak_rss_bytes"] is not None
-        for item in loaded["off"]
+        item.get("supervisor_metrics_applicable") is False and
+        item.get("comparison_valid_ratio") is None and
+        item.get("monitoring_available_ratio") is None and
+        item.get("fast_lio_metrics", {}).get("navigation_valid") is True and
+        item.get("fast_lio_metrics", {}).get("corrected_estimate_valid") is True and
+        item.get("fast_lio_metrics", {}).get("processing_lag_exceeded") is False and
+        item.get("fast_lio_metrics", {}).get("load_shedding_count") == 0 and
+        item.get("fast_lio_metrics", {}).get("imu_drop_count") == 0 and
+        item.get("fast_lio_metrics", {}).get("lidar_drop_count") == 0 and
+        item.get("fast_lio_metrics", {}).get("overflow_detected") is False
+        for item in off_measurements
     )
     on_correct = all(
-        item["supervisor_metrics_applicable"] is True and
-        item["comparison_valid_ratio"] is not None and item["comparison_valid_ratio"] >= 0.99 and
-        item["monitoring_available_ratio"] is not None and item["monitoring_available_ratio"] >= 0.99 and
-        item["query_timeout_count"] == 0 and item["query_generation_mismatch_count"] == 0 and
-        item["query_rtt_p95_ms"] is not None and item["query_rtt_p95_ms"] < 50 and
-        item["query_rtt_p99_ms"] is not None and item["query_rtt_p99_ms"] < 100 and
-        item["alignment_gap_p99_ms"] is not None and item["alignment_gap_p99_ms"] <= 50 and
-        item["aligned_comparison_age_p99_ms"] is not None and item["aligned_comparison_age_p99_ms"] <= 150 and
-        item["supervisor_cpu_p95_percent"] is not None and item["supervisor_cpu_p95_percent"] < 15 and
-        item["supervisor_peak_rss_bytes"] is not None and item["supervisor_peak_rss_bytes"] < 150 * 1024 * 1024
-        for item in loaded["on"]
+        item.get("supervisor_metrics_applicable") is True and item.get("pass") is True and
+        item.get("comparison_valid_ratio") is not None and item["comparison_valid_ratio"] >= 0.99 and
+        item.get("monitoring_available_ratio") is not None and item["monitoring_available_ratio"] >= 0.99 and
+        item.get("query_timeout_count_delta") == 0 and
+        item.get("query_generation_mismatch_count_delta") == 0
+        for item in on_measurements
     )
+    off_p95 = result["metrics"]["p95_corrected_scan_end_to_end_us"]["median_off"]
+    on_p95 = result["metrics"]["p95_corrected_scan_end_to_end_us"]["median_on"]
+    off_queue = result["metrics"]["maximum_queue_depth"]["median_off"]
+    on_queue = result["metrics"]["maximum_queue_depth"]["median_on"]
     result["acceptance"] = {
-        "off_metrics_not_applicable_and_resources_measured": off_correct,
-        "on_supervisor_correct": on_correct,
-        "no_new_lio_overhead": median("on", "fast_lio_corrected_p95_us")
-        <= 1.05 * median("off", "fast_lio_corrected_p95_us") and
-        median("on", "fast_lio_max_queue_depth") <= 1.20 * median("off", "fast_lio_max_queue_depth"),
+        "ordered_sequence": [item["mode"] for item in runs] == expected,
+        "same_provenance": True,
+        "off_contract": off_correct,
+        "on_contract": on_correct,
+        "no_new_lio_overhead_p95": on_p95 <= off_p95 * 1.05,
+        "no_new_lio_overhead_queue": on_queue <= off_queue * 1.20,
     }
     result["pass"] = all(result["acceptance"].values())
     write_json(args.output.resolve(), result)
@@ -494,30 +505,39 @@ def sitl_ab(args: argparse.Namespace) -> int:
 
 
 def memory_run(args: argparse.Namespace) -> int:
-    rows = []
-    with args.input.resolve().open(newline="", encoding="utf-8") as stream:
-        rows = list(csv.DictReader(stream))
-    if not rows:
-        raise RuntimeError("memory input is empty")
-    sim_times = [float(row["sim_time_s"]) for row in rows]
-    if max(sim_times) < args.minimum_duration_s:
-        raise RuntimeError("memory run is shorter than the required 20 simulated minutes")
-    stable = [row for row in rows if float(row["sim_time_s"]) >= args.warmup_s]
-    rss = [int(row["supervisor_rss_bytes"]) for row in stable]
-    first = rss[0]
-    result = {
-        "schema_version": 1, "input": str(args.input.resolve()), "sample_count": len(rows),
-        "duration_s": max(sim_times), "warmup_s": args.warmup_s,
-        "rss_first_after_warmup": first, "rss_max_after_warmup": max(rss),
-        "rss_growth_ratio": (max(rss) / first - 1.0) if first else None,
-        "max_outstanding_queries": max(int(row["outstanding_queries"]) for row in rows),
-        "state_transition_count": max(int(row["state_transition_count"]) for row in rows),
-    }
-    result["acceptance"] = {
-        "rss_growth": result["rss_growth_ratio"] is not None and result["rss_growth_ratio"] < 0.10,
-        "outstanding_queries": result["max_outstanding_queries"] <= 1,
-    }
-    result["pass"] = all(result["acceptance"].values())
+    source = args.input.resolve()
+    if source.is_dir():
+        run = _load_json(source / "run.json")
+        measurement = run.get("measurement", {})
+        if measurement.get("mode") != "memory-on":
+            raise RuntimeError("memory input is not a canonical memory-on run")
+        result = measurement.get("memory")
+        if not isinstance(result, dict):
+            raise RuntimeError("canonical memory artifact has no memory analysis")
+        result = {"schema_version": 2, "input": str(source), **result,
+                  "measurement_s": measurement.get("measurement_s"),
+                  "warmup_s": measurement.get("warmup_s")}
+        result["acceptance"] = {
+            "rss_growth": result.get("rss_growth_ratio") is not None and result["rss_growth_ratio"] < 0.10,
+            "outstanding_queries": measurement.get("maximum_outstanding_queries", 2) <= 1,
+            "measurement_duration": measurement.get("measurement_s") == args.minimum_duration_s,
+        }
+    else:
+        rows = []
+        with source.open(newline="", encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        if not rows:
+            raise RuntimeError("memory input is empty")
+        try:
+            result = robust_rss_growth([
+                {"role": "supervisor", "rss_bytes": int(row["supervisor_rss_bytes"])}
+                for row in rows if row.get("supervisor_rss_bytes")
+            ])
+        except (KeyError, ValueError) as error:
+            raise RuntimeError(f"memory resource evidence is incomplete: {error}") from error
+        result = {"schema_version": 2, "input": str(source), **result}
+        result["acceptance"] = {"rss_growth": result.get("pass", False)}
+    result["pass"] = all(result.get("acceptance", {}).values())
     write_json(args.output.resolve(), result)
     return 0 if result["pass"] else 2
 

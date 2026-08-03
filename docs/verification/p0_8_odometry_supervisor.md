@@ -744,6 +744,103 @@ regressions and no estimator or mapping optimization was introduced.
 - [x] P0.9 not started
 - [x] P0.10 not started
 
+## Canonical SITL qualification architecture
+
+The P0.8 SITL qualification path is now owned by exactly one entrypoint:
+
+```text
+tools/performance/p0_8_sitl_orchestrator.py
+```
+
+The former startup-check and measured-probe executables were retired. The
+manual simulation session scripts remain developer-debug tooling only and do
+not produce P0.8 acceptance evidence. `p0_8_qualification.py` is offline-only
+for canonical artifact aggregation and memory/report composition; it does not
+launch a process.
+
+The orchestrator owns the typed lifecycle from `PREFLIGHT` through the
+XRCE/Gazebo/ROS clock gates, dynamic versioned raw PX4 topic discovery, PX4
+ingress, sensors, FAST-LIO, prior, supervisor, simulation-clock warm-up and
+measurement, `COMPLETE`, and owned-process `CLEANUP`. Persistent ROS readiness
+uses one `rclpy` participant with explicit QoS profiles. Wall watchdogs,
+process deadlines, resource sampling, and cleanup use `time.monotonic_ns()`;
+simulation clock values are data for readiness and measurement boundaries.
+
+Each run creates a fresh artifact directory under:
+
+```text
+.artifacts/verification/p0.8-sitl/<run-id>/
+```
+
+with atomic `run.json`, `events.jsonl`, `processes.json`, `topics.json`,
+`resources.csv`, `measurement.json`, `acceptance.json`, and role logs. The
+artifact records `product_base_sha`, `qualification_harness_sha`,
+`product_paths_unchanged_from_base`, PX4 and `px4_msgs` provenance, stage
+evidence, failure classification, diagnostic snapshots by status name, and
+cleanup/orphan evidence. Missing metrics remain JSON `null`.
+
+Qualification commands, after sourcing the ROS and workspace overlays, are:
+
+```bash
+python3 tools/performance/p0_8_sitl_orchestrator.py startup \
+  --px4-dir /home/letandat/Dev/Autopilot-p0.7-v1.17 \
+  --output .artifacts/verification/p0.8-sitl/startup-<run-id>
+python3 tools/performance/p0_8_sitl_orchestrator.py smoke-on --repeat 3 \
+  --output .artifacts/verification/p0.8-sitl/smoke-series-<run-id>
+python3 tools/performance/p0_8_sitl_orchestrator.py sitl-off \
+  --output .artifacts/verification/p0.8-sitl/sitl-off-<run-id>
+python3 tools/performance/p0_8_sitl_orchestrator.py sitl-on \
+  --output .artifacts/verification/p0.8-sitl/sitl-on-<run-id>
+python3 tools/performance/p0_8_sitl_orchestrator.py memory-on \
+  --output .artifacts/verification/p0.8-sitl/memory-on-<run-id>
+python3 tools/performance/p0_8_qualification.py sitl-ab \
+  --root .artifacts/verification/p0.8-sitl/ab \
+  --output .artifacts/verification/p0.8-sitl/ab/comparison.json
+```
+
+The alternating A/B order is `OFF-1, ON-1, OFF-2, ON-2, OFF-3, ON-3` and
+memory is eligible only after the ON smoke streak and A/B comparison pass.
+The first post-implementation live checks were debug-only runs with
+`--allow-dirty`, so they are not acceptance evidence. Startup reached the
+canonical ingress boundary and cleaned up all owned process groups. The
+supervisor-enabled smoke reached measurement and cleaned up, but failed its
+contract with `comparison_valid=85/86=0.9883720930`; its artifact records one
+`LIO_DIAGNOSTIC_SCHEMA_MISMATCH` event. This is retained as a frozen-product
+blocker, not relaxed in the harness and not fixed inside a frozen product
+path.
+
+Current qualification status:
+
+```text
+P0.8 implementation: canonical orchestrator and offline aggregation implemented
+P0.8 canonical dataset: PASS (historical evidence retained above)
+P0.8 startup: DEBUG PASS (not acceptance-eligible)
+P0.8 post-R21 smoke: BLOCKED by frozen-product measurement failure
+P0.8 SITL A/B: NOT RUN
+P0.8 memory: NOT RUN
+Ready for P0.9: NO
+Ready for P0.10: NO
+```
+
+Debug artifacts:
+
+```text
+.artifacts/verification/p0.8-sitl/debug-startup-20260803T000600Z/
+.artifacts/verification/p0.8-sitl/debug-smoke-on-20260803T001500Z/
+```
+
+The product freeze check remains:
+
+```bash
+git diff --exit-code \
+  9494791092ed17047fbc288d133804b98486057d -- \
+  src/navigation_estimator/fast_lio_core \
+  src/navigation_estimator/fast_lio_ros \
+  src/px4_interface/px4_odometry_bridge \
+  src/odometry_supervisor \
+  src/navigation_interfaces
+```
+
 ## Historical final P0.8 conclusion (superseded by corrective task above)
 
 ```text

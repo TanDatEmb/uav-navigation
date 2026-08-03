@@ -18,7 +18,7 @@ DATASET_TOOL := python3 tools/data.py
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_TOOL := PARALLEL_WORKERS="$(PARALLEL_WORKERS)" MAKE_JOBS="$(MAKE_JOBS)" GZ_VERSION="$(GZ_VERSION)" COLCON_FLAGS="$(COLCON_FLAGS)" python3 tools/runtime/build.py --mode "$(MODE)"
 
-.PHONY: help build build-safe test test-tools check vendor-check deps-px4-check clean clean-artifacts data-list data-fetch data-check data-smoke data-run data-replay data-replay-stop replay-stop data-cleanup data-view data-report data-test runtime-repro px4-ingress-build px4-ingress-test px4-ingress-check px4-ingress-sitl px4-ingress-smoke
+.PHONY: help build build-safe test test-tools check vendor-check deps-px4-check clean clean-artifacts data-list data-fetch data-check data-smoke data-run data-replay data-replay-stop replay-stop data-cleanup data-view data-report data-test runtime-repro px4-ingress-build px4-ingress-test px4-ingress-check px4-ingress-sitl px4-ingress-smoke p0-8-sitl-startup p0-8-sitl-smoke-on p0-8-sitl-off p0-8-sitl-on p0-8-sitl-memory-on
 
 help:
 	@$(DATASET_TOOL) --help
@@ -49,6 +49,18 @@ vendor-check:
 
 deps-px4-check:
 	@$(ROS_ENV) python3 tools/runtime/px4_ingress.py verify-submodule
+
+# P0.8 canonical SITL qualification. Each target delegates to the one
+# orchestrator entrypoint; P08_SITL_OUTPUT must name a fresh artifact directory.
+P08_SITL_OUTPUT ?=
+P08_PX4_DIR ?= $(HOME)/Dev/Autopilot-p0.7-v1.17
+
+p0-8-sitl-startup p0-8-sitl-smoke-on p0-8-sitl-off p0-8-sitl-on p0-8-sitl-memory-on:
+	@test -n "$(P08_SITL_OUTPUT)" || { echo "P08_SITL_OUTPUT must be a fresh artifact directory" >&2; exit 64; }
+	@mode="$@"; mode="$${mode#p0-8-sitl-}"; \
+		if test "$$mode" = smoke-on; then repeat="--repeat 3"; else repeat=""; fi; \
+		$(ROS_ENV) python3 tools/performance/p0_8_sitl_orchestrator.py "$$mode" \
+			--px4-dir "$(P08_PX4_DIR)" --output "$(P08_SITL_OUTPUT)" $$repeat
 
 clean:
 	@$(DATASET_TOOL) clean
