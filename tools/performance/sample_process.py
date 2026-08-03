@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Sample one process and its children until the leader exits."""
+"""Sample one process tree until the leader exits.
+
+CPU percent follows psutil's process convention: 100% is one logical CPU.
+"""
 
 import argparse
 import csv
@@ -7,42 +10,43 @@ import os
 import time
 from pathlib import Path
 
-
-def descendants(root: int) -> set[int]:
-    result = {root}
-    changed = True
-    while changed:
-        changed = False
-        for entry in Path("/proc").glob("[0-9]*"):
-            try:
-                pid = int(entry.name)
-                status = (entry / "status").read_text(encoding="utf-8")
-                parent = next(int(line.split()[1]) for line in status.splitlines()
-                              if line.startswith("PPid:"))
-            except (OSError, StopIteration, ValueError):
-                continue
-            if parent in result and pid not in result:
-                result.add(pid)
-                changed = True
-    return result
+import psutil
 
 
-def sample(pid: int) -> tuple[float, int]:
-    total_cpu = 0.0
-    total_rss_kib = 0
-    for child in descendants(pid):
+def sample(process: psutil.Process) -> dict[str, float | int]:
+    processes = [process]
+    try:
+        processes.extend(process.children(recursive=True))
+    except psutil.Error:
+        pass
+    cpu = rss = vms = threads = voluntary = involuntary = 0
+    cpu_times = 0.0
+    live = 0
+    for item in processes:
         try:
-            stat = (Path("/proc") / str(child) / "stat").read_text(encoding="utf-8")
-            fields = stat.rsplit(") ", 1)[1].split()
-            utime = int(fields[11])
-            stime = int(fields[12])
-            total_cpu += (utime + stime) / os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-            status = (Path("/proc") / str(child) / "status").read_text(encoding="utf-8")
-            total_rss_kib += next(int(line.split()[1]) for line in status.splitlines()
-                                  if line.startswith("VmRSS:"))
-        except (OSError, StopIteration, ValueError, IndexError):
+            cpu += item.cpu_percent(interval=None)
+            memory = item.memory_info()
+            rss += memory.rss
+            vms += memory.vms
+            threads += item.num_threads()
+            context = item.num_ctx_switches()
+            voluntary += context.voluntary
+            involuntary += context.involuntary
+            times = item.cpu_times()
+            cpu_times += times.user + times.system
+            live += 1
+        except psutil.Error:
             continue
-    return total_cpu, total_rss_kib
+    return {
+        "process_count": live,
+        "cpu_percent_one_logical_core": cpu,
+        "rss_bytes": rss,
+        "vms_bytes": vms,
+        "threads": threads,
+        "voluntary_context_switches": voluntary,
+        "involuntary_context_switches": involuntary,
+        "cpu_seconds": cpu_times,
+    }
 
 
 def main() -> int:
@@ -52,15 +56,33 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=1.0)
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    process = psutil.Process(args.pid)
+    sample(process)  # prime psutil's interval-based CPU measurement
     start = time.monotonic()
     with args.output.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
-        writer.writerow(["elapsed_s", "cpu_seconds_children", "rss_kib_children"])
+        writer.writerow([
+            "elapsed_s", "process_count", "cpu_percent_one_logical_core",
+            "rss_bytes", "vms_bytes", "threads",
+            "voluntary_context_switches", "involuntary_context_switches",
+            "cpu_seconds",
+        ])
         while os.path.exists(f"/proc/{args.pid}"):
-            cpu, rss = sample(args.pid)
-            writer.writerow([f"{time.monotonic() - start:.3f}", f"{cpu:.6f}", rss])
-            stream.flush()
             time.sleep(max(0.1, args.interval))
+            try:
+                values = sample(process)
+            except psutil.NoSuchProcess:
+                break
+            writer.writerow([
+                f"{time.monotonic() - start:.3f}",
+                values["process_count"],
+                f"{values['cpu_percent_one_logical_core']:.3f}",
+                values["rss_bytes"], values["vms_bytes"], values["threads"],
+                values["voluntary_context_switches"],
+                values["involuntary_context_switches"],
+                f"{values['cpu_seconds']:.6f}",
+            ])
+            stream.flush()
     return 0
 
 
