@@ -27,7 +27,11 @@ class OdometryRingBuffer {
   bool push(const ConvertedOdometry &sample);
   std::optional<SampledOdometry> sample(std::int64_t timestamp_ns) const;
   void clear();
+  void setStableSamples(std::size_t stable_samples);
   std::size_t size() const { return samples_.size(); }
+  std::size_t stableSampleCount() const { return stable_sample_count_; }
+  std::size_t stableSamplesRequired() const { return config_.stable_samples; }
+  bool postResetStable() const { return post_reset_stable_; }
 
  private:
   static ConvertedOdometry interpolate(const ConvertedOdometry &a,
@@ -35,6 +39,10 @@ class OdometryRingBuffer {
                                        std::int64_t timestamp_ns);
   RingBufferConfig config_;
   std::deque<ConvertedOdometry> samples_;
+  std::uint64_t current_generation_{0};
+  bool generation_initialized_{false};
+  std::size_t stable_sample_count_{0};
+  bool post_reset_stable_{false};
 };
 
 }  // namespace px4_odometry_bridge

@@ -12,6 +12,18 @@ std::optional<std::int64_t> checked_microseconds_to_nanoseconds(std::uint64_t ti
   return static_cast<std::int64_t>(ns);
 }
 
+std::optional<std::int64_t> checked_ros_time_to_nanoseconds(
+    std::int32_t sec, std::uint32_t nanosec) {
+  if (sec < 0 || nanosec >= 1'000'000'000U) return std::nullopt;
+  constexpr auto max = std::numeric_limits<std::int64_t>::max();
+  const auto seconds = static_cast<std::int64_t>(sec);
+  if (seconds > (max - static_cast<std::int64_t>(nanosec)) / 1'000'000'000LL) {
+    return std::nullopt;
+  }
+  const auto result = seconds * 1'000'000'000LL + static_cast<std::int64_t>(nanosec);
+  return result > 0 ? std::optional<std::int64_t>(result) : std::nullopt;
+}
+
 TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
                                                  std::int64_t now_ns) {
   const auto timestamp_ns = checked_microseconds_to_nanoseconds(timestamp_us);

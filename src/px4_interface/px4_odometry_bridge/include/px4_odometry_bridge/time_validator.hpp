@@ -7,6 +7,8 @@
 namespace px4_odometry_bridge {
 
 std::optional<std::int64_t> checked_microseconds_to_nanoseconds(std::uint64_t timestamp_us);
+std::optional<std::int64_t> checked_ros_time_to_nanoseconds(
+    std::int32_t sec, std::uint32_t nanosec);
 
 struct TimeValidationConfig {
   std::int64_t max_stale_ns{200'000'000};

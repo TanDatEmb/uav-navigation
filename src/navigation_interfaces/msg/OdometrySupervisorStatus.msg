@@ -1,0 +1,63 @@
+std_msgs/Header header
+
+uint8 STARTUP=0
+uint8 HEALTHY=1
+uint8 SUSPECT=2
+uint8 DEGRADED=3
+uint8 DIVERGED=4
+uint8 health
+
+uint8 INDEPENDENT=0
+uint8 CORRELATED=1
+uint8 reference_mode
+
+uint16 REASON_NONE=0
+uint16 REASON_STARTUP=1
+uint16 REASON_HEALTHY=2
+uint16 REASON_MONITORING_UNAVAILABLE=3
+uint16 REASON_ODOM_ORIGIN_NOT_ALIGNED=4
+uint16 REASON_ALIGNMENT_FAILED=5
+uint16 REASON_RESIDUAL_SUSPECT=6
+uint16 REASON_RESIDUAL_DEGRADED=7
+uint16 REASON_RESIDUAL_DIVERGED=8
+uint16 REASON_LIO_LOST=9
+uint16 REASON_STATE_CORRUPTION=10
+uint16 REASON_LIO_RESETTING=11
+uint16 REASON_PX4_RESET_GRACE=12
+uint16 REASON_DIAGNOSTIC_SCHEMA_MISMATCH=13
+uint16 REASON_STALE_INPUT=14
+uint16 reason_code
+string reason
+
+bool monitoring_available
+bool comparison_valid
+bool lio_valid
+bool px4_valid
+bool time_aligned
+
+bool external_odometry_allowed
+bool reinitialization_requested
+uint64 reinitialization_request_sequence
+
+bool planner_speed_limit_active
+float32 planner_speed_limit_m_s
+bool hover_or_failsafe_requested
+
+builtin_interfaces/Time evaluation_time
+
+int64 lio_propagated_age_ns
+int64 lio_corrected_age_ns
+int64 px4_age_ns
+int64 alignment_gap_ns
+
+float64 position_error_m
+float64 velocity_error_m_s
+float64 orientation_error_rad
+float64 yaw_error_rad
+float64 position_error_growth_m_s
+
+uint64 px4_reset_generation
+uint64 px4_time_generation
+uint64 state_transition_count
+uint64 evaluation_count
+uint64 alignment_failure_count

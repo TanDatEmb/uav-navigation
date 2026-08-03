@@ -35,6 +35,7 @@ target_compile_options(${PROJECT_NAME}_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/px4_odometry_bridge_node.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_core)
+target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_interfaces_INCLUDE_DIRS})
 ament_target_dependencies(${PROJECT_NAME}_node
   diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
 

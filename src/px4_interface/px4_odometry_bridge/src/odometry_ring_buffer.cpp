@@ -9,8 +9,24 @@ OdometryRingBuffer::OdometryRingBuffer(RingBufferConfig config) : config_(config
 bool OdometryRingBuffer::push(const ConvertedOdometry &sample) {
   if (sample.timestamp_ns <= 0 ||
       (!samples_.empty() && sample.timestamp_ns <= samples_.back().timestamp_ns)) {
+    samples_.clear();
+    post_reset_stable_ = false;
+    stable_sample_count_ = 0;
     return false;
   }
+
+  if (!generation_initialized_ || sample.reset_generation != current_generation_) {
+    if (generation_initialized_) samples_.clear();
+    current_generation_ = sample.reset_generation;
+    generation_initialized_ = true;
+    stable_sample_count_ = 0;
+    post_reset_stable_ = false;
+  }
+  ++stable_sample_count_;
+  if (stable_sample_count_ < config_.stable_samples) {
+    return false;
+  }
+  post_reset_stable_ = true;
   samples_.push_back(sample);
   while (samples_.size() > config_.capacity ||
          (samples_.back().timestamp_ns - samples_.front().timestamp_ns) >
@@ -62,6 +78,18 @@ ConvertedOdometry OdometryRingBuffer::interpolate(const ConvertedOdometry &a,
   return output;
 }
 
-void OdometryRingBuffer::clear() { samples_.clear(); }
+void OdometryRingBuffer::clear() {
+  samples_.clear();
+  current_generation_ = 0;
+  generation_initialized_ = false;
+  stable_sample_count_ = 0;
+  post_reset_stable_ = false;
+}
+
+void OdometryRingBuffer::setStableSamples(std::size_t stable_samples) {
+  config_.stable_samples = std::max<std::size_t>(1, stable_samples);
+  stable_sample_count_ = 0;
+  post_reset_stable_ = false;
+}
 
 }  // namespace px4_odometry_bridge

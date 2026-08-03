@@ -43,8 +43,8 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
       !finite(sample.velocity) || !finite(sample.angular_velocity)) {
     return {std::nullopt, "timestamp or vector contains a non-finite/invalid value"};
   }
-  if (!sample.angular_velocity_valid || sample.angular_velocity.squaredNorm() < 1e-18) {
-    return {std::nullopt, "PX4 angular velocity is invalid or zero"};
+  if (!sample.angular_velocity_valid) {
+    return {std::nullopt, "PX4 angular velocity is invalid"};
   }
 
   const double norm = sample.orientation.norm();
@@ -92,13 +92,30 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
   output.timestamp_ns = sample.timestamp_ns;
   output.position = position_world;
   output.orientation = Eigen::Quaterniond(world_from_flu).normalized();
+  output.velocity_world = velocity_world;
   output.velocity_body = world_from_flu.transpose() * velocity_world;
   output.angular_velocity_body = c_flu_frd() * sample.angular_velocity;
-  output.position_variance = rotate_variance(c_enu_ned(), sample.position_variance);
-  output.velocity_variance = rotate_variance(world_from_flu.transpose(),
-                                             rotate_variance(c_enu_ned(), sample.velocity_variance));
-  output.orientation_variance = rotate_variance(c_flu_frd(), sample.orientation_variance);
+  const Eigen::Matrix3d position_basis =
+      sample.pose_frame == PoseFrame::kNed ? c_enu_ned() : c_zup_frd();
+  output.position_variance = rotate_variance(position_basis, sample.position_variance);
+  if (sample.velocity_frame == VelocityFrame::kBodyFrd) {
+    output.velocity_variance = rotate_variance(c_flu_frd(), sample.velocity_variance);
+  } else {
+    const Eigen::Matrix3d velocity_world_basis =
+        sample.velocity_frame == VelocityFrame::kNed ? c_enu_ned() : c_zup_frd();
+    output.velocity_variance = rotate_variance(
+        world_from_flu.transpose(),
+        rotate_variance(velocity_world_basis, sample.velocity_variance));
+  }
+  output.orientation_variance = rotate_variance(
+      world_from_flu * c_flu_frd(), sample.orientation_variance);
   output.reset_counter = sample.reset_counter;
+  output.position_covariance_available = output.position_variance.allFinite() &&
+                                         (output.position_variance.array() >= 0.0).all();
+  output.velocity_covariance_available = output.velocity_variance.allFinite() &&
+                                         (output.velocity_variance.array() >= 0.0).all();
+  output.orientation_covariance_available = output.orientation_variance.allFinite() &&
+                                            (output.orientation_variance.array() >= 0.0).all();
   output.angular_velocity_valid = true;
   return {output, {}};
 }

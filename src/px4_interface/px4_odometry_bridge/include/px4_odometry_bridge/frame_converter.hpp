@@ -37,6 +37,7 @@ struct ConvertedOdometry {
   std::int64_t timestamp_ns{0};
   Eigen::Vector3d position{Eigen::Vector3d::Zero()};
   Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
+  Eigen::Vector3d velocity_world{Eigen::Vector3d::Zero()};
   Eigen::Vector3d velocity_body{Eigen::Vector3d::Zero()};
   Eigen::Vector3d angular_velocity_body{Eigen::Vector3d::Zero()};
   Eigen::Vector3d position_variance{Eigen::Vector3d::Constant(-1.0)};
@@ -45,6 +46,9 @@ struct ConvertedOdometry {
   std::uint8_t reset_counter{0};
   std::uint64_t reset_generation{0};
   std::uint64_t time_generation{0};
+  bool position_covariance_available{false};
+  bool velocity_covariance_available{false};
+  bool orientation_covariance_available{false};
   bool angular_velocity_valid{false};
 };
 

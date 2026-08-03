@@ -313,6 +313,7 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.message =
       result.rejection_reason.empty() ? result.diagnostics.reason : result.rejection_reason;
   status.values = {
+      keyValue("diagnostic_schema_version", "1"),
       keyValue("status", toString(result.status_after)),
       keyValue("config_path", parameters_.config_path),
       keyValue("config_sha256", parameters_.config_sha256),
