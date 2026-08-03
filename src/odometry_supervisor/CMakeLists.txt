@@ -17,7 +17,8 @@ find_package(std_msgs REQUIRED)
 add_library(${PROJECT_NAME}_core
   src/residual_calculator.cpp
   src/supervisor_state_machine.cpp
-  src/diagnostic_adapter.cpp)
+  src/diagnostic_adapter.cpp
+  src/world_alignment.cpp)
 add_library(${PROJECT_NAME}::core ALIAS ${PROJECT_NAME}_core)
 target_include_directories(${PROJECT_NAME}_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -46,7 +47,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_${PROJECT_NAME}
     test/test_residual_calculator.cpp
     test/test_supervisor_state_machine.cpp
-    test/test_diagnostic_adapter.cpp)
+    test/test_diagnostic_adapter.cpp
+    test/test_world_alignment.cpp)
   target_link_libraries(test_${PROJECT_NAME} ${PROJECT_NAME}_core)
   ament_target_dependencies(test_${PROJECT_NAME} diagnostic_msgs)
 endif()

@@ -16,6 +16,7 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.px4_continuity_valid = true;
   input.px4_post_reset_stable = true;
   input.origin_aligned = true;
+  input.alignment_valid = true;
   input.lio_diagnostics_valid = true;
   input.px4_diagnostics_valid = true;
   input.lio_diagnostics_schema_valid = true;
@@ -53,6 +54,16 @@ TEST(OdometrySupervisorStateMachine, HealthyAndPx4UnavailableDoesNotInvalidateLi
   EXPECT_FALSE(output.monitoring_available);
   EXPECT_TRUE(output.external_odometry_allowed);
   EXPECT_FALSE(output.reinitialization_requested);
+}
+
+TEST(OdometrySupervisorStateMachine, WorldAlignmentIsRequiredBeforeComparison) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  auto input = healthy_input(1'000'000'000);
+  input.alignment_valid = false;
+  const auto output = machine.evaluate(input);
+  EXPECT_FALSE(output.comparison_valid);
+  EXPECT_FALSE(output.monitoring_available);
+  EXPECT_EQ(output.reason, "WORLD_ALIGNMENT_UNAVAILABLE");
 }
 
 TEST(OdometrySupervisorStateMachine, SingleOutlierDoesNotLeaveHealthy) {

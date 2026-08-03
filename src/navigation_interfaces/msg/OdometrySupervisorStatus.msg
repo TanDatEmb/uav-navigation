@@ -41,6 +41,12 @@ bool comparison_valid
 bool lio_valid
 bool px4_valid
 bool time_aligned
+bool alignment_valid
+string alignment_source
+builtin_interfaces/Time alignment_epoch
+uint64 alignment_reset_generation
+uint64 alignment_time_generation
+uint64 alignment_reinitialization_count
 
 bool external_odometry_allowed
 bool reinitialization_requested

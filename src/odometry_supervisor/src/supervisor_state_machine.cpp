@@ -160,14 +160,15 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool comparison_valid = input.px4_available && input.px4_fresh &&
                                 input.px4_continuity_valid && input.lio_diagnostics_valid &&
                                 input.px4_diagnostics_valid && input.aligned_comparison_fresh &&
-                                input.origin_aligned && input.residual.valid &&
+                                input.origin_aligned && input.alignment_valid && input.residual.valid &&
                                 input.propagated_fresh && input.corrected_fresh &&
                                 input.alignment_gap_ns >= 0 &&
                                 input.alignment_gap_ns <= config_.maximum_alignment_gap_ns &&
                                 !in_reset_grace && !time_generation_changed &&
                                 !input.time_generation_changed;
   const bool monitoring_available = input.px4_available && input.px4_fresh &&
-                                    input.px4_diagnostics_valid && input.origin_aligned;
+                                    input.px4_diagnostics_valid && input.origin_aligned &&
+                                    input.alignment_valid;
   if (input.px4_available && !comparison_valid) ++alignment_failure_count_;
 
   if (input.lio_diagnostics_valid) {
@@ -263,6 +264,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.lio_valid = input.lio_valid;
   output.px4_valid = input.px4_available && input.px4_fresh && input.px4_continuity_valid;
   output.time_aligned = comparison_valid;
+  output.alignment_valid = input.alignment_valid;
+  output.alignment = input.alignment;
   output.evaluation_time_ns = input.evaluation_time_ns;
   output.lio_propagated_age_ns = input.propagated_age_ns;
   output.lio_corrected_age_ns = input.corrected_age_ns;
@@ -315,6 +318,10 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
       output.reason_code = kReasonOriginNotAligned;
       output.reason = "ODOM_ORIGIN_NOT_ALIGNED";
     }
+  } else if (input.px4_available && !input.alignment_valid &&
+             state_ != HealthState::kDiverged) {
+    output.reason_code = kReasonAlignmentFailed;
+    output.reason = "WORLD_ALIGNMENT_UNAVAILABLE";
   } else if (!input.lio_diagnostics_valid && state_ != HealthState::kDiverged) {
     output.reason_code = input.lio_diagnostics_schema_valid ? kReasonLioDiagnosticsStale
                                                              : kReasonLioDiagnosticSchemaMismatch;

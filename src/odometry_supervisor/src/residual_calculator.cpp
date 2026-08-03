@@ -20,7 +20,8 @@ std::optional<double> projected_body_x_heading(const Eigen::Matrix3d& rotation) 
 }  // namespace
 
 bool ResidualCalculator::valid(const OdometryState& state) {
-  return state.valid && state.timestamp_ns > 0 && state.frame_id == "odom" &&
+  return state.valid && state.timestamp_ns > 0 &&
+         (state.frame_id == "lio_odom" || state.frame_id == "px4_odom") &&
          state.child_frame_id == "base_link" && state.position_odom.allFinite() &&
          state.velocity_base.allFinite() && state.orientation_odom_base.coeffs().allFinite() &&
          std::isfinite(state.orientation_odom_base.norm()) &&
@@ -30,7 +31,8 @@ bool ResidualCalculator::valid(const OdometryState& state) {
 std::optional<Residual> ResidualCalculator::compare(
     const OdometryState& lio, const OdometryState& px4,
     const std::optional<Residual>& previous) {
-  if (!valid(lio) || !valid(px4) || lio.timestamp_ns != px4.timestamp_ns) {
+  if (!valid(lio) || !valid(px4) || lio.frame_id != px4.frame_id ||
+      lio.timestamp_ns != px4.timestamp_ns) {
     return std::nullopt;
   }
   const auto lio_q = lio.orientation_odom_base.normalized();

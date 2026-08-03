@@ -12,7 +12,7 @@ odometry_supervisor::OdometryState state(std::int64_t timestamp, double yaw = 0.
   result.orientation_odom_base =
       Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ());
   result.velocity_base = Eigen::Vector3d(1.0, 0.0, 0.0);
-  result.frame_id = "odom";
+  result.frame_id = "lio_odom";
   result.child_frame_id = "base_link";
   result.valid = true;
   return result;

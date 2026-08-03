@@ -63,6 +63,21 @@ struct Residual {
   double position_error_growth_m_s{0.0};
 };
 
+// A world-frame contract between two odometry producers. The transform is
+// applied as x_target = R_target_source * x_source + t_target_source.
+struct WorldAlignment {
+  std::string target_frame{"lio_odom"};
+  std::string source_frame{"px4_odom"};
+  Eigen::Quaterniond target_from_source_orientation{Eigen::Quaterniond::Identity()};
+  Eigen::Vector3d target_from_source_translation{Eigen::Vector3d::Zero()};
+  std::int64_t epoch_ns{0};
+  std::uint64_t reset_generation{0};
+  std::uint64_t time_generation{0};
+  std::uint64_t reinitialization_count{0};
+  std::string source;
+  bool valid{false};
+};
+
 struct AlignedComparison {
   OdometryState lio;
   OdometryState px4;
@@ -75,6 +90,7 @@ struct AlignedComparison {
   std::uint32_t component_validity_mask{0};
   std::uint32_t covariance_availability_mask{0};
   bool interpolated{false};
+  WorldAlignment alignment;
 };
 
 struct ResidualThresholds {
@@ -122,6 +138,7 @@ struct EvaluationInput {
   bool px4_continuity_valid{false};
   bool px4_post_reset_stable{false};
   bool origin_aligned{false};
+  bool alignment_valid{false};
   bool lio_diagnostics_valid{false};
   bool px4_diagnostics_valid{false};
   bool lio_diagnostics_schema_valid{false};
@@ -159,6 +176,7 @@ struct EvaluationInput {
   double query_rtt_p99_ms{0.0};
   double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
+  WorldAlignment alignment;
   Residual residual;
 };
 
@@ -172,6 +190,7 @@ struct SupervisorOutput {
   bool lio_valid{false};
   bool px4_valid{false};
   bool time_aligned{false};
+  bool alignment_valid{false};
   bool external_odometry_allowed{false};
   bool reinitialization_requested{false};
   std::uint64_t reinitialization_request_sequence{0};
@@ -219,6 +238,7 @@ struct SupervisorOutput {
   double query_rtt_p99_ms{0.0};
   double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
+  WorldAlignment alignment;
 };
 
 }  // namespace odometry_supervisor
