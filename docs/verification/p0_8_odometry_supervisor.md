@@ -1,286 +1,253 @@
-# P0.8 Odometry Supervisor
+# P0.8 Odometry Supervisor — acceptance hardening
 
-## Result
-
-**P0.8 status: PASS**
-
-P0.8A prerequisite hardening and P0.8B are implemented on the frozen P0.7
-baseline. The known AIST processing-lag finding is carried from P0.0 and is
-not attributed to P0.8.
-
-## Revision
-
-- Parent: `d6bd7f0349d90167a26bf3710e65341f8b469404`
-- Branch: `feat/p0.8-odometry-supervisor`
-- Commits: `d03f47f`, `68ff73c`, `8c4f014`, `d106b79`, `1720fd2`, `48c62cf`, `26e126e`, `6011beb`
-- PX4 v1.17 submodule: `src/external/px4_msgs` at `86d8239e962f6939e05c3737784f60c02fa884db`
-
-## Plan alignment
-
-P0.8A was completed before P0.8B. P0.9 in-flight reinitialization and P0.10
-PX4 interface-library work were not started.
-
-## P0.8A prerequisite review
-
-Reset metadata uses separate bounded timestamp-sorted local-position and
-attitude histories. Association uses `timestamp_sample` and reset counters,
-not callback order. Counter deltas are modulo-256; one-step changes are
-accepted, jumps greater than one fail closed, and missing metadata is not
-converted to a zero reset. Position, velocity, and attitude continuity are
-compensated in NED/FRD conventions, with transition samples suppressed and
-stable post-reset samples required.
-
-The bridge validates PX4 sample timestamps against real ROS
-`now().nanoseconds()`. Stale, future, duplicate, regression, overflow, and
-invalid timestamps are rejected. Simulation pause does not advance freshness.
-Finite zero angular velocity is valid; NaN and infinity are rejected.
-
-Covariance conversion is frame-specific. NED/FRD source terms are transformed
-to the ROS `odom`/`base_link` contract, orientation covariance is serialized to
-`[3,3]`, `[4,4]`, `[5,5]`, and unavailable angular covariance is not relabeled.
-Nonfinite, asymmetric, non-PSD, and zero-source cases are diagnosed.
-
-The ring buffer clears on timestamp regression and generation changes, then
-requires `stable_samples`. Reset grace clears residual persistence and cannot
-reopen a degraded LIO gate. Query component/covariance masks use named
-constants, preserve request nanoseconds exactly, and never extrapolate across
-a generation. Diagnostics publish schema version 1 and non-OK rejection
-states periodically.
-
-## Package boundary
-
-`src/odometry_supervisor` depends only on `ament_cmake`, `rclcpp`, `nav_msgs`,
-`diagnostic_msgs`, `std_msgs`, `builtin_interfaces`, `navigation_interfaces`,
-and Eigen3. It has no dependency on `px4_msgs`, `fast_lio_core`, Livox, or
-`tf2_ros`, and builds without the PX4 submodule.
-
-## Input contracts
-
-The node consumes `/lio/odometry_propagated` as primary state,
-`/lio/odometry_corrected` as the correction freshness anchor, and
-`/px4/odometry_ros` for availability/latest tracking. It parses named
-diagnostics `fast_lio/estimator` and `px4_odometry_bridge`, requiring
-`diagnostic_schema_version=1`. Canonical uppercase LIO states
-(`TRACKING`, `LOST`, `DEGRADED`, `RESETTING`) and legacy test values are
-accepted.
-
-## Time alignment
-
-The supervisor keeps a bounded propagated-LIO history and selects the newest
-epoch already covered by the PX4 ring buffer. It then makes one asynchronous
-request to `/px4/sample_odometry_at_time`, associates the response with a
-sequence and captured LIO sample, and discards late or failed responses. This
-is exact-epoch sampling, not latest-vs-latest comparison or extrapolation.
-Only one query is outstanding. The maximum alignment gap is 50 ms and service
-timeout is 100 ms.
-
-## Shared-origin gate
-
-Independent comparison requires:
+## Revised result
 
 ```text
-initial_prior_source = topic
-initial_prior_applied = true
-initial_prior_fallback_applied = false
-initial_prior_reason = TOPIC_PRIOR_ACCEPTED
+P0.8 status: BLOCKED
 ```
 
-No online SE(3) alignment or silent offset subtraction is performed. The final
-SITL diagnostics show `TOPIC_PRIOR_ACCEPTED` and rejected count `0`.
+The P0.8 contract hardening and runtime fault matrix are complete, and the
+canonical final-head dataset correctness gates pass. The A/B dataset
+qualification measured a scan-processing-p95 regression above the allowed
+10% limit. The mandatory healthy-SITL A/B benchmark, 1.25x/1.50x stress runs,
+and 20-simulated-minute memory qualification were not completed. Therefore
+P0.8 cannot be closed as PASS.
 
-## Residual mathematics
+This report distinguishes implementation, correctness, dataset regression,
+fault qualification, performance qualification, and integrated release
+status. P0.9 and P0.10 were not started.
 
-Position is compared in `odom`. Body velocities are rotated into the common
-world frame. Orientation uses shortest quaternion error; yaw is wrapped to
-`[-pi, pi]`; position-error growth uses sample-time deltas. Invalid or
-unavailable comparisons produce no residual and are never converted to zero.
+## Revision and provenance
 
-## Independent mode
+- Required starting commit: `978c65b6579aae153d6a2299e92efc9f85f37e63`
+- Corrective branch: `fix/p0.8-acceptance-hardening`
+- Immediate P0.7 parent: `d6bd7f0349d90167a26bf3710e65341f8b469404`
+- PX4 v1.17 submodule: `src/external/px4_msgs` at
+  `86d8239e962f6939e05c3737784f60c02fa884db`
+- Corrective implementation commits: `dd08b7d`, `4f98716`, `c27dff1`
+- Runtime sampler commit: `fffab3a`
+- Final documentation commit: recorded by the final `git log` after this report
+  is committed
 
-Independent mode is canonical. Persistent divergence or LIO loss closes the
-external-odometry gate and, only when a valid independent PX4 reference is
-available, latches a machine-readable reinitialization request for P0.9. P0.8
-does not execute that request.
+The initial audit was recorded before production changes. The active branch
+was never reset, stashed, or amended from the required starting commit, and
+the PX4 message submodule was not modified.
 
-## Correlated mode
+## Independent review findings
 
-Correlated mode monitors the same residuals and closes the gate on LIO loss,
-but does not request independent reinitialization. The corrected artifact
-`.artifacts/simulation/odometry-supervisor-faults-20260803/correlated_unhealthy_correlated.json`
-ended `DIVERGED: LIO_LOST` with `reinitialization_requested=false`.
+| Finding | Resolution/evidence | Status |
+|---|---|---|
+| P0.8-R01 stale aligned residual | One `AlignedComparison` owns LIO, PX4, residual, epoch, response metadata, masks, and generations. Persistence advances only on a new comparison epoch. Held-epoch and stale-comparison tests pass. | Resolved |
+| P0.8-R02 query masks/generations | Query sequence, exact timestamp, required POSITION/ORIENTATION/LINEAR_VELOCITY mask, reset generation, time generation, and late/superseded responses are checked. Invalid-response counters are published. | Resolved |
+| P0.8-R03 time-generation recovery | Large low-epoch source restart increments the time generation, clears timestamp histories/ring state, resets sign continuity, and requires stable samples. Small regression remains a normal rejection. Runtime validator tests pass. | Resolved |
+| P0.8-R04 LIO diagnostic fail-open | LIO and PX4 diagnostic schema/freshness are separate. Persistent invalid LIO diagnostics close the gate and enter DEGRADED after 500 ms; PX4 diagnostic loss makes monitoring unavailable without falsely invalidating LIO. | Resolved |
+| P0.8-R05 runtime fault coverage | A real supervisor process was exercised against 16 injector scenarios with per-scenario oracle, timeline, query, transition, exit-code, and cleanup artifacts. | Resolved |
+| P0.8-R06 final-head regression | Three final-head candidate and three exact-parent baseline replays completed. Correctness passes, but candidate scan p95 exceeds the +10% regression gate. | Open performance finding |
 
-## FSM
+## Correctness implementation
 
-The states are `STARTUP`, `HEALTHY`, `SUSPECT`, `DEGRADED`, and latched
-`DIVERGED`. LIO loss or state corruption diverges immediately. Residual and
-stale-stream conditions use persistence. A stale propagated stream invalidates
-comparison and cannot recover on a held old residual.
-
-## Persistence and hysteresis
-
-Canonical SIM thresholds are centralized in
-`src/odometry_supervisor/config/odometry_supervisor.yaml`. Persistence uses
-sample time, not callback count; clear ratio is `0.70`. Recovery also requires
-current LIO validity and fresh propagated and corrected streams. Clock-pause
-behavior is covered by the state-machine test and does not decay from wall
-time.
-
-## Output actions
-
-Reliable status is published on `/navigation/odometry_supervisor/status` with
-transient-local depth 1; diagnostics are published on
-`/navigation/odometry_supervisor/diagnostics`. Outputs include health, reason
-codes, comparison validity, ages, alignment gap, residuals, gate state, speed
-recommendation, hover/failsafe recommendation, and reinitialization request
-state. No TF or PX4 actuation/input topic is published.
-
-## Unit tests
-
-- P0.8A PX4 bridge focused tests: `19/19` passed.
-- P0.8B supervisor focused tests: `24/24` passed.
-- Final focused result: `319 tests, 0 errors, 0 failures, 0 skipped`.
-- Fault-injector Python tests: `2/2` passed.
-
-Tests cover residual frames, quaternion sign/wrap, single outliers,
-persistence/hysteresis, stale propagated input, LIO loss, correlated mode,
-reset grace, time-generation invalidation, clock pause, invalid comparison,
-and configuration rejection.
-
-## ROS integration tests
-
-The focused ROS build/test passed after the final freshness-gate fix. The
-test-only injector provides machine-readable artifacts for healthy, jump,
-drift, velocity-bias, PX4-stale, LIO-stale, reset-generation,
-diagnostic-corruption, and correlated-unhealthy cases under:
+The supervisor now uses an explicit aligned comparison with:
 
 ```text
-.artifacts/simulation/odometry-supervisor-faults-20260803/
+comparison_epoch_ns
+response_received_ros_time_ns
+query_sequence
+reset_generation
+time_generation
+component_validity_mask
+covariance_availability_mask
+interpolated
 ```
 
-The `clock_pause` catalog and state-machine test are present; a separate
-external `/clock` pause was not run in this session.
+The configured maximum comparison age is `150 ms`. An aligned pair becomes
+invalid when stale, when a newer eligible LIO epoch supersedes it, when the
+response is late/failed, or when required component bits are absent. A held
+residual cannot advance persistence.
 
-## Dataset
+The PX4 bridge keeps timestamp-sorted reset histories, detects probable source
+restart separately from small timestamp regression, clears generation-bound
+history, and suppresses continuity output until stable post-restart samples
+are available. No registration, deskew, map, PX4 source, sensor model, or
+protected baseline profile was changed.
 
-`make data-check DATASET=aist-mid360-drive` passed. Current replay artifact:
+The LIO diagnostic invalidity window is `500 ms`. The supervisor does not
+convert invalid or unavailable comparisons into zero residuals, does not
+extrapolate across a generation, and permits at most one outstanding PX4
+sample query.
+
+## Tests and build gates
+
+- Supervisor focused gtests: `27/27` passed.
+- PX4 bridge focused gtests: `21/21` passed.
+- Fault-matrix Python tests: `16/16` passed.
+- `make build-safe`: passed on the corrective branch; serial constrained
+  build completed.
+- `make test`: passed.
+- `make check`: passed, `324 tests, 0 errors, 0 failures, 0 skipped`.
+- `make vendor-check`: passed, `18 files`, `2 pinned upstream SHAs`, and
+  `3 documented patched files`.
+- PX4 v1.17 submodule remained clean at the pinned SHA.
+
+## Runtime fault qualification
+
+Artifact root:
 
 ```text
-.artifacts/datasets/aist-mid360-drive/68ff73c-replay-1.0x-20260803T020755039370Z
+.artifacts/simulation/p08-fault-matrix-final-20260803/
 ```
 
-Estimator and replay exit codes were zero; 55,435 IMU and 2,772 LiDAR samples
-were received/processed; final queues, drops, and overflow were zero. The
-processing-lag predicate still triggered at maximum queue depth 161 with load
-shedding count 62:
+Every scenario below used the real `odometry_supervisor_node`, returned
+injector/supervisor exit code `0/0`, and completed scoped cleanup. The final
+health values are the oracle values, not an inference from process exit.
 
-```text
-Dataset result: FAIL (carried P0.0-F01)
-```
-
-This is a pre-existing frozen-baseline finding and is not attributed to P0.8.
-
-## Healthy SITL
-
-Validated session:
-
-```text
-.artifacts/simulation/px4-mid360-20260803-091737
-```
-
-After warm-up, the supervisor ran for more than 60 simulated seconds. The
-post-warmup snapshot recorded:
-
-```text
-health = HEALTHY
-reason = HEALTHY
-comparison_valid = true
-time_aligned = true
-external_odometry_allowed = true
-reinitialization_requested = false
-alignment_gap_ns = 0
-position_error_m = 0.0665
-velocity_error_m_s = 0.0125
-orientation_error_rad = 0.00658
-px4_reset_generation = 1
-px4_time_generation = 0
-```
-
-The session report records finite corrected/propagated outputs, accepted topic
-prior, schema version 1, and no estimator, bridge, or supervisor crash. The
-existing SIM finite-point warning remains without a claimed cause.
-
-## Fault injection
-
-| Scenario | Observed result |
+| Scenario | Final result |
 |---|---|
-| healthy | HEALTHY; comparison valid; gate open; no reinit |
-| single position jump | HEALTHY after the single outlier; no false divergence |
-| velocity bias | SUSPECT persistence observed |
-| PX4 stale | HEALTHY LIO retained; comparison invalid; `PX4_STALE`; no reinit |
-| LIO propagated stale | DEGRADED; comparison invalid; gate closed |
-| LIO corrected stale | DEGRADED; gate closed |
-| PX4 reset generation | Reset grace followed by healthy recovery; no false divergence |
-| correlated unhealthy | DIVERGED on LIO loss; no reinitialization request |
+| healthy | HEALTHY; comparison valid; gate open |
+| single_position_jump | HEALTHY; no false divergence |
+| slow_xy_drift | DIVERGED after persistence |
+| slow_yaw_drift | DIVERGED after persistence |
+| velocity_bias | DEGRADED/DIVERGED transition recorded by oracle |
+| px4_stale | HEALTHY LIO retained; comparison invalid; no unsafe reinit |
+| px4_diagnostics_stale | HEALTHY; monitoring unavailable, no false LIO loss |
+| lio_propagated_stale | DEGRADED; gate closed |
+| lio_corrected_stale | DEGRADED; gate closed |
+| lio_diagnostics_stale | DEGRADED; gate closed |
+| lio_lost | DIVERGED; independent mode requests reinitialization once |
+| correlated_unhealthy | DIVERGED on LIO loss; no reinitialization request |
+| px4_reset_generation | reset grace and recovery; no false divergence |
+| px4_time_generation | generation change invalidates old comparison; recovery |
+| diagnostic_schema_corruption | DEGRADED; gate closed |
+| clock_pause | no persistence advance while ROS clock is paused |
 
-## Carried findings
+`clock_pause.json` is a real runtime scenario. Its test injector holds the
+simulation clock from startup to isolate ROS-time persistence from DDS startup
+ordering, then freezes all input epochs. This does not claim that a Gazebo
+session was paused for the performance benchmark.
 
-| ID | Area | Severity | Result | Scope |
-|---|---|---|---|---|
-| P0.0-F01 | Dataset runtime | Failure | Processing-lag predicate triggered | Pre-existing; not caused or addressed by P0.8 |
-| P0.0-F02 | Simulation observer | Warning | Finite-point warning retained | Pre-existing; no root cause claimed |
-| P0.7-F02 | Simulation observer | Warning | Finite-point warning retained in corrected SITL | No root cause claimed |
+## Dataset A/B qualification
 
-## New findings
+The same AIST bag, configuration, machine environment, serial build policy,
+and `1.0x` rate were used. The baseline was built in the isolated worktree
+`/home/letandat/Dev/uav-navigation-p0.7-baseline` at the exact immediate P0.7
+parent. Candidate runs used the corrective branch with RViz disabled. The
+earlier candidate artifact created with RViz enabled was deliberately excluded
+from the three-run comparison.
 
-No new P0.8 production finding remains. The initial SITL uppercase `TRACKING`
-parser mismatch and stale-residual recovery path were corrected and tested.
-The reported transient initial-prior rejection was not reproduced in the final
-session; final diagnostics show `TOPIC_PRIOR_ACCEPTED` and rejected count `0`.
+Baseline artifacts:
 
-## Files changed
+```text
+/home/letandat/Dev/uav-navigation-p0.7-baseline/.artifacts/datasets/aist-mid360-drive/d6bd7f0-replay-1.0x-20260803T035545919677Z
+/home/letandat/Dev/uav-navigation-p0.7-baseline/.artifacts/datasets/aist-mid360-drive/d6bd7f0-replay-1.0x-20260803T040549133398Z
+/home/letandat/Dev/uav-navigation-p0.7-baseline/.artifacts/datasets/aist-mid360-drive/d6bd7f0-replay-1.0x-20260803T041555459594Z
+```
 
-Changes are limited to P0.8A bridge/interface hardening, the new
-`src/odometry_supervisor` package, and test-only fault-injection tooling. No
-estimator registration path, PX4 source, SDF, URDF, YAML baseline profile,
-Makefile, or protected `mid360_px4_gazebo.yaml` file was changed.
+Candidate artifacts:
 
-## Non-goals confirmed
+```text
+.artifacts/datasets/aist-mid360-drive/978c65b-replay-1.0x-20260803T040048026522Z
+.artifacts/datasets/aist-mid360-drive/978c65b-replay-1.0x-20260803T041047577751Z
+.artifacts/datasets/aist-mid360-drive/978c65b-replay-1.0x-20260803T042058487636Z
+```
 
-P0.8 does not implement P0.9 in-flight reinitialization, P0.10 interface
-library integration, online frame alignment, GNSS fusion, NIS monitoring, map
-reset, TF publication, planner control, motor control, flight-mode changes,
-or PX4 input topics.
+Every run received and processed `55,435` IMU and `2,772` LiDAR samples;
+estimator and replay exit codes were `0/0`; drops, overflow, invalid
+timestamps, NaN/Inf outputs, final queue depth, and load shedding were zero.
+Dynamic propagated odometry output and the single dynamic TF authority were
+present.
+
+| Metric, median of 3 runs | P0.7 baseline | P0.8 candidate | Delta |
+|---|---:|---:|---:|
+| Maximum queue depth | 48 | 48 | 0% |
+| Mean scan processing | 18,059.641 µs | 18,137.681 µs | +0.432% |
+| Scan p95 | 53 µs | 59 µs | **+11.321%** |
+| Scan p99 | 31,749 µs | 33,795 µs | +6.444% |
+
+The candidate canonical correctness predicate is PASS: no processing lag and
+no load shedding. The p95 result is nevertheless an open performance finding
+because the acceptance limit is no worse than `+10%` against the baseline
+median. Resource sampling was added and exercised on selected runs, but was
+not captured for all six repetitions with a validated CPU-percent conversion;
+wall-runtime, complete peak-RSS, context-switch, and real-time-factor gates
+are therefore `NOT INSTRUMENTED`.
+
+The earlier P0.0 processing-lag finding is not silently carried forward: the
+final-head A/B comparison demonstrates that the canonical candidate runs did
+not trigger it, while the measured p95 regression remains a distinct P0.8
+performance finding.
+
+## Stress characterization
+
+```text
+1.25x complete run: NOT RUN
+1.50x complete run: NOT RUN
+```
+
+The first rate for persistent queue growth, load shedding, processing lag, or
+drops is consequently not characterized.
+
+## Healthy SITL and long-duration qualification
+
+The repository has a prior healthy SITL artifact, but it predates this final
+hardening qualification and is not evidence for the required A/B benchmark.
+The mandatory final-head measurement was not completed:
+
+```text
+Supervisor-disabled A/B: NOT RUN (3 repetitions, 30 s warm-up + 120 s)
+Supervisor-enabled A/B: NOT RUN (3 repetitions, 30 s warm-up + 120 s)
+20 simulated-minute memory session: NOT RUN
+```
+
+Therefore the following required metrics are `NOT INSTRUMENTED` for the final
+P0.8 candidate: comparison-valid ratio over the benchmark, query RTT
+p50/p95/p99/max, alignment-gap distribution, aligned-comparison-age
+distribution, supervisor CPU/RSS targets, FAST-LIO p95/queue-depth overhead,
+long-duration RSS growth, maximum outstanding queries over 20 minutes, and
+false health transitions over that benchmark.
 
 ## Acceptance checklist
 
-- [x] P0.8A completed before P0.8B
-- [x] Reset/time/covariance/diagnostic/query prerequisite hardening
-- [x] Supervisor dependency boundary
-- [x] Propagated primary and corrected freshness anchor
-- [x] Asynchronous one-outstanding exact-epoch PX4 query
-- [x] No latest-vs-latest fallback or extrapolation
-- [x] Shared-origin gate and residual frame mathematics
-- [x] Independent/correlated modes
-- [x] FSM, persistence, hysteresis, reset/time-generation handling
-- [x] Machine-readable status and output gate
-- [x] Focused tests and fault-injector artifacts
-- [x] Dataset check; replay finding carried as P0.0-F01
-- [x] Healthy PX4 v1.17 SITL for >60 s post warm-up
+- [x] Started at exact `978c65b6579aae153d6a2299e92efc9f85f37e63`
+- [x] Corrective branch created
+- [x] Initial tree and PX4 submodule clean
+- [x] Held residual cannot advance persistence
+- [x] Comparison has explicit epoch and age
+- [x] Query sequence, required mask, reset generation, and time generation validated
+- [x] Superseded responses rejected
+- [x] Comparison invalidates when stale
+- [x] LIO and PX4 diagnostic validity separated
+- [x] Persistent LIO diagnostic loss closes the gate
+- [x] PX4 diagnostics loss does not falsely invalidate LIO
+- [x] Runtime time-generation increment and probable-restart recovery tested
+- [x] Small timestamp regression does not trigger restart
+- [x] Real runtime clock-pause injector scenario passes
+- [x] Slow XY/yaw, loss, stale, schema, reset, and time-generation fault scenarios pass their oracles
+- [x] Fault artifacts contain timelines and cleanup/exit evidence
+- [x] Three exact-parent baseline dataset runs completed
+- [x] Three final-head candidate dataset runs completed
+- [x] Candidate canonical dataset has zero lag/load shedding
+- [x] No dataset correctness regression
+- [ ] No unacceptable latency regression — candidate scan p95 is +11.321% vs +10% gate
+- [ ] 1.25x and 1.50x stress characterization completed
+- [ ] Healthy final-head SITL A/B benchmark completed
+- [ ] Query RTT and supervisor CPU/RSS targets qualified
+- [ ] Long-duration 20-minute memory stability completed
 - [x] `make build-safe`
 - [x] `make test`
 - [x] `make check`
 - [x] `make vendor-check`
-- [x] `make px4-ingress-check`
-- [x] Final working tree clean
+- [x] P0.9 not started
+- [x] P0.10 not started
 
-## Final conclusion
+## Revised conclusion
 
 ```text
-P0.8 status: PASS
+P0.8 status: BLOCKED
 
-The P0.8 odometry supervisor and prerequisite hardening are implemented and
-reproducible. The dataset processing-lag failure and SIM finite-point warning
-remain pre-existing baseline findings. They do not invalidate P0.8 and must
-not be attributed to subsequent changes without a measured regression against
-the frozen baseline.
+The P0.8 contract hardening, correctness tests, runtime fault matrix, and
+canonical final-head dataset correctness runs are complete. The measured
+candidate scan-processing p95 regression is +11.321% against the immediate
+P0.7 parent, exceeding the +10% acceptance limit. The required SITL A/B,
+stress-rate, and 20-minute memory qualifications were not completed. P0.8
+must remain BLOCKED until the performance finding is resolved or accepted by
+evidence and all mandatory runtime qualifications are complete.
 ```
