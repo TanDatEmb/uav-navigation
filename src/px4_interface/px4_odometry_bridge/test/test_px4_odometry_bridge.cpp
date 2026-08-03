@@ -285,10 +285,59 @@ TEST(Px4ResetCompensator, RejectsCounterJumpAndMissingMetadata) {
   ASSERT_TRUE(compensator.observe(first).has_value());
   auto jump = sample(1'010'000'000);
   jump.reset_counter = 2;
-  EXPECT_FALSE(compensator.observe(jump).has_value());
+  const auto counter_jump = compensator.observe(jump);
+  EXPECT_FALSE(counter_jump.has_value());
+  EXPECT_EQ(counter_jump.status,
+            px4_odometry_bridge::ResetObservationStatus::kCounterDiscontinuity);
   auto missing = sample(1'020'000'000);
   missing.reset_counter = 1;
-  EXPECT_FALSE(compensator.observe(missing).has_value());
+  const auto metadata_pending = compensator.observe(missing);
+  EXPECT_FALSE(metadata_pending.has_value());
+  EXPECT_EQ(metadata_pending.status,
+            px4_odometry_bridge::ResetObservationStatus::kMetadataPending);
+}
+
+TEST(Px4ResetCompensator, InvalidMetadataCannotBeUsedForStartupRebaseline) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  ASSERT_TRUE(compensator.observe(first).has_value());
+
+  auto reset = first;
+  reset.timestamp_ns = 1'010'000'000;
+  reset.reset_counter = 1;
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.association_invalid = true;
+  const auto observation = compensator.observe(reset, metadata);
+  EXPECT_FALSE(observation.has_value());
+  EXPECT_EQ(observation.status,
+            px4_odometry_bridge::ResetObservationStatus::kInvalidMetadata);
+  EXPECT_EQ(compensator.reset_generation(), 0U);
+}
+
+TEST(Px4ResetCompensator, TypedResetTransitionPreservesGenerationAndSuppressesOnlyTransition) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  ASSERT_TRUE(compensator.observe(first).has_value());
+
+  auto reset = first;
+  reset.timestamp_ns = 1'010'000'000;
+  reset.reset_counter = 1;
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.available = true;
+  metadata.timestamp_ns = reset.timestamp_ns;
+  metadata.position_z_reset = true;
+  metadata.position_delta_source = Eigen::Vector3d(0.0, 0.0, 2.0);
+  const auto transition = compensator.observe(reset, metadata);
+  EXPECT_FALSE(transition.has_value());
+  EXPECT_EQ(transition.status,
+            px4_odometry_bridge::ResetObservationStatus::kResetTransitionSuppressed);
+  EXPECT_EQ(transition.reset_generation, 1U);
+
+  reset.timestamp_ns += 10'000'000;
+  const auto stable = compensator.observe(reset, metadata);
+  ASSERT_TRUE(stable.has_value());
+  EXPECT_EQ(stable.status, px4_odometry_bridge::ResetObservationStatus::kAccepted);
+  EXPECT_EQ(stable->reset_generation, 1U);
 }
 
 TEST(Px4ResetCompensator, PreservesVelocityDuringMovingVelocityReset) {

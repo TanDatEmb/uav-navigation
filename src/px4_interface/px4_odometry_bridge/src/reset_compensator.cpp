@@ -23,8 +23,22 @@ Eigen::Vector3d rotateDiagonalVariance(const Eigen::Matrix3d &rotation,
 
 }  // namespace
 
-std::optional<ConvertedOdometry> ResetCompensator::observe(
+const char* toString(const ResetObservationStatus status) noexcept {
+  switch (status) {
+    case ResetObservationStatus::kAccepted: return "accepted";
+    case ResetObservationStatus::kResetTransitionSuppressed: return "reset_transition_suppressed";
+    case ResetObservationStatus::kMetadataPending: return "metadata_pending";
+    case ResetObservationStatus::kInvalidMetadata: return "invalid_metadata";
+    case ResetObservationStatus::kCounterDiscontinuity: return "counter_discontinuity";
+    case ResetObservationStatus::kInvalidResetRotation: return "invalid_reset_rotation";
+    case ResetObservationStatus::kProbableSourceRestart: return "probable_source_restart";
+  }
+  return "unknown";
+}
+
+ResetObservation ResetCompensator::observe(
     ConvertedOdometry sample, DetailedResetMetadata metadata) {
+  ResetObservation result;
   if (!initialized_) {
     initialized_ = true;
     last_counter_ = sample.reset_counter;
@@ -33,21 +47,39 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
     if (delta != 0) {
       // A one-count modulo-256 increment is the only reset transition that
       // can be associated unambiguously with this sample.
-      if (delta != 1 || !metadata.available || !metadata.hasReset() ||
-          !last_output_.has_value() || metadata.timestamp_ns <= 0 ||
+      if (delta != 1) {
+        result.status = ResetObservationStatus::kCounterDiscontinuity;
+        result.reset_generation = reset_generation_;
+        return result;
+      }
+      if (metadata.association_invalid) {
+        result.status = ResetObservationStatus::kInvalidMetadata;
+        result.reset_generation = reset_generation_;
+        return result;
+      }
+      if (!metadata.available || !metadata.hasReset()) {
+        result.status = ResetObservationStatus::kMetadataPending;
+        result.reset_generation = reset_generation_;
+        return result;
+      }
+      if (!last_output_.has_value() || metadata.timestamp_ns <= 0 ||
           ((metadata.position_xy_reset || metadata.position_z_reset) &&
            !metadata.position_delta_source.allFinite()) ||
           ((metadata.velocity_xy_reset || metadata.velocity_z_reset) &&
            !metadata.velocity_delta_source.allFinite()) ||
           (metadata.heading_reset && !std::isfinite(metadata.heading_delta_rad))) {
-        return std::nullopt;
+        result.status = ResetObservationStatus::kInvalidMetadata;
+        result.reset_generation = reset_generation_;
+        return result;
       }
 
       Eigen::Matrix3d reset_rotation_world = Eigen::Matrix3d::Identity();
       if (metadata.attitude_reset) {
         if (!metadata.attitude_delta.coeffs().allFinite() ||
             metadata.attitude_delta.norm() < 1e-9) {
-          return std::nullopt;
+          result.status = ResetObservationStatus::kInvalidResetRotation;
+          result.reset_generation = reset_generation_;
+          return result;
         }
         reset_rotation_world = FrameConverter::c_enu_ned() *
                                metadata.attitude_delta.normalized().toRotationMatrix() *
@@ -77,7 +109,9 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
       last_counter_ = sample.reset_counter;
       // The transition sample is intentionally suppressed. The next sample
       // proves that the continuity transform remains valid.
-      return std::nullopt;
+      result.status = ResetObservationStatus::kResetTransitionSuppressed;
+      result.reset_generation = reset_generation_;
+      return result;
     }
   }
 
@@ -97,7 +131,10 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
                          sample.velocity_world;
   sample.reset_generation = reset_generation_;
   last_output_ = sample;
-  return sample;
+  result.status = ResetObservationStatus::kAccepted;
+  result.sample = std::move(sample);
+  result.reset_generation = reset_generation_;
+  return result;
 }
 
 std::optional<Eigen::Vector3d> ResetCompensator::rebasePositionAtCurrentOutput() {

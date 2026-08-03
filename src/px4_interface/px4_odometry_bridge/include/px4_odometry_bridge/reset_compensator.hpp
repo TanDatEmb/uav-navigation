@@ -9,8 +9,12 @@
 namespace px4_odometry_bridge {
 
 struct DetailedResetMetadata {
+  // timestamp_ns is the timestamp carried by VehicleLocalPosition or
+  // VehicleAttitude. It is never replaced with the VehicleOdometry timestamp.
   std::int64_t timestamp_ns{0};
+  std::int64_t matched_odometry_timestamp_ns{0};
   bool available{false};
+  bool association_invalid{false};
   bool position_xy_reset{false};
   bool position_z_reset{false};
   bool velocity_xy_reset{false};
@@ -36,10 +40,34 @@ struct DetailedResetMetadata {
   }
 };
 
+enum class ResetObservationStatus : std::uint8_t {
+  kAccepted = 0,
+  kResetTransitionSuppressed,
+  kMetadataPending,
+  kInvalidMetadata,
+  kCounterDiscontinuity,
+  kInvalidResetRotation,
+  kProbableSourceRestart,
+};
+
+[[nodiscard]] const char* toString(ResetObservationStatus status) noexcept;
+
+struct ResetObservation {
+  ResetObservationStatus status{ResetObservationStatus::kMetadataPending};
+  std::optional<ConvertedOdometry> sample;
+  std::uint64_t reset_generation{0};
+
+  [[nodiscard]] bool accepted() const noexcept { return sample.has_value(); }
+  [[nodiscard]] bool has_value() const noexcept { return sample.has_value(); }
+  explicit operator bool() const noexcept { return sample.has_value(); }
+  [[nodiscard]] const ConvertedOdometry* operator->() const noexcept { return &*sample; }
+  [[nodiscard]] ConvertedOdometry* operator->() noexcept { return &*sample; }
+};
+
 class ResetCompensator {
  public:
-  std::optional<ConvertedOdometry> observe(ConvertedOdometry sample,
-                                           DetailedResetMetadata metadata = {});
+  [[nodiscard]] ResetObservation observe(ConvertedOdometry sample,
+                                         DetailedResetMetadata metadata = {});
   // Rebase the continuous output frame at the first published sample. This
   // is used once at bridge startup so an EKF bootstrap reset cannot become the
   // origin of the downstream local-odometry contract.

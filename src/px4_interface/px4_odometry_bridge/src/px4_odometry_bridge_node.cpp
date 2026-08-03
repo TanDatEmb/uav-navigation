@@ -58,9 +58,12 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     xrce_synchronized_ = declare_parameter<bool>("xrce_synchronized", false);
     maximum_metadata_age_ns_ = declare_parameter<std::int64_t>(
         "reset.maximum_metadata_age_ns", 100'000'000);
+    maximum_metadata_association_gap_ns_ = declare_parameter<std::int64_t>(
+        "reset.maximum_event_association_gap_ns", 5'000'000);
     stable_samples_after_reset_ = declare_parameter<std::int64_t>(
         "reset.stable_samples_after_reset", 3);
-    if (maximum_metadata_age_ns_ <= 0 || stable_samples_after_reset_ <= 0) {
+    if (maximum_metadata_age_ns_ <= 0 || maximum_metadata_association_gap_ns_ < 0 ||
+        stable_samples_after_reset_ <= 0) {
       throw std::invalid_argument("reset metadata/stable-sample configuration must be positive");
     }
     history_.setStableSamples(static_cast<std::size_t>(stable_samples_after_reset_));
@@ -150,6 +153,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     const auto timestamp = checked_microseconds_to_nanoseconds(message.timestamp_sample);
     if (!timestamp) return;
     metadata.timestamp_ns = *timestamp;
+    metadata.matched_odometry_timestamp_ns = *timestamp;
     metadata.position_delta_source =
         Eigen::Vector3d(message.delta_xy[0], message.delta_xy[1], message.delta_z);
     metadata.velocity_delta_source =
@@ -168,6 +172,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     const auto timestamp = checked_microseconds_to_nanoseconds(message.timestamp_sample);
     if (!timestamp) return;
     metadata.timestamp_ns = *timestamp;
+    metadata.matched_odometry_timestamp_ns = *timestamp;
     metadata.attitude_delta = Eigen::Quaterniond(
         message.delta_q_reset[0], message.delta_q_reset[1], message.delta_q_reset[2],
         message.delta_q_reset[3]);
@@ -190,7 +195,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return std::nullopt;
     }
     DetailedResetMetadata result = *current;
-    result.timestamp_ns = timestamp_ns;
+    result.matched_odometry_timestamp_ns = timestamp_ns;
     if (current == history.begin()) return result;
     const auto previous = std::prev(current);
     const auto local_delta = counter_delta(previous->xy_reset_counter, current->xy_reset_counter);
@@ -203,7 +208,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
                                               current->attitude_reset_counter);
     if (local_delta > 1 || z_delta > 1 || vxy_delta > 1 || vz_delta > 1 ||
         heading_delta > 1 || attitude_delta > 1) {
-      return std::nullopt;
+      result.association_invalid = true;
+      result.available = false;
+      return result;
     }
     result.position_xy_reset = local_delta == 1;
     result.position_z_reset = z_delta == 1;
@@ -211,7 +218,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     result.velocity_z_reset = vz_delta == 1;
     result.heading_reset = heading_delta == 1;
     result.attitude_reset = attitude_delta == 1;
-    result.available = result.hasReset();
+    result.available = !result.association_invalid && result.hasReset();
     return result;
   }
 
@@ -220,7 +227,15 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     const auto attitude = metadata_at(attitude_reset_history_, timestamp_ns);
     if (!local && !attitude) return std::nullopt;
     DetailedResetMetadata result;
-    result.timestamp_ns = timestamp_ns;
+    result.matched_odometry_timestamp_ns = timestamp_ns;
+    result.association_invalid =
+        (local && local->association_invalid) ||
+        (attitude && attitude->association_invalid);
+    if (local && attitude && local->hasReset() && attitude->hasReset() &&
+        std::llabs(local->timestamp_ns - attitude->timestamp_ns) >
+            maximum_metadata_association_gap_ns_) {
+      result.association_invalid = true;
+    }
     if (local) {
       result.position_xy_reset = local->position_xy_reset;
       result.position_z_reset = local->position_z_reset;
@@ -241,7 +256,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       result.attitude_delta = attitude->attitude_delta;
       result.attitude_reset_counter = attitude->attitude_reset_counter;
     }
-    result.available = result.hasReset();
+    result.available = !result.association_invalid && result.hasReset();
     return result;
   }
 
@@ -299,26 +314,38 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     const auto metadata = detailed_metadata_for(*timestamp_ns);
-    auto continuous = reset_compensator_.observe(
-        *converted.value, metadata.value_or(DetailedResetMetadata{}));
-    if (!continuous && !output_valid_) {
+    const DetailedResetMetadata associated_metadata = metadata.value_or(DetailedResetMetadata{});
+    auto observation = reset_compensator_.observe(*converted.value, associated_metadata);
+    last_reset_observation_status_ = toString(observation.status);
+    if (!observation.accepted() && !output_valid_ &&
+        observation.status == ResetObservationStatus::kMetadataPending &&
+        !associated_metadata.association_invalid) {
       // A bridge can receive VehicleOdometry before the first
       // VehicleLocalPosition/VehicleAttitude reset metadata sample. There is
       // no downstream odometry frame yet, so establish the startup baseline
       // from this current sample instead of suppressing forever. Once an
       // output has been published, the normal metadata requirement remains
       // strict and a reset cannot silently change the LIO world frame.
+      history_.clear();
       reset_compensator_.clear();
-      continuous = reset_compensator_.observe(*converted.value);
+      converter_.reset_sign_continuity();
+      startup_origin_rebased_ = false;
+      continuity_valid_ = false;
+      last_valid_sample_time_ns_ = 0;
+      observation = reset_compensator_.observe(*converted.value);
+      last_reset_observation_status_ = toString(observation.status);
       ++startup_rebaseline_count_;
+      ++startup_rebaseline_generation_;
       publish_diagnostics("stabilizing", "PX4 startup baseline reinitialized before reset metadata");
     }
-    if (!continuous) {
+    if (!observation.accepted()) {
       ++reset_suppressed_count_;
       continuity_valid_ = false;
-      publish_diagnostics("suppressed", "PX4 reset transition awaiting detailed metadata");
+      publish_diagnostics("suppressed", std::string("PX4 reset observation: ") +
+                                      toString(observation.status));
       return;
     }
+    auto continuous = std::move(observation.sample);
     if (!startup_origin_rebased_) {
       const auto startup_origin = reset_compensator_.rebasePositionAtCurrentOutput();
       if (!startup_origin.has_value()) {
@@ -395,6 +422,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     add_value("conversion_rejected_count", std::to_string(conversion_rejected_count_));
     add_value("reset_suppressed_count", std::to_string(reset_suppressed_count_));
     add_value("startup_rebaseline_count", std::to_string(startup_rebaseline_count_));
+    add_value("startup_rebaseline_generation",
+              std::to_string(startup_rebaseline_generation_));
+    add_value("reset_observation_status", last_reset_observation_status_);
     array.status.push_back(status);
     diagnostics_->publish(array);
   }
@@ -479,6 +509,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   std::deque<DetailedResetMetadata> local_reset_history_;
   std::deque<DetailedResetMetadata> attitude_reset_history_;
   std::int64_t maximum_metadata_age_ns_{100'000'000};
+  std::int64_t maximum_metadata_association_gap_ns_{5'000'000};
   std::int64_t stable_samples_after_reset_{3};
   static constexpr std::int64_t time_validator_max_stale_ns_{200'000'000};
   bool simulation_clock_{false};
@@ -490,6 +521,8 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t conversion_rejected_count_{0};
   std::uint64_t reset_suppressed_count_{0};
   std::uint64_t startup_rebaseline_count_{0};
+  std::uint64_t startup_rebaseline_generation_{0};
+  std::string last_reset_observation_status_{"accepted"};
   bool output_valid_{false};
   bool continuity_valid_{true};
   bool startup_origin_rebased_{false};
