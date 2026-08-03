@@ -1,8 +1,9 @@
 # P0.8 frame/odometry root-cause evidence
 
-Status at this revision: implementation and deterministic tests are in scope;
-canonical SITL acceptance remains unclaimed until a fresh runtime artifact has
-real samples and a clean pinned provenance.
+Status at this revision: the frame-contract implementation and smoke-on runtime
+contract have machine-readable evidence. The extended three-pair A/B report is
+not accepted as a whole because its queue-overhead gate is false; that result is
+preserved rather than hidden.
 
 ## Executive conclusion
 
@@ -53,6 +54,13 @@ Not selected as root cause:
 The old Euler-yaw artifact in historical P0.8 evidence is not used as
 post-fix acceptance. Current runtime claims require a new probe/SITL artifact.
 
+The first clean runtime attempt also exposed a second boundary bug: FAST-LIO
+publishes estimator, transport, and propagated-worker diagnostics as separate
+`DiagnosticArray` messages. The supervisor had been replacing its estimator
+snapshot with arrays that did not contain the estimator status, producing a
+false `LIO_DIAGNOSTIC_SCHEMA_MISMATCH`. The subscriber now updates a snapshot
+only when the named status is present.
+
 ## Architecture decision
 
 Option A was selected: keep PX4 and LIO world frames distinct and add one
@@ -72,10 +80,16 @@ explicit origin/heading contract that this milestone does not possess.
 | Gate | Evidence | Result |
 | --- | --- | --- |
 | PX4 converter unit tests | `build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no` | 25/25 passed |
-| supervisor/core tests | `build/odometry_supervisor/test_odometry_supervisor --gtest_color=no` | 34/34 passed at last run |
-| parameter schema | `build/fast_lio_ros/test_parameter_loader --gtest_color=no` | 19/19 passed |
+| supervisor/core tests | `build/odometry_supervisor/test_odometry_supervisor --gtest_color=no` | 35/35 passed |
+| parameter schema | `build/fast_lio_ros/test_parameter_loader --gtest_color=no` | 20/20 passed |
 | Python tool syntax | `python3 -m py_compile ...` | exit 0 |
-| canonical SITL | fresh `p0_8_sitl_orchestrator.py` artifact | not yet accepted |
+| canonical smoke-on | `smoke-on-20260803f/run.json` | outcome `PASS`, 70/70 healthy, comparison and monitoring ratios 1.0 |
+| extended SITL A/B | `sitl-ab-20260803.json` | `pass=false`: p95 gate true, queue gate false (median 41 -> 63) |
+
+The selected A/B evidence uses three clean OFF/ON pairs with the same pinned
+PX4, px4_msgs, config hashes, and qualification harness SHA. A separate ON
+attempt failed closed on processing lag (`sitl-on-20260803-3`) and the retry
+passed; both attempts remain referenced in the artifact.
 
 The supervisor status now exposes `alignment_valid`, source, epoch, reset/time
 generations, and reinitialization count. The independent probe writes
