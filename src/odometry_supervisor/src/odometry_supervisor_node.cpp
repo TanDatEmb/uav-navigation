@@ -247,16 +247,18 @@ class OdometrySupervisorNode final : public rclcpp::Node {
 
     EvaluationInput input;
     input.evaluation_time_ns = std::max(now_ns, latest_propagated_ ? latest_propagated_->timestamp_ns : 0);
+    const auto lio_status = lio_diagnostics_.string("status");
+    const auto lio_status_is = [&lio_status](const char* canonical, const char* legacy) {
+      return lio_status == canonical || lio_status == legacy;
+    };
     input.lio_valid = lio_diagnostics_.found &&
-                      lio_diagnostics_.string("status") == "Tracking" &&
+                      lio_status_is("TRACKING", "Tracking") &&
                       lio_diagnostics_.boolean("navigation_valid");
-    input.lio_lost = lio_diagnostics_.found && lio_diagnostics_.string("status") == "Lost";
+    input.lio_lost = lio_diagnostics_.found && lio_status_is("LOST", "Lost");
     input.lio_state_corruption =
         lio_diagnostics_.string("last_update_failure_class") == "StateCorruption";
-    input.lio_degraded = lio_diagnostics_.found &&
-                         lio_diagnostics_.string("status") == "Degraded";
-    input.lio_resetting = lio_diagnostics_.found &&
-                          lio_diagnostics_.string("status") == "Resetting";
+    input.lio_degraded = lio_diagnostics_.found && lio_status_is("DEGRADED", "Degraded");
+    input.lio_resetting = lio_diagnostics_.found && lio_status_is("RESETTING", "Resetting");
     input.propagated_fresh = propagated_fresh;
     input.corrected_fresh = corrected_fresh;
     input.px4_available = latest_px4_.has_value();
