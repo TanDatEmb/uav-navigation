@@ -424,33 +424,66 @@ def sitl_ab(args: argparse.Namespace) -> int:
     sides = {side: sorted((root / side).glob("run-*.json")) for side in ("off", "on")}
     if any(len(paths) < args.min_runs for paths in sides.values()):
         raise RuntimeError("SITL A/B requires three valid runs per side")
-    required = {
+    off_required = {
+        "supervisor_metrics_applicable", "fast_lio_corrected_p95_us",
+        "fast_lio_max_queue_depth", "bridge_peak_rss_bytes", "fast_lio_peak_rss_bytes",
+    }
+    on_required = off_required | {
         "comparison_valid_ratio", "monitoring_available_ratio", "query_timeout_count",
         "query_generation_mismatch_count", "query_rtt_p95_ms", "query_rtt_p99_ms",
         "alignment_gap_p99_ms", "aligned_comparison_age_p99_ms", "supervisor_cpu_p95_percent",
-        "supervisor_peak_rss_bytes", "fast_lio_corrected_p95_us", "fast_lio_max_queue_depth",
+        "supervisor_peak_rss_bytes",
     }
     loaded = {side: [_load_json(path) for path in paths[:args.min_runs]] for side, paths in sides.items()}
-    missing = sorted(required - set(loaded["off"][0]) - set(loaded["on"][0]))
+    missing = sorted((off_required - set(loaded["off"][0])) | (on_required - set(loaded["on"][0])))
     if missing:
         raise RuntimeError(f"SITL metrics not instrumented: {', '.join(missing)}")
     def median(side: str, key: str) -> float:
         return statistics.median(float(item[key]) for item in loaded[side])
     result = {"schema_version": 1, "warmup_s": args.warmup_s, "measurement_s": args.measure_s,
               "runs": {side: loaded[side] for side in loaded}, "metrics": {}}
-    for key in sorted(required):
-        result["metrics"][key] = {side: [float(item[key]) for item in loaded[side]] for side in loaded}
-        result["metrics"][key]["median_off"] = median("off", key)
-        result["metrics"][key]["median_on"] = median("on", key)
+    for key in sorted(on_required - {"supervisor_metrics_applicable"}):
+        result["metrics"][key] = {
+            side: [item[key] for item in loaded[side]] for side in loaded
+        }
+        result["metrics"][key]["median_off"] = median("off", key) if all(
+            item[key] is not None for item in loaded["off"]
+        ) else None
+        result["metrics"][key]["median_on"] = median("on", key) if all(
+            item[key] is not None for item in loaded["on"]
+        ) else None
+    result["metrics"]["supervisor_metrics_applicable"] = {
+        side: [item["supervisor_metrics_applicable"] for item in loaded[side]]
+        for side in loaded
+    }
+    off_correct = all(
+        item["supervisor_metrics_applicable"] is False and
+        item["comparison_valid_ratio"] is None and
+        item["monitoring_available_ratio"] is None and
+        item["query_timeout_count"] is None and
+        item["query_generation_mismatch_count"] is None and
+        item["fast_lio_corrected_p95_us"] is not None and
+        item["fast_lio_max_queue_depth"] is not None and
+        item["bridge_peak_rss_bytes"] is not None and
+        item["fast_lio_peak_rss_bytes"] is not None
+        for item in loaded["off"]
+    )
+    on_correct = all(
+        item["supervisor_metrics_applicable"] is True and
+        item["comparison_valid_ratio"] is not None and item["comparison_valid_ratio"] >= 0.99 and
+        item["monitoring_available_ratio"] is not None and item["monitoring_available_ratio"] >= 0.99 and
+        item["query_timeout_count"] == 0 and item["query_generation_mismatch_count"] == 0 and
+        item["query_rtt_p95_ms"] is not None and item["query_rtt_p95_ms"] < 50 and
+        item["query_rtt_p99_ms"] is not None and item["query_rtt_p99_ms"] < 100 and
+        item["alignment_gap_p99_ms"] is not None and item["alignment_gap_p99_ms"] <= 50 and
+        item["aligned_comparison_age_p99_ms"] is not None and item["aligned_comparison_age_p99_ms"] <= 150 and
+        item["supervisor_cpu_p95_percent"] is not None and item["supervisor_cpu_p95_percent"] < 15 and
+        item["supervisor_peak_rss_bytes"] is not None and item["supervisor_peak_rss_bytes"] < 150 * 1024 * 1024
+        for item in loaded["on"]
+    )
     result["acceptance"] = {
-        "off_and_on_correct": all(
-            item["comparison_valid_ratio"] >= 0.99 and item["monitoring_available_ratio"] >= 0.99 and
-            item["query_timeout_count"] == 0 and item["query_generation_mismatch_count"] == 0 and
-            item["query_rtt_p95_ms"] < 50 and item["query_rtt_p99_ms"] < 100 and
-            item["alignment_gap_p99_ms"] <= 50 and item["aligned_comparison_age_p99_ms"] <= 150 and
-            item["supervisor_cpu_p95_percent"] < 15 and item["supervisor_peak_rss_bytes"] < 150 * 1024 * 1024
-            for side in loaded for item in loaded[side]
-        ),
+        "off_metrics_not_applicable_and_resources_measured": off_correct,
+        "on_supervisor_correct": on_correct,
         "no_new_lio_overhead": median("on", "fast_lio_corrected_p95_us")
         <= 1.05 * median("off", "fast_lio_corrected_p95_us") and
         median("on", "fast_lio_max_queue_depth") <= 1.20 * median("off", "fast_lio_max_queue_depth"),

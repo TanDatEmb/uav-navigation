@@ -44,6 +44,55 @@ def diagnostic_values(message: DiagnosticArray, name: str) -> dict[str, str]:
     return {}
 
 
+class ProcessMetricSampler:
+    """Cache process handles and fail closed for missing/dead roles."""
+
+    def __init__(self, session: Path, roles: tuple[str, ...]) -> None:
+        self.session = session
+        self.roles = roles
+        self.processes: dict[str, psutil.Process] = {}
+        self.identities: dict[str, tuple[int, float]] = {}
+        self.cpu_primed: set[str] = set()
+
+    def sample(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for role in self.roles:
+            pid_file = self.session / "pids" / f"{role}.pid"
+            state = "missing"
+            values: dict[str, Any] = {
+                "cpu_percent": None, "rss_bytes": None, "threads": None,
+            }
+            if pid_file.is_file():
+                try:
+                    pid = int(pid_file.read_text().strip())
+                    candidate = psutil.Process(pid)
+                    identity = (pid, float(candidate.create_time()))
+                    if self.identities.get(role) != identity:
+                        self.processes[role] = candidate
+                        self.identities[role] = identity
+                        self.cpu_primed.discard(role)
+                    process = self.processes[role]
+                    if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+                        state = "dead"
+                    else:
+                        if role not in self.cpu_primed:
+                            process.cpu_percent(None)
+                            self.cpu_primed.add(role)
+                            state = "primed"
+                        else:
+                            values["cpu_percent"] = float(process.cpu_percent(None))
+                            state = "measured"
+                        memory = process.memory_info()
+                        values["rss_bytes"] = int(memory.rss)
+                        values["threads"] = int(process.num_threads())
+                except (OSError, ValueError, psutil.Error):
+                    state = "dead"
+            result[f"{role}_state"] = state
+            for metric, value in values.items():
+                result[f"{role}_{metric}"] = value
+        return result
+
+
 class Probe(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(
@@ -61,6 +110,8 @@ class Probe(Node):
         self.status_samples: list[dict[str, Any]] = []
         self.rows: list[dict[str, Any]] = []
         self.wall_started = time.monotonic()
+        roles = ("bridge", "fast_lio", "supervisor") if self.mode == "on" else ("bridge", "fast_lio")
+        self.process_sampler = ProcessMetricSampler(args.session, roles)
         self.create_subscription(Clock, "/clock", self.on_clock, 50)
         self.create_subscription(OdometrySupervisorStatus,
                                  "/navigation/odometry_supervisor/status",
@@ -83,24 +134,15 @@ class Probe(Node):
     def on_odometry(self, _message: Odometry) -> None:
         pass
 
-    def process_metrics(self) -> dict[str, float]:
-        result: dict[str, float] = {}
-        for role in ("supervisor", "bridge", "fast_lio"):
-            pid_file = self.args.session / "pids" / f"{role}.pid"
-            if not pid_file.is_file():
-                result[f"{role}_cpu_percent"] = 0.0
-                result[f"{role}_rss_bytes"] = 0
-                result[f"{role}_threads"] = 0
-                continue
-            try:
-                process = psutil.Process(int(pid_file.read_text().strip()))
-                result[f"{role}_cpu_percent"] = float(process.cpu_percent(None))
-                result[f"{role}_rss_bytes"] = int(process.memory_info().rss)
-                result[f"{role}_threads"] = int(process.num_threads())
-            except (OSError, ValueError, psutil.Error):
-                result[f"{role}_cpu_percent"] = 0.0
-                result[f"{role}_rss_bytes"] = 0
-                result[f"{role}_threads"] = 0
+    def process_metrics(self) -> dict[str, Any]:
+        result = self.process_sampler.sample()
+        if self.mode == "off":
+            result.update({
+                "supervisor_state": "not_applicable",
+                "supervisor_cpu_percent": None,
+                "supervisor_rss_bytes": None,
+                "supervisor_threads": None,
+            })
         return result
 
     def sample(self) -> None:
@@ -115,25 +157,25 @@ class Probe(Node):
             self.measure_end_ns = self.clock_ns + int(self.args.measure_s * 1e9)
         if self.measure_start_ns is None:
             return
-        status = self.latest_status
+        status = self.latest_status if self.mode == "on" else None
         row: dict[str, Any] = {
             "sim_time_s": (self.clock_ns - self.measure_start_ns) / 1e9,
-            "comparison_valid": int(bool(status and status.comparison_valid)),
-            "monitoring_available": int(bool(status and status.monitoring_available)),
-            "health": int(status.health) if status else -1,
-            "query_count": int(status.query_sequence) if status else 0,
-            "query_success_count": int(status.query_success_count) if status else 0,
-            "query_failure_count": int(status.query_failure_count) if status else 0,
-            "query_timeout_count": int(status.query_timeout_count) if status else 0,
-            "query_generation_mismatch_count": int(status.query_generation_mismatch_count) if status else 0,
-            "query_rtt_p50_ms": float(status.query_rtt_p50_ms) if status else 0.0,
-            "query_rtt_p95_ms": float(status.query_rtt_p95_ms) if status else 0.0,
-            "query_rtt_p99_ms": float(status.query_rtt_p99_ms) if status else 0.0,
-            "query_rtt_max_ms": float(status.query_rtt_max_ms) if status else 0.0,
-            "alignment_gap_ms": float(status.alignment_gap_ns) / 1e6 if status and status.alignment_gap_ns >= 0 else 0.0,
-            "comparison_age_ms": float(status.aligned_comparison_age_ns) / 1e6 if status and status.aligned_comparison_age_ns >= 0 else 0.0,
-            "state_transition_count": int(status.state_transition_count) if status else 0,
-            "reinitialization_requests": int(status.reinitialization_request_sequence) if status else 0,
+            "comparison_valid": int(status.comparison_valid) if status else None,
+            "monitoring_available": int(status.monitoring_available) if status else None,
+            "health": int(status.health) if status else None,
+            "query_count": int(status.query_sequence) if status else None,
+            "query_success_count": int(status.query_success_count) if status else None,
+            "query_failure_count": int(status.query_failure_count) if status else None,
+            "query_timeout_count": int(status.query_timeout_count) if status else None,
+            "query_generation_mismatch_count": int(status.query_generation_mismatch_count) if status else None,
+            "query_rtt_p50_ms": float(status.query_rtt_p50_ms) if status else None,
+            "query_rtt_p95_ms": float(status.query_rtt_p95_ms) if status else None,
+            "query_rtt_p99_ms": float(status.query_rtt_p99_ms) if status else None,
+            "query_rtt_max_ms": float(status.query_rtt_max_ms) if status else None,
+            "alignment_gap_ms": float(status.alignment_gap_ns) / 1e6 if status and status.alignment_gap_ns >= 0 else None,
+            "comparison_age_ms": float(status.aligned_comparison_age_ns) / 1e6 if status and status.aligned_comparison_age_ns >= 0 else None,
+            "state_transition_count": int(status.state_transition_count) if status else None,
+            "reinitialization_requests": int(status.reinitialization_request_sequence) if status else None,
             "fast_lio_corrected_p95_us": float(self.latest_lio.get("p95_corrected_scan_end_to_end_us", 0.0)),
             "fast_lio_max_queue_depth": int(float(self.latest_lio.get("maximum_queue_depth", 0))),
         }
@@ -143,45 +185,58 @@ class Probe(Node):
             self.finish()
 
     def finish(self) -> None:
-        if self.mode == "off":
-            comparison_ratio = monitoring_ratio = 1.0
-            timeouts = generations = 0
-        else:
-            comparison_ratio = statistics.mean(row["comparison_valid"] for row in self.rows) if self.rows else 0.0
-            monitoring_ratio = statistics.mean(row["monitoring_available"] for row in self.rows) if self.rows else 0.0
-            timeouts = max(row["query_timeout_count"] for row in self.rows) if self.rows else 0
-            generations = max(row["query_generation_mismatch_count"] for row in self.rows) if self.rows else 0
         def values(key: str) -> list[float]:
-            return [float(row[key]) for row in self.rows]
+            return [float(row[key]) for row in self.rows if row.get(key) is not None]
+
+        def maximum(key: str) -> float | None:
+            items = values(key)
+            return max(items) if items else None
+
+        comparison_values = values("comparison_valid")
+        monitoring_values = values("monitoring_available")
+        comparison_ratio = statistics.mean(comparison_values) if comparison_values else None
+        monitoring_ratio = statistics.mean(monitoring_values) if monitoring_values else None
+        timeouts = maximum("query_timeout_count")
+        generations = maximum("query_generation_mismatch_count")
+        supervisor_cpu = values("supervisor_cpu_percent")
+        supervisor_rss = values("supervisor_rss_bytes")
         result = {
             "schema_version": 1,
             "mode": self.mode,
             "warmup_s": self.args.warmup_s,
             "measurement_s": self.args.measure_s,
             "sample_count": len(self.rows),
+            "supervisor_metrics_applicable": self.mode == "on",
             "comparison_valid_ratio": comparison_ratio,
             "monitoring_available_ratio": monitoring_ratio,
-            "query_count": max((row["query_count"] for row in self.rows), default=0),
-            "query_success_count": max((row["query_success_count"] for row in self.rows), default=0),
+            "query_count": maximum("query_count"),
+            "query_success_count": maximum("query_success_count"),
             "query_timeout_count": timeouts,
-            "query_failure_count": max((row["query_failure_count"] for row in self.rows), default=0),
+            "query_failure_count": maximum("query_failure_count"),
             "query_generation_mismatch_count": generations,
-            "query_rtt_p50_ms": max((row["query_rtt_p50_ms"] for row in self.rows), default=0.0),
-            "query_rtt_p95_ms": max((row["query_rtt_p95_ms"] for row in self.rows), default=0.0),
-            "query_rtt_p99_ms": max((row["query_rtt_p99_ms"] for row in self.rows), default=0.0),
-            "query_rtt_max_ms": max((row["query_rtt_max_ms"] for row in self.rows), default=0.0),
-            "alignment_gap_p99_ms": percentile(values("alignment_gap_ms"), 0.99),
-            "aligned_comparison_age_p99_ms": percentile(values("comparison_age_ms"), 0.99),
-            "state_transition_count": max((row["state_transition_count"] for row in self.rows), default=0),
-            "reinitialization_requests": max((row["reinitialization_requests"] for row in self.rows), default=0),
-            "supervisor_cpu_mean_percent": statistics.mean(values("supervisor_cpu_percent")) if self.rows else 0.0,
-            "supervisor_cpu_p95_percent": percentile(values("supervisor_cpu_percent"), 0.95),
-            "supervisor_cpu_max_percent": max(values("supervisor_cpu_percent"), default=0.0),
-            "supervisor_peak_rss_bytes": max((row["supervisor_rss_bytes"] for row in self.rows), default=0),
-            "fast_lio_corrected_p95_us": max((row["fast_lio_corrected_p95_us"] for row in self.rows), default=0.0),
-            "fast_lio_max_queue_depth": max((row["fast_lio_max_queue_depth"] for row in self.rows), default=0),
+            "query_rtt_p50_ms": maximum("query_rtt_p50_ms"),
+            "query_rtt_p95_ms": maximum("query_rtt_p95_ms"),
+            "query_rtt_p99_ms": maximum("query_rtt_p99_ms"),
+            "query_rtt_max_ms": maximum("query_rtt_max_ms"),
+            "alignment_gap_p99_ms": percentile(values("alignment_gap_ms"), 0.99) if values("alignment_gap_ms") else None,
+            "aligned_comparison_age_p99_ms": percentile(values("comparison_age_ms"), 0.99) if values("comparison_age_ms") else None,
+            "state_transition_count": maximum("state_transition_count"),
+            "reinitialization_requests": maximum("reinitialization_requests"),
+            "supervisor_cpu_mean_percent": statistics.mean(supervisor_cpu) if supervisor_cpu else None,
+            "supervisor_cpu_p95_percent": percentile(supervisor_cpu, 0.95) if supervisor_cpu else None,
+            "supervisor_cpu_max_percent": max(supervisor_cpu) if supervisor_cpu else None,
+            "supervisor_peak_rss_bytes": max(supervisor_rss) if supervisor_rss else None,
+            "fast_lio_corrected_p95_us": maximum("fast_lio_corrected_p95_us"),
+            "fast_lio_max_queue_depth": maximum("fast_lio_max_queue_depth"),
             "rows": self.rows,
         }
+        for role in ("bridge", "fast_lio"):
+            cpu = values(f"{role}_cpu_percent")
+            rss = values(f"{role}_rss_bytes")
+            result[f"{role}_cpu_mean_percent"] = statistics.mean(cpu) if cpu else None
+            result[f"{role}_cpu_p95_percent"] = percentile(cpu, 0.95) if cpu else None
+            result[f"{role}_cpu_max_percent"] = max(cpu) if cpu else None
+            result[f"{role}_peak_rss_bytes"] = max(rss) if rss else None
         self.args.output.parent.mkdir(parents=True, exist_ok=True)
         self.args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         rclpy.shutdown()
