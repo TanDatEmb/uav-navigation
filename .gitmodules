@@ -1,0 +1,3 @@
+[submodule "src/external/px4_msgs"]
+	path = src/external/px4_msgs
+	url = https://github.com/PX4/px4_msgs.git

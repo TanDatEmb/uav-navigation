@@ -1,5 +1,5 @@
-# External ROS packages
+# External PX4 message dependency
 
-`src/external` contains upstream ROS packages imported using vcstool. These
-repositories are not owned or modified by `uav-navigation`. Each dependency is
-pinned by a tracked `.repos` manifest.
+`px4_msgs` is tracked as a Git submodule at `src/external/px4_msgs`.
+The parent repository pins the immutable PX4 v1.17-compatible commit; no
+vcstool manifest or external overlay is required.

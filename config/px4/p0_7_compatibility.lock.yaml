@@ -5,7 +5,7 @@ px4:
   sha: d6f12ad1c4f70ad3230afd7d86e971421e02fef4
 
 px4_msgs:
-  manifest: dependencies/px4/px4_msgs.repos
+  path: src/external/px4_msgs
   ref: release/1.17
   sha: 86d8239e962f6939e05c3737784f60c02fa884db
 
