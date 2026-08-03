@@ -18,7 +18,7 @@ DATASET_TOOL := python3 tools/data.py
 ROS_ENV := source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_TOOL := PARALLEL_WORKERS="$(PARALLEL_WORKERS)" MAKE_JOBS="$(MAKE_JOBS)" GZ_VERSION="$(GZ_VERSION)" COLCON_FLAGS="$(COLCON_FLAGS)" python3 tools/runtime/build.py --mode "$(MODE)"
 
-.PHONY: help build build-safe test test-tools check vendor-check deps-px4-sync deps-px4-verify clean clean-artifacts data-list data-fetch data-check data-smoke data-run data-replay data-replay-stop replay-stop data-cleanup data-view data-report data-test runtime-repro px4-ingress-build px4-ingress-test px4-ingress-check px4-ingress-sitl px4-ingress-smoke
+.PHONY: help build build-safe test test-tools check vendor-check deps-px4-check clean clean-artifacts data-list data-fetch data-check data-smoke data-run data-replay data-replay-stop replay-stop data-cleanup data-view data-report data-test runtime-repro px4-ingress-build px4-ingress-test px4-ingress-check px4-ingress-sitl px4-ingress-smoke
 
 help:
 	@$(DATASET_TOOL) --help
@@ -47,11 +47,8 @@ check:
 vendor-check:
 	@python3 tools/vendor_check.py
 
-deps-px4-sync:
-	@python3 tools/runtime/px4_deps.py sync
-
-deps-px4-verify:
-	@python3 tools/runtime/px4_deps.py verify
+deps-px4-check:
+	@$(ROS_ENV) python3 tools/runtime/px4_ingress.py verify-submodule
 
 clean:
 	@$(DATASET_TOOL) clean

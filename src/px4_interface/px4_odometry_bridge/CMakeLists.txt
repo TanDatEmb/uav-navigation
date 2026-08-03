@@ -14,6 +14,12 @@ find_package(navigation_interfaces REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../external/px4_msgs/package.xml")
+  message(FATAL_ERROR
+    "px4_msgs package not found; initialize submodule with: "
+    "git submodule update --init --recursive")
+endif()
+
 add_library(${PROJECT_NAME}_core
   src/frame_converter.cpp
   src/reference_point_converter.cpp

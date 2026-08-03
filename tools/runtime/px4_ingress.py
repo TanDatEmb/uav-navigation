@@ -21,12 +21,52 @@ def run(command: list[str], cwd: Path = ROOT) -> int:
     return subprocess.run(command, cwd=cwd, check=False).returncode
 
 
-def verify_messages() -> int:
-    return run([sys.executable, str(ROOT / "tools/runtime/px4_deps.py"), "verify"])
+def verify_submodule() -> int:
+    checkout = ROOT / "src/external/px4_msgs"
+    staged = subprocess.run(
+        ["git", "ls-files", "--stage", "src/external/px4_msgs"],
+        cwd=ROOT, text=True, stdout=subprocess.PIPE, check=False,
+    ).stdout.strip()
+    if not staged.startswith("160000 "):
+        print("ERROR: src/external/px4_msgs is not tracked as a Git submodule", file=sys.stderr)
+        return 2
+    if not checkout.is_dir() or not (checkout / "package.xml").is_file():
+        print(
+            "ERROR: px4_msgs package not found; initialize submodule with: "
+            "git submodule update --init --recursive",
+            file=sys.stderr,
+        )
+        return 2
+    actual = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        text=True, stdout=subprocess.PIPE, check=False,
+    ).stdout.strip()
+    remote = subprocess.run(
+        ["git", "-C", str(checkout), "remote", "get-url", "origin"],
+        text=True, stdout=subprocess.PIPE, check=False,
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "-C", str(checkout), "status", "--porcelain"],
+        text=True, stdout=subprocess.PIPE, check=False,
+    ).stdout.strip()
+    print(f"px4_msgs submodule SHA: {actual}")
+    print(f"px4_msgs remote: {remote}")
+    print(f"px4_msgs working tree: {'dirty' if dirty else 'clean'}")
+    if actual != "86d8239e962f6939e05c3737784f60c02fa884db":
+        print("ERROR: px4_msgs submodule SHA mismatch", file=sys.stderr)
+        return 2
+    if remote.rstrip("/").removesuffix(".git") != "https://github.com/PX4/px4_msgs":
+        print("ERROR: px4_msgs submodule remote mismatch", file=sys.stderr)
+        return 2
+    if dirty:
+        print("ERROR: px4_msgs submodule working tree is dirty", file=sys.stderr)
+        return 2
+    print("px4_msgs submodule: verified")
+    return 0
 
 
 def colcon(target: str) -> int:
-    if verify_messages() != 0:
+    if verify_submodule() != 0:
         return 2
     workers = os.environ.get("PARALLEL_WORKERS", "1")
     if target == "build":
@@ -92,7 +132,7 @@ def sitl() -> int:
 
 
 def smoke() -> int:
-    if verify_messages() != 0:
+    if verify_submodule() != 0:
         return 2
     return run([
         "timeout", "15", "ros2", "run", "px4_odometry_bridge",
@@ -102,10 +142,14 @@ def smoke() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("target", choices=("build", "test", "check", "sitl", "smoke"))
+    parser.add_argument(
+        "target", choices=("build", "test", "check", "verify-submodule", "sitl", "smoke")
+    )
     args = parser.parse_args()
     if args.target in {"build", "test", "check"}:
         return colcon(args.target)
+    if args.target == "verify-submodule":
+        return verify_submodule()
     if args.target == "sitl":
         return sitl()
     return smoke()
