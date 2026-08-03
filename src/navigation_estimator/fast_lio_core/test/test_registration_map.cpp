@@ -70,7 +70,7 @@ TEST(RegistrationMapTest, UsesUpstreamIncrementalTreeAndDownsampling) {
       {-2.0, 0.0, 0.0},
   };
 
-  EXPECT_EQ(map.frameId(), std::string_view("odom"));
+  EXPECT_EQ(map.frameId(), std::string_view("lio_odom"));
   EXPECT_EQ(map.backend(),
             RegistrationMapBackend::kUpstreamIkdTree);
   EXPECT_EQ(map.insert(points), 3U);

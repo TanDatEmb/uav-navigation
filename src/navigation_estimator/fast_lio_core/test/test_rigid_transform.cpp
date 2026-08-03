@@ -19,13 +19,13 @@ TEST(RigidTransformTest, AppliesTargetFromSourceDirection) {
 }
 
 TEST(RigidTransformTest, CompositionAndInversePreserveFrameDirection) {
-  const RigidTransform T_odom_imu(odomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+  const RigidTransform T_odom_imu(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                                   Eigen::Vector3d(5.0, 0.0, 0.0));
   const RigidTransform T_imu_lidar(imuFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
                                    Eigen::Vector3d(0.0, 0.0, 1.0));
   const auto T_odom_lidar = T_odom_imu.compose(T_imu_lidar);
   ASSERT_TRUE(T_odom_lidar.ok());
-  EXPECT_EQ(T_odom_lidar.value().targetFrame(), odomFrame());
+  EXPECT_EQ(T_odom_lidar.value().targetFrame(), lioOdomFrame());
   EXPECT_EQ(T_odom_lidar.value().sourceFrame(), lidarFrame());
 
   const Eigen::Vector3d point_lidar(2.0, 3.0, 4.0);
@@ -34,7 +34,7 @@ TEST(RigidTransformTest, CompositionAndInversePreserveFrameDirection) {
 }
 
 TEST(RigidTransformTest, RejectsInvalidCompositionDirection) {
-  const RigidTransform T_odom_imu(odomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+  const RigidTransform T_odom_imu(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                                   Eigen::Vector3d::Zero());
   const RigidTransform T_base_lidar(baseFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
                                     Eigen::Vector3d::Zero());

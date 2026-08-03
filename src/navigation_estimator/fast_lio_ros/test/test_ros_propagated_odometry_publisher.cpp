@@ -28,7 +28,7 @@ KinematicStateEstimate estimateAt(std::int64_t time_ns) {
 TEST_F(RosPropagatedOdometryPublisherTest, ConvertsAndPublishesOwnedEstimate) {
   rclcpp::Node node("propagated_publisher_test");
   RosParameters parameters;
-  parameters.odom_frame = "odom";
+  parameters.odom_frame = "lio_odom";
   parameters.base_frame = "base_link";
   parameters.imu_frame = "livox_imu_frame";
   auto covariance_runtime = std::make_shared<CovarianceProjectionRuntime>();

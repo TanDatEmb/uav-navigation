@@ -6,6 +6,7 @@
 #include <string>
 
 #include "fast_lio_core/geometry/frame.hpp"
+#include "fast_lio_core/geometry/frame_ids.hpp"
 #include "fast_lio_core/time/timestamp.hpp"
 
 namespace uav::nav::lio {
@@ -37,7 +38,7 @@ struct InitialStatePriorMask {
 
 struct InitialStatePrior {
   Timestamp sample_time{};
-  FrameId reference_frame{FrameId("odom")};
+  FrameId reference_frame{lioOdomFrame()};
   FrameId body_frame{FrameId("base_link")};
   InitialStatePriorSource source{InitialStatePriorSource::kZero};
   InitialStatePriorContext context{InitialStatePriorContext::kGroundStartup};

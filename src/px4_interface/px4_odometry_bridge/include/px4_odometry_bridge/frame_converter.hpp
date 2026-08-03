@@ -18,6 +18,12 @@ enum class VelocityFrame : std::uint8_t {
   kBodyFrd = 3
 };
 
+enum class WorldConvention : std::uint8_t {
+  kUnknown = 0,
+  kRosEnu = 1,
+  kPx4FrdLocal = 2,
+};
+
 struct Px4OdometrySample {
   std::int64_t timestamp_ns{0};
   PoseFrame pose_frame{PoseFrame::kUnknown};
@@ -35,6 +41,9 @@ struct Px4OdometrySample {
 
 struct ConvertedOdometry {
   std::int64_t timestamp_ns{0};
+  PoseFrame source_pose_frame{PoseFrame::kUnknown};
+  VelocityFrame source_velocity_frame{VelocityFrame::kUnknown};
+  WorldConvention world_convention{WorldConvention::kUnknown};
   Eigen::Vector3d position{Eigen::Vector3d::Zero()};
   Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
   Eigen::Vector3d velocity_world{Eigen::Vector3d::Zero()};
@@ -65,7 +74,7 @@ class FrameConverter {
 
   static const Eigen::Matrix3d &c_enu_ned();
   static const Eigen::Matrix3d &c_flu_frd();
-  static const Eigen::Matrix3d &c_zup_frd();
+  static const Eigen::Matrix3d &rotation_ros_local_from_px4_frd_world();
 
  private:
   std::optional<Eigen::Quaterniond> previous_orientation_;

@@ -65,7 +65,7 @@ TEST(FrameConventionsTest, Mid360DatasetExtrinsicPreservesBasisAndInverse) {
   }
 
   const RigidTransform T_odom_imu(
-      odomFrame(), imuFrame(),
+      lioOdomFrame(), imuFrame(),
       Eigen::Quaterniond(
           Eigen::AngleAxisd(0.25, Eigen::Vector3d::UnitZ())),
       Eigen::Vector3d(1.0, 2.0, 3.0));

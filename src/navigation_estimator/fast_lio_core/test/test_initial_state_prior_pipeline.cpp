@@ -24,7 +24,7 @@ LidarScan scan(std::int64_t time_ns) {
 InitialStatePrior topicPrior(std::int64_t time_ns) {
   InitialStatePrior prior;
   prior.sample_time = Timestamp(time_ns);
-  prior.reference_frame = odomFrame();
+  prior.reference_frame = lioOdomFrame();
   prior.body_frame = baseFrame();
   prior.source = InitialStatePriorSource::kTopic;
   prior.context = InitialStatePriorContext::kGroundStartup;

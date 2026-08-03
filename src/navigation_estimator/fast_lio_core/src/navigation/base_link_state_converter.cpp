@@ -22,7 +22,7 @@ BaseLinkStateConverter::BaseLinkStateConverter(RigidTransform base_to_imu)
       r_base_imu_m_(base_to_imu_.translation()),
       R_base_imu_(base_to_imu_.rotation().toRotationMatrix()),
       source_frame_(imuFrame()),
-      reference_frame_(odomFrame()),
+      reference_frame_(lioOdomFrame()),
       body_frame_(baseFrame()) {
   validateBaseToImu(base_to_imu_);
 }

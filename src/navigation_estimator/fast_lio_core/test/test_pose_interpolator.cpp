@@ -11,10 +11,10 @@ namespace {
 
 TEST(PoseInterpolatorTest, InterpolatesTranslationAndRotation) {
   const PoseStamped lower{Timestamp(0, ClockDomain::kSensorTime),
-                          RigidTransform(odomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+                          RigidTransform(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                                          Eigen::Vector3d::Zero())};
   const PoseStamped upper{Timestamp(1'000, ClockDomain::kSensorTime),
-                          RigidTransform(odomFrame(), imuFrame(),
+                          RigidTransform(lioOdomFrame(), imuFrame(),
                                          Eigen::Quaterniond(Eigen::AngleAxisd(
                                              std::numbers::pi, Eigen::Vector3d::UnitZ())),
                                          Eigen::Vector3d(2.0, 4.0, 6.0))};
@@ -41,10 +41,10 @@ TEST(PoseInterpolatorTest, RejectsExtrapolation) {
 
 TEST(PoseInterpolatorTest, RejectsDifferentPoseDirections) {
   const PoseStamped lower{Timestamp(0, ClockDomain::kSensorTime),
-                          RigidTransform(odomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+                          RigidTransform(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                                          Eigen::Vector3d::Zero())};
   const PoseStamped upper{Timestamp(100, ClockDomain::kSensorTime),
-                          RigidTransform(odomFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
+                          RigidTransform(lioOdomFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
                                          Eigen::Vector3d::Zero())};
   const auto result =
       PoseInterpolator::interpolate(lower, upper, Timestamp(50, ClockDomain::kSensorTime));

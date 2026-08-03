@@ -68,7 +68,7 @@ TEST(BaseLinkStateConverterTest, IdentityTransformPreservesPoseAndCorrectsExpres
 
   EXPECT_EQ(output.time, estimate.time);
   EXPECT_EQ(output.source_frame, imuFrame());
-  EXPECT_EQ(output.reference_frame, odomFrame());
+  EXPECT_EQ(output.reference_frame, lioOdomFrame());
   EXPECT_EQ(output.body_frame, baseFrame());
   expectVectorNear(output.position_reference_body_m, position_odom_imu);
   EXPECT_TRUE(output.orientation_reference_body.isApprox(orientation_odom_imu,
@@ -130,7 +130,7 @@ TEST(BaseLinkStateConverterTest, PureYawWithKnownBaseTranslationRecoversVelocity
   const Eigen::Vector3d velocity_odom_base(0.9, -0.4, 0.2);
   const BaseLinkStateConverter converter =
       makeConverter(Eigen::Quaterniond::Identity(), r_base_imu);
-  const RigidTransform T_odom_base(odomFrame(), baseFrame(), orientation_odom_base,
+  const RigidTransform T_odom_base(lioOdomFrame(), baseFrame(), orientation_odom_base,
                                    position_odom_base);
   const auto T_odom_imu_result = T_odom_base.compose(converter.baseToImu());
   ASSERT_TRUE(T_odom_imu_result.ok());
@@ -163,7 +163,7 @@ TEST(BaseLinkStateConverterTest, RollPitchYawAndAsymmetricLeverArmUseRigidCompos
   const Eigen::Vector3d velocity_odom_base(-0.7, 1.4, 0.25);
   const BaseLinkStateConverter converter =
       makeConverter(Eigen::Quaterniond::Identity(), r_base_imu);
-  const RigidTransform T_odom_base(odomFrame(), baseFrame(), orientation_odom_base,
+  const RigidTransform T_odom_base(lioOdomFrame(), baseFrame(), orientation_odom_base,
                                    position_odom_base);
   const auto T_odom_imu_result = T_odom_base.compose(converter.baseToImu());
   ASSERT_TRUE(T_odom_imu_result.ok());
@@ -196,7 +196,7 @@ TEST(BaseLinkStateConverterTest, MountingRotationRotatesAngularVelocityIntoBase)
   const Eigen::Vector3d velocity_odom_base(0.2, 0.8, -1.3);
   const BaseLinkStateConverter converter =
       makeConverter(rotation_base_imu, r_base_imu);
-  const RigidTransform T_odom_base(odomFrame(), baseFrame(), orientation_odom_base,
+  const RigidTransform T_odom_base(lioOdomFrame(), baseFrame(), orientation_odom_base,
                                    position_odom_base);
   const auto T_odom_imu_result = T_odom_base.compose(converter.baseToImu());
   ASSERT_TRUE(T_odom_imu_result.ok());
@@ -259,7 +259,7 @@ TEST(BaseLinkStateConverterTest, RejectsWrongStaticTransformDirections) {
                      Eigen::Vector3d::Zero()),
       RigidTransform(baseFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
                      Eigen::Vector3d::Zero()),
-      RigidTransform(odomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+      RigidTransform(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                      Eigen::Vector3d::Zero()),
   };
   for (const RigidTransform& transform : wrong_transforms) {

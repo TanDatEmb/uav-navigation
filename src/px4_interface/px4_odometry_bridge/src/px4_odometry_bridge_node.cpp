@@ -32,6 +32,19 @@
 
 namespace px4_odometry_bridge {
 
+namespace {
+constexpr char kOutputTopic[] = "/px4/estimator_odometry";
+constexpr char kOutputFrame[] = "px4_odom";
+
+const char *world_convention_name(WorldConvention convention) {
+  switch (convention) {
+    case WorldConvention::kRosEnu: return "ROS_ENU";
+    case WorldConvention::kPx4FrdLocal: return "PX4_FRD_LOCAL_ZUP";
+    default: return "UNKNOWN";
+  }
+}
+}  // namespace
+
 class Px4OdometryBridgeNode final : public rclcpp::Node {
  public:
   using SampleService = navigation_interfaces::srv::SampleOdometryAtTime;
@@ -51,7 +64,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       throw std::invalid_argument("reset metadata/stable-sample configuration must be positive");
     }
     history_.setStableSamples(static_cast<std::size_t>(stable_samples_after_reset_));
-    output_ = create_publisher<nav_msgs::msg::Odometry>("/px4/odometry_ros", 10);
+    output_ = create_publisher<nav_msgs::msg::Odometry>(kOutputTopic, 10);
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
         "/px4/diagnostics", rclcpp::QoS(1).transient_local());
     const auto px4_output_qos = rclcpp::QoS(1).best_effort();
@@ -302,6 +315,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     const auto output = to_ros(*continuous);
     continuity_valid_ = true;
     output_valid_ = true;
+    last_world_convention_ = converted.value->world_convention;
     last_valid_sample_time_ns_ = continuous->timestamp_ns;
     last_time_generation_ = time_result.generation;
     last_px4_timestamp_sample_ns_ = continuous->timestamp_ns;
@@ -341,8 +355,10 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
               std::to_string(history_.stableSampleCount()));
     add_value("post_reset_stable_samples_required",
               std::to_string(history_.stableSamplesRequired()));
-    add_value("output_frame", "odom");
+    add_value("output_topic", kOutputTopic);
+    add_value("output_frame", kOutputFrame);
     add_value("output_child_frame", "base_link");
+    add_value("world_convention", world_convention_name(last_world_convention_));
     add_value("simulation_clock", simulation_clock_ ? "true" : "false");
     add_value("bridge_use_sim_time", get_parameter("use_sim_time").as_bool() ? "true" : "false");
     add_value("xrce_synchronized", xrce_synchronized_ ? "true" : "false");
@@ -361,7 +377,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   static nav_msgs::msg::Odometry to_ros(const ConvertedOdometry &sample) {
     nav_msgs::msg::Odometry message;
     message.header.stamp = rclcpp::Time(sample.timestamp_ns);
-    message.header.frame_id = "odom";
+    message.header.frame_id = kOutputFrame;
     message.child_frame_id = "base_link";
     message.pose.pose.position.x = sample.position.x();
     message.pose.pose.position.y = sample.position.y();
@@ -452,6 +468,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   bool continuity_valid_{true};
   std::int64_t last_valid_sample_time_ns_{0};
   std::uint64_t last_time_generation_{0};
+  WorldConvention last_world_convention_{WorldConvention::kUnknown};
 };
 
 }  // namespace px4_odometry_bridge

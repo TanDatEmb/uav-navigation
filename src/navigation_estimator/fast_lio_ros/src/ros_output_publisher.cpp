@@ -164,7 +164,7 @@ void appendRuntimeValues(
                             covariance.pose_covariance_available ? "true" : "false"));
   values.push_back(keyValue("twist_covariance_available",
                             covariance.twist_covariance_available ? "true" : "false"));
-  values.push_back(keyValue("pose_covariance_expression_frame", "odom"));
+  values.push_back(keyValue("pose_covariance_expression_frame", "lio_odom"));
   values.push_back(keyValue("twist_covariance_expression_frame", "base_link"));
   values.push_back(keyValue("covariance_projection_success_count",
                             std::to_string(covariance.projection_success_count)));
@@ -213,7 +213,7 @@ void appendCovarianceProjectionValues(
                             covariance.pose_covariance_available ? "true" : "false"));
   values.push_back(keyValue("twist_covariance_available",
                             covariance.twist_covariance_available ? "true" : "false"));
-  values.push_back(keyValue("pose_covariance_expression_frame", "odom"));
+  values.push_back(keyValue("pose_covariance_expression_frame", "lio_odom"));
   values.push_back(keyValue("twist_covariance_expression_frame", "base_link"));
   values.push_back(keyValue("covariance_projection_success_count",
                             std::to_string(covariance.projection_success_count)));

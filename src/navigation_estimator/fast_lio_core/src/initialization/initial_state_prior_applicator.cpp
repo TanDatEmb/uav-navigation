@@ -34,8 +34,8 @@ Status InitialStatePriorApplicator::setGeometry(RigidTransform base_to_imu) {
 Status InitialStatePriorApplicator::apply(
     const InitialStatePrior& prior, const ManifoldState& imu_initialized_state,
     double maximum_full_attitude_tilt_disagreement_rad, ManifoldState& output) const {
-  if (prior.reference_frame != odomFrame() || prior.body_frame != baseFrame()) {
-    return Status(StatusCode::kFrameMismatch, "initial prior must use odom -> base_link semantics");
+  if (prior.reference_frame != lioOdomFrame() || prior.body_frame != baseFrame()) {
+    return Status(StatusCode::kFrameMismatch, "initial prior must use lio_odom -> base_link semantics");
   }
   if (!prior.allFinite() || !imu_initialized_state.allFinite() ||
       !std::isfinite(maximum_full_attitude_tilt_disagreement_rad) ||

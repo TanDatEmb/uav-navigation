@@ -1,6 +1,6 @@
 fast_lio:
   ros__parameters:
-    frames: {odom: odom, base: base_link, imu: livox_imu_frame, lidar: livox_frame}
+    frames: {odom: lio_odom, base: base_link, imu: livox_imu_frame, lidar: livox_frame}
     input:
       lidar_topic: /livox/lidar
       imu_topic: /livox/imu
@@ -16,6 +16,8 @@ fast_lio:
     initial_prior:
       source: zero
       context: ground_startup
+      source_frame: lio_odom
+      source_frame_transform: same_frame
       components: {position: true, velocity: true, attitude: yaw_only}
       topic: /initial_state_prior
       topic_wait_timeout_ns: 2000000000

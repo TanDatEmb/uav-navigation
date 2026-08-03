@@ -64,7 +64,7 @@ InitialPriorFallback parsePriorFallback(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 31> kRequired{
+  static constexpr std::array<std::string_view, 33> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -79,6 +79,8 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "timing.livox_timestamp_policy",
       "initial_prior.source",
       "initial_prior.context",
+      "initial_prior.source_frame",
+      "initial_prior.source_frame_transform",
       "initial_prior.components.position",
       "initial_prior.components.velocity",
       "initial_prior.components.attitude",
@@ -177,7 +179,7 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   if (!result.config_path.empty()) {
     result.config_sha256 = sha256File(result.config_path);
   }
-  result.odom_frame = node.declare_parameter("frames.odom", "odom");
+  result.odom_frame = node.declare_parameter("frames.odom", "lio_odom");
   result.base_frame = node.declare_parameter("frames.base", "base_link");
   result.imu_frame = node.declare_parameter("frames.imu", "livox_imu_frame");
   result.lidar_frame = node.declare_parameter("frames.lidar", "livox_frame");
@@ -209,6 +211,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("initial_prior.source", "zero");
   result.initial_prior_context =
       node.declare_parameter("initial_prior.context", "ground_startup");
+  result.initial_prior_source_frame = node.declare_parameter(
+      "initial_prior.source_frame", result.odom_frame);
+  result.initial_prior_source_frame_transform = node.declare_parameter(
+      "initial_prior.source_frame_transform", "same_frame");
   result.initial_prior_position_enabled = node.declare_parameter(
       "initial_prior.components.position", true);
   result.initial_prior_velocity_enabled = node.declare_parameter(
@@ -471,6 +477,17 @@ void ParameterLoader::validate(const RosParameters& p) {
   }
   if (p.odom_frame == p.base_frame || p.imu_frame == p.lidar_frame) {
     throw std::invalid_argument("configured frames must identify distinct frames");
+  }
+  if (p.initial_prior_source_frame.empty() ||
+      (p.initial_prior_source_frame != p.odom_frame &&
+       p.initial_prior_source_frame_transform != "startup_coincident") ||
+      (p.initial_prior_source_frame == p.odom_frame &&
+       p.initial_prior_source_frame_transform != "same_frame") ||
+      (p.initial_prior_source_frame != p.odom_frame &&
+       p.initial_prior_context != "ground_startup")) {
+    throw std::invalid_argument(
+        "initial prior source frame needs an explicit same_frame or ground-startup "
+        "startup_coincident transform");
   }
   if (p.lidar_message_type != "pointcloud2" && p.lidar_message_type != "livox_custom") {
     throw std::invalid_argument("unsupported input.lidar_message_type");

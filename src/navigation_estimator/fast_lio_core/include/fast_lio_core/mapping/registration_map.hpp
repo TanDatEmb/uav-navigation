@@ -47,7 +47,7 @@ class RegistrationMap {
   [[nodiscard]] virtual std::size_t size() const = 0;
   virtual void clear() = 0;
 
-  [[nodiscard]] constexpr std::string_view frameId() const noexcept { return "odom"; }
+  [[nodiscard]] constexpr std::string_view frameId() const noexcept { return "lio_odom"; }
 };
 
 }  // namespace uav::nav::lio

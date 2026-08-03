@@ -288,7 +288,23 @@ void FastLioNode::onInitialStatePrior(
       static_cast<std::int64_t>(message->header.stamp.sec) * 1'000'000'000LL +
           static_cast<std::int64_t>(message->header.stamp.nanosec),
       clock_domain);
-  prior.reference_frame = FrameId(message->header.frame_id);
+  const std::string source_frame = message->header.frame_id;
+  if (source_frame == parameters_.odom_frame &&
+      parameters_.initial_prior_source_frame_transform == "same_frame") {
+    prior.reference_frame = FrameId(parameters_.odom_frame);
+  } else if (source_frame == parameters_.initial_prior_source_frame &&
+             parameters_.initial_prior_source_frame_transform == "startup_coincident" &&
+             parameters_.initial_prior_context == "ground_startup") {
+    // This one-time identity defines lio_odom to coincide with the PX4 prior
+    // frame at the sampled startup epoch; it is not a general relabeling.
+    prior.reference_frame = FrameId(parameters_.odom_frame);
+  } else {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "initial-state prior rejected: source frame %s has no configured transform to %s",
+        source_frame.c_str(), parameters_.odom_frame.c_str());
+    return;
+  }
   prior.body_frame = FrameId(message->child_frame_id);
   prior.source = InitialStatePriorSource::kTopic;
   prior.context = InitialStatePriorContext::kGroundStartup;
@@ -310,7 +326,9 @@ void FastLioNode::onInitialStatePrior(
   prior.angular_velocity_base_rad_s = Eigen::Vector3d(
       message->twist.twist.angular.x, message->twist.twist.angular.y,
       message->twist.twist.angular.z);
-  prior.provenance = "topic:" + parameters_.initial_prior_topic;
+  prior.provenance = "topic:" + parameters_.initial_prior_topic + "|source_frame=" +
+                     source_frame + "|target_frame=" + parameters_.odom_frame +
+                     "|transform=" + parameters_.initial_prior_source_frame_transform;
   const Status status = pipeline_.submitInitialStatePrior(std::move(prior));
   if (!status.ok()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,

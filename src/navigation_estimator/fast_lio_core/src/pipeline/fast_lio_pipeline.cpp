@@ -141,7 +141,7 @@ Status FastLioPipeline::submitInitialStatePrior(InitialStatePrior prior) {
   }
   if (prior.source != InitialStatePriorSource::kTopic ||
       prior.context != config_.initial_prior.context ||
-      prior.reference_frame != odomFrame() || prior.body_frame != baseFrame()) {
+      prior.reference_frame != lioOdomFrame() || prior.body_frame != baseFrame()) {
     ++prior_frame_rejected_count_;
     ++prior_rejected_count_;
     return Status(StatusCode::kFrameMismatch, "initial-state topic prior contract rejected");

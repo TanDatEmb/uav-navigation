@@ -22,7 +22,7 @@ ManifoldState makeImuState(const Eigen::Quaterniond& orientation,
 InitialStatePrior makePrior(PriorAttitudeMode attitude = PriorAttitudeMode::kNone) {
   InitialStatePrior prior;
   prior.sample_time = Timestamp(100, ClockDomain::kSensorTime);
-  prior.reference_frame = odomFrame();
+  prior.reference_frame = lioOdomFrame();
   prior.body_frame = baseFrame();
   prior.source = InitialStatePriorSource::kFixed;
   prior.mask = {true, true, attitude};

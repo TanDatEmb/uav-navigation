@@ -39,7 +39,7 @@ std::filesystem::path canonicalConfigWithout(std::string_view line,
 TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   rclcpp::Node node{"parameter_loader_test"};
   const auto parameters = ParameterLoader::declareAndLoad(node);
-  EXPECT_EQ(parameters.odom_frame, "odom");
+  EXPECT_EQ(parameters.odom_frame, "lio_odom");
   EXPECT_EQ(parameters.lidar_timing_mode, "simultaneous_scan");
   EXPECT_EQ(parameters.input_clock_domain, "ros_time");
   EXPECT_EQ(parameters.livox_timestamp_policy, "require_header_match");
@@ -232,6 +232,18 @@ TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
                std::invalid_argument);
 }
 
+TEST_F(ParameterLoaderTest, PriorFrameRequiresExplicitStartupTransform) {
+  rclcpp::Node node{"parameter_loader_prior_frame_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.initial_prior_source_frame = "px4_odom";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.initial_prior_source_frame_transform = "startup_coincident";
+  parameters.initial_prior_context = "in_flight_reinitialization";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+  parameters.initial_prior_context = "ground_startup";
+  EXPECT_NO_THROW(ParameterLoader::validate(parameters));
+}
+
 TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
   const auto profile = loadCanonicalEstimatorProfile(
       FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
@@ -341,7 +353,7 @@ TEST_F(ParameterLoaderTest, InvalidConfigIsRejectedWithoutDefaults) {
   {
     std::ofstream stream(path);
     stream << "fast_lio:\n  ros__parameters:\n"
-              "    frames: {odom: odom}\n";
+              "    frames: {odom: lio_odom}\n";
   }
   EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
                std::invalid_argument);

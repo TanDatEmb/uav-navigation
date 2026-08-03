@@ -24,7 +24,7 @@ struct ImuTrajectoryState {
 
 class ImuTrajectory {
  public:
-  explicit ImuTrajectory(FrameId odom_frame = odomFrame(), FrameId imu_frame = imuFrame());
+  explicit ImuTrajectory(FrameId odom_frame = lioOdomFrame(), FrameId imu_frame = imuFrame());
 
   [[nodiscard]] Status addState(ImuTrajectoryState state);
   [[nodiscard]] Result<ImuTrajectoryState> interpolate(const Timestamp& time) const;

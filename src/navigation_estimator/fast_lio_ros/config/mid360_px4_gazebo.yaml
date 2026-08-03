@@ -1,7 +1,7 @@
 fast_lio:
   ros__parameters:
     frames:
-      odom: odom
+      odom: lio_odom
       base: base_link
       imu: livox_imu_frame
       lidar: livox_frame
@@ -22,8 +22,10 @@ fast_lio:
     initial_prior:
       source: topic
       context: ground_startup
+      source_frame: px4_odom
+      source_frame_transform: startup_coincident
       components: { position: true, velocity: true, attitude: yaw_only }
-      topic: /px4/odometry_ros
+      topic: /px4/estimator_odometry
       topic_wait_timeout_ns: 2000000000
       maximum_topic_prior_age_ns: 500000000
       ground_fallback: zero

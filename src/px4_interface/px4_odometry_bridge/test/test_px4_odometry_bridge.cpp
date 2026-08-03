@@ -65,6 +65,75 @@ TEST(Px4FrameConverter, ConvertsNedPositionAndBodyVelocity) {
   EXPECT_TRUE(output.value->velocity_body.isApprox(Eigen::Vector3d(4.0, -5.0, -6.0)));
 }
 
+TEST(Px4FrameConverter, ConvertsNedPoseAndWorldVelocityWithPublishedBasis) {
+  px4_odometry_bridge::Px4OdometrySample input;
+  input.timestamp_ns = 1'000'000;
+  input.pose_frame = px4_odometry_bridge::PoseFrame::kNed;
+  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kNed;
+  input.position = Eigen::Vector3d(1.0, 2.0, 3.0);
+  input.velocity = Eigen::Vector3d(4.0, 5.0, 6.0);
+  input.angular_velocity = Eigen::Vector3d::Zero();
+  input.orientation = Eigen::Quaterniond(
+      Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitZ()) *
+      Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitY()) *
+      Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitX()));
+
+  const auto output = px4_odometry_bridge::FrameConverter{}.convert(input);
+  ASSERT_TRUE(output);
+  EXPECT_EQ(output.value->world_convention, px4_odometry_bridge::WorldConvention::kRosEnu);
+  EXPECT_TRUE(output.value->position.isApprox(
+      px4_odometry_bridge::FrameConverter::c_enu_ned() * input.position));
+  EXPECT_TRUE(output.value->velocity_world.isApprox(
+      px4_odometry_bridge::FrameConverter::c_enu_ned() * input.velocity));
+  const Eigen::Matrix3d expected_orientation =
+      px4_odometry_bridge::FrameConverter::c_enu_ned() *
+      input.orientation.toRotationMatrix() *
+      px4_odometry_bridge::FrameConverter::c_flu_frd();
+  EXPECT_TRUE(output.value->orientation.toRotationMatrix().isApprox(expected_orientation));
+}
+
+TEST(Px4FrameConverter, KeepsFrdWorldLocalAndDoesNotClaimEnu) {
+  px4_odometry_bridge::Px4OdometrySample input;
+  input.timestamp_ns = 1'000'000;
+  input.pose_frame = px4_odometry_bridge::PoseFrame::kFrd;
+  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kFrd;
+  input.position = Eigen::Vector3d(1.0, 2.0, 3.0);
+  input.velocity = Eigen::Vector3d(4.0, 5.0, 6.0);
+  input.angular_velocity = Eigen::Vector3d::Zero();
+
+  const auto output = px4_odometry_bridge::FrameConverter{}.convert(input);
+  ASSERT_TRUE(output);
+  EXPECT_EQ(output.value->world_convention,
+            px4_odometry_bridge::WorldConvention::kPx4FrdLocal);
+  EXPECT_TRUE(output.value->position.isApprox(Eigen::Vector3d(1.0, -2.0, -3.0)));
+}
+
+TEST(Px4FrameConverter, RejectsWorldVelocityFromDifferentWorldFrame) {
+  px4_odometry_bridge::Px4OdometrySample input;
+  input.timestamp_ns = 1'000'000;
+  input.pose_frame = px4_odometry_bridge::PoseFrame::kFrd;
+  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kNed;
+  input.angular_velocity = Eigen::Vector3d::Zero();
+  EXPECT_FALSE(px4_odometry_bridge::FrameConverter{}.convert(input));
+}
+
+TEST(Px4FrameConverter, QuaternionSignProducesTheSameOrientation) {
+  px4_odometry_bridge::Px4OdometrySample input;
+  input.timestamp_ns = 1'000'000;
+  input.pose_frame = px4_odometry_bridge::PoseFrame::kNed;
+  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kNed;
+  input.angular_velocity = Eigen::Vector3d::Zero();
+  input.orientation = Eigen::Quaterniond(
+      Eigen::AngleAxisd(0.7, Eigen::Vector3d::UnitZ()));
+  auto positive = px4_odometry_bridge::FrameConverter{}.convert(input);
+  ASSERT_TRUE(positive);
+  input.orientation.coeffs() *= -1.0;
+  auto negative = px4_odometry_bridge::FrameConverter{}.convert(input);
+  ASSERT_TRUE(negative);
+  EXPECT_NEAR(positive.value->orientation.angularDistance(negative.value->orientation), 0.0,
+              1e-12);
+}
+
 TEST(Px4FrameConverter, AcceptsZeroStationaryAngularVelocity) {
   px4_odometry_bridge::Px4OdometrySample input;
   input.timestamp_ns = 1'000'000;

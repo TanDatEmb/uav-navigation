@@ -32,9 +32,9 @@ const Eigen::Matrix3d &FrameConverter::c_flu_frd() {
   return matrix;
 }
 
-const Eigen::Matrix3d &FrameConverter::c_zup_frd() {
-  // PX4's FRD world convention differs from ROS Z-UP by the same reflection
-  // used for body FRD -> FLU. Keeping it explicit prevents hidden sign fixes.
+const Eigen::Matrix3d &FrameConverter::rotation_ros_local_from_px4_frd_world() {
+  // This changes the handed body/world axes to ROS local Z-up axes. It does
+  // not make a PX4 FRD world globally ENU: its heading and origin remain PX4's.
   return c_flu_frd();
 }
 
@@ -67,8 +67,9 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
       position_world = c_enu_ned() * sample.position;
       break;
     case PoseFrame::kFrd:
-      world_from_flu = c_zup_frd() * continuous_q.toRotationMatrix() * c_flu_frd();
-      position_world = c_zup_frd() * sample.position;
+      world_from_flu = rotation_ros_local_from_px4_frd_world() *
+                       continuous_q.toRotationMatrix() * c_flu_frd();
+      position_world = rotation_ros_local_from_px4_frd_world() * sample.position;
       break;
     default:
       return {std::nullopt, "unsupported PX4 pose frame"};
@@ -76,10 +77,16 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
 
   switch (sample.velocity_frame) {
     case VelocityFrame::kNed:
+      if (sample.pose_frame != PoseFrame::kNed) {
+        return {std::nullopt, "NED velocity cannot be combined with a non-NED pose frame"};
+      }
       velocity_world = c_enu_ned() * sample.velocity;
       break;
     case VelocityFrame::kFrd:
-      velocity_world = c_zup_frd() * sample.velocity;
+      if (sample.pose_frame != PoseFrame::kFrd) {
+        return {std::nullopt, "FRD world velocity cannot be combined with a non-FRD pose frame"};
+      }
+      velocity_world = rotation_ros_local_from_px4_frd_world() * sample.velocity;
       break;
     case VelocityFrame::kBodyFrd:
       velocity_world = world_from_flu * c_flu_frd() * sample.velocity;
@@ -90,19 +97,28 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
 
   ConvertedOdometry output;
   output.timestamp_ns = sample.timestamp_ns;
+  output.source_pose_frame = sample.pose_frame;
+  output.source_velocity_frame = sample.velocity_frame;
+  output.world_convention = sample.pose_frame == PoseFrame::kNed
+                                ? WorldConvention::kRosEnu
+                                : WorldConvention::kPx4FrdLocal;
   output.position = position_world;
   output.orientation = Eigen::Quaterniond(world_from_flu).normalized();
   output.velocity_world = velocity_world;
   output.velocity_body = world_from_flu.transpose() * velocity_world;
   output.angular_velocity_body = c_flu_frd() * sample.angular_velocity;
   const Eigen::Matrix3d position_basis =
-      sample.pose_frame == PoseFrame::kNed ? c_enu_ned() : c_zup_frd();
+      sample.pose_frame == PoseFrame::kNed
+          ? c_enu_ned()
+          : rotation_ros_local_from_px4_frd_world();
   output.position_variance = rotate_variance(position_basis, sample.position_variance);
   if (sample.velocity_frame == VelocityFrame::kBodyFrd) {
     output.velocity_variance = rotate_variance(c_flu_frd(), sample.velocity_variance);
   } else {
     const Eigen::Matrix3d velocity_world_basis =
-        sample.velocity_frame == VelocityFrame::kNed ? c_enu_ned() : c_zup_frd();
+        sample.velocity_frame == VelocityFrame::kNed
+            ? c_enu_ned()
+            : rotation_ros_local_from_px4_frd_world();
     output.velocity_variance = rotate_variance(
         world_from_flu.transpose(),
         rotate_variance(velocity_world_basis, sample.velocity_variance));

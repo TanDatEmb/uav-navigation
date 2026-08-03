@@ -36,6 +36,8 @@ struct RosParameters {
   std::string input_clock_domain;
   std::string initial_prior_source;
   std::string initial_prior_context;
+  std::string initial_prior_source_frame;
+  std::string initial_prior_source_frame_transform;
   std::string initial_prior_attitude;
   std::string initial_prior_topic;
   std::string initial_prior_fallback;

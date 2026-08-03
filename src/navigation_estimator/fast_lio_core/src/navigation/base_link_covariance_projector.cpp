@@ -149,7 +149,7 @@ Result<BaseLinkNavigationCovariance> BaseLinkCovarianceProjector::project(
       !imu_estimate.angular_velocity_imu_rad_s.allFinite() ||
       !base_state.allFinite() ||
       !base_state.angular_velocity_body_rad_s.has_value() ||
-      base_state.reference_frame != odomFrame() ||
+      base_state.reference_frame != lioOdomFrame() ||
       base_state.body_frame != baseFrame() ||
       imu_estimate.estimate.time != base_state.time) {
     return numericalFailure(
