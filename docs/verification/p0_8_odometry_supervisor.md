@@ -385,3 +385,237 @@ stress-rate, and 20-minute memory qualifications were not completed. P0.8
 must remain BLOCKED until the performance finding is resolved or accepted by
 evidence and all mandatory runtime qualifications are complete.
 ```
+
+## SITL startup root-cause analysis
+
+This section records the current continuation from the required starting
+commit `fd005e2cfb3e26ee68f162046410a97a317ba5f0` on branch
+`fix/p0.8-sitl-qualification`. The earlier safety-gate failure was caused by
+a stale prompt prerequisite; the valid continuation point was `fd005e2`, and
+no reset to `b23c706` was performed.
+
+### Failed-session evidence
+
+The preserved failed session was inspected before rerunning:
+
+```text
+.artifacts/verification/p0.8-performance/sitl-off/px4-mid360-20260803-131938/
+```
+
+The session used `PX4_DIR=/home/letandat/Dev/Autopilot` and recorded PX4 SHA
+`6249cc3d892e161f5834d8976e41b5ee27443864`, not the required stable v1.17
+worktree. It timed out before receiving a real `/px4/odometry_ros` sample.
+The audit therefore classified the failure as an incorrect PX4 worktree /
+binary selection, not as evidence of a FAST-LIO or bridge conversion defect.
+
+### Raw PX4 odometry
+
+The corrected startup check discovers the runtime topic from the graph rather
+than assuming a suffix. With the pinned message package it found:
+
+```text
+candidate: /fmu/out/vehicle_odometry
+selected:  /fmu/out/vehicle_odometry
+publishers: 1
+sample: received
+```
+
+The pinned dependencies were verified as:
+
+```text
+PX4:      d6f12ad1c4f70ad3230afd7d86e971421e02fef4
+px4_msgs: 86d8239e962f6939e05c3737784f60c02fa884db
+```
+
+### XRCE connectivity
+
+The startup artifact records the Micro XRCE-DDS agent, client connection, and
+session-establishment log evidence as present.
+
+### Clock-domain verification
+
+The workflow uses PX4 simulation-clock mode with `UXRCE_DDS_SYNCT=0`, a ROS
+bridge with `use_sim_time=true`, and waits for an advancing `/clock` before
+starting the PX4 odometry bridge. The startup artifact measured clock samples
+from `2760000000` ns to `2764000000` ns and marked `advanced=true`.
+
+### Bridge binary and overlay
+
+The intended overlay resolves all runtime packages to this workspace:
+
+```text
+px4_odometry_bridge: /home/letandat/Dev/uav-navigation/install/px4_odometry_bridge
+odometry_supervisor: /home/letandat/Dev/uav-navigation/install/odometry_supervisor
+fast_lio_ros:        /home/letandat/Dev/uav-navigation/install/fast_lio_ros
+```
+
+The resolved executables are `px4_odometry_bridge_node`,
+`odometry_supervisor_node`, and `fast_lio_node`. The startup workflow records
+role PID, PGID, command, start time, log, and exit evidence for each owned
+process.
+
+### Bridge rejection state
+
+The corrected startup artifact is:
+
+```text
+.artifacts/verification/p0.8-sitl-qualification/startup/attempt-04/startup-check.json
+```
+
+It is `PASS`: raw VehicleOdometry was received, the bridge was running with
+the simulation clock, `/px4/odometry_ros` produced a real sample at
+`8432000000` ns, and `timestamp_rejected_count`,
+`conversion_rejected_count`, and `reset_suppressed_count` were all zero.
+
+### Confirmed root cause
+
+The confirmed root cause of the original missing output was the launch default
+selecting the wrong PX4 worktree. Topic versioning, XRCE connectivity, and
+clock readiness were then verified with the startup-only workflow.
+
+### Minimal fix
+
+The minimal fix pins the default SITL worktree and required PX4 SHA, validates
+that the PX4 tree is clean and exact, waits for real samples at every startup
+stage, passes the explicit clock/profile parameters, and cleans only owned
+process groups. No PX4 source, `px4_msgs` contents, estimator logic, bridge
+conversion mathematics, or supervisor FSM thresholds were changed.
+
+## SITL probe semantic correction
+
+### Supervisor OFF applicability
+
+The probe now reports supervisor-specific fields as `null` and sets
+`supervisor_metrics_applicable=false` when the supervisor is disabled. It no
+longer fabricates passing comparison-valid, monitoring, RTT, or supervisor
+resource values. OFF acceptance is limited to bridge and FAST-LIO health,
+corrected-output latency, queue/load-shedding, drop/overflow, and related
+runtime metrics.
+
+### Supervisor ON requirements
+
+ON mode requires a live supervisor and retains the supervisor acceptance gates:
+healthy state, comparison validity, monitoring availability, query timeout and
+generation-mismatch checks, reinitialization checks, alignment limits, and
+resource limits.
+
+### Process sampling correction
+
+The process samplers now cache `psutil.Process` handles by PID and creation
+time, prime CPU sampling before measurement, detect replacement/death, and
+emit `missing`, `dead`, `primed`, or `measured` states. Missing or dead roles
+are not converted into valid zero CPU/RSS values. These semantics and the
+OFF/ON acceptance split passed the repository test suite.
+
+## Healthy SITL smoke
+
+The startup-only qualification passed, but the required supervisor-ON smoke
+did not pass its acceptance gates. Evidence:
+
+```text
+.artifacts/verification/p0.8-sitl-qualification/smoke4/on-smoke.json
+.artifacts/verification/p0.8-sitl-qualification/smoke4/px4-mid360-20260803-141616/
+```
+
+The smoke used 10 simulated seconds of warm-up and 20 simulated seconds of
+measurement. It demonstrated raw PX4 odometry, bridge output, FAST-LIO
+corrected and propagated output, and successful cleanup with zero owned
+orphan processes. The final runtime diagnostic snapshot also showed the
+P0.6 topic prior accepted (`TOPIC_PRIOR_ACCEPTED`),
+`initial_prior_fallback_applied=false`, and FAST-LIO `TRACKING`; the early
+`initial-state prior gate is closed` log lines were transient startup
+observations, not the final prior result.
+
+The measured supervisor smoke result was:
+
+| Metric | Result | Required |
+|---|---:|---:|
+| `comparison_valid_ratio` | `0.0` | `>= 0.99` |
+| `monitoring_available_ratio` | `0.9523809524` | `>= 0.99` |
+| query timeout count | `2` | `0` |
+| query generation mismatch count | `0` | `0` |
+| query RTT p95 / p99 | `0.5 / 0.5 ms` | `< 50 / 100 ms` |
+| alignment gap p99 | `0 ms` | `<= 50 ms` |
+| aligned comparison age p99 | unavailable | `<= 150 ms` |
+| supervisor final health | `HEALTHY` | `HEALTHY` |
+
+The failed comparison gate was reported as `ALIGNED_COMPARISON_STALE` while
+the asynchronous supervisor query and continuously advancing LIO/PX4 epochs
+were running. This is a confirmed runtime blocker for qualification, but it
+is outside the allowed SITL orchestration/probe scope. No supervisor
+alignment or FSM production logic was changed speculatively.
+
+## Healthy SITL A/B
+
+The full interleaved qualification was not started because the ON smoke did
+not pass:
+
+```text
+OFF-1, ON-1, OFF-2, ON-2, OFF-3, ON-3: NOT RUN
+Warm-up: 30 simulated seconds: NOT RUN
+Measurement: 120 simulated seconds: NOT RUN
+```
+
+This preserves the prerequisite rule and avoids treating incomplete A/B data
+as acceptance evidence.
+
+## Supervisor overhead
+
+The smoke artifact captured query RTT and resource fields, but it is not a
+substitute for the required three-run A/B qualification. The full supervisor
+overhead gates remain `NOT INSTRUMENTED` for P0.8 closure.
+
+## Long-duration stability
+
+The 1,200-simulated-second run was not started because both prerequisites are
+not satisfied: the short ON smoke failed and full ON health contract evidence
+does not exist. No memory-growth result is claimed.
+
+## Stress-capacity classification
+
+The existing 1.25x and 1.50x observations remain capacity-characterization
+findings for the qualification host. They are not reclassified as functional
+regressions and no estimator or mapping optimization was introduced.
+
+## Current P0.8 acceptance checklist
+
+- [x] Required starting commit and continuation branch recorded
+- [x] Preserved failed session audited
+- [x] Wrong PX4 worktree root cause identified
+- [x] Stable PX4 v1.17 SHA and pinned `px4_msgs` verified
+- [x] Raw VehicleOdometry topic and sample demonstrated
+- [x] XRCE connection and session demonstrated
+- [x] Advancing `/clock` demonstrated
+- [x] Startup-only bridge output demonstrated
+- [x] Bridge diagnostics and cleanup evidence captured
+- [x] OFF metrics no longer fabricate supervisor values
+- [x] Missing/dead process sampling is not represented as zero load
+- [x] `make build-safe`
+- [x] `make test`
+- [x] `make check`
+- [x] `make vendor-check`
+- [ ] Short supervisor-ON smoke passes all gates
+- [ ] Three OFF SITL runs complete
+- [ ] Three ON SITL runs complete
+- [ ] Supervisor overhead qualified
+- [ ] 1,200-simulated-second memory qualification complete
+- [x] P0.9 not started
+- [x] P0.10 not started
+
+## Final P0.8 conclusion
+
+```text
+P0.8 status: BLOCKED
+
+SITL startup recovery is PASS: the pinned PX4 v1.17 worktree, raw
+VehicleOdometry topic/sample, XRCE session, advancing simulation clock, and
+bridge output are reproducible and cleaned up successfully. The qualification
+probe now has correct OFF/ON applicability and process-sampling semantics.
+
+The required supervisor-ON smoke remains BLOCKED because comparison-valid
+ratio was 0.0, monitoring-available ratio was 0.9523809524, and two query
+timeouts occurred. Consequently the mandatory six-run A/B qualification and
+1,200-simulated-second memory run were not executed. P0.8 cannot be marked
+PASS until the supervisor alignment gate is resolved and these runtime gates
+are measured successfully.
+```
