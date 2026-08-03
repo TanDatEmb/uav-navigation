@@ -6,6 +6,112 @@
 P0.8 status: BLOCKED
 ```
 
+## Corrective task: asynchronous comparison lifecycle and probe accounting
+
+The startup recovery in commit `35c8637` proved that PX4, XRCE, topic
+versioning, clock policy, bridge conversion, and the P0.6 prior were not the
+cause of the comparison failure. The next focused correction therefore stayed
+inside the supervisor alignment coordinator and qualification probe.
+
+### P0.8-R18 — completed comparison invalidated by a newer epoch
+
+The previous predicate rejected a completed pair whenever a newer propagated
+epoch became eligible, even when the completed pair was still within its
+150-ms freshness window. At the 50-Hz propagated / 20-Hz evaluation cadence,
+that made a successful asynchronous pair stale before the next evaluation.
+
+The corrective implementation now:
+
+- defines comparison freshness by completed-pair age, not newest-epoch
+  availability;
+- retains the last good pair while a newer query is pending or times out;
+- preserves immediate invalidation for timestamp mismatch, invalid component
+  contract, generation mismatch, and explicit time-generation transitions;
+- exposes latest eligible epoch, comparison lag, pending query epoch, and
+  pending query age in supervisor diagnostics;
+- drives evaluation with the ROS node clock while retaining steady-clock RPC
+  timeout measurement.
+
+The state-machine regression test confirms that a held comparison remains
+valid and does not advance residual persistence when a newer eligible epoch is
+present.
+
+### P0.8-R19 — probe under-sampled status events and used cumulative counters
+
+The probe now accounts for every supervisor status callback in the measurement
+window. The 1-Hz timer remains reserved for resource and runtime samples. It
+also records reason/health histograms and the longest continuous invalid
+window. Query, failure, timeout, generation, state-transition, and
+reinitialization fields are reported as end-minus-start deltas after warm-up.
+
+The ROS-independent accumulator tests cover 396 valid events out of 400,
+warm-up timeout exclusion, and invalid-window duration. This prevents a
+single 1-Hz snapshot or a warm-up counter from deciding the full acceptance
+result.
+
+### P0.8-R20 — wall-time evaluation cadence mixed with simulation time
+
+Evaluation now uses the ROS clock timer. The asynchronous service timeout
+continues to use `steady_clock`, so RPC timeout behavior remains independent
+of simulation clock pauses while state freshness and persistence remain in the
+simulation-time domain.
+
+## Corrective ON smoke
+
+The corrected binary was rebuilt in the normal sourced workspace and exercised
+with the required 10-s warm-up plus 20-s measurement. Artifact:
+
+```text
+.artifacts/verification/p0.8-sitl-corrective/smoke2/on-smoke.json
+.artifacts/verification/p0.8-sitl-corrective/smoke2/px4-mid360-20260803-144936/
+```
+
+The comparison lifecycle and probe accounting now pass their specific gates:
+
+| Metric | Result |
+|---|---:|
+| status events | `400` |
+| comparison-valid events / ratio | `400 / 1.0` |
+| monitoring-available events / ratio | `400 / 1.0` |
+| query count delta | `400` |
+| query success delta | `400` |
+| query failure delta | `0` |
+| query timeout delta | `0` |
+| generation mismatch delta | `0` |
+| reinitialization delta | `0` |
+| aligned-comparison age p99 | `80 ms` |
+| alignment gap p99 | `0 ms` |
+
+The smoke nevertheless remains blocked by a separate runtime residual result:
+after warm-up the supervisor was `DIVERGED: RESIDUAL_DIVERGED`, with
+`comparison_valid=true` but yaw residual approximately `-3.141113 rad`.
+This observation was exposed only after comparison validity was repaired. It
+has not been attributed to PX4, bridge conversion, FAST-LIO, frame geometry,
+or prior semantics, and no such component was changed in this corrective task.
+
+The corrected smoke therefore demonstrates that P0.8-R18, P0.8-R19, and
+P0.8-R20 are addressed, but it does not satisfy the complete ON health gate.
+The six-run A/B qualification and 1,200-simulated-second memory run remain
+`NOT RUN`.
+
+## Corrective-task conclusion
+
+```text
+P0.8 status: BLOCKED
+
+The asynchronous comparison lifecycle and probe event accounting corrections
+are implemented and tested. Corrected smoke evidence shows sustained
+comparison_valid=1.0, monitoring_available=1.0, and zero measurement-window
+query timeouts. The smoke still fails the required post-warm-up HEALTHY gate
+because the supervisor enters RESIDUAL_DIVERGED with an approximately pi-rad
+yaw residual. That residual requires a separate evidence-based investigation;
+no PX4, bridge, FAST-LIO, frame, prior, or threshold workaround was applied.
+
+Do not start the full A/B or memory qualification until the residual finding
+is resolved and the ON smoke remains HEALTHY for the complete measurement
+window.
+```
+
 ## Final performance qualification
 
 This section supersedes the earlier dataset-performance paragraph for the
@@ -602,7 +708,7 @@ regressions and no estimator or mapping optimization was introduced.
 - [x] P0.9 not started
 - [x] P0.10 not started
 
-## Final P0.8 conclusion
+## Historical final P0.8 conclusion (superseded by corrective task above)
 
 ```text
 P0.8 status: BLOCKED
