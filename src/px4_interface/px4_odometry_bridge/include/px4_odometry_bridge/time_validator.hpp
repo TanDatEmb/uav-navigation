@@ -13,12 +13,25 @@ std::optional<std::int64_t> checked_ros_time_to_nanoseconds(
 struct TimeValidationConfig {
   std::int64_t max_stale_ns{200'000'000};
   std::int64_t max_future_ns{200'000'000};
+  std::int64_t probable_restart_regression_ns{1'000'000'000};
+  std::int64_t restart_low_epoch_max_ns{10'000'000'000};
+};
+
+enum class TimestampEvent : std::uint8_t {
+  kAccepted,
+  kDuplicate,
+  kSmallRegression,
+  kProbableSourceRestart,
+  kStale,
+  kFuture,
+  kInvalid,
 };
 
 struct TimeValidationResult {
   bool accepted{false};
   std::uint64_t generation{0};
   std::string reason;
+  TimestampEvent event{TimestampEvent::kInvalid};
 };
 
 class TimestampValidator {

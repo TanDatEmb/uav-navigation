@@ -145,6 +145,29 @@ TEST(Px4TimeValidator, RejectsStaleAndAcceptsPausedClockWithoutWallTimeDecay) {
             "future PX4 sample timestamp");
 }
 
+TEST(Px4TimeValidator, ClassifiesLargeLowEpochRegressionAsSourceRestart) {
+  px4_odometry_bridge::TimestampValidator validator({
+      .max_stale_ns = 200'000'000,
+      .max_future_ns = 200'000'000,
+      .probable_restart_regression_ns = 1'000'000'000,
+      .restart_low_epoch_max_ns = 10'000'000'000});
+  ASSERT_TRUE(validator.observe(20'000'000, 20'000'000'000).accepted);
+  const auto restart = validator.observe(1'000'000, 1'000'000'000);
+  EXPECT_TRUE(restart.accepted);
+  EXPECT_EQ(restart.event, px4_odometry_bridge::TimestampEvent::kProbableSourceRestart);
+  EXPECT_EQ(restart.generation, 1U);
+  EXPECT_TRUE(validator.observe(1'001'000, 1'001'000'000).accepted);
+}
+
+TEST(Px4TimeValidator, DoesNotTreatSmallRegressionAsRestart) {
+  px4_odometry_bridge::TimestampValidator validator;
+  ASSERT_TRUE(validator.observe(20'000'000, 20'000'000'000).accepted);
+  const auto result = validator.observe(19'999'000, 19'999'000'000);
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.event, px4_odometry_bridge::TimestampEvent::kSmallRegression);
+  EXPECT_EQ(result.generation, 0U);
+}
+
 TEST(Px4TimeValidator, UsesCheckedNanosecondServiceTime) {
   EXPECT_EQ(px4_odometry_bridge::checked_ros_time_to_nanoseconds(2, 345),
             std::optional<std::int64_t>(2'000'000'345));

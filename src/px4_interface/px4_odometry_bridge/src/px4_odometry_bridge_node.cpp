@@ -245,6 +245,20 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       publish_diagnostics("rejected", time_result.reason);
       return;
     }
+    if (time_result.event == TimestampEvent::kProbableSourceRestart) {
+      history_.clear();
+      local_reset_history_.clear();
+      attitude_reset_history_.clear();
+      reset_compensator_.clear();
+      converter_.reset_sign_continuity();
+      output_valid_ = false;
+      continuity_valid_ = false;
+      last_valid_sample_time_ns_ = 0;
+      last_time_generation_ = time_result.generation;
+      last_px4_timestamp_sample_ns_ = 0;
+      last_px4_ros_output_stamp_ns_ = 0;
+      publish_diagnostics("restarting_time_generation", time_result.reason);
+    }
 
     Px4OdometrySample sample;
     sample.timestamp_ns = *timestamp_ns;
@@ -281,7 +295,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     }
     continuous->time_generation = time_result.generation;
     if (!history_.push(*continuous)) {
-      continuity_valid_ = true;
+      continuity_valid_ = false;
       publish_diagnostics("stabilizing", "PX4 post-reset stable sample gate active");
       return;
     }
