@@ -6,6 +6,23 @@
 
 namespace px4_odometry_bridge {
 
+namespace {
+
+Eigen::Vector3d rotateDiagonalVariance(const Eigen::Matrix3d &rotation,
+                                       const Eigen::Vector3d &variance) {
+  if (!variance.allFinite()) return variance;
+  Eigen::Vector3d result = Eigen::Vector3d::Constant(-1.0);
+  for (int index = 0; index < 3; ++index) {
+    if (variance[index] >= 0.0 && std::isfinite(variance[index])) {
+      result[index] =
+          (rotation.row(index).array().square() * variance.transpose().array()).sum();
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
 std::optional<ConvertedOdometry> ResetCompensator::observe(
     ConvertedOdometry sample, DetailedResetMetadata metadata) {
   if (!initialized_) {
@@ -18,9 +35,11 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
       // can be associated unambiguously with this sample.
       if (delta != 1 || !metadata.available || !metadata.hasReset() ||
           !last_output_.has_value() || metadata.timestamp_ns <= 0 ||
-          !metadata.position_delta_source.allFinite() ||
-          !metadata.velocity_delta_source.allFinite() ||
-          !std::isfinite(metadata.heading_delta_rad)) {
+          ((metadata.position_xy_reset || metadata.position_z_reset) &&
+           !metadata.position_delta_source.allFinite()) ||
+          ((metadata.velocity_xy_reset || metadata.velocity_z_reset) &&
+           !metadata.velocity_delta_source.allFinite()) ||
+          (metadata.heading_reset && !std::isfinite(metadata.heading_delta_rad))) {
         return std::nullopt;
       }
 
@@ -41,14 +60,19 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
             FrameConverter::c_enu_ned().transpose();
       }
       const Eigen::Matrix3d inverse_reset = reset_rotation_world.transpose();
-      const Eigen::Vector3d position_delta =
-          FrameConverter::c_enu_ned() * metadata.position_delta_source;
-      const Eigen::Vector3d velocity_delta =
-          FrameConverter::c_enu_ned() * metadata.velocity_delta_source;
-      continuity_translation_ -= continuity_rotation_ * inverse_reset * position_delta;
-      continuity_velocity_translation_ -=
-          continuity_rotation_ * inverse_reset * velocity_delta;
       continuity_rotation_ *= inverse_reset;
+      if (metadata.position_xy_reset || metadata.position_z_reset) {
+        const Eigen::Vector3d position_delta =
+            continuity_rotation_ *
+            (FrameConverter::c_enu_ned() * metadata.position_delta_source);
+        continuity_translation_ -= position_delta;
+      }
+      if (metadata.velocity_xy_reset || metadata.velocity_z_reset) {
+        const Eigen::Vector3d velocity_delta =
+            continuity_rotation_ *
+            (FrameConverter::c_enu_ned() * metadata.velocity_delta_source);
+        continuity_velocity_translation_ -= velocity_delta;
+      }
       ++reset_generation_;
       last_counter_ = sample.reset_counter;
       // The transition sample is intentionally suppressed. The next sample
@@ -57,11 +81,18 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
     }
   }
 
+  // A reset defines a new sample world basis. Apply the accumulated inverse
+  // reset to every world-expressed component, not just the quaternion; doing
+  // otherwise publishes a non-rigid pose (continuous attitude with a position
+  // left in the post-reset basis). Position/velocity deltas are then applied
+  // in the same continuous world basis.
   sample.position = continuity_translation_ + continuity_rotation_ * sample.position;
   sample.orientation = Eigen::Quaterniond(continuity_rotation_ *
                                            sample.orientation.toRotationMatrix()).normalized();
-  sample.velocity_world = continuity_velocity_translation_ +
-                          continuity_rotation_ * sample.velocity_world;
+  sample.position_variance =
+      rotateDiagonalVariance(continuity_rotation_, sample.position_variance);
+  sample.velocity_world =
+      continuity_velocity_translation_ + continuity_rotation_ * sample.velocity_world;
   sample.velocity_body = sample.orientation.toRotationMatrix().transpose() *
                          sample.velocity_world;
   sample.reset_generation = reset_generation_;

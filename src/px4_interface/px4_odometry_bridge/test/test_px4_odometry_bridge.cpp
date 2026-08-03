@@ -316,6 +316,41 @@ TEST(Px4ResetCompensator, PreservesVelocityDuringMovingVelocityReset) {
   EXPECT_NEAR(output->velocity_world.x(), 2.1, 1e-12);
 }
 
+TEST(Px4ResetCompensator, AppliesResetRotationToWorldPoseAndIgnoresStaleDeltas) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  first.position = Eigen::Vector3d(1.0, 2.0, 3.0);
+  first.orientation = Eigen::Quaterniond::Identity();
+  ASSERT_TRUE(compensator.observe(first).has_value());
+
+  auto reset = first;
+  reset.timestamp_ns = 1'010'000'000;
+  reset.reset_counter = 1;
+  reset.position = Eigen::Vector3d(1.0, 2.0, 3.0);
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.available = true;
+  metadata.timestamp_ns = reset.timestamp_ns;
+  metadata.heading_reset = true;
+  metadata.heading_delta_rad = 0.4;
+  const Eigen::Matrix3d source_reset =
+      px4_odometry_bridge::FrameConverter::c_enu_ned() *
+      Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+      px4_odometry_bridge::FrameConverter::c_enu_ned().transpose();
+  reset.orientation = Eigen::Quaterniond(source_reset);
+  // These values belong to an earlier position reset and must be ignored.
+  metadata.position_delta_source = Eigen::Vector3d(0.0, 0.0, 10.0);
+  metadata.velocity_delta_source = Eigen::Vector3d(0.0, 0.0, 5.0);
+  EXPECT_FALSE(compensator.observe(reset, metadata).has_value());
+
+  auto after = reset;
+  after.timestamp_ns = 1'020'000'000;
+  const auto output = compensator.observe(after, metadata);
+  ASSERT_TRUE(output.has_value());
+  const Eigen::Matrix3d expected_continuity_rotation = source_reset.transpose();
+  EXPECT_TRUE(output->position.isApprox(expected_continuity_rotation * first.position));
+  EXPECT_NEAR(output->orientation.angularDistance(first.orientation), 0.0, 1e-12);
+}
+
 TEST(Px4ResetCompensator, SupportsCounterWrapAndQuaternionReset) {
   px4_odometry_bridge::ResetCompensator compensator;
   auto first = sample(1'000'000'000);

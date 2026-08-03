@@ -386,8 +386,18 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("deskew_applied", result.diagnostics.deskew.deskew_applied ? "true" : "false"),
       keyValue("imu_samples_per_scan",
                std::to_string(result.diagnostics.synchronization.imu_samples_per_scan)),
+      keyValue("input_point_count",
+               std::to_string(result.diagnostics.registration.input_point_count)),
+      keyValue("filtered_point_count",
+               std::to_string(result.diagnostics.registration.filtered_point_count)),
+      keyValue("query_count",
+               std::to_string(result.diagnostics.registration.query_count)),
+      keyValue("valid_plane_count",
+               std::to_string(result.diagnostics.registration.valid_plane_count)),
       keyValue("accepted_residual_count",
                std::to_string(result.diagnostics.registration.accepted_residual_count)),
+      keyValue("rejected_residual_count",
+               std::to_string(result.diagnostics.registration.rejected_residual_count)),
       keyValue("residual_rms_m", std::to_string(result.diagnostics.registration.residual_rms_m)),
       keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
       keyValue("covariance_trace", std::to_string(result.diagnostics.state.covariance_trace)),
@@ -490,6 +500,12 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   status.values.push_back(keyValue(
       "final_increment_norm",
       std::to_string(result.diagnostics.registration.final_increment_norm)));
+  status.values.push_back(keyValue(
+      "correction_translation_norm_m",
+      std::to_string(result.diagnostics.state.correction_translation_norm_m)));
+  status.values.push_back(keyValue(
+      "correction_rotation_norm_rad",
+      std::to_string(result.diagnostics.state.correction_rotation_norm_rad)));
   status.values.push_back(keyValue(
       "covariance_minimum_eigenvalue",
       std::to_string(

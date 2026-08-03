@@ -1,7 +1,7 @@
 # P0.8 frame/odometry root-cause evidence
 
-Status at this revision: the frame-contract implementation and smoke-on runtime
-contract have machine-readable evidence. The extended three-pair A/B report is
+Status at this revision: the frame-contract implementation and real-motion SITL
+runtime have machine-readable evidence. The historical three-pair A/B report is
 not accepted as a whole because its queue-overhead gate is false; that result is
 preserved rather than hidden.
 
@@ -51,6 +51,16 @@ Not selected as root cause:
 - yaw offset or sign hack: no constant correction was added;
 - threshold relaxation: supervisor thresholds were not changed.
 
+The motion replay then isolated a second, runtime-only defect in reset
+continuity. `ResetCompensator` applied the accumulated inverse PX4 reset to the
+quaternion but left `position` and `velocity_world` in the post-reset world
+basis. That produced a non-rigid odometry sample: the bridge orientation was
+continuous while its position still followed the unrotated NED-to-ENU axes. In
+the failing translation run this made LIO converge to `[-N, E]` while PX4 ROS
+reported `[E, N]`; stationary tests could not expose this invariant violation.
+The fix applies the same accumulated transform to every world-expressed pose
+component and applies reset deltas in that continuous basis.
+
 The old Euler-yaw artifact in historical P0.8 evidence is not used as
 post-fix acceptance. Current runtime claims require a new probe/SITL artifact.
 
@@ -79,7 +89,7 @@ explicit origin/heading contract that this milestone does not possess.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| PX4 converter unit tests | `build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no` | 25/25 passed |
+| PX4 converter unit tests | `build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no` | 26/26 passed |
 | supervisor/core tests | `build/odometry_supervisor/test_odometry_supervisor --gtest_color=no` | 35/35 passed |
 | parameter schema | `build/fast_lio_ros/test_parameter_loader --gtest_color=no` | 20/20 passed |
 | Python tool syntax | `python3 -m py_compile ...` | exit 0 |
@@ -95,3 +105,38 @@ The supervisor status now exposes `alignment_valid`, source, epoch, reset/time
 generations, and reinitialization count. The independent probe writes
 `discovery.json`, `samples.jsonl`, and `summary.json` under its requested fresh
 artifact directory.
+
+## Motion runtime evidence
+
+The pre-fix motion artifact reproduced the user-visible failure without a
+stationary shortcut:
+
+```text
+artifact=.artifacts/verification/p0.8-motion/20260803-225124-full-it6.jsonl
+takeoff/yaw estimator status=TRACKING before horizontal motion
+translation PX4 ROS position ~= [1.0, 2.0, 2.0]
+translation LIO position ~= [-2.0, 1.0, 2.0]
+supervisor=DIVERGED:RESIDUAL_DIVERGED
+```
+
+After the SE(3) reset-continuity fix and the motion convergence budget was set
+to ten iterations, a source-clean full scenario completed 60.032 s through
+ground, takeoff, yaw +90, XY translation, yaw -90, and landing:
+
+```text
+artifact=.artifacts/verification/p0.8-motion/20260803-231947-full-reset-se3-it10-clean.jsonl
+session=px4-mid360-20260803-231947; dirty=false
+estimator=556/556 TRACKING; correction_failure_count=0
+supervisor=1199/1199 HEALTHY; final=PX4_RESET_GRACE; comparison_valid=true
+supervisor_position_error_max=0.215323 m; orientation_error_max=0.024404 rad
+comparison_valid=1177/1199; processing_us=p50 30463; p95 47338; max 75447
+queue_high_water=15/16; ROS IMU gap max=8000000 ns
+bridge conversion_rejected=0; timestamp_rejected=0; reset_generation=2
+pointcloud=554 scans, all frame_id=livox_frame, no dense-cloud violation
+vehicle=OFFBOARD+armed samples, failsafe=false; mode/arm ACK result=0
+```
+
+The motion driver is `tools/diagnostics/sitl_motion_scenario.py`; it records
+native PX4 timestamps, raw and converted odometry, LIO corrected/propagated
+odometry, reset metadata, point-cloud quality, diagnostics, command ACKs and
+phase events in one JSONL artifact.

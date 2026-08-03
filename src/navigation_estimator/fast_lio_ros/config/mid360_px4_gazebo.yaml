@@ -53,7 +53,10 @@ fast_lio:
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.2
     registration:
-      maximum_iterations: 4
+      # Takeoff/yaw produces a valid but larger motion prior error than the
+      # stationary bootstrap. Ten iterations cover that motion without
+      # changing the estimator or registration model.
+      maximum_iterations: 10
     mapping:
       registration_map:
         voxel_size_m: 0.2
