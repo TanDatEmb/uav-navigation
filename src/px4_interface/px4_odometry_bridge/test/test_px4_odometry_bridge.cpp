@@ -316,6 +316,75 @@ TEST(Px4ResetCompensator, PreservesVelocityDuringMovingVelocityReset) {
   EXPECT_NEAR(output->velocity_world.x(), 2.1, 1e-12);
 }
 
+TEST(Px4ResetCompensator, StartupOriginRebaseKeepsTakeoffDeltaAtZero) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  first.position = Eigen::Vector3d(1.0, 2.0, 10.0);
+  ASSERT_TRUE(compensator.observe(first).has_value());
+  const auto origin = compensator.rebasePositionAtCurrentOutput();
+  ASSERT_TRUE(origin.has_value());
+  EXPECT_TRUE(origin->isApprox(Eigen::Vector3d(1.0, 2.0, 10.0)));
+
+  auto at_takeoff_height = first;
+  at_takeoff_height.timestamp_ns = 1'010'000'000;
+  at_takeoff_height.position = Eigen::Vector3d(1.0, 2.0, 13.0);
+  const auto output = compensator.observe(at_takeoff_height);
+  ASSERT_TRUE(output.has_value());
+  EXPECT_TRUE(output->position.isApprox(Eigen::Vector3d(0.0, 0.0, 3.0)));
+}
+
+TEST(Px4ResetCompensator, StartupOriginRebaseAlsoRemovesBootstrapResetOffset) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto before_reset = sample(1'000'000'000);
+  before_reset.position = Eigen::Vector3d(0.0, 0.0, 10.0);
+  ASSERT_TRUE(compensator.observe(before_reset).has_value());
+
+  auto reset = before_reset;
+  reset.timestamp_ns = 1'010'000'000;
+  reset.reset_counter = 1;
+  reset.position = Eigen::Vector3d::Zero();
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.available = true;
+  metadata.timestamp_ns = reset.timestamp_ns;
+  metadata.position_z_reset = true;
+  // The converted ENU reset delta is -10 m when the source NED delta is +10 m.
+  metadata.position_delta_source = Eigen::Vector3d(0.0, 0.0, 10.0);
+  EXPECT_FALSE(compensator.observe(reset, metadata).has_value());
+
+  auto after_reset = reset;
+  after_reset.timestamp_ns = 1'020'000'000;
+  auto continuous = compensator.observe(after_reset, metadata);
+  ASSERT_TRUE(continuous.has_value());
+  const auto origin = compensator.rebasePositionAtCurrentOutput();
+  ASSERT_TRUE(origin.has_value());
+  continuous->position -= *origin;
+  EXPECT_TRUE(continuous->position.isApprox(Eigen::Vector3d::Zero()));
+
+  auto at_takeoff_height = after_reset;
+  at_takeoff_height.timestamp_ns = 1'030'000'000;
+  at_takeoff_height.position.z() = 3.0;
+  const auto output = compensator.observe(at_takeoff_height);
+  ASSERT_TRUE(output.has_value());
+  EXPECT_NEAR(output->position.z(), 3.0, 1e-12);
+}
+
+TEST(Px4ResetCompensator, ClearAllowsStartupBaselineWithArbitraryResetCounter) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto before_restart = sample(1'000'000'000);
+  before_restart.reset_counter = 3;
+  before_restart.position = Eigen::Vector3d(4.0, 5.0, 6.0);
+  ASSERT_TRUE(compensator.observe(before_restart).has_value());
+
+  compensator.clear();
+  auto after_restart = before_restart;
+  after_restart.timestamp_ns = 1'010'000'000;
+  after_restart.reset_counter = 11;
+  after_restart.position = Eigen::Vector3d::Zero();
+  const auto output = compensator.observe(after_restart);
+  ASSERT_TRUE(output.has_value());
+  EXPECT_TRUE(output->position.isApprox(Eigen::Vector3d::Zero()));
+}
+
 TEST(Px4ResetCompensator, AppliesResetRotationToWorldPoseAndIgnoresStaleDeltas) {
   px4_odometry_bridge::ResetCompensator compensator;
   auto first = sample(1'000'000'000);

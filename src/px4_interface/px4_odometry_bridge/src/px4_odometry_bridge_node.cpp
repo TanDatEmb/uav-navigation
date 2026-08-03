@@ -264,6 +264,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       attitude_reset_history_.clear();
       reset_compensator_.clear();
       converter_.reset_sign_continuity();
+      startup_origin_rebased_ = false;
       output_valid_ = false;
       continuity_valid_ = false;
       last_valid_sample_time_ns_ = 0;
@@ -300,11 +301,33 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     const auto metadata = detailed_metadata_for(*timestamp_ns);
     auto continuous = reset_compensator_.observe(
         *converted.value, metadata.value_or(DetailedResetMetadata{}));
+    if (!continuous && !output_valid_) {
+      // A bridge can receive VehicleOdometry before the first
+      // VehicleLocalPosition/VehicleAttitude reset metadata sample. There is
+      // no downstream odometry frame yet, so establish the startup baseline
+      // from this current sample instead of suppressing forever. Once an
+      // output has been published, the normal metadata requirement remains
+      // strict and a reset cannot silently change the LIO world frame.
+      reset_compensator_.clear();
+      continuous = reset_compensator_.observe(*converted.value);
+      ++startup_rebaseline_count_;
+      publish_diagnostics("stabilizing", "PX4 startup baseline reinitialized before reset metadata");
+    }
     if (!continuous) {
       ++reset_suppressed_count_;
       continuity_valid_ = false;
       publish_diagnostics("suppressed", "PX4 reset transition awaiting detailed metadata");
       return;
+    }
+    if (!startup_origin_rebased_) {
+      const auto startup_origin = reset_compensator_.rebasePositionAtCurrentOutput();
+      if (!startup_origin.has_value()) {
+        continuity_valid_ = false;
+        publish_diagnostics("suppressed", "PX4 startup origin was not finite");
+        return;
+      }
+      continuous->position -= *startup_origin;
+      startup_origin_rebased_ = true;
     }
     continuous->time_generation = time_result.generation;
     if (!history_.push(*continuous)) {
@@ -355,6 +378,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
               std::to_string(history_.stableSampleCount()));
     add_value("post_reset_stable_samples_required",
               std::to_string(history_.stableSamplesRequired()));
+    add_value("startup_origin_rebased", startup_origin_rebased_ ? "true" : "false");
     add_value("output_topic", kOutputTopic);
     add_value("output_frame", kOutputFrame);
     add_value("output_child_frame", "base_link");
@@ -370,6 +394,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     add_value("timestamp_rejected_count", std::to_string(timestamp_rejected_count_));
     add_value("conversion_rejected_count", std::to_string(conversion_rejected_count_));
     add_value("reset_suppressed_count", std::to_string(reset_suppressed_count_));
+    add_value("startup_rebaseline_count", std::to_string(startup_rebaseline_count_));
     array.status.push_back(status);
     diagnostics_->publish(array);
   }
@@ -464,8 +489,10 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t timestamp_rejected_count_{0};
   std::uint64_t conversion_rejected_count_{0};
   std::uint64_t reset_suppressed_count_{0};
+  std::uint64_t startup_rebaseline_count_{0};
   bool output_valid_{false};
   bool continuity_valid_{true};
+  bool startup_origin_rebased_{false};
   std::int64_t last_valid_sample_time_ns_{0};
   std::uint64_t last_time_generation_{0};
   WorldConvention last_world_convention_{WorldConvention::kUnknown};

@@ -110,4 +110,4 @@ echo
 cd "${PX4_ROOTFS}"
 # A background/headless session must keep stdin open. With immediate EOF the
 # PX4 shell continuously redraws its prompt and can grow px4.log by GB/minute.
-tail -f /dev/null | "${PX4_BIN}"
+tail -f /dev/null | "${PX4_BIN}" -s "${WS_DIR}/tools/simulation/px4_mid360_startup.sh"

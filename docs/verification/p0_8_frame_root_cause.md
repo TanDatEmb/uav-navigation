@@ -1,9 +1,11 @@
 # P0.8 frame/odometry root-cause evidence
 
-Status at this revision: the frame-contract implementation and real-motion SITL
-runtime have machine-readable evidence. The historical three-pair A/B report is
-not accepted as a whole because its queue-overhead gate is false; that result is
-preserved rather than hidden.
+Status at this revision: the frame-contract implementation, startup-Z regression,
+startup metadata race, and an armed takeoff/yaw development replay have
+machine-readable evidence. The historical three-pair A/B report is not accepted
+as a whole because its queue-overhead gate is false; that result is preserved
+rather than hidden. The armed replay is development evidence from a dirty tree,
+not canonical qualification.
 
 ## Executive conclusion
 
@@ -13,6 +15,71 @@ also published `header.frame_id=odom`. The shared spelling asserted a common
 world frame that did not exist. The supervisor then compared the two states
 directly. This allowed an origin/convention mismatch to appear as a residual;
 changing yaw signs or thresholds would only hide it.
+
+## Startup Z-origin root cause and corrective invariant
+
+The user-visible symptom was reproduced at the boundary: the raw PX4 local
+position was approximately zero on the ground, but the bridge and the LIO prior
+started near `-10 m`. The failing artifact
+`.artifacts/verification/p0.8-motion/20260803-220757/samples.jsonl` records
+`VehicleLocalPosition.z_ned ~= 0`, `delta_z_ned ~= -10.208 m`,
+`/px4/estimator_odometry.z = -10.3347 m`, and
+`lio_corrected.z = -10.3475 m`. The `delta_z_ned` field is PX4 EKF reset
+metadata, not vehicle altitude. The old bridge preserved that bootstrap reset
+offset in its continuous output; `startup_coincident` then copied the wrong
+origin into the LIO initial state. A real 3 m climb therefore appeared as a
+relative movement from the wrong origin (for example, `-10 -> -7`) instead of
+from zero.
+
+The fix is state-based:
+
+- after reset compensation, the first valid published bridge sample anchors
+  `px4_odom` position to zero once;
+- subsequent samples preserve their measured position increments, including
+  takeoff and landing deltas;
+- a later reset still requires detailed reset metadata and increments the reset
+  generation; it cannot silently create a new LIO origin;
+- if VehicleOdometry arrives before the first reset-metadata sample, the bridge
+  reinitializes its not-yet-published startup baseline once. This is safe only
+  before any downstream output exists; after output starts, missing metadata
+  remains a hard suppression condition.
+
+This is not a sign change, yaw correction, fixed `-10 m` subtraction, threshold
+loosening, or test sleep.
+
+The post-fix development replay
+`.artifacts/verification/p0.8-motion/20260804-004455-startup-z-rebase-rebaseline-full.jsonl`
+published 5,973 PX4 samples with `continuity_valid=true`,
+`startup_origin_rebased=true`, `startup_rebaseline_count=0`,
+`reset_generation=1`, `reset_suppressed_count=2`, and zero conversion or
+timestamp rejects. The ground-window medians were approximately `z=0.062 m`
+for PX4 and `z=0.027 m` for LIO; the raw PX4 local Z remained near zero while
+`delta_z_ned` remained approximately `-10.211 m`. This validates origin
+handling, not takeoff: PX4 arm was rejected (`VehicleCommandAck.result=1`),
+`pre_flight_checks_pass=false`, and raw Z did not move. The harness profile uses
+a 2 m takeoff setpoint in this replay; no 3 m acceptance claim is made.
+
+The subsequent armed full development replay
+`.artifacts/verification/p0.8-motion/20260804-005730-startup-z-rebase-full-armed.jsonl`
+covered ground, takeoff, yaw `+90 deg`, XY translation, yaw `-90 deg`, and
+landing for 60.008 s. It recorded 118 armed vehicle-status samples, 57 accepted
+arm ACKs (with 2 transient rejects while preflight settled), raw NED Z from
+`0.031 m` down to `-2.038 m`. The simulation harness disabled its missing-GCS
+requirement explicitly. The bridge
+output stayed near zero on ground (`z=-0.019..-0.007 m`) and followed takeoff
+to `z=-0.006..1.984 m`; LIO stayed near zero on ground (`z=0.003..0.003 m`)
+and followed the same takeoff to `z=0.003..1.901 m`. There was no `-10 m`
+startup offset. FAST-LIO remained `TRACKING` with
+`TOPIC_PRIOR_ACCEPTED`, 107 candidates, zero prior rejects/timeouts/fallbacks;
+the bridge reported `running`, `continuity_valid=true`,
+`startup_origin_rebased=true`, `reset_generation=2`, and zero conversion or
+timestamp rejects. Supervisor comparison remained valid and `HEALTHY:
+PX4_RESET_GRACE`.
+
+This replay uses the harness's 2 m NED takeoff setpoint; the unit invariant also
+checks a 3 m relative takeoff delta. It is intentionally reported as
+development evidence because the repository had uncommitted work during the
+run; it must not be confused with the source-clean qualification gate.
 
 ## Machine-readable reproduction
 

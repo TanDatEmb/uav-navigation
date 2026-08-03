@@ -40,6 +40,10 @@ class ResetCompensator {
  public:
   std::optional<ConvertedOdometry> observe(ConvertedOdometry sample,
                                            DetailedResetMetadata metadata = {});
+  // Rebase the continuous output frame at the first published sample. This
+  // is used once at bridge startup so an EKF bootstrap reset cannot become the
+  // origin of the downstream local-odometry contract.
+  std::optional<Eigen::Vector3d> rebasePositionAtCurrentOutput();
   void clear();
   std::uint64_t reset_generation() const { return reset_generation_; }
 

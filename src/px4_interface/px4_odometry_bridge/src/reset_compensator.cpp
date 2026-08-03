@@ -100,6 +100,16 @@ std::optional<ConvertedOdometry> ResetCompensator::observe(
   return sample;
 }
 
+std::optional<Eigen::Vector3d> ResetCompensator::rebasePositionAtCurrentOutput() {
+  if (!last_output_.has_value() || !last_output_->position.allFinite()) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d origin = last_output_->position;
+  continuity_translation_ -= origin;
+  last_output_->position -= origin;
+  return origin;
+}
+
 void ResetCompensator::clear() {
   initialized_ = false;
   last_counter_ = 0;

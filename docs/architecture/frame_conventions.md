@@ -9,7 +9,7 @@ relabeled as the other. The TF tree owned by this repository is:
 | Producer | `header.frame_id` | `child_frame_id` | World contract | Topic |
 | --- | --- | --- | --- | --- |
 | FAST-LIO corrected/propagated | `lio_odom` | `base_link` | ROS local ENU/Z-up, continuous local origin | `/lio/odometry_corrected`, `/lio/odometry_propagated` |
-| PX4 ingress bridge | `px4_odom` | `base_link` | PX4 source convention retained; NED is converted to ROS ENU, FRD remains PX4 local | `/px4/estimator_odometry` |
+| PX4 ingress bridge | `px4_odom` | `base_link` | PX4 source convention retained; NED is converted to ROS ENU, FRD remains PX4 local; position origin is anchored once at the first valid bridge output | `/px4/estimator_odometry` |
 | supervisor status | `lio_odom` | n/a | metadata is reported in the LIO contract | `/navigation/odometry_supervisor/status` |
 
 PX4 `VehicleOdometry.pose_frame` and `velocity_frame` are decoded before any
@@ -18,6 +18,12 @@ FRD pose/velocity uses the explicit body/world axis basis and is marked
 `px4_frd_local`. Mixed NED/FRD world fields are rejected. The bridge reports
 `source_pose_frame`, `source_velocity_frame`, `world_convention`, output frame,
 and conversion rejection reason in diagnostics.
+
+The bridge anchors the continuous `px4_odom` position at its first valid
+published sample, after reset compensation. This removes an EKF bootstrap
+reset offset from the local-odometry origin while preserving later motion
+increments. The anchor is one-shot; a later reset increments the bridge reset
+generation and is not silently treated as a new LIO origin.
 
 The supervisor captures one alignment record only after FAST-LIO has accepted a
 ground-startup prior from `px4_odom`. The configured transform is
