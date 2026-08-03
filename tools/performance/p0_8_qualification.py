@@ -187,11 +187,20 @@ def require_valid_dataset_runs(runs: list[dict[str, Any]], side: str) -> None:
 
 def host_key(run: dict[str, Any]) -> tuple[Any, ...]:
     host = run["run"].get("provenance", {}).get("host", {})
+    cpu_lines = tuple(line.strip() for line in host.get("cpu", "").splitlines()
+                      if line.startswith(("Architecture:", "CPU(s):", "Model name:",
+                                           "Thread(s) per core:", "Core(s) per socket:",
+                                           "Socket(s):")))
+    memory_lines = tuple(" ".join(line.strip().split()[:2])
+                         for line in host.get("memory", "").splitlines()
+                         if line.strip().startswith(("Mem:", "Swap:")))
+    power_lines = tuple(line.strip() for line in host.get("power_profile", "").splitlines()
+                        if "energy performance preference:" in line)
     return (
         host.get("kernel"),
-        host.get("cpu"),
-        host.get("memory"),
-        host.get("power_profile"),
+        cpu_lines,
+        memory_lines[:1],
+        power_lines,
     )
 
 
