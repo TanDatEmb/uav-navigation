@@ -96,5 +96,75 @@ TEST(InitialStatePriorPipelineTest, ValidTopicPriorAppliesOnceBeforeMapBootstrap
   EXPECT_EQ(pipeline.diagnostics().initial_prior.late_rejected_count, 1U);
 }
 
+TEST(InitialStatePriorPipelineTest, FutureTopicPriorWaitsForSensorEpoch) {
+  FastLioPipeline pipeline(topicConfig());
+  MeasurementGroup first;
+  first.scan.start_time = Timestamp(1'000'000'000);
+  first.scan.end_time = Timestamp(1'000'000'000);
+  first.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  first.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  first.propagation_start_time = Timestamp(800'000'000);
+  first.has_start_bracket = true;
+  first.has_end_bracket = true;
+  first.max_imu_gap_ns = 100'000'000;
+
+  EXPECT_EQ(pipeline.process(first).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(1'100'000'000)).ok());
+  const ProcessResult waiting = pipeline.process(first);
+  EXPECT_EQ(waiting.rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  EXPECT_TRUE(waiting.diagnostics.initial_prior.waiting_for_sensor_time);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.time_delta_ns, -100'000'000);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.candidate_timestamp_ns, 1'100'000'000);
+
+  MeasurementGroup second = first;
+  second.scan.start_time = Timestamp(1'200'000'000);
+  second.scan.end_time = Timestamp(1'200'000'000);
+  second.imu_samples = {imu(1'000'000'000), imu(1'100'000'000), imu(1'200'000'000)};
+  second.propagation_start_time = Timestamp(1'000'000'000);
+  const ProcessResult applied = pipeline.process(second);
+  EXPECT_EQ(applied.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(applied.diagnostics.initial_prior.reason, "TOPIC_PRIOR_ACCEPTED");
+  EXPECT_FALSE(applied.diagnostics.initial_prior.fallback_applied);
+}
+
+TEST(InitialStatePriorPipelineTest, FutureTopicPriorSurvivesTimeoutUntilSensorCatchesUp) {
+  EstimatorConfig config = topicConfig();
+  config.initial_prior.topic_wait_timeout_ns = 1;
+  FastLioPipeline pipeline(config);
+  MeasurementGroup first;
+  first.scan.start_time = Timestamp(1'000'000'000);
+  first.scan.end_time = Timestamp(1'000'000'000);
+  first.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  first.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  first.propagation_start_time = Timestamp(800'000'000);
+  first.has_start_bracket = true;
+  first.has_end_bracket = true;
+  first.max_imu_gap_ns = 100'000'000;
+
+  EXPECT_EQ(pipeline.process(first).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(2'000'000'000)).ok());
+
+  MeasurementGroup timeout = first;
+  timeout.scan.start_time = Timestamp(1'500'000'000);
+  timeout.scan.end_time = Timestamp(1'500'000'000);
+  timeout.imu_samples = {imu(1'000'000'000), imu(1'250'000'000), imu(1'500'000'000)};
+  timeout.propagation_start_time = Timestamp(1'000'000'000);
+  const ProcessResult waiting = pipeline.process(timeout);
+  EXPECT_EQ(waiting.rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  EXPECT_TRUE(waiting.diagnostics.initial_prior.waiting_for_sensor_time);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.future_rejected_count, 0U);
+  EXPECT_FALSE(waiting.diagnostics.initial_prior.fallback_applied);
+
+  MeasurementGroup caught_up = timeout;
+  caught_up.scan.start_time = Timestamp(2'100'000'000);
+  caught_up.scan.end_time = Timestamp(2'100'000'000);
+  caught_up.imu_samples = {imu(1'500'000'000), imu(1'800'000'000), imu(2'100'000'000)};
+  caught_up.propagation_start_time = Timestamp(1'500'000'000);
+  const ProcessResult applied = pipeline.process(caught_up);
+  EXPECT_EQ(applied.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(applied.diagnostics.initial_prior.reason, "TOPIC_PRIOR_ACCEPTED");
+  EXPECT_FALSE(applied.diagnostics.initial_prior.fallback_applied);
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

@@ -140,6 +140,9 @@ struct InitialPriorDiagnostics {
   std::int64_t candidate_timestamp_ns{0};
   std::int64_t application_timestamp_ns{0};
   std::int64_t candidate_age_ns{0};
+  std::int64_t time_delta_ns{0};
+  std::string clock_domain{"unknown"};
+  bool waiting_for_sensor_time{false};
   std::size_t candidate_count{0};
   std::size_t accepted_count{0};
   std::size_t rejected_count{0};

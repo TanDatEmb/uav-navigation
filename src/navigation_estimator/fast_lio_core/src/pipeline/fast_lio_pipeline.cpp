@@ -868,6 +868,10 @@ InitialStatePrior FastLioPipeline::makeFixedPrior(const Timestamp& sample_time) 
 
 bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time) {
   const auto source = config_.initial_prior.source;
+  diagnostics_.initial_prior.application_timestamp_ns = application_time.nanoseconds();
+  diagnostics_.initial_prior.clock_domain =
+      std::string(toString(application_time.clock_domain()));
+  diagnostics_.initial_prior.waiting_for_sensor_time = false;
   if (source == InitialStatePriorSource::kZero || source == InitialStatePriorSource::kFixed) {
     diagnostics_.initial_prior.status = InitialPriorStatus::kApplied;
     if (source == InitialStatePriorSource::kFixed) {
@@ -885,6 +889,9 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
     candidate = initial_prior_candidate_;
   }
   if (candidate.has_value()) {
+    diagnostics_.initial_prior.candidate_timestamp_ns = candidate->sample_time.nanoseconds();
+    diagnostics_.initial_prior.time_delta_ns =
+        application_time.nanoseconds() - candidate->sample_time.nanoseconds();
     if (!candidate->sample_time.sameClockDomain(application_time)) {
       std::scoped_lock lock(initial_prior_mutex_);
       ++prior_timestamp_rejected_count_;
@@ -892,11 +899,9 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
       initial_prior_candidate_.reset();
       diagnostics_.initial_prior.reason = "TOPIC_PRIOR_CLOCK_DOMAIN_MISMATCH";
     } else if (candidate->sample_time.nanoseconds() > application_time.nanoseconds()) {
-      std::scoped_lock lock(initial_prior_mutex_);
-      ++prior_future_rejected_count_;
-      ++prior_rejected_count_;
-      initial_prior_candidate_.reset();
-      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_IS_FUTURE";
+      diagnostics_.initial_prior.waiting_for_sensor_time = true;
+      diagnostics_.initial_prior.status = InitialPriorStatus::kWaiting;
+      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAITING_FOR_SENSOR_TIME";
     } else {
       const std::int64_t age = application_time.nanoseconds() - candidate->sample_time.nanoseconds();
       diagnostics_.initial_prior.candidate_age_ns = age;
@@ -927,6 +932,17 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
     return false;
   }
   ++diagnostics_.initial_prior.wait_timeout_count;
+  if (candidate.has_value() &&
+      candidate->sample_time.sameClockDomain(application_time) &&
+      candidate->sample_time.nanoseconds() > application_time.nanoseconds()) {
+    // A candidate in the same clock domain can become applicable as the
+    // sensor epoch advances.  The wall-clock-independent timeout must not
+    // discard it or trigger fallback while that catch-up is still possible.
+    diagnostics_.initial_prior.status = InitialPriorStatus::kWaiting;
+    diagnostics_.initial_prior.waiting_for_sensor_time = true;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAITING_FOR_SENSOR_TIME";
+    return false;
+  }
   if (config_.initial_prior.context == InitialStatePriorContext::kInFlightReinitialization ||
       config_.initial_prior.ground_fallback == InitialPriorFallback::kReject) {
     diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
