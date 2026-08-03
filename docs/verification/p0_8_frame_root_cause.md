@@ -140,3 +140,22 @@ The motion driver is `tools/diagnostics/sitl_motion_scenario.py`; it records
 native PX4 timestamps, raw and converted odometry, LIO corrected/propagated
 odometry, reset metadata, point-cloud quality, diagnostics, command ACKs and
 phase events in one JSONL artifact.
+
+A repeat on the final source revision also completed the motion phases and did
+not reproduce the frame/odometry divergence, but it is not a qualification
+result because the host run accumulated transport backlog:
+
+```text
+artifact=.artifacts/verification/p0.8-motion/20260803-232450-full-reset-se3-it10-final.jsonl
+source_revision=9c193a36300c123759ebd32bb715093219cb769f; dirty=false
+estimator=548/548 TRACKING; supervisor=1183/1183 HEALTHY
+correction_failure_count=0; conversion_rejected=0; timestamp_rejected=1
+processing_us=p50 29319; p95 43745; max 57383
+queue_high_water=66/16; ROS IMU gap max=260000000 ns
+```
+
+The two clean runs therefore separate the fixed frame invariant from a
+remaining host/DDS-startup performance repeatability issue. The latter keeps
+the canonical SITL qualification gate closed until it is reproduced under a
+controlled host load or otherwise explained; it is not hidden by selecting
+only the lower-backlog run.
