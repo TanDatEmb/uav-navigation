@@ -92,9 +92,17 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
  private:
   void on_odometry(const VehicleOdometry &message) {
     const auto timestamp_ns = checked_microseconds_to_nanoseconds(message.timestamp_sample);
-    if (!timestamp_ns) return;
+    if (!timestamp_ns) {
+      ++timestamp_rejected_count_;
+      publish_diagnostics("rejected", "invalid PX4 timestamp");
+      return;
+    }
     const auto time_result = time_validator_.observe(message.timestamp_sample, *timestamp_ns);
-    if (!time_result.accepted) return;
+    if (!time_result.accepted) {
+      ++timestamp_rejected_count_;
+      publish_diagnostics("rejected", time_result.reason);
+      return;
+    }
 
     Px4OdometrySample sample;
     sample.timestamp_ns = *timestamp_ns;
@@ -115,15 +123,28 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     sample.reset_counter = message.reset_counter;
     sample.angular_velocity_valid = sample.angular_velocity.allFinite();
     auto converted = converter_.convert(sample);
-    if (!converted) return;
+    if (!converted) {
+      ++conversion_rejected_count_;
+      publish_diagnostics("rejected", "PX4 frame conversion rejected sample");
+      return;
+    }
     const bool detailed = latest_detail_timestamp_us_.has_value() &&
                           std::llabs(static_cast<long long>(*latest_detail_timestamp_us_) -
                                      static_cast<long long>(message.timestamp_sample)) <= 50'000;
     auto continuous = reset_compensator_.observe(*converted.value, {.available = detailed});
-    if (!continuous) return;
+    if (!continuous) {
+      ++reset_suppressed_count_;
+      publish_diagnostics("suppressed", "PX4 reset transition awaiting detailed metadata");
+      return;
+    }
     continuous->time_generation = time_result.generation;
     history_.push(*continuous);
-    output_->publish(to_ros(*continuous));
+    const auto output = to_ros(*continuous);
+    last_px4_timestamp_sample_ns_ = continuous->timestamp_ns;
+    last_px4_ros_output_stamp_ns_ =
+        static_cast<std::int64_t>(output.header.stamp.sec) * 1'000'000'000LL +
+        static_cast<std::int64_t>(output.header.stamp.nanosec);
+    output_->publish(output);
     publish_diagnostics("running", "VehicleOdometry converted and published");
   }
 
@@ -145,9 +166,16 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     add_value("output_frame", "odom");
     add_value("output_child_frame", "base_link");
     add_value("simulation_clock", simulation_clock_ ? "true" : "false");
+    add_value("bridge_use_sim_time", get_parameter("use_sim_time").as_bool() ? "true" : "false");
     add_value("xrce_synchronized", xrce_synchronized_ ? "true" : "false");
     add_value("timesync_seen", timesync_seen_ ? "true" : "false");
+    add_value("px4_timestamp_sample_ns", std::to_string(last_px4_timestamp_sample_ns_));
+    add_value("px4_ros_output_stamp_ns", std::to_string(last_px4_ros_output_stamp_ns_));
+    add_value("bridge_node_now_ns", std::to_string(now().nanoseconds()));
     add_value("buffer_size", std::to_string(history_.size()));
+    add_value("timestamp_rejected_count", std::to_string(timestamp_rejected_count_));
+    add_value("conversion_rejected_count", std::to_string(conversion_rejected_count_));
+    add_value("reset_suppressed_count", std::to_string(reset_suppressed_count_));
     array.status.push_back(status);
     diagnostics_->publish(array);
   }
@@ -193,6 +221,11 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   bool simulation_clock_{false};
   bool xrce_synchronized_{false};
   bool timesync_seen_{false};
+  std::int64_t last_px4_timestamp_sample_ns_{0};
+  std::int64_t last_px4_ros_output_stamp_ns_{0};
+  std::uint64_t timestamp_rejected_count_{0};
+  std::uint64_t conversion_rejected_count_{0};
+  std::uint64_t reset_suppressed_count_{0};
 };
 
 }  // namespace px4_odometry_bridge
