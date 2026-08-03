@@ -77,7 +77,7 @@ struct RosParameters {
   std::int64_t lidar_queue_capacity{};
   std::int64_t maximum_processing_lag_ms{};
   std::string overload_policy;
-  bool propagated_odometry_enabled{false};
+  bool propagated_odometry_enabled{true};
   double propagated_odometry_publish_rate_hz{50.0};
   std::int64_t propagated_odometry_imu_ingress_capacity{4096};
   std::int64_t propagated_odometry_imu_history_duration_ns{1'000'000'000};
