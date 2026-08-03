@@ -21,6 +21,7 @@ import rclpy
 from diagnostic_msgs.msg import DiagnosticArray
 from nav_msgs.msg import Odometry
 from navigation_interfaces.msg import OdometrySupervisorStatus
+from px4_msgs.msg import VehicleOdometry
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rosgraph_msgs.msg import Clock
@@ -44,6 +45,31 @@ def diagnostic_values(message: DiagnosticArray, name: str) -> dict[str, str]:
         if status.name == name:
             return {item.key: item.value for item in status.values}
     return {}
+
+
+def odometry_snapshot(message: Odometry) -> dict[str, Any]:
+    return {
+        "stamp_ns": ns(message.header.stamp),
+        "frame_id": message.header.frame_id,
+        "child_frame_id": message.child_frame_id,
+        "position_xyz": [message.pose.pose.position.x, message.pose.pose.position.y,
+                          message.pose.pose.position.z],
+        "orientation_xyzw": [message.pose.pose.orientation.x, message.pose.pose.orientation.y,
+                              message.pose.pose.orientation.z, message.pose.pose.orientation.w],
+    }
+
+
+def raw_px4_snapshot(message: VehicleOdometry) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(message.timestamp),
+        "timestamp_sample_us": int(message.timestamp_sample),
+        "pose_frame": int(message.pose_frame),
+        "velocity_frame": int(message.velocity_frame),
+        "position": [float(value) for value in message.position],
+        "q_wxyz": [float(value) for value in message.q],
+        "velocity": [float(value) for value in message.velocity],
+        "reset_counter": int(message.reset_counter),
+    }
 
 
 class ProcessMetricSampler:
@@ -110,6 +136,15 @@ class Probe(Node):
         self.latest_status: OdometrySupervisorStatus | None = None
         self.status_events = StatusEventAccumulator()
         self.latest_lio: dict[str, str] = {}
+        self.latest_px4_diagnostics: dict[str, str] = {}
+        self.latest_supervisor_diagnostics: dict[str, str] = {}
+        self.latest_px4_raw: dict[str, Any] | None = None
+        self.latest_px4_odometry: dict[str, Any] | None = None
+        self.latest_corrected_odometry: dict[str, Any] | None = None
+        self.latest_propagated_odometry: dict[str, Any] | None = None
+        self.provenance_events: list[dict[str, Any]] = []
+        self.last_prior_applied = False
+        self.last_provenance_transition_count: int | None = None
         self.status_samples: list[dict[str, Any]] = []
         self.rows: list[dict[str, Any]] = []
         self.wall_started = time.monotonic()
@@ -120,7 +155,14 @@ class Probe(Node):
                                  "/navigation/odometry_supervisor/status",
                                  self.on_status, 20)
         self.create_subscription(DiagnosticArray, "/lio/diagnostics", self.on_lio, 20)
+        self.create_subscription(DiagnosticArray, "/px4/diagnostics", self.on_px4_diagnostics, 20)
+        self.create_subscription(DiagnosticArray,
+                                 "/navigation/odometry_supervisor/diagnostics",
+                                 self.on_supervisor_diagnostics, 20)
         self.create_subscription(Odometry, "/lio/odometry_corrected", self.on_odometry, 20)
+        self.create_subscription(Odometry, "/lio/odometry_propagated", self.on_propagated_odometry, 20)
+        self.create_subscription(Odometry, "/px4/odometry_ros", self.on_px4_odometry, 20)
+        self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.on_raw_px4, 20)
         self.timer = self.create_timer(1.0, self.sample)
 
     def on_clock(self, message: Clock) -> None:
@@ -135,9 +177,51 @@ class Probe(Node):
 
     def on_lio(self, message: DiagnosticArray) -> None:
         self.latest_lio = diagnostic_values(message, "fast_lio/estimator")
+        prior_applied = self.latest_lio.get("initial_prior_applied") == "true"
+        if self.mode == "on" and prior_applied and not self.last_prior_applied:
+            self.record_provenance_event("prior_applied")
+        self.last_prior_applied = prior_applied
 
-    def on_odometry(self, _message: Odometry) -> None:
-        pass
+    def on_px4_diagnostics(self, message: DiagnosticArray) -> None:
+        self.latest_px4_diagnostics = diagnostic_values(message, "px4_odometry_bridge")
+
+    def on_supervisor_diagnostics(self, message: DiagnosticArray) -> None:
+        self.latest_supervisor_diagnostics = diagnostic_values(message, "odometry_supervisor")
+        if self.mode != "on":
+            return
+        transition_text = self.latest_supervisor_diagnostics.get("state_transition_count")
+        if transition_text is None:
+            return
+        transition_count = int(transition_text)
+        if (self.last_provenance_transition_count is None or
+                transition_count != self.last_provenance_transition_count):
+            self.record_provenance_event("supervisor_state_transition")
+        self.last_provenance_transition_count = transition_count
+
+    def on_raw_px4(self, message: VehicleOdometry) -> None:
+        self.latest_px4_raw = raw_px4_snapshot(message)
+
+    def on_px4_odometry(self, message: Odometry) -> None:
+        self.latest_px4_odometry = odometry_snapshot(message)
+
+    def on_propagated_odometry(self, message: Odometry) -> None:
+        self.latest_propagated_odometry = odometry_snapshot(message)
+
+    def on_odometry(self, message: Odometry) -> None:
+        self.latest_corrected_odometry = odometry_snapshot(message)
+
+    def record_provenance_event(self, event: str) -> None:
+        self.provenance_events.append({
+            "event": event,
+            "event_stamp_ns": self.clock_ns,
+            "supervisor_diagnostics": dict(self.latest_supervisor_diagnostics),
+            "lio_diagnostics": dict(self.latest_lio),
+            "px4_diagnostics": dict(self.latest_px4_diagnostics),
+            "raw_px4_vehicle_odometry": self.latest_px4_raw,
+            "px4_bridge_odometry": self.latest_px4_odometry,
+            "lio_corrected_odometry": self.latest_corrected_odometry,
+            "lio_propagated_odometry": self.latest_propagated_odometry,
+        })
 
     def process_metrics(self) -> dict[str, Any]:
         result = self.process_sampler.sample()
@@ -235,6 +319,7 @@ class Probe(Node):
             "supervisor_peak_rss_bytes": max(supervisor_rss) if supervisor_rss else None,
             "fast_lio_corrected_p95_us": maximum("fast_lio_corrected_p95_us"),
             "fast_lio_max_queue_depth": maximum("fast_lio_max_queue_depth"),
+            "provenance_events": self.provenance_events,
             "rows": self.rows,
         }
         for role in ("bridge", "fast_lio"):

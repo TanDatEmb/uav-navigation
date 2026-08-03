@@ -47,11 +47,19 @@ struct OdometryState {
 
 struct Residual {
   bool valid{false};
+  bool heading_observable{false};
   std::int64_t timestamp_ns{0};
   double position_error_m{0.0};
   double velocity_error_m_s{0.0};
   double orientation_error_rad{0.0};
   double yaw_error_rad{0.0};
+  double euler_yaw_error_rad{0.0};
+  double robust_heading_lio_rad{0.0};
+  double robust_heading_px4_rad{0.0};
+  Eigen::Vector3d q_error_axis{Eigen::Vector3d::Zero()};
+  double body_z_dot{1.0};
+  double body_x_horizontal_norm_lio{0.0};
+  double body_x_horizontal_norm_px4{0.0};
   double position_error_growth_m_s{0.0};
 };
 

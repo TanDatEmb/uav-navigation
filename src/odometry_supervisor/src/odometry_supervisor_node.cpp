@@ -583,10 +583,24 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     add_value("stale_residual_reuse_count", std::to_string(output.stale_residual_reuse_count));
     add_value("external_odometry_allowed", output.external_odometry_allowed ? "true" : "false");
     add_value("reinitialization_requested", output.reinitialization_requested ? "true" : "false");
+    add_value("state_transition_count", std::to_string(output.state_transition_count));
+    add_value("reason", output.reason);
     add_value("position_error_m", std::to_string(output.residual.position_error_m));
     add_value("velocity_error_m_s", std::to_string(output.residual.velocity_error_m_s));
     add_value("orientation_error_rad", std::to_string(output.residual.orientation_error_rad));
     add_value("yaw_error_rad", std::to_string(output.residual.yaw_error_rad));
+    add_value("heading_observable", output.residual.heading_observable ? "true" : "false");
+    add_value("euler_yaw_error_rad", std::to_string(output.residual.euler_yaw_error_rad));
+    add_value("robust_heading_lio_rad", std::to_string(output.residual.robust_heading_lio_rad));
+    add_value("robust_heading_px4_rad", std::to_string(output.residual.robust_heading_px4_rad));
+    add_value("q_error_axis_x", std::to_string(output.residual.q_error_axis.x()));
+    add_value("q_error_axis_y", std::to_string(output.residual.q_error_axis.y()));
+    add_value("q_error_axis_z", std::to_string(output.residual.q_error_axis.z()));
+    add_value("body_z_dot", std::to_string(output.residual.body_z_dot));
+    add_value("body_x_horizontal_norm_lio",
+              std::to_string(output.residual.body_x_horizontal_norm_lio));
+    add_value("body_x_horizontal_norm_px4",
+              std::to_string(output.residual.body_x_horizontal_norm_px4));
     add_value("position_error_growth_m_s", std::to_string(output.residual.position_error_growth_m_s));
     array.status.push_back(std::move(diagnostic));
     diagnostics_->publish(std::move(array));

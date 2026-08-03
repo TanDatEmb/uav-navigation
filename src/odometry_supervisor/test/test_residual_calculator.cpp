@@ -17,6 +17,13 @@ odometry_supervisor::OdometryState state(std::int64_t timestamp, double yaw = 0.
   result.valid = true;
   return result;
 }
+
+odometry_supervisor::OdometryState state(std::int64_t timestamp,
+                                         const Eigen::Quaterniond& orientation) {
+  auto result = state(timestamp);
+  result.orientation_odom_base = orientation;
+  return result;
+}
 }  // namespace
 
 TEST(OdometryResidual, IdenticalStatesProduceZeroResidual) {
@@ -51,6 +58,40 @@ TEST(OdometryResidual, WrapsYawAcrossPi) {
       state(1'000'000'000, -M_PI + 0.01), state(1'000'000'000, M_PI - 0.01));
   ASSERT_TRUE(result.has_value());
   EXPECT_NEAR(std::abs(result->yaw_error_rad), 0.02, 1e-9);
+}
+
+TEST(OdometryResidual, UsesProjectedBodyXHeadingInsteadOfEulerYaw) {
+  constexpr double yaw = 0.7;
+  const Eigen::Quaterniond tilted =
+      Eigen::Quaterniond(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ())) *
+      Eigen::Quaterniond(Eigen::AngleAxisd(0.35, Eigen::Vector3d::UnitY())) *
+      Eigen::Quaterniond(Eigen::AngleAxisd(-0.25, Eigen::Vector3d::UnitX()));
+  const auto result = odometry_supervisor::ResidualCalculator::compare(
+      state(1'000'000'000, tilted), state(1'000'000'000, yaw));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->heading_observable);
+  EXPECT_NEAR(result->yaw_error_rad, 0.0, 1e-12);
+  EXPECT_NEAR(result->robust_heading_lio_rad, yaw, 1e-12);
+  EXPECT_NEAR(result->robust_heading_px4_rad, yaw, 1e-12);
+}
+
+TEST(OdometryResidual, RejectsUnobservableVerticalBodyXHeading) {
+  const Eigen::Quaterniond vertical_body_x(
+      Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitY()));
+  const auto result = odometry_supervisor::ResidualCalculator::compare(
+      state(1'000'000'000, vertical_body_x), state(1'000'000'000));
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST(OdometryResidual, ExposesQuaternionErrorProvenance) {
+  const auto result = odometry_supervisor::ResidualCalculator::compare(
+      state(1'000'000'000, 0.2), state(1'000'000'000, 0.0));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->orientation_error_rad, 0.2, 1e-12);
+  EXPECT_NEAR(result->q_error_axis.x(), 0.0, 1e-12);
+  EXPECT_NEAR(result->q_error_axis.y(), 0.0, 1e-12);
+  EXPECT_NEAR(result->q_error_axis.z(), 1.0, 1e-12);
+  EXPECT_NEAR(result->body_z_dot, 1.0, 1e-12);
 }
 
 TEST(OdometryResidual, RequiresSameEpochAndRejectsInvalidState) {

@@ -56,6 +56,35 @@ continues to use `steady_clock`, so RPC timeout behavior remains independent
 of simulation clock pauses while state freshness and persistence remain in the
 simulation-time domain.
 
+### P0.8-R21 — yaw residual used an Euler extraction with the wrong semantics
+
+The residual calculator previously obtained yaw from
+`rotation.eulerAngles(0, 1, 2).z()`. That extraction is not the P0.6 heading
+definition and can differ by approximately pi near the active roll/pitch
+configuration even when the full quaternion error is small.
+
+The implementation now defines the yaw residual from the projected body-X
+heading:
+
+```text
+heading(R) = atan2(R(1,0), R(0,0))
+```
+
+The comparison is rejected when either horizontal projection norm is below
+`1e-6`, so an unobservable heading cannot silently pass the supervisor gate.
+The residual also retains the former Euler yaw, quaternion error axis, full
+orientation angle, `body_z_dot`, both projected-heading values, and both
+horizontal norms for provenance only. The supervisor diagnostic publishes
+these values, while the qualification probe records them only at
+`prior_applied` and supervisor state-transition events together with raw PX4,
+bridge, corrected, propagated, and LIO/PX4 diagnostic snapshots.
+
+Focused coverage now includes tilted states with equal projected heading,
+the unobservable vertical body-X case, quaternion error-axis provenance, and
+the existing wrap/sign contracts. The focused supervisor package passes all
+31 tests; `make check` passes with 334 tests and the dataset guard; vendor
+freeze validation also passes.
+
 ## Corrective ON smoke
 
 The corrected binary was rebuilt in the normal sourced workspace and exercised
@@ -82,33 +111,40 @@ The comparison lifecycle and probe accounting now pass their specific gates:
 | aligned-comparison age p99 | `80 ms` |
 | alignment gap p99 | `0 ms` |
 
-The smoke nevertheless remains blocked by a separate runtime residual result:
+The smoke nevertheless remained blocked by a separate runtime residual result:
 after warm-up the supervisor was `DIVERGED: RESIDUAL_DIVERGED`, with
-`comparison_valid=true` but yaw residual approximately `-3.141113 rad`.
-This observation was exposed only after comparison validity was repaired. It
-has not been attributed to PX4, bridge conversion, FAST-LIO, frame geometry,
-or prior semantics, and no such component was changed in this corrective task.
+`comparison_valid=true`, full quaternion orientation error `0.000807 rad`,
+and Euler yaw residual approximately `-3.141113 rad`. This classifies the
+finding as the yaw-extraction artifact addressed by P0.8-R21, rather than a
+measured pi-radian full-orientation mismatch. The `smoke2` binary predates
+R21 and is therefore classification evidence only, not post-fix acceptance.
 
-The corrected smoke therefore demonstrates that P0.8-R18, P0.8-R19, and
-P0.8-R20 are addressed, but it does not satisfy the complete ON health gate.
-The six-run A/B qualification and 1,200-simulated-second memory run remain
-`NOT RUN`.
+The corrected pre-R21 smoke therefore demonstrates that P0.8-R18, P0.8-R19,
+and P0.8-R20 are addressed and identifies the R21 metric defect. The required
+post-R21 ON smoke has not completed: one attempt received no ROS samples from
+the `/clock`/odometry transport, and a second attempt failed before FAST-LIO
+startup when `/px4/odometry_ros` did not become available. Both sessions were
+cleaned up and excluded from acceptance. The six-run A/B qualification and
+1,200-simulated-second memory run remain `NOT RUN`.
+
+R21 implementation status is `PASS`; R21 runtime acceptance is `BLOCKED` until
+the pinned SITL session produces a valid post-fix measurement artifact.
 
 ## Corrective-task conclusion
 
 ```text
 P0.8 status: BLOCKED
 
-The asynchronous comparison lifecycle and probe event accounting corrections
-are implemented and tested. Corrected smoke evidence shows sustained
-comparison_valid=1.0, monitoring_available=1.0, and zero measurement-window
-query timeouts. The smoke still fails the required post-warm-up HEALTHY gate
-because the supervisor enters RESIDUAL_DIVERGED with an approximately pi-rad
-yaw residual. That residual requires a separate evidence-based investigation;
-no PX4, bridge, FAST-LIO, frame, prior, or threshold workaround was applied.
+The asynchronous comparison lifecycle, probe event accounting, and R21 yaw
+semantics correction are implemented and tested. Existing smoke evidence
+shows sustained comparison_valid=1.0, monitoring_available=1.0, and zero
+measurement-window query timeouts; it also proved the old pi-rad value was an
+Euler extraction artifact because the full quaternion error was only
+`0.000807 rad`. The post-R21 ON smoke is still blocked by ROS/SITL transport
+startup in this environment, so no post-fix runtime health claim is made.
 
-Do not start the full A/B or memory qualification until the residual finding
-is resolved and the ON smoke remains HEALTHY for the complete measurement
+Do not start the full A/B or memory qualification until the post-R21 ON smoke
+produces a valid artifact and remains HEALTHY for the complete measurement
 window.
 ```
 
