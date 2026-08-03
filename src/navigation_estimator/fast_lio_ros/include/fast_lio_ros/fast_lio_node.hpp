@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -59,6 +60,11 @@ class FastLioNode : public rclcpp::Node {
   void publishAvailableResults();
   void publishTransportSnapshot();
 
+  struct PendingLidarTiming {
+    std::int64_t scan_end_ns{0};
+    std::chrono::steady_clock::time_point started_at;
+  };
+
   RosParameters parameters_;
   EstimatorProfile profile_;
   FastLioPipeline pipeline_;
@@ -86,6 +92,7 @@ class FastLioNode : public rclcpp::Node {
   ProcessingStatistics processing_statistics_;
   RuntimeDiagnostics runtime_diagnostics_;
   RuntimeStatistics runtime_statistics_;
+  std::deque<PendingLidarTiming> pending_lidar_timings_;
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::int64_t previous_ros_imu_ns_{-1};
   std::uint64_t correction_sequence_{0U};

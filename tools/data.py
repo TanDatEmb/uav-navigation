@@ -23,6 +23,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools/performance"))
+from p0_8_provenance import make_provenance  # noqa: E402
+
 CATALOG = ROOT / "datasets" / "catalog"
 RAW_SUFFIXES = {".bag", ".mcap", ".db3"}
 GENERATED_LIMIT = 10 * 1024 * 1024
@@ -570,9 +573,10 @@ def new_run_directory(
 
 
 def write_run_json(
-    output: Path, action: str, context: dict, counts: dict[str, int]
+    output: Path, action: str, context: dict, counts: dict[str, int],
+    provenance: dict | None = None, **extra: object,
 ) -> None:
-    atomic_json(output / "run.json", {
+    payload = {
         "schema_version": 1,
         "action": action,
         "dataset": context["id"],
@@ -582,7 +586,11 @@ def write_run_json(
         "git_short_sha": git_short_sha(),
         "input": context["input"],
         "observed_counts": counts,
-    })
+    }
+    if provenance is not None:
+        payload["provenance"] = provenance
+    payload.update(extra)
+    atomic_json(output / "run.json", payload)
 
 
 def reject_non_finite_csv(output: Path) -> None:
@@ -636,8 +644,19 @@ def run_offline(args: argparse.Namespace, home: Path, smoke: bool) -> int:
 def run_replay(args: argparse.Namespace, home: Path) -> int:
     context = dataset_context(args.dataset, home)
     counts = bag_topic_counts(context)
+    provenance = make_provenance(
+        ROOT,
+        config=context["config"],
+        dataset=context["id"],
+        rate=args.rate,
+    )
     output = new_run_directory(
         context["id"], f"replay-{args.rate}x", create=False
+    )
+    output.mkdir(parents=True, exist_ok=False)
+    write_run_json(
+        output, "replay", context, counts, provenance,
+        status="started", replay_returncode=None, estimator_returncode=None,
     )
     command = [
         sys.executable, str(ROOT / "tools/runtime/ros_replay.py"), "run",
@@ -646,6 +665,7 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
         "--imu-topic", str(context["input"]["imu_topic"]),
         "--lidar-topic", str(context["input"]["lidar_topic"]),
         "--rate", str(args.rate),
+        "--allow-existing-output",
     ]
     if args.enable_rviz:
         command.extend([
@@ -659,8 +679,11 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
         "--drain-timeout", str(args.drain_timeout),
     ])
     result = subprocess.run(command, cwd=ROOT)
-    if result.returncode == 0:
-        write_run_json(output, "replay", context, counts)
+    write_run_json(
+        output, "replay", context, counts, provenance,
+        status="passed" if result.returncode == 0 else "failed",
+        wrapper_returncode=result.returncode,
+    )
     return result.returncode
 
 

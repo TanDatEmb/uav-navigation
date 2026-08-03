@@ -338,7 +338,16 @@ def rviz_command(
 
 def run(args: argparse.Namespace) -> int:
     requested_rviz_command = rviz_command(args)
-    args.output.mkdir(parents=True, exist_ok=False)
+    if args.output.exists():
+        if not args.allow_existing_output:
+            raise RuntimeError(f"artifact directory already exists: {args.output}")
+        unexpected = [path.name for path in args.output.iterdir() if path.name != "run.json"]
+        if unexpected:
+            raise RuntimeError(
+                f"existing artifact directory is not provenance-only: {unexpected}"
+            )
+    else:
+        args.output.mkdir(parents=True, exist_ok=False)
     state_path = args.output / "diagnostics_state.json"
     registry_path = args.output / "process_groups.json"
     logs: list[Any] = []
@@ -492,6 +501,7 @@ def parser() -> argparse.ArgumentParser:
     replay.add_argument("--bag", type=Path, required=True)
     replay.add_argument("--config", type=Path, required=True)
     replay.add_argument("--output", type=Path, required=True)
+    replay.add_argument("--allow-existing-output", action="store_true")
     replay.add_argument("--imu-topic", required=True)
     replay.add_argument("--lidar-topic", required=True)
     replay.add_argument("--rate", type=float, default=1.0)

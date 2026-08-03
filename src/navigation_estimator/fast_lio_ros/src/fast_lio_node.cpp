@@ -443,6 +443,7 @@ void FastLioNode::processingLoop() {
         is_imu ? std::get<ImuSample>(measurement).time.nanoseconds()
                : std::get<LidarScan>(measurement).end_time.nanoseconds();
     Status status;
+    const auto pipeline_push_started = std::chrono::steady_clock::now();
     if (is_imu) {
       status = pipeline_.pushImu(std::get<ImuSample>(measurement));
       std::lock_guard lock(input_mutex_);
@@ -454,7 +455,20 @@ void FastLioNode::processingLoop() {
       }
     } else {
       status = pipeline_.pushLidar(std::move(std::get<LidarScan>(measurement)));
+      const auto pipeline_push_finished = std::chrono::steady_clock::now();
+      if (status.ok()) {
+        pending_lidar_timings_.push_back(
+            PendingLidarTiming{measurement_time_ns, processing_started});
+        constexpr std::size_t kMaximumPendingLidarTimings = 8192U;
+        if (pending_lidar_timings_.size() > kMaximumPendingLidarTimings) {
+          pending_lidar_timings_.pop_front();
+        }
+      }
       std::lock_guard lock(input_mutex_);
+      runtime_statistics_.recordPipelinePushLidar(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              pipeline_push_finished - pipeline_push_started)
+              .count());
       status.ok() ? ++ingress_diagnostics_.core_accepted_lidar_count
                   : ++ingress_diagnostics_.lidar_drop_count;
       if (!status.ok()) {
@@ -508,7 +522,12 @@ void FastLioNode::processingLoop() {
 }
 
 void FastLioNode::publishAvailableResults() {
-  while (const auto result = pipeline_.processNext()) {
+  while (true) {
+    const auto result_started = std::chrono::steady_clock::now();
+    const auto result = pipeline_.processNext();
+    if (!result.has_value()) {
+      break;
+    }
     auto augmented = *result;
     {
       std::lock_guard lock(input_mutex_);
@@ -533,6 +552,34 @@ void FastLioNode::publishAvailableResults() {
       update.correction_sequence = correction_sequence_;
       (void)propagated_odometry_worker_->enqueueEstimatorState(
           std::move(update));
+    }
+    const auto result_finished = std::chrono::steady_clock::now();
+    {
+      std::lock_guard lock(input_mutex_);
+      runtime_statistics_.recordResultProcessing(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              result_finished - result_started)
+              .count());
+      if (augmented.scan_time.has_value()) {
+        const auto scan_end_ns = augmented.scan_time->nanoseconds();
+        for (auto timing = pending_lidar_timings_.begin();
+             timing != pending_lidar_timings_.end(); ++timing) {
+          if (timing->scan_end_ns != scan_end_ns) {
+            continue;
+          }
+          if (augmented.hasCorrectedOutput()) {
+            runtime_statistics_.recordCorrectedScanEndToEnd(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    result_finished - timing->started_at)
+                    .count());
+            runtime_statistics_.recordRegistrationUpdate(
+                augmented.diagnostics.timing.residual_build_us +
+                augmented.diagnostics.timing.ikfom_update_us);
+          }
+          pending_lidar_timings_.erase(timing);
+          break;
+        }
+      }
     }
   }
 }

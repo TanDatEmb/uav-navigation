@@ -80,12 +80,66 @@ void appendRuntimeValues(
                             std::to_string(runtime.worker_last_progress_wall_time_ns)));
   values.push_back(keyValue("last_scan_processing_us",
                             std::to_string(runtime.last_scan_processing_us)));
+  values.push_back(keyValue("scan_processing_count",
+                            std::to_string(runtime.scan_processing_count)));
   values.push_back(keyValue("mean_scan_processing_us",
                             std::to_string(runtime.mean_scan_processing_us)));
+  values.push_back(keyValue("p50_scan_processing_us",
+                            std::to_string(runtime.p50_scan_processing_us)));
   values.push_back(keyValue("p95_scan_processing_us",
                             std::to_string(runtime.p95_scan_processing_us)));
   values.push_back(keyValue("p99_scan_processing_us",
                             std::to_string(runtime.p99_scan_processing_us)));
+  values.push_back(keyValue("maximum_scan_processing_us",
+                            std::to_string(runtime.maximum_scan_processing_us)));
+  values.push_back(keyValue("pipeline_push_lidar_count",
+                            std::to_string(runtime.pipeline_push_lidar_count)));
+  values.push_back(keyValue("mean_pipeline_push_lidar_us",
+                            std::to_string(runtime.mean_pipeline_push_lidar_us)));
+  values.push_back(keyValue("p50_pipeline_push_lidar_us",
+                            std::to_string(runtime.p50_pipeline_push_lidar_us)));
+  values.push_back(keyValue("p95_pipeline_push_lidar_us",
+                            std::to_string(runtime.p95_pipeline_push_lidar_us)));
+  values.push_back(keyValue("p99_pipeline_push_lidar_us",
+                            std::to_string(runtime.p99_pipeline_push_lidar_us)));
+  values.push_back(keyValue("maximum_pipeline_push_lidar_us",
+                            std::to_string(runtime.maximum_pipeline_push_lidar_us)));
+  values.push_back(keyValue("result_processing_count",
+                            std::to_string(runtime.result_processing_count)));
+  values.push_back(keyValue("mean_result_processing_us",
+                            std::to_string(runtime.mean_result_processing_us)));
+  values.push_back(keyValue("p50_result_processing_us",
+                            std::to_string(runtime.p50_result_processing_us)));
+  values.push_back(keyValue("p95_result_processing_us",
+                            std::to_string(runtime.p95_result_processing_us)));
+  values.push_back(keyValue("p99_result_processing_us",
+                            std::to_string(runtime.p99_result_processing_us)));
+  values.push_back(keyValue("maximum_result_processing_us",
+                            std::to_string(runtime.maximum_result_processing_us)));
+  values.push_back(keyValue("corrected_scan_end_to_end_count",
+                            std::to_string(runtime.corrected_scan_end_to_end_count)));
+  values.push_back(keyValue("mean_corrected_scan_end_to_end_us",
+                            std::to_string(runtime.mean_corrected_scan_end_to_end_us)));
+  values.push_back(keyValue("p50_corrected_scan_end_to_end_us",
+                            std::to_string(runtime.p50_corrected_scan_end_to_end_us)));
+  values.push_back(keyValue("p95_corrected_scan_end_to_end_us",
+                            std::to_string(runtime.p95_corrected_scan_end_to_end_us)));
+  values.push_back(keyValue("p99_corrected_scan_end_to_end_us",
+                            std::to_string(runtime.p99_corrected_scan_end_to_end_us)));
+  values.push_back(keyValue("maximum_corrected_scan_end_to_end_us",
+                            std::to_string(runtime.maximum_corrected_scan_end_to_end_us)));
+  values.push_back(keyValue("registration_update_count",
+                            std::to_string(runtime.registration_update_count)));
+  values.push_back(keyValue("mean_registration_update_us",
+                            std::to_string(runtime.mean_registration_update_us)));
+  values.push_back(keyValue("p50_registration_update_us",
+                            std::to_string(runtime.p50_registration_update_us)));
+  values.push_back(keyValue("p95_registration_update_us",
+                            std::to_string(runtime.p95_registration_update_us)));
+  values.push_back(keyValue("p99_registration_update_us",
+                            std::to_string(runtime.p99_registration_update_us)));
+  values.push_back(keyValue("maximum_registration_update_us",
+                            std::to_string(runtime.maximum_registration_update_us)));
   values.push_back(keyValue("worker_busy_ratio",
                             std::to_string(runtime.worker_busy_ratio)));
   values.push_back(keyValue("overflow_detected",
