@@ -248,10 +248,10 @@ def dataset_compare(args: argparse.Namespace) -> int:
         raise RuntimeError("baseline and candidate configurations differ")
     host_conditions_valid = len({host_key(item) for item in baseline + candidate}) == 1
     metrics = [
-        "pipeline_push_lidar_p95_us", "pipeline_push_lidar_p99_us",
-        "corrected_scan_end_to_end_p95_us", "corrected_scan_end_to_end_p99_us",
-        "registration_update_p95_us", "registration_update_p99_us",
-        "result_processing_p95_us", "result_processing_p99_us",
+        "p95_pipeline_push_lidar_us", "p99_pipeline_push_lidar_us",
+        "p95_corrected_scan_end_to_end_us", "p99_corrected_scan_end_to_end_us",
+        "p95_registration_update_us", "p99_registration_update_us",
+        "p95_result_processing_us", "p99_result_processing_us",
         "maximum_queue_depth", "worker_busy_ratio",
     ]
     comparison: dict[str, Any] = {
@@ -261,9 +261,9 @@ def dataset_compare(args: argparse.Namespace) -> int:
         "host_conditions_valid": host_conditions_valid,
         "configuration_sha256": next(iter(config_hashes["candidate"])),
         "policy": {
-            "corrected_scan_end_to_end_p95_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
-            "registration_update_p95_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
-            "pipeline_push_lidar_p95_us": {"relative_max": 0.15, "absolute_max_us": 500.0},
+            "p95_corrected_scan_end_to_end_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
+            "p95_registration_update_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
+            "p95_pipeline_push_lidar_us": {"relative_max": 0.15, "absolute_max_us": 500.0},
             "wall_time_s": {"relative_max": 0.10},
             "peak_rss_bytes": {"relative_max": 0.15},
             "maximum_queue_depth": {"relative_max": 0.25},
