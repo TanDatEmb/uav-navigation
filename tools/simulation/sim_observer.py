@@ -17,10 +17,13 @@ from typing import Any
 
 import yaml
 import rclpy
+from rclpy.clock import Clock as RclClock
+from rclpy.clock_type import ClockType
 from rclpy.serialization import deserialize_message
 from diagnostic_msgs.msg import DiagnosticArray
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import Imu, PointCloud2
 from tf2_msgs.msg import TFMessage
@@ -69,7 +72,10 @@ class CsvSink:
 
 class SimObserver(Node):
     def __init__(self, session: Path, config: dict[str, Any]):
-        super().__init__("px4_mid360_sim_observer")
+        super().__init__(
+            "px4_mid360_sim_observer",
+            parameter_overrides=[Parameter("use_sim_time", Parameter.Type.BOOL, True)],
+        )
         self.session, self.config = session, config
         self.started = time.monotonic()
         self.stop_requested = False
@@ -152,8 +158,16 @@ class SimObserver(Node):
                                  self._safe("local_map", lambda _: self.observe_raw("local_map")), 2, raw=True)
         self.create_subscription(DiagnosticArray, "/lio/diagnostics", self._safe("diagnostics", self.on_diagnostics), 20)
         self.create_subscription(TFMessage, "/tf", self._safe("tf", lambda _: self.observe_raw("tf")), 20, raw=True)
-        self.create_timer(1.0/max(float(config["observer"]["sample_hz"]), .1), self.sample)
-        self.create_timer(float(config["gazebo"]["sample_period_s"]), self.sample_gazebo)
+        # Observation cadence is a wall-time concern. The node still follows
+        # /clock for ROS-time semantics, but must keep producing cleanup and
+        # health artifacts when simulation time is absent or paused.
+        self._wall_clock = RclClock(clock_type=ClockType.STEADY_TIME)
+        self.create_timer(
+            1.0/max(float(config["observer"]["sample_hz"]), .1), self.sample,
+            clock=self._wall_clock)
+        self.create_timer(
+            float(config["gazebo"]["sample_period_s"]), self.sample_gazebo,
+            clock=self._wall_clock)
 
     def _safe(self, probe: str, callback):
         def wrapped(message):

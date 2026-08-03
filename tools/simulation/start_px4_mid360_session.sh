@@ -80,6 +80,15 @@ until ros2 topic list 2>/dev/null | grep -qx '/px4/odometry_ros'; do
   sleep 1
 done
 
+# The topic is volatile, so wait for a real simulation-epoch sample before
+# starting FAST-LIO. This keeps the startup prior contract from racing the
+# first PX4 publication while retaining the estimator's timestamp gates.
+deadline=$((SECONDS+30))
+until timeout 5 ros2 topic echo /px4/odometry_ros --once >/dev/null 2>&1; do
+  (( SECONDS < deadline )) || { echo "PX4 odometry sample startup timeout" >&2; exit 70; }
+  sleep 1
+done
+
 launch_terminal fast_lio "FAST-LIO | $(basename "${SESSION_DIR}")" \
   ros2 launch navigation_bringup fast_lio.launch.py \
   config_file:="${LIO_CONFIG}" use_sim_time:=true \

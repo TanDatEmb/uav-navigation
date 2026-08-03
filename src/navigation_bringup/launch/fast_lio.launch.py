@@ -47,6 +47,7 @@ def generate_launch_description():
                     "livox_lidar_to_imu_rpy": LaunchConfiguration(
                         "livox_lidar_to_imu_rpy"
                     ),
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
                 }.items(),
             ),
             Node(

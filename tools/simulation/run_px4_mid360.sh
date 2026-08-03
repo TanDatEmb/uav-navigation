@@ -91,10 +91,12 @@ export PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}"
 export PX4_SIMULATOR=gz
 export PX4_GZ_WORLD="${WORLD_NAME}"
 export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
+export PX4_PARAM_UXRCE_DDS_SYNCT=0
 unset PX4_SIM_MODEL PX4_GZ_MODEL 2>/dev/null || true
 
 echo
 echo "PX4 is attaching to the existing Gazebo model."
+echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
 echo "Other terminal: ros2 launch navigation_bringup fast_lio.launch.py config_file:=${WS_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360_px4_gazebo.yaml use_sim_time:=true"
 echo
 cd "${PX4_ROOTFS}"

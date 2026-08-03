@@ -23,12 +23,14 @@ def generate_launch_description():
                 default_value="0.011 0.02329 -0.04412",
             ),
             DeclareLaunchArgument("livox_lidar_to_imu_rpy", default_value="0 0 0"),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 parameters=[
                     {
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                         "robot_description": ParameterValue(
                             Command(
                                 [
