@@ -279,14 +279,21 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   }
 
   void initialize_alignment_if_ready(const EvaluationInput& input) {
+    // The initial-prior contract is a one-shot event. Do not discard a
+    // captured world alignment merely because the diagnostic publisher misses
+    // one timer period or reports a transiently stale snapshot. A generation
+    // change is the explicit invalidation event for this alignment.
+    if (input.origin_aligned) {
+      origin_alignment_latched_ = true;
+    }
     if (alignment_ &&
         (alignment_->reset_generation != input.px4_reset_generation ||
-         alignment_->time_generation != input.px4_time_generation ||
-         !input.origin_aligned)) {
+         alignment_->time_generation != input.px4_time_generation)) {
       invalidate_alignment();
     }
-    if (!alignment_ && input.origin_aligned && input.px4_available &&
-        input.px4_diagnostics_valid && latest_px4_ &&
+    if (!alignment_ && origin_alignment_latched_ && input.px4_available &&
+        input.px4_fresh && input.px4_diagnostics_valid &&
+        input.px4_continuity_valid && input.px4_post_reset_stable && latest_px4_ &&
         latest_px4_->frame_id == kPx4OdomFrame) {
       WorldAlignment alignment;
       alignment.target_frame = kLioOdomFrame;
@@ -700,6 +707,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::optional<OdometryState> latest_px4_;
   std::optional<AlignedComparison> aligned_comparison_;
   std::optional<WorldAlignment> alignment_;
+  bool origin_alignment_latched_{false};
   std::optional<Residual> previous_residual_;
   DiagnosticSnapshot lio_diagnostics_;
   DiagnosticSnapshot px4_diagnostics_;
