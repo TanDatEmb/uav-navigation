@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -79,7 +80,17 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     propagated_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/lio/odometry_propagated", rclcpp::QoS(20).reliable(),
         [this](nav_msgs::msg::Odometry::ConstSharedPtr message) {
-          latest_propagated_ = state_from_ros(*message);
+          const auto state = state_from_ros(*message);
+          if (!ResidualCalculator::valid(state)) return;
+          if (!propagated_history_.empty() &&
+              state.timestamp_ns <= propagated_history_.back().timestamp_ns) {
+            propagated_history_.clear();
+          }
+          propagated_history_.push_back(state);
+          while (propagated_history_.size() > kPropagatedHistoryCapacity) {
+            propagated_history_.pop_front();
+          }
+          latest_propagated_ = state;
         });
     corrected_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/lio/odometry_corrected", rclcpp::QoS(20).reliable(),
@@ -182,6 +193,17 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     return *age <= max_age;
   }
 
+  std::optional<OdometryState> latest_propagated_epoch_available_to_px4() const {
+    if (!latest_px4_ || propagated_history_.empty()) return std::nullopt;
+    const auto upper = std::upper_bound(
+        propagated_history_.begin(), propagated_history_.end(), latest_px4_->timestamp_ns,
+        [](std::int64_t timestamp, const OdometryState& state) {
+          return timestamp < state.timestamp_ns;
+        });
+    if (upper == propagated_history_.begin()) return std::nullopt;
+    return *std::prev(upper);
+  }
+
   void request_px4_at(const OdometryState& lio) {
     if (query_pending_ || !query_client_->service_is_ready()) return;
     auto request = std::make_shared<QueryService::Request>();
@@ -191,7 +213,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     pending_sequence_ = sequence;
     pending_started_ = std::chrono::steady_clock::now();
     query_client_->async_send_request(
-        request, [this, sequence, requested_time = lio.timestamp_ns](
+        request, [this, sequence, requested_time = lio.timestamp_ns, lio](
                      rclcpp::Client<QueryService>::SharedFuture future) {
           if (!query_pending_ || pending_sequence_ != sequence) return;
           query_pending_ = false;
@@ -209,8 +231,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
             aligned_lio_.reset();
             return;
           }
-          const auto lio = latest_propagated_;
-          if (!lio || lio->timestamp_ns != requested_time) return;
           aligned_lio_ = lio;
           aligned_px4_ = state_from_ros(response->odometry);
           const auto residual = ResidualCalculator::compare(*aligned_lio_, *aligned_px4_,
@@ -240,9 +260,10 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     const bool corrected_fresh = fresh(latest_corrected_, config_.corrected_max_age_ns,
                                        now_ns, &corrected_age);
     const bool px4_fresh = fresh(latest_px4_, config_.px4_max_age_ns, now_ns, &px4_age);
-    if (propagated_fresh && !query_pending_ &&
-        (!aligned_lio_ || aligned_lio_->timestamp_ns != latest_propagated_->timestamp_ns)) {
-      request_px4_at(*latest_propagated_);
+    const auto lio_epoch = latest_propagated_epoch_available_to_px4();
+    if (propagated_fresh && lio_epoch && !query_pending_ &&
+        (!aligned_lio_ || aligned_lio_->timestamp_ns != lio_epoch->timestamp_ns)) {
+      request_px4_at(*lio_epoch);
     }
 
     EvaluationInput input;
@@ -385,6 +406,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   rclcpp::Client<QueryService>::SharedPtr query_client_;
   rclcpp::TimerBase::SharedPtr evaluation_timer_;
   std::optional<OdometryState> latest_propagated_;
+  static constexpr std::size_t kPropagatedHistoryCapacity = 256;
+  std::deque<OdometryState> propagated_history_;
   std::optional<OdometryState> latest_corrected_;
   std::optional<OdometryState> latest_px4_;
   std::optional<OdometryState> aligned_lio_;
