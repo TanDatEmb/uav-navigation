@@ -72,6 +72,7 @@ class SupervisorFaultInjector(Node):
         self.duration_s = duration_s
         self.output = output
         self.started_ns = self.get_clock().now().nanoseconds
+        self.fault_start_s = 3.0
         self.finished = False
         self.inputs: list[dict] = []
         self.statuses: list[dict] = []
@@ -165,11 +166,11 @@ class SupervisorFaultInjector(Node):
         propagated = odometry(timestamp_ns, lio_x, lio_yaw, lio_velocity)
         corrected = odometry(timestamp_ns, lio_x, lio_yaw, lio_velocity)
         px4 = odometry(timestamp_ns, px4_x, px4_yaw, px4_velocity)
-        if self.scenario != "lio_propagated_stale" or elapsed < 1.0:
+        if self.scenario != "lio_propagated_stale" or elapsed < self.fault_start_s:
             self.propagated_pub.publish(propagated)
-        if self.scenario != "lio_corrected_stale" or elapsed < 1.0:
+        if self.scenario != "lio_corrected_stale" or elapsed < self.fault_start_s:
             self.corrected_pub.publish(corrected)
-        if self.scenario != "px4_stale" or elapsed < 1.0:
+        if self.scenario != "px4_stale" or elapsed < self.fault_start_s:
             self.px4_pub.publish(px4)
 
         lio_status = "Lost" if self.scenario == "correlated_unhealthy" else "Tracking"
