@@ -56,6 +56,7 @@ int64 lio_propagated_age_ns
 int64 lio_corrected_age_ns
 int64 px4_age_ns
 int64 alignment_gap_ns
+int64 aligned_comparison_age_ns
 
 float64 position_error_m
 float64 velocity_error_m_s
@@ -81,3 +82,10 @@ uint64 query_stale_sequence_count
 uint64 query_timeout_count
 uint64 query_service_unavailable_count
 uint64 stale_residual_reuse_count
+uint64 query_success_count
+uint64 query_failure_count
+uint64 query_rtt_count
+float64 query_rtt_p50_ms
+float64 query_rtt_p95_ms
+float64 query_rtt_p99_ms
+float64 query_rtt_max_ms

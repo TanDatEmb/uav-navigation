@@ -268,6 +268,10 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.lio_corrected_age_ns = input.corrected_age_ns;
   output.px4_age_ns = input.px4_age_ns;
   output.alignment_gap_ns = input.alignment_gap_ns;
+  output.aligned_comparison_age_ns =
+      input.aligned_comparison_fresh && input.evaluation_time_ns >= input.comparison_epoch_ns
+          ? input.evaluation_time_ns - input.comparison_epoch_ns
+          : -1;
   output.residual = input.residual;
   output.px4_reset_generation = input.px4_reset_generation;
   output.px4_time_generation = input.px4_time_generation;
@@ -291,6 +295,13 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.query_stale_sequence_count = input.query_stale_sequence_count;
   output.query_timeout_count = input.query_timeout_count;
   output.query_service_unavailable_count = input.query_service_unavailable_count;
+  output.query_success_count = input.query_success_count;
+  output.query_failure_count = input.query_failure_count;
+  output.query_rtt_count = input.query_rtt_count;
+  output.query_rtt_p50_ms = input.query_rtt_p50_ms;
+  output.query_rtt_p95_ms = input.query_rtt_p95_ms;
+  output.query_rtt_p99_ms = input.query_rtt_p99_ms;
+  output.query_rtt_max_ms = input.query_rtt_max_ms;
   output.stale_residual_reuse_count = input.stale_residual_reuse_count;
   if (input.lio_valid && input.px4_available && !input.origin_aligned) {
     output.monitoring_available = false;

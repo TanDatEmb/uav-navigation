@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -218,6 +219,41 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     std::chrono::steady_clock::time_point started{};
   };
 
+  void record_query_result(const PendingQuery& pending, bool success) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+        std::chrono::steady_clock::now() - pending.started).count();
+    if (success) {
+      ++query_success_count_;
+    } else {
+      ++query_failure_count_;
+    }
+    ++query_rtt_count_;
+    query_rtt_max_ms_ = std::max(query_rtt_max_ms_, elapsed);
+    constexpr std::array<double, 15> upper_bounds{
+        0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0,
+        40.0, 80.0, 160.0, 320.0, 640.0, 1280.0, 2560.0};
+    std::size_t bin = upper_bounds.size();
+    for (std::size_t index = 0; index < upper_bounds.size(); ++index) {
+      if (elapsed <= upper_bounds[index]) { bin = index; break; }
+    }
+    ++query_rtt_histogram_[bin];
+  }
+
+  double query_rtt_percentile(double quantile) const {
+    if (query_rtt_count_ == 0) return 0.0;
+    const auto target = std::max<std::uint64_t>(1, static_cast<std::uint64_t>(
+        std::ceil(quantile * static_cast<double>(query_rtt_count_))));
+    std::uint64_t cumulative = 0;
+    constexpr std::array<double, 16> upper_bounds{
+        0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0,
+        40.0, 80.0, 160.0, 320.0, 640.0, 1280.0, 2560.0, 5120.0};
+    for (std::size_t index = 0; index < query_rtt_histogram_.size(); ++index) {
+      cumulative += query_rtt_histogram_[index];
+      if (cumulative >= target) return upper_bounds[index];
+    }
+    return query_rtt_max_ms_;
+  }
+
   void invalidate_comparison() {
     aligned_comparison_.reset();
     previous_residual_.reset();
@@ -250,18 +286,22 @@ class OdometrySupervisorNode final : public rclcpp::Node {
           try {
             response = future.get();
           } catch (const std::exception&) {
+            record_query_result(pending, false);
             invalidate_comparison();
             return;
           }
           if (!response || !response->success ||
               time_ns(response->odometry.header.stamp) != pending.requested_epoch_ns) {
+            record_query_result(pending, false);
             invalidate_comparison();
             return;
           }
+          record_query_result(pending, true);
           constexpr auto required_components = navigation_interfaces::kPositionValid |
                                                navigation_interfaces::kOrientationValid |
                                                navigation_interfaces::kLinearVelocityValid;
           if ((response->component_validity_mask & required_components) != required_components) {
+            ++query_failure_count_;
             ++query_invalid_component_count_;
             invalidate_comparison();
             return;
@@ -275,6 +315,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->reset_generation != current_reset_generation ||
               response->time_generation != current_time_generation) {
             ++query_generation_mismatch_count_;
+            ++query_failure_count_;
             invalidate_comparison();
             return;
           }
@@ -321,6 +362,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
       if (elapsed > config_.service_timeout_ns) {
         pending_query_.reset();
         ++query_timeout_count_;
+        ++query_failure_count_;
         invalidate_comparison();
       }
     }
@@ -395,6 +437,13 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.query_stale_sequence_count = query_stale_sequence_count_;
     input.query_timeout_count = query_timeout_count_;
     input.query_service_unavailable_count = query_service_unavailable_count_;
+    input.query_success_count = query_success_count_;
+    input.query_failure_count = query_failure_count_;
+    input.query_rtt_count = query_rtt_count_;
+    input.query_rtt_p50_ms = query_rtt_percentile(0.50);
+    input.query_rtt_p95_ms = query_rtt_percentile(0.95);
+    input.query_rtt_p99_ms = query_rtt_percentile(0.99);
+    input.query_rtt_max_ms = query_rtt_max_ms_;
     if (aligned_comparison_ && !input.new_comparison_sample && input.aligned_comparison_fresh) {
       ++stale_residual_reuse_count_;
     }
@@ -442,6 +491,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.lio_corrected_age_ns = output.lio_corrected_age_ns;
     message.px4_age_ns = output.px4_age_ns;
     message.alignment_gap_ns = output.alignment_gap_ns;
+    message.aligned_comparison_age_ns = output.aligned_comparison_age_ns;
     message.position_error_m = output.residual.position_error_m;
     message.velocity_error_m_s = output.residual.velocity_error_m_s;
     message.orientation_error_rad = output.residual.orientation_error_rad;
@@ -463,6 +513,13 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.query_stale_sequence_count = output.query_stale_sequence_count;
     message.query_timeout_count = output.query_timeout_count;
     message.query_service_unavailable_count = output.query_service_unavailable_count;
+    message.query_success_count = output.query_success_count;
+    message.query_failure_count = output.query_failure_count;
+    message.query_rtt_count = output.query_rtt_count;
+    message.query_rtt_p50_ms = output.query_rtt_p50_ms;
+    message.query_rtt_p95_ms = output.query_rtt_p95_ms;
+    message.query_rtt_p99_ms = output.query_rtt_p99_ms;
+    message.query_rtt_max_ms = output.query_rtt_max_ms;
     message.stale_residual_reuse_count = output.stale_residual_reuse_count;
     status_->publish(message);
 
@@ -502,6 +559,13 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     add_value("query_stale_sequence_count", std::to_string(output.query_stale_sequence_count));
     add_value("query_timeout_count", std::to_string(output.query_timeout_count));
     add_value("query_service_unavailable_count", std::to_string(output.query_service_unavailable_count));
+    add_value("query_success_count", std::to_string(output.query_success_count));
+    add_value("query_failure_count", std::to_string(output.query_failure_count));
+    add_value("query_rtt_count", std::to_string(output.query_rtt_count));
+    add_value("query_rtt_p50_ms", std::to_string(output.query_rtt_p50_ms));
+    add_value("query_rtt_p95_ms", std::to_string(output.query_rtt_p95_ms));
+    add_value("query_rtt_p99_ms", std::to_string(output.query_rtt_p99_ms));
+    add_value("query_rtt_max_ms", std::to_string(output.query_rtt_max_ms));
     add_value("stale_residual_reuse_count", std::to_string(output.stale_residual_reuse_count));
     add_value("external_odometry_allowed", output.external_odometry_allowed ? "true" : "false");
     add_value("reinitialization_requested", output.reinitialization_requested ? "true" : "false");
@@ -541,6 +605,11 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::uint64_t query_stale_sequence_count_{0};
   std::uint64_t query_timeout_count_{0};
   std::uint64_t query_service_unavailable_count_{0};
+  std::array<std::uint64_t, 16> query_rtt_histogram_{};
+  std::uint64_t query_rtt_count_{0};
+  double query_rtt_max_ms_{0.0};
+  std::uint64_t query_success_count_{0};
+  std::uint64_t query_failure_count_{0};
   std::uint64_t stale_residual_reuse_count_{0};
   bool new_comparison_sample_pending_{false};
   std::optional<std::uint64_t> last_seen_px4_time_generation_;

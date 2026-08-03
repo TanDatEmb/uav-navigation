@@ -143,6 +143,7 @@ def dataset_run(args: argparse.Namespace) -> int:
             "command": command,
             "runner_returncode": returncode,
             "provenance": provenance,
+            "base_code_sha": args.base_code_sha,
             "input_counts": counts,
             "artifact": str(output),
         }
@@ -153,6 +154,7 @@ def dataset_run(args: argparse.Namespace) -> int:
             "dataset": args.dataset,
             "rate": args.rate,
             "provenance": provenance,
+            "base_code_sha": args.base_code_sha,
             "input_counts": counts,
             "runner_returncode": returncode,
             "summary": str(output / "summary.json"),
@@ -167,6 +169,35 @@ def metric_value(diagnostics: dict[str, Any], field: str) -> float:
     if value is None:
         raise RuntimeError(f"metric not instrumented: {field}")
     return float(value)
+
+
+def require_valid_dataset_runs(runs: list[dict[str, Any]], side: str) -> None:
+    for item in runs:
+        run = item["run"]
+        if not run.get("correctness", {}).get("pass", False):
+            raise RuntimeError(f"{side} run failed correctness: {item['path']}")
+        provenance = run.get("provenance", {})
+        if provenance.get("git", {}).get("dirty") or any(
+            item.get("dirty", False) for item in provenance.get("submodules", {}).values()
+        ):
+            raise RuntimeError(f"{side} run is not clean: {item['path']}")
+        if not provenance.get("git", {}).get("full_sha") or not provenance.get("build", {}).get("binary_sha256"):
+            raise RuntimeError(f"{side} run lacks complete provenance: {item['path']}")
+
+
+def host_key(run: dict[str, Any]) -> tuple[Any, ...]:
+    host = run["run"].get("provenance", {}).get("host", {})
+    return (
+        host.get("kernel"),
+        host.get("cpu"),
+        host.get("memory"),
+        host.get("power_profile"),
+    )
+
+
+def coefficient(values: list[float]) -> float:
+    mean = statistics.mean(values) if values else 0.0
+    return statistics.stdev(values) / mean if len(values) > 1 and mean else 0.0
 
 
 def collect_runs(root: Path, role: str) -> list[dict[str, Any]]:
@@ -204,6 +235,18 @@ def dataset_compare(args: argparse.Namespace) -> int:
     candidate = collect_runs(root, "candidate")
     if len(baseline) < 3 or len(candidate) < 3:
         raise RuntimeError("comparison requires at least three runs per side")
+    require_valid_dataset_runs(baseline, "baseline")
+    require_valid_dataset_runs(candidate, "candidate")
+    config_hashes = {
+        side: {item["run"].get("provenance", {}).get("configuration", {}).get("sha256")
+               for item in runs}
+        for side, runs in (("baseline", baseline), ("candidate", candidate))
+    }
+    if any(len(values) != 1 or None in values for values in config_hashes.values()):
+        raise RuntimeError(f"configuration changed within A/B side: {config_hashes}")
+    if config_hashes["baseline"] != config_hashes["candidate"]:
+        raise RuntimeError("baseline and candidate configurations differ")
+    host_conditions_valid = len({host_key(item) for item in baseline + candidate}) == 1
     metrics = [
         "pipeline_push_lidar_p95_us", "pipeline_push_lidar_p99_us",
         "corrected_scan_end_to_end_p95_us", "corrected_scan_end_to_end_p99_us",
@@ -211,7 +254,22 @@ def dataset_compare(args: argparse.Namespace) -> int:
         "result_processing_p95_us", "result_processing_p99_us",
         "maximum_queue_depth", "worker_busy_ratio",
     ]
-    comparison: dict[str, Any] = {"schema_version": 1, "metrics": {}, "runs": {"baseline": baseline, "candidate": candidate}}
+    comparison: dict[str, Any] = {
+        "schema_version": 2,
+        "metrics": {},
+        "runs": {"baseline": baseline, "candidate": candidate},
+        "host_conditions_valid": host_conditions_valid,
+        "configuration_sha256": next(iter(config_hashes["candidate"])),
+        "policy": {
+            "corrected_scan_end_to_end_p95_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
+            "registration_update_p95_us": {"relative_max": 0.10, "absolute_max_us": 2000.0},
+            "pipeline_push_lidar_p95_us": {"relative_max": 0.15, "absolute_max_us": 500.0},
+            "wall_time_s": {"relative_max": 0.10},
+            "peak_rss_bytes": {"relative_max": 0.15},
+            "maximum_queue_depth": {"relative_max": 0.25},
+            "worker_busy_ratio": {"absolute_max": 0.10},
+        },
+    }
     rows = []
     for metric in metrics:
         if metric == "maximum_queue_depth":
@@ -234,8 +292,28 @@ def dataset_compare(args: argparse.Namespace) -> int:
             "baseline": stats["baseline"], "candidate": stats["candidate"],
             "absolute_delta": c - b,
             "relative_delta": (c / b - 1.0) if b else None,
+            "baseline_range": [min(stats["baseline"]["values"]), max(stats["baseline"]["values"])],
+            "candidate_range": [min(stats["candidate"]["values"]), max(stats["candidate"]["values"])],
+            "baseline_coefficient_of_variation": coefficient(stats["baseline"]["values"]),
+            "candidate_coefficient_of_variation": coefficient(stats["candidate"]["values"]),
         }
         rows.append([metric, b, c, c - b, (c / b - 1.0) if b else ""])
+    comparison["acceptance"] = {
+        "host_conditions": host_conditions_valid,
+        "correctness": True,
+        "queue_median": comparison["metrics"]["maximum_queue_depth"]["relative_delta"] <= 0.25,
+        "queue_worst_case": max(comparison["metrics"]["maximum_queue_depth"]["candidate"]["values"])
+        <= 1.5 * max(comparison["metrics"]["maximum_queue_depth"]["baseline"]["values"]),
+        "worker_busy_ratio": comparison["metrics"]["worker_busy_ratio"]["absolute_delta"] <= 0.10,
+    }
+    for metric, policy in comparison["policy"].items():
+        if metric not in comparison["metrics"]:
+            continue
+        result = comparison["metrics"][metric]
+        relative_ok = policy.get("relative_max") is None or result["relative_delta"] <= policy["relative_max"]
+        absolute_ok = policy.get("absolute_max_us") is None or result["absolute_delta"] <= policy["absolute_max_us"]
+        comparison["acceptance"][metric] = relative_ok or absolute_ok
+    comparison["pass"] = all(comparison["acceptance"].values())
     write_json(root / "comparison.json", comparison)
     with (root / "comparison.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
@@ -254,6 +332,95 @@ def host(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise RuntimeError(f"missing artifact: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sitl_ab(args: argparse.Namespace) -> int:
+    root = args.root.resolve()
+    sides = {side: sorted((root / side).glob("run-*.json")) for side in ("off", "on")}
+    if any(len(paths) < args.min_runs for paths in sides.values()):
+        raise RuntimeError("SITL A/B requires three valid runs per side")
+    required = {
+        "comparison_valid_ratio", "monitoring_available_ratio", "query_timeout_count",
+        "query_generation_mismatch_count", "query_rtt_p95_ms", "query_rtt_p99_ms",
+        "alignment_gap_p99_ms", "aligned_comparison_age_p99_ms", "supervisor_cpu_p95_percent",
+        "supervisor_peak_rss_bytes", "fast_lio_corrected_p95_us", "fast_lio_max_queue_depth",
+    }
+    loaded = {side: [_load_json(path) for path in paths[:args.min_runs]] for side, paths in sides.items()}
+    missing = sorted(required - set(loaded["off"][0]) - set(loaded["on"][0]))
+    if missing:
+        raise RuntimeError(f"SITL metrics not instrumented: {', '.join(missing)}")
+    def median(side: str, key: str) -> float:
+        return statistics.median(float(item[key]) for item in loaded[side])
+    result = {"schema_version": 1, "warmup_s": args.warmup_s, "measurement_s": args.measure_s,
+              "runs": {side: loaded[side] for side in loaded}, "metrics": {}}
+    for key in sorted(required):
+        result["metrics"][key] = {side: [float(item[key]) for item in loaded[side]] for side in loaded}
+        result["metrics"][key]["median_off"] = median("off", key)
+        result["metrics"][key]["median_on"] = median("on", key)
+    result["acceptance"] = {
+        "off_and_on_correct": all(
+            item["comparison_valid_ratio"] >= 0.99 and item["monitoring_available_ratio"] >= 0.99 and
+            item["query_timeout_count"] == 0 and item["query_generation_mismatch_count"] == 0 and
+            item["query_rtt_p95_ms"] < 50 and item["query_rtt_p99_ms"] < 100 and
+            item["alignment_gap_p99_ms"] <= 50 and item["aligned_comparison_age_p99_ms"] <= 150 and
+            item["supervisor_cpu_p95_percent"] < 15 and item["supervisor_peak_rss_bytes"] < 150 * 1024 * 1024
+            for side in loaded for item in loaded[side]
+        ),
+        "no_new_lio_overhead": median("on", "fast_lio_corrected_p95_us")
+        <= 1.05 * median("off", "fast_lio_corrected_p95_us") and
+        median("on", "fast_lio_max_queue_depth") <= 1.20 * median("off", "fast_lio_max_queue_depth"),
+    }
+    result["pass"] = all(result["acceptance"].values())
+    write_json(args.output.resolve(), result)
+    return 0 if result["pass"] else 2
+
+
+def memory_run(args: argparse.Namespace) -> int:
+    rows = []
+    with args.input.resolve().open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    if not rows:
+        raise RuntimeError("memory input is empty")
+    sim_times = [float(row["sim_time_s"]) for row in rows]
+    if max(sim_times) < args.minimum_duration_s:
+        raise RuntimeError("memory run is shorter than the required 20 simulated minutes")
+    stable = [row for row in rows if float(row["sim_time_s"]) >= args.warmup_s]
+    rss = [int(row["supervisor_rss_bytes"]) for row in stable]
+    first = rss[0]
+    result = {
+        "schema_version": 1, "input": str(args.input.resolve()), "sample_count": len(rows),
+        "duration_s": max(sim_times), "warmup_s": args.warmup_s,
+        "rss_first_after_warmup": first, "rss_max_after_warmup": max(rss),
+        "rss_growth_ratio": (max(rss) / first - 1.0) if first else None,
+        "max_outstanding_queries": max(int(row["outstanding_queries"]) for row in rows),
+        "state_transition_count": max(int(row["state_transition_count"]) for row in rows),
+    }
+    result["acceptance"] = {
+        "rss_growth": result["rss_growth_ratio"] is not None and result["rss_growth_ratio"] < 0.10,
+        "outstanding_queries": result["max_outstanding_queries"] <= 1,
+    }
+    result["pass"] = all(result["acceptance"].values())
+    write_json(args.output.resolve(), result)
+    return 0 if result["pass"] else 2
+
+
+def report(args: argparse.Namespace) -> int:
+    sections = {}
+    for name, path in (("dataset", args.dataset), ("sitl", args.sitl), ("memory", args.memory)):
+        if path is not None:
+            sections[name] = _load_json(path.resolve())
+    if not sections:
+        raise RuntimeError("report requires at least one measured qualification artifact")
+    result = {"schema_version": 1, "qualification": "p0.8-performance", "sections": sections}
+    result["pass"] = all(section.get("pass", False) for section in sections.values())
+    write_json(args.output.resolve(), result)
+    return 0 if result["pass"] else 2
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     sub = result.add_subparsers(dest="command", required=True)
@@ -264,6 +431,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--dataset", default="aist-mid360-drive")
     run.add_argument("--rate", type=float, default=1.0)
     run.add_argument("--binary-relative")
+    run.add_argument("--base-code-sha", default=None)
     run.add_argument("--replay-timeout", type=float, default=900.0)
     run.add_argument("--readiness-timeout", type=float, default=30.0)
     run.add_argument("--drain-timeout", type=float, default=120.0)
@@ -276,6 +444,7 @@ def parser() -> argparse.ArgumentParser:
     stress.add_argument("--rate", type=float, required=True)
     stress.add_argument("--dataset", default="aist-mid360-drive")
     stress.add_argument("--binary-relative")
+    stress.add_argument("--base-code-sha", default=None)
     stress.add_argument("--replay-timeout", type=float, default=900.0)
     stress.add_argument("--readiness-timeout", type=float, default=30.0)
     stress.add_argument("--drain-timeout", type=float, default=120.0)
@@ -283,10 +452,22 @@ def parser() -> argparse.ArgumentParser:
     host_parser.add_argument("--workspace", type=Path, required=True)
     host_parser.add_argument("--expected-git-sha", required=True)
     host_parser.add_argument("--output", type=Path, required=True)
-    # SITL and memory commands are intentionally explicit placeholders until
-    # the session protocol has a measured-clock probe attached.
-    for name in ("sitl-ab", "memory-run", "report"):
-        sub.add_parser(name)
+    sitl = sub.add_parser("sitl-ab")
+    sitl.add_argument("--root", type=Path, required=True)
+    sitl.add_argument("--output", type=Path, required=True)
+    sitl.add_argument("--min-runs", type=int, default=3)
+    sitl.add_argument("--warmup-s", type=float, default=30.0)
+    sitl.add_argument("--measure-s", type=float, default=120.0)
+    memory = sub.add_parser("memory-run")
+    memory.add_argument("--input", type=Path, required=True)
+    memory.add_argument("--output", type=Path, required=True)
+    memory.add_argument("--warmup-s", type=float, default=120.0)
+    memory.add_argument("--minimum-duration-s", type=float, default=1200.0)
+    report_parser = sub.add_parser("report")
+    report_parser.add_argument("--dataset", type=Path)
+    report_parser.add_argument("--sitl", type=Path)
+    report_parser.add_argument("--memory", type=Path)
+    report_parser.add_argument("--output", type=Path, required=True)
     return result
 
 
@@ -298,7 +479,13 @@ def main() -> int:
         return dataset_compare(args)
     if args.command == "host":
         return host(args)
-    raise SystemExit(f"{args.command} requires a dedicated measured protocol")
+    if args.command == "sitl-ab":
+        return sitl_ab(args)
+    if args.command == "memory-run":
+        return memory_run(args)
+    if args.command == "report":
+        return report(args)
+    raise SystemExit(f"unsupported command: {args.command}")
 
 
 if __name__ == "__main__":

@@ -127,6 +127,7 @@ struct EvaluationInput {
   std::int64_t corrected_age_ns{-1};
   std::int64_t px4_age_ns{-1};
   std::int64_t alignment_gap_ns{-1};
+  std::int64_t aligned_comparison_age_ns{-1};
   std::int64_t comparison_epoch_ns{0};
   bool new_comparison_sample{false};
   bool aligned_comparison_fresh{false};
@@ -138,6 +139,13 @@ struct EvaluationInput {
   std::uint64_t query_stale_sequence_count{0};
   std::uint64_t query_timeout_count{0};
   std::uint64_t query_service_unavailable_count{0};
+  std::uint64_t query_success_count{0};
+  std::uint64_t query_failure_count{0};
+  std::uint64_t query_rtt_count{0};
+  double query_rtt_p50_ms{0.0};
+  double query_rtt_p95_ms{0.0};
+  double query_rtt_p99_ms{0.0};
+  double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
   Residual residual;
 };
@@ -186,6 +194,13 @@ struct SupervisorOutput {
   std::uint64_t query_stale_sequence_count{0};
   std::uint64_t query_timeout_count{0};
   std::uint64_t query_service_unavailable_count{0};
+  std::uint64_t query_success_count{0};
+  std::uint64_t query_failure_count{0};
+  std::uint64_t query_rtt_count{0};
+  double query_rtt_p50_ms{0.0};
+  double query_rtt_p95_ms{0.0};
+  double query_rtt_p99_ms{0.0};
+  double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
 };
 
