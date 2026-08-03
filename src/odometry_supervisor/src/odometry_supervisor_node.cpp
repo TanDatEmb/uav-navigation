@@ -307,10 +307,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.alignment_gap_ns = aligned_px4_ && aligned_lio_
                                  ? std::llabs(aligned_px4_->timestamp_ns - aligned_lio_->timestamp_ns)
                                  : -1;
-    input.residual = aligned_lio_ && aligned_px4_ && latest_propagated_ &&
-                             aligned_lio_->timestamp_ns == latest_propagated_->timestamp_ns
-                         ? aligned_residual_
-                         : Residual{};
+    input.residual = aligned_lio_ && aligned_px4_ ? aligned_residual_ : Residual{};
     input.time_generation_changed = false;
     if (px4_diagnostics_.found && px4_diagnostics_.hasSchemaV1()) {
       if (last_seen_px4_time_generation_ &&
