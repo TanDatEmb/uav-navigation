@@ -35,43 +35,108 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_command(args: list[str], *, cwd: Path) -> str:
+    result = subprocess.run(args, cwd=cwd, check=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def untracked_manifest(workspace: Path) -> list[dict[str, Any]]:
+    result = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=workspace, check=True, capture_output=True,
+    )
+    manifest: list[dict[str, Any]] = []
+    for raw_path in result.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        relative = raw_path.decode("utf-8", errors="surrogateescape")
+        path = workspace / relative
+        entry: dict[str, Any] = {"path": relative}
+        if path.is_file():
+            entry["sha256"] = sha256(path)
+            entry["size_bytes"] = path.stat().st_size
+        else:
+            entry["kind"] = "non_regular"
+        manifest.append(entry)
+    return manifest
+
+
+def git_tree_state(workspace: Path) -> dict[str, Any]:
+    status = command(["git", "status", "--porcelain"], cwd=workspace)
+    return {
+        "dirty": bool(status),
+        "status": status.splitlines(),
+        "tracked_diff_sha256": sha256_command(["git", "diff", "--binary"], cwd=workspace),
+        "staged_diff_sha256": sha256_command(
+            ["git", "diff", "--cached", "--binary"], cwd=workspace),
+        "untracked_manifest": untracked_manifest(workspace),
+    }
+
+
 def git_identity(workspace: Path) -> dict[str, Any]:
     full_sha = command(["git", "rev-parse", "HEAD"], cwd=workspace, check=True)
     short_sha = command(["git", "rev-parse", "--short", "HEAD"], cwd=workspace, check=True)
     branch = command(["git", "branch", "--show-current"], cwd=workspace)
-    status = command(["git", "status", "--porcelain"], cwd=workspace)
     submodule = workspace / PX4_MSGS
     if not submodule.is_dir():
         raise RuntimeError(f"PX4 message submodule is missing: {submodule}")
-    submodule_status = command(["git", "status", "--porcelain"], cwd=submodule)
     submodule_sha = command(["git", "rev-parse", "HEAD"], cwd=submodule, check=True)
+    tree = git_tree_state(workspace)
+    submodule_tree = git_tree_state(submodule)
     return {
         "full_sha": full_sha,
         "short_sha": short_sha,
         "branch": branch or "(detached)",
-        "dirty": bool(status),
-        "status": status.splitlines(),
+        "dirty": tree["dirty"],
+        "status": tree["status"],
+        "tracked_diff_sha256": tree["tracked_diff_sha256"],
+        "staged_diff_sha256": tree["staged_diff_sha256"],
+        "untracked_manifest": tree["untracked_manifest"],
         "submodules": {
             PX4_MSGS.as_posix(): {
                 "sha": submodule_sha,
-                "dirty": bool(submodule_status),
-                "status": submodule_status.splitlines(),
+                **submodule_tree,
             }
         },
     }
 
 
+def validate_provenance(
+    provenance: dict[str, Any], *, policy: str = "qualification",
+    expected_sha: str | None = None,
+) -> dict[str, Any]:
+    """Annotate provenance and enforce the selected replay policy.
+
+    Development replay may run from a dirty worktree, but its artifact is
+    explicitly ineligible for qualification. Qualification is fail-closed.
+    """
+    if policy not in {"development", "qualification"}:
+        raise ValueError(f"unknown provenance policy: {policy}")
+    git = provenance.get("git", provenance)
+    submodules = git.get("submodules", {})
+    submodule_dirty = any(bool(item.get("dirty")) for item in submodules.values())
+    dirty = bool(git.get("dirty")) or submodule_dirty
+    actual_sha = git.get("full_sha")
+    sha_matches = expected_sha is None or actual_sha == expected_sha
+    eligible = not dirty and sha_matches
+    provenance["provenance_policy"] = policy
+    provenance["acceptance_eligible"] = eligible
+    provenance["qualification_clean"] = not dirty
+    provenance["expected_sha"] = expected_sha
+    provenance["expected_sha_matches"] = sha_matches
+    if policy == "qualification" and dirty:
+        raise RuntimeError("benchmark refused: qualification requires clean worktree and submodule")
+    if expected_sha is not None and not sha_matches:
+        raise RuntimeError(
+            f"benchmark refused: expected HEAD {expected_sha}, actual {actual_sha}"
+        )
+    return provenance
+
+
 def require_clean(workspace: Path, expected_sha: str | None = None) -> dict[str, Any]:
     identity = git_identity(workspace)
-    if identity["dirty"]:
-        raise RuntimeError("benchmark refused: working tree is dirty")
-    if identity["submodules"][PX4_MSGS.as_posix()]["dirty"]:
-        raise RuntimeError("benchmark refused: PX4 message submodule is dirty")
-    if expected_sha is not None and identity["full_sha"] != expected_sha:
-        raise RuntimeError(
-            f"benchmark refused: expected HEAD {expected_sha}, "
-            f"actual {identity['full_sha']}"
-        )
+    validate_provenance(identity, policy="qualification", expected_sha=expected_sha)
     return identity
 
 
@@ -147,8 +212,9 @@ def make_provenance(
     rate: float | None = None,
     expected_sha: str | None = None,
     binary_relative: str | None = None,
+    policy: str = "qualification",
 ) -> dict[str, Any]:
-    identity = require_clean(workspace, expected_sha)
+    identity = git_identity(workspace)
     binary = find_binary(workspace, binary_relative)
     if not config.is_file():
         raise RuntimeError(f"benchmark refused: config does not exist: {config}")
@@ -167,6 +233,7 @@ def make_provenance(
         },
         "host": host_snapshot(),
     }
+    validate_provenance(result, policy=policy, expected_sha=expected_sha)
     if dataset is not None:
         result["dataset"] = {"id": dataset, "rate": rate}
     return result

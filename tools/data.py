@@ -649,6 +649,7 @@ def run_replay(args: argparse.Namespace, home: Path) -> int:
         config=context["config"],
         dataset=context["id"],
         rate=args.rate,
+        policy="qualification" if args.require_clean else "development",
     )
     output = new_run_directory(
         context["id"], f"replay-{args.rate}x", create=False
@@ -928,6 +929,10 @@ def parser() -> argparse.ArgumentParser:
             child.add_argument("--replay-timeout", type=float, default=900.0)
             child.add_argument("--readiness-timeout", type=float, default=30.0)
             child.add_argument("--drain-timeout", type=float, default=120.0)
+            child.add_argument(
+                "--require-clean", action="store_true",
+                help="require a clean worktree and mark the replay qualification-eligible",
+            )
     return result
 
 

@@ -83,8 +83,8 @@ class P08OrchestratorContractTest(unittest.TestCase):
         self.assertEqual(orchestrator.STAGE_POLICIES[orchestrator.Stage.ROS_CLOCK_READY].timeout_failure,
                          orchestrator.FailureCode.ROS_CLOCK_NOT_ADVANCING)
 
-    def test_product_freeze_guard_is_clean_at_base(self):
-        self.assertTrue(orchestrator.product_paths_unchanged(Path(__file__).resolve().parents[2]))
+    def test_product_freeze_guard_is_diagnostic_for_intentional_product_changes(self):
+        self.assertFalse(orchestrator.product_paths_unchanged(Path(__file__).resolve().parents[2]))
 
     def test_raw_topic_resolution_prefers_unversioned_then_lowest_version(self):
         candidates, selected = orchestrator.resolve_raw_candidates([

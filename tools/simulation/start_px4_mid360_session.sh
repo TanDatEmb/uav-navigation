@@ -102,7 +102,7 @@ launch_terminal px4_ingress "PX4 odometry ingress | $(basename "${SESSION_DIR}")
   -p use_sim_time:=true -p simulation_clock:=true
 
 deadline=$((SECONDS+45))
-until timeout 5 ros2 topic echo --no-daemon --once /px4/odometry_ros >/dev/null 2>&1; do
+until timeout 5 ros2 topic echo --no-daemon --once /px4/estimator_odometry >/dev/null 2>&1; do
   (( SECONDS < deadline )) || { echo "PX4 odometry bridge startup timeout" >&2; exit 70; }
   sleep 1
 done

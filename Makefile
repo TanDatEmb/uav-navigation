@@ -4,6 +4,7 @@ RATE ?= 1.0
 REPLAY_TIMEOUT ?= 900
 REPLAY_READINESS_TIMEOUT ?= 30
 REPLAY_DRAIN_TIMEOUT ?= 120
+REPLAY_REQUIRE_CLEAN ?= 0
 REPEAT ?= 1
 MAX_LIDAR ?= 0
 DRY_RUN ?= 0
@@ -54,13 +55,15 @@ deps-px4-check:
 # orchestrator entrypoint; P08_SITL_OUTPUT must name a fresh artifact directory.
 P08_SITL_OUTPUT ?=
 P08_PX4_DIR ?= $(HOME)/Dev/Autopilot-p0.7-v1.17
+P08_EXPECTED_GIT_SHA ?=
 
 p0-8-sitl-startup p0-8-sitl-smoke-on p0-8-sitl-off p0-8-sitl-on p0-8-sitl-memory-on:
 	@test -n "$(P08_SITL_OUTPUT)" || { echo "P08_SITL_OUTPUT must be a fresh artifact directory" >&2; exit 64; }
 	@mode="$@"; mode="$${mode#p0-8-sitl-}"; \
 		if test "$$mode" = smoke-on; then repeat="--repeat 3"; else repeat=""; fi; \
 		$(ROS_ENV) python3 tools/performance/p0_8_sitl_orchestrator.py "$$mode" \
-			--px4-dir "$(P08_PX4_DIR)" --output "$(P08_SITL_OUTPUT)" $$repeat
+			--px4-dir "$(P08_PX4_DIR)" --output "$(P08_SITL_OUTPUT)" \
+			$(if $(strip $(P08_EXPECTED_GIT_SHA)),--expected-git-sha "$(P08_EXPECTED_GIT_SHA)",) $$repeat
 
 clean:
 	@$(DATASET_TOOL) clean
@@ -93,6 +96,7 @@ data-replay:
 		--replay-timeout "$(REPLAY_TIMEOUT)" \
 		--readiness-timeout "$(REPLAY_READINESS_TIMEOUT)" \
 		--drain-timeout "$(REPLAY_DRAIN_TIMEOUT)" \
+		$(if $(filter 1 true yes,$(REPLAY_REQUIRE_CLEAN)),--require-clean,) \
 		$(if $(filter 1 true yes,$(ENABLE_RVIZ)),--enable-rviz,)
 
 data-replay-stop:

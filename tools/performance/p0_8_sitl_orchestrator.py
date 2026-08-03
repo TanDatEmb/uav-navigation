@@ -527,9 +527,9 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
                         TopicSpec("clock", "/clock", "rosgraph_msgs/msg/Clock", CLOCK_QOS),
                         self._on_clock)
         self._subscribe(
-            "px4_odometry_ros", Odometry,
-            TopicSpec("px4_odometry_ros", "/px4/odometry_ros", "nav_msgs/msg/Odometry", LIO_QOS),
-            lambda message: self._observe("px4_odometry_ros", message, self._odom_summary(message)))
+            "px4_estimator_odometry", Odometry,
+            TopicSpec("px4_estimator_odometry", "/px4/estimator_odometry", "nav_msgs/msg/Odometry", LIO_QOS),
+            lambda message: self._observe("px4_estimator_odometry", message, self._odom_summary(message)))
         self._subscribe(
             "px4_diagnostics", DiagnosticArray,
             TopicSpec("px4_diagnostics", "/px4/diagnostics", "diagnostic_msgs/msg/DiagnosticArray", PX4_DIAGNOSTICS_QOS),
@@ -1073,10 +1073,14 @@ def product_paths_unchanged(workspace: Path, base_sha: str = PRODUCT_BASE_SHA) -
 
 
 class Preflight:
-    def __init__(self, workspace: Path, px4_dir: Path, allow_dirty: bool) -> None:
+    def __init__(self, workspace: Path, px4_dir: Path, allow_dirty: bool = False,
+                 expected_git_sha: str | None = None) -> None:
         self.workspace = workspace
         self.px4_dir = px4_dir
+        # Canonical SITL has no development-dirty mode. Keep the legacy
+        # argument for callers, but intentionally do not use it as an escape.
         self.allow_dirty = allow_dirty
+        self.expected_git_sha = expected_git_sha
 
     def run(self) -> dict[str, Any]:
         if not self.workspace.is_dir() or not (self.workspace / "install/setup.bash").is_file():
@@ -1086,12 +1090,14 @@ class Preflight:
             raise QualificationFailure(FailureCode.PROVENANCE_INVALID,
                                         f"required product base is unavailable: {PRODUCT_BASE_SHA}", Stage.PREFLIGHT)
         frozen = product_paths_unchanged(self.workspace)
-        if not frozen:
-            raise QualificationFailure(FailureCode.PRODUCT_FREEZE_VIOLATION,
-                                        "product paths differ from the required base", Stage.PREFLIGHT)
         git_sha = command_output(["git", "rev-parse", "HEAD"], self.workspace)
         git_status = command_output(["git", "status", "--porcelain"], self.workspace)
-        if git_status and not self.allow_dirty:
+        if self.expected_git_sha is not None and git_sha != self.expected_git_sha:
+            raise QualificationFailure(
+                FailureCode.PROVENANCE_INVALID,
+                f"expected workspace SHA {self.expected_git_sha}, actual {git_sha}",
+                Stage.PREFLIGHT)
+        if git_status:
             raise QualificationFailure(FailureCode.PROVENANCE_INVALID,
                                         "acceptance run requires a clean workspace", Stage.PREFLIGHT)
         if not self.px4_dir.is_dir():
@@ -1158,6 +1164,9 @@ class Preflight:
             "workspace_dirty": bool(git_status),
             "product_paths_unchanged_from_base": frozen,
             "acceptance_eligible": not bool(git_status),
+            "provenance_policy": "qualification",
+            "expected_git_sha": self.expected_git_sha,
+            "expected_git_sha_matches": self.expected_git_sha is None or git_sha == self.expected_git_sha,
             "px4": {"path": str(self.px4_dir), "sha": px4_sha, "dirty": bool(px4_status)},
             "px4_msgs": {"sha": msgs_sha, "dirty": bool(msgs_status)},
             "config_hashes": {
@@ -1173,12 +1182,14 @@ class Preflight:
 
 class SitlOrchestrator:
     def __init__(self, workspace: Path, px4_dir: Path, output: Path,
-                 policy: ModePolicy, allow_dirty: bool = False) -> None:
+                 policy: ModePolicy, allow_dirty: bool = False,
+                 expected_git_sha: str | None = None) -> None:
         self.workspace = workspace.resolve()
         self.px4_dir = px4_dir.resolve()
         self.output = output.resolve()
         self.policy = policy
         self.allow_dirty = allow_dirty
+        self.expected_git_sha = expected_git_sha
         self.machine = StageMachine()
         self.registry = ProcessRegistry(self.output)
         self.artifact: ArtifactWriter | None = None
@@ -1397,9 +1408,9 @@ class SitlOrchestrator:
             parse_bool(values.get("output_valid")) is True and
             parse_bool(values.get("continuity_valid")) is True and
             parse_int(values.get("last_valid_sample_time_ns")) not in (None, 0) and
-            self.monitor is not None and self.monitor.topic_ready("px4_odometry_ros") and
-            (self.monitor.topic("px4_odometry_ros").last_ros_stamp_ns or 0) > 0 and
-            values.get("output_frame") == "odom" and values.get("output_child_frame") == "base_link"
+            self.monitor is not None and self.monitor.topic_ready("px4_estimator_odometry") and
+            (self.monitor.topic("px4_estimator_odometry").last_ros_stamp_ns or 0) > 0 and
+            values.get("output_frame") == "px4_odom" and values.get("output_child_frame") == "base_link"
         )
 
     def _fast_lio_ready(self) -> bool:
@@ -1414,9 +1425,9 @@ class SitlOrchestrator:
             (self.monitor.topic("lio_propagated").last_ros_stamp_ns or 0) > 0 and
             self.monitor.topic("lio_corrected").latest_payload_summary is not None and
             self.monitor.topic("lio_propagated").latest_payload_summary is not None and
-            self.monitor.topic("lio_corrected").latest_payload_summary.get("frame_id") == "odom" and
+            self.monitor.topic("lio_corrected").latest_payload_summary.get("frame_id") == "lio_odom" and
             self.monitor.topic("lio_corrected").latest_payload_summary.get("child_frame_id") == "base_link" and
-            self.monitor.topic("lio_propagated").latest_payload_summary.get("frame_id") == "odom" and
+            self.monitor.topic("lio_propagated").latest_payload_summary.get("frame_id") == "lio_odom" and
             self.monitor.topic("lio_propagated").latest_payload_summary.get("child_frame_id") == "base_link"
         )
 
@@ -1440,7 +1451,9 @@ class SitlOrchestrator:
             self.registry.alive("supervisor") and
             self.monitor is not None and self.monitor.supervisor_status is not None and
             self.monitor.supervisor_status_count > 0 and bool(values) and
-            int_value(self.monitor.supervisor_status.health) != 0
+            int_value(self.monitor.supervisor_status.health) != 0 and
+            parse_bool(values.get("alignment_valid")) is True and
+            values.get("alignment_source") == "initial_prior.startup_coincident_identity"
         )
 
     def _measurement_summary(self) -> dict[str, Any]:
@@ -1572,7 +1585,7 @@ class SitlOrchestrator:
                    lambda: {"alive": self.registry.alive("px4_odometry_bridge")}, ("px4_odometry_bridge",))
         self._wait(Stage.PX4_INGRESS_READY, self._bridge_ready,
                    lambda: {"diagnostics": self.monitor.diagnostics.snapshot("px4_odometry_bridge"),
-                             "output": self.monitor.topic("px4_odometry_ros").as_dict()},
+                             "output": self.monitor.topic("px4_estimator_odometry").as_dict()},
                    ("px4_odometry_bridge", "ros_gz_bridge", "px4_gazebo"))
         if self.policy.stop_after is Stage.PX4_INGRESS_READY:
             return
@@ -1656,7 +1669,8 @@ class SitlOrchestrator:
             return 2
         try:
             self._begin(Stage.PREFLIGHT)
-            self.provenance = Preflight(self.workspace, self.px4_dir, self.allow_dirty).run()
+            self.provenance = Preflight(
+                self.workspace, self.px4_dir, self.allow_dirty, self.expected_git_sha).run()
             self._end("PASS", self.provenance)
             self.artifact.update(**self.provenance)
             self.resources = ResourceSampler(self.output / "resources.csv", self.registry)
@@ -1783,7 +1797,8 @@ def run_series(args: argparse.Namespace) -> int:
     for index in range(1, args.repeat + 1):
         child = root / f"run-{index:02d}"
         code = SitlOrchestrator(args.workspace, args.px4_dir, child,
-                                MODE_POLICIES[RunMode.SMOKE_ON], args.allow_dirty).run()
+                                MODE_POLICIES[RunMode.SMOKE_ON], args.allow_dirty,
+                                args.expected_git_sha).run()
         payload = json.loads((child / "run.json").read_text(encoding="utf-8"))
         passed = code == 0 and payload.get("outcome") == "PASS"
         streak = streak + 1 if passed else 0
@@ -1806,7 +1821,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path,
                         default=None, help="fresh canonical artifact directory")
     parser.add_argument("--allow-dirty", action="store_true",
-                        help="debug only; records acceptance_eligible=false")
+                        help="deprecated; canonical SITL always rejects dirty worktrees")
+    parser.add_argument("--expected-git-sha", default=None,
+                        help="optional exact workspace SHA required by qualification")
     parser.add_argument("--repeat", type=int, default=1,
                         help="repeat smoke-on in this entrypoint and write a series artifact")
     return parser
@@ -1822,7 +1839,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.repeat > 1:
         return run_series(args)
     return SitlOrchestrator(args.workspace, args.px4_dir, args.output,
-                            MODE_POLICIES[RunMode(args.mode)], args.allow_dirty).run()
+                            MODE_POLICIES[RunMode(args.mode)], args.allow_dirty,
+                            args.expected_git_sha).run()
 
 
 if __name__ == "__main__":

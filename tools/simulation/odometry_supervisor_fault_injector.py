@@ -82,10 +82,10 @@ def key_values(values: dict[str, str]) -> list[KeyValue]:
 
 
 def odometry(timestamp_ns: int, x: float = 0.0, yaw: float = 0.0,
-             velocity_x: float = 0.0) -> Odometry:
+             velocity_x: float = 0.0, frame_id: str = "lio_odom") -> Odometry:
     message = Odometry()
     message.header.stamp = stamp_from_ns(timestamp_ns)
-    message.header.frame_id = "odom"
+    message.header.frame_id = frame_id
     message.child_frame_id = "base_link"
     message.pose.pose.position.x = x
     message.pose.pose.orientation.w = math.cos(yaw / 2.0)
@@ -114,7 +114,7 @@ class SupervisorFaultInjector(Node):
         self.clock_pub = self.create_publisher(Clock, "/clock", 10)
         self.propagated_pub = self.create_publisher(Odometry, "/lio/odometry_propagated", 20)
         self.corrected_pub = self.create_publisher(Odometry, "/lio/odometry_corrected", 20)
-        self.px4_pub = self.create_publisher(Odometry, "/px4/odometry_ros", 20)
+        self.px4_pub = self.create_publisher(Odometry, "/px4/estimator_odometry", 20)
         diagnostic_qos = 10
         if self.sim_time:
             diagnostic_qos = QoSProfile(
@@ -163,7 +163,7 @@ class SupervisorFaultInjector(Node):
         x, yaw, velocity = self.px4_values(elapsed)
         response.success = True
         response.reason = "synthetic epoch-aligned reference"
-        response.odometry = odometry(timestamp_ns, x, yaw, velocity)
+        response.odometry = odometry(timestamp_ns, x, yaw, velocity, "px4_odom")
         response.interpolated = False
         response.reset_generation = 2 if self.scenario == "px4_reset_generation" and elapsed >= 2.0 else 1
         response.time_generation = 2 if self.scenario == "px4_time_generation" and elapsed >= 2.0 else 1
@@ -263,7 +263,7 @@ class SupervisorFaultInjector(Node):
         px4_x, px4_yaw, px4_velocity = self.px4_values(elapsed)
         propagated = odometry(timestamp_ns, lio_x, lio_yaw, lio_velocity)
         corrected = odometry(timestamp_ns, lio_x, lio_yaw, lio_velocity)
-        px4 = odometry(timestamp_ns, px4_x, px4_yaw, px4_velocity)
+        px4 = odometry(timestamp_ns, px4_x, px4_yaw, px4_velocity, "px4_odom")
         if self.scenario != "lio_propagated_stale" or elapsed < self.fault_start_s:
             self.propagated_pub.publish(propagated)
         if self.scenario != "lio_corrected_stale" or elapsed < self.fault_start_s:
