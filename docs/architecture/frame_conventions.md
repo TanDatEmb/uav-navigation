@@ -1,69 +1,70 @@
 # Frame conventions
 
-M1 follows ROS REP-103: SI units and right-handed FLU axes. The TF tree is
-`odom -> base_link -> livox_frame -> livox_imu_frame`. `odom` is a continuous local LIO
-world frame with possible drift; it is not a global `map`, and M1 never publishes
-`map -> odom`.
+The ROS graph uses explicit frame names. `lio_odom` is the local LIO world
+frame; `px4_odom` is the PX4 boundary world frame. Neither is silently
+relabeled as the other. The TF tree owned by this repository is:
+`lio_odom -> base_link -> livox_frame -> livox_imu_frame`. No
+`map -> lio_odom` or global-localization transform is published.
 
-| Frame | Parent | Axes/origin | Transform source | Dynamic |
+| Producer | `header.frame_id` | `child_frame_id` | World contract | Topic |
 | --- | --- | --- | --- | --- |
-| `odom` | none | local right-handed, Z up | LIO state | no |
-| `base_link` | `odom` | X forward, Y left, Z up; UAV reference/near CoM | vehicle definition | yes |
-| `livox_frame` | `base_link` | LiDAR sensing origin; FLU points | URDF/factory geometry | no |
-| `livox_imu_frame` | `livox_frame` | IMU sensing origin; FLU measurements | URDF/factory geometry | no |
+| FAST-LIO corrected/propagated | `lio_odom` | `base_link` | ROS local ENU/Z-up, continuous local origin | `/lio/odometry_corrected`, `/lio/odometry_propagated` |
+| PX4 ingress bridge | `px4_odom` | `base_link` | PX4 source convention retained; NED is converted to ROS ENU, FRD remains PX4 local | `/px4/estimator_odometry` |
+| supervisor status | `lio_odom` | n/a | metadata is reported in the LIO contract | `/navigation/odometry_supervisor/status` |
+
+PX4 `VehicleOdometry.pose_frame` and `velocity_frame` are decoded before any
+ROS message is published. NED pose/velocity uses the explicit ENU/NED basis;
+FRD pose/velocity uses the explicit body/world axis basis and is marked
+`px4_frd_local`. Mixed NED/FRD world fields are rejected. The bridge reports
+`source_pose_frame`, `source_velocity_frame`, `world_convention`, output frame,
+and conversion rejection reason in diagnostics.
+
+The supervisor captures one alignment record only after FAST-LIO has accepted a
+ground-startup prior from `px4_odom`. The configured transform is
+`^lio_odom T_px4_odom = Identity` at that startup epoch, represented by
+`WorldAlignment{target_frame=lio_odom, source_frame=px4_odom}`. This is an
+explicit startup-coincident contract, not a sign flip, yaw offset, topic
+relabel, or runtime threshold adjustment. Every PX4 service response is
+transformed using the captured record before residual calculation. The record
+contains source/target frames, epoch, PX4 reset/time generations, source, and
+reinitialization count. A generation change invalidates the comparison and
+requires a new startup-coincident alignment; missing or mismatched alignment
+fails closed.
 
 Notation `^A T_B` transforms coordinates from B to A. The core state estimates
-`T_odom_imu`; point registration uses `T_odom_imu * T_imu_lidar * p_lidar`.
-The URDF defines `base_link -> livox_frame -> livox_imu_frame`; runtime config
-names must match it. The factory nominal `T_L_I` is the parent/child transform
-with translation `[0.011, 0.02329, -0.04412] m` and identity rotation. FAST-LIO
-uses its exact inverse `T_I_L` with translation `[-0.011, -0.02329, 0.04412] m`.
-`T_imu_lidar` is derived from those static transforms
-and is never an anonymous matrix. ROS quaternions are ordered `x, y, z, w`.
-
-The real profile uses factory nominal geometry, not unit calibration. The AIST
-profile intentionally retains its dataset-specific estimator extrinsic and
-requires separate provenance. In SIM, `[0, 0, 0.28] m` is the vehicle mount
-`base_link -> livox_frame`; it is not the internal LiDAR-to-IMU transform.
-Future PX4
-NED/FRD conversion is confined to a future PX4 boundary, not this repository.
+`^lio_odom T_imu`; point registration uses
+`^lio_odom T_imu * ^imu T_lidar * p_lidar`. ROS quaternions are ordered
+`x, y, z, w`. The URDF defines `base_link -> livox_frame -> livox_imu_frame`.
+The factory nominal `T_L_I` has translation `[0.011, 0.02329, -0.04412] m` and
+identity rotation; FAST-LIO uses its exact inverse `T_I_L`.
 
 ## Odometry covariance contract
 
-The P0.3 odometry topics use `header.frame_id=odom` and
-`child_frame_id=base_link`. P0.5R publishes pose covariance as
-`[delta p_odom_base, delta theta_odom_base]` in `odom` and twist covariance as
-`[delta v_base, delta omega_base]` in `base_link`. Both are analytical
-projections of the full IKFoM 23-DoF covariance with cross terms preserved; the
-internal covariance is not relabeled. The velocity projection is conditional
-on the resolved bias-corrected gyro sample paired with the output epoch.
-Angular-rate covariance is not a P0.5R acceptance gate.
-
-The old P0.5A per-sample gyro covariance requirement is deferred and does not
-block P0.5R. `T_base_imu` is deterministic static calibration and is resolved
-once/cached; it has no modeled calibration uncertainty in this contract.
+FAST-LIO publishes pose covariance as
+`[delta p_lio_odom_base, delta theta_lio_odom_base]` in `lio_odom` and twist
+covariance as `[delta v_base, delta omega_base]` in `base_link`. These are
+analytical projections of the full IKFoM covariance with cross terms
+preserved. PX4 covariance remains annotated with the source convention by
+the bridge and is not treated as LIO covariance until the explicit alignment
+has been applied.
 
 ## Initial-state prior contract
 
-P0.6 accepts an optional generic initial-state prior with public semantics
-`odom -> base_link`. The internal IKFoM nominal state remains expressed at
-`livox_imu_frame`; the prior is converted through the cached
-`T_base_imu = ^base_link T_livox_imu_frame` geometry before the one-time
-estimator initialization. For a base prior `(p_OB, v_OB, omega_B)`, the
-conversion is:
+The PX4 simulation profile declares:
 
-```text
-R_OB = R_OI R_IB
-p_OI = p_OB + R_OB r_BI
-v_OI = R_OB v_B + R_OB (omega_B x r_BI)
+```yaml
+frames: {odom: lio_odom, base: base_link, ...}
+initial_prior:
+  source: topic
+  context: ground_startup
+  source_frame: px4_odom
+  source_frame_transform: startup_coincident
+  topic: /px4/estimator_odometry
 ```
 
-Zero position means `p_OB = 0`, not `p_OI = 0`. The prior can provide zero,
-fixed, or `nav_msgs/msg/Odometry` topic values; topic timestamps are sensor
-timestamps from the message header and are never replaced with callback time.
-Ground-startup timeout fallback is explicit in configuration. In-flight
-reinitialization is defined and unit-tested as reject-on-timeout only; it is
-not runtime-wired by P0.6. Position, velocity, and attitude components are
-independently masked. Yaw-only changes world-Z yaw while preserving IMU
-gravity-derived roll/pitch; full attitude is accepted only when its gravity
-tilt agrees with the IMU initialization threshold.
+The prior is consumed once at startup, with its sensor timestamp preserved.
+The ROS adapter accepts `px4_odom` only under the explicit
+`ground_startup/startup_coincident` contract and records the provenance in
+FAST-LIO diagnostics. Real and AIST profiles use `lio_odom` plus
+`same_frame`. Timeout fallback remains explicit and is not accepted by the
+canonical PX4/SITL gate.
