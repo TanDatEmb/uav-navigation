@@ -25,6 +25,8 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rosgraph_msgs.msg import Clock
 
+from p0_8_probe_metrics import StatusEventAccumulator
+
 
 def ns(clock: Any) -> int:
     return int(clock.sec) * 1_000_000_000 + int(clock.nanosec)
@@ -106,6 +108,7 @@ class Probe(Node):
         self.measure_start_ns = None
         self.measure_end_ns = None
         self.latest_status: OdometrySupervisorStatus | None = None
+        self.status_events = StatusEventAccumulator()
         self.latest_lio: dict[str, str] = {}
         self.status_samples: list[dict[str, Any]] = []
         self.rows: list[dict[str, Any]] = []
@@ -127,6 +130,8 @@ class Probe(Node):
 
     def on_status(self, message: OdometrySupervisorStatus) -> None:
         self.latest_status = message
+        event_ns = ns(message.header.stamp) or self.clock_ns
+        self.status_events.record(message, event_ns)
 
     def on_lio(self, message: DiagnosticArray) -> None:
         self.latest_lio = diagnostic_values(message, "fast_lio/estimator")
@@ -155,6 +160,7 @@ class Probe(Node):
         if self.measure_start_ns is None and elapsed_ns >= self.args.warmup_s * 1e9:
             self.measure_start_ns = self.clock_ns
             self.measure_end_ns = self.clock_ns + int(self.args.measure_s * 1e9)
+            self.status_events.start(self.measure_start_ns, self.measure_end_ns, self.latest_status)
         if self.measure_start_ns is None:
             return
         status = self.latest_status if self.mode == "on" else None
@@ -192,12 +198,12 @@ class Probe(Node):
             items = values(key)
             return max(items) if items else None
 
-        comparison_values = values("comparison_valid")
-        monitoring_values = values("monitoring_available")
-        comparison_ratio = statistics.mean(comparison_values) if comparison_values else None
-        monitoring_ratio = statistics.mean(monitoring_values) if monitoring_values else None
-        timeouts = maximum("query_timeout_count")
-        generations = maximum("query_generation_mismatch_count")
+        measurement_end_ns = min(self.clock_ns, self.measure_end_ns or self.clock_ns)
+        status_metrics = self.status_events.finish(measurement_end_ns)
+        comparison_ratio = status_metrics["comparison_valid_ratio"]
+        monitoring_ratio = status_metrics["monitoring_available_ratio"]
+        timeouts = status_metrics["query_timeout_count_delta"]
+        generations = status_metrics["query_generation_mismatch_count_delta"]
         supervisor_cpu = values("supervisor_cpu_percent")
         supervisor_rss = values("supervisor_rss_bytes")
         result = {
@@ -206,13 +212,14 @@ class Probe(Node):
             "warmup_s": self.args.warmup_s,
             "measurement_s": self.args.measure_s,
             "sample_count": len(self.rows),
+            **status_metrics,
             "supervisor_metrics_applicable": self.mode == "on",
             "comparison_valid_ratio": comparison_ratio,
             "monitoring_available_ratio": monitoring_ratio,
-            "query_count": maximum("query_count"),
-            "query_success_count": maximum("query_success_count"),
+            "query_count": status_metrics["query_sequence_delta"],
+            "query_success_count": status_metrics["query_success_count_delta"],
             "query_timeout_count": timeouts,
-            "query_failure_count": maximum("query_failure_count"),
+            "query_failure_count": status_metrics["query_failure_count_delta"],
             "query_generation_mismatch_count": generations,
             "query_rtt_p50_ms": maximum("query_rtt_p50_ms"),
             "query_rtt_p95_ms": maximum("query_rtt_p95_ms"),
@@ -220,8 +227,8 @@ class Probe(Node):
             "query_rtt_max_ms": maximum("query_rtt_max_ms"),
             "alignment_gap_p99_ms": percentile(values("alignment_gap_ms"), 0.99) if values("alignment_gap_ms") else None,
             "aligned_comparison_age_p99_ms": percentile(values("comparison_age_ms"), 0.99) if values("comparison_age_ms") else None,
-            "state_transition_count": maximum("state_transition_count"),
-            "reinitialization_requests": maximum("reinitialization_requests"),
+            "state_transition_count": status_metrics["state_transition_count_delta"],
+            "reinitialization_requests": status_metrics["reinitialization_request_sequence_delta"],
             "supervisor_cpu_mean_percent": statistics.mean(supervisor_cpu) if supervisor_cpu else None,
             "supervisor_cpu_p95_percent": percentile(supervisor_cpu, 0.95) if supervisor_cpu else None,
             "supervisor_cpu_max_percent": max(supervisor_cpu) if supervisor_cpu else None,

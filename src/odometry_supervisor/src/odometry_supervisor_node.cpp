@@ -117,8 +117,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     query_client_ = create_client<QueryService>("/px4/sample_odometry_at_time");
     const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::duration<double>(1.0 / config_.evaluation_rate_hz));
-    evaluation_timer_ = create_wall_timer(std::max(period, std::chrono::milliseconds(1)),
-                                          [this]() { evaluate_once(); });
+    evaluation_timer_ = create_timer(std::max(period, std::chrono::milliseconds(1)),
+                                     [this]() { evaluate_once(); });
   }
 
  private:
@@ -265,7 +265,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     if (pending_query_) return;
     if (!query_client_->service_is_ready()) {
       ++query_service_unavailable_count_;
-      invalidate_comparison();
       return;
     }
     auto request = std::make_shared<QueryService::Request>();
@@ -287,13 +286,14 @@ class OdometrySupervisorNode final : public rclcpp::Node {
             response = future.get();
           } catch (const std::exception&) {
             record_query_result(pending, false);
-            invalidate_comparison();
             return;
           }
           if (!response || !response->success ||
               time_ns(response->odometry.header.stamp) != pending.requested_epoch_ns) {
             record_query_result(pending, false);
-            invalidate_comparison();
+            if (response && time_ns(response->odometry.header.stamp) != pending.requested_epoch_ns) {
+              invalidate_comparison();
+            }
             return;
           }
           record_query_result(pending, true);
@@ -341,10 +341,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         });
   }
 
-  bool aligned_comparison_fresh(std::int64_t now_ns,
-                                const std::optional<OdometryState>& lio_epoch) const {
-    if (!aligned_comparison_ || !lio_epoch) return false;
-    if (lio_epoch->timestamp_ns > aligned_comparison_->comparison_epoch_ns) return false;
+  bool aligned_comparison_fresh(std::int64_t now_ns) const {
+    if (!aligned_comparison_) return false;
     if (now_ns < aligned_comparison_->comparison_epoch_ns ||
         now_ns - aligned_comparison_->comparison_epoch_ns >
             config_.maximum_comparison_age_ns) return false;
@@ -363,7 +361,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         pending_query_.reset();
         ++query_timeout_count_;
         ++query_failure_count_;
-        invalidate_comparison();
       }
     }
     std::int64_t propagated_age = -1;
@@ -421,12 +418,23 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.px4_reset_generation = px4_diagnostics_.unsignedInteger("reset_generation");
     input.px4_time_generation = px4_diagnostics_.unsignedInteger("time_generation");
     const auto lio_epoch = latest_propagated_epoch_available_to_px4();
+    input.latest_eligible_epoch_ns = lio_epoch ? lio_epoch->timestamp_ns : 0;
     input.alignment_gap_ns = aligned_comparison_
                                  ? std::llabs(aligned_comparison_->px4.timestamp_ns -
                                               aligned_comparison_->lio.timestamp_ns)
                                  : -1;
     input.comparison_epoch_ns = aligned_comparison_ ? aligned_comparison_->comparison_epoch_ns : 0;
-    input.aligned_comparison_fresh = aligned_comparison_fresh(now_ns, lio_epoch);
+    input.comparison_lag_to_latest_eligible_ns =
+        aligned_comparison_ && lio_epoch &&
+                lio_epoch->timestamp_ns >= aligned_comparison_->comparison_epoch_ns
+            ? lio_epoch->timestamp_ns - aligned_comparison_->comparison_epoch_ns
+            : -1;
+    input.aligned_comparison_fresh = aligned_comparison_fresh(now_ns);
+    input.pending_query_epoch_ns = pending_query_ ? pending_query_->requested_epoch_ns : 0;
+    if (pending_query_) {
+      input.pending_query_age_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - pending_query_->started).count();
+    }
     input.new_comparison_sample = new_comparison_sample_pending_;
     input.residual = aligned_comparison_ ? aligned_comparison_->residual : Residual{};
     input.query_sequence = aligned_comparison_ ? aligned_comparison_->query_sequence : 0;
@@ -551,6 +559,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     add_value("lio_diagnostics_stale", output.lio_diagnostics_stale ? "true" : "false");
     add_value("px4_diagnostics_stale", output.px4_diagnostics_stale ? "true" : "false");
     add_value("new_comparison_sample", output.new_comparison_sample ? "true" : "false");
+    add_value("latest_eligible_epoch_ns", std::to_string(output.latest_eligible_epoch_ns));
+    add_value("comparison_epoch_ns", std::to_string(output.comparison_epoch_ns));
+    add_value("comparison_lag_to_latest_eligible_ns",
+              std::to_string(output.comparison_lag_to_latest_eligible_ns));
+    add_value("pending_query_epoch_ns", std::to_string(output.pending_query_epoch_ns));
+    add_value("pending_query_age_ns", std::to_string(output.pending_query_age_ns));
     add_value("query_sequence", std::to_string(output.query_sequence));
     add_value("component_validity_mask", std::to_string(output.component_validity_mask));
     add_value("covariance_availability_mask", std::to_string(output.covariance_availability_mask));

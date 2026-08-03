@@ -272,6 +272,10 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
       input.aligned_comparison_fresh && input.evaluation_time_ns >= input.comparison_epoch_ns
           ? input.evaluation_time_ns - input.comparison_epoch_ns
           : -1;
+  output.latest_eligible_epoch_ns = input.latest_eligible_epoch_ns;
+  output.comparison_lag_to_latest_eligible_ns = input.comparison_lag_to_latest_eligible_ns;
+  output.pending_query_epoch_ns = input.pending_query_epoch_ns;
+  output.pending_query_age_ns = input.pending_query_age_ns;
   output.residual = input.residual;
   output.px4_reset_generation = input.px4_reset_generation;
   output.px4_time_generation = input.px4_time_generation;

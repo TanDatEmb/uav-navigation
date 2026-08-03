@@ -229,6 +229,25 @@ TEST(OdometrySupervisorStateMachine, HeldComparisonEpochCannotAdvanceResidualPer
   EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kSuspect);
 }
 
+TEST(OdometrySupervisorStateMachine, HeldComparisonRemainsValidWhileNewerEpochIsEligible) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  auto input = healthy_input(1'000'000'000);
+  ASSERT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+
+  input.evaluation_time_ns = 1'050'000'000;
+  input.latest_eligible_epoch_ns = 1'040'000'000;
+  input.comparison_epoch_ns = 1'000'000'000;
+  input.comparison_lag_to_latest_eligible_ns = 40'000'000;
+  input.new_comparison_sample = false;
+  input.aligned_comparison_fresh = true;
+  const auto output = machine.evaluate(input);
+
+  EXPECT_TRUE(output.comparison_valid);
+  EXPECT_TRUE(output.aligned_comparison_fresh);
+  EXPECT_FALSE(output.new_comparison_sample);
+  EXPECT_EQ(output.comparison_lag_to_latest_eligible_ns, 40'000'000);
+}
+
 TEST(OdometrySupervisorStateMachine, StaleComparisonCannotTriggerResidualState) {
   odometry_supervisor::SupervisorStateMachine machine;
   evaluate(machine, 1'000'000'000);

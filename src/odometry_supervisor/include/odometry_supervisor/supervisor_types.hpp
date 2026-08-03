@@ -128,6 +128,10 @@ struct EvaluationInput {
   std::int64_t px4_age_ns{-1};
   std::int64_t alignment_gap_ns{-1};
   std::int64_t aligned_comparison_age_ns{-1};
+  std::int64_t latest_eligible_epoch_ns{0};
+  std::int64_t comparison_lag_to_latest_eligible_ns{-1};
+  std::int64_t pending_query_epoch_ns{0};
+  std::int64_t pending_query_age_ns{-1};
   std::int64_t comparison_epoch_ns{0};
   bool new_comparison_sample{false};
   bool aligned_comparison_fresh{false};
@@ -172,6 +176,10 @@ struct SupervisorOutput {
   std::int64_t px4_age_ns{-1};
   std::int64_t alignment_gap_ns{-1};
   std::int64_t aligned_comparison_age_ns{-1};
+  std::int64_t latest_eligible_epoch_ns{0};
+  std::int64_t comparison_lag_to_latest_eligible_ns{-1};
+  std::int64_t pending_query_epoch_ns{0};
+  std::int64_t pending_query_age_ns{-1};
   Residual residual;
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
