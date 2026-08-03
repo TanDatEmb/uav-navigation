@@ -171,6 +171,7 @@ struct SupervisorOutput {
   std::int64_t lio_corrected_age_ns{-1};
   std::int64_t px4_age_ns{-1};
   std::int64_t alignment_gap_ns{-1};
+  std::int64_t aligned_comparison_age_ns{-1};
   Residual residual;
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
