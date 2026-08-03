@@ -125,7 +125,7 @@ px4-ingress-smoke:
 
 # BEGIN PX4 MID360 SIMULATION WORKFLOW
 # PX4 MID-360 simulation workflow
-PX4_DIR ?= $(HOME)/Dev/Autopilot
+PX4_DIR ?= $(HOME)/Dev/Autopilot-p0.7-v1.17
 GZ_GUI ?= 1
 SESSION_ROOT ?= $(CURDIR)/.artifacts/simulation
 KEEP_SESSIONS ?= 10
@@ -133,19 +133,36 @@ OBSERVER_SAMPLE_HZ ?= 2
 POINTCLOUD_SAMPLE_EVERY ?= 10
 AUTO_SNAPSHOT ?= 1
 PUBLISH_LOCAL_MAP ?=
+SIM_PROFILE ?= debug
+SUPERVISOR_ENABLED ?= 0
 
-.PHONY: sim-px4-mid360 sim-px4-mid360-headless sim-px4-mid360-check sim-px4-mid360-stop sim-px4-mid360-report sim-px4-mid360-clean sim-px4-mid360-test sim-px4-mid360-latest sim-px4-mid360-reset
+.PHONY: sim-px4-mid360 sim-px4-mid360-headless sim-px4-mid360-debug sim-px4-mid360-benchmark sim-px4-mid360-runtime sim-px4-mid360-check sim-px4-mid360-stop sim-px4-mid360-report sim-px4-mid360-clean sim-px4-mid360-test sim-px4-mid360-latest sim-px4-mid360-reset
 
 sim-px4-mid360:
 	@PX4_DIR="$(PX4_DIR)" GZ_GUI="$(GZ_GUI)" SESSION_ROOT="$(SESSION_ROOT)" \
+		SIM_PROFILE="$(SIM_PROFILE)" SUPERVISOR_ENABLED="$(SUPERVISOR_ENABLED)" \
 		OBSERVER_SAMPLE_HZ="$(OBSERVER_SAMPLE_HZ)" POINTCLOUD_SAMPLE_EVERY="$(POINTCLOUD_SAMPLE_EVERY)" \
 		AUTO_SNAPSHOT="$(AUTO_SNAPSHOT)" ENABLE_RVIZ="$(ENABLE_RVIZ)" PUBLISH_LOCAL_MAP="$(PUBLISH_LOCAL_MAP)" \
 		bash tools/simulation/start_px4_mid360_session.sh
 
 sim-px4-mid360-headless:
-	@PX4_DIR="$(PX4_DIR)" GZ_GUI=0 SESSION_ROOT="$(SESSION_ROOT)" ENABLE_RVIZ=0 \
+	@PX4_DIR="$(PX4_DIR)" GZ_GUI=0 SESSION_ROOT="$(SESSION_ROOT)" SIM_PROFILE=debug ENABLE_RVIZ=0 \
+		SUPERVISOR_ENABLED="$(SUPERVISOR_ENABLED)" \
 		OBSERVER_SAMPLE_HZ="$(OBSERVER_SAMPLE_HZ)" POINTCLOUD_SAMPLE_EVERY="$(POINTCLOUD_SAMPLE_EVERY)" \
 		AUTO_SNAPSHOT="$(AUTO_SNAPSHOT)" PUBLISH_LOCAL_MAP="$(PUBLISH_LOCAL_MAP)" \
+		bash tools/simulation/start_px4_mid360_session.sh
+
+sim-px4-mid360-debug:
+	@$(MAKE) sim-px4-mid360-headless SIM_PROFILE=debug SUPERVISOR_ENABLED="$(SUPERVISOR_ENABLED)"
+
+sim-px4-mid360-benchmark:
+	@PX4_DIR="$(PX4_DIR)" GZ_GUI=0 SESSION_ROOT="$(SESSION_ROOT)" SIM_PROFILE=benchmark \
+		SUPERVISOR_ENABLED="$(SUPERVISOR_ENABLED)" ENABLE_RVIZ=0 AUTO_SNAPSHOT=0 \
+		bash tools/simulation/start_px4_mid360_session.sh
+
+sim-px4-mid360-runtime:
+	@PX4_DIR="$(PX4_DIR)" GZ_GUI=0 SESSION_ROOT="$(SESSION_ROOT)" SIM_PROFILE=runtime \
+		SUPERVISOR_ENABLED=1 ENABLE_RVIZ=0 AUTO_SNAPSHOT=0 \
 		bash tools/simulation/start_px4_mid360_session.sh
 
 sim-px4-mid360-check:

@@ -9,12 +9,13 @@ WS_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 detect_px4_dir() {
   if [[ -n "${PX4_DIR:-}" ]]; then printf '%s\n' "${PX4_DIR}"
-  elif [[ -d "${HOME}/Dev/Autopilot" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot"
+  elif [[ -d "${HOME}/Dev/Autopilot-p0.7-v1.17" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot-p0.7-v1.17"
   elif [[ -d "${HOME}/Dev/Autopilot" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot"
   else printf '%s\n' "${HOME}/Autopilot"; fi
 }
 
 PX4_DIR="$(detect_px4_dir)"
+PX4_REQUIRED_GIT_SHA="${PX4_REQUIRED_GIT_SHA:-d6f12ad1c4f70ad3230afd7d86e971421e02fef4}"
 PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
 PX4_BIN="${PX4_BUILD}/bin/px4"
 PX4_ROOTFS="${PX4_BUILD}/rootfs"
@@ -34,6 +35,13 @@ for required in "${PX4_DIR}/.git" "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
     exit 1
   fi
 done
+PX4_ACTUAL_GIT_SHA="$(git -C "${PX4_DIR}" rev-parse HEAD)"
+[[ "${PX4_ACTUAL_GIT_SHA}" == "${PX4_REQUIRED_GIT_SHA}" ]] || {
+  echo "PX4 SHA mismatch: required ${PX4_REQUIRED_GIT_SHA}, actual ${PX4_ACTUAL_GIT_SHA}." >&2
+  exit 66
+}
+[[ -z "$(git -C "${PX4_DIR}" status --porcelain)" ]] || {
+  echo "PX4 source repository is dirty: ${PX4_DIR}" >&2; exit 66; }
 command -v gz >/dev/null 2>&1 || { echo "ERROR: Gazebo command 'gz' is unavailable." >&2; exit 1; }
 
 # PX4's generated environment supplies its Gazebo plugins/server config and its
