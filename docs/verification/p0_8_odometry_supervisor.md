@@ -1,9 +1,143 @@
 # P0.8 Odometry Supervisor — acceptance hardening
 
-## Revised result
+## Historical result before final performance qualification
 
 ```text
 P0.8 status: BLOCKED
+```
+
+## Final performance qualification
+
+This section supersedes the earlier dataset-performance paragraph for the
+final qualification. The earlier `978c65b` artifacts remain historical only;
+they are not final-head evidence.
+
+### Provenance correction
+
+- Required start: `b23c706cbefa7b3ebff98c356686cacbe0a34a30`.
+- Branch: `fix/p0.8-performance-qualification`.
+- Immediate P0.7 base code: `d6bd7f0349d90167a26bf3710e65341f8b469404`.
+- Common diagnostics instrumentation: `568e0ea`.
+- Instrumented baseline: `1529e69d8aef09da29eec8dd782dc5af441dab45`.
+- Final candidate runtime SHA used for canonical A/B:
+  `8cac3ce2fe988051b256f32e090b1ac7f1916fc4`.
+- PX4 message submodule: `86d8239e962f6939e05c3737784f60c02fa884db`, clean.
+- Qualification runner resource-parsing SHA: `679efd4c543afb78ff6ec3fdc57964e9260849a1`.
+
+Every dataset run recorded full Git SHA, branch, dirty state, submodule state,
+binary SHA-256, configuration SHA-256, compiler, host, dataset, rate, process
+sampler, and `/usr/bin/time -v` output. A run fails closed on dirty state, SHA
+mismatch, missing binary/configuration, or an existing output directory.
+
+Artifacts:
+
+```text
+.artifacts/verification/p0.8-performance/final/
+```
+
+### Latency metric correction
+
+The final diagnostics use bounded full-run populations, not a mean over the
+full run combined with a rolling last-1024 percentile. The measured fields are
+`pipeline_push_lidar`, `result_processing`, `corrected_scan_end_to_end`, and
+`registration_update`, each with count, mean, p50, p95, p99, and maximum. The
+legacy `scan_processing` field is not the sole gate.
+
+### Dataset A/B methodology and correctness
+
+Three baseline and three candidate runs used the same AIST bag, configuration,
+serial constrained build policy, and host condition group at `1.0x`. Baseline
+and candidate runs passed correctness: `55,435` IMU and `2,772` LiDAR received
+and processed, zero drops/overflow/invalid timestamps, zero final queues,
+zero non-finite output, and estimator/replay exit `0/0`.
+
+### Dataset latency and resource results
+
+Medians over three complete runs:
+
+| Metric | Baseline | Candidate | Absolute delta | Relative delta |
+|---|---:|---:|---:|---:|
+| Corrected scan end-to-end p95 | 82,543 µs | 82,677 µs | +134 µs | +0.162% |
+| Corrected scan end-to-end p99 | 119,634 µs | 119,768 µs | +134 µs | +0.112% |
+| Registration update p95 | 124,258 µs | 124,101 µs | -157 µs | -0.126% |
+| Pipeline push LiDAR p95 | 46 µs | 46 µs | 0 µs | 0.000% |
+| Result processing p95 | 81,356 µs | 81,347 µs | -9 µs | -0.011% |
+| Maximum queue depth | 48 | 48 | 0 | 0.000% |
+| Worker busy ratio | 0.424231 | 0.425711 | +0.001480 | +0.349% |
+| Wall time | 287.41 s | 287.50 s | +0.09 s | +0.031% |
+| Peak RSS | 297,496,576 B | 287,158,272 B | -10,338,304 B | -3.475% |
+| CPU seconds | 157.50 s | 159.57 s | +2.07 s | +1.314% |
+
+The canonical `1.0x` dataset passes the specified dual thresholds. No
+meaningful final-head dataset regression was measured. The old `978c65b`
+scan-p95 finding is not a finding against this final candidate.
+
+### Stress characterization
+
+| Rate | Result | Evidence |
+|---:|---|---|
+| 1.25x | BLOCKED/FAIL | `stress-1p25x-rerun/run.json`; lag, `load_shedding_count=9`, maximum queue depth `121` |
+| 1.50x | BLOCKED/FAIL | `stress-1p50x/run.json`; input and processed counts did not converge and lag/load-shedding acceptance failed |
+
+These are measured throughput-boundary findings. No production optimization
+was attempted because the canonical `1.0x` A/B had no meaningful regression.
+
+### Healthy SITL A/B
+
+The final-head SITL protocol could not reach measurement. The headless session
+was launched with PX4 v1.17, the pinned `px4_msgs` submodule, the project
+Gazebo world, and candidate install, but timed out waiting for a real
+`/px4/odometry_ros` sample before FAST-LIO startup. Cleanup completed with zero
+orphan processes.
+
+Evidence:
+
+```text
+.artifacts/verification/p0.8-performance/sitl-off/px4-mid360-20260803-131938/
+```
+
+The required three OFF runs, three ON runs, 30-second warm-up, 120-second
+measurement, comparison-valid ratio, query RTT, alignment-gap, supervisor
+CPU/RSS, and FAST-LIO overhead are `NOT QUALIFIED`. No SITL result is inferred
+from the prior observer report.
+
+### Long-duration memory
+
+The required supervisor-enabled 20-simulated-minute session was not run because
+the SITL startup prerequisite failed. RSS growth, outstanding query bound,
+container growth, and long-duration state stability are `NOT QUALIFIED`.
+
+### Final gates
+
+- [x] Exact starting HEAD and clean PX4 message submodule captured
+- [x] Final candidate full SHA captured in canonical dataset artifacts
+- [x] Full-run latency distributions and sample counts captured
+- [x] Three baseline and three candidate canonical runs passed correctness
+- [x] Dataset latency dual-threshold qualification passed
+- [x] Dataset CPU/RSS/wall qualification passed
+- [x] 1.25x stress run completed and finding recorded
+- [x] 1.50x stress run completed and finding recorded
+- [ ] Healthy SITL OFF/ON A/B completed
+- [ ] Query RTT and supervisor resource targets qualified
+- [ ] 20-simulated-minute memory qualification completed
+- [x] `make build` passed
+- [x] `make build-safe` passed
+- [x] `make test` passed
+- [x] `make check` passed: 330 tests, 0 errors, 0 failures, 0 skipped
+- [x] `make vendor-check` passed
+- [x] P0.9 and P0.10 not started
+
+## Revised final acceptance conclusion
+
+```text
+P0.8 status: BLOCKED
+
+The final-head dataset correctness, full-run latency, CPU/RSS/wall-runtime,
+and provenance qualifications pass. The 1.25x and 1.50x stress runs expose
+measured throughput-boundary findings. The mandatory healthy SITL A/B and
+20-simulated-minute memory qualification could not start because the final
+headless session did not produce a PX4 odometry sample and was cleaned up
+successfully. P0.8 therefore remains BLOCKED; it is not PASS WITH CONDITIONS.
 ```
 
 The P0.8 contract hardening and runtime fault matrix are complete, and the
@@ -238,7 +372,7 @@ false health transitions over that benchmark.
 - [x] P0.9 not started
 - [x] P0.10 not started
 
-## Revised conclusion
+## Historical conclusion (superseded by final qualification above)
 
 ```text
 P0.8 status: BLOCKED
