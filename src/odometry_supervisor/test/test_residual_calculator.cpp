@@ -105,6 +105,16 @@ TEST(OdometryResidual, RequiresSameEpochAndRejectsInvalidState) {
                    .has_value());
 }
 
+TEST(OdometryResidual, KeepsPx4AndLioWorldFramesDistinct) {
+  auto lio = state(1'000'000'000);
+  auto px4 = state(1'000'000'000);
+  lio.frame_id = "lio_odom";
+  px4.frame_id = "px4_odom";
+
+  EXPECT_TRUE(odometry_supervisor::ResidualCalculator::valid(lio));
+  EXPECT_TRUE(odometry_supervisor::ResidualCalculator::valid(px4));
+}
+
 TEST(OdometryResidual, ComputesPositionErrorGrowthRate) {
   auto previous = state(1'000'000'000);
   auto current = state(2'000'000'000);
