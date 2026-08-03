@@ -198,9 +198,10 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
             onInitialStatePrior(message);
           });
   RCLCPP_INFO(get_logger(),
-              "Publishing corrected and propagated odometry in odom -> %s; "
+              "Publishing corrected and propagated odometry in %s -> %s; "
               "dynamic TF owner=%s; static geometry resolved from %s -> %s; "
               "config_sha256=%s",
+              parameters_.odom_frame.c_str(),
               parameters_.base_frame.c_str(),
               parameters_.propagated_odometry_enabled ? "propagated" : "corrected",
               parameters_.base_frame.c_str(), parameters_.imu_frame.c_str(),
@@ -329,11 +330,16 @@ void FastLioNode::onInitialStatePrior(
   prior.provenance = "topic:" + parameters_.initial_prior_topic + "|source_frame=" +
                      source_frame + "|target_frame=" + parameters_.odom_frame +
                      "|transform=" + parameters_.initial_prior_source_frame_transform;
+  const auto prior_target_frame = std::string(prior.reference_frame.name());
+  const auto prior_body_frame = std::string(prior.body_frame.name());
   const Status status = pipeline_.submitInitialStatePrior(std::move(prior));
   if (!status.ok()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "initial-state prior rejected: %s",
-                         status.message().c_str());
+                         "initial-state prior rejected: %s "
+                         "source=%s target=%s body=%s configured_target=%s",
+                         status.message().c_str(), source_frame.c_str(),
+                         prior_target_frame.c_str(), prior_body_frame.c_str(),
+                         parameters_.odom_frame.c_str());
   }
 }
 
