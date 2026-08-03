@@ -28,6 +28,7 @@ target_compile_options(${PROJECT_NAME}_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/odometry_supervisor_node.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_core)
+target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_interfaces_INCLUDE_DIRS})
 ament_target_dependencies(${PROJECT_NAME}_node
   builtin_interfaces diagnostic_msgs nav_msgs navigation_interfaces rclcpp std_msgs)
 

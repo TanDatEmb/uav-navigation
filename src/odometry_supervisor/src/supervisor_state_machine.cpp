@@ -19,6 +19,11 @@ constexpr std::uint16_t kReasonLioResetting = 11;
 constexpr std::uint16_t kReasonResetGrace = 12;
 constexpr std::uint16_t kReasonSchemaMismatch = 13;
 constexpr std::uint16_t kReasonStale = 14;
+constexpr std::uint16_t kReasonLioDiagnosticsStale = 15;
+constexpr std::uint16_t kReasonLioDiagnosticSchemaMismatch = 16;
+constexpr std::uint16_t kReasonPx4DiagnosticsStale = 17;
+constexpr std::uint16_t kReasonPx4DiagnosticSchemaMismatch = 18;
+constexpr std::uint16_t kReasonAlignedComparisonStale = 19;
 }
 
 SupervisorStateMachine::SupervisorStateMachine(SupervisorConfig config)
@@ -35,6 +40,10 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
                            config.maximum_alignment_gap_ns, config.service_timeout_ns}) {
     if (value < 0) throw std::invalid_argument("freshness/alignment limits must be nonnegative");
   }
+  if (config.maximum_comparison_age_ns <= 0 ||
+      config.maximum_comparison_age_ns < config.service_timeout_ns) {
+    throw std::invalid_argument("maximum comparison age is incompatible with service timeout");
+  }
   const auto ordered = [](const ResidualThresholds& a, const ResidualThresholds& b) {
     return a.position_m < b.position_m && a.velocity_m_s < b.velocity_m_s &&
            a.orientation_rad < b.orientation_rad && a.yaw_rad < b.yaw_rad;
@@ -47,7 +56,7 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
   }
   if (config.suspect_enter_ns <= 0 || config.degraded_enter_ns < config.suspect_enter_ns ||
       config.diverged_enter_ns < config.degraded_enter_ns || config.recovery_confirm_ns <= 0 ||
-      config.reset_grace_ns < 0) {
+      config.reset_grace_ns < 0 || config.lio_diagnostics_invalid_enter_ns <= 0) {
     throw std::invalid_argument("supervisor persistence durations are not ordered");
   }
   const auto evaluation_period_ns = static_cast<std::int64_t>(1e9 / config.evaluation_rate_hz);
@@ -141,10 +150,16 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   previous_reset_generation_ = input.px4_reset_generation;
   previous_time_generation_ = input.px4_time_generation;
 
+  const bool new_comparison_epoch =
+      input.new_comparison_sample && input.comparison_epoch_ns > 0 &&
+      (!last_comparison_epoch_ns_ || input.comparison_epoch_ns > *last_comparison_epoch_ns_);
+  if (new_comparison_epoch) last_comparison_epoch_ns_ = input.comparison_epoch_ns;
+
   const bool in_reset_grace = reset_grace_until_ns_ &&
                               input.evaluation_time_ns < *reset_grace_until_ns_;
   const bool comparison_valid = input.px4_available && input.px4_fresh &&
-                                input.px4_continuity_valid && input.diagnostics_valid &&
+                                input.px4_continuity_valid && input.lio_diagnostics_valid &&
+                                input.px4_diagnostics_valid && input.aligned_comparison_fresh &&
                                 input.origin_aligned && input.residual.valid &&
                                 input.propagated_fresh && input.corrected_fresh &&
                                 input.alignment_gap_ns >= 0 &&
@@ -152,13 +167,29 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
                                 !in_reset_grace && !time_generation_changed &&
                                 !input.time_generation_changed;
   const bool monitoring_available = input.px4_available && input.px4_fresh &&
-                                    input.diagnostics_valid && input.origin_aligned;
+                                    input.px4_diagnostics_valid && input.origin_aligned;
   if (input.px4_available && !comparison_valid) ++alignment_failure_count_;
+
+  if (input.lio_diagnostics_valid) {
+    lio_diagnostics_invalid_since_ns_.reset();
+  } else if (!lio_diagnostics_invalid_since_ns_) {
+    lio_diagnostics_invalid_since_ns_ = input.evaluation_time_ns;
+  }
 
   if (input.lio_lost) {
     transition(HealthState::kDiverged, kReasonLioLost, "LIO_LOST");
   } else if (input.lio_state_corruption) {
     transition(HealthState::kDiverged, kReasonStateCorruption, "STATE_CORRUPTION");
+  } else if (state_ != HealthState::kDiverged && !input.lio_diagnostics_valid &&
+             lio_diagnostics_invalid_since_ns_ &&
+             input.evaluation_time_ns - *lio_diagnostics_invalid_since_ns_ >=
+                 config_.lio_diagnostics_invalid_enter_ns) {
+    if (input.lio_diagnostics_schema_valid) {
+      transition(HealthState::kDegraded, kReasonLioDiagnosticsStale, "LIO_DIAGNOSTICS_STALE");
+    } else {
+      transition(HealthState::kDegraded, kReasonLioDiagnosticSchemaMismatch,
+                 "LIO_DIAGNOSTIC_SCHEMA_MISMATCH");
+    }
   } else if (state_ != HealthState::kDiverged && input.lio_resetting) {
     transition(HealthState::kDegraded, kReasonLioResetting, "LIO_RESETTING");
   } else if (state_ != HealthState::kDiverged && input.lio_degraded) {
@@ -170,41 +201,49 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   } else if (state_ != HealthState::kDiverged) {
     const bool corrected_stale = input.propagated_fresh && !input.corrected_fresh;
     const bool propagated_stale = !input.propagated_fresh;
-    const bool diverged_condition = comparison_valid && exceeds(input.residual, config_.diverged);
-    const bool degraded_condition =
-        (comparison_valid && exceeds(input.residual, config_.degraded)) || corrected_stale ||
-        propagated_stale || !input.lio_valid;
-    const bool suspect_condition = comparison_valid && exceeds(input.residual, config_.suspect);
-    if (diverged_condition) {
-      if (!diverged_since_ns_) diverged_since_ns_ = input.evaluation_time_ns;
-      if (input.evaluation_time_ns - *diverged_since_ns_ >= config_.diverged_enter_ns) {
+    const bool diverged_residual = new_comparison_epoch && comparison_valid &&
+                                   exceeds(input.residual, config_.diverged);
+    const bool degraded_residual = new_comparison_epoch && comparison_valid &&
+                                   exceeds(input.residual, config_.degraded);
+    const bool suspect_residual = new_comparison_epoch && comparison_valid &&
+                                  exceeds(input.residual, config_.suspect);
+    const bool degraded_condition = degraded_residual || corrected_stale || propagated_stale ||
+                                    !input.lio_valid;
+    if (diverged_residual) {
+      if (!diverged_since_ns_) diverged_since_ns_ = input.comparison_epoch_ns;
+      if (input.comparison_epoch_ns - *diverged_since_ns_ >= config_.diverged_enter_ns) {
         transition(HealthState::kDiverged, kReasonResidualDiverged, "RESIDUAL_DIVERGED");
       }
-    } else {
+    } else if (new_comparison_epoch) {
       diverged_since_ns_.reset();
     }
     if (state_ != HealthState::kDiverged && degraded_condition) {
-      if (!degraded_since_ns_) degraded_since_ns_ = input.evaluation_time_ns;
-      if (input.evaluation_time_ns - *degraded_since_ns_ >= config_.degraded_enter_ns) {
+      if (!degraded_since_ns_) {
+        degraded_since_ns_ = degraded_residual ? input.comparison_epoch_ns : input.evaluation_time_ns;
+      }
+      const auto elapsed = degraded_residual ? input.comparison_epoch_ns - *degraded_since_ns_
+                                             : input.evaluation_time_ns - *degraded_since_ns_;
+      if (elapsed >= config_.degraded_enter_ns) {
         transition(HealthState::kDegraded, kReasonResidualDegraded, "RESIDUAL_DEGRADED");
       }
-    } else if (!degraded_condition) {
+    } else if (new_comparison_epoch && !degraded_condition) {
       degraded_since_ns_.reset();
     }
     if ((state_ == HealthState::kHealthy || state_ == HealthState::kSuspect) &&
-        suspect_condition) {
-      if (!suspect_since_ns_) suspect_since_ns_ = input.evaluation_time_ns;
-      if (input.evaluation_time_ns - *suspect_since_ns_ >= config_.suspect_enter_ns) {
+        suspect_residual) {
+      if (!suspect_since_ns_) suspect_since_ns_ = input.comparison_epoch_ns;
+      if (input.comparison_epoch_ns - *suspect_since_ns_ >= config_.suspect_enter_ns) {
         transition(HealthState::kSuspect, kReasonResidualSuspect, "RESIDUAL_SUSPECT");
       }
-    } else if (!suspect_condition) {
+    } else if (new_comparison_epoch && !suspect_residual) {
       suspect_since_ns_.reset();
     }
     if (state_ == HealthState::kSuspect || state_ == HealthState::kDegraded) {
       if (comparison_valid && input.lio_valid && input.propagated_fresh &&
-          input.corrected_fresh && below(input.residual, config_.suspect, config_.clear_ratio)) {
-        if (!recovery_since_ns_) recovery_since_ns_ = input.evaluation_time_ns;
-        if (input.evaluation_time_ns - *recovery_since_ns_ >= config_.recovery_confirm_ns) {
+          input.corrected_fresh && new_comparison_epoch &&
+          below(input.residual, config_.suspect, config_.clear_ratio)) {
+        if (!recovery_since_ns_) recovery_since_ns_ = input.comparison_epoch_ns;
+        if (input.comparison_epoch_ns - *recovery_since_ns_ >= config_.recovery_confirm_ns) {
           transition(HealthState::kHealthy, kReasonHealthy, "HEALTHY_RECOVERED");
           recovery_since_ns_.reset();
         }
@@ -235,6 +274,24 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.state_transition_count = transition_count_;
   output.evaluation_count = evaluation_count_;
   output.alignment_failure_count = alignment_failure_count_;
+  output.comparison_epoch_ns = input.comparison_epoch_ns;
+  output.new_comparison_sample = new_comparison_epoch;
+  output.aligned_comparison_fresh = input.aligned_comparison_fresh;
+  output.lio_diagnostics_valid = input.lio_diagnostics_valid;
+  output.px4_diagnostics_valid = input.px4_diagnostics_valid;
+  output.lio_diagnostics_schema_valid = input.lio_diagnostics_schema_valid;
+  output.px4_diagnostics_schema_valid = input.px4_diagnostics_schema_valid;
+  output.lio_diagnostics_stale = input.lio_diagnostics_stale;
+  output.px4_diagnostics_stale = input.px4_diagnostics_stale;
+  output.query_sequence = input.query_sequence;
+  output.component_validity_mask = input.component_validity_mask;
+  output.covariance_availability_mask = input.covariance_availability_mask;
+  output.query_invalid_component_count = input.query_invalid_component_count;
+  output.query_generation_mismatch_count = input.query_generation_mismatch_count;
+  output.query_stale_sequence_count = input.query_stale_sequence_count;
+  output.query_timeout_count = input.query_timeout_count;
+  output.query_service_unavailable_count = input.query_service_unavailable_count;
+  output.stale_residual_reuse_count = input.stale_residual_reuse_count;
   if (input.lio_valid && input.px4_available && !input.origin_aligned) {
     output.monitoring_available = false;
     output.comparison_valid = false;
@@ -243,9 +300,21 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
       output.reason_code = kReasonOriginNotAligned;
       output.reason = "ODOM_ORIGIN_NOT_ALIGNED";
     }
-  } else if (input.px4_available && !input.diagnostics_valid && state_ != HealthState::kDiverged) {
-    output.reason_code = kReasonSchemaMismatch;
-    output.reason = "DIAGNOSTIC_SCHEMA_MISMATCH";
+  } else if (!input.lio_diagnostics_valid && state_ != HealthState::kDiverged) {
+    output.reason_code = input.lio_diagnostics_schema_valid ? kReasonLioDiagnosticsStale
+                                                             : kReasonLioDiagnosticSchemaMismatch;
+    output.reason = input.lio_diagnostics_schema_valid ? "LIO_DIAGNOSTICS_STALE"
+                                                       : "LIO_DIAGNOSTIC_SCHEMA_MISMATCH";
+  } else if (input.px4_available && !input.px4_diagnostics_valid &&
+             state_ != HealthState::kDiverged) {
+    output.reason_code = input.px4_diagnostics_schema_valid ? kReasonPx4DiagnosticsStale
+                                                             : kReasonPx4DiagnosticSchemaMismatch;
+    output.reason = input.px4_diagnostics_schema_valid ? "PX4_DIAGNOSTICS_STALE"
+                                                       : "PX4_DIAGNOSTIC_SCHEMA_MISMATCH";
+  } else if (input.px4_available && !input.aligned_comparison_fresh &&
+             state_ != HealthState::kDiverged) {
+    output.reason_code = kReasonAlignedComparisonStale;
+    output.reason = "ALIGNED_COMPARISON_STALE";
   } else if (!input.px4_available && state_ != HealthState::kDiverged) {
     output.reason_code = kReasonMonitoringUnavailable;
     output.reason = "MONITORING_UNAVAILABLE";
@@ -280,10 +349,12 @@ void SupervisorStateMachine::reset() {
   reinitialization_sequence_ = 0;
   reinitialization_latched_ = false;
   clearPersistence();
+  lio_diagnostics_invalid_since_ns_.reset();
   reset_grace_until_ns_.reset();
   previous_reset_generation_.reset();
   previous_time_generation_.reset();
   previous_residual_.reset();
+  last_comparison_epoch_ns_.reset();
 }
 
 }  // namespace odometry_supervisor

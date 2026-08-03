@@ -26,6 +26,13 @@ uint16 REASON_LIO_RESETTING=11
 uint16 REASON_PX4_RESET_GRACE=12
 uint16 REASON_DIAGNOSTIC_SCHEMA_MISMATCH=13
 uint16 REASON_STALE_INPUT=14
+uint16 REASON_LIO_DIAGNOSTICS_STALE=15
+uint16 REASON_LIO_DIAGNOSTIC_SCHEMA_MISMATCH=16
+uint16 REASON_PX4_DIAGNOSTICS_STALE=17
+uint16 REASON_PX4_DIAGNOSTIC_SCHEMA_MISMATCH=18
+uint16 REASON_ALIGNED_COMPARISON_STALE=19
+uint16 REASON_QUERY_GENERATION_MISMATCH=20
+uint16 REASON_QUERY_INVALID_COMPONENT=21
 uint16 reason_code
 string reason
 
@@ -61,3 +68,16 @@ uint64 px4_time_generation
 uint64 state_transition_count
 uint64 evaluation_count
 uint64 alignment_failure_count
+
+builtin_interfaces/Time comparison_epoch
+bool new_comparison_sample
+bool aligned_comparison_fresh
+uint64 query_sequence
+uint32 component_validity_mask
+uint32 covariance_availability_mask
+uint64 query_invalid_component_count
+uint64 query_generation_mismatch_count
+uint64 query_stale_sequence_count
+uint64 query_timeout_count
+uint64 query_service_unavailable_count
+uint64 stale_residual_reuse_count

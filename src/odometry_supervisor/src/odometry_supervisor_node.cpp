@@ -16,6 +16,7 @@
 
 #include <navigation_interfaces/msg/odometry_supervisor_status.hpp>
 #include <navigation_interfaces/srv/sample_odometry_at_time.hpp>
+#include <navigation_interfaces/odometry_validity.hpp>
 
 #include "odometry_supervisor/diagnostic_adapter.hpp"
 #include "odometry_supervisor/residual_calculator.hpp"
@@ -142,6 +143,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         "alignment.maximum_gap_ns", config.maximum_alignment_gap_ns);
     config.service_timeout_ns = declare_parameter("alignment.service_timeout_ns",
                                                   config.service_timeout_ns);
+    config.maximum_comparison_age_ns = declare_parameter(
+        "alignment.maximum_comparison_age_ns", config.maximum_comparison_age_ns);
     config.clear_ratio = declare_parameter("hysteresis.clear_ratio", config.clear_ratio);
     config.suspect_enter_ns = declare_parameter("persistence.suspect_enter_ns",
                                                 config.suspect_enter_ns);
@@ -152,6 +155,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     config.recovery_confirm_ns = declare_parameter("persistence.recovery_confirm_ns",
                                                    config.recovery_confirm_ns);
     config.reset_grace_ns = declare_parameter("persistence.reset_grace_ns", config.reset_grace_ns);
+    config.lio_diagnostics_invalid_enter_ns = declare_parameter(
+        "persistence.lio_diagnostics_invalid_enter_ns", config.lio_diagnostics_invalid_enter_ns);
     config.suspect_speed_limit_m_s = declare_parameter(
         "actions.suspect_speed_limit_m_s", config.suspect_speed_limit_m_s);
     config.degraded_speed_limit_m_s = declare_parameter(
@@ -204,52 +209,119 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     return *std::prev(upper);
   }
 
-  void request_px4_at(const OdometryState& lio) {
-    if (query_pending_ || !query_client_->service_is_ready()) return;
+  struct PendingQuery {
+    std::uint64_t sequence{0};
+    std::int64_t requested_epoch_ns{0};
+    std::uint64_t expected_reset_generation{0};
+    std::uint64_t expected_time_generation{0};
+    OdometryState lio;
+    std::chrono::steady_clock::time_point started{};
+  };
+
+  void invalidate_comparison() {
+    aligned_comparison_.reset();
+    previous_residual_.reset();
+    new_comparison_sample_pending_ = false;
+  }
+
+  void request_px4_at(const OdometryState& lio, std::uint64_t expected_reset_generation,
+                      std::uint64_t expected_time_generation) {
+    if (pending_query_) return;
+    if (!query_client_->service_is_ready()) {
+      ++query_service_unavailable_count_;
+      invalidate_comparison();
+      return;
+    }
     auto request = std::make_shared<QueryService::Request>();
     request->sample_time = ros_time(lio.timestamp_ns);
     const auto sequence = ++query_sequence_;
-    query_pending_ = true;
-    pending_sequence_ = sequence;
-    pending_started_ = std::chrono::steady_clock::now();
+    pending_query_ = PendingQuery{sequence, lio.timestamp_ns, expected_reset_generation,
+                                  expected_time_generation, lio, std::chrono::steady_clock::now()};
     query_client_->async_send_request(
-        request, [this, sequence, requested_time = lio.timestamp_ns, lio](
+        request, [this, sequence](
                      rclcpp::Client<QueryService>::SharedFuture future) {
-          if (!query_pending_ || pending_sequence_ != sequence) return;
-          query_pending_ = false;
+          if (!pending_query_ || pending_query_->sequence != sequence) {
+            ++query_stale_sequence_count_;
+            return;
+          }
+          const auto pending = *pending_query_;
+          pending_query_.reset();
           QueryService::Response::SharedPtr response;
           try {
             response = future.get();
           } catch (const std::exception&) {
-            aligned_px4_.reset();
-            aligned_lio_.reset();
+            invalidate_comparison();
             return;
           }
           if (!response || !response->success ||
-              time_ns(response->odometry.header.stamp) != requested_time) {
-            aligned_px4_.reset();
-            aligned_lio_.reset();
+              time_ns(response->odometry.header.stamp) != pending.requested_epoch_ns) {
+            invalidate_comparison();
             return;
           }
-          aligned_lio_ = lio;
-          aligned_px4_ = state_from_ros(response->odometry);
-          const auto residual = ResidualCalculator::compare(*aligned_lio_, *aligned_px4_,
-                                                             previous_residual_);
-          if (residual) previous_residual_ = residual;
-          aligned_residual_ = residual.value_or(Residual{});
+          constexpr auto required_components = navigation_interfaces::kPositionValid |
+                                               navigation_interfaces::kOrientationValid |
+                                               navigation_interfaces::kLinearVelocityValid;
+          if ((response->component_validity_mask & required_components) != required_components) {
+            ++query_invalid_component_count_;
+            invalidate_comparison();
+            return;
+          }
+          const auto current_reset_generation =
+              px4_diagnostics_.unsignedInteger("reset_generation");
+          const auto current_time_generation =
+              px4_diagnostics_.unsignedInteger("time_generation");
+          if (response->reset_generation != pending.expected_reset_generation ||
+              response->time_generation != pending.expected_time_generation ||
+              response->reset_generation != current_reset_generation ||
+              response->time_generation != current_time_generation) {
+            ++query_generation_mismatch_count_;
+            invalidate_comparison();
+            return;
+          }
+          const auto px4 = state_from_ros(response->odometry);
+          const auto residual = ResidualCalculator::compare(pending.lio, px4, previous_residual_);
+          if (!residual) {
+            invalidate_comparison();
+            return;
+          }
+          aligned_comparison_ = AlignedComparison{pending.lio,
+                                                   px4,
+                                                   *residual,
+                                                   pending.requested_epoch_ns,
+                                                   now().nanoseconds(),
+                                                   sequence,
+                                                   response->reset_generation,
+                                                   response->time_generation,
+                                                   response->component_validity_mask,
+                                                   response->covariance_availability_mask,
+                                                   response->interpolated};
+          previous_residual_ = *residual;
+          new_comparison_sample_pending_ = true;
         });
+  }
+
+  bool aligned_comparison_fresh(std::int64_t now_ns,
+                                const std::optional<OdometryState>& lio_epoch) const {
+    if (!aligned_comparison_ || !lio_epoch) return false;
+    if (lio_epoch->timestamp_ns > aligned_comparison_->comparison_epoch_ns) return false;
+    if (now_ns < aligned_comparison_->comparison_epoch_ns ||
+        now_ns - aligned_comparison_->comparison_epoch_ns >
+            config_.maximum_comparison_age_ns) return false;
+    return true;
   }
 
   void evaluate_once() {
     const auto now_ns = now().nanoseconds();
-    if (query_pending_) {
+    // A simulated ROS clock is zero until the first /clock message.  Do not
+    // start freshness or persistence timers in that pre-clock epoch.
+    if (get_parameter("use_sim_time").as_bool() && now_ns == 0) return;
+    if (pending_query_) {
       const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::chrono::steady_clock::now() - pending_started_).count();
+          std::chrono::steady_clock::now() - pending_query_->started).count();
       if (elapsed > config_.service_timeout_ns) {
-        query_pending_ = false;
-        pending_sequence_ = 0;
-        aligned_px4_.reset();
-        aligned_lio_.reset();
+        pending_query_.reset();
+        ++query_timeout_count_;
+        invalidate_comparison();
       }
     }
     std::int64_t propagated_age = -1;
@@ -260,42 +332,44 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     const bool corrected_fresh = fresh(latest_corrected_, config_.corrected_max_age_ns,
                                        now_ns, &corrected_age);
     const bool px4_fresh = fresh(latest_px4_, config_.px4_max_age_ns, now_ns, &px4_age);
-    const auto lio_epoch = latest_propagated_epoch_available_to_px4();
-    if (propagated_fresh && lio_epoch && !query_pending_ &&
-        (!aligned_lio_ || aligned_lio_->timestamp_ns != lio_epoch->timestamp_ns)) {
-      request_px4_at(*lio_epoch);
-    }
-
     EvaluationInput input;
-    input.evaluation_time_ns = std::max(now_ns, latest_propagated_ ? latest_propagated_->timestamp_ns : 0);
+    input.evaluation_time_ns = now_ns;
     const auto lio_status = lio_diagnostics_.string("status");
     const auto lio_status_is = [&lio_status](const char* canonical, const char* legacy) {
       return lio_status == canonical || lio_status == legacy;
     };
-    input.lio_valid = lio_diagnostics_.found &&
-                      lio_status_is("TRACKING", "Tracking") &&
+    const bool lio_schema_valid = lio_diagnostics_.found && lio_diagnostics_.hasSchemaV1();
+    const bool px4_schema_valid = px4_diagnostics_.found && px4_diagnostics_.hasSchemaV1();
+    const bool lio_diagnostics_fresh =
+        lio_schema_valid && lio_diagnostics_.stamp_ns > 0 && now_ns >= lio_diagnostics_.stamp_ns &&
+        now_ns - lio_diagnostics_.stamp_ns <= config_.diagnostics_max_age_ns;
+    const bool px4_diagnostics_fresh =
+        px4_schema_valid && px4_diagnostics_.stamp_ns > 0 && now_ns >= px4_diagnostics_.stamp_ns &&
+        now_ns - px4_diagnostics_.stamp_ns <= config_.diagnostics_max_age_ns;
+    input.lio_diagnostics_schema_valid = lio_schema_valid;
+    input.px4_diagnostics_schema_valid = px4_schema_valid;
+    input.lio_diagnostics_stale = lio_schema_valid && !lio_diagnostics_fresh;
+    input.px4_diagnostics_stale = px4_schema_valid && !px4_diagnostics_fresh;
+    input.lio_diagnostics_valid = lio_diagnostics_fresh;
+    input.px4_diagnostics_valid = px4_diagnostics_fresh;
+    input.lio_valid = input.lio_diagnostics_valid && lio_status_is("TRACKING", "Tracking") &&
                       lio_diagnostics_.boolean("navigation_valid");
-    input.lio_lost = lio_diagnostics_.found && lio_status_is("LOST", "Lost");
+    input.lio_lost = input.lio_diagnostics_valid && lio_status_is("LOST", "Lost");
     input.lio_state_corruption =
+        input.lio_diagnostics_valid &&
         lio_diagnostics_.string("last_update_failure_class") == "StateCorruption";
-    input.lio_degraded = lio_diagnostics_.found && lio_status_is("DEGRADED", "Degraded");
-    input.lio_resetting = lio_diagnostics_.found && lio_status_is("RESETTING", "Resetting");
+    input.lio_degraded = input.lio_diagnostics_valid && lio_status_is("DEGRADED", "Degraded");
+    input.lio_resetting = input.lio_diagnostics_valid && lio_status_is("RESETTING", "Resetting");
     input.propagated_fresh = propagated_fresh;
     input.corrected_fresh = corrected_fresh;
     input.px4_available = latest_px4_.has_value();
     input.px4_fresh = px4_fresh;
-    input.px4_continuity_valid = px4_diagnostics_.boolean("continuity_valid");
-    input.px4_post_reset_stable = px4_diagnostics_.boolean("post_reset_stable");
-    const bool lio_diagnostics_fresh =
-        lio_diagnostics_.found && lio_diagnostics_.stamp_ns > 0 && now_ns >= lio_diagnostics_.stamp_ns &&
-        now_ns - lio_diagnostics_.stamp_ns <= config_.diagnostics_max_age_ns;
-    const bool px4_diagnostics_fresh =
-        px4_diagnostics_.found && px4_diagnostics_.stamp_ns > 0 && now_ns >= px4_diagnostics_.stamp_ns &&
-        now_ns - px4_diagnostics_.stamp_ns <= config_.diagnostics_max_age_ns;
-    input.diagnostics_valid = lio_diagnostics_fresh && px4_diagnostics_fresh &&
-                              lio_diagnostics_.hasSchemaV1() && px4_diagnostics_.hasSchemaV1();
+    input.px4_continuity_valid = input.px4_diagnostics_valid &&
+                                 px4_diagnostics_.boolean("continuity_valid");
+    input.px4_post_reset_stable = input.px4_diagnostics_valid &&
+                                  px4_diagnostics_.boolean("post_reset_stable");
     const auto source = lio_diagnostics_.string("initial_prior_source");
-    input.origin_aligned = source == "topic" &&
+    input.origin_aligned = input.lio_diagnostics_valid && source == "topic" &&
                            lio_diagnostics_.boolean("initial_prior_applied") &&
                            !lio_diagnostics_.boolean("initial_prior_fallback_applied") &&
                            lio_diagnostics_.string("initial_prior_reason") == "TOPIC_PRIOR_ACCEPTED";
@@ -304,23 +378,43 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.px4_age_ns = px4_age;
     input.px4_reset_generation = px4_diagnostics_.unsignedInteger("reset_generation");
     input.px4_time_generation = px4_diagnostics_.unsignedInteger("time_generation");
-    input.alignment_gap_ns = aligned_px4_ && aligned_lio_
-                                 ? std::llabs(aligned_px4_->timestamp_ns - aligned_lio_->timestamp_ns)
+    const auto lio_epoch = latest_propagated_epoch_available_to_px4();
+    input.alignment_gap_ns = aligned_comparison_
+                                 ? std::llabs(aligned_comparison_->px4.timestamp_ns -
+                                              aligned_comparison_->lio.timestamp_ns)
                                  : -1;
-    input.residual = aligned_lio_ && aligned_px4_ ? aligned_residual_ : Residual{};
+    input.comparison_epoch_ns = aligned_comparison_ ? aligned_comparison_->comparison_epoch_ns : 0;
+    input.aligned_comparison_fresh = aligned_comparison_fresh(now_ns, lio_epoch);
+    input.new_comparison_sample = new_comparison_sample_pending_;
+    input.residual = aligned_comparison_ ? aligned_comparison_->residual : Residual{};
+    input.query_sequence = aligned_comparison_ ? aligned_comparison_->query_sequence : 0;
+    input.component_validity_mask = aligned_comparison_ ? aligned_comparison_->component_validity_mask : 0;
+    input.covariance_availability_mask = aligned_comparison_ ? aligned_comparison_->covariance_availability_mask : 0;
+    input.query_invalid_component_count = query_invalid_component_count_;
+    input.query_generation_mismatch_count = query_generation_mismatch_count_;
+    input.query_stale_sequence_count = query_stale_sequence_count_;
+    input.query_timeout_count = query_timeout_count_;
+    input.query_service_unavailable_count = query_service_unavailable_count_;
+    if (aligned_comparison_ && !input.new_comparison_sample && input.aligned_comparison_fresh) {
+      ++stale_residual_reuse_count_;
+    }
+    input.stale_residual_reuse_count = stale_residual_reuse_count_;
     input.time_generation_changed = false;
-    if (px4_diagnostics_.found && px4_diagnostics_.hasSchemaV1()) {
+    if (px4_diagnostics_.found && px4_schema_valid) {
       if (last_seen_px4_time_generation_ &&
           *last_seen_px4_time_generation_ != input.px4_time_generation) {
         input.time_generation_changed = true;
-        query_pending_ = false;
-        pending_sequence_ = 0;
-        aligned_px4_.reset();
-        aligned_lio_.reset();
+        pending_query_.reset();
+        invalidate_comparison();
       }
       last_seen_px4_time_generation_ = input.px4_time_generation;
     }
+    if (propagated_fresh && lio_epoch && !pending_query_ &&
+        (!aligned_comparison_ || aligned_comparison_->comparison_epoch_ns != lio_epoch->timestamp_ns)) {
+      request_px4_at(*lio_epoch, input.px4_reset_generation, input.px4_time_generation);
+    }
     const auto output = machine_.evaluate(input);
+    new_comparison_sample_pending_ = false;
     publish(output);
   }
 
@@ -358,6 +452,18 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.state_transition_count = output.state_transition_count;
     message.evaluation_count = output.evaluation_count;
     message.alignment_failure_count = output.alignment_failure_count;
+    message.comparison_epoch = ros_time(output.comparison_epoch_ns);
+    message.new_comparison_sample = output.new_comparison_sample;
+    message.aligned_comparison_fresh = output.aligned_comparison_fresh;
+    message.query_sequence = output.query_sequence;
+    message.component_validity_mask = output.component_validity_mask;
+    message.covariance_availability_mask = output.covariance_availability_mask;
+    message.query_invalid_component_count = output.query_invalid_component_count;
+    message.query_generation_mismatch_count = output.query_generation_mismatch_count;
+    message.query_stale_sequence_count = output.query_stale_sequence_count;
+    message.query_timeout_count = output.query_timeout_count;
+    message.query_service_unavailable_count = output.query_service_unavailable_count;
+    message.stale_residual_reuse_count = output.stale_residual_reuse_count;
     status_->publish(message);
 
     diagnostic_msgs::msg::DiagnosticArray array;
@@ -380,6 +486,23 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     add_value("health", health_name(output.health));
     add_value("reference_mode", output.reference_mode == ReferenceMode::kIndependent ? "independent" : "correlated");
     add_value("comparison_valid", output.comparison_valid ? "true" : "false");
+    add_value("aligned_comparison_fresh", output.aligned_comparison_fresh ? "true" : "false");
+    add_value("lio_diagnostics_valid", output.lio_diagnostics_valid ? "true" : "false");
+    add_value("px4_diagnostics_valid", output.px4_diagnostics_valid ? "true" : "false");
+    add_value("lio_diagnostics_schema_valid", output.lio_diagnostics_schema_valid ? "true" : "false");
+    add_value("px4_diagnostics_schema_valid", output.px4_diagnostics_schema_valid ? "true" : "false");
+    add_value("lio_diagnostics_stale", output.lio_diagnostics_stale ? "true" : "false");
+    add_value("px4_diagnostics_stale", output.px4_diagnostics_stale ? "true" : "false");
+    add_value("new_comparison_sample", output.new_comparison_sample ? "true" : "false");
+    add_value("query_sequence", std::to_string(output.query_sequence));
+    add_value("component_validity_mask", std::to_string(output.component_validity_mask));
+    add_value("covariance_availability_mask", std::to_string(output.covariance_availability_mask));
+    add_value("query_invalid_component_count", std::to_string(output.query_invalid_component_count));
+    add_value("query_generation_mismatch_count", std::to_string(output.query_generation_mismatch_count));
+    add_value("query_stale_sequence_count", std::to_string(output.query_stale_sequence_count));
+    add_value("query_timeout_count", std::to_string(output.query_timeout_count));
+    add_value("query_service_unavailable_count", std::to_string(output.query_service_unavailable_count));
+    add_value("stale_residual_reuse_count", std::to_string(output.stale_residual_reuse_count));
     add_value("external_odometry_allowed", output.external_odometry_allowed ? "true" : "false");
     add_value("reinitialization_requested", output.reinitialization_requested ? "true" : "false");
     add_value("position_error_m", std::to_string(output.residual.position_error_m));
@@ -407,16 +530,19 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::deque<OdometryState> propagated_history_;
   std::optional<OdometryState> latest_corrected_;
   std::optional<OdometryState> latest_px4_;
-  std::optional<OdometryState> aligned_lio_;
-  std::optional<OdometryState> aligned_px4_;
-  Residual aligned_residual_;
+  std::optional<AlignedComparison> aligned_comparison_;
   std::optional<Residual> previous_residual_;
   DiagnosticSnapshot lio_diagnostics_;
   DiagnosticSnapshot px4_diagnostics_;
-  bool query_pending_{false};
+  std::optional<PendingQuery> pending_query_;
   std::uint64_t query_sequence_{0};
-  std::uint64_t pending_sequence_{0};
-  std::chrono::steady_clock::time_point pending_started_{};
+  std::uint64_t query_invalid_component_count_{0};
+  std::uint64_t query_generation_mismatch_count_{0};
+  std::uint64_t query_stale_sequence_count_{0};
+  std::uint64_t query_timeout_count_{0};
+  std::uint64_t query_service_unavailable_count_{0};
+  std::uint64_t stale_residual_reuse_count_{0};
+  bool new_comparison_sample_pending_{false};
   std::optional<std::uint64_t> last_seen_px4_time_generation_;
 };
 

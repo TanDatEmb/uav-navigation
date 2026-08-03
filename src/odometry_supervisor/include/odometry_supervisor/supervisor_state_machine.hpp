@@ -35,10 +35,12 @@ class SupervisorStateMachine {
   std::optional<std::int64_t> degraded_since_ns_;
   std::optional<std::int64_t> diverged_since_ns_;
   std::optional<std::int64_t> recovery_since_ns_;
+  std::optional<std::int64_t> lio_diagnostics_invalid_since_ns_;
   std::optional<std::int64_t> reset_grace_until_ns_;
   std::optional<std::uint64_t> previous_reset_generation_;
   std::optional<std::uint64_t> previous_time_generation_;
   std::optional<Residual> previous_residual_;
+  std::optional<std::int64_t> last_comparison_epoch_ns_;
 };
 
 }  // namespace odometry_supervisor

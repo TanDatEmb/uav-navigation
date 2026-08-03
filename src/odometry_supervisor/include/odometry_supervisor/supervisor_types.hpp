@@ -10,6 +10,31 @@ namespace odometry_supervisor {
 enum class HealthState : std::uint8_t { kStartup = 0, kHealthy, kSuspect, kDegraded, kDiverged };
 enum class ReferenceMode : std::uint8_t { kIndependent = 0, kCorrelated = 1 };
 
+enum class ReasonCode : std::uint16_t {
+  kNone = 0,
+  kStartup = 1,
+  kHealthy = 2,
+  kMonitoringUnavailable = 3,
+  kOriginNotAligned = 4,
+  kAlignmentFailed = 5,
+  kResidualSuspect = 6,
+  kResidualDegraded = 7,
+  kResidualDiverged = 8,
+  kLioLost = 9,
+  kStateCorruption = 10,
+  kLioResetting = 11,
+  kPx4ResetGrace = 12,
+  kDiagnosticSchemaMismatch = 13,
+  kStaleInput = 14,
+  kLioDiagnosticsStale = 15,
+  kLioDiagnosticSchemaMismatch = 16,
+  kPx4DiagnosticsStale = 17,
+  kPx4DiagnosticSchemaMismatch = 18,
+  kAlignedComparisonStale = 19,
+  kQueryGenerationMismatch = 20,
+  kQueryInvalidComponent = 21,
+};
+
 struct OdometryState {
   std::int64_t timestamp_ns{0};
   Eigen::Vector3d position_odom{Eigen::Vector3d::Zero()};
@@ -30,6 +55,20 @@ struct Residual {
   double position_error_growth_m_s{0.0};
 };
 
+struct AlignedComparison {
+  OdometryState lio;
+  OdometryState px4;
+  Residual residual;
+  std::int64_t comparison_epoch_ns{0};
+  std::int64_t response_received_ros_time_ns{0};
+  std::uint64_t query_sequence{0};
+  std::uint64_t reset_generation{0};
+  std::uint64_t time_generation{0};
+  std::uint32_t component_validity_mask{0};
+  std::uint32_t covariance_availability_mask{0};
+  bool interpolated{false};
+};
+
 struct ResidualThresholds {
   double position_m{0.0};
   double velocity_m_s{0.0};
@@ -46,6 +85,7 @@ struct SupervisorConfig {
   std::int64_t diagnostics_max_age_ns{500'000'000};
   std::int64_t maximum_alignment_gap_ns{50'000'000};
   std::int64_t service_timeout_ns{100'000'000};
+  std::int64_t maximum_comparison_age_ns{150'000'000};
   ResidualThresholds suspect{0.30, 0.30, 0.2094395102, 0.1396263402};
   ResidualThresholds degraded{0.75, 0.75, 0.5235987756, 0.3490658504};
   ResidualThresholds diverged{1.50, 1.50, 1.0471975512, 0.6981317008};
@@ -55,6 +95,7 @@ struct SupervisorConfig {
   std::int64_t diverged_enter_ns{1'500'000'000};
   std::int64_t recovery_confirm_ns{2'000'000'000};
   std::int64_t reset_grace_ns{500'000'000};
+  std::int64_t lio_diagnostics_invalid_enter_ns{500'000'000};
   float suspect_speed_limit_m_s{2.0F};
   float degraded_speed_limit_m_s{0.5F};
 };
@@ -73,7 +114,12 @@ struct EvaluationInput {
   bool px4_continuity_valid{false};
   bool px4_post_reset_stable{false};
   bool origin_aligned{false};
-  bool diagnostics_valid{false};
+  bool lio_diagnostics_valid{false};
+  bool px4_diagnostics_valid{false};
+  bool lio_diagnostics_schema_valid{false};
+  bool px4_diagnostics_schema_valid{false};
+  bool lio_diagnostics_stale{false};
+  bool px4_diagnostics_stale{false};
   bool time_generation_changed{false};
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
@@ -81,6 +127,18 @@ struct EvaluationInput {
   std::int64_t corrected_age_ns{-1};
   std::int64_t px4_age_ns{-1};
   std::int64_t alignment_gap_ns{-1};
+  std::int64_t comparison_epoch_ns{0};
+  bool new_comparison_sample{false};
+  bool aligned_comparison_fresh{false};
+  std::uint64_t query_sequence{0};
+  std::uint32_t component_validity_mask{0};
+  std::uint32_t covariance_availability_mask{0};
+  std::uint64_t query_invalid_component_count{0};
+  std::uint64_t query_generation_mismatch_count{0};
+  std::uint64_t query_stale_sequence_count{0};
+  std::uint64_t query_timeout_count{0};
+  std::uint64_t query_service_unavailable_count{0};
+  std::uint64_t stale_residual_reuse_count{0};
   Residual residual;
 };
 
@@ -111,6 +169,24 @@ struct SupervisorOutput {
   std::uint64_t state_transition_count{0};
   std::uint64_t evaluation_count{0};
   std::uint64_t alignment_failure_count{0};
+  std::int64_t comparison_epoch_ns{0};
+  bool new_comparison_sample{false};
+  bool aligned_comparison_fresh{false};
+  bool lio_diagnostics_valid{false};
+  bool px4_diagnostics_valid{false};
+  bool lio_diagnostics_schema_valid{false};
+  bool px4_diagnostics_schema_valid{false};
+  bool lio_diagnostics_stale{false};
+  bool px4_diagnostics_stale{false};
+  std::uint64_t query_sequence{0};
+  std::uint32_t component_validity_mask{0};
+  std::uint32_t covariance_availability_mask{0};
+  std::uint64_t query_invalid_component_count{0};
+  std::uint64_t query_generation_mismatch_count{0};
+  std::uint64_t query_stale_sequence_count{0};
+  std::uint64_t query_timeout_count{0};
+  std::uint64_t query_service_unavailable_count{0};
+  std::uint64_t stale_residual_reuse_count{0};
 };
 
 }  // namespace odometry_supervisor

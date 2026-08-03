@@ -16,8 +16,14 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.px4_continuity_valid = true;
   input.px4_post_reset_stable = true;
   input.origin_aligned = true;
-  input.diagnostics_valid = true;
+  input.lio_diagnostics_valid = true;
+  input.px4_diagnostics_valid = true;
+  input.lio_diagnostics_schema_valid = true;
+  input.px4_diagnostics_schema_valid = true;
   input.alignment_gap_ns = 0;
+  input.comparison_epoch_ns = time;
+  input.new_comparison_sample = true;
+  input.aligned_comparison_fresh = true;
   input.residual.valid = true;
   input.px4_reset_generation = 1;
   input.px4_time_generation = 1;
@@ -40,7 +46,8 @@ TEST(OdometrySupervisorStateMachine, HealthyAndPx4UnavailableDoesNotInvalidateLi
   input.px4_fresh = false;
   input.px4_continuity_valid = false;
   input.origin_aligned = false;
-  input.diagnostics_valid = false;
+  input.lio_diagnostics_valid = false;
+  input.px4_diagnostics_valid = false;
   const auto output = machine.evaluate(input);
   EXPECT_EQ(output.health, odometry_supervisor::HealthState::kHealthy);
   EXPECT_FALSE(output.monitoring_available);
@@ -206,6 +213,42 @@ TEST(OdometrySupervisorStateMachine, ClockPauseDoesNotAdvancePersistence) {
             odometry_supervisor::HealthState::kHealthy);
   EXPECT_EQ(evaluate(machine, 1'100'000'000, 0.4).health,
             odometry_supervisor::HealthState::kHealthy);
+}
+
+TEST(OdometrySupervisorStateMachine, HeldComparisonEpochCannotAdvanceResidualPersistence) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  evaluate(machine, 1'000'000'000);
+  auto input = healthy_input(1'100'000'000);
+  input.residual.position_error_m = 0.4;
+  ASSERT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+  input.evaluation_time_ns = 1'500'000'000;
+  input.new_comparison_sample = false;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+  input.comparison_epoch_ns = 1'400'000'000;
+  input.new_comparison_sample = true;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kSuspect);
+}
+
+TEST(OdometrySupervisorStateMachine, StaleComparisonCannotTriggerResidualState) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  evaluate(machine, 1'000'000'000);
+  auto input = healthy_input(1'100'000'000);
+  input.residual.position_error_m = 2.0;
+  input.aligned_comparison_fresh = false;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+  EXPECT_EQ(machine.evaluate(input).reason, "ALIGNED_COMPARISON_STALE");
+}
+
+TEST(OdometrySupervisorStateMachine, PersistentLioDiagnosticInvalidityDegradesAfterConfiguredWindow) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  evaluate(machine, 1'000'000'000);
+  auto input = healthy_input(1'100'000'000);
+  input.lio_diagnostics_valid = false;
+  input.lio_diagnostics_schema_valid = true;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kHealthy);
+  input.evaluation_time_ns = 1'600'000'000;
+  EXPECT_EQ(machine.evaluate(input).health, odometry_supervisor::HealthState::kDegraded);
+  EXPECT_FALSE(machine.evaluate(input).external_odometry_allowed);
 }
 
 TEST(OdometrySupervisorStateMachine, InvalidComparisonDoesNotBecomeZeroResidual) {
