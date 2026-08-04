@@ -14,10 +14,10 @@ help:
 	@echo "uav-navigation runtime commands"
 	@echo "  make build                                 static ROS build; no runtime data required"
 	@echo "  make test                                  unit/integration tests; not a runtime verdict"
-	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; no RViz"
+	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset pipeline; PX4 not required"
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
-	@echo "  make sim                                   interactive PX4/Gazebo session; no auto flight"
+	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop only the latest session process groups and report"
 	@echo "  make clean                                 remove generated runtime artifacts only"
@@ -34,7 +34,7 @@ test:
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) python3 tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)"
+	@$(ROS_ENV) python3 tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz
 
 dataset-check:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }

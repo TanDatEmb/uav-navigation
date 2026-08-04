@@ -23,11 +23,18 @@ import report
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
 ARTIFACT_ROOT = ROOT / ".artifacts/runtime"
+RVIZ_CONFIG = ROOT / "src/navigation_estimator/livox_ros_driver2_interface/config/display_point_cloud_ROS2.rviz"
 NO_RVIZ_ENV = {
     "ENABLE_RVIZ": "0",
     "RVIZ_ENABLE": "0",
     "DISABLE_RVIZ": "1",
     "NAVIGATION_NO_RVIZ": "1",
+}
+RVIZ_ENV = {
+    "ENABLE_RVIZ": "1",
+    "RVIZ_ENABLE": "1",
+    "DISABLE_RVIZ": "0",
+    "NAVIGATION_NO_RVIZ": "0",
 }
 
 
@@ -44,9 +51,10 @@ def load_config(name: str) -> dict[str, Any]:
     return value
 
 
-def _ros_shell(command: list[str]) -> list[str]:
+def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
+    environment = RVIZ_ENV if enable_rviz else NO_RVIZ_ENV
     parts = [
-        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1",
+        "export " + " ".join(f"{key}={value}" for key, value in environment.items()),
         "source /opt/ros/jazzy/setup.bash",
     ]
     install = ROOT / "install/setup.bash"
@@ -54,6 +62,27 @@ def _ros_shell(command: list[str]) -> list[str]:
         parts.append(f"source {shlex.quote(str(install))}")
     parts.append("exec " + shlex.join(command))
     return ["bash", "-lc", "; ".join(parts)]
+
+
+def _rviz_command(*, use_sim_time: bool = False) -> list[str]:
+    command = [
+        "rviz2", "-d", str(RVIZ_CONFIG),
+        "--ros-args",
+    ]
+    if use_sim_time:
+        command.extend(["-p", "use_sim_time:=true"])
+    command.extend(["-r", "/livox/lidar:=/lidar/points"])
+    return command
+
+
+def _start_rviz(session: Session, *, use_sim_time: bool = False) -> None:
+    if not RVIZ_CONFIG.is_file():
+        raise FileNotFoundError(f"RViz config does not exist: {RVIZ_CONFIG}")
+    session.start(
+        "rviz",
+        _ros_shell(_rviz_command(use_sim_time=use_sim_time), enable_rviz=True),
+        cwd=ROOT,
+    )
 
 
 def _command_exists(name: str) -> bool:
@@ -141,7 +170,7 @@ def _dataset_context(dataset: str) -> tuple[dict[str, Any], dict[str, int]]:
     return context, data.bag_topic_counts(context)
 
 
-def run_dataset(dataset: str, rate: float) -> int:
+def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
     if not dataset:
         raise ValueError("DATASET is required")
     if rate <= 0:
@@ -155,6 +184,7 @@ def run_dataset(dataset: str, rate: float) -> int:
         workflow="dataset",
         dataset=dataset,
         rate=rate,
+        rviz=enable_rviz,
         replay_tail_grace_s=float(config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)),
         failures=[],
     )
@@ -176,9 +206,11 @@ def run_dataset(dataset: str, rate: float) -> int:
                 "use_sim_time:=false", "enable_external_odometry:=false",
                 "publish_sensor_frames:=true", "livox_mount_xyz:=0 0 0",
                 "livox_mount_rpy:=0 0 0",
-            ]),
+            ], enable_rviz=enable_rviz),
             cwd=ROOT,
         )
+        if enable_rviz:
+            _start_rviz(session)
         timeout_s = float(config["runtime"]["timeouts"]["startup_s"])
         _wait_until(session, lambda snapshot: _stream_count(session, "diagnostics") > 0, timeout_s, "LIO diagnostics")
         replay = session.start(
@@ -187,7 +219,7 @@ def run_dataset(dataset: str, rate: float) -> int:
                 "ros2", "bag", "play", str(context["bag"]), "--rate", str(rate),
                 "--remap", f"{context['input']['lidar_topic']}:=/lidar/points",
                 f"{context['input']['imu_topic']}:=/lidar/imu",
-            ]),
+            ], enable_rviz=enable_rviz),
             cwd=ROOT,
         )
         replay_code = _wait_process(replay, float(config["runtime"]["timeouts"]["replay_s"]), "dataset replay")
@@ -249,7 +281,15 @@ def run_sim(headless: bool) -> int:
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
     session = Session.create(ARTIFACT_ROOT, "sim-check" if headless else "sim")
     session.write_state({"workflow": "sim", "headless": headless, "px4_dir": str(px4_dir)})
-    _write_runtime(session, workflow="sim", headless=headless, px4_dir=str(px4_dir), failures=[], startup_complete=False)
+    _write_runtime(
+        session,
+        workflow="sim",
+        headless=headless,
+        rviz=not headless,
+        px4_dir=str(px4_dir),
+        failures=[],
+        startup_complete=False,
+    )
     prereq = _sim_prerequisites(px4_dir)
     if prereq:
         _write_runtime(session, failures=prereq)
@@ -280,17 +320,19 @@ def run_sim(headless: bool) -> int:
         session.start("bridge", _ros_shell([
             "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
             "-r", "__node:=px4_mid360_bridge", "-p", f"config_file:={bridge_config}", "-p", "use_sim_time:=true",
-        ]), cwd=ROOT)
+        ], enable_rviz=not headless), cwd=ROOT)
         session.start("px4_ingress", _ros_shell([
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
             "-p", "use_sim_time:=true", "-p", "simulation_clock:=true",
-        ]), cwd=ROOT)
+        ], enable_rviz=not headless), cwd=ROOT)
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
             "enable_external_odometry:=true", "publish_sensor_frames:=true",
             "livox_mount_xyz:=0 0 0.28", "livox_mount_rpy:=0 0 0",
-        ]), cwd=ROOT)
+        ], enable_rviz=not headless), cwd=ROOT)
+        if not headless:
+            _start_rviz(session, use_sim_time=True)
         _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
         _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING")
         _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
@@ -404,23 +446,22 @@ def _number(value: Any) -> float:
 
 
 def main() -> int:
-    # The canonical runtime workflows never launch a visualizer. Enforce this
-    # for direct runner invocations as well as Makefile calls, even when a
-    # stale shell still exports ENABLE_RVIZ=1.
-    os.environ.update(NO_RVIZ_ENV)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     dataset = sub.add_parser("dataset-check")
     dataset.add_argument("--dataset", required=True)
     dataset.add_argument("--rate", type=float, required=True)
+    dataset.add_argument("--rviz", action="store_true", help="launch RViz for this replay")
     sub.add_parser("sim-check")
     sub.add_parser("sim")
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
     args = parser.parse_args()
+    enable_rviz = args.command == "sim" or (args.command == "dataset-check" and args.rviz)
+    os.environ.update(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV)
     if args.command == "dataset-check":
-        return run_dataset(args.dataset, args.rate)
+        return run_dataset(args.dataset, args.rate, enable_rviz=args.rviz)
     if args.command == "sim-check":
         return run_sim(True)
     if args.command == "sim":

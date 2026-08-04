@@ -113,14 +113,44 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     }
 
 
-def _active_stale_count(row: dict[str, Any], runtime: dict[str, Any]) -> int:
+def _first_tracking_wall_ns(samples: list[dict[str, Any]]) -> int | None:
+    tracking_times: list[int] = []
+    for item in _series(samples, "diagnostics"):
+        payload = item.get("payload", {})
+        values = payload.get("values", {})
+        state = values.get("state", values.get("status"))
+        if str(state).upper() != "TRACKING":
+            continue
+        try:
+            arrival_ns = int(item.get("arrival_wall_ns", 0))
+        except (TypeError, ValueError):
+            arrival_ns = 0
+        if arrival_ns > 0:
+            tracking_times.append(arrival_ns)
+    return min(tracking_times) if tracking_times else None
+
+
+def _active_stale_count(
+    row: dict[str, Any],
+    runtime: dict[str, Any],
+    samples: list[dict[str, Any]] | None = None,
+) -> int:
     times = row.get("stale_event_times_ns", [])
+    first_tracking_ns = _first_tracking_wall_ns(samples or [])
+    # A stream can pause while LIO is still collecting its startup state. That
+    # is not a tracking-time freshness violation; if TRACKING is never
+    # observed, the report already fails the explicit TRACKING contract.
+    active_times = [
+        int(value)
+        for value in times
+        if first_tracking_ns is None or int(value) >= first_tracking_ns
+    ]
     replay_finished = runtime.get("replay_finished_wall_ns")
     if isinstance(times, list) and replay_finished:
         grace_ns = int(_number(runtime.get("replay_tail_grace_s"), 0.5) * 1e9)
         active_until = int(replay_finished) - grace_ns
-        return sum(int(value) < active_until for value in times)
-    return int(row.get("stale_event_count", 0))
+        return sum(value < active_until for value in active_times)
+    return len(active_times) if samples is not None else int(row.get("stale_event_count", 0))
 
 
 def _metric_summary(values: list[float]) -> dict[str, Any]:
@@ -259,16 +289,17 @@ def _sample_time(item: dict[str, Any]) -> int:
 def _match(a: list[dict[str, Any]], b: list[dict[str, Any]], tolerance_ns: int) -> list[tuple[dict[str, Any], dict[str, Any], int]]:
     if not a or not b:
         return []
-    a0 = _sample_time(a[0])
-    b0 = _sample_time(b[0])
-    normalized_b = [(item, _sample_time(item) - b0) for item in b]
+    # These streams share the ROS/PX4 simulation epoch. Never normalize each
+    # stream to its own first sample: startup latency is real and subtracting
+    # it pairs samples from different physical times.
+    timestamped_b = [(item, _sample_time(item)) for item in b]
     result: list[tuple[dict[str, Any], dict[str, Any], int]] = []
     index = 0
     for left in a:
-        target = _sample_time(left) - a0
-        while index + 1 < len(normalized_b) and normalized_b[index + 1][1] <= target:
+        target = _sample_time(left)
+        while index + 1 < len(timestamped_b) and timestamped_b[index + 1][1] <= target:
             index += 1
-        candidates = normalized_b[max(0, index - 1) : min(len(normalized_b), index + 2)]
+        candidates = timestamped_b[max(0, index - 1) : min(len(timestamped_b), index + 2)]
         if not candidates:
             continue
         right, right_time = min(candidates, key=lambda pair: abs(pair[1] - target))
@@ -279,9 +310,11 @@ def _match(a: list[dict[str, Any]], b: list[dict[str, Any]], tolerance_ns: int) 
 
 
 def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, Any]:
-    # Compare the exact converted LIO message sent to PX4.  The raw ROS
-    # propagated message is local Z-up/FLU while PX4 estimator odometry is
-    # reported in NED or FRD, so direct component subtraction is invalid.
+    # Compare the exact converted LIO message sent to PX4. The raw ROS
+    # propagated message is checked separately by _frame_contract_residuals.
+    # PX4 estimator odometry may be NED or FRD, so direct component subtraction
+    # is invalid; the first matched attitude is used only for the estimator
+    # residual after absolute timestamp matching.
     lio = _series(samples, "external_odometry")
     px4 = _series(samples, "px4_odometry")
     matches = _match(lio, px4, int(tolerance_ms * 1e6))
@@ -349,6 +382,14 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
         "source": "lio/external_odometry_input vs px4/estimator_odometry",
         "frame_alignment": "first matched pose; LIO FRD aligned to PX4 pose frame",
         "origin_alignment": "first matched position removed from both streams",
+        "timestamp_alignment": "absolute timestamp_sample; no per-stream epoch normalization",
+        "first_external_sample_time_ns": _sample_time(lio[0]) if lio else None,
+        "first_px4_sample_time_ns": _sample_time(px4[0]) if px4 else None,
+        "initial_stream_epoch_offset_ms": (
+            (_sample_time(lio[0]) - _sample_time(px4[0])) / 1e6
+            if lio and px4
+            else None
+        ),
         "maximum_synchronization_tolerance_ms": tolerance_ms,
         "matched_sample_count": len(matches),
         "unmatched_sample_count": max(0, len(lio) - len(matches)),
@@ -362,6 +403,60 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
         "circular_comparison": True,
         "pre_fusion": "NOT_AVAILABLE",
         "fusion_enabled": "OBSERVED_ONLY",
+    }
+
+
+_WORLD_PX4_FROM_LIO = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+_BODY_FRD_FROM_FLU = ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
+
+
+def _matrix_vector(
+    matrix: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    vector: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return tuple(sum(matrix[row][column] * vector[column] for column in range(3)) for row in range(3))  # type: ignore[return-value]
+
+
+def _frame_contract_residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, Any]:
+    """Check the raw ROS LIO message against the VehicleOdometry input."""
+    lio = _series(samples, "propagated_odometry")
+    external = _series(samples, "external_odometry")
+    matches = _match(lio, external, int(tolerance_ms * 1e6))
+    position: list[float] = []
+    velocity: list[float] = []
+    angular_velocity: list[float] = []
+    deltas = [abs(delta) / 1e6 for _, _, delta in matches]
+    for left, right, _ in matches:
+        raw = left.get("payload", {})
+        converted = right.get("payload", {})
+        raw_position = _vector(raw.get("position"))
+        converted_position = _vector(converted.get("position"))
+        raw_velocity = _vector(raw.get("linear_velocity"))
+        converted_velocity = _vector(converted.get("velocity"))
+        raw_angular = _vector(raw.get("angular_velocity"))
+        converted_angular = _vector(converted.get("angular_velocity"))
+        if raw_position is not None and converted_position is not None:
+            expected = _matrix_vector(_WORLD_PX4_FROM_LIO, raw_position)
+            position.append(math.sqrt(sum((expected[i] - converted_position[i]) ** 2 for i in range(3))))
+        if raw_velocity is not None and converted_velocity is not None:
+            expected = _matrix_vector(_BODY_FRD_FROM_FLU, raw_velocity)
+            velocity.append(math.sqrt(sum((expected[i] - converted_velocity[i]) ** 2 for i in range(3))))
+        if raw_angular is not None and converted_angular is not None:
+            expected = _matrix_vector(_BODY_FRD_FROM_FLU, raw_angular)
+            angular_velocity.append(math.sqrt(sum((expected[i] - converted_angular[i]) ** 2 for i in range(3))))
+    return {
+        "source": "lio/propagated_odometry -> px4/external_odometry",
+        "world_transform": "x_px4=-y_lio; y_px4=x_lio; z_px4=z_lio",
+        "body_transform": "x_frd=x_flu; y_frd=-y_flu; z_frd=-z_flu",
+        "timestamp_alignment": "absolute ROS header stamp vs PX4 timestamp_sample",
+        "matched_sample_count": len(matches),
+        "unmatched_sample_count": max(0, len(lio) - len(matches)),
+        "mean_timestamp_delta_ms": sum(deltas) / len(deltas) if deltas else None,
+        "p95_timestamp_delta_ms": _p(deltas, 0.95),
+        "maximum_timestamp_delta_ms": max(deltas) if deltas else None,
+        "position": _metric_summary(position),
+        "velocity": _metric_summary(velocity),
+        "angular_velocity": _metric_summary(angular_velocity),
     }
 
 
@@ -381,7 +476,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         expected = _number(config.get("runtime", {}).get("streams", {}).get(name, {}).get("expected_hz"))
         if expected and row["mean_rate_hz"] < expected * minimum_fraction:
             reasons.append(f"{name} rate below contract")
-        if row["timestamp_regression_count"] or _active_stale_count(row, runtime) or row["nonfinite_message_count"]:
+        if row["timestamp_regression_count"] or _active_stale_count(row, runtime, samples) or row["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     diagnostics = _diag_values(snapshot)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
@@ -438,7 +533,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "external_odometry"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
-        if streams[name]["timestamp_regression_count"] or _active_stale_count(streams[name], runtime) or streams[name]["nonfinite_message_count"]:
+        if streams[name]["timestamp_regression_count"] or _active_stale_count(streams[name], runtime, samples) or streams[name]["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     external_expected = _number(config.get("runtime", {}).get("streams", {}).get("external_odometry", {}).get("expected_hz"))
     if external_expected and streams["external_odometry"]["mean_rate_hz"] < external_expected * _number(thresholds.get("minimum_rate_fraction"), 0.90):
@@ -450,6 +545,9 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     if not tracking_observed:
         reasons.append("LIO did not finish in TRACKING")
     residuals = _residuals(samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0))
+    conversion_contract = _frame_contract_residuals(
+        samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0)
+    )
     scenario = _load_json(session / "scenario.json", {})
     scenario_reasons = list(scenario.get("failures", []))
     reasons.extend(str(item) for item in scenario_reasons)
@@ -479,6 +577,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "map_point_count": map_point_count,
         },
         "residuals": residuals,
+        "conversion_contract": conversion_contract,
         "offboard": scenario,
         "provenance": provenance(workspace, px4_dir),
     }
@@ -526,7 +625,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('stale_event_count', 0)} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "px4", "residuals", "offboard", "provenance"):
+    for section in ("lio", "px4", "residuals", "conversion_contract", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

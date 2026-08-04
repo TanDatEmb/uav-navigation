@@ -22,13 +22,14 @@ speed inside the same workflow; it does not select a profile. The dataset
 workflow starts FAST-LIO with `config/runtime/dataset.yaml`, remaps the
 prepared input to `/lidar/points` and `/lidar/imu`, waits for TRACKING, drains
 the queues, and writes its report automatically. `make replay` is the same
-workflow entrypoint and does not launch RViz.
+workflow entrypoint and always launches RViz; `dataset-check` remains the
+headless dataset contract.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
 `config/runtime/offboard.yaml`. The scenario verifies OFFBOARD entry, arm,
 takeoff, translation/yaw segments, landing, and disarm. `sim` starts the same
-stack with the Gazebo GUI and no RViz/controller; stopping it produces
+stack with the Gazebo GUI and RViz, but no controller; stopping it produces
 `OBSERVATION_COMPLETE`, never a flight `PASS`.
 
 ## Configuration

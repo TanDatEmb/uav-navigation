@@ -13,6 +13,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -334,7 +335,12 @@ std::size_t IkdTreeRegistrationMap::pruneFarthest(
       safeValidPointCount(*impl_->tree) <= target_point_count) {
     return 0U;
   }
+  const std::size_t size_before = safeValidPointCount(*impl_->tree);
   UpstreamPointVector points = impl_->snapshotUpstream();
+  if (points.size() != size_before) {
+    throw std::runtime_error(
+        "ikd-Tree snapshot count mismatch during local map prune");
+  }
   const auto distance_key = [&](const UpstreamPoint& point) {
     const double distance = (toEigenPoint(point) - center_odom_m).norm();
     const auto shell =
@@ -344,17 +350,35 @@ std::size_t IkdTreeRegistrationMap::pruneFarthest(
   std::nth_element(
       points.begin(), points.begin() + static_cast<std::ptrdiff_t>(target_point_count),
       points.end(), [&](const UpstreamPoint& left, const UpstreamPoint& right) {
-        return distance_key(left) < distance_key(right);
+        const auto left_key = distance_key(left);
+        const auto right_key = distance_key(right);
+        if (left_key != right_key) {
+          return left_key < right_key;
+        }
+        return upstreamPointLess(left, right);
       });
-  UpstreamPointVector points_to_delete(
-      points.begin() + static_cast<std::ptrdiff_t>(target_point_count),
-      points.end());
-  const std::size_t size_before = safeValidPointCount(*impl_->tree);
-  impl_->tree->Delete_Points(points_to_delete);
-  const std::size_t size_after = safeValidPointCount(*impl_->tree);
-  if (size_after == 0U) {
-    impl_->built = false;
+
+  // The upstream Delete_Points() path can trigger synchronous subtree
+  // rebuilds while it is consuming the deletion vector. In a large batch,
+  // points after a rebuild may no longer be found, leaving valid points above
+  // the requested cap. Build the selected working set once and swap it in so
+  // the count and the retained geometry are exact for both sync and async
+  // backend modes.
+  points.resize(target_point_count);
+
+  auto replacement = std::make_unique<UpstreamTree>(
+      static_cast<float>(config_.deletion_rebuild_ratio),
+      static_cast<float>(config_.balance_rebuild_ratio),
+      static_cast<float>(config_.voxel_size_m),
+      config_.enable_asynchronous_rebuild);
+  replacement->Build(std::move(points));
+  const std::size_t size_after = safeValidPointCount(*replacement);
+  if (size_after != target_point_count) {
+    throw std::runtime_error(
+        "ikd-Tree replacement map did not reach target point count");
   }
+  impl_->tree.swap(replacement);
+  impl_->built = true;
   return size_before > size_after ? size_before - size_after : 0U;
 }
 

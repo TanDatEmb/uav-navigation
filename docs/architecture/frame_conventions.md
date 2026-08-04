@@ -17,9 +17,23 @@ anchors the continuous `px4_odom` position at its first valid sample and
 retains reset compensation for later PX4 resets.
 
 The external-odometry bridge converts `lio_odom` to PX4 FRD and body-FRD
-fields. Timestamp mapping, covariance conversion, public frame generation,
-freshness, finite-value validation, and geometric-jump latching are kept at
-this boundary. Publication is additionally gated by the compact LIO health
+fields. Its world alignment is the explicit local-yaw matrix
+
+```text
+                 [ 0 -1  0 ]
+p_px4_frd_local = [ 1  0  0 ] p_lio_odom
+                 [ 0  0  1 ]
+```
+
+therefore `x_px4 = -y_lio`, `y_px4 = x_lio`, and `z_px4 = z_lio`. The inverse
+matrix is used when a PX4 FRD-local sample is converted back to ROS. The body
+matrix remains the independent FLU->FRD sign change
+`diag(1,-1,-1)`. This is a known local startup yaw alignment, not a claim that
+the PX4 local frame is globally ENU.
+
+Timestamp mapping, covariance conversion, public frame generation, freshness,
+finite-value validation, and geometric-jump latching are kept at this
+boundary. Publication is additionally gated by the compact LIO health
 diagnostics; no alignment or supervisor process is involved.
 
 Notation `^A T_B` transforms coordinates from B to A. The core state estimates

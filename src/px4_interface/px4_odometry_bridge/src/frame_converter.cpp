@@ -33,9 +33,14 @@ const Eigen::Matrix3d &FrameConverter::c_flu_frd() {
 }
 
 const Eigen::Matrix3d &FrameConverter::rotation_ros_local_from_px4_frd_world() {
-  // This changes the handed body/world axes to ROS local Z-up axes. It does
-  // not make a PX4 FRD world globally ENU: its heading and origin remain PX4's.
-  return c_flu_frd();
+  // Inverse of the explicit LIO->PX4 local-world alignment:
+  //   x_lio = y_px4, y_lio = -x_px4, z_lio = z_px4.
+  // This does not make a PX4 FRD world globally ENU; it preserves PX4's local
+  // origin and applies only the known startup yaw alignment.
+  static const Eigen::Matrix3d matrix =
+      (Eigen::Matrix3d() << 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+          .finished();
+  return matrix;
 }
 
 ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {

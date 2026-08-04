@@ -269,6 +269,34 @@ TEST(RegistrationMapTest, LocalManagerReportsRemovedPoints) {
   EXPECT_EQ(map.size(), 1U);
 }
 
+TEST(RegistrationMapTest, LocalManagerAcceptsCropRecoveryBelowHardLimit) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.01;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> points;
+  for (int index = 0; index < 10; ++index) {
+    points.emplace_back(static_cast<double>(index), 0.0, 0.0);
+  }
+  ASSERT_EQ(map.insert(points), points.size());
+
+  LocalMapManagerConfig config;
+  config.half_extent_m = {5.0, 5.0, 5.0};
+  config.crop_trigger_distance_m = 1.0;
+  config.soft_point_limit = 5U;
+  config.hard_point_limit = 8U;
+  config.target_point_count_after_prune = 3U;
+  LocalMapManager manager(config);
+
+  const LocalMapUpdate update = manager.update(map, {0.0, 0.0, 0.0});
+
+  EXPECT_TRUE(update.hard_limit_triggered);
+  EXPECT_FALSE(update.hard_limit_recovery_failed);
+  EXPECT_EQ(update.map_count_after_crop, 6U);
+  EXPECT_EQ(update.map_count_after_prune, 6U);
+  EXPECT_EQ(update.distance_pruned_count, 0U);
+  EXPECT_EQ(map.size(), 6U);
+}
+
 TEST(RegistrationMapTest, LocalManagerLeavesMapBelowSoftLimitUntouched) {
   IkdTreeRegistrationMapConfig map_config;
   map_config.voxel_size_m = 0.01;
@@ -326,6 +354,47 @@ TEST(RegistrationMapTest,
   const auto second = manager.update(map, {0.1, 0.0, 0.0});
   EXPECT_FALSE(second.crop_performed);
   EXPECT_EQ(second.distance_pruned_count, 0U);
+}
+
+TEST(RegistrationMapTest,
+     LocalManagerPrunesLargeMapToTargetWithoutLeavingStalePoints) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.3;
+  IkdTreeRegistrationMap map(map_config);
+  constexpr std::size_t kRows = 400U;
+  constexpr std::size_t kColumns = 400U;
+  std::vector<Eigen::Vector3d> points;
+  points.reserve(kRows * kColumns);
+  for (std::size_t row = 0; row < kRows; ++row) {
+    for (std::size_t column = 0; column < kColumns; ++column) {
+      points.emplace_back(
+          static_cast<double>(column) * 0.31,
+          static_cast<double>(row) * 0.31,
+          static_cast<double>((row + column) % 7U) * 0.31);
+    }
+  }
+  ASSERT_EQ(map.insert(points), points.size());
+  ASSERT_EQ(map.size(), points.size());
+  ASSERT_EQ(map.snapshot().size(), points.size());
+
+  LocalMapManagerConfig config;
+  config.half_extent_m = {1000.0, 1000.0, 1000.0};
+  config.crop_trigger_distance_m = 1.0;
+  config.soft_point_limit = 100000U;
+  config.hard_point_limit = 120000U;
+  config.target_point_count_after_prune = 80000U;
+  config.distance_shell_size_m = 5.0;
+  LocalMapManager manager(config);
+
+  const LocalMapUpdate update = manager.update(map, {0.0, 0.0, 0.0});
+
+  EXPECT_TRUE(update.hard_limit_triggered);
+  EXPECT_FALSE(update.hard_limit_recovery_failed);
+  EXPECT_EQ(update.map_count_after_prune, 80000U);
+  EXPECT_EQ(update.distance_pruned_count, 80000U);
+  EXPECT_EQ(update.removed_point_count, 80000U);
+  EXPECT_EQ(map.size(), 80000U);
+  EXPECT_EQ(map.snapshot().size(), 80000U);
 }
 
 TEST(RegistrationMapTest, SoftLimitRunsBudgetedCropWithoutDistancePrune) {

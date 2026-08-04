@@ -107,7 +107,7 @@ TEST(Px4FrameConverter, KeepsFrdWorldLocalAndDoesNotClaimEnu) {
   ASSERT_TRUE(output);
   EXPECT_EQ(output.value->world_convention,
             px4_odometry_bridge::WorldConvention::kPx4FrdLocal);
-  EXPECT_TRUE(output.value->position.isApprox(Eigen::Vector3d(1.0, -2.0, -3.0)));
+  EXPECT_TRUE(output.value->position.isApprox(Eigen::Vector3d(2.0, -1.0, 3.0)));
 }
 
 TEST(Px4FrameConverter, RejectsWorldVelocityFromDifferentWorldFrame) {

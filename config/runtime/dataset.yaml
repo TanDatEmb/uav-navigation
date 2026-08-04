@@ -53,20 +53,18 @@ fast_lio:
       scan_voxel_size_m: 0.9
     registration: {maximum_iterations: 10}
     mapping:
-      # The replay's 0.2 m map reached 374374 points.  A 0.3 m registration
-      # voxel is a bounded way to reduce the map continuously without waiting
-      # for a large hard-limit deletion burst.
+      # Replay scans contain roughly 10k-16k points. Keep a bounded multi-scan
+      # local map instead of retaining the old 450k/500k default capacity.
       registration_map: {voxel_size_m: 0.3}
       dynamic_filter: {enabled: false}
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0
-        # Keep limits below the old 450k/500k defaults while leaving headroom
-        # for the coarser registration map. Hard pruning is a last-resort
-        # guard; the voxel size above is the normal memory control.
-        soft_point_limit: 220000
-        hard_point_limit: 280000
-        target_point_count_after_prune: 180000
+        # Keep about 5-10 replay scans of spatial support. The hard limit is a
+        # safety bound; the registration voxel remains the normal reduction.
+        soft_point_limit: 100000
+        hard_point_limit: 120000
+        target_point_count_after_prune: 80000
         distance_shell_size_m: 5.0
     output:
       publish_registered_points: false

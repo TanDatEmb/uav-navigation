@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace uav::nav::lio {
 
@@ -60,12 +61,24 @@ LocalMapUpdate LocalMapManager::update(RegistrationMap& map,
     update.removed_point_count += update.distance_pruned_count;
   }
   update.map_count_after_prune = map.size();
+  // A hard threshold can be crossed before the moving-cube crop and then be
+  // recovered by that crop alone. Only a hard-triggered prune is required to
+  // reach the target count; being above target while already back below the
+  // hard cap is a valid bounded-map state.
+  const bool hard_prune_required =
+      update.map_count_after_crop > config_.hard_point_limit;
   update.hard_limit_recovery_failed =
-      update.hard_limit_triggered &&
+      hard_prune_required &&
       update.map_count_after_prune > config_.target_point_count_after_prune;
   if (update.hard_limit_recovery_failed) {
     throw std::runtime_error(
-        "local map hard-limit recovery did not reach target point count");
+        "local map hard-limit recovery did not reach target point count " +
+        std::string("before=") + std::to_string(update.map_count_before) +
+        " after_crop=" + std::to_string(update.map_count_after_crop) +
+        " after_prune=" + std::to_string(update.map_count_after_prune) +
+        " target=" +
+        std::to_string(config_.target_point_count_after_prune) +
+        " pruned=" + std::to_string(update.distance_pruned_count));
   }
   if (soft_maintenance_due) {
     soft_maintenance_armed_ = false;

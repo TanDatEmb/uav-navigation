@@ -34,9 +34,9 @@ TEST(ExternalOdometryConversionTest, ConvertsRosZUpFluToPx4Frd) {
   const auto converted = convert_ros_lio_odometry(message);
   ASSERT_TRUE(converted.has_value());
   EXPECT_EQ(converted->timestamp_ns, 1'000'000'002LL);
-  EXPECT_DOUBLE_EQ(converted->position_frd.x(), 1.0);
-  EXPECT_DOUBLE_EQ(converted->position_frd.y(), -2.0);
-  EXPECT_DOUBLE_EQ(converted->position_frd.z(), -3.0);
+  EXPECT_DOUBLE_EQ(converted->position_frd.x(), -2.0);
+  EXPECT_DOUBLE_EQ(converted->position_frd.y(), 1.0);
+  EXPECT_DOUBLE_EQ(converted->position_frd.z(), 3.0);
   EXPECT_DOUBLE_EQ(converted->velocity_body_frd.y(), -4.0);
   EXPECT_DOUBLE_EQ(converted->angular_velocity_body_frd.z(), -5.0);
   EXPECT_TRUE(converted->frame_valid);
@@ -83,8 +83,8 @@ TEST(ExternalOdometryConversionTest, TransformsFullNonDiagonalCovarianceBeforePu
   const auto diagonal = transformed_covariance_diagonal(
       covariance, 0, C_world_frd_from_ros_local_zup());
   ASSERT_TRUE(diagonal.has_value());
-  EXPECT_DOUBLE_EQ((*diagonal)[0], 2.0);
-  EXPECT_DOUBLE_EQ((*diagonal)[1], 3.0);
+  EXPECT_DOUBLE_EQ((*diagonal)[0], 3.0);
+  EXPECT_DOUBLE_EQ((*diagonal)[1], 2.0);
   EXPECT_DOUBLE_EQ((*diagonal)[2], 4.0);
 
   const Eigen::Matrix3d quarter_turn =
@@ -104,7 +104,7 @@ TEST(ExternalOdometryConversionTest, PreservesPositiveVarianceBelowExampleFloor)
   message.pose.covariance[0] = small_variance;
   const auto converted = convert_ros_lio_odometry(message);
   ASSERT_TRUE(converted.has_value());
-  EXPECT_DOUBLE_EQ(converted->position_variance.x(), small_variance);
+  EXPECT_DOUBLE_EQ(converted->position_variance.y(), small_variance);
 }
 
 TEST(ExternalOdometryConversionTest, RequiresPositiveFiniteFloatRepresentableVariance) {

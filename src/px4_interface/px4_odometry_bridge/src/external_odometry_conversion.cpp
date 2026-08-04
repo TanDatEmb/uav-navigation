@@ -49,8 +49,12 @@ std::optional<Eigen::Matrix3d> validated_block(
 }  // namespace
 
 const Eigen::Matrix3d& C_world_frd_from_ros_local_zup() noexcept {
+  // The LIO local frame is yaw-aligned to the PX4 local FRD/NED log frame:
+  //   x_px4 = -y_lio, y_px4 = x_lio, z_px4 = z_lio.
+  // This is a proper +90 degree world-yaw rotation.  It is deliberately
+  // separate from the body FLU->FRD basis below.
   static const Eigen::Matrix3d matrix =
-      (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0)
+      (Eigen::Matrix3d() << 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
           .finished();
   return matrix;
 }
