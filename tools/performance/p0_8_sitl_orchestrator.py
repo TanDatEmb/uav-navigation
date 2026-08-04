@@ -1690,6 +1690,7 @@ class SitlOrchestrator:
                 "publication_ready_ratio": diagnostic_ratio("publication_ready"),
                 "publication_active_ratio": diagnostic_ratio("publication_active"),
                 "authorization_ratio": diagnostic_ratio("supervisor_authorized"),
+                "supervisor_authorization_ratio": diagnostic_ratio("supervisor_authorized"),
                 "gate_reason_values": sorted(set(gate_reasons)),
                 "gate_reason_transition_count": gate_transitions,
                 "gate_close_reopen_count": gate_close_reopen_count,

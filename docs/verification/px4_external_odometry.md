@@ -43,6 +43,16 @@ in `timestamp` through an explicit conversion result. P0.9-A proves only
 `ROS_SIMULATION_TIME -> PX4_SIMULATION_TIME`; unresolved real-hardware time
 conversion returns `TIME_DOMAIN_UNRESOLVED` and keeps publication closed.
 
+Within one public frame generation, `timestamp_sample` must strictly increase:
+an older sample is rejected as `TIMESTAMP_SAMPLE_REGRESSION`, while an equal
+sample is suppressed as `DUPLICATE_MEASUREMENT_SUPPRESSED` without incrementing
+the conversion-failure counter. A publication timestamp may equal the prior
+publication timestamp when its sample timestamp increased; a decrease is
+rejected as `PUBLICATION_TIMESTAMP_REGRESSION`. The bridge exposes separate
+`timestamp_sample_regression_count`, `publication_timestamp_regression_count`,
+and `duplicate_measurement_suppressed_count` diagnostics. A public generation
+change starts a new timestamp epoch.
+
 The gate independently requires node readiness, PX4 input transport,
 timestamp conversion, supervisor authorization, valid LIO public generation,
 fresh corrected/propagated odometry, covariance, fresh supervisor status, the
@@ -50,6 +60,11 @@ message frame contract, and an unlatched geometric-jump state. `publisher_ready`
 advertises only bridge node/transport readiness so supervisor authorization
 does not form a circular dependency. `publication_ready` and
 `publication_active` do not mean EKF2 fusion is active.
+
+Before writing PX4 float covariance fields, every source variance must remain
+finite and strictly positive after conversion to `float`. Positive double
+values that underflow to zero or overflow to infinity are rejected as
+`COVARIANCE_NOT_FLOAT_REPRESENTABLE`; no synthetic covariance floor is used.
 
 Diagnostics are published on `/px4/external_odometry_diagnostics`, including
 the required gate fields, frame/generation/reset fields, timestamp provenance,

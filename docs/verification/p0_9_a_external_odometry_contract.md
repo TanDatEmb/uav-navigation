@@ -108,3 +108,49 @@ cycle; they were not hidden or reclassified as passes.
 
 The final P0.9-A contract is therefore closed without claiming PX4 estimator
 fusion or navigation improvement.
+
+## P0.9-A-CLOSEOUT revalidation — 2026-08-04
+
+This section records the review closeout separately from the earlier canonical
+run. The earlier artifacts were classified before the corrective edits:
+
+| Artifact | Classification | Evidence boundary |
+| --- | --- | --- |
+| `.artifacts/verification/p0.9-a-sitl-on-20260804T0750Z` | Canonical external-enabled artifact for the pre-closeout HEAD | `pass=true`, `acceptance_eligible=true`; 165 messages at 2.75 Hz, FRD/BODY-FRD frames, reset `{1}`, timestamp-failure delta `0`, publication active. It is not evidence for the corrected HEAD because its harness SHA is `f0dcab2`. |
+| `.artifacts/verification/p0.9-a-sitl-off-20260804T0820Z` | Canonical external-disabled comparison for the pre-closeout HEAD | `pass=true`, `acceptance_eligible=true`; FAST-LIO no drops/load shedding/overflow and max queue `17`. It is not evidence for the corrected HEAD because its harness SHA is `f0dcab2`. |
+
+The unresolved review items were corrected in commit `72f85ad`:
+
+- timestamp sample regression, duplicate suppression, publication regression,
+  equal publication timestamps, generation reset, and the three required
+  reason-specific counters are now distinct;
+- covariance is checked after double-to-float conversion, including positive
+  underflow and overflow rejection as
+  `COVARIANCE_NOT_FLOAT_REPRESENTABLE`;
+- schema-v2 external publisher readiness is tested and isolated from timestamp
+  and supervisor authorization, and `publication_active` now requires the
+  readiness gate as well as a recent publication;
+- the runner records published sample strictness, publication nondecreasing
+  behavior, timestamp counter deltas, readiness/active/authorization ratios,
+  public-generation uniqueness, covariance rejection deltas, gate transitions,
+  PX4 subscription count, and the explicit non-fusing verdict.
+
+Focused validation on the corrected HEAD passed: the two affected packages
+built as `RelWithDebInfo`; `px4_odometry_bridge` ran 35 tests, supervisor ran
+71 tests, and the tools/runtime/simulation suites ran 36, 20, and 17 tests.
+
+The required same-HEAD 30 s warmup / 60 s measurement revalidation was run, but
+did not produce a canonical PASS:
+
+| Artifact | Result | Classification |
+| --- | --- | --- |
+| `.artifacts/verification/p0.9-a-closeout-off-20260804T0640Z` | FAIL: FAST-LIO `processing_lag_exceeded=true`, load shedding `2`, max queue `325` | Non-canonical runtime baseline failure; cleanup complete, no orphans. |
+| `.artifacts/verification/p0.9-a-closeout-off-20260804T0710Z` | FAIL: FAST-LIO `processing_lag_exceeded=true`, load shedding `2`, max queue `202` | Non-canonical runtime baseline failure; cleanup complete, no orphans. |
+| `.artifacts/verification/p0.9-a-closeout-off-20260804T0740Z` | FAIL: FAST-LIO `processing_lag_exceeded=true`, load shedding `0`, max queue `135` | Non-canonical runtime baseline failure; cleanup complete, no orphans. |
+| `.artifacts/verification/p0.9-a-closeout-on-20260804T0810Z` | FAIL closed: supervisor `LIO_LOST`, zero external publications | Non-canonical runtime revalidation; bridge observed `publisher_ready_ratio=1.0`, public generation `{1}`, covariance rejection `0`, timestamp regression/duplicate deltas `0`, subscription count `2`, and fusion disabled, but authorization/publication remained closed. |
+
+Therefore the corrected code and static contract are closed, while the final
+absolute SITL/runtime verdict remains `BLOCKED_RUNTIME_BASELINE`. No claim is
+made that the corrected HEAD has passed dynamic external publication until a
+clean 30/60 A/B pair completes. PX4 EKF2 fusion, real-hardware time conversion,
+and in-flight restart remain deferred as before.
