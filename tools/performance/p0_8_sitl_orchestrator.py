@@ -461,6 +461,7 @@ SENSOR_QOS = qos_dict("KEEP_LAST", 100, "BEST_EFFORT", "VOLATILE")
 LIO_QOS = qos_dict("KEEP_LAST", 10, "RELIABLE", "VOLATILE")
 SUPERVISOR_QOS = qos_dict("KEEP_LAST", 10, "RELIABLE", "VOLATILE")
 CLOCK_QOS = qos_dict("KEEP_LAST", 10, "BEST_EFFORT", "VOLATILE")
+MAX_DIAGNOSTIC_SAMPLES = 20_000
 
 
 class RosReadinessMonitor(Node):  # type: ignore[misc]
@@ -495,6 +496,8 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.external_reset_counters: list[int] = []
         self.external_diagnostic_samples: list[dict[str, Any]] = []
         self.external_baseline_message_count = 0
+        self.diagnostic_samples: list[dict[str, Any]] = []
+        self.diagnostic_sample_drop_count = 0
         self._qualification_subscriptions: dict[str, Any] = {}
         self._create_static_subscriptions()
 
@@ -611,15 +614,15 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
 
     def _on_px4_diagnostics(self, message: Any) -> None:
         self._observe("px4_diagnostics", message, {"status_names": [s.name for s in message.status]})
-        self.diagnostics.update(message)
+        self._record_diagnostics(message)
 
     def _on_lio_diagnostics(self, message: Any) -> None:
         self._observe("lio_diagnostics", message, {"status_names": [s.name for s in message.status]})
-        self.diagnostics.update(message)
+        self._record_diagnostics(message)
 
     def _on_supervisor_diagnostics(self, message: Any) -> None:
         self._observe("supervisor_diagnostics", message, {"status_names": [s.name for s in message.status]})
-        self.diagnostics.update(message)
+        self._record_diagnostics(message)
         if self.status_accumulator is None:
             return
         event_ns = stamp_ns(message) or self.latest_clock_ns
@@ -635,7 +638,7 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
     def _on_external_diagnostics(self, message: Any) -> None:
         self._observe("external_diagnostics", message,
                       {"status_names": [s.name for s in message.status]})
-        self.diagnostics.update(message)
+        self._record_diagnostics(message)
         if self.status_accumulator is None:
             return
         event_ns = stamp_ns(message) or self.latest_clock_ns
@@ -647,6 +650,29 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
             "event_ns": event_ns,
             "values": self.diagnostics.values("px4_external_odometry_bridge"),
         })
+
+    def _record_diagnostics(self, message: Any) -> None:
+        """Retain bounded diagnostic-event samples for causal timelines."""
+        self.diagnostics.update(message)
+        if self.status_accumulator is None:
+            return
+        event_ns = stamp_ns(message) or self.latest_clock_ns
+        start_ns = self.status_accumulator.start_ns
+        end_ns = self.status_accumulator.end_ns
+        if start_ns is None or end_ns is None or not (start_ns <= event_ns <= end_ns):
+            return
+        for status in getattr(message, "status", ()):
+            self.diagnostic_samples.append({
+                "event_ns": event_ns,
+                "name": status.name,
+                "level": int_value(status.level),
+                "message": status.message,
+                "values": {item.key: item.value for item in status.values},
+            })
+        excess = len(self.diagnostic_samples) - MAX_DIAGNOSTIC_SAMPLES
+        if excess > 0:
+            del self.diagnostic_samples[:excess]
+            self.diagnostic_sample_drop_count += excess
 
     def _on_external_odometry(self, message: Any) -> None:
         timestamp_us = int(message.timestamp)
@@ -774,6 +800,8 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.external_timestamp_age_max_ns = 0
         self.external_reset_counters = []
         self.external_diagnostic_samples = []
+        self.diagnostic_samples = []
+        self.diagnostic_sample_drop_count = 0
         self.external_baseline_message_count = (
             self.topic("external_odometry").message_count
             if self.topic("external_odometry") is not None else 0)
@@ -1028,6 +1056,7 @@ class ResourceSampler:
         self.writer = csv.DictWriter(self.stream, fieldnames=self.FIELDS)
         self.writer.writeheader()
         self.last_sample_ns: int | None = None
+        self._cpu_previous: dict[int, tuple[float, int]] = {}
         self.rows: list[dict[str, Any]] = []
 
     def sample(self, sim_time_ns: int, force: bool = False) -> None:
@@ -1045,18 +1074,28 @@ class ResourceSampler:
                     for role, record in self.registry.records.items()]
         else:
             rows = []
+            current_pids: set[int] = set()
             for role, record in self.registry.records.items():
                 pids = self.registry.owned_group_members(role)
+                current_pids.update(pids)
                 cpu = rss = uss = threads = 0
                 uss_seen = False
                 alive = 0
+                cpu_sample_available = False
                 for pid in pids:
                     try:
                         process = psutil.Process(pid)
                         if process.status() == psutil.STATUS_ZOMBIE:
                             continue
                         alive += 1
-                        cpu += float(process.cpu_percent(None))
+                        cpu_times = process.cpu_times()
+                        cpu_seconds = float(cpu_times.user + cpu_times.system)
+                        previous = self._cpu_previous.get(pid)
+                        self._cpu_previous[pid] = (cpu_seconds, now_ns)
+                        if previous is not None and now_ns > previous[1]:
+                            cpu += max(0.0, cpu_seconds - previous[0]) * 100.0 / (
+                                (now_ns - previous[1]) / 1e9)
+                            cpu_sample_available = True
                         rss += int(process.memory_info().rss)
                         threads += int(process.num_threads())
                         try:
@@ -1071,11 +1110,15 @@ class ResourceSampler:
                     "role": role, "state": "alive" if alive else "dead",
                     "pgid": record.pgid, "process_count": alive,
                     "pids": ",".join(str(pid) for pid in pids),
-                    "cpu_percent": cpu if alive else None,
+                    "cpu_percent": cpu if alive and cpu_sample_available else None,
                     "rss_bytes": rss if alive else None,
                     "uss_bytes": uss if alive and uss_seen else None,
                     "thread_count": threads if alive else None,
                 })
+            self._cpu_previous = {
+                pid: sample for pid, sample in self._cpu_previous.items()
+                if pid in current_pids
+            }
         for row in rows:
             self.writer.writerow(row)
             self.rows.append(row)
@@ -1103,6 +1146,12 @@ class ArtifactWriter:
         atomic_write_json(output / "topics.json", {})
         atomic_write_json(output / "measurement.json", {})
         atomic_write_json(output / "acceptance.json", {})
+        atomic_write_json(output / "diagnostics_time_series.json", {
+            "schema_version": 1,
+            "sample_count": 0,
+            "dropped_sample_count": 0,
+            "samples": [],
+        })
         with (output / "resources.csv").open("w", encoding="utf-8") as stream:
             stream.write("wall_monotonic_ns,sim_time_ns,role,state,pgid,process_count,pids,cpu_percent,rss_bytes,uss_bytes,thread_count\n")
         atomic_write_json(output / "run.json", self.run)
@@ -1290,6 +1339,8 @@ class SitlOrchestrator:
         self.measurement_result: dict[str, Any] | None = None
         self.measurement_rows: list[dict[str, Any]] = []
         self.final_topics: dict[str, Any] = {}
+        self.final_diagnostic_samples: list[dict[str, Any]] = []
+        self.final_diagnostic_sample_drop_count = 0
         self.ros_initialized = False
 
     def _persist(self) -> None:
@@ -1924,6 +1975,7 @@ class SitlOrchestrator:
                 "resources": str(self.output / "resources.csv"),
                 "measurement": str(self.output / "measurement.json"),
                 "acceptance": str(self.output / "acceptance.json"),
+                "diagnostics": str(self.output / "diagnostics_time_series.json"),
                 "logs": str(self.output / "logs"),
             },
         }
@@ -1960,6 +2012,15 @@ class SitlOrchestrator:
                 # Destroying the participant before process cleanup prevents a
                 # late callback from changing final evidence.
                 self.final_topics = self.monitor.as_topics()
+                self.final_diagnostic_samples = list(self.monitor.diagnostic_samples)
+                self.final_diagnostic_sample_drop_count = (
+                    self.monitor.diagnostic_sample_drop_count)
+                atomic_write_json(self.output / "diagnostics_time_series.json", {
+                    "schema_version": 1,
+                    "sample_count": len(self.final_diagnostic_samples),
+                    "dropped_sample_count": self.final_diagnostic_sample_drop_count,
+                    "samples": self.final_diagnostic_samples,
+                })
                 self.monitor.destroy_node()
                 try:
                     rclpy.shutdown()  # type: ignore[union-attr]
@@ -2013,7 +2074,11 @@ class SitlOrchestrator:
             self.artifact.update(outcome=outcome, acceptance_eligible=bool(self.provenance.get("acceptance_eligible", False)) and outcome == "PASS",
                                  cleanup=self.cleanup_result, stage_timeline=self.stage_records,
                                  processes=self.registry.as_dict(), topics=self.final_topics, failure=self.primary_failure,
-                                 measurement=self.measurement_result)
+                                 measurement=self.measurement_result,
+                                 diagnostics_time_series={
+                                     "sample_count": len(self.final_diagnostic_samples),
+                                     "dropped_sample_count": self.final_diagnostic_sample_drop_count,
+                                 })
             self.artifact.close()
         return 0 if self.primary_failure is None and self.cleanup_result.get("complete", False) else 2
 
