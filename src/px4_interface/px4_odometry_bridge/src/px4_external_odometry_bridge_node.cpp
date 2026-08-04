@@ -28,6 +28,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
  public:
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
   using SupervisorStatus = navigation_interfaces::msg::OdometrySupervisorStatus;
+  static constexpr std::uint64_t kSimulationTimestampMappingGeneration = 1;
 
   Px4ExternalOdometryBridgeNode() : Node("px4_external_odometry_bridge") {
     max_age_ns_ = declare_parameter<std::int64_t>(
@@ -147,7 +148,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
             ? supervisor_->lio_public_frame_generation
             : 0U;
     last_timestamp_result_ = timestamp_converter_->convert(
-        frame->timestamp_ns, now_ns, use_sim_time, public_generation);
+        frame->timestamp_ns, now_ns, use_sim_time,
+        kSimulationTimestampMappingGeneration);
     const bool timestamp_ready = last_timestamp_result_.valid;
     const bool transport_ready = output_->get_subscription_count() > 0;
     const bool supervisor_fresh = supervisor_.has_value() &&
@@ -283,7 +285,11 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("timestamp_target_domain", last_timestamp_result_.target_domain);
     add("timestamp_conversion_valid", last_timestamp_result_.valid ? "true" : "false");
     add("timestamp_conversion_generation",
-        std::to_string(last_timestamp_result_.generation));
+        std::to_string(last_timestamp_result_.timestamp_mapping_generation));
+    add("timestamp_mapping_generation",
+        std::to_string(timestamp_diagnostics.timestamp_mapping_generation));
+    add("timestamp_mapping_generation_change_count",
+        std::to_string(timestamp_diagnostics.timestamp_mapping_generation_change_count));
     add("timestamp_sample_us",
         std::to_string(last_timestamp_result_.measurement_time_us));
     add("publication_timestamp_us",

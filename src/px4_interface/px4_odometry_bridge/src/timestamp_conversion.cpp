@@ -6,10 +6,11 @@
 namespace px4_odometry_bridge {
 namespace {
 
-TimestampConversionResult invalid_result(const std::uint64_t generation,
-                                         std::string reason) {
+TimestampConversionResult invalid_result(
+    const std::uint64_t timestamp_mapping_generation,
+    std::string reason) {
   TimestampConversionResult result;
-  result.generation = generation;
+  result.timestamp_mapping_generation = timestamp_mapping_generation;
   result.reason = std::move(reason);
   return result;
 }
@@ -32,17 +33,29 @@ TimestampConversionResult TimestampConverter::convert(
     const std::int64_t measurement_time_ns,
     const std::int64_t publication_time_ns,
     const bool simulation_time_equivalence_proven,
-    const std::uint64_t generation) {
-  const auto fail = [this, generation](std::string reason) {
+    const std::uint64_t timestamp_mapping_generation) {
+  const auto fail = [this, timestamp_mapping_generation](std::string reason) {
     ++diagnostics_.conversion_failure_count;
     diagnostics_.failure_reason = reason;
-    return invalid_result(generation, std::move(reason));
+    return invalid_result(timestamp_mapping_generation, std::move(reason));
   };
   if (!simulation_time_equivalence_proven) {
     return fail("TIME_DOMAIN_UNRESOLVED");
   }
-  if (generation == 0) {
-    return fail("PUBLIC_FRAME_GENERATION_INVALID");
+  if (timestamp_mapping_generation == 0) {
+    return fail("TIMESTAMP_MAPPING_GENERATION_INVALID");
+  }
+  const bool mapping_generation_changed =
+      !last_timestamp_mapping_generation_.has_value() ||
+      *last_timestamp_mapping_generation_ != timestamp_mapping_generation;
+  if (mapping_generation_changed) {
+    if (last_timestamp_mapping_generation_.has_value()) {
+      ++diagnostics_.timestamp_mapping_generation_change_count;
+    }
+    last_timestamp_mapping_generation_ = timestamp_mapping_generation;
+    diagnostics_.timestamp_mapping_generation = timestamp_mapping_generation;
+    last_measurement_time_us_.reset();
+    last_publication_time_us_.reset();
   }
   const auto measurement_us = nanoseconds_to_microseconds(measurement_time_ns);
   const auto publication_us = nanoseconds_to_microseconds(publication_time_ns);
@@ -61,20 +74,18 @@ TimestampConversionResult TimestampConverter::convert(
   if (age < -maximum_age_ns_) {
     return fail("TIMESTAMP_FUTURE");
   }
-  const bool generation_changed = !last_generation_.has_value() ||
-                                  *last_generation_ != generation;
-  if (!generation_changed) {
-    if (last_measurement_time_ns_.has_value() &&
-        measurement_time_ns < *last_measurement_time_ns_) {
+  if (!mapping_generation_changed) {
+    if (last_measurement_time_us_.has_value() &&
+        *measurement_us < *last_measurement_time_us_) {
       ++diagnostics_.regression_count;
       ++diagnostics_.timestamp_sample_regression_count;
       return fail("TIMESTAMP_SAMPLE_REGRESSION");
     }
-    if (last_measurement_time_ns_.has_value() &&
-        measurement_time_ns == *last_measurement_time_ns_) {
+    if (last_measurement_time_us_.has_value() &&
+        *measurement_us == *last_measurement_time_us_) {
       ++diagnostics_.duplicate_measurement_suppressed_count;
       diagnostics_.failure_reason = "DUPLICATE_MEASUREMENT_SUPPRESSED";
-      auto result = invalid_result(generation,
+      auto result = invalid_result(timestamp_mapping_generation,
                                    "DUPLICATE_MEASUREMENT_SUPPRESSED");
       result.suppressed = true;
       result.measurement_time_us = *measurement_us;
@@ -82,23 +93,22 @@ TimestampConversionResult TimestampConverter::convert(
       result.timestamp_age_ns = age;
       return result;
     }
-    if (last_publication_time_ns_.has_value() &&
-        publication_time_ns < *last_publication_time_ns_) {
+    if (last_publication_time_us_.has_value() &&
+        *publication_us < *last_publication_time_us_) {
       ++diagnostics_.regression_count;
       ++diagnostics_.publication_timestamp_regression_count;
       return fail("PUBLICATION_TIMESTAMP_REGRESSION");
     }
   }
-  last_generation_ = generation;
-  last_measurement_time_ns_ = measurement_time_ns;
-  last_publication_time_ns_ = publication_time_ns;
+  last_measurement_time_us_ = *measurement_us;
+  last_publication_time_us_ = *publication_us;
   TimestampConversionResult result;
   result.valid = true;
   result.source_domain = "ROS_SIMULATION_TIME";
   result.target_domain = "PX4_SIMULATION_TIME";
   result.measurement_time_us = *measurement_us;
   result.publication_time_us = *publication_us;
-  result.generation = generation;
+  result.timestamp_mapping_generation = timestamp_mapping_generation;
   result.timestamp_age_ns = static_cast<std::int64_t>(age);
   result.reason = "VALID_SIMULATION_TIME_EQUIVALENCE";
   return result;
