@@ -21,6 +21,12 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.px4_diagnostics_valid = true;
   input.lio_diagnostics_schema_valid = true;
   input.px4_diagnostics_schema_valid = true;
+  input.correction_quality_valid = true;
+  input.timestamp_valid = true;
+  input.covariance_valid = true;
+  input.lio_generation_locked = true;
+  input.external_publisher_ready = true;
+  input.lio_generation = 1;
   input.alignment_gap_ns = 0;
   input.comparison_epoch_ns = time;
   input.new_comparison_sample = true;

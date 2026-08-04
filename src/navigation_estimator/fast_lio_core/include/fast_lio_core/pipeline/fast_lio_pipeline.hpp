@@ -62,6 +62,7 @@ class FastLioPipeline {
   [[nodiscard]] const std::optional<Timestamp>& stateTime() const noexcept;
   [[nodiscard]] const std::optional<Timestamp>& synchronizationEpoch()
       const noexcept;
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
   [[nodiscard]] std::size_t pendingLidarCount() const;
 
  private:
@@ -101,6 +102,7 @@ class FastLioPipeline {
   ManifoldState state_{};
   ManifoldState::Covariance covariance_{ManifoldState::Covariance::Identity()};
   std::optional<Timestamp> state_time_;
+  std::optional<Timestamp> initial_prior_state_time_;
   std::optional<Timestamp> last_initialization_imu_time_;
   std::optional<Timestamp> last_correction_time_;
   std::vector<Eigen::Vector3d> bootstrap_reference_points_odom_m_;
@@ -130,6 +132,7 @@ class FastLioPipeline {
   std::size_t consecutive_uncorrected_lidar_updates_{0};
   std::size_t consecutive_recovery_successes_{0};
   bool tracking_ever_confirmed_{false};
+  std::uint64_t generation_{1};
 };
 
 }  // namespace uav::nav::lio

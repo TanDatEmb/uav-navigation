@@ -21,6 +21,7 @@ def generate_launch_description():
                 description="Path to the fast_lio_ros parameter YAML.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("enable_external_odometry", default_value="true"),
             DeclareLaunchArgument(
                 "publish_sensor_frames",
                 default_value="true",
@@ -59,6 +60,14 @@ def generate_launch_description():
                     LaunchConfiguration("config_file"),
                     {"use_sim_time": LaunchConfiguration("use_sim_time")},
                 ],
+            ),
+            Node(
+                package="px4_odometry_bridge",
+                executable="px4_odometry_bridge_external_node",
+                name="px4_external_odometry_bridge",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("enable_external_odometry")),
+                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
             ),
         ]
     )

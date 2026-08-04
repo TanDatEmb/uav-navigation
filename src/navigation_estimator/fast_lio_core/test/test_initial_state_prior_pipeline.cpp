@@ -174,5 +174,52 @@ TEST(InitialStatePriorPipelineTest, FutureTopicPriorSurvivesTimeoutUntilSensorCa
   EXPECT_FALSE(applied.diagnostics.initial_prior.fallback_applied);
 }
 
+TEST(InitialStatePriorPipelineTest, PredictsFromExactPriorEpochWithBracketedImu) {
+  FastLioPipeline pipeline(topicConfig());
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'200'000'000);
+  group.scan.end_time = Timestamp(1'200'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(1'000'000'000), imu(1'100'000'000), imu(1'200'000'000)};
+  group.propagation_start_time = Timestamp(1'000'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+  ASSERT_EQ(pipeline.process(group).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(1'000'000'000)).ok());
+  const auto result = pipeline.process(group);
+  EXPECT_EQ(result.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_TRUE(result.diagnostics.initial_prior.propagated_to_application);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), 1'200'000'000);
+}
+
+TEST(InitialStatePriorPipelineTest, InFlightPriorDoesNotUseStationaryInitializer) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.ground_fallback = InitialPriorFallback::kReject;
+  config.initial_prior.mask.attitude = PriorAttitudeMode::kFull;
+  FastLioPipeline pipeline(config);
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'000'000'000);
+  group.scan.end_time = Timestamp(1'000'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  group.imu_samples[1].linear_acceleration_imu_m_s2 = Eigen::Vector3d(2.0, 0.0, 8.0);
+  group.propagation_start_time = Timestamp(800'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+  EXPECT_EQ(pipeline.process(group).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  auto prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask.attitude = PriorAttitudeMode::kFull;
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+  const auto result = pipeline.process(group);
+  EXPECT_EQ(result.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_NE(result.diagnostics.initialization.initialization_status,
+            "IMU stationarity quality gate failed");
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

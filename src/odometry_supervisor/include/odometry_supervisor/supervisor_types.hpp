@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -70,6 +71,19 @@ struct WorldAlignment {
   std::string source_frame{"px4_odom"};
   Eigen::Quaterniond target_from_source_orientation{Eigen::Quaterniond::Identity()};
   Eigen::Vector3d target_from_source_translation{Eigen::Vector3d::Zero()};
+  // World alignment is deliberately 4-DOF: XYZ plus yaw. Roll/pitch are
+  // residual quality checks and must not be encoded in this quaternion.
+  double yaw_rad{0.0};
+  Eigen::Matrix4d covariance{Eigen::Matrix4d::Zero()};
+  double translation_dispersion_m{0.0};
+  double yaw_dispersion_rad{0.0};
+  double roll_pitch_disagreement_rad{0.0};
+  double excitation_metric_m{0.0};
+  std::size_t sample_count{0};
+  std::int64_t epoch_start_ns{0};
+  std::int64_t epoch_end_ns{0};
+  std::uint64_t lio_generation{0};
+  std::string rejection_reason;
   std::int64_t epoch_ns{0};
   std::uint64_t reset_generation{0};
   std::uint64_t time_generation{0};
@@ -110,6 +124,10 @@ struct SupervisorConfig {
   std::int64_t maximum_alignment_gap_ns{50'000'000};
   std::int64_t service_timeout_ns{100'000'000};
   std::int64_t maximum_comparison_age_ns{150'000'000};
+  bool authoritative_yaw{false};
+  std::size_t alignment_window_size{32};
+  std::size_t alignment_minimum_samples{8};
+  double alignment_minimum_horizontal_excitation_m{0.20};
   ResidualThresholds suspect{0.30, 0.30, 0.2094395102, 0.1396263402};
   ResidualThresholds degraded{0.75, 0.75, 0.5235987756, 0.3490658504};
   ResidualThresholds diverged{1.50, 1.50, 1.0471975512, 0.6981317008};
@@ -145,9 +163,16 @@ struct EvaluationInput {
   bool px4_diagnostics_schema_valid{false};
   bool lio_diagnostics_stale{false};
   bool px4_diagnostics_stale{false};
+  bool correction_quality_valid{false};
+  bool timestamp_valid{false};
+  bool covariance_valid{false};
+  bool lio_generation_locked{false};
+  bool continuity_unrecoverable{false};
+  bool external_publisher_ready{false};
   bool time_generation_changed{false};
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
+  std::uint64_t lio_generation{0};
   std::int64_t propagated_age_ns{-1};
   std::int64_t corrected_age_ns{-1};
   std::int64_t px4_age_ns{-1};
@@ -210,6 +235,13 @@ struct SupervisorOutput {
   Residual residual;
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
+  std::uint64_t lio_generation{0};
+  bool correction_quality_valid{false};
+  bool timestamp_valid{false};
+  bool covariance_valid{false};
+  bool lio_generation_locked{false};
+  bool continuity_unrecoverable{false};
+  bool external_publisher_ready{false};
   std::uint64_t state_transition_count{0};
   std::uint64_t evaluation_count{0};
   std::uint64_t alignment_failure_count{0};

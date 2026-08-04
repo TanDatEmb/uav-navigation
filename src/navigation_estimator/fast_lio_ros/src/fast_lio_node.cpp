@@ -3,6 +3,7 @@
 #include <exception>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <pthread.h>
 #include <utility>
 
@@ -348,6 +349,24 @@ void FastLioNode::onInitialStatePrior(
   prior.angular_velocity_base_rad_s = Eigen::Vector3d(
       message->twist.twist.angular.x, message->twist.twist.angular.y,
       message->twist.twist.angular.z);
+  bool covariance_present = false;
+  Eigen::Matrix<double, 23, 23> prior_covariance =
+      Eigen::Matrix<double, 23, 23>::Identity();
+  const auto copy_covariance = [&covariance_present](double value, double& destination) {
+    if (std::isfinite(value) && value > 0.0) {
+      destination = value;
+      covariance_present = true;
+    }
+  };
+  for (int index = 0; index < 3; ++index) {
+    copy_covariance(message->pose.covariance[static_cast<std::size_t>(index * 6 + index)],
+                    prior_covariance(index, index));
+    copy_covariance(message->pose.covariance[static_cast<std::size_t>((index + 3) * 6 + index + 3)],
+                    prior_covariance(index + 3, index + 3));
+    copy_covariance(message->twist.covariance[static_cast<std::size_t>(index * 6 + index)],
+                    prior_covariance(index + 12, index + 12));
+  }
+  if (covariance_present) prior.covariance = prior_covariance;
   prior.provenance = "topic:" + parameters_.initial_prior_topic + "|source_frame=" +
                      source_frame + "|target_frame=" + parameters_.odom_frame +
                      "|transform=" + parameters_.initial_prior_source_frame_transform;

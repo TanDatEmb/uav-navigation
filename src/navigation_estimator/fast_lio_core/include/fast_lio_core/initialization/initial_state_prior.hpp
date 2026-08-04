@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -47,6 +48,10 @@ struct InitialStatePrior {
   Eigen::Quaterniond orientation_odom_base{Eigen::Quaterniond::Identity()};
   std::optional<Eigen::Vector3d> linear_velocity_base_m_s;
   std::optional<Eigen::Vector3d> angular_velocity_base_rad_s;
+  // Optional covariance in the IKFoM 23-dimensional error-state ordering.
+  // It belongs to sample_time and is never silently relabeled.
+  std::optional<Eigen::Matrix<double, 23, 23>> covariance;
+  std::uint64_t generation{0};
   std::string provenance;
 
   [[nodiscard]] bool allFinite() const noexcept;

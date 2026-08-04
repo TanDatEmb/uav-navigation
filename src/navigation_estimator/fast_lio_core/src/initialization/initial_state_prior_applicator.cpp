@@ -67,12 +67,16 @@ Status InitialStatePriorApplicator::apply(
     }
     case PriorAttitudeMode::kFull: {
       const Eigen::Matrix3d R_OB_prior = prior.orientation_odom_base.toRotationMatrix();
-      const Eigen::Vector3d gravity = imu_initialized_state.gravity_odom_m_s2().normalized();
-      const Eigen::Vector3d gravity_base_imu = R_OB_imu.transpose() * gravity;
-      const Eigen::Vector3d gravity_base_prior = R_OB_prior.transpose() * gravity;
-      const double disagreement = std::acos(std::clamp(gravity_base_imu.dot(gravity_base_prior), -1.0, 1.0));
-      if (disagreement > maximum_full_attitude_tilt_disagreement_rad) {
-        return Status(StatusCode::kInitializationRejected, "full prior tilt disagrees with IMU gravity");
+      if (prior.context != InitialStatePriorContext::kInFlightReinitialization) {
+        const Eigen::Vector3d gravity = imu_initialized_state.gravity_odom_m_s2().normalized();
+        const Eigen::Vector3d gravity_base_imu = R_OB_imu.transpose() * gravity;
+        const Eigen::Vector3d gravity_base_prior = R_OB_prior.transpose() * gravity;
+        const double disagreement = std::acos(
+            std::clamp(gravity_base_imu.dot(gravity_base_prior), -1.0, 1.0));
+        if (disagreement > maximum_full_attitude_tilt_disagreement_rad) {
+          return Status(StatusCode::kInitializationRejected,
+                        "full prior tilt disagrees with IMU gravity");
+        }
       }
       R_OB = R_OB_prior;
       break;

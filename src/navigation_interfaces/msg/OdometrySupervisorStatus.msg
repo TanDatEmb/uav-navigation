@@ -44,6 +44,20 @@ bool time_aligned
 bool alignment_valid
 string alignment_source
 builtin_interfaces/Time alignment_epoch
+string alignment_target_frame
+string alignment_source_frame
+float64[3] alignment_translation_xyz
+float64 alignment_yaw_rad
+float64[16] alignment_covariance
+float64 alignment_translation_dispersion_m
+float64 alignment_yaw_dispersion_rad
+float64 alignment_roll_pitch_disagreement_rad
+float64 alignment_excitation_metric_m
+uint64 alignment_sample_count
+int64 alignment_epoch_start_ns
+int64 alignment_epoch_end_ns
+uint64 lio_generation
+string alignment_rejection_reason
 uint64 alignment_reset_generation
 uint64 alignment_time_generation
 uint64 alignment_reinitialization_count
@@ -72,6 +86,12 @@ float64 position_error_growth_m_s
 
 uint64 px4_reset_generation
 uint64 px4_time_generation
+bool correction_quality_valid
+bool timestamp_valid
+bool covariance_valid
+bool lio_generation_locked
+bool continuity_unrecoverable
+bool external_publisher_ready
 uint64 state_transition_count
 uint64 evaluation_count
 uint64 alignment_failure_count

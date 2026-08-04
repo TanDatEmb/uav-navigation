@@ -23,6 +23,7 @@ endif()
 add_library(${PROJECT_NAME}_core
   src/frame_converter.cpp
   src/reference_point_converter.cpp
+  src/external_odometry_conversion.cpp
   src/reset_compensator.cpp
   src/odometry_ring_buffer.cpp
   src/time_validator.cpp)
@@ -31,6 +32,7 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
 target_link_libraries(${PROJECT_NAME}_core Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME}_core nav_msgs)
 target_compile_options(${PROJECT_NAME}_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/px4_odometry_bridge_node.cpp)
@@ -39,12 +41,19 @@ target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_interfaces_
 ament_target_dependencies(${PROJECT_NAME}_node
   diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
 
+add_executable(${PROJECT_NAME}_external_node src/px4_external_odometry_bridge_node.cpp)
+target_link_libraries(${PROJECT_NAME}_external_node ${PROJECT_NAME}_core)
+target_include_directories(${PROJECT_NAME}_external_node PRIVATE ${navigation_interfaces_INCLUDE_DIRS})
+ament_target_dependencies(${PROJECT_NAME}_external_node
+  diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
+
 install(TARGETS ${PROJECT_NAME}_core
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 install(TARGETS ${PROJECT_NAME}_node DESTINATION lib/${PROJECT_NAME})
+install(TARGETS ${PROJECT_NAME}_external_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 if(BUILD_TESTING)
@@ -54,6 +63,11 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_${PROJECT_NAME}
     diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
   target_include_directories(test_${PROJECT_NAME} PRIVATE test)
+  ament_add_gtest(test_external_odometry_conversion
+    test/test_external_odometry_conversion.cpp)
+  target_link_libraries(test_external_odometry_conversion ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_external_odometry_conversion
+    nav_msgs rclcpp rosidl_default_runtime px4_msgs)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

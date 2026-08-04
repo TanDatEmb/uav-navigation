@@ -20,7 +20,7 @@ class SupervisorStateMachine {
                     double ratio);
   void transition(HealthState state, std::uint16_t reason_code, const char* reason);
   void clearPersistence();
-  void applyActions(SupervisorOutput& output) const;
+  void applyActions(SupervisorOutput& output, bool safety_gate) const;
 
   SupervisorConfig config_;
   HealthState state_{HealthState::kStartup};

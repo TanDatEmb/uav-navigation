@@ -21,8 +21,15 @@ std::optional<OdometryState> applyWorldAlignment(
 
   OdometryState result = source;
   const auto rotation = alignment.target_from_source_orientation.normalized();
+  const Eigen::Matrix3d world_rotation = rotation.toRotationMatrix();
+  // World alignment is XYZ plus yaw. A full-SO(3) quaternion here would hide
+  // roll/pitch disagreement instead of reporting it as a residual.
+  if ((world_rotation.col(2) - Eigen::Vector3d::UnitZ()).norm() > 1e-9 ||
+      !std::isfinite(alignment.yaw_rad)) {
+    return std::nullopt;
+  }
   result.frame_id = alignment.target_frame;
-  result.position_odom = rotation * source.position_odom +
+  result.position_odom = world_rotation * source.position_odom +
                          alignment.target_from_source_translation;
   result.orientation_odom_base =
       (rotation * source.orientation_odom_base.normalized()).normalized();

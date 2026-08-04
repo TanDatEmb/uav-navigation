@@ -44,6 +44,12 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
       config.maximum_comparison_age_ns < config.service_timeout_ns) {
     throw std::invalid_argument("maximum comparison age is incompatible with service timeout");
   }
+  if (config.alignment_window_size == 0 || config.alignment_minimum_samples == 0 ||
+      config.alignment_minimum_samples > config.alignment_window_size ||
+      !std::isfinite(config.alignment_minimum_horizontal_excitation_m) ||
+      config.alignment_minimum_horizontal_excitation_m < 0.0) {
+    throw std::invalid_argument("alignment window/excitation configuration is invalid");
+  }
   const auto ordered = [](const ResidualThresholds& a, const ResidualThresholds& b) {
     return a.position_m < b.position_m && a.velocity_m_s < b.velocity_m_s &&
            a.orientation_rad < b.orientation_rad && a.yaw_rad < b.yaw_rad;
@@ -101,16 +107,17 @@ void SupervisorStateMachine::clearPersistence() {
   recovery_since_ns_.reset();
 }
 
-void SupervisorStateMachine::applyActions(SupervisorOutput& output) const {
+void SupervisorStateMachine::applyActions(SupervisorOutput& output,
+                                          const bool safety_gate) const {
   switch (state_) {
     case HealthState::kStartup:
       output.external_odometry_allowed = false;
       break;
     case HealthState::kHealthy:
-      output.external_odometry_allowed = true;
+      output.external_odometry_allowed = safety_gate;
       break;
     case HealthState::kSuspect:
-      output.external_odometry_allowed = true;
+      output.external_odometry_allowed = safety_gate;
       output.planner_speed_limit_active = true;
       output.planner_speed_limit_m_s = config_.suspect_speed_limit_m_s;
       break;
@@ -160,15 +167,14 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool comparison_valid = input.px4_available && input.px4_fresh &&
                                 input.px4_continuity_valid && input.lio_diagnostics_valid &&
                                 input.px4_diagnostics_valid && input.aligned_comparison_fresh &&
-                                input.origin_aligned && input.alignment_valid && input.residual.valid &&
+                                input.alignment_valid && input.residual.valid &&
                                 input.propagated_fresh && input.corrected_fresh &&
                                 input.alignment_gap_ns >= 0 &&
                                 input.alignment_gap_ns <= config_.maximum_alignment_gap_ns &&
                                 !in_reset_grace && !time_generation_changed &&
                                 !input.time_generation_changed;
   const bool monitoring_available = input.px4_available && input.px4_fresh &&
-                                    input.px4_diagnostics_valid && input.origin_aligned &&
-                                    input.alignment_valid;
+                                    input.px4_diagnostics_valid && input.alignment_valid;
   if (input.px4_available && !comparison_valid) ++alignment_failure_count_;
 
   if (input.lio_diagnostics_valid) {
@@ -282,6 +288,13 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.residual = input.residual;
   output.px4_reset_generation = input.px4_reset_generation;
   output.px4_time_generation = input.px4_time_generation;
+  output.lio_generation = input.lio_generation;
+  output.correction_quality_valid = input.correction_quality_valid;
+  output.timestamp_valid = input.timestamp_valid;
+  output.covariance_valid = input.covariance_valid;
+  output.lio_generation_locked = input.lio_generation_locked;
+  output.continuity_unrecoverable = input.continuity_unrecoverable;
+  output.external_publisher_ready = input.external_publisher_ready;
   output.state_transition_count = transition_count_;
   output.evaluation_count = evaluation_count_;
   output.alignment_failure_count = alignment_failure_count_;
@@ -310,15 +323,7 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.query_rtt_p99_ms = input.query_rtt_p99_ms;
   output.query_rtt_max_ms = input.query_rtt_max_ms;
   output.stale_residual_reuse_count = input.stale_residual_reuse_count;
-  if (input.lio_valid && input.px4_available && !input.origin_aligned) {
-    output.monitoring_available = false;
-    output.comparison_valid = false;
-    output.time_aligned = false;
-    if (state_ != HealthState::kDiverged) {
-      output.reason_code = kReasonOriginNotAligned;
-      output.reason = "ODOM_ORIGIN_NOT_ALIGNED";
-    }
-  } else if (input.px4_available && !input.alignment_valid &&
+  if (input.px4_available && !input.alignment_valid &&
              state_ != HealthState::kDiverged) {
     output.reason_code = kReasonAlignmentFailed;
     output.reason = "WORLD_ALIGNMENT_UNAVAILABLE";
@@ -350,13 +355,19 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
 
   if (state_ == HealthState::kDiverged && config_.reference_mode == ReferenceMode::kIndependent &&
       input.px4_available && input.px4_fresh && input.px4_continuity_valid &&
-      input.px4_post_reset_stable && input.origin_aligned && !reinitialization_latched_) {
+      input.px4_post_reset_stable && input.alignment_valid && !reinitialization_latched_) {
     reinitialization_latched_ = true;
     ++reinitialization_sequence_;
   }
   output.reinitialization_request_sequence = reinitialization_sequence_;
   output.reinitialization_requested = reinitialization_latched_;
-  applyActions(output);
+  const bool external_safety_gate =
+      input.lio_valid && input.corrected_fresh && input.propagated_fresh &&
+      input.correction_quality_valid && input.timestamp_valid && input.covariance_valid &&
+      input.lio_generation_locked && input.alignment_valid &&
+      !input.lio_resetting && !input.continuity_unrecoverable &&
+      input.external_publisher_ready && !in_reset_grace;
+  applyActions(output, external_safety_gate);
   previous_residual_ = input.residual.valid ? std::optional<Residual>(input.residual) : std::nullopt;
   return output;
 }

@@ -281,8 +281,11 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     tryCompleteImuInitialization(progress_time);
     if (status_ != EstimatorStatus::kInitializingMap) {
       result.rejection_reason =
-          imu_initialization_result_.has_value() ? "INITIAL_STATE_PRIOR_PENDING"
-                                                 : "IMU_INITIALIZATION_NOT_READY";
+          (imu_initialization_result_.has_value() ||
+           (config_.initial_prior.context == InitialStatePriorContext::kInFlightReinitialization &&
+            diagnostics_.initial_prior.status == InitialPriorStatus::kWaiting))
+              ? "INITIAL_STATE_PRIOR_PENDING"
+              : "IMU_INITIALIZATION_NOT_READY";
       diagnostics_.reason = result.rejection_reason;
       return finalizeResult(std::move(result));
     }
@@ -296,6 +299,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
 
   Timestamp propagation_start = group.scan.start_time;
   if (!state_time_.has_value()) {
+    const Timestamp initial_epoch = initial_prior_state_time_.value_or(group.scan.start_time);
     if (last_initialization_imu_time_.has_value() &&
         (!last_initialization_imu_time_->sameClockDomain(group.scan.start_time) ||
          group.scan.start_time.nanoseconds() < last_initialization_imu_time_->nanoseconds())) {
@@ -303,11 +307,14 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       diagnostics_.reason = result.rejection_reason;
       return finalizeResult(std::move(result));
     }
-    // The initialization result determines attitude and biases from the
-    // stationary window. Its first nominal state epoch is the first accepted
-    // scan start at or after that window; no state is backdated through the
-    // initialization samples.
-    state_time_ = group.scan.start_time;
+    if (initial_epoch.nanoseconds() > group.scan.start_time.nanoseconds()) {
+      result.rejection_reason = "INITIAL_PRIOR_AFTER_APPLICATION_EPOCH";
+      diagnostics_.reason = result.rejection_reason;
+      return finalizeResult(std::move(result));
+    }
+    // A prior owns its sample epoch. If it predates the scan, predict from
+    // that exact epoch using the bracketed IMU history.
+    state_time_ = initial_epoch;
   } else {
     propagation_start = *state_time_;
   }
@@ -619,6 +626,8 @@ void FastLioPipeline::reset() {
   initial_prior_gate_closed_ = false;
   initial_prior_applied_ = false;
   initial_prior_fallback_applied_ = false;
+  initial_prior_state_time_.reset();
+  ++generation_;
   covariance_ = estimator_.covariance();
   state_time_.reset();
   last_initialization_imu_time_.reset();
@@ -777,17 +786,51 @@ void FastLioPipeline::tryCompleteImuInitialization(
   }
   if (!imu_initialization_result_.has_value()) {
     transitionTo(EstimatorStatus::kInitializingImu, "EVALUATING_IMU_INITIALIZATION");
-    auto initialized = initializer_.tryInitialize();
-    updateInitializationDiagnostics();
-    if (!initialized.ok()) {
-      diagnostics_.initialization.initialization_status = initialized.status().message();
-      diagnostics_.reason = initialized.status().message();
-      return;
-    }
-    imu_initialization_result_ = initialized.value();
     prior_wait_start_time_ = progress_time.has_value() ? progress_time : last_initialization_imu_time_;
     diagnostics_.initial_prior.application_timestamp_ns =
         prior_wait_start_time_.has_value() ? prior_wait_start_time_->nanoseconds() : 0;
+    if (config_.initial_prior.context == InitialStatePriorContext::kInFlightReinitialization) {
+      // In-flight recovery is prior-driven. It may collect IMU for timing and
+      // evidence, but it must not invoke the stationary initializer.
+      const Timestamp application_time = progress_time.value_or(
+          prior_wait_start_time_.value_or(last_initialization_imu_time_.value_or(Timestamp{})));
+      if (!resolveInitialStatePrior(application_time)) return;
+      InitialStatePrior prior;
+      {
+        std::scoped_lock lock(initial_prior_mutex_);
+        if (initial_prior_candidate_.has_value()) prior = *initial_prior_candidate_;
+      }
+      if (prior.mask.attitude != PriorAttitudeMode::kFull) {
+        diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+        diagnostics_.initial_prior.reason = "IN_FLIGHT_PRIOR_REQUIRES_FULL_ATTITUDE";
+        diagnostics_.reason = diagnostics_.initial_prior.reason;
+        return;
+      }
+      const auto quality = initializer_.quality();
+      if (quality.samples_collected == 0U || !quality.accel_mean_m_s2.allFinite() ||
+          quality.measured_gravity_norm_m_s2 < 1e-6) {
+        diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+        diagnostics_.initial_prior.reason = "IN_FLIGHT_PRIOR_IMU_EVIDENCE_INVALID";
+        diagnostics_.reason = diagnostics_.initial_prior.reason;
+        return;
+      }
+      InitializationResult result;
+      result.quality = quality;
+      result.orientation_odom_imu = Eigen::Quaterniond::Identity();
+      result.gyro_bias_rad_s = Eigen::Vector3d::Zero();
+      result.accel_bias_m_s2 = Eigen::Vector3d::Zero();
+      result.gravity_odom_m_s2 = Eigen::Vector3d(0.0, 0.0, -9.80665);
+      imu_initialization_result_ = result;
+    } else {
+      auto initialized = initializer_.tryInitialize();
+      updateInitializationDiagnostics();
+      if (!initialized.ok()) {
+        diagnostics_.initialization.initialization_status = initialized.status().message();
+        diagnostics_.reason = initialized.status().message();
+        return;
+      }
+      imu_initialization_result_ = initialized.value();
+    }
   }
 
   const Timestamp application_time = progress_time.value_or(
@@ -842,10 +885,29 @@ void FastLioPipeline::tryCompleteImuInitialization(
   estimator_.initialize(state_);
   estimator_initialized_ = true;
   covariance_ = estimator_.covariance();
+  initial_prior_state_time_ = prior.sample_time;
+  diagnostics_.initial_prior.generation = prior.generation;
+  if (prior.covariance.has_value()) {
+    const auto symmetric = 0.5 * (*prior.covariance + prior.covariance->transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 23, 23>> solver(symmetric);
+    if (solver.info() != Eigen::Success || !symmetric.allFinite() ||
+        solver.eigenvalues().minCoeff() < -1e-9) {
+      diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+      diagnostics_.initial_prior.reason = "INITIAL_PRIOR_COVARIANCE_NOT_PSD";
+      diagnostics_.reason = diagnostics_.initial_prior.reason;
+      estimator_initialized_ = false;
+      return;
+    }
+    covariance_ = symmetric;
+    estimator_.rebase(state_, covariance_);
+    diagnostics_.initial_prior.covariance_applied = true;
+  }
   diagnostics_.initialization.initialization_status = "INITIALIZED";
   diagnostics_.initial_prior.applied = true;
   diagnostics_.initial_prior.fallback_applied = initial_prior_fallback_applied_;
-  diagnostics_.initial_prior.covariance_applied = false;
+  diagnostics_.initial_prior.propagated_to_application =
+      initial_prior_state_time_.has_value() &&
+      initial_prior_state_time_->nanoseconds() != application_time.nanoseconds();
   transitionTo(EstimatorStatus::kInitializingMap,
                initial_prior_fallback_applied_ ? "IMU_INITIALIZATION_PRIOR_FALLBACK_ACCEPTED"
                                                : "IMU_INITIALIZATION_PRIOR_ACCEPTED");
@@ -1051,6 +1113,9 @@ void FastLioPipeline::resetTransientDiagnostics() {
 
 void FastLioPipeline::fillStateDiagnostics(EstimatorDiagnostics& diagnostics) const {
   diagnostics.status = status_;
+  diagnostics.lio_generation = generation_;
+  diagnostics.lio_generation_locked = tracking_ever_confirmed_ &&
+                                       status_ == EstimatorStatus::kTracking;
   diagnostics.consecutive_uncorrected_lidar_updates =
       consecutive_uncorrected_lidar_updates_;
   diagnostics.consecutive_recovery_successes =

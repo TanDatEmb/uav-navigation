@@ -136,6 +136,8 @@ struct InitialPriorDiagnostics {
   bool applied{false};
   bool fallback_applied{false};
   bool covariance_applied{false};
+  bool propagated_to_application{false};
+  std::uint64_t generation{0};
   bool bootstrap_map_after_prior{false};
   std::int64_t candidate_timestamp_ns{0};
   std::int64_t application_timestamp_ns{0};
@@ -258,6 +260,8 @@ struct StageTimingDiagnostics {
 
 struct EstimatorDiagnostics {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
+  std::uint64_t lio_generation{1};
+  bool lio_generation_locked{false};
   EstimatorStatus previous_status{EstimatorStatus::kWaitingForSensors};
   std::size_t status_transition_count{0};
   std::size_t consecutive_registration_failure_count{0};

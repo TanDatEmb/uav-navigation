@@ -20,6 +20,8 @@
 #include <navigation_interfaces/odometry_validity.hpp>
 
 #include "odometry_supervisor/diagnostic_adapter.hpp"
+#include "odometry_supervisor/lio_lifecycle_coordinator.hpp"
+#include "odometry_supervisor/odometry_alignment_estimator.hpp"
 #include "odometry_supervisor/residual_calculator.hpp"
 #include "odometry_supervisor/supervisor_state_machine.hpp"
 #include "odometry_supervisor/world_alignment.hpp"
@@ -31,8 +33,6 @@ using QueryService = navigation_interfaces::srv::SampleOdometryAtTime;
 constexpr char kLioOdomFrame[] = "lio_odom";
 constexpr char kPx4OdomFrame[] = "px4_odom";
 constexpr char kBaseLinkFrame[] = "base_link";
-constexpr char kAlignmentSource[] =
-    "initial_prior.startup_coincident_identity";
 
 std::int64_t time_ns(const builtin_interfaces::msg::Time& time) {
   return static_cast<std::int64_t>(time.sec) * 1'000'000'000LL +
@@ -74,6 +74,17 @@ const char* health_name(HealthState state) {
   return "UNKNOWN";
 }
 
+const char* lifecycle_name(LioLifecycleState state) {
+  switch (state) {
+    case LioLifecycleState::kStartup: return "STARTUP";
+    case LioLifecycleState::kTracking: return "TRACKING";
+    case LioLifecycleState::kResetting: return "RESETTING";
+    case LioLifecycleState::kLost: return "LOST";
+    case LioLifecycleState::kReinitializing: return "REINITIALIZING";
+  }
+  return "UNKNOWN";
+}
+
 }  // namespace
 
 class OdometrySupervisorNode final : public rclcpp::Node {
@@ -81,6 +92,11 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   OdometrySupervisorNode() : Node("odometry_supervisor") {
     config_ = load_config();
     machine_ = SupervisorStateMachine(config_);
+    alignment_estimator_ = OdometryAlignmentEstimator({
+        .window_size = config_.alignment_window_size,
+        .minimum_samples = config_.alignment_minimum_samples,
+        .minimum_horizontal_excitation_m =
+            config_.alignment_minimum_horizontal_excitation_m});
     status_ = create_publisher<StatusMessage>(
         "/navigation/odometry_supervisor/status", rclcpp::QoS(1).reliable().transient_local());
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -113,6 +129,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         [this](nav_msgs::msg::Odometry::ConstSharedPtr message) {
           const auto state = state_from_ros(*message);
           if (ResidualCalculator::valid(state) && state.frame_id == kPx4OdomFrame) {
+            if (!px4_history_.empty() &&
+                state.timestamp_ns <= px4_history_.back().timestamp_ns) {
+              px4_history_.clear();
+            }
+            px4_history_.push_back(state);
+            while (px4_history_.size() > kPx4HistoryCapacity) px4_history_.pop_front();
             latest_px4_ = state;
           }
         });
@@ -131,6 +153,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
           const auto snapshot = selectDiagnostic(*message, "px4_odometry_bridge");
           if (snapshot.found) px4_diagnostics_ = snapshot;
+        });
+    external_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+        "/px4/external_odometry_diagnostics", rclcpp::QoS(10).reliable(),
+        [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
+          const auto snapshot = selectDiagnostic(*message, "px4_external_odometry_bridge");
+          if (snapshot.found) external_diagnostics_ = snapshot;
         });
     query_client_ = create_client<QueryService>("/px4/sample_odometry_at_time");
     const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -164,6 +192,14 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                                   config.service_timeout_ns);
     config.maximum_comparison_age_ns = declare_parameter(
         "alignment.maximum_comparison_age_ns", config.maximum_comparison_age_ns);
+    config.authoritative_yaw = declare_parameter("alignment.authoritative_yaw", false);
+    config.alignment_window_size = static_cast<std::size_t>(declare_parameter<std::int64_t>(
+        "alignment.window_size", static_cast<std::int64_t>(config.alignment_window_size)));
+    config.alignment_minimum_samples = static_cast<std::size_t>(declare_parameter<std::int64_t>(
+        "alignment.minimum_samples", static_cast<std::int64_t>(config.alignment_minimum_samples)));
+    config.alignment_minimum_horizontal_excitation_m = declare_parameter(
+        "alignment.minimum_horizontal_excitation_m",
+        config.alignment_minimum_horizontal_excitation_m);
     config.clear_ratio = declare_parameter("hysteresis.clear_ratio", config.clear_ratio);
     config.suspect_enter_ns = declare_parameter("persistence.suspect_enter_ns",
                                                 config.suspect_enter_ns);
@@ -284,33 +320,59 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     invalidate_comparison();
   }
 
-  void initialize_alignment_if_ready(const EvaluationInput& input) {
-    // The initial-prior contract is a one-shot event. Do not discard a
-    // captured world alignment merely because the diagnostic publisher misses
-    // one timer period or reports a transiently stale snapshot. A generation
-    // change is the explicit invalidation event for this alignment.
-    if (input.origin_aligned) {
-      origin_alignment_latched_ = true;
-    }
+  void update_alignment_if_ready(const EvaluationInput& input) {
     if (alignment_ &&
         (alignment_->reset_generation != input.px4_reset_generation ||
-         alignment_->time_generation != input.px4_time_generation)) {
+         alignment_->time_generation != input.px4_time_generation ||
+         alignment_->lio_generation != input.lio_generation)) {
       invalidate_alignment();
+      alignment_estimator_.reset();
+      last_alignment_pair_epoch_ns_ = 0;
+      alignment_rejection_reason_ = "alignment generation changed";
     }
-    if (!alignment_ && origin_alignment_latched_ && input.px4_available &&
-        input.px4_fresh && input.px4_diagnostics_valid &&
-        input.px4_continuity_valid && input.px4_post_reset_stable && latest_px4_ &&
-        latest_px4_->frame_id == kPx4OdomFrame) {
-      WorldAlignment alignment;
-      alignment.target_frame = kLioOdomFrame;
-      alignment.source_frame = kPx4OdomFrame;
-      alignment.epoch_ns = latest_px4_->timestamp_ns;
-      alignment.reset_generation = input.px4_reset_generation;
-      alignment.time_generation = input.px4_time_generation;
+    if (!input.lio_valid || !input.px4_available || !input.px4_fresh ||
+        !input.px4_diagnostics_valid || !input.px4_continuity_valid ||
+        !input.px4_post_reset_stable) {
+      return;
+    }
+
+    // Pair only equal sensor epochs. The window is bounded and this callback
+    // runs on the supervisor evaluation timer, never on the LiDAR hot path.
+    for (const auto& lio : propagated_history_) {
+      if (lio.timestamp_ns <= last_alignment_pair_epoch_ns_) continue;
+      const auto px4 = std::find_if(
+          px4_history_.begin(), px4_history_.end(),
+          [&lio](const OdometryState& candidate) {
+            return candidate.timestamp_ns == lio.timestamp_ns;
+          });
+      if (px4 == px4_history_.end()) continue;
+      AlignmentSample sample;
+      sample.timestamp_ns = lio.timestamp_ns;
+      sample.lio_position = lio.position_odom;
+      sample.lio_orientation = lio.orientation_odom_base;
+      sample.px4_position = px4->position_odom;
+      sample.px4_orientation = px4->orientation_odom_base;
+      sample.lio_generation = input.lio_generation;
+      sample.px4_reset_generation = input.px4_reset_generation;
+      sample.px4_time_generation = input.px4_time_generation;
+      sample.lio_tracking = input.lio_valid;
+      sample.px4_continuity_valid = input.px4_continuity_valid;
+      sample.yaw_authoritative = config_.authoritative_yaw;
+      if (alignment_estimator_.addSample(std::move(sample))) {
+        last_alignment_pair_epoch_ns_ = lio.timestamp_ns;
+      }
+    }
+
+    const auto estimate = alignment_estimator_.estimate();
+    last_alignment_estimate_ = estimate;
+    alignment_rejection_reason_ = estimate.rejection_reason;
+    if (estimate.valid()) {
+      auto alignment = estimate.alignment;
       alignment.reinitialization_count = ++alignment_reinitialization_count_;
-      alignment.source = kAlignmentSource;
-      alignment.valid = true;
       alignment_ = alignment;
+      alignment_rejection_reason_.clear();
+    } else {
+      alignment_.reset();
     }
   }
 
@@ -476,6 +538,30 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                  px4_diagnostics_.boolean("continuity_valid");
     input.px4_post_reset_stable = input.px4_diagnostics_valid &&
                                   px4_diagnostics_.boolean("post_reset_stable");
+    input.lio_generation = lio_diagnostics_.unsignedInteger("lio_generation");
+    input.lio_generation_locked = input.lio_diagnostics_valid &&
+                                  lio_diagnostics_.boolean("lio_generation_locked");
+    input.correction_quality_valid = input.lio_diagnostics_valid &&
+                                    lio_diagnostics_.boolean("corrected_estimate_valid") &&
+                                    lio_diagnostics_.boolean("navigation_valid");
+    input.timestamp_valid = input.lio_diagnostics_valid &&
+                            lio_diagnostics_.integer("output_time_ns", -1) > 0 &&
+                            propagated_fresh && corrected_fresh;
+    const double covariance_minimum =
+        lio_diagnostics_.number("covariance_minimum_eigenvalue", -1.0);
+    const double covariance_trace = lio_diagnostics_.number("covariance_trace", -1.0);
+    input.covariance_valid = input.lio_diagnostics_valid &&
+                             std::isfinite(covariance_minimum) && covariance_minimum >= 0.0 &&
+                             std::isfinite(covariance_trace) && covariance_trace > 0.0;
+    input.continuity_unrecoverable =
+        lio_diagnostics_.boolean("requires_reanchor") || input.lio_state_corruption;
+    input.external_publisher_ready = external_diagnostics_.found &&
+                                     external_diagnostics_.hasSchemaV1() &&
+                                     external_diagnostics_.boolean("ready") &&
+                                     external_diagnostics_.stamp_ns > 0 &&
+                                     now_ns >= external_diagnostics_.stamp_ns &&
+                                     now_ns - external_diagnostics_.stamp_ns <=
+                                         config_.diagnostics_max_age_ns;
     const auto source = lio_diagnostics_.string("initial_prior_source");
     input.origin_aligned = input.lio_diagnostics_valid && source == "topic" &&
                            lio_diagnostics_.boolean("initial_prior_applied") &&
@@ -535,16 +621,30 @@ class OdometrySupervisorNode final : public rclcpp::Node {
       }
       last_seen_px4_time_generation_ = input.px4_time_generation;
     }
-    initialize_alignment_if_ready(input);
+    update_alignment_if_ready(input);
     input.alignment_valid = alignment_.has_value() && alignment_->valid;
-    if (input.alignment_valid) input.alignment = *alignment_;
+    if (input.alignment_valid) {
+      input.alignment = *alignment_;
+    } else {
+      input.alignment.target_frame = kLioOdomFrame;
+      input.alignment.source_frame = kPx4OdomFrame;
+      input.alignment.reset_generation = input.px4_reset_generation;
+      input.alignment.time_generation = input.px4_time_generation;
+      input.alignment.lio_generation = input.lio_generation;
+      input.alignment.rejection_reason = alignment_rejection_reason_;
+    }
     if (propagated_fresh && lio_epoch && !pending_query_ &&
         input.alignment_valid &&
         (!aligned_comparison_ || aligned_comparison_->comparison_epoch_ns != lio_epoch->timestamp_ns)) {
       request_px4_at(*lio_epoch, input.px4_reset_generation, input.px4_time_generation,
                      *alignment_);
     }
+    lifecycle_coordinator_.observe({input.lio_generation, input.lio_valid, input.lio_resetting,
+                                    input.continuity_unrecoverable, latest_corrected_});
     const auto output = machine_.evaluate(input);
+    if (output.reinitialization_requested) {
+      static_cast<void>(lifecycle_coordinator_.requestReinitialization());
+    }
     new_comparison_sample_pending_ = false;
     publish(output);
   }
@@ -565,6 +665,27 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.alignment_valid = output.alignment_valid;
     message.alignment_source = output.alignment.source;
     message.alignment_epoch = ros_time(output.alignment.epoch_ns);
+    message.alignment_target_frame = output.alignment.target_frame;
+    message.alignment_source_frame = output.alignment.source_frame;
+    for (int index = 0; index < 3; ++index) {
+      message.alignment_translation_xyz[static_cast<std::size_t>(index)] =
+          output.alignment.target_from_source_translation[index];
+    }
+    message.alignment_yaw_rad = output.alignment.yaw_rad;
+    for (int index = 0; index < 16; ++index) {
+      message.alignment_covariance[static_cast<std::size_t>(index)] =
+          output.alignment.covariance(index / 4, index % 4);
+    }
+    message.alignment_translation_dispersion_m = output.alignment.translation_dispersion_m;
+    message.alignment_yaw_dispersion_rad = output.alignment.yaw_dispersion_rad;
+    message.alignment_roll_pitch_disagreement_rad =
+        output.alignment.roll_pitch_disagreement_rad;
+    message.alignment_excitation_metric_m = output.alignment.excitation_metric_m;
+    message.alignment_sample_count = output.alignment.sample_count;
+    message.alignment_epoch_start_ns = output.alignment.epoch_start_ns;
+    message.alignment_epoch_end_ns = output.alignment.epoch_end_ns;
+    message.lio_generation = output.lio_generation;
+    message.alignment_rejection_reason = output.alignment.rejection_reason;
     message.alignment_reset_generation = output.alignment.reset_generation;
     message.alignment_time_generation = output.alignment.time_generation;
     message.alignment_reinitialization_count = output.alignment.reinitialization_count;
@@ -587,6 +708,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.position_error_growth_m_s = output.residual.position_error_growth_m_s;
     message.px4_reset_generation = output.px4_reset_generation;
     message.px4_time_generation = output.px4_time_generation;
+    message.correction_quality_valid = output.correction_quality_valid;
+    message.timestamp_valid = output.timestamp_valid;
+    message.covariance_valid = output.covariance_valid;
+    message.lio_generation_locked = output.lio_generation_locked;
+    message.continuity_unrecoverable = output.continuity_unrecoverable;
+    message.external_publisher_ready = output.external_publisher_ready;
     message.state_transition_count = output.state_transition_count;
     message.evaluation_count = output.evaluation_count;
     message.alignment_failure_count = output.alignment_failure_count;
@@ -640,6 +767,25 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               std::to_string(output.alignment.time_generation));
     add_value("alignment_reinitialization_count",
               std::to_string(output.alignment.reinitialization_count));
+    add_value("alignment_rejection_reason", output.alignment.rejection_reason);
+    add_value("alignment_sample_count", std::to_string(output.alignment.sample_count));
+    add_value("alignment_translation_dispersion_m",
+              std::to_string(output.alignment.translation_dispersion_m));
+    add_value("alignment_yaw_dispersion_rad",
+              std::to_string(output.alignment.yaw_dispersion_rad));
+    add_value("alignment_excitation_metric_m",
+              std::to_string(output.alignment.excitation_metric_m));
+    add_value("lio_generation", std::to_string(output.lio_generation));
+    add_value("lio_generation_locked", output.lio_generation_locked ? "true" : "false");
+    add_value("correction_quality_valid", output.correction_quality_valid ? "true" : "false");
+    add_value("timestamp_valid", output.timestamp_valid ? "true" : "false");
+    add_value("covariance_valid", output.covariance_valid ? "true" : "false");
+    add_value("continuity_unrecoverable", output.continuity_unrecoverable ? "true" : "false");
+    add_value("external_publisher_ready", output.external_publisher_ready ? "true" : "false");
+    add_value("lio_lifecycle_state", lifecycle_name(lifecycle_coordinator_.state()));
+    add_value("lio_snapshot_valid", lifecycle_coordinator_.snapshot().has_value() ? "true" : "false");
+    add_value("lio_reinitialization_count",
+              std::to_string(lifecycle_coordinator_.reinitialization_count()));
     add_value("aligned_comparison_fresh", output.aligned_comparison_fresh ? "true" : "false");
     add_value("lio_diagnostics_valid", output.lio_diagnostics_valid ? "true" : "false");
     add_value("px4_diagnostics_valid", output.px4_diagnostics_valid ? "true" : "false");
@@ -704,6 +850,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr px4_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr lio_diagnostics_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr px4_diagnostics_sub_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr external_diagnostics_sub_;
   rclcpp::Client<QueryService>::SharedPtr query_client_;
   rclcpp::TimerBase::SharedPtr evaluation_timer_;
   std::optional<OdometryState> latest_propagated_;
@@ -713,10 +860,16 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::optional<OdometryState> latest_px4_;
   std::optional<AlignedComparison> aligned_comparison_;
   std::optional<WorldAlignment> alignment_;
-  bool origin_alignment_latched_{false};
+  static constexpr std::size_t kPx4HistoryCapacity = 256;
+  std::deque<OdometryState> px4_history_;
+  OdometryAlignmentEstimator alignment_estimator_;
+  AlignmentEstimate last_alignment_estimate_;
+  std::int64_t last_alignment_pair_epoch_ns_{0};
+  std::string alignment_rejection_reason_;
   std::optional<Residual> previous_residual_;
   DiagnosticSnapshot lio_diagnostics_;
   DiagnosticSnapshot px4_diagnostics_;
+  DiagnosticSnapshot external_diagnostics_;
   std::optional<PendingQuery> pending_query_;
   std::uint64_t query_sequence_{0};
   std::uint64_t query_invalid_component_count_{0};
@@ -733,6 +886,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   bool new_comparison_sample_pending_{false};
   std::optional<std::uint64_t> last_seen_px4_time_generation_;
   std::uint64_t alignment_reinitialization_count_{0};
+  LioLifecycleCoordinator lifecycle_coordinator_;
 };
 
 }  // namespace odometry_supervisor
