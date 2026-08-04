@@ -212,6 +212,10 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     config.alignment_lock_stable_windows = static_cast<std::size_t>(declare_parameter<std::int64_t>(
         "alignment.lock_stable_windows",
         static_cast<std::int64_t>(config.alignment_lock_stable_windows)));
+    config.alignment_lock_max_translation_step_m = declare_parameter(
+        "alignment.lock_max_translation_step_m", config.alignment_lock_max_translation_step_m);
+    config.alignment_lock_max_yaw_step_rad = declare_parameter(
+        "alignment.lock_max_yaw_step_rad", config.alignment_lock_max_yaw_step_rad);
     config.alignment_minimum_horizontal_excitation_m = declare_parameter(
         "alignment.minimum_horizontal_excitation_m",
         config.alignment_minimum_horizontal_excitation_m);
@@ -480,9 +484,20 @@ class OdometrySupervisorNode final : public rclcpp::Node {
           auto candidate = estimate.alignment;
           candidate.reinitialization_count = alignment_reinitialization_count_ + 1U;
           candidate.source = "px4.sample_odometry_at_time.4dof.circular_mean";
+          const bool stable_against_previous =
+              !alignment_.has_value() ||
+              ((candidate.target_from_source_translation -
+                alignment_->target_from_source_translation).norm() <=
+               config_.alignment_lock_max_translation_step_m &&
+               std::abs(std::atan2(
+                   std::sin(candidate.yaw_rad - alignment_->yaw_rad),
+                   std::cos(candidate.yaw_rad - alignment_->yaw_rad))) <=
+                   config_.alignment_lock_max_yaw_step_rad);
           alignment_ = candidate;
           alignment_rejection_reason_.clear();
-          ++alignment_stable_windows_;
+          alignment_stable_windows_ = stable_against_previous
+                                          ? alignment_stable_windows_ + 1U
+                                          : 1U;
           if (alignment_stable_windows_ >= config_.alignment_lock_stable_windows) {
             alignment_lifecycle_ = AlignmentLifecycleState::kLocked;
             alignment_->reinitialization_count = ++alignment_reinitialization_count_;

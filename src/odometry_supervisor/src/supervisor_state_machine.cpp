@@ -47,6 +47,10 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
   if (config.alignment_window_size == 0 || config.alignment_minimum_samples == 0 ||
       config.alignment_minimum_samples > config.alignment_window_size ||
       config.alignment_lock_stable_windows == 0 ||
+      !std::isfinite(config.alignment_lock_max_translation_step_m) ||
+      config.alignment_lock_max_translation_step_m < 0.0 ||
+      !std::isfinite(config.alignment_lock_max_yaw_step_rad) ||
+      config.alignment_lock_max_yaw_step_rad < 0.0 ||
       !std::isfinite(config.alignment_minimum_horizontal_excitation_m) ||
       config.alignment_minimum_horizontal_excitation_m < 0.0) {
     throw std::invalid_argument("alignment window/excitation configuration is invalid");

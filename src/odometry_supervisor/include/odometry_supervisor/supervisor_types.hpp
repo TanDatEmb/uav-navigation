@@ -138,6 +138,8 @@ struct SupervisorConfig {
   std::size_t alignment_window_size{32};
   std::size_t alignment_minimum_samples{8};
   std::size_t alignment_lock_stable_windows{3};
+  double alignment_lock_max_translation_step_m{0.10};
+  double alignment_lock_max_yaw_step_rad{0.05};
   double alignment_minimum_horizontal_excitation_m{0.20};
   ResidualThresholds suspect{0.30, 0.30, 0.2094395102, 0.1396263402};
   ResidualThresholds degraded{0.75, 0.75, 0.5235987756, 0.3490658504};
