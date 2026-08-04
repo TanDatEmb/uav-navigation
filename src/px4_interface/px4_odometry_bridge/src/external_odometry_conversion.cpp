@@ -7,12 +7,14 @@
 namespace px4_odometry_bridge {
 namespace {
 
-constexpr double kMinimumVariance = 1e-6;
 constexpr double kSymmetryTolerance = 1e-10;
 constexpr double kPsdTolerance = 1e-10;
 
 bool valid_variance(const double value) {
-  return std::isfinite(value) && value >= kMinimumVariance;
+  // The bridge must not manufacture a covariance floor.  A positive,
+  // finite variance remains valid even when it is smaller than 1e-6; zero,
+  // negative, and non-finite values are unavailable for this contract.
+  return std::isfinite(value) && value > 0.0;
 }
 
 std::optional<Eigen::Matrix3d> validated_block(

@@ -98,6 +98,15 @@ TEST(ExternalOdometryConversionTest, TransformsFullNonDiagonalCovarianceBeforePu
   EXPECT_NEAR((*rotated_diagonal)[2], 4.0, 1e-12);
 }
 
+TEST(ExternalOdometryConversionTest, PreservesPositiveVarianceBelowExampleFloor) {
+  auto message = valid_message();
+  constexpr double small_variance = 1e-12;
+  message.pose.covariance[0] = small_variance;
+  const auto converted = convert_ros_lio_odometry(message);
+  ASSERT_TRUE(converted.has_value());
+  EXPECT_DOUBLE_EQ(converted->position_variance.x(), small_variance);
+}
+
 TEST(ExternalOdometryConversionTest, RejectsZeroTimestampQuaternionFrameAndUnavailableCovariance) {
   auto message = valid_message();
   message.header.stamp.sec = 0;
