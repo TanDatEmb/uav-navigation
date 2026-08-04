@@ -15,7 +15,7 @@ timestamp conversion, and in-flight restart remain deferred.
 | P0.8 closure | `e9f6cee23f279776fa8960f7f432b05664a80baf` |
 | Historical canonical transport HEAD | `f0dcab2b97e0fdf02aa4889ab2f305d83f6cf050` |
 | Corrected implementation HEAD | `a6d1b15` |
-| Report HEAD | documentation update after `a6d1b15` |
+| Report content commit | `585dd28` (`docs(p0.9): finalize time-generation provenance`) |
 | PX4 | `d6f12ad1c4f70ad3230afd7d86e971421e02fef4` |
 | px4_msgs | `86d8239e962f6939e05c3737784f60c02fa884db` |
 | Protected config SHA-256 | `2690d584703d709e24d7159759ddffd1ab6e5d6eb165870058b98af61c587f6f` |
