@@ -1570,6 +1570,13 @@ class SitlOrchestrator:
                        self.monitor.status_accumulator.start_ns) / 1e9)
             external_message_count = len(self.monitor.external_measurement_samples)
             reset_values = set(self.monitor.external_reset_counters)
+            external_baseline = self.monitor.measurement_baseline_diagnostics.get(
+                "px4_external_odometry_bridge") or {}
+            external_baseline_values = external_baseline.get("values", {})
+            external_failure_total = parse_int(
+                external_diagnostics.get("timestamp_conversion_failure_count"))
+            external_failure_baseline = parse_int(
+                external_baseline_values.get("timestamp_conversion_failure_count")) or 0
             external_metrics = {
                 "message_count": external_message_count,
                 "publication_rate_hz": external_message_count / measurement_duration_s,
@@ -1585,8 +1592,14 @@ class SitlOrchestrator:
                     if external_topic and external_topic.latest_payload_summary else None,
                 "velocity_frame": external_topic.latest_payload_summary.get("velocity_frame")
                     if external_topic and external_topic.latest_payload_summary else None,
-                "timestamp_conversion_failure_count": parse_int(
-                    external_diagnostics.get("timestamp_conversion_failure_count")),
+                # Startup can legitimately reject samples before the LIO
+                # public generation is available.  Acceptance measures the
+                # conversion counter over the measurement window, while the
+                # cumulative diagnostic remains available for provenance.
+                "timestamp_conversion_failure_count": (
+                    external_failure_total - external_failure_baseline
+                    if external_failure_total is not None else None),
+                "timestamp_conversion_failure_count_total": external_failure_total,
                 "timestamp_conversion_valid": parse_bool(
                     external_diagnostics.get("timestamp_conversion_valid")),
                 "publication_ready": parse_bool(external_diagnostics.get("publication_ready")),
