@@ -16,7 +16,6 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.px4_fresh = true;
   input.px4_continuity_valid = true;
   input.px4_post_reset_stable = true;
-  input.origin_aligned = true;
   input.alignment_valid = true;
   input.lio_diagnostics_valid = true;
   input.px4_diagnostics_valid = true;
@@ -53,7 +52,6 @@ TEST(OdometrySupervisorStateMachine, HealthyAndPx4UnavailableDoesNotInvalidateLi
   input.px4_available = false;
   input.px4_fresh = false;
   input.px4_continuity_valid = false;
-  input.origin_aligned = false;
   input.lio_diagnostics_valid = false;
   input.px4_diagnostics_valid = false;
   const auto output = machine.evaluate(input);
@@ -310,7 +308,6 @@ TEST(OdometrySupervisorStateMachine, InvalidComparisonDoesNotBecomeZeroResidual)
   evaluate(machine, 1'000'000'000);
   auto input = healthy_input(1'100'000'000);
   input.residual.valid = false;
-  input.origin_aligned = false;
   const auto output = machine.evaluate(input);
   EXPECT_FALSE(output.comparison_valid);
   EXPECT_EQ(output.health, odometry_supervisor::HealthState::kHealthy);

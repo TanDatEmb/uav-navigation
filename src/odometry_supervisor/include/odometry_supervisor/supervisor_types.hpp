@@ -155,7 +155,6 @@ struct EvaluationInput {
   bool px4_fresh{false};
   bool px4_continuity_valid{false};
   bool px4_post_reset_stable{false};
-  bool origin_aligned{false};
   bool alignment_valid{false};
   bool lio_diagnostics_valid{false};
   bool px4_diagnostics_valid{false};

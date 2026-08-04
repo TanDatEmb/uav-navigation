@@ -562,11 +562,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                      now_ns >= external_diagnostics_.stamp_ns &&
                                      now_ns - external_diagnostics_.stamp_ns <=
                                          config_.diagnostics_max_age_ns;
-    const auto source = lio_diagnostics_.string("initial_prior_source");
-    input.origin_aligned = input.lio_diagnostics_valid && source == "topic" &&
-                           lio_diagnostics_.boolean("initial_prior_applied") &&
-                           !lio_diagnostics_.boolean("initial_prior_fallback_applied") &&
-                           lio_diagnostics_.string("initial_prior_reason") == "TOPIC_PRIOR_ACCEPTED";
     input.propagated_age_ns = propagated_age;
     input.corrected_age_ns = corrected_age;
     input.px4_age_ns = px4_age;
