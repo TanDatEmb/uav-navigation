@@ -21,7 +21,7 @@ def generate_launch_description():
                 description="Path to the fast_lio_ros parameter YAML.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
-            DeclareLaunchArgument("enable_external_odometry", default_value="true"),
+            DeclareLaunchArgument("enable_external_odometry", default_value="false"),
             DeclareLaunchArgument(
                 "publish_sensor_frames",
                 default_value="true",

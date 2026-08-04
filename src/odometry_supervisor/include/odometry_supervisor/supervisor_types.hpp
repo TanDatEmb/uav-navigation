@@ -10,6 +10,14 @@ namespace odometry_supervisor {
 
 enum class HealthState : std::uint8_t { kStartup = 0, kHealthy, kSuspect, kDegraded, kDiverged };
 enum class ReferenceMode : std::uint8_t { kIndependent = 0, kCorrelated = 1 };
+enum class AlignmentLifecycleState : std::uint8_t {
+  kUnaligned = 0,
+  kCollecting,
+  kProvisional,
+  kLocked,
+  kRevalidating,
+  kInvalid,
+};
 
 enum class ReasonCode : std::uint16_t {
   kNone = 0,
@@ -79,6 +87,8 @@ struct WorldAlignment {
   double yaw_dispersion_rad{0.0};
   double roll_pitch_disagreement_rad{0.0};
   double excitation_metric_m{0.0};
+  double effective_sample_count{0.0};
+  std::string yaw_mode{"MOTION_OBSERVED"};
   std::size_t sample_count{0};
   std::int64_t epoch_start_ns{0};
   std::int64_t epoch_end_ns{0};
@@ -127,6 +137,7 @@ struct SupervisorConfig {
   bool authoritative_yaw{false};
   std::size_t alignment_window_size{32};
   std::size_t alignment_minimum_samples{8};
+  std::size_t alignment_lock_stable_windows{3};
   double alignment_minimum_horizontal_excitation_m{0.20};
   ResidualThresholds suspect{0.30, 0.30, 0.2094395102, 0.1396263402};
   ResidualThresholds degraded{0.75, 0.75, 0.5235987756, 0.3490658504};
@@ -168,6 +179,10 @@ struct EvaluationInput {
   bool lio_generation_locked{false};
   bool continuity_unrecoverable{false};
   bool external_publisher_ready{false};
+  bool external_measurement_publishable{false};
+  bool external_measurement_authorized{false};
+  bool cross_comparison_valid{false};
+  AlignmentLifecycleState alignment_lifecycle{AlignmentLifecycleState::kUnaligned};
   bool time_generation_changed{false};
   std::uint64_t px4_reset_generation{0};
   std::uint64_t px4_time_generation{0};
@@ -216,6 +231,10 @@ struct SupervisorOutput {
   bool time_aligned{false};
   bool alignment_valid{false};
   bool external_odometry_allowed{false};
+  bool external_measurement_publishable{false};
+  bool external_measurement_authorized{false};
+  bool cross_comparison_valid{false};
+  AlignmentLifecycleState alignment_lifecycle{AlignmentLifecycleState::kUnaligned};
   bool reinitialization_requested{false};
   std::uint64_t reinitialization_request_sequence{0};
   bool planner_speed_limit_active{false};

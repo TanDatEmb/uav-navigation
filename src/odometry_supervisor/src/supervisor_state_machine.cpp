@@ -46,6 +46,7 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
   }
   if (config.alignment_window_size == 0 || config.alignment_minimum_samples == 0 ||
       config.alignment_minimum_samples > config.alignment_window_size ||
+      config.alignment_lock_stable_windows == 0 ||
       !std::isfinite(config.alignment_minimum_horizontal_excitation_m) ||
       config.alignment_minimum_horizontal_excitation_m < 0.0) {
     throw std::invalid_argument("alignment window/excitation configuration is invalid");
@@ -176,7 +177,6 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool monitoring_available = input.px4_available && input.px4_fresh &&
                                     input.px4_diagnostics_valid && input.alignment_valid;
   if (input.px4_available && !comparison_valid) ++alignment_failure_count_;
-
   if (input.lio_diagnostics_valid) {
     lio_diagnostics_invalid_since_ns_.reset();
   } else if (!lio_diagnostics_invalid_since_ns_) {
@@ -260,6 +260,23 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
     }
   }
 
+  // Authorization is evaluated after the health transition.  The published
+  // health state and the external gate must describe the same evaluation.
+  const bool external_measurement_publishable =
+      input.lio_valid && input.propagated_fresh && input.corrected_fresh &&
+      input.correction_quality_valid && input.timestamp_valid && input.covariance_valid &&
+      input.lio_generation_locked && !input.lio_resetting &&
+      !input.continuity_unrecoverable;
+  const bool correlated_reference_evidence =
+      comparison_valid && input.alignment_valid && input.px4_available &&
+      input.px4_fresh && input.px4_continuity_valid && input.px4_post_reset_stable;
+  const bool health_allows_external = state_ == HealthState::kHealthy ||
+                                      state_ == HealthState::kSuspect;
+  const bool external_measurement_authorized =
+      external_measurement_publishable && input.external_publisher_ready &&
+      (config_.reference_mode == ReferenceMode::kIndependent ||
+       correlated_reference_evidence) && !in_reset_grace && health_allows_external;
+
   SupervisorOutput output;
   output.health = state_;
   output.reference_mode = config_.reference_mode;
@@ -267,10 +284,12 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.reason = reason_;
   output.monitoring_available = monitoring_available;
   output.comparison_valid = comparison_valid;
+  output.cross_comparison_valid = comparison_valid;
   output.lio_valid = input.lio_valid;
   output.px4_valid = input.px4_available && input.px4_fresh && input.px4_continuity_valid;
   output.time_aligned = comparison_valid;
   output.alignment_valid = input.alignment_valid;
+  output.alignment_lifecycle = input.alignment_lifecycle;
   output.alignment = input.alignment;
   output.evaluation_time_ns = input.evaluation_time_ns;
   output.lio_propagated_age_ns = input.propagated_age_ns;
@@ -295,6 +314,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.lio_generation_locked = input.lio_generation_locked;
   output.continuity_unrecoverable = input.continuity_unrecoverable;
   output.external_publisher_ready = input.external_publisher_ready;
+  output.external_measurement_publishable = external_measurement_publishable;
+  output.external_measurement_authorized = external_measurement_authorized;
   output.state_transition_count = transition_count_;
   output.evaluation_count = evaluation_count_;
   output.alignment_failure_count = alignment_failure_count_;
@@ -361,13 +382,7 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   }
   output.reinitialization_request_sequence = reinitialization_sequence_;
   output.reinitialization_requested = reinitialization_latched_;
-  const bool external_safety_gate =
-      input.lio_valid && input.corrected_fresh && input.propagated_fresh &&
-      input.correction_quality_valid && input.timestamp_valid && input.covariance_valid &&
-      input.lio_generation_locked && input.alignment_valid &&
-      !input.lio_resetting && !input.continuity_unrecoverable &&
-      input.external_publisher_ready && !in_reset_grace;
-  applyActions(output, external_safety_gate);
+  applyActions(output, external_measurement_authorized);
   previous_residual_ = input.residual.valid ? std::optional<Residual>(input.residual) : std::nullopt;
   return output;
 }

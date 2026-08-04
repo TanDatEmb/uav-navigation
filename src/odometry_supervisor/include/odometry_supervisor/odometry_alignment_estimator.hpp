@@ -41,6 +41,11 @@ enum class AlignmentEstimateStatus : std::uint8_t {
   kCovarianceInvalid,
 };
 
+enum class AlignmentYawMode : std::uint8_t {
+  kMotionObserved = 0,
+  kOrientationAided,
+};
+
 [[nodiscard]] const char* toString(AlignmentEstimateStatus status) noexcept;
 
 struct OdometryAlignmentEstimatorConfig {
@@ -67,6 +72,8 @@ struct AlignmentEstimate {
   double excitation_metric_m{0.0};
   double translation_residual_trend_m_s{0.0};
   double yaw_residual_trend_rad_s{0.0};
+  double effective_sample_count{0.0};
+  AlignmentYawMode yaw_mode{AlignmentYawMode::kMotionObserved};
   std::size_t sample_count{0};
   std::size_t rejected_outlier_count{0};
   std::int64_t epoch_start_ns{0};

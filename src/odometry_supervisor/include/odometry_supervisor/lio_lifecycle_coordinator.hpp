@@ -23,7 +23,9 @@ struct LioLifecycleObservation {
   std::optional<OdometryState> corrected;
 };
 
-struct LioReinitializationSnapshot {
+// Last-good odometry-only evidence. It is not a warm-start state and is never
+// applied to the estimator by this coordinator.
+struct LioOdometryOnlySnapshot {
   std::uint64_t generation{0};
   OdometryState corrected;
   bool valid{false};
@@ -37,8 +39,11 @@ class LioLifecycleCoordinator {
   void clear();
 
   [[nodiscard]] LioLifecycleState state() const noexcept { return state_; }
-  [[nodiscard]] const std::optional<LioReinitializationSnapshot>& snapshot() const noexcept {
+  [[nodiscard]] const std::optional<LioOdometryOnlySnapshot>& snapshot() const noexcept {
     return snapshot_;
+  }
+  [[nodiscard]] bool trackingEverConfirmed() const noexcept {
+    return tracking_ever_confirmed_;
   }
   [[nodiscard]] std::uint64_t reinitialization_count() const noexcept {
     return reinitialization_count_;
@@ -46,9 +51,10 @@ class LioLifecycleCoordinator {
 
  private:
   LioLifecycleState state_{LioLifecycleState::kStartup};
-  std::optional<LioReinitializationSnapshot> snapshot_;
+  std::optional<LioOdometryOnlySnapshot> snapshot_;
   std::uint64_t generation_{0};
   std::uint64_t reinitialization_count_{0};
+  bool tracking_ever_confirmed_{false};
 };
 
 }  // namespace odometry_supervisor

@@ -77,15 +77,49 @@ TEST(OdometrySupervisorStateMachine, ExternalGateRequiresEverySafetyInput) {
       &odometry_supervisor::EvaluationInput::timestamp_valid,
       &odometry_supervisor::EvaluationInput::covariance_valid,
       &odometry_supervisor::EvaluationInput::lio_generation_locked,
-      &odometry_supervisor::EvaluationInput::alignment_valid,
       &odometry_supervisor::EvaluationInput::external_publisher_ready,
-      &odometry_supervisor::EvaluationInput::propagated_fresh};
+      &odometry_supervisor::EvaluationInput::propagated_fresh,
+      &odometry_supervisor::EvaluationInput::corrected_fresh};
   for (const auto gate : gates) {
     odometry_supervisor::SupervisorStateMachine machine;
     auto input = healthy_input(1'000'000'000);
     input.*gate = false;
     EXPECT_FALSE(machine.evaluate(input).external_odometry_allowed);
   }
+}
+
+TEST(OdometrySupervisorStateMachine, IndependentAuthorizationDoesNotNeedPx4Evidence) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  auto input = healthy_input(1'000'000'000);
+  input.px4_available = false;
+  input.px4_fresh = false;
+  input.px4_continuity_valid = false;
+  input.alignment_valid = false;
+  const auto output = machine.evaluate(input);
+  EXPECT_TRUE(output.external_measurement_publishable);
+  EXPECT_TRUE(output.external_measurement_authorized);
+  EXPECT_TRUE(output.external_odometry_allowed);
+  EXPECT_FALSE(output.cross_comparison_valid);
+}
+
+TEST(OdometrySupervisorStateMachine, CorrelatedAuthorizationNeedsFreshComparisonEvidence) {
+  odometry_supervisor::SupervisorConfig config;
+  config.reference_mode = odometry_supervisor::ReferenceMode::kCorrelated;
+  odometry_supervisor::SupervisorStateMachine machine(config);
+  auto input = healthy_input(1'000'000'000);
+  input.aligned_comparison_fresh = false;
+  const auto without_evidence = machine.evaluate(input);
+  EXPECT_TRUE(without_evidence.external_measurement_publishable);
+  EXPECT_FALSE(without_evidence.external_measurement_authorized);
+  EXPECT_FALSE(without_evidence.external_odometry_allowed);
+
+  input.evaluation_time_ns = 1'100'000'000;
+  input.comparison_epoch_ns = input.evaluation_time_ns;
+  input.aligned_comparison_fresh = true;
+  const auto with_evidence = machine.evaluate(input);
+  EXPECT_TRUE(with_evidence.cross_comparison_valid);
+  EXPECT_TRUE(with_evidence.external_measurement_authorized);
+  EXPECT_TRUE(with_evidence.external_odometry_allowed);
 }
 
 TEST(OdometrySupervisorStateMachine, SingleOutlierDoesNotLeaveHealthy) {

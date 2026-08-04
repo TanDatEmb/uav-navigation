@@ -9,6 +9,7 @@ odometry_supervisor:
       authoritative_yaw: false
       window_size: 32
       minimum_samples: 8
+      lock_stable_windows: 3
       minimum_horizontal_excitation_m: 0.20
     freshness:
       propagated_max_age_ns: 120000000

@@ -65,7 +65,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     const auto now_ns = now().nanoseconds();
-    if (!supervisor_.has_value() || !supervisor_->external_odometry_allowed ||
+    if (!supervisor_.has_value() || !supervisor_->external_measurement_authorized ||
         time_ns(supervisor_->evaluation_time) <= 0 ||
         now_ns < time_ns(supervisor_->evaluation_time) ||
         now_ns - time_ns(supervisor_->evaluation_time) > max_age_ns_) {
@@ -128,7 +128,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     status.name = "px4_external_odometry_bridge";
     status.level = ready_ ? diagnostic_msgs::msg::DiagnosticStatus::OK
                           : diagnostic_msgs::msg::DiagnosticStatus::WARN;
-    status.message = supervisor_.has_value() && supervisor_->external_odometry_allowed
+    status.message = supervisor_.has_value() && supervisor_->external_measurement_authorized
                          ? "external odometry publishing is enabled"
                          : "external odometry gate is closed";
     const auto add = [&status](std::string key, std::string value) {
@@ -148,8 +148,9 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("rejected_count", std::to_string(rejected_count_));
     add("reset_counter", std::to_string(reset_counter_));
     add("last_published_time_ns", std::to_string(last_published_time_ns_));
-    add("supervisor_gate", supervisor_.has_value() && supervisor_->external_odometry_allowed
-                              ? "true" : "false");
+    add("supervisor_gate", supervisor_.has_value() &&
+                                   supervisor_->external_measurement_authorized
+                               ? "true" : "false");
     array.status.push_back(std::move(status));
     diagnostics_->publish(std::move(array));
     ready_ = true;

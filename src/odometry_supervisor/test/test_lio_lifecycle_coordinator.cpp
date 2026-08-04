@@ -36,3 +36,18 @@ TEST(LioLifecycleCoordinator, ReinitializationNeedsLastGoodSnapshot) {
   EXPECT_FALSE(coordinator.snapshot().has_value());
   EXPECT_EQ(coordinator.state(), odometry_supervisor::LioLifecycleState::kStartup);
 }
+
+TEST(LioLifecycleCoordinator, DistinguishesStartupInvalidityFromLostTracking) {
+  odometry_supervisor::LioLifecycleCoordinator coordinator;
+  coordinator.observe({1, false, false, false, std::nullopt});
+  EXPECT_EQ(coordinator.state(), odometry_supervisor::LioLifecycleState::kStartup);
+  EXPECT_FALSE(coordinator.trackingEverConfirmed());
+
+  coordinator.observe({1, true, false, false, corrected(1'000'000'000)});
+  EXPECT_EQ(coordinator.state(), odometry_supervisor::LioLifecycleState::kTracking);
+  EXPECT_TRUE(coordinator.trackingEverConfirmed());
+
+  coordinator.observe({1, false, false, false, std::nullopt});
+  EXPECT_EQ(coordinator.state(), odometry_supervisor::LioLifecycleState::kLost);
+  EXPECT_TRUE(coordinator.trackingEverConfirmed());
+}

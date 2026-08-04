@@ -42,6 +42,13 @@ bool lio_valid
 bool px4_valid
 bool time_aligned
 bool alignment_valid
+uint8 ALIGNMENT_UNALIGNED=0
+uint8 ALIGNMENT_COLLECTING=1
+uint8 ALIGNMENT_PROVISIONAL=2
+uint8 ALIGNMENT_LOCKED=3
+uint8 ALIGNMENT_REVALIDATING=4
+uint8 ALIGNMENT_INVALID=5
+uint8 alignment_lifecycle_state
 string alignment_source
 builtin_interfaces/Time alignment_epoch
 string alignment_target_frame
@@ -53,6 +60,8 @@ float64 alignment_translation_dispersion_m
 float64 alignment_yaw_dispersion_rad
 float64 alignment_roll_pitch_disagreement_rad
 float64 alignment_excitation_metric_m
+float64 alignment_effective_sample_count
+string alignment_yaw_mode
 uint64 alignment_sample_count
 int64 alignment_epoch_start_ns
 int64 alignment_epoch_end_ns
@@ -63,6 +72,9 @@ uint64 alignment_time_generation
 uint64 alignment_reinitialization_count
 
 bool external_odometry_allowed
+bool cross_comparison_valid
+bool external_measurement_publishable
+bool external_measurement_authorized
 bool reinitialization_requested
 uint64 reinitialization_request_sequence
 

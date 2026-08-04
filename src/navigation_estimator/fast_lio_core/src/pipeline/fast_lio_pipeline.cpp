@@ -264,6 +264,13 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
     return finalizeResult(std::move(result));
   }
+  // Direct callers provide the synchronized IMU group without going through
+  // pushImu(). Retain the same bounded history used by the ROS ingress so a
+  // prior or a rebased state can be propagated from its exact epoch. The
+  // history mailbox deduplicates samples already retained by pushImu().
+  for (const ImuSample& sample : group.imu_samples) {
+    retainPriorImuSample(sample);
+  }
   if (status_ == EstimatorStatus::kWaitingForSensors) {
     transitionTo(EstimatorStatus::kCollectingImu, "SYNCHRONIZED_MEASUREMENT_RECEIVED");
   }
@@ -812,10 +819,10 @@ Status FastLioPipeline::buildPredictionImuSamples(
   const std::int64_t configured_gap =
       group.max_imu_gap_ns > 0 ? group.max_imu_gap_ns
                                : config_.synchronization.maximum_imu_gap_ns;
-  for (std::size_t index = first_index; index <= end_index; ++index) {
-    if (index == 0U) {
-      continue;
-    }
+  // Validate only gaps that participate in [start_time, end_time]. The
+  // retained sample immediately before an exact start bracket may itself be
+  // separated by a discontinuity that was already handled by the rebase.
+  for (std::size_t index = first_index + 1U; index <= end_index; ++index) {
     const std::int64_t gap = unique[index].time.nanoseconds() -
                              unique[index - 1U].time.nanoseconds();
     if (gap <= 0) {

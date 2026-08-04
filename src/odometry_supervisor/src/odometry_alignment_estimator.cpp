@@ -50,6 +50,30 @@ double weightedCircularMean(const std::vector<double>& angles,
   return std::atan2(sine, cosine);
 }
 
+double motionObservedYaw(const std::deque<AlignmentSample>& samples,
+                         const std::vector<double>& weights) {
+  Eigen::Vector2d mean_lio = Eigen::Vector2d::Zero();
+  Eigen::Vector2d mean_px4 = Eigen::Vector2d::Zero();
+  double weight_sum = 0.0;
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    mean_lio += weights[index] * samples[index].lio_position.head<2>();
+    mean_px4 += weights[index] * samples[index].px4_position.head<2>();
+    weight_sum += weights[index];
+  }
+  if (!(weight_sum > 0.0)) return 0.0;
+  mean_lio /= weight_sum;
+  mean_px4 /= weight_sum;
+  double sine = 0.0;
+  double cosine = 0.0;
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    const Eigen::Vector2d source = samples[index].px4_position.head<2>() - mean_px4;
+    const Eigen::Vector2d target = samples[index].lio_position.head<2>() - mean_lio;
+    cosine += weights[index] * source.dot(target);
+    sine += weights[index] * (source.x() * target.y() - source.y() * target.x());
+  }
+  return std::atan2(sine, cosine);
+}
+
 double weightedSlope(const std::vector<double>& times,
                      const std::vector<double>& values,
                      const std::vector<double>& weights) {
@@ -165,17 +189,28 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   std::vector<double> angles;
   std::vector<double> weights;
   std::vector<double> tilts;
+  std::vector<double> authoritative_angles;
+  std::vector<double> authoritative_weights;
   angles.reserve(samples_.size());
   weights.reserve(samples_.size());
   tilts.reserve(samples_.size());
+  authoritative_angles.reserve(samples_.size());
+  authoritative_weights.reserve(samples_.size());
   bool yaw_authoritative = false;
   for (const auto& sample : samples_) {
     angles.push_back(wrap(heading(sample.lio_orientation) - heading(sample.px4_orientation)));
     weights.push_back(sample.weight);
     tilts.push_back(tiltDisagreement(sample.lio_orientation, sample.px4_orientation));
     yaw_authoritative = yaw_authoritative || sample.yaw_authoritative;
+    if (sample.yaw_authoritative) {
+      authoritative_angles.push_back(angles.back());
+      authoritative_weights.push_back(sample.weight);
+    }
   }
-  const double preliminary_yaw = weightedCircularMean(angles, weights);
+  const double preliminary_yaw = yaw_authoritative
+                                     ? weightedCircularMean(authoritative_angles,
+                                                            authoritative_weights)
+                                     : motionObservedYaw(samples_, weights);
   std::vector<Eigen::Vector3d> translations;
   translations.reserve(samples_.size());
   Eigen::Vector3d preliminary_translation = Eigen::Vector3d::Zero();
@@ -197,7 +232,9 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   yaw_residuals.reserve(samples_.size());
   for (std::size_t index = 0; index < samples_.size(); ++index) {
     position_residuals.push_back((translations[index] - preliminary_translation).norm());
-    yaw_residuals.push_back(std::abs(wrap(angles[index] - preliminary_yaw)));
+    yaw_residuals.push_back(yaw_authoritative && samples_[index].yaw_authoritative
+                                ? std::abs(wrap(angles[index] - preliminary_yaw))
+                                : 0.0);
   }
   const double position_median = median(position_residuals);
   const double yaw_median = median(yaw_residuals);
@@ -224,19 +261,47 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
 
   std::vector<double> inlier_angles;
   std::vector<double> inlier_weights;
+  std::vector<double> inlier_authoritative_angles;
+  std::vector<double> inlier_authoritative_weights;
   inlier_angles.reserve(inliers.size());
   inlier_weights.reserve(inliers.size());
+  inlier_authoritative_angles.reserve(inliers.size());
+  inlier_authoritative_weights.reserve(inliers.size());
   Eigen::Vector3d translation = Eigen::Vector3d::Zero();
   weight_sum = 0.0;
+  double inlier_weight_square_sum = 0.0;
   double maximum_tilt = 0.0;
   for (const auto index : inliers) {
     inlier_angles.push_back(angles[index]);
     inlier_weights.push_back(weights[index]);
+    if (samples_[index].yaw_authoritative) {
+      inlier_authoritative_angles.push_back(angles[index]);
+      inlier_authoritative_weights.push_back(weights[index]);
+    }
     translation += weights[index] * translations[index];
     weight_sum += weights[index];
+    inlier_weight_square_sum += weights[index] * weights[index];
     maximum_tilt = std::max(maximum_tilt, tilts[index]);
   }
-  const double yaw = weightedCircularMean(inlier_angles, inlier_weights);
+  double yaw = 0.0;
+  if (yaw_authoritative && !inlier_authoritative_angles.empty()) {
+    yaw = weightedCircularMean(inlier_authoritative_angles,
+                               inlier_authoritative_weights);
+  } else {
+    std::deque<AlignmentSample> inlier_samples;
+    inlier_samples.clear();
+    for (const auto index : inliers) inlier_samples.push_back(samples_[index]);
+    yaw = motionObservedYaw(inlier_samples, inlier_weights);
+  }
+  translation = Eigen::Vector3d::Zero();
+  weight_sum = 0.0;
+  const Eigen::AngleAxisd final_yaw_rotation(yaw, Eigen::Vector3d::UnitZ());
+  for (const auto index : inliers) {
+    translations[index] = samples_[index].lio_position -
+                          final_yaw_rotation * samples_[index].px4_position;
+    translation += weights[index] * translations[index];
+    weight_sum += weights[index];
+  }
   translation /= weight_sum;
 
   double translation_squared = 0.0;
@@ -250,7 +315,9 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   yaw_trends.reserve(inliers.size());
   for (const auto index : inliers) {
     const Eigen::Vector3d residual = translations[index] - translation;
-    const double yaw_residual = wrap(angles[index] - yaw);
+    const double yaw_residual = yaw_authoritative && samples_[index].yaw_authoritative
+                                    ? wrap(angles[index] - yaw)
+                                    : 0.0;
     translation_squared += weights[index] * residual.squaredNorm();
     yaw_squared += weights[index] * yaw_residual * yaw_residual;
     translation_covariance += weights[index] * (residual * residual.transpose());
@@ -258,7 +325,12 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
     position_trends.push_back(residual.norm());
     yaw_trends.push_back(std::abs(yaw_residual));
   }
-  translation_covariance /= weight_sum;
+  const double effective_sample_count =
+      weight_sum * weight_sum /
+      std::max(inlier_weight_square_sum, std::numeric_limits<double>::min());
+  const double unbiased_denominator =
+      weight_sum * std::max(1.0 - 1.0 / std::max(effective_sample_count, 1.0), 1e-12);
+  translation_covariance /= unbiased_denominator;
   const double translation_dispersion = std::sqrt(translation_squared / weight_sum);
   const double yaw_dispersion = std::sqrt(yaw_squared / weight_sum);
   const double position_trend = std::abs(weightedSlope(times, position_trends, inlier_weights));
@@ -305,6 +377,9 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   result.alignment.target_from_source_translation = translation;
   result.alignment.yaw_rad = yaw;
   result.alignment.roll_pitch_disagreement_rad = maximum_tilt;
+  result.alignment.effective_sample_count = effective_sample_count;
+  result.alignment.yaw_mode =
+      yaw_authoritative ? "ORIENTATION_AIDED" : "MOTION_OBSERVED";
   result.alignment.epoch_ns = samples_.back().timestamp_ns;
   result.alignment.epoch_start_ns = samples_.front().timestamp_ns;
   result.alignment.epoch_end_ns = samples_.back().timestamp_ns;
@@ -315,7 +390,9 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   result.alignment.source = "paired_timestamp.4dof.circular_mean";
   result.alignment.valid = true;
   result.covariance.topLeftCorner<3, 3>() = translation_covariance;
-  result.covariance(3, 3) = yaw_dispersion * yaw_dispersion;
+  result.covariance(3, 3) = yaw_authoritative
+                               ? yaw_squared / unbiased_denominator
+                               : 0.0;
   for (int index = 0; index < 4; ++index) {
     result.covariance(index, index) =
         std::max(result.covariance(index, index), config_.covariance_floor);
@@ -327,6 +404,9 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   result.excitation_metric_m = excitation;
   result.translation_residual_trend_m_s = position_trend;
   result.yaw_residual_trend_rad_s = yaw_trend;
+  result.effective_sample_count = effective_sample_count;
+  result.yaw_mode = yaw_authoritative ? AlignmentYawMode::kOrientationAided
+                                      : AlignmentYawMode::kMotionObserved;
   result.sample_count = inliers.size();
   result.rejected_outlier_count = samples_.size() - inliers.size();
   result.epoch_start_ns = samples_.front().timestamp_ns;

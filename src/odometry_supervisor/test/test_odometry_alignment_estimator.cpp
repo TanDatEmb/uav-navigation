@@ -8,7 +8,8 @@ namespace {
 
 odometry_supervisor::AlignmentSample sample(std::int64_t timestamp,
                                              const Eigen::Vector3d& px4_position,
-                                             double yaw = 0.0) {
+                                             double yaw = 0.0,
+                                             bool yaw_authoritative = true) {
   odometry_supervisor::AlignmentSample result;
   result.timestamp_ns = timestamp;
   result.px4_position = px4_position;
@@ -23,7 +24,7 @@ odometry_supervisor::AlignmentSample sample(std::int64_t timestamp,
   result.px4_time_generation = 2;
   result.lio_tracking = true;
   result.px4_continuity_valid = true;
-  result.yaw_authoritative = true;
+  result.yaw_authoritative = yaw_authoritative;
   return result;
 }
 
@@ -75,6 +76,24 @@ TEST(OdometryAlignmentEstimator, RejectsStationaryYawWhenNoAuthoritativeSourceEx
   const auto result = estimator.estimate();
   EXPECT_EQ(result.status,
             odometry_supervisor::AlignmentEstimateStatus::kYawUnobservable);
+}
+
+TEST(OdometryAlignmentEstimator, RecoversMotionObservedYawFromCenteredTrajectories) {
+  odometry_supervisor::OdometryAlignmentEstimator estimator;
+  for (int index = 0; index < 10; ++index) {
+    ASSERT_TRUE(estimator.addSample(sample(
+        1'000'000'000 + index * 20'000'000,
+        Eigen::Vector3d(0.1 * index, 0.05 * index, 0.2), 0.0, false)));
+  }
+  const auto result = estimator.estimate();
+  ASSERT_TRUE(result.valid()) << result.rejection_reason;
+  EXPECT_EQ(result.alignment.yaw_mode, "MOTION_OBSERVED");
+  EXPECT_EQ(result.yaw_mode, odometry_supervisor::AlignmentYawMode::kMotionObserved);
+  EXPECT_NEAR(result.alignment.yaw_rad, 0.35, 1e-12);
+  EXPECT_TRUE(result.alignment.target_from_source_translation.isApprox(
+      Eigen::Vector3d(4.0, -2.0, 1.5), 1e-12));
+  EXPECT_NEAR(result.effective_sample_count, 10.0, 1e-12);
+  EXPECT_TRUE(result.covariance.allFinite());
 }
 
 TEST(OdometryAlignmentEstimator, GenerationChangeClearsWindow) {

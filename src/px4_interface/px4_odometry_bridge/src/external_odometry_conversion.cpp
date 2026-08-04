@@ -7,8 +7,8 @@
 namespace px4_odometry_bridge {
 namespace {
 
-double positive_variance(double value) {
-  return std::isfinite(value) && value > 0.0 ? value : 1e-6;
+bool valid_variance(double value) {
+  return std::isfinite(value) && value > 0.0;
 }
 
 }  // namespace
@@ -44,12 +44,20 @@ std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     return std::nullopt;
   }
   for (int index = 0; index < 3; ++index) {
-    result.position_variance[index] = positive_variance(
-        message.pose.covariance[static_cast<std::size_t>(index * 6 + index)]);
-    result.orientation_variance[index] = positive_variance(
-        message.pose.covariance[static_cast<std::size_t>((index + 3) * 6 + index + 3)]);
-    result.velocity_variance[index] = positive_variance(
-        message.twist.covariance[static_cast<std::size_t>(index * 6 + index)]);
+    const double position_variance =
+        message.pose.covariance[static_cast<std::size_t>(index * 6 + index)];
+    const double orientation_variance =
+        message.pose.covariance[static_cast<std::size_t>((index + 3) * 6 + index + 3)];
+    const double velocity_variance =
+        message.twist.covariance[static_cast<std::size_t>(index * 6 + index)];
+    if (!valid_variance(position_variance) ||
+        !valid_variance(orientation_variance) ||
+        !valid_variance(velocity_variance)) {
+      return std::nullopt;
+    }
+    result.position_variance[index] = position_variance;
+    result.orientation_variance[index] = orientation_variance;
+    result.velocity_variance[index] = velocity_variance;
   }
   return result;
 }
