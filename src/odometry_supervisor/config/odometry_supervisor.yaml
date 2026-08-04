@@ -1,7 +1,9 @@
 odometry_supervisor:
   ros__parameters:
     reference_mode: independent
-    evaluation_rate_hz: 20.0
+    # Keep exact-time query load bounded while retaining 10 Hz supervisor
+    # observability; alignment proof still requires novel pairs per estimate.
+    evaluation_rate_hz: 10.0
     alignment:
       maximum_gap_ns: 50000000
       service_timeout_ns: 100000000
