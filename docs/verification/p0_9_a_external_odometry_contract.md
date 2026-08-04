@@ -1,7 +1,9 @@
 # P0.9-A external odometry contract and non-fusing dry run
 
-Status: PASS for the P0.9-A contract and SITL transport dry run. PX4 fusion,
-real-hardware timestamp conversion, and in-flight restart remain deferred.
+Status: Historical canonical P0.9-A transport run PASS; corrected contract
+static validation PASS. The same-HEAD closeout runtime revalidation is
+`BLOCKED_RUNTIME_BASELINE` as recorded below. PX4 fusion, real-hardware
+timestamp conversion, and in-flight restart remain deferred.
 
 ## Provenance
 
