@@ -175,7 +175,7 @@ def _vector(value: Any) -> tuple[float, float, float] | None:
 
 
 def _quaternion(value: Any) -> tuple[float, float, float, float] | None:
-    if not isinstance(value, list) or len(value) != 4:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
     try:
         result = tuple(float(item) for item in value)
@@ -185,6 +185,79 @@ def _quaternion(value: Any) -> tuple[float, float, float, float] | None:
     if not math.isfinite(norm) or norm < 1e-9:
         return None
     return tuple(item / norm for item in result)
+
+
+def _quaternion_xyzw(value: Any) -> tuple[float, float, float, float] | None:
+    """Read a ROS x,y,z,w quaternion into the report's w,x,y,z order."""
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    return _quaternion([value[3], value[0], value[1], value[2]])
+
+
+_C_NED_FROM_ENU = ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, -1.0))
+_C_FRD_FROM_FLU = ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
+
+
+def _matrix_multiply(
+    left: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+    right: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    return tuple(
+        tuple(sum(left[row][index] * right[index][column] for index in range(3)) for column in range(3))
+        for row in range(3)
+    )  # type: ignore[return-value]
+
+
+def _rotation_matrix_from_quaternion(
+    value: tuple[float, float, float, float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    w, x, y, z = value
+    return (
+        (1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)),
+        (2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)),
+        (2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)),
+    )
+
+
+def _quaternion_from_rotation_matrix(
+    matrix: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+) -> tuple[float, float, float, float]:
+    # The matrices used here are proper rotations (ENU->NED and FLU->FRD
+    # both have determinant +1), so the standard stable branch is sufficient.
+    trace = matrix[0][0] + matrix[1][1] + matrix[2][2]
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        result = (
+            0.25 * scale,
+            (matrix[2][1] - matrix[1][2]) / scale,
+            (matrix[0][2] - matrix[2][0]) / scale,
+            (matrix[1][0] - matrix[0][1]) / scale,
+        )
+    elif matrix[0][0] > matrix[1][1] and matrix[0][0] > matrix[2][2]:
+        scale = math.sqrt(1.0 + matrix[0][0] - matrix[1][1] - matrix[2][2]) * 2.0
+        result = (
+            (matrix[2][1] - matrix[1][2]) / scale,
+            0.25 * scale,
+            (matrix[0][1] + matrix[1][0]) / scale,
+            (matrix[0][2] + matrix[2][0]) / scale,
+        )
+    elif matrix[1][1] > matrix[2][2]:
+        scale = math.sqrt(1.0 + matrix[1][1] - matrix[0][0] - matrix[2][2]) * 2.0
+        result = (
+            (matrix[0][2] - matrix[2][0]) / scale,
+            (matrix[0][1] + matrix[1][0]) / scale,
+            0.25 * scale,
+            (matrix[1][2] + matrix[2][1]) / scale,
+        )
+    else:
+        scale = math.sqrt(1.0 + matrix[2][2] - matrix[0][0] - matrix[1][1]) * 2.0
+        result = (
+            (matrix[1][0] - matrix[0][1]) / scale,
+            (matrix[0][2] + matrix[2][0]) / scale,
+            (matrix[1][2] + matrix[2][1]) / scale,
+            0.25 * scale,
+        )
+    return _quaternion(result) or (1.0, 0.0, 0.0, 0.0)
 
 
 def _quaternion_inverse(value: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -357,15 +430,16 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
         )
         position.append(math.sqrt(sum(value * value for value in position_error)))
 
-        lio_body_velocity = _vector(left.get("payload", {}).get("velocity"))
+        lio_velocity = _vector(left.get("payload", {}).get("velocity"))
         px4_velocity = _vector(right.get("payload", {}).get("velocity"))
-        if lio_body_velocity is not None and px4_velocity is not None:
-            lio_world_velocity = _quaternion_rotate(lq, lio_body_velocity)
+        if lio_velocity is not None and px4_velocity is not None:
             velocity_frame = int(right.get("payload", {}).get("velocity_frame", 0))
             predicted_velocity = (
-                lio_body_velocity
-                if velocity_frame == 3
-                else _quaternion_rotate(alignment, lio_world_velocity)
+                _quaternion_rotate(alignment, lio_velocity)
+                if velocity_frame == 1
+                else _quaternion_rotate(
+                    alignment, _quaternion_rotate(lq, lio_velocity)
+                )
             )
             velocity_error = tuple(
                 predicted_velocity[index] - px4_velocity[index] for index in range(3)
@@ -406,10 +480,6 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
     }
 
 
-_WORLD_PX4_FROM_LIO = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
-_BODY_FRD_FROM_FLU = ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
-
-
 def _matrix_vector(
     matrix: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
     vector: tuple[float, float, float],
@@ -418,13 +488,15 @@ def _matrix_vector(
 
 
 def _frame_contract_residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, Any]:
-    """Check the raw ROS LIO message against the VehicleOdometry input."""
+    """Check every converted vector/quaternion against the one frame contract."""
     lio = _series(samples, "propagated_odometry")
     external = _series(samples, "external_odometry")
     matches = _match(lio, external, int(tolerance_ms * 1e6))
     position: list[float] = []
     velocity: list[float] = []
     angular_velocity: list[float] = []
+    attitude: list[float] = []
+    frame_contract_violations = 0
     deltas = [abs(delta) / 1e6 for _, _, delta in matches]
     for left, right, _ in matches:
         raw = left.get("payload", {})
@@ -435,19 +507,34 @@ def _frame_contract_residuals(samples: list[dict[str, Any]], tolerance_ms: float
         converted_velocity = _vector(converted.get("velocity"))
         raw_angular = _vector(raw.get("angular_velocity"))
         converted_angular = _vector(converted.get("angular_velocity"))
+        raw_orientation = _quaternion_xyzw(raw.get("q_xyzw"))
+        converted_orientation = _quaternion(converted.get("q_wxyz"))
+        if int(converted.get("pose_frame", 0)) != 1 or int(converted.get("velocity_frame", 0)) != 1:
+            frame_contract_violations += 1
         if raw_position is not None and converted_position is not None:
-            expected = _matrix_vector(_WORLD_PX4_FROM_LIO, raw_position)
+            expected = _matrix_vector(_C_NED_FROM_ENU, raw_position)
             position.append(math.sqrt(sum((expected[i] - converted_position[i]) ** 2 for i in range(3))))
-        if raw_velocity is not None and converted_velocity is not None:
-            expected = _matrix_vector(_BODY_FRD_FROM_FLU, raw_velocity)
+        if raw_velocity is not None and converted_velocity is not None and raw_orientation is not None:
+            velocity_enu = _quaternion_rotate(raw_orientation, raw_velocity)
+            expected = _matrix_vector(_C_NED_FROM_ENU, velocity_enu)
             velocity.append(math.sqrt(sum((expected[i] - converted_velocity[i]) ** 2 for i in range(3))))
         if raw_angular is not None and converted_angular is not None:
-            expected = _matrix_vector(_BODY_FRD_FROM_FLU, raw_angular)
+            expected = _matrix_vector(_C_FRD_FROM_FLU, raw_angular)
             angular_velocity.append(math.sqrt(sum((expected[i] - converted_angular[i]) ** 2 for i in range(3))))
+        if raw_orientation is not None and converted_orientation is not None:
+            expected_matrix = _matrix_multiply(
+                _matrix_multiply(_C_NED_FROM_ENU, _rotation_matrix_from_quaternion(raw_orientation)),
+                _C_FRD_FROM_FLU,
+            )
+            expected_orientation = _quaternion_from_rotation_matrix(expected_matrix)
+            attitude.append(_quaternion_angle(expected_orientation, converted_orientation))
     return {
         "source": "lio/propagated_odometry -> px4/external_odometry",
-        "world_transform": "x_px4=-y_lio; y_px4=x_lio; z_px4=z_lio",
+        "world_transform": "x_px4_ned=y_lio_enu; y_px4_ned=x_lio_enu; z_px4_ned=-z_lio_enu",
         "body_transform": "x_frd=x_flu; y_frd=-y_flu; z_frd=-z_flu",
+        "pose_frame": "PX4 POSE_FRAME_NED",
+        "velocity_frame": "PX4 VELOCITY_FRAME_NED",
+        "frame_contract_violation_count": frame_contract_violations,
         "timestamp_alignment": "absolute ROS header stamp vs PX4 timestamp_sample",
         "matched_sample_count": len(matches),
         "unmatched_sample_count": max(0, len(lio) - len(matches)),
@@ -457,6 +544,270 @@ def _frame_contract_residuals(samples: list[dict[str, Any]], tolerance_ms: float
         "position": _metric_summary(position),
         "velocity": _metric_summary(velocity),
         "angular_velocity": _metric_summary(angular_velocity),
+        "attitude": _metric_summary(attitude),
+    }
+
+
+def _vector_metric_summary(errors: list[tuple[float, float, float]]) -> dict[str, Any]:
+    return {
+        "norm": _metric_summary([
+            math.sqrt(sum(component * component for component in error)) for error in errors
+        ]),
+        "x": _metric_summary([abs(error[0]) for error in errors]),
+        "y": _metric_summary([abs(error[1]) for error in errors]),
+        "z": _metric_summary([abs(error[2]) for error in errors]),
+    }
+
+
+def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, Any]:
+    """Compare LIO and PX4 input to independent Gazebo ENU/FLU odometry."""
+    ground_truth = _series(samples, "ground_truth_odometry")
+    lio = _series(samples, "propagated_odometry")
+    external = _series(samples, "external_odometry")
+    px4 = _series(samples, "px4_odometry")
+    tolerance_ns = int(tolerance_ms * 1e6)
+    lio_matches = _match(ground_truth, lio, tolerance_ns)
+    external_matches = _match(ground_truth, external, tolerance_ns)
+    px4_matches = _match(ground_truth, px4, tolerance_ns)
+    lio_position_errors: list[tuple[float, float, float]] = []
+    external_position_errors: list[tuple[float, float, float]] = []
+    lio_velocity_errors: list[tuple[float, float, float]] = []
+    external_velocity_errors: list[tuple[float, float, float]] = []
+    lio_angular_errors: list[tuple[float, float, float]] = []
+    external_angular_errors: list[tuple[float, float, float]] = []
+    px4_position_errors: list[tuple[float, float, float]] = []
+    px4_velocity_errors: list[tuple[float, float, float]] = []
+    px4_angular_errors: list[tuple[float, float, float]] = []
+    lio_attitude: list[float] = []
+    external_attitude: list[float] = []
+    px4_attitude: list[float] = []
+    lio_deltas = [abs(delta) / 1e6 for _, _, delta in lio_matches]
+    external_deltas = [abs(delta) / 1e6 for _, _, delta in external_matches]
+    px4_deltas = [abs(delta) / 1e6 for _, _, delta in px4_matches]
+    first_gt_position: tuple[float, float, float] | None = None
+    first_lio_position: tuple[float, float, float] | None = None
+    first_gt_position_external: tuple[float, float, float] | None = None
+    first_external_position: tuple[float, float, float] | None = None
+    first_gt_position_px4: tuple[float, float, float] | None = None
+    first_px4_position: tuple[float, float, float] | None = None
+    first_lio_attitude: float | None = None
+    first_external_attitude: float | None = None
+    first_px4_attitude: float | None = None
+    gt_child_frames: set[str] = set()
+
+    for gt_item, estimate_item, _ in lio_matches:
+        gt = gt_item.get("payload", {})
+        estimate = estimate_item.get("payload", {})
+        gt_position = _vector(gt.get("position"))
+        estimate_position = _vector(estimate.get("position"))
+        gt_orientation = _quaternion_xyzw(gt.get("q_xyzw"))
+        estimate_orientation = _quaternion_xyzw(estimate.get("q_xyzw"))
+        gt_velocity = _vector(gt.get("linear_velocity"))
+        estimate_velocity = _vector(estimate.get("linear_velocity"))
+        gt_angular = _vector(gt.get("angular_velocity"))
+        estimate_angular = _vector(estimate.get("angular_velocity"))
+        gt_child_frames.add(str(gt.get("child_frame_id", "")))
+        if gt_position is not None and estimate_position is not None:
+            if first_gt_position is None:
+                first_gt_position = gt_position
+                first_lio_position = estimate_position
+            assert first_lio_position is not None
+            lio_position_errors.append(tuple(
+                (estimate_position[index] - first_lio_position[index]) -
+                (gt_position[index] - first_gt_position[index])
+                for index in range(3)
+            ))
+        if gt_orientation is not None and estimate_orientation is not None:
+            angle = _quaternion_angle(estimate_orientation, gt_orientation)
+            lio_attitude.append(angle)
+            if first_lio_attitude is None:
+                first_lio_attitude = angle
+        if gt_velocity is not None and estimate_velocity is not None:
+            # nav_msgs/Odometry.twist is expressed in child_frame_id.  The
+            # simulator ground truth and LIO both publish a body-frame twist;
+            # compare them directly.  Only the PX4 branch below rotates this
+            # body-FLU vector into the ENU world before ENU->NED conversion.
+            expected_velocity = gt_velocity
+            lio_velocity_errors.append(tuple(
+                estimate_velocity[index] - expected_velocity[index] for index in range(3)
+            ))
+        if gt_angular is not None and estimate_angular is not None:
+            expected_angular = (
+                gt_angular if str(gt.get("child_frame_id", "")) != "base_link" else gt_angular
+            )
+            lio_angular_errors.append(tuple(
+                estimate_angular[index] - expected_angular[index] for index in range(3)
+            ))
+
+    for gt_item, estimate_item, _ in external_matches:
+        gt = gt_item.get("payload", {})
+        estimate = estimate_item.get("payload", {})
+        gt_position = _vector(gt.get("position"))
+        estimate_position = _vector(estimate.get("position"))
+        gt_orientation = _quaternion_xyzw(gt.get("q_xyzw"))
+        estimate_orientation = _quaternion(estimate.get("q_wxyz"))
+        gt_velocity = _vector(gt.get("linear_velocity"))
+        estimate_velocity = _vector(estimate.get("velocity"))
+        gt_angular = _vector(gt.get("angular_velocity"))
+        estimate_angular = _vector(estimate.get("angular_velocity"))
+        gt_child_frames.add(str(gt.get("child_frame_id", "")))
+        if gt_position is not None and estimate_position is not None:
+            if first_gt_position_external is None:
+                first_gt_position_external = gt_position
+            if first_external_position is None:
+                first_external_position = estimate_position
+            assert first_external_position is not None
+            assert first_gt_position_external is not None
+            expected_delta = _matrix_vector(
+                _C_NED_FROM_ENU,
+                tuple(gt_position[index] - first_gt_position_external[index] for index in range(3)),
+            )
+            actual_delta = tuple(
+                estimate_position[index] - first_external_position[index] for index in range(3)
+            )
+            external_position_errors.append(tuple(
+                actual_delta[index] - expected_delta[index] for index in range(3)
+            ))
+        if gt_orientation is not None and estimate_orientation is not None:
+            expected_matrix = _matrix_multiply(
+                _matrix_multiply(_C_NED_FROM_ENU, _rotation_matrix_from_quaternion(gt_orientation)),
+                _C_FRD_FROM_FLU,
+            )
+            expected_orientation = _quaternion_from_rotation_matrix(expected_matrix)
+            angle = _quaternion_angle(estimate_orientation, expected_orientation)
+            external_attitude.append(angle)
+            if first_external_attitude is None:
+                first_external_attitude = angle
+        if gt_velocity is not None and estimate_velocity is not None:
+            # OdometryPublisher publishes linear velocity in child_frame_id,
+            # which is the robot body frame.  Convert body-FLU -> ENU using
+            # the ground-truth body-to-world attitude, then ENU -> PX4 NED.
+            velocity_enu = (
+                _quaternion_rotate(gt_orientation, gt_velocity)
+                if gt_orientation is not None
+                else gt_velocity
+            )
+            expected_velocity = _matrix_vector(_C_NED_FROM_ENU, velocity_enu)
+            external_velocity_errors.append(tuple(
+                estimate_velocity[index] - expected_velocity[index] for index in range(3)
+            ))
+        if gt_angular is not None and estimate_angular is not None:
+            expected_angular = _matrix_vector(_C_FRD_FROM_FLU, gt_angular)
+            external_angular_errors.append(tuple(
+                estimate_angular[index] - expected_angular[index] for index in range(3)
+            ))
+
+    for gt_item, estimate_item, _ in px4_matches:
+        gt = gt_item.get("payload", {})
+        estimate = estimate_item.get("payload", {})
+        gt_position = _vector(gt.get("position"))
+        estimate_position = _vector(estimate.get("position"))
+        gt_orientation = _quaternion_xyzw(gt.get("q_xyzw"))
+        estimate_orientation = _quaternion(estimate.get("q_wxyz"))
+        gt_velocity = _vector(gt.get("linear_velocity"))
+        estimate_velocity = _vector(estimate.get("velocity"))
+        gt_angular = _vector(gt.get("angular_velocity"))
+        estimate_angular = _vector(estimate.get("angular_velocity"))
+        gt_child_frames.add(str(gt.get("child_frame_id", "")))
+        if gt_position is not None and estimate_position is not None:
+            if first_gt_position_px4 is None:
+                first_gt_position_px4 = gt_position
+            if first_px4_position is None:
+                first_px4_position = estimate_position
+            assert first_gt_position_px4 is not None
+            assert first_px4_position is not None
+            expected_delta = _matrix_vector(
+                _C_NED_FROM_ENU,
+                tuple(gt_position[index] - first_gt_position_px4[index] for index in range(3)),
+            )
+            actual_delta = tuple(
+                estimate_position[index] - first_px4_position[index] for index in range(3)
+            )
+            px4_position_errors.append(tuple(
+                actual_delta[index] - expected_delta[index] for index in range(3)
+            ))
+        if gt_orientation is not None and estimate_orientation is not None:
+            expected_matrix = _matrix_multiply(
+                _matrix_multiply(_C_NED_FROM_ENU, _rotation_matrix_from_quaternion(gt_orientation)),
+                _C_FRD_FROM_FLU,
+            )
+            expected_orientation = _quaternion_from_rotation_matrix(expected_matrix)
+            angle = _quaternion_angle(estimate_orientation, expected_orientation)
+            px4_attitude.append(angle)
+            if first_px4_attitude is None:
+                first_px4_attitude = angle
+        if gt_velocity is not None and estimate_velocity is not None:
+            velocity_enu = (
+                _quaternion_rotate(gt_orientation, gt_velocity)
+                if gt_orientation is not None
+                else gt_velocity
+            )
+            expected_velocity = _matrix_vector(_C_NED_FROM_ENU, velocity_enu)
+            px4_velocity_errors.append(tuple(
+                estimate_velocity[index] - expected_velocity[index] for index in range(3)
+            ))
+        if gt_angular is not None and estimate_angular is not None:
+            expected_angular = _matrix_vector(_C_FRD_FROM_FLU, gt_angular)
+            px4_angular_errors.append(tuple(
+                estimate_angular[index] - expected_angular[index] for index in range(3)
+            ))
+
+    return {
+        "source": "Gazebo /sim/ground_truth/odometry (ENU/FLU)",
+        "ground_truth_frame_ids": sorted({str(item.get("payload", {}).get("frame_id", "")) for item in ground_truth}),
+        "ground_truth_child_frame_ids": sorted(gt_child_frames),
+        "world_transform": "x_ned=y_enu; y_ned=x_enu; z_ned=-z_enu",
+        "body_transform": "x_frd=x_flu; y_frd=-y_flu; z_frd=-z_flu",
+        "timestamp_alignment": "absolute simulation timestamp; no stream epoch normalization",
+        "maximum_synchronization_tolerance_ms": tolerance_ms,
+        "ground_truth_sample_count": len(ground_truth),
+        "lio_matched_sample_count": len(lio_matches),
+        "external_matched_sample_count": len(external_matches),
+        "lio_timestamp_delta_ms": {
+            "mean": sum(lio_deltas) / len(lio_deltas) if lio_deltas else None,
+            "p95": _p(lio_deltas, 0.95),
+            "maximum": max(lio_deltas) if lio_deltas else None,
+        },
+        "external_timestamp_delta_ms": {
+            "mean": sum(external_deltas) / len(external_deltas) if external_deltas else None,
+            "p95": _p(external_deltas, 0.95),
+            "maximum": max(external_deltas) if external_deltas else None,
+        },
+        "px4_timestamp_delta_ms": {
+            "mean": sum(px4_deltas) / len(px4_deltas) if px4_deltas else None,
+            "p95": _p(px4_deltas, 0.95),
+            "maximum": max(px4_deltas) if px4_deltas else None,
+        },
+        "lio_vs_ground_truth": {
+            "origin_alignment": "first matched position removed",
+            "position_m": _vector_metric_summary(lio_position_errors),
+            "velocity_m_s": _vector_metric_summary(lio_velocity_errors),
+            "angular_velocity_rad_s": _vector_metric_summary(lio_angular_errors),
+            "attitude_rad": _metric_summary(lio_attitude),
+            "initial_attitude_error_rad": first_lio_attitude,
+        },
+        "external_ned_vs_ground_truth": {
+            "origin_alignment": "first matched position removed after ENU->NED conversion",
+            "position_m": _vector_metric_summary(external_position_errors),
+            "velocity_m_s": _vector_metric_summary(external_velocity_errors),
+            "angular_velocity_rad_s": _vector_metric_summary(external_angular_errors),
+            "attitude_rad": _metric_summary(external_attitude),
+            "initial_attitude_error_rad": first_external_attitude,
+            "required_pose_frame": 1,
+            "required_velocity_frame": 1,
+        },
+        "px4_ned_vs_ground_truth": {
+            "origin_alignment": "first matched position removed after ENU->NED conversion",
+            "position_m": _vector_metric_summary(px4_position_errors),
+            "velocity_m_s": _vector_metric_summary(px4_velocity_errors),
+            "angular_velocity_rad_s": _vector_metric_summary(px4_angular_errors),
+            "attitude_rad": _metric_summary(px4_attitude),
+            "initial_attitude_error_rad": first_px4_attitude,
+            "matched_sample_count": len(px4_matches),
+            "required_pose_frame": 1,
+            "required_velocity_frame": 1,
+        },
+        "px4_matched_sample_count": len(px4_matches),
     }
 
 
@@ -522,7 +873,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
 
 def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags", "aid_ev_pos", "aid_ev_vel", "aid_ev_yaw")
+    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags", "aid_ev_pos", "aid_ev_vel", "aid_ev_yaw")
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
@@ -530,7 +881,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
     reasons: list[str] = []
-    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "external_odometry"):
+    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
         if streams[name]["timestamp_regression_count"] or _active_stale_count(streams[name], runtime, samples) or streams[name]["nonfinite_message_count"]:
@@ -546,6 +897,9 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         reasons.append("LIO did not finish in TRACKING")
     residuals = _residuals(samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0))
     conversion_contract = _frame_contract_residuals(
+        samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0)
+    )
+    ground_truth_residuals = _ground_truth_residuals(
         samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0)
     )
     scenario = _load_json(session / "scenario.json", {})
@@ -578,6 +932,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         },
         "residuals": residuals,
         "conversion_contract": conversion_contract,
+        "ground_truth_residuals": ground_truth_residuals,
         "offboard": scenario,
         "provenance": provenance(workspace, px4_dir),
     }
@@ -625,7 +980,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('stale_event_count', 0)} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "px4", "residuals", "conversion_contract", "offboard", "provenance"):
+    for section in ("lio", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

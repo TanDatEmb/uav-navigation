@@ -318,8 +318,19 @@ void FastLioNode::onInitialStatePrior(
   } else if (source_frame == parameters_.initial_prior_source_frame &&
              parameters_.initial_prior_source_frame_transform == "startup_coincident" &&
              parameters_.initial_prior_context == "ground_startup") {
-    // This one-time identity defines lio_odom to coincide with the PX4 prior
-    // frame at the sampled startup epoch; it is not a general relabeling.
+    if (message->child_frame_id != parameters_.base_frame) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "initial-state prior rejected: child frame %s is not %s",
+          message->child_frame_id.c_str(), parameters_.base_frame.c_str());
+      return;
+    }
+    // /px4/estimator_odometry is not raw VehicleOdometry.  The ingress bridge
+    // has already applied the exact PX4 NED/FRD -> ROS ENU/FLU conversion and
+    // rebased the PX4 local origin.  This one-time identity only declares
+    // those already-converted coordinates to be lio_odom at ground startup.
+    // In particular, preserve the full quaternion and body velocity; never
+    // extract an untransformed PX4 yaw scalar here.
     prior.reference_frame = FrameId(parameters_.odom_frame);
   } else {
     RCLCPP_WARN_THROTTLE(
@@ -369,7 +380,9 @@ void FastLioNode::onInitialStatePrior(
   if (covariance_present) prior.covariance = prior_covariance;
   prior.provenance = "topic:" + parameters_.initial_prior_topic + "|source_frame=" +
                      source_frame + "|target_frame=" + parameters_.odom_frame +
-                     "|transform=" + parameters_.initial_prior_source_frame_transform;
+                     "|transform=" + parameters_.initial_prior_source_frame_transform +
+                     "|orientation=converted_enu_from_ned_full_quaternion" +
+                     "|velocity=body_flu";
   const auto prior_target_frame = std::string(prior.reference_frame.name());
   const auto prior_body_frame = std::string(prior.body_frame.name());
   const Status status = pipeline_.submitInitialStatePrior(

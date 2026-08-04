@@ -10,26 +10,52 @@ TF tree is:
 | FAST-LIO corrected/propagated | `lio_odom` | `base_link` | `/lio/odometry_corrected`, `/lio/odometry_propagated` |
 | PX4 ingress bridge | `px4_odom` | `base_link` | `/px4/estimator_odometry` |
 | external odometry bridge input | `lio_odom` | `base_link` | `/lio/odometry_propagated` |
+| Gazebo ground truth | `world`/`odom` | `base_link` | `/sim/ground_truth/odometry` |
 
-PX4 NED/FRD pose and velocity fields are decoded with explicit basis
-conversions before the ingress bridge publishes ROS ENU/FLU data. The bridge
-anchors the continuous `px4_odom` position at its first valid sample and
-retains reset compensation for later PX4 resets.
+## Coordinate contract
 
-The external-odometry bridge converts `lio_odom` to PX4 FRD and body-FRD
-fields. Its world alignment is the explicit local-yaw matrix
+There are two independent basis changes. They must not be combined or replaced
+with a guessed yaw:
 
 ```text
-                 [ 0 -1  0 ]
-p_px4_frd_local = [ 1  0  0 ] p_lio_odom
-                 [ 0  0  1 ]
+LIO/Gazebo world ENU (z-up)       PX4 NED (z-down)
+  +x east                         +x north
+  +y north                        +y east
+  +z up                           +z down
+
+                 [ 0  1  0 ]
+p_ned = C_ned_enu [ 1  0  0 ] p_enu
+                 [ 0  0 -1 ]
+
+ROS base_link FLU                 PX4 body FRD
+  +x forward                      +x forward
+  +y left                         +y right
+  +z up                           +z down
+
+                 [ 1  0  0 ]
+v_frd = C_frd_flu [ 0 -1  0 ] v_flu
+                 [ 0  0 -1 ]
 ```
 
-therefore `x_px4 = -y_lio`, `y_px4 = x_lio`, and `z_px4 = z_lio`. The inverse
-matrix is used when a PX4 FRD-local sample is converted back to ROS. The body
-matrix remains the independent FLU->FRD sign change
-`diag(1,-1,-1)`. This is a known local startup yaw alignment, not a claim that
-the PX4 local frame is globally ENU.
+The Gazebo smoke world is ENU and the offboard scenario setpoints are NED.
+The direct simulator measurement is therefore decisive: a NED setpoint
+`[3, 0, -2]` appears in Gazebo as approximately `[0, 3, 2]`.
+
+PX4 `VehicleOdometry` uses `pose_frame=NED` and `velocity_frame=NED` on the
+`/fmu/in/vehicle_visual_odometry` boundary. Its quaternion is the passive
+Hamilton quaternion body-FRD -> world-NED. Its angular velocity is always
+body-FRD. The ingress bridge performs the inverse NED/FRD -> ENU/FLU conversion
+before publishing ROS messages; the values on `/px4/estimator_odometry` are
+already ROS ENU/FLU despite the PX4-origin frame name.
+
+The bridge anchors the continuous `px4_odom` position at its first valid sample
+and retains reset compensation for later PX4 resets.
+
+The external-odometry bridge converts position, velocity, and attitude using
+`C_ned_enu`; it converts only angular velocity using `C_frd_flu`. Thus
+`x_px4=y_lio`, `y_px4=x_lio`, and `z_px4=-z_lio`. A PX4 `POSE_FRAME_FRD` sample
+is rejected at ingress unless an explicit measured world alignment is added;
+the bridge never invents a local yaw offset.
 
 Timestamp mapping, covariance conversion, public frame generation, freshness,
 finite-value validation, and geometric-jump latching are kept at this
@@ -64,3 +90,14 @@ initial_prior:
 
 The dataset configuration uses the same-frame zero prior. These are workflow
 inputs, not runtime alignment fallbacks.
+
+`/px4/estimator_odometry` is subscribed only after PX4 NED/FRD has been decoded
+by `FrameConverter`. The initial-prior callback copies the full converted
+quaternion and body-FLU velocity; it does not extract a raw PX4 yaw angle.
+`yaw_only` changes only the yaw relative to the gravity-aligned IMU attitude,
+while preserving the measured roll/pitch. This makes the startup yaw reference
+an explicit ENU quantity rather than a silent NED scalar.
+
+The simulator ground-truth topic is independent of LIO and PX4 estimates. The
+runtime report compares position, world/body velocity, angular velocity,
+attitude, frame IDs, and absolute timestamps against it.

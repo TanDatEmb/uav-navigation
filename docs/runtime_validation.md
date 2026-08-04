@@ -55,6 +55,7 @@ SHA fields.
 | product | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | required |
 | transform | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | required |
 | health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | single surface |
+| simulator truth | `/sim/ground_truth/odometry` | `nav_msgs/msg/Odometry` | independent ENU/FLU accuracy reference |
 | PX4 input | `/fmu/in/vehicle_visual_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation only |
 | PX4 output | `/fmu/out/vehicle_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation observation |
 | PX4 output | `/fmu/out/vehicle_status_v1` | `px4_msgs/msg/VehicleStatus` | simulation observation |

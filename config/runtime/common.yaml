@@ -21,12 +21,14 @@ runtime:
     tf: /tf
     tf_static: /tf_static
     external_odometry: /fmu/in/vehicle_visual_odometry
+    ground_truth_odometry: /sim/ground_truth/odometry
   streams:
     imu: {expected_hz: 200.0, stale_after_s: 0.10}
     lidar: {expected_hz: 10.0, stale_after_s: 0.50}
     corrected_odometry: {expected_hz: 10.0, stale_after_s: 1.00}
     propagated_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
     external_odometry: {expected_hz: 50.0, stale_after_s: 0.20}
+    ground_truth_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
     px4_odometry: {expected_hz: 30.0, stale_after_s: 1.00}
     vehicle_status: {expected_hz: 10.0, stale_after_s: 1.00}
     local_position: {expected_hz: 30.0, stale_after_s: 1.00}

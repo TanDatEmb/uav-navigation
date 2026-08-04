@@ -61,13 +61,13 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     const auto finite_float = [](const double value) {
       return std::isfinite(static_cast<float>(value));
     };
-    for (const double value : frame.position_frd) {
+    for (const double value : frame.position_ned) {
       if (!finite_float(value)) return false;
     }
-    for (const double value : frame.orientation_frd.coeffs()) {
+    for (const double value : frame.orientation_ned.coeffs()) {
       if (!finite_float(value)) return false;
     }
-    for (const double value : frame.velocity_body_frd) {
+    for (const double value : frame.velocity_ned) {
       if (!finite_float(value)) return false;
     }
     for (const double value : frame.angular_velocity_body_frd) {
@@ -193,10 +193,10 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
 
     bool frame_jump = false;
     if (last_published_.has_value()) {
-      frame_jump = (frame->position_frd - last_published_->position_frd).norm() >
+      frame_jump = (frame->position_ned - last_published_->position_ned).norm() >
                        position_jump_m_ ||
-                   last_published_->orientation_frd.angularDistance(
-                       frame->orientation_frd) > orientation_jump_rad_;
+                   last_published_->orientation_ned.angularDistance(
+                       frame->orientation_ned) > orientation_jump_rad_;
     }
     (void)jump_latch_.observeGeometricJump(frame_jump);
 
@@ -222,18 +222,20 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     VehicleOdometry output;
     output.timestamp = last_timestamp_result_.publication_time_us;
     output.timestamp_sample = last_timestamp_result_.measurement_time_us;
-    output.pose_frame = VehicleOdometry::POSE_FRAME_FRD;
-    output.velocity_frame = VehicleOdometry::VELOCITY_FRAME_BODY_FRD;
-    output.position = {static_cast<float>(frame->position_frd.x()),
-                       static_cast<float>(frame->position_frd.y()),
-                       static_cast<float>(frame->position_frd.z())};
-    output.q = {static_cast<float>(frame->orientation_frd.w()),
-                static_cast<float>(frame->orientation_frd.x()),
-                static_cast<float>(frame->orientation_frd.y()),
-                static_cast<float>(frame->orientation_frd.z())};
-    output.velocity = {static_cast<float>(frame->velocity_body_frd.x()),
-                       static_cast<float>(frame->velocity_body_frd.y()),
-                       static_cast<float>(frame->velocity_body_frd.z())};
+    // VehicleOdometry contract: position/q and velocity below are both NED;
+    // q is body-FRD -> world-NED.  angular_velocity remains body-FRD.
+    output.pose_frame = VehicleOdometry::POSE_FRAME_NED;
+    output.velocity_frame = VehicleOdometry::VELOCITY_FRAME_NED;
+    output.position = {static_cast<float>(frame->position_ned.x()),
+                       static_cast<float>(frame->position_ned.y()),
+                       static_cast<float>(frame->position_ned.z())};
+    output.q = {static_cast<float>(frame->orientation_ned.w()),
+                static_cast<float>(frame->orientation_ned.x()),
+                static_cast<float>(frame->orientation_ned.y()),
+                static_cast<float>(frame->orientation_ned.z())};
+    output.velocity = {static_cast<float>(frame->velocity_ned.x()),
+                       static_cast<float>(frame->velocity_ned.y()),
+                       static_cast<float>(frame->velocity_ned.z())};
     output.angular_velocity = {static_cast<float>(frame->angular_velocity_body_frd.x()),
                                static_cast<float>(frame->angular_velocity_body_frd.y()),
                                static_cast<float>(frame->angular_velocity_body_frd.z())};

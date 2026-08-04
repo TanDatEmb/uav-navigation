@@ -35,6 +35,9 @@ namespace px4_odometry_bridge {
 
 namespace {
 constexpr char kOutputTopic[] = "/px4/estimator_odometry";
+// The message has already crossed the PX4 NED/FRD -> ROS ENU/FLU boundary.
+// The frame name identifies the PX4-originated local origin; it must not be
+// interpreted as raw PX4 NED coordinates by the initial-prior consumer.
 constexpr char kOutputFrame[] = "px4_odom";
 
 const char *world_convention_name(WorldConvention convention) {
@@ -461,6 +464,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   }
 
   static nav_msgs::msg::Odometry to_ros(const ConvertedOdometry &sample) {
+    // ConvertedOdometry is ROS ENU/FLU here: position/attitude are expressed
+    // in the converted local ENU world and twist is expressed in base_link
+    // FLU, exactly as required by nav_msgs/Odometry.
     nav_msgs::msg::Odometry message;
     message.header.stamp = rclcpp::Time(sample.timestamp_ns);
     message.header.frame_id = kOutputFrame;

@@ -24,7 +24,7 @@ nav_msgs::msg::Odometry valid_message() {
   return message;
 }
 
-TEST(ExternalOdometryConversionTest, ConvertsRosZUpFluToPx4Frd) {
+TEST(ExternalOdometryConversionTest, ConvertsRosEnuFluToPx4NedFrd) {
   auto message = valid_message();
   message.pose.pose.position.x = 1.0;
   message.pose.pose.position.y = 2.0;
@@ -34,10 +34,14 @@ TEST(ExternalOdometryConversionTest, ConvertsRosZUpFluToPx4Frd) {
   const auto converted = convert_ros_lio_odometry(message);
   ASSERT_TRUE(converted.has_value());
   EXPECT_EQ(converted->timestamp_ns, 1'000'000'002LL);
-  EXPECT_DOUBLE_EQ(converted->position_frd.x(), -2.0);
-  EXPECT_DOUBLE_EQ(converted->position_frd.y(), 1.0);
-  EXPECT_DOUBLE_EQ(converted->position_frd.z(), 3.0);
-  EXPECT_DOUBLE_EQ(converted->velocity_body_frd.y(), -4.0);
+  EXPECT_DOUBLE_EQ(converted->position_ned.x(), 2.0);
+  EXPECT_DOUBLE_EQ(converted->position_ned.y(), 1.0);
+  EXPECT_DOUBLE_EQ(converted->position_ned.z(), -3.0);
+  // Identity attitude: body-FLU velocity [0,4,0] is ENU [0,4,0], then NED
+  // [4,0,0].  It is not a body-FRD vector in the new /fmu/in contract.
+  EXPECT_DOUBLE_EQ(converted->velocity_ned.x(), 4.0);
+  EXPECT_DOUBLE_EQ(converted->velocity_ned.y(), 0.0);
+  EXPECT_DOUBLE_EQ(converted->velocity_ned.z(), 0.0);
   EXPECT_DOUBLE_EQ(converted->angular_velocity_body_frd.z(), -5.0);
   EXPECT_TRUE(converted->frame_valid);
   EXPECT_TRUE(converted->covariance_valid);
@@ -56,10 +60,10 @@ TEST(ExternalOdometryConversionTest, UsesSeparateWorldAndBodyFrameMatrices) {
   const auto converted = convert_ros_lio_odometry(message);
   ASSERT_TRUE(converted.has_value());
   const Eigen::Matrix3d expected =
-      C_world_frd_from_ros_local_zup() * ros_orientation.toRotationMatrix() *
+      C_ned_from_lio_enu() * ros_orientation.toRotationMatrix() *
       C_body_frd_from_body_flu().inverse();
-  EXPECT_TRUE(converted->orientation_frd.toRotationMatrix().isApprox(expected));
-  EXPECT_NEAR(converted->orientation_frd.norm(), 1.0, 1e-12);
+  EXPECT_TRUE(converted->orientation_ned.toRotationMatrix().isApprox(expected));
+  EXPECT_NEAR(converted->orientation_ned.norm(), 1.0, 1e-12);
 
   auto negated = message;
   negated.pose.pose.orientation.w = -negated.pose.pose.orientation.w;
@@ -68,8 +72,25 @@ TEST(ExternalOdometryConversionTest, UsesSeparateWorldAndBodyFrameMatrices) {
   negated.pose.pose.orientation.z = -negated.pose.pose.orientation.z;
   const auto converted_negated = convert_ros_lio_odometry(negated);
   ASSERT_TRUE(converted_negated.has_value());
-  EXPECT_TRUE(converted->orientation_frd.toRotationMatrix().isApprox(
-      converted_negated->orientation_frd.toRotationMatrix()));
+  EXPECT_TRUE(converted->orientation_ned.toRotationMatrix().isApprox(
+      converted_negated->orientation_ned.toRotationMatrix()));
+}
+
+TEST(ExternalOdometryConversionTest, RotatesBodyVelocityIntoNedWorldFrame) {
+  auto message = valid_message();
+  const Eigen::Quaterniond yaw_quarter_turn(
+      Eigen::AngleAxisd(std::numbers::pi / 2.0, Eigen::Vector3d::UnitZ()));
+  message.pose.pose.orientation.w = yaw_quarter_turn.w();
+  message.pose.pose.orientation.x = yaw_quarter_turn.x();
+  message.pose.pose.orientation.y = yaw_quarter_turn.y();
+  message.pose.pose.orientation.z = yaw_quarter_turn.z();
+  // Body-FLU +X becomes world-ENU +Y after the yaw, then NED [1, 0, 0].
+  message.twist.twist.linear.x = 1.0;
+  const auto converted = convert_ros_lio_odometry(message);
+  ASSERT_TRUE(converted.has_value());
+  EXPECT_NEAR(converted->velocity_ned.x(), 1.0, 1e-12);
+  EXPECT_NEAR(converted->velocity_ned.y(), 0.0, 1e-12);
+  EXPECT_NEAR(converted->velocity_ned.z(), 0.0, 1e-12);
 }
 
 TEST(ExternalOdometryConversionTest, TransformsFullNonDiagonalCovarianceBeforePublishingDiagonal) {
@@ -81,7 +102,7 @@ TEST(ExternalOdometryConversionTest, TransformsFullNonDiagonalCovarianceBeforePu
   covariance[2] = covariance[12] = 0.5;
   covariance[8] = covariance[13] = 0.75;
   const auto diagonal = transformed_covariance_diagonal(
-      covariance, 0, C_world_frd_from_ros_local_zup());
+      covariance, 0, C_ned_from_lio_enu());
   ASSERT_TRUE(diagonal.has_value());
   EXPECT_DOUBLE_EQ((*diagonal)[0], 3.0);
   EXPECT_DOUBLE_EQ((*diagonal)[1], 2.0);

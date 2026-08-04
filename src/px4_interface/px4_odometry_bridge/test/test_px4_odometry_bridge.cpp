@@ -94,7 +94,7 @@ TEST(Px4FrameConverter, ConvertsNedPoseAndWorldVelocityWithPublishedBasis) {
   EXPECT_TRUE(output.value->orientation.toRotationMatrix().isApprox(expected_orientation));
 }
 
-TEST(Px4FrameConverter, KeepsFrdWorldLocalAndDoesNotClaimEnu) {
+TEST(Px4FrameConverter, RejectsUnalignedFrdWorldInsteadOfGuessingYaw) {
   px4_odometry_bridge::Px4OdometrySample input;
   input.timestamp_ns = 1'000'000;
   input.pose_frame = px4_odometry_bridge::PoseFrame::kFrd;
@@ -104,10 +104,7 @@ TEST(Px4FrameConverter, KeepsFrdWorldLocalAndDoesNotClaimEnu) {
   input.angular_velocity = Eigen::Vector3d::Zero();
 
   const auto output = px4_odometry_bridge::FrameConverter{}.convert(input);
-  ASSERT_TRUE(output);
-  EXPECT_EQ(output.value->world_convention,
-            px4_odometry_bridge::WorldConvention::kPx4FrdLocal);
-  EXPECT_TRUE(output.value->position.isApprox(Eigen::Vector3d(2.0, -1.0, 3.0)));
+  EXPECT_FALSE(output);
 }
 
 TEST(Px4FrameConverter, RejectsWorldVelocityFromDifferentWorldFrame) {
@@ -183,8 +180,8 @@ TEST(Px4FrameConverter, UsesNedBasisForPositionCovariance) {
 TEST(Px4FrameConverter, KeepsUnavailableAngularCovarianceExplicit) {
   px4_odometry_bridge::Px4OdometrySample input;
   input.timestamp_ns = 1'000'000;
-  input.pose_frame = px4_odometry_bridge::PoseFrame::kFrd;
-  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kFrd;
+  input.pose_frame = px4_odometry_bridge::PoseFrame::kNed;
+  input.velocity_frame = px4_odometry_bridge::VelocityFrame::kNed;
   input.position_variance = Eigen::Vector3d::Ones();
   input.velocity_variance = Eigen::Vector3d::Ones();
   input.orientation_variance = Eigen::Vector3d::Ones();

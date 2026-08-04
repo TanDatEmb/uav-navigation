@@ -60,11 +60,12 @@ fast_lio:
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0
-        # Keep about 5-10 replay scans of spatial support. The hard limit is a
-        # safety bound; the registration voxel remains the normal reduction.
-        soft_point_limit: 100000
-        hard_point_limit: 120000
-        target_point_count_after_prune: 80000
+        # Replay measurements stay around 10k-16k map points. Keep one to two
+        # scan periods of headroom, then prune back to the observed range;
+        # never allocate a 100k+ point map for this dataset contract.
+        soft_point_limit: 20000
+        hard_point_limit: 24000
+        target_point_count_after_prune: 16000
         distance_shell_size_m: 5.0
     output:
       publish_registered_points: false

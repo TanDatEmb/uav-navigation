@@ -122,7 +122,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(result["matched_sample_count"], 0)
         self.assertEqual(result["initial_stream_epoch_offset_ms"], -1.0)
 
-    def test_frame_contract_reports_requested_world_mapping(self) -> None:
+    def test_frame_contract_reports_ned_world_mapping_and_attitude(self) -> None:
         samples = [
             {
                 "kind": "sample",
@@ -130,6 +130,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "payload": {
                     "stamp_ns": 1_000_000,
                     "position": [2.0, 3.0, 4.0],
+                    "q_xyzw": [0.0, 0.0, 0.0, 1.0],
                     "linear_velocity": [1.0, 2.0, 3.0],
                     "angular_velocity": [4.0, 5.0, 6.0],
                 },
@@ -140,19 +141,26 @@ class RuntimeContractTest(unittest.TestCase):
                 "stream": "external_odometry",
                 "payload": {
                     "timestamp_sample_us": 1_000,
-                    "position": [-3.0, 2.0, 4.0],
-                    "velocity": [1.0, -2.0, -3.0],
+                    "pose_frame": 1,
+                    "velocity_frame": 1,
+                    "position": [3.0, 2.0, -4.0],
+                    # C_NED_FROM_ENU * C_FRD_FROM_FLU at identity attitude is
+                    # a +90 deg yaw in the NED basis.
+                    "q_wxyz": [0.7071067811865476, 0.0, 0.0, 0.7071067811865475],
+                    "velocity": [2.0, 1.0, -3.0],
                     "angular_velocity": [4.0, -5.0, -6.0],
                 },
                 "timestamp_ns": 1_000_000,
             },
         ]
         result = report._frame_contract_residuals(samples, 1.0)
-        self.assertEqual(result["world_transform"], "x_px4=-y_lio; y_px4=x_lio; z_px4=z_lio")
+        self.assertEqual(result["world_transform"], "x_px4_ned=y_lio_enu; y_px4_ned=x_lio_enu; z_px4_ned=-z_lio_enu")
         self.assertEqual(result["matched_sample_count"], 1)
         self.assertAlmostEqual(result["position"]["maximum"], 0.0, places=9)
         self.assertAlmostEqual(result["velocity"]["maximum"], 0.0, places=9)
         self.assertAlmostEqual(result["angular_velocity"]["maximum"], 0.0, places=9)
+        self.assertAlmostEqual(result["attitude"]["maximum"], 0.0, places=9)
+        self.assertEqual(result["frame_contract_violation_count"], 0)
 
     def test_report_verdict_set_is_closed(self) -> None:
         self.assertEqual(report.VERDICTS, {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"})

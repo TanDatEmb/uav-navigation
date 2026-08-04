@@ -16,3 +16,12 @@
   ros_type_name: sensor_msgs/msg/Imu
   gz_type_name: gz.msgs.IMU
   direction: GZ_TO_ROS
+
+# Gazebo OdometryPublisher ground truth.  The message is ENU/FLU (odom frame
+# and base_link child frame); the PX4 bridge must convert it to NED/FRD before
+# publishing /fmu/in/vehicle_visual_odometry.
+- ros_topic_name: /sim/ground_truth/odometry
+  gz_topic_name: /model/x500_mid360/odometry_with_covariance
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: gz.msgs.OdometryWithCovariance
+  direction: GZ_TO_ROS

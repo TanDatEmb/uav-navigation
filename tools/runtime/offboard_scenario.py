@@ -211,6 +211,9 @@ class OffboardScenario:
         self.mode_pub.publish(offboard)
         setpoint = TrajectorySetpoint()
         setpoint.timestamp = self.sim_now_ns // 1000
+        # PX4 TrajectorySetpoint.position is always local NED (x north, y east,
+        # z down).  Gazebo ground truth is ENU; the runtime report checks the
+        # corresponding x_enu=y_ned, y_enu=x_ned, z_enu=-z_ned mapping.
         position = [float(value) for value in segment.get("position_ned", [0.0, 0.0, 0.0])]
         setpoint.position = position
         setpoint.velocity = [math.nan, math.nan, math.nan]

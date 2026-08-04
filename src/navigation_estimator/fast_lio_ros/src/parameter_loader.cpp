@@ -236,12 +236,12 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.local_map_crop_trigger_distance_m = node.declare_parameter(
       "mapping.local_map.crop_trigger_distance_m", 5.0);
   result.local_map_soft_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.soft_point_limit", 100000);
+      "mapping.local_map.soft_point_limit", 20000);
   result.local_map_hard_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.hard_point_limit", 120000);
+      "mapping.local_map.hard_point_limit", 24000);
   result.local_map_target_point_count_after_prune =
       node.declare_parameter<std::int64_t>(
-          "mapping.local_map.target_point_count_after_prune", 80000);
+          "mapping.local_map.target_point_count_after_prune", 16000);
   result.local_map_distance_shell_size_m = node.declare_parameter(
       "mapping.local_map.distance_shell_size_m", 5.0);
   result.dynamic_filter_enabled =

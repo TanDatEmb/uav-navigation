@@ -76,7 +76,6 @@ class FrameConverter {
 
   static const Eigen::Matrix3d &c_enu_ned();
   static const Eigen::Matrix3d &c_flu_frd();
-  static const Eigen::Matrix3d &rotation_ros_local_from_px4_frd_world();
 
  private:
   std::optional<Eigen::Quaterniond> previous_orientation_;

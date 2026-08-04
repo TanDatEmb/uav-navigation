@@ -13,9 +13,15 @@ namespace px4_odometry_bridge {
 
 struct ExternalOdometryFrame {
   std::int64_t timestamp_ns{0};
-  Eigen::Vector3d position_frd{Eigen::Vector3d::Zero()};
-  Eigen::Quaterniond orientation_frd{Eigen::Quaterniond::Identity()};
-  Eigen::Vector3d velocity_body_frd{Eigen::Vector3d::Zero()};
+  // PX4 VehicleOdometry input is deliberately published in NED, not in an
+  // unlabeled project-local FRD frame.  This makes position, velocity, and
+  // attitude use the same world basis and lets the simulator contract be
+  // checked directly against Gazebo ground truth.
+  Eigen::Vector3d position_ned{Eigen::Vector3d::Zero()};
+  Eigen::Quaterniond orientation_ned{Eigen::Quaterniond::Identity()};
+  Eigen::Vector3d velocity_ned{Eigen::Vector3d::Zero()};
+  // VehicleOdometry.angular_velocity is always body-FRD, independent of the
+  // pose and linear-velocity frames.
   Eigen::Vector3d angular_velocity_body_frd{Eigen::Vector3d::Zero()};
   Eigen::Vector3d position_variance{Eigen::Vector3d::Zero()};
   Eigen::Vector3d orientation_variance{Eigen::Vector3d::Zero()};
@@ -24,10 +30,16 @@ struct ExternalOdometryFrame {
   bool covariance_valid{false};
 };
 
-// Keep these matrices separate even though both are FRD/FLU sign changes.
-// The world matrix changes ROS local Z-up coordinates; the body matrix changes
-// ROS body FLU coordinates. The distinction is part of the public contract.
-[[nodiscard]] const Eigen::Matrix3d& C_world_frd_from_ros_local_zup() noexcept;
+// LIO's public world contract is local ENU/Z-up:
+//   +X east, +Y north, +Z up.
+// PX4 POSE_FRAME_NED and VELOCITY_FRAME_NED are:
+//   +X north, +Y east, +Z down.
+// This is the one and only world basis change used for /fmu/in.  In basis
+// form: e_x(ENU)->e_y(NED), e_y(ENU)->e_x(NED), e_z(ENU)->-e_z(NED).
+[[nodiscard]] const Eigen::Matrix3d& C_ned_from_lio_enu() noexcept;
+
+// ROS base_link is FLU; PX4 body fields are FRD.  This is independent of the
+// world transform above and must never be reused for world position/velocity.
 [[nodiscard]] const Eigen::Matrix3d& C_body_frd_from_body_flu() noexcept;
 
 [[nodiscard]] std::optional<Eigen::Vector3d> transformed_covariance_diagonal(

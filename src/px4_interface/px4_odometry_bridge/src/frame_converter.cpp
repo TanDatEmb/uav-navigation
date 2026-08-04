@@ -21,6 +21,9 @@ Eigen::Vector3d rotate_variance(const Eigen::Matrix3d &rotation,
 }  // namespace
 
 const Eigen::Matrix3d &FrameConverter::c_enu_ned() {
+  // PX4 NED -> ROS ENU coordinate conversion is its own inverse:
+  //   [x_enu y_enu z_enu]^T = C_enu_ned [x_ned y_ned z_ned]^T
+  //   x_enu=y_ned, y_enu=x_ned, z_enu=-z_ned.
   static const Eigen::Matrix3d matrix = (Eigen::Matrix3d() << 0.0, 1.0, 0.0,
                                          1.0, 0.0, 0.0, 0.0, 0.0, -1.0)
                                             .finished();
@@ -28,18 +31,8 @@ const Eigen::Matrix3d &FrameConverter::c_enu_ned() {
 }
 
 const Eigen::Matrix3d &FrameConverter::c_flu_frd() {
+  // ROS base_link is FLU; PX4 body fields are FRD.
   static const Eigen::Matrix3d matrix = Eigen::DiagonalMatrix<double, 3>(1.0, -1.0, -1.0);
-  return matrix;
-}
-
-const Eigen::Matrix3d &FrameConverter::rotation_ros_local_from_px4_frd_world() {
-  // Inverse of the explicit LIO->PX4 local-world alignment:
-  //   x_lio = y_px4, y_lio = -x_px4, z_lio = z_px4.
-  // This does not make a PX4 FRD world globally ENU; it preserves PX4's local
-  // origin and applies only the known startup yaw alignment.
-  static const Eigen::Matrix3d matrix =
-      (Eigen::Matrix3d() << 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-          .finished();
   return matrix;
 }
 
@@ -72,10 +65,11 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
       position_world = c_enu_ned() * sample.position;
       break;
     case PoseFrame::kFrd:
-      world_from_flu = rotation_ros_local_from_px4_frd_world() *
-                       continuous_q.toRotationMatrix() * c_flu_frd();
-      position_world = rotation_ros_local_from_px4_frd_world() * sample.position;
-      break;
+      // POSE_FRAME_FRD carries an arbitrary local heading.  Without a
+      // measured ^lio_odom T_px4_frd alignment, applying a guessed yaw here
+      // silently mirrors/rotates every position, velocity, and yaw.  Reject
+      // it instead of manufacturing a transform.
+      return {std::nullopt, "PX4 FRD pose frame requires an explicit world alignment"};
     default:
       return {std::nullopt, "unsupported PX4 pose frame"};
   }
@@ -88,11 +82,7 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
       velocity_world = c_enu_ned() * sample.velocity;
       break;
     case VelocityFrame::kFrd:
-      if (sample.pose_frame != PoseFrame::kFrd) {
-        return {std::nullopt, "FRD world velocity cannot be combined with a non-FRD pose frame"};
-      }
-      velocity_world = rotation_ros_local_from_px4_frd_world() * sample.velocity;
-      break;
+      return {std::nullopt, "PX4 FRD world velocity requires an explicit world alignment"};
     case VelocityFrame::kBodyFrd:
       velocity_world = world_from_flu * c_flu_frd() * sample.velocity;
       break;
@@ -113,17 +103,12 @@ ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {
   output.velocity_body = world_from_flu.transpose() * velocity_world;
   output.angular_velocity_body = c_flu_frd() * sample.angular_velocity;
   const Eigen::Matrix3d position_basis =
-      sample.pose_frame == PoseFrame::kNed
-          ? c_enu_ned()
-          : rotation_ros_local_from_px4_frd_world();
+      c_enu_ned();
   output.position_variance = rotate_variance(position_basis, sample.position_variance);
   if (sample.velocity_frame == VelocityFrame::kBodyFrd) {
     output.velocity_variance = rotate_variance(c_flu_frd(), sample.velocity_variance);
   } else {
-    const Eigen::Matrix3d velocity_world_basis =
-        sample.velocity_frame == VelocityFrame::kNed
-            ? c_enu_ned()
-            : rotation_ros_local_from_px4_frd_world();
+    const Eigen::Matrix3d velocity_world_basis = c_enu_ned();
     output.velocity_variance = rotate_variance(
         world_from_flu.transpose(),
         rotate_variance(velocity_world_basis, sample.velocity_variance));

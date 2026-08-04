@@ -10,5 +10,16 @@
       <parent>base_link</parent><child>livox_frame</child>
       <pose relative_to="base_link">0 0 0.28 0 0 0</pose>
     </joint>
+    <!-- Gazebo ground truth in ENU/FLU.  PX4's simulator bridge consumes the
+         same model through NED/FRD; keep this topic available so every frame
+         conversion can be checked against the simulator, not against another
+         transformed estimate. -->
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <dimensions>3</dimensions>
+      <!-- OdometryPublisher defaults to base_footprint.  LIO and PX4 use
+           base_link, so publish truth for the same rigid body frame. -->
+      <robot_base_frame>base_link</robot_base_frame>
+    </plugin>
   </model>
 </sdf>

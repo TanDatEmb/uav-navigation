@@ -344,6 +344,14 @@ class RuntimeMonitor:
             TopicSpec("propagated_odometry", "/lio/odometry_propagated", Odometry, _odom_payload),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
+        if self.workflow != "dataset":
+            # Gazebo's OdometryPublisher is the independent simulator truth.
+            # It is ENU/FLU and must remain a separate stream; comparing an
+            # estimate to a bridge output derived from that same estimate
+            # would only prove that the bridge copied its own numbers.
+            specs.append(TopicSpec(
+                "ground_truth_odometry", "/sim/ground_truth/odometry", Odometry, _odom_payload
+            ))
         try:
             from tf2_msgs.msg import TFMessage
             specs.append(TopicSpec("tf", "/tf", TFMessage, lambda m: {"transform_count": len(m.transforms)}))

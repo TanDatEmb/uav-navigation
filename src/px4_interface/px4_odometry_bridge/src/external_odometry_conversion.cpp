@@ -48,13 +48,11 @@ std::optional<Eigen::Matrix3d> validated_block(
 
 }  // namespace
 
-const Eigen::Matrix3d& C_world_frd_from_ros_local_zup() noexcept {
-  // The LIO local frame is yaw-aligned to the PX4 local FRD/NED log frame:
-  //   x_px4 = -y_lio, y_px4 = x_lio, z_px4 = z_lio.
-  // This is a proper +90 degree world-yaw rotation.  It is deliberately
-  // separate from the body FLU->FRD basis below.
+const Eigen::Matrix3d& C_ned_from_lio_enu() noexcept {
+  // Exact ENU -> NED basis conversion.  Do not replace this with a yaw-only
+  // rotation: the vertical axis also changes sign.
   static const Eigen::Matrix3d matrix =
-      (Eigen::Matrix3d() << 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+      (Eigen::Matrix3d() << 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0)
           .finished();
   return matrix;
 }
@@ -129,38 +127,48 @@ std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     return std::nullopt;
   }
 
-  const auto& c_world = C_world_frd_from_ros_local_zup();
+  const auto& c_ned = C_ned_from_lio_enu();
   const auto& c_body = C_body_frd_from_body_flu();
-  const Eigen::Matrix3d rotation_f_b =
-      c_world * orientation_ros.normalized().toRotationMatrix() * c_body.inverse();
+  const Eigen::Matrix3d rotation_enu_flu = orientation_ros.normalized().toRotationMatrix();
+  const Eigen::Matrix3d rotation_ned_frd = c_ned * rotation_enu_flu * c_body.inverse();
+  const Eigen::Matrix3d rotation_ned_from_body_flu = c_ned * rotation_enu_flu;
   const auto position_variance = transformed_covariance_diagonal(
-      message.pose.covariance, 0, c_world);
+      message.pose.covariance, 0, c_ned);
+  // VehicleOdometry.orientation_variance is expressed in body coordinates.
+  // ROS pose orientation covariance is expressed in the LIO world basis, so
+  // rotate world -> body-FLU -> body-FRD before taking the diagonal.
   const auto orientation_variance = transformed_covariance_diagonal(
-      message.pose.covariance, 3, c_world);
+      message.pose.covariance, 3, c_body * rotation_enu_flu.transpose());
   const auto velocity_variance = transformed_covariance_diagonal(
-      message.twist.covariance, 0, c_body);
+      message.twist.covariance, 0, rotation_ned_from_body_flu);
   if (!position_variance || !orientation_variance || !velocity_variance) {
     return std::nullopt;
   }
 
   ExternalOdometryFrame result;
   result.timestamp_ns = timestamp_ns;
-  result.position_frd = c_world * Eigen::Vector3d(
+  result.position_ned = c_ned * Eigen::Vector3d(
       message.pose.pose.position.x, message.pose.pose.position.y,
       message.pose.pose.position.z);
-  result.orientation_frd = Eigen::Quaterniond(rotation_f_b).normalized();
-  result.velocity_body_frd = c_body * Eigen::Vector3d(
+  result.orientation_ned = Eigen::Quaterniond(rotation_ned_frd).normalized();
+  // nav_msgs/Odometry states twist in child_frame_id.  Here child_frame_id is
+  // base_link (FLU), therefore convert body-FLU -> LIO ENU -> PX4 NED.  The
+  // previous implementation only applied the body sign matrix and published
+  // a body velocity while labeling the field as BODY_FRD; the new contract is
+  // an explicit NED world velocity.
+  const Eigen::Vector3d velocity_body_flu(
       message.twist.twist.linear.x, message.twist.twist.linear.y,
       message.twist.twist.linear.z);
+  result.velocity_ned = rotation_ned_from_body_flu * velocity_body_flu;
   result.angular_velocity_body_frd = c_body * Eigen::Vector3d(
       message.twist.twist.angular.x, message.twist.twist.angular.y,
       message.twist.twist.angular.z);
   result.position_variance = *position_variance;
   result.orientation_variance = *orientation_variance;
   result.velocity_variance = *velocity_variance;
-  result.frame_valid = result.position_frd.allFinite() &&
-                       result.orientation_frd.coeffs().allFinite() &&
-                       result.velocity_body_frd.allFinite() &&
+  result.frame_valid = result.position_ned.allFinite() &&
+                       result.orientation_ned.coeffs().allFinite() &&
+                       result.velocity_ned.allFinite() &&
                        result.angular_velocity_body_frd.allFinite();
   result.covariance_valid = result.position_variance.allFinite() &&
                             result.orientation_variance.allFinite() &&
