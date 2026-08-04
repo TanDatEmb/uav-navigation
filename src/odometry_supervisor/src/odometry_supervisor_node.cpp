@@ -27,6 +27,7 @@
 #include "odometry_supervisor/supervisor_state_machine.hpp"
 #include "odometry_supervisor/world_alignment.hpp"
 #include "odometry_supervisor/query_epoch_eligibility.hpp"
+#include "odometry_supervisor/query_failure_accounting.hpp"
 
 namespace odometry_supervisor {
 namespace {
@@ -364,7 +365,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     }
     if (!query_client_->service_is_ready()) {
       ++query_service_unavailable_count_;
-      ++query_transport_failure_count_;
       set_query_failure("TRANSPORT_FAILURE", "PX4 sampling service unavailable");
       if (!service_retry_key_ || *service_retry_key_ != key) {
         service_retry_key_ = key;
@@ -375,7 +375,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
       ++service_retry_attempts_;
       if (service_retry_attempts_ >= kMaxServiceRetryAttempts) {
         suppress_query_epoch(key);
-        ++query_failure_count_;
+        query_failures_.record(QueryFailureKind::kTransport);
         query_last_failure_reason_ = "PX4 sampling service retry budget exhausted";
       } else {
         next_service_retry_ = now_steady +
@@ -391,15 +391,17 @@ class OdometrySupervisorNode final : public rclcpp::Node {
 
   void record_transport_failure(const QueryEpochKey& key, const std::string& reason) {
     suppress_query_epoch(key);
-    ++query_transport_failure_count_;
+    query_failures_.record(QueryFailureKind::kTransport);
     set_query_failure("TRANSPORT_FAILURE", reason);
     invalidate_comparison();
     alignment_manager_.observeTransportFailure(reason);
   }
 
-  void record_contract_failure(const QueryEpochKey& key, const std::string& reason) {
+  void record_contract_failure(const QueryEpochKey& key, const std::string& reason,
+                               bool generation_mismatch = false) {
     suppress_query_epoch(key);
-    ++query_failure_count_;
+    query_failures_.record(generation_mismatch ? QueryFailureKind::kGenerationMismatch
+                                               : QueryFailureKind::kContract);
     set_query_failure("GENERATION_CONTRACT_FAILURE", reason);
     invalidate_comparison();
     alignment_manager_.observeTransportFailure(reason);
@@ -407,8 +409,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
 
   void record_geometric_failure(const QueryEpochKey& key, const std::string& reason) {
     suppress_query_epoch(key);
-    ++query_geometric_failure_count_;
-    ++query_failure_count_;
+    query_failures_.record(QueryFailureKind::kGeometric);
     set_query_failure("GEOMETRIC_FAILURE", reason);
     alignment_manager_.beginRevalidation(reason, key.epoch_ns);
     invalidate_comparison();
@@ -431,8 +432,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         std::chrono::steady_clock::now() - pending.started).count();
     if (success) {
       ++query_success_count_;
-    } else {
-      ++query_failure_count_;
     }
     ++query_rtt_count_;
     query_rtt_max_ms_ = std::max(query_rtt_max_ms_, elapsed);
@@ -589,9 +588,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->reset_generation != pending.expected_reset_generation ||
               response->frame_generation != pending.expected_frame_generation ||
               response->time_generation != pending.expected_time_generation) {
-            ++query_generation_mismatch_count_;
             alignment_rejection_reason_ = "alignment query generation mismatch";
-            record_contract_failure(pending.key, alignment_rejection_reason_);
+            record_contract_failure(pending.key, alignment_rejection_reason_, true);
             return;
           }
           last_alignment_pair_epoch_ns_ = pending.requested_epoch_ns;
@@ -604,8 +602,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                                                     previous_residual_)
                                       : std::nullopt;
             if (!residual) {
-              ++query_geometric_failure_count_;
-              ++query_failure_count_;
+              query_failures_.record(QueryFailureKind::kGeometric);
               set_query_failure("GEOMETRIC_FAILURE", "frozen alignment residual unavailable");
               alignment_manager_.observeRevalidation(
                   invalid_revalidation(pending.key, pending.sequence));
@@ -709,7 +706,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                                navigation_interfaces::kOrientationValid |
                                                navigation_interfaces::kLinearVelocityValid;
           if ((response->component_validity_mask & required_components) != required_components) {
-            ++query_failure_count_;
             ++query_invalid_component_count_;
             record_contract_failure(pending.key, "comparison component validity failed");
             return;
@@ -726,8 +722,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->reset_generation != current_reset_generation ||
               response->frame_generation != current_frame_generation ||
               response->time_generation != current_time_generation) {
-            ++query_generation_mismatch_count_;
-            record_contract_failure(pending.key, "comparison query generation mismatch");
+            record_contract_failure(pending.key, "comparison query generation mismatch", true);
             return;
           }
           const auto locked_alignment = alignment_manager_.lockedAlignment();
@@ -918,17 +913,17 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.component_validity_mask = aligned_comparison_ ? aligned_comparison_->component_validity_mask : 0;
     input.covariance_availability_mask = aligned_comparison_ ? aligned_comparison_->covariance_availability_mask : 0;
     input.query_invalid_component_count = query_invalid_component_count_;
-    input.query_generation_mismatch_count = query_generation_mismatch_count_;
+    input.query_generation_mismatch_count = query_failures_.generation_mismatch_count;
     input.query_stale_sequence_count = query_stale_sequence_count_;
     input.query_timeout_count = query_timeout_count_;
     input.query_service_unavailable_count = query_service_unavailable_count_;
     input.query_success_count = query_success_count_;
-    input.query_failure_count = query_failure_count_;
+    input.query_failure_count = query_failures_.failure_count;
     input.query_epoch_not_yet_buffered_count = query_epoch_not_yet_buffered_count_;
     input.query_epoch_expired_count = query_epoch_expired_count_;
     input.query_duplicate_suppressed_count = query_duplicate_suppressed_count_;
-    input.query_transport_failure_count = query_transport_failure_count_;
-    input.query_geometric_failure_count = query_geometric_failure_count_;
+    input.query_transport_failure_count = query_failures_.transport_failure_count;
+    input.query_geometric_failure_count = query_failures_.geometric_failure_count;
     input.query_failure_class = query_failure_class_;
     input.query_last_failure_reason = query_last_failure_reason_;
     input.query_rtt_count = query_rtt_count_;
@@ -1324,7 +1319,6 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::optional<PendingAlignmentQuery> pending_alignment_query_;
   std::uint64_t query_sequence_{0};
   std::uint64_t query_invalid_component_count_{0};
-  std::uint64_t query_generation_mismatch_count_{0};
   std::uint64_t query_stale_sequence_count_{0};
   std::uint64_t query_timeout_count_{0};
   std::uint64_t query_service_unavailable_count_{0};
@@ -1332,12 +1326,10 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   std::uint64_t query_rtt_count_{0};
   double query_rtt_max_ms_{0.0};
   std::uint64_t query_success_count_{0};
-  std::uint64_t query_failure_count_{0};
+  QueryFailureCounters query_failures_;
   std::uint64_t query_epoch_not_yet_buffered_count_{0};
   std::uint64_t query_epoch_expired_count_{0};
   std::uint64_t query_duplicate_suppressed_count_{0};
-  std::uint64_t query_transport_failure_count_{0};
-  std::uint64_t query_geometric_failure_count_{0};
   std::string query_failure_class_{"NONE"};
   std::string query_last_failure_reason_;
   std::optional<QueryEpochKey> last_query_key_;

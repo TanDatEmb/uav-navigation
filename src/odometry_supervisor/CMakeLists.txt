@@ -56,6 +56,7 @@ if(BUILD_TESTING)
     test/test_odometry_alignment_estimator.cpp
     test/test_alignment_lifecycle_manager.cpp
     test/test_query_epoch_eligibility.cpp
+    test/test_query_failure_accounting.cpp
     test/test_lio_lifecycle_coordinator.cpp)
   target_link_libraries(test_${PROJECT_NAME} ${PROJECT_NAME}_core)
   ament_target_dependencies(test_${PROJECT_NAME} diagnostic_msgs)
