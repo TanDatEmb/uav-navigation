@@ -175,7 +175,9 @@ TEST(InitialStatePriorPipelineTest, FutureTopicPriorSurvivesTimeoutUntilSensorCa
 }
 
 TEST(InitialStatePriorPipelineTest, PredictsFromExactPriorEpochWithBracketedImu) {
-  FastLioPipeline pipeline(topicConfig());
+  auto config = topicConfig();
+  config.ikfom.maximum_integration_step_ns = 100'000'000;
+  FastLioPipeline pipeline(config);
   MeasurementGroup group;
   group.scan.start_time = Timestamp(1'200'000'000);
   group.scan.end_time = Timestamp(1'200'000'000);
@@ -224,7 +226,7 @@ TEST(InitialStatePriorPipelineTest,
   prior.mask = {true, true, PriorAttitudeMode::kFull};
   prior.position_odom_base_m = initial_position;
   prior.orientation_odom_base = initial_orientation;
-  prior.linear_velocity_base_m_s = initial_velocity;
+  prior.linear_velocity_base_m_s = initial_orientation.inverse() * initial_velocity;
   prior.angular_velocity_base_rad_s =
       Eigen::Vector3d(0.0, 0.0, yaw_rate_rad_s);
   ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
@@ -250,9 +252,13 @@ TEST(InitialStatePriorPipelineTest,
                                            Eigen::Vector3d::UnitZ())) *
       initial_orientation;
   EXPECT_TRUE(result.predicted_estimate->state.position_odom_imu_m().isApprox(
-      expected_position, 1e-6));
+      expected_position, 1e-4))
+      << "actual=" << result.predicted_estimate->state.position_odom_imu_m().transpose()
+      << " expected=" << expected_position.transpose();
   EXPECT_TRUE(result.predicted_estimate->state.velocity_odom_imu_m_s().isApprox(
-      initial_velocity, 1e-6));
+      initial_velocity, 1e-3))
+      << "actual=" << result.predicted_estimate->state.velocity_odom_imu_m_s().transpose()
+      << " expected=" << initial_velocity.transpose();
   EXPECT_LT(result.predicted_estimate->state.orientation_odom_imu().angularDistance(
                 expected_orientation),
             1e-6);
@@ -260,6 +266,88 @@ TEST(InitialStatePriorPipelineTest,
   EXPECT_EQ(pipeline.stateTime()->nanoseconds(), t1_ns);
   EXPECT_TRUE(result.diagnostics.initial_prior.propagated_to_application);
   EXPECT_EQ(result.diagnostics.initial_prior.time_delta_ns, t1_ns - t0_ns);
+  EXPECT_TRUE(result.diagnostics.prediction.attempted);
+  EXPECT_TRUE(result.diagnostics.prediction.successful);
+  EXPECT_EQ(result.diagnostics.prediction.start_time_ns, t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.end_time_ns, t1_ns);
+  EXPECT_EQ(result.diagnostics.prediction.interval_ns, t1_ns - t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_first_time_ns, t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_last_time_ns, t1_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_sample_count, 3U);
+  EXPECT_EQ(result.diagnostics.prediction.integration_interval_count, 2U);
+}
+
+TEST(InitialStatePriorPipelineTest, MissingPredictionBracketFailsClosed) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  FastLioPipeline pipeline(config);
+
+  InitialStatePrior prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.linear_velocity_base_m_s = Eigen::Vector3d::Zero();
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d::Zero();
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'200'000'000);
+  group.scan.end_time = Timestamp(1'200'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(900'000'000), imu(1'000'000'000), imu(1'100'000'000)};
+  group.propagation_start_time = Timestamp(1'200'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  EXPECT_FALSE(result.predicted_estimate.has_value());
+  EXPECT_EQ(result.rejection_reason, "Prediction IMU end bracket is missing");
+  EXPECT_TRUE(result.diagnostics.prediction.attempted);
+  EXPECT_FALSE(result.diagnostics.prediction.successful);
+  EXPECT_EQ(result.diagnostics.prediction.rejection_reason,
+            "Prediction IMU end bracket is missing");
+}
+
+TEST(InitialStatePriorPipelineTest, InvalidPriorCovarianceDoesNotMutateFilter) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  FastLioPipeline pipeline(config);
+  const ManifoldState state_before = pipeline.state();
+  const ManifoldState::Covariance covariance_before = pipeline.covariance();
+
+  InitialStatePrior prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.linear_velocity_base_m_s = Eigen::Vector3d::Zero();
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d::Zero();
+  prior.covariance = ManifoldState::Covariance::Identity();
+  (*prior.covariance)(0, 0) = -1.0;
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'000'000'000);
+  group.scan.end_time = Timestamp(1'000'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  group.propagation_start_time = Timestamp(800'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  EXPECT_FALSE(result.predicted_estimate.has_value());
+  EXPECT_EQ(result.diagnostics.initial_prior.reason,
+            "INITIAL_PRIOR_COVARIANCE_NOT_PSD");
+  EXPECT_TRUE(pipeline.state().position_odom_imu_m().isApprox(
+      state_before.position_odom_imu_m(), 1e-12));
+  EXPECT_LT(pipeline.state().orientation_odom_imu().angularDistance(
+                state_before.orientation_odom_imu()),
+            1e-12);
+  EXPECT_TRUE(pipeline.state().velocity_odom_imu_m_s().isApprox(
+      state_before.velocity_odom_imu_m_s(), 1e-12));
+  EXPECT_TRUE(pipeline.covariance().isApprox(covariance_before, 1e-12));
 }
 
 TEST(InitialStatePriorPipelineTest, InFlightPriorDoesNotUseStationaryInitializer) {

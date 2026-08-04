@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <deque>
 #include <optional>
 #include <mutex>
 #include <string>
@@ -84,6 +85,10 @@ class FastLioPipeline {
   void recordUncorrectedUpdate(LidarUpdateFailureClass failure_class);
   [[nodiscard]] ProcessResult recoverFromDiscontinuity(
       const PropagationDiscontinuity& discontinuity);
+  [[nodiscard]] Status buildPredictionImuSamples(
+      const MeasurementGroup& group, const Timestamp& start_time,
+      const Timestamp& end_time, std::vector<ImuSample>& output) const;
+  void retainPriorImuSample(const ImuSample& sample);
 
   EstimatorConfig config_;
   MeasurementBuffer buffer_;
@@ -103,6 +108,7 @@ class FastLioPipeline {
   ManifoldState::Covariance covariance_{ManifoldState::Covariance::Identity()};
   std::optional<Timestamp> state_time_;
   std::optional<Timestamp> initial_prior_state_time_;
+  std::deque<ImuSample> prior_imu_history_;
   std::optional<Timestamp> last_initialization_imu_time_;
   std::optional<Timestamp> last_correction_time_;
   std::vector<Eigen::Vector3d> bootstrap_reference_points_odom_m_;

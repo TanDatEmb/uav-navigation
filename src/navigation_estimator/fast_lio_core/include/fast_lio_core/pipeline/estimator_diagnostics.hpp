@@ -140,6 +140,7 @@ struct InitialPriorDiagnostics {
   std::uint64_t generation{0};
   bool bootstrap_map_after_prior{false};
   std::int64_t candidate_timestamp_ns{0};
+  std::int64_t state_time_ns{0};
   std::int64_t application_timestamp_ns{0};
   std::int64_t candidate_age_ns{0};
   std::int64_t time_delta_ns{0};
@@ -258,6 +259,19 @@ struct StageTimingDiagnostics {
   std::int64_t total_processing_us{0};
 };
 
+struct PredictionDiagnostics {
+  bool attempted{false};
+  bool successful{false};
+  std::int64_t start_time_ns{0};
+  std::int64_t end_time_ns{0};
+  std::int64_t interval_ns{0};
+  std::int64_t imu_first_time_ns{0};
+  std::int64_t imu_last_time_ns{0};
+  std::size_t imu_sample_count{0};
+  std::size_t integration_interval_count{0};
+  std::string rejection_reason;
+};
+
 struct EstimatorDiagnostics {
   EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
   std::uint64_t lio_generation{1};
@@ -286,6 +300,7 @@ struct EstimatorDiagnostics {
   StateDiagnostics state;
   AngularVelocityDiagnostics corrected_angular_velocity;
   OutputDiagnostics output;
+  PredictionDiagnostics prediction;
   StageTimingDiagnostics timing;
 };
 
