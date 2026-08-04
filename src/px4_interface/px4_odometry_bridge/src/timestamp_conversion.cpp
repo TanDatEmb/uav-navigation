@@ -64,9 +64,9 @@ TimestampConversionResult TimestampConverter::convert(
                                   *last_generation_ != generation;
   if (!generation_changed &&
       ((!last_measurement_time_ns_.has_value() ||
-        measurement_time_ns <= *last_measurement_time_ns_) ||
+        measurement_time_ns < *last_measurement_time_ns_) ||
        (!last_publication_time_ns_.has_value() ||
-        publication_time_ns <= *last_publication_time_ns_))) {
+        publication_time_ns < *last_publication_time_ns_))) {
     ++diagnostics_.regression_count;
     return fail("TIMESTAMP_REGRESSION");
   }

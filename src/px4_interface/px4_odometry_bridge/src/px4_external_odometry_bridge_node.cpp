@@ -235,8 +235,10 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       status.values.push_back(std::move(item));
     };
     const auto timestamp_diagnostics = timestamp_converter_->diagnostics();
+    const bool publisher_ready = node_ready_ && transport_ready;
     add("diagnostic_schema_version", "2");
     add("ready", infrastructure_ready ? "true" : "false");
+    add("publisher_ready", publisher_ready ? "true" : "false");
     add("node_ready", node_ready_ ? "true" : "false");
     add("transport_ready", transport_ready ? "true" : "false");
     add("timestamp_ready", timestamp_ready ? "true" : "false");

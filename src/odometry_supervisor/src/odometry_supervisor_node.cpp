@@ -870,9 +870,16 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                              std::isfinite(covariance_trace) && covariance_trace > 0.0;
     input.continuity_unrecoverable =
         lio_diagnostics_.boolean("requires_reanchor") || input.lio_state_corruption;
+    // P0.9 external diagnostics have their own schema and publisher readiness
+    // contract.  Readiness means that the bridge node and PX4 input transport
+    // exist; timestamp/publication authorization remain independent gates in
+    // the bridge.  Using the old schema-v1/"ready" field here would create a
+    // circular dependency: the bridge would need supervisor authorization to
+    // become ready, while the supervisor would wait for that readiness.
     input.external_publisher_ready = external_diagnostics_.found &&
-                                     external_diagnostics_.hasSchemaV1() &&
-                                     external_diagnostics_.boolean("ready") &&
+                                     external_diagnostics_.string(
+                                         "diagnostic_schema_version") == "2" &&
+                                     external_diagnostics_.boolean("publisher_ready") &&
                                      external_diagnostics_.stamp_ns > 0 &&
                                      now_ns >= external_diagnostics_.stamp_ns &&
                                      now_ns - external_diagnostics_.stamp_ns <=

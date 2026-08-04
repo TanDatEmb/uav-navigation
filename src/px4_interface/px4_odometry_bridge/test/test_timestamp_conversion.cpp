@@ -18,6 +18,14 @@ TEST(TimestampConversionTest, ValidMonotonicSimulationTimestamps) {
   EXPECT_TRUE(converter.convert(1'001'000'000, 1'021'000'000, true, 7).valid);
 }
 
+TEST(TimestampConversionTest, EqualSimulationPublicationEpochIsMonotonic) {
+  TimestampConverter converter(150'000'000);
+  ASSERT_TRUE(converter.convert(1'000'000'000, 1'020'000'000, true, 7).valid);
+  const auto result = converter.convert(1'001'000'000, 1'020'000'000, true, 7);
+  EXPECT_TRUE(result.valid);
+  EXPECT_EQ(converter.diagnostics().regression_count, 0U);
+}
+
 TEST(TimestampConversionTest, RegressionIsRejectedAndCounted) {
   TimestampConverter converter(150'000'000);
   ASSERT_TRUE(converter.convert(2'000'000'000, 2'001'000'000, true, 1).valid);
