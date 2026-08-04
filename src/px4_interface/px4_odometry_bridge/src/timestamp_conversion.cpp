@@ -1,6 +1,7 @@
 #include "px4_odometry_bridge/timestamp_conversion.hpp"
 
 #include <limits>
+#include <utility>
 
 namespace px4_odometry_bridge {
 namespace {
@@ -62,13 +63,31 @@ TimestampConversionResult TimestampConverter::convert(
   }
   const bool generation_changed = !last_generation_.has_value() ||
                                   *last_generation_ != generation;
-  if (!generation_changed &&
-      ((!last_measurement_time_ns_.has_value() ||
-        measurement_time_ns < *last_measurement_time_ns_) ||
-       (!last_publication_time_ns_.has_value() ||
-        publication_time_ns < *last_publication_time_ns_))) {
-    ++diagnostics_.regression_count;
-    return fail("TIMESTAMP_REGRESSION");
+  if (!generation_changed) {
+    if (last_measurement_time_ns_.has_value() &&
+        measurement_time_ns < *last_measurement_time_ns_) {
+      ++diagnostics_.regression_count;
+      ++diagnostics_.timestamp_sample_regression_count;
+      return fail("TIMESTAMP_SAMPLE_REGRESSION");
+    }
+    if (last_measurement_time_ns_.has_value() &&
+        measurement_time_ns == *last_measurement_time_ns_) {
+      ++diagnostics_.duplicate_measurement_suppressed_count;
+      diagnostics_.failure_reason = "DUPLICATE_MEASUREMENT_SUPPRESSED";
+      auto result = invalid_result(generation,
+                                   "DUPLICATE_MEASUREMENT_SUPPRESSED");
+      result.suppressed = true;
+      result.measurement_time_us = *measurement_us;
+      result.publication_time_us = *publication_us;
+      result.timestamp_age_ns = age;
+      return result;
+    }
+    if (last_publication_time_ns_.has_value() &&
+        publication_time_ns < *last_publication_time_ns_) {
+      ++diagnostics_.regression_count;
+      ++diagnostics_.publication_timestamp_regression_count;
+      return fail("PUBLICATION_TIMESTAMP_REGRESSION");
+    }
   }
   last_generation_ = generation;
   last_measurement_time_ns_ = measurement_time_ns;

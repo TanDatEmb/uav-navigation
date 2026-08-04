@@ -23,6 +23,13 @@ struct DiagnosticSnapshot {
   std::string string(const std::string& key, std::string fallback = {}) const;
 };
 
+// P0.9 external publisher readiness is limited to the bridge node and PX4
+// transport. Timestamp validity and supervisor authorization are independent
+// publication gates, so this helper cannot form a cycle.
+[[nodiscard]] bool externalPublisherReady(const DiagnosticSnapshot& snapshot,
+                                          std::int64_t now_ns,
+                                          std::int64_t maximum_age_ns);
+
 DiagnosticSnapshot selectDiagnostic(
     const diagnostic_msgs::msg::DiagnosticArray& array, const std::string& name);
 

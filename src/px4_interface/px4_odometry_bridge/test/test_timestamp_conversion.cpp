@@ -26,13 +26,38 @@ TEST(TimestampConversionTest, EqualSimulationPublicationEpochIsMonotonic) {
   EXPECT_EQ(converter.diagnostics().regression_count, 0U);
 }
 
-TEST(TimestampConversionTest, RegressionIsRejectedAndCounted) {
+TEST(TimestampConversionTest, EqualMeasurementEpochIsSuppressedWithoutFailure) {
+  TimestampConverter converter(150'000'000);
+  ASSERT_TRUE(converter.convert(2'000'000'000, 2'001'000'000, true, 1).valid);
+  const auto result = converter.convert(2'000'000'000, 2'002'000'000, true, 1);
+  EXPECT_FALSE(result.valid);
+  EXPECT_TRUE(result.suppressed);
+  EXPECT_EQ(result.reason, "DUPLICATE_MEASUREMENT_SUPPRESSED");
+  EXPECT_EQ(converter.diagnostics().duplicate_measurement_suppressed_count, 1U);
+  EXPECT_EQ(converter.diagnostics().regression_count, 0U);
+  EXPECT_EQ(converter.diagnostics().conversion_failure_count, 0U);
+}
+
+TEST(TimestampConversionTest, SampleRegressionIsRejectedAndCounted) {
   TimestampConverter converter(150'000'000);
   ASSERT_TRUE(converter.convert(2'000'000'000, 2'001'000'000, true, 1).valid);
   const auto result = converter.convert(1'999'000'000, 2'002'000'000, true, 1);
   EXPECT_FALSE(result.valid);
-  EXPECT_EQ(result.reason, "TIMESTAMP_REGRESSION");
+  EXPECT_EQ(result.reason, "TIMESTAMP_SAMPLE_REGRESSION");
   EXPECT_EQ(converter.diagnostics().regression_count, 1U);
+  EXPECT_EQ(converter.diagnostics().timestamp_sample_regression_count, 1U);
+  EXPECT_EQ(converter.diagnostics().publication_timestamp_regression_count, 0U);
+  EXPECT_EQ(converter.diagnostics().conversion_failure_count, 1U);
+}
+
+TEST(TimestampConversionTest, PublicationRegressionIsRejectedAndCounted) {
+  TimestampConverter converter(150'000'000);
+  ASSERT_TRUE(converter.convert(2'000'000'000, 2'002'000'000, true, 1).valid);
+  const auto result = converter.convert(2'001'000'000, 2'001'000'000, true, 1);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "PUBLICATION_TIMESTAMP_REGRESSION");
+  EXPECT_EQ(converter.diagnostics().publication_timestamp_regression_count, 1U);
+  EXPECT_EQ(converter.diagnostics().timestamp_sample_regression_count, 0U);
   EXPECT_EQ(converter.diagnostics().conversion_failure_count, 1U);
 }
 

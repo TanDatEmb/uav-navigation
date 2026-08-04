@@ -22,6 +22,7 @@ ExternalOdometryGateInput ready_input() {
 TEST(ExternalOdometryGateTest, RequiresEveryIndependentGate) {
   const auto ready = evaluate_external_odometry_gate(ready_input());
   EXPECT_TRUE(ready.publication_ready);
+  EXPECT_TRUE(ready.publisher_ready);
   EXPECT_EQ(ready.reason, "READY");
   for (auto gate : {&ExternalOdometryGateInput::node_ready,
                     &ExternalOdometryGateInput::transport_ready,
@@ -36,6 +37,9 @@ TEST(ExternalOdometryGateTest, RequiresEveryIndependentGate) {
     input.*gate = false;
     EXPECT_FALSE(evaluate_external_odometry_gate(input).publication_ready);
   }
+  auto no_transport = ready_input();
+  no_transport.transport_ready = false;
+  EXPECT_FALSE(evaluate_external_odometry_gate(no_transport).publisher_ready);
 }
 
 TEST(ExternalOdometryGateTest, JumpLatchClosesGateWithoutChangingGeneration) {

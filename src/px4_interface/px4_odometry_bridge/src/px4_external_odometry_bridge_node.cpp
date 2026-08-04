@@ -80,15 +80,6 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     for (const double value : frame.angular_velocity_body_frd) {
       if (!finite_float(value)) return false;
     }
-    for (const double value : frame.position_variance) {
-      if (!finite_float(value)) return false;
-    }
-    for (const double value : frame.orientation_variance) {
-      if (!finite_float(value)) return false;
-    }
-    for (const double value : frame.velocity_variance) {
-      if (!finite_float(value)) return false;
-    }
     return true;
   }
 
@@ -110,14 +101,43 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
 
   void on_lio(const nav_msgs::msg::Odometry& message) {
     const auto frame = convert_ros_lio_odometry(message);
-    if (!frame || !fits_px4_float(*frame)) {
+    if (!frame) {
       ++rejected_count_;
       last_frame_valid_ = false;
+      last_rejection_reason_ = "EXTERNAL_ODOMETRY_CONVERSION_REJECTED";
+      last_gate_ = ExternalOdometryGateResult{};
+      publication_ready_ = false;
+      publication_active_ = false;
+      return;
+    }
+    if (!fits_px4_float(*frame)) {
+      ++rejected_count_;
+      last_frame_valid_ = false;
+      last_rejection_reason_ = "EXTERNAL_ODOMETRY_NOT_FLOAT_REPRESENTABLE";
+      last_gate_ = ExternalOdometryGateResult{};
+      publication_ready_ = false;
+      publication_active_ = false;
+      return;
+    }
+    const auto position_variance_float =
+        positive_variances_to_px4_float(frame->position_variance);
+    const auto orientation_variance_float =
+        positive_variances_to_px4_float(frame->orientation_variance);
+    const auto velocity_variance_float =
+        positive_variances_to_px4_float(frame->velocity_variance);
+    if (!position_variance_float || !orientation_variance_float ||
+        !velocity_variance_float) {
+      ++rejected_count_;
+      ++covariance_rejected_count_;
+      last_frame_valid_ = false;
+      last_rejection_reason_ = "COVARIANCE_NOT_FLOAT_REPRESENTABLE";
+      last_gate_ = ExternalOdometryGateResult{};
       publication_ready_ = false;
       publication_active_ = false;
       return;
     }
     last_frame_valid_ = true;
+    last_rejection_reason_ = "NONE";
     const auto now_ns = now().nanoseconds();
     last_sample_timestamp_ns_ = frame->timestamp_ns;
     last_transport_timestamp_ns_ = now_ns;
@@ -191,15 +211,9 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output.angular_velocity = {static_cast<float>(frame->angular_velocity_body_frd.x()),
                                static_cast<float>(frame->angular_velocity_body_frd.y()),
                                static_cast<float>(frame->angular_velocity_body_frd.z())};
-    output.position_variance = {static_cast<float>(frame->position_variance.x()),
-                                static_cast<float>(frame->position_variance.y()),
-                                static_cast<float>(frame->position_variance.z())};
-    output.orientation_variance = {static_cast<float>(frame->orientation_variance.x()),
-                                   static_cast<float>(frame->orientation_variance.y()),
-                                   static_cast<float>(frame->orientation_variance.z())};
-    output.velocity_variance = {static_cast<float>(frame->velocity_variance.x()),
-                                static_cast<float>(frame->velocity_variance.y()),
-                                static_cast<float>(frame->velocity_variance.z())};
+    output.position_variance = *position_variance_float;
+    output.orientation_variance = *orientation_variance_float;
+    output.velocity_variance = *velocity_variance_float;
     output.reset_counter =
         public_frame_generation_to_reset_counter(public_generation);
     output.quality = supervisor_->health == SupervisorStatus::HEALTHY ? 100 : 50;
@@ -254,7 +268,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("geometric_jump_latched", jump_latch_.latched() ? "true" : "false");
     add("publication_ready", publication_ready_ ? "true" : "false");
     add("publication_active",
-        (publication_active_ && last_published_time_ns_ > 0 &&
+        (publication_ready_ && publication_active_ && last_published_time_ns_ > 0 &&
          now_ns >= last_published_time_ns_ &&
          now_ns - last_published_time_ns_ <= max_age_ns_)
             ? "true"
@@ -277,6 +291,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("timestamp_age_ns", std::to_string(last_timestamp_result_.timestamp_age_ns));
     add("timestamp_regression_count",
         std::to_string(timestamp_diagnostics.regression_count));
+    add("timestamp_sample_regression_count",
+        std::to_string(timestamp_diagnostics.timestamp_sample_regression_count));
+    add("publication_timestamp_regression_count",
+        std::to_string(timestamp_diagnostics.publication_timestamp_regression_count));
+    add("duplicate_measurement_suppressed_count",
+        std::to_string(timestamp_diagnostics.duplicate_measurement_suppressed_count));
     add("timestamp_conversion_failure_count",
         std::to_string(timestamp_diagnostics.conversion_failure_count));
     add("timestamp_failure_reason", timestamp_diagnostics.failure_reason);
@@ -284,6 +304,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("published_count", std::to_string(published_count_));
     add("gated_count", std::to_string(gated_count_));
     add("rejected_count", std::to_string(rejected_count_));
+    add("covariance_rejected_count", std::to_string(covariance_rejected_count_));
+    add("covariance_rejection_reason", last_rejection_reason_ ==
+                                            "COVARIANCE_NOT_FLOAT_REPRESENTABLE"
+                                        ? last_rejection_reason_
+                                        : "NONE");
+    add("last_rejection_reason", last_rejection_reason_);
     add("lio_public_frame_generation",
         std::to_string(supervisor_.has_value()
                            ? supervisor_->lio_public_frame_generation
@@ -320,12 +346,14 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t published_count_{0};
   std::uint64_t gated_count_{0};
   std::uint64_t rejected_count_{0};
+  std::uint64_t covariance_rejected_count_{0};
   std::uint8_t last_reset_counter_{0};
   GeometricJumpLatch jump_latch_;
   bool node_ready_{false};
   bool last_frame_valid_{false};
   bool publication_ready_{false};
   bool publication_active_{false};
+  std::string last_rejection_reason_{"NONE"};
 };
 
 }  // namespace px4_odometry_bridge

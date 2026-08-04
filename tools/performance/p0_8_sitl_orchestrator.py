@@ -488,9 +488,12 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.external_measurement_samples: list[dict[str, int]] = []
         self.external_last_timestamp_us: int | None = None
         self.external_last_sample_us: int | None = None
-        self.external_timestamp_regression_count = 0
+        self.external_sample_regression_count = 0
+        self.external_publication_regression_count = 0
+        self.external_duplicate_measurement_count = 0
         self.external_timestamp_age_max_ns = 0
         self.external_reset_counters: list[int] = []
+        self.external_diagnostic_samples: list[dict[str, Any]] = []
         self.external_baseline_message_count = 0
         self._qualification_subscriptions: dict[str, Any] = {}
         self._create_static_subscriptions()
@@ -633,6 +636,17 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self._observe("external_diagnostics", message,
                       {"status_names": [s.name for s in message.status]})
         self.diagnostics.update(message)
+        if self.status_accumulator is None:
+            return
+        event_ns = stamp_ns(message) or self.latest_clock_ns
+        start_ns = self.status_accumulator.start_ns
+        end_ns = self.status_accumulator.end_ns
+        if start_ns is None or end_ns is None or not (start_ns <= event_ns <= end_ns):
+            return
+        self.external_diagnostic_samples.append({
+            "event_ns": event_ns,
+            "values": self.diagnostics.values("px4_external_odometry_bridge"),
+        })
 
     def _on_external_odometry(self, message: Any) -> None:
         timestamp_us = int(message.timestamp)
@@ -646,8 +660,18 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         })
         if self.status_accumulator is None:
             return
-        if self.external_last_timestamp_us is not None and timestamp_us <= self.external_last_timestamp_us:
-            self.external_timestamp_regression_count += 1
+        event_ns = stamp_ns(message) or self.latest_clock_ns
+        start_ns = self.status_accumulator.start_ns
+        end_ns = self.status_accumulator.end_ns
+        if start_ns is not None and end_ns is not None and not (start_ns <= event_ns <= end_ns):
+            return
+        if self.external_last_sample_us is not None:
+            if sample_us < self.external_last_sample_us:
+                self.external_sample_regression_count += 1
+            elif sample_us == self.external_last_sample_us:
+                self.external_duplicate_measurement_count += 1
+        if self.external_last_timestamp_us is not None and timestamp_us < self.external_last_timestamp_us:
+            self.external_publication_regression_count += 1
         self.external_last_timestamp_us = timestamp_us
         self.external_last_sample_us = sample_us
         self.external_timestamp_age_max_ns = max(
@@ -744,9 +768,12 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.external_measurement_samples = []
         self.external_last_timestamp_us = None
         self.external_last_sample_us = None
-        self.external_timestamp_regression_count = 0
+        self.external_sample_regression_count = 0
+        self.external_publication_regression_count = 0
+        self.external_duplicate_measurement_count = 0
         self.external_timestamp_age_max_ns = 0
         self.external_reset_counters = []
+        self.external_diagnostic_samples = []
         self.external_baseline_message_count = (
             self.topic("external_odometry").message_count
             if self.topic("external_odometry") is not None else 0)
@@ -1573,6 +1600,45 @@ class SitlOrchestrator:
             external_baseline = self.monitor.measurement_baseline_diagnostics.get(
                 "px4_external_odometry_bridge") or {}
             external_baseline_values = external_baseline.get("values", {})
+            def diagnostic_delta(key: str) -> int | None:
+                current = parse_int(external_diagnostics.get(key))
+                baseline = parse_int(external_baseline_values.get(key)) or 0
+                return current - baseline if current is not None else None
+
+            diagnostic_samples = self.monitor.external_diagnostic_samples
+            diagnostic_values = [sample["values"] for sample in diagnostic_samples]
+
+            def diagnostic_ratio(key: str) -> float | None:
+                if not diagnostic_values:
+                    return None
+                parsed = [parse_bool(values.get(key)) for values in diagnostic_values]
+                valid = [value for value in parsed if value is not None]
+                return sum(valid) / len(valid) if valid else None
+
+            gate_reasons = [values.get("gate_reason") for values in diagnostic_values
+                            if values.get("gate_reason")]
+            gate_transitions = sum(
+                previous != current
+                for previous, current in zip(gate_reasons, gate_reasons[1:]))
+            gate_close_reopen_count = 0
+            gate_closed = False
+            previous_ready: bool | None = None
+            for values in diagnostic_values:
+                ready = parse_bool(values.get("publication_ready"))
+                if ready is None:
+                    continue
+                if previous_ready is True and not ready:
+                    gate_closed = True
+                elif gate_closed and ready:
+                    gate_close_reopen_count += 1
+                    gate_closed = False
+                previous_ready = ready
+            public_generation_values = sorted({
+                value for value in (
+                    parse_int(values.get("lio_public_frame_generation"))
+                    for values in diagnostic_values)
+                if value is not None and value > 0
+            })
             external_failure_total = parse_int(
                 external_diagnostics.get("timestamp_conversion_failure_count"))
             external_failure_baseline = parse_int(
@@ -1583,11 +1649,23 @@ class SitlOrchestrator:
                 "topic_message_delta": ((external_topic.message_count -
                                           self.monitor.external_baseline_message_count)
                                          if external_topic is not None else 0),
-                "timestamp_regression_count":
-                    self.monitor.external_timestamp_regression_count,
+                "timestamp_sample_regression_count":
+                    diagnostic_delta("timestamp_sample_regression_count"),
+                "publication_timestamp_regression_count":
+                    diagnostic_delta("publication_timestamp_regression_count"),
+                "duplicate_measurement_suppressed_count":
+                    diagnostic_delta("duplicate_measurement_suppressed_count"),
+                "published_sample_regression_count":
+                    self.monitor.external_sample_regression_count,
+                "published_duplicate_sample_count":
+                    self.monitor.external_duplicate_measurement_count,
+                "published_timestamp_regression_count":
+                    self.monitor.external_publication_regression_count,
                 "timestamp_age_max_ns": self.monitor.external_timestamp_age_max_ns,
                 "reset_counter_values": sorted(reset_values),
                 "reset_counter_change_count": max(0, len(reset_values) - 1),
+                "public_frame_generation_values": public_generation_values,
+                "public_frame_generation_unique_count": len(public_generation_values),
                 "pose_frame": external_topic.latest_payload_summary.get("pose_frame")
                     if external_topic and external_topic.latest_payload_summary else None,
                 "velocity_frame": external_topic.latest_payload_summary.get("velocity_frame")
@@ -1602,6 +1680,22 @@ class SitlOrchestrator:
                 "timestamp_conversion_failure_count_total": external_failure_total,
                 "timestamp_conversion_valid": parse_bool(
                     external_diagnostics.get("timestamp_conversion_valid")),
+                "covariance_rejected_count": diagnostic_delta("covariance_rejected_count"),
+                "covariance_rejected_count_total": parse_int(
+                    external_diagnostics.get("covariance_rejected_count")),
+                "publisher_subscription_count": parse_int(
+                    external_diagnostics.get("publisher_subscription_count")),
+                "diagnostic_sample_count": len(diagnostic_values),
+                "publisher_ready_ratio": diagnostic_ratio("publisher_ready"),
+                "publication_ready_ratio": diagnostic_ratio("publication_ready"),
+                "publication_active_ratio": diagnostic_ratio("publication_active"),
+                "authorization_ratio": diagnostic_ratio("supervisor_authorized"),
+                "gate_reason_values": sorted(set(gate_reasons)),
+                "gate_reason_transition_count": gate_transitions,
+                "gate_close_reopen_count": gate_close_reopen_count,
+                # P0.9-A is deliberately a non-fusing dry run. No EKF2
+                # external-vision aiding parameter is configured or claimed.
+                "ekf2_external_fusion_enabled": False,
                 "publication_ready": parse_bool(external_diagnostics.get("publication_ready")),
                 "publication_active": parse_bool(external_diagnostics.get("publication_active")),
                 "geometric_jump_count": parse_int(
@@ -1654,12 +1748,38 @@ class SitlOrchestrator:
             external = result["external_odometry_metrics"]
             checks.update({
                 "external_topic_samples_present": external["message_count"] > 0,
-                "external_timestamp_monotonic": external["timestamp_regression_count"] == 0,
+                "external_timestamp_sample_strictly_increasing": (
+                    external["published_sample_regression_count"] == 0 and
+                    external["published_duplicate_sample_count"] == 0),
+                "external_publication_timestamp_nondecreasing":
+                    external["published_timestamp_regression_count"] == 0,
+                "external_timestamp_monotonic": (
+                    external["published_sample_regression_count"] == 0 and
+                    external["published_duplicate_sample_count"] == 0 and
+                    external["published_timestamp_regression_count"] == 0),
                 "external_timestamp_age_bounded": external["timestamp_age_max_ns"] <= 150_000_000,
                 "external_reset_counter_stable": external["reset_counter_change_count"] == 0,
+                "external_public_frame_generation_stable":
+                    external["public_frame_generation_unique_count"] == 1,
                 "external_timestamp_conversion_valid": external["timestamp_conversion_valid"] is True,
                 "external_timestamp_conversion_rejections_zero":
                     external["timestamp_conversion_failure_count"] == 0,
+                "external_timestamp_sample_regressions_zero":
+                    external["timestamp_sample_regression_count"] == 0,
+                "external_publication_timestamp_regressions_zero":
+                    external["publication_timestamp_regression_count"] == 0,
+                "external_covariance_rejections_zero":
+                    external["covariance_rejected_count"] == 0,
+                "external_publisher_subscription_present":
+                    (external["publisher_subscription_count"] or 0) > 0,
+                "external_publication_ready_observed":
+                    (external["publication_ready_ratio"] or 0.0) > 0.0,
+                "external_publication_active_observed":
+                    (external["publication_active_ratio"] or 0.0) > 0.0,
+                "external_authorization_observed":
+                    (external["authorization_ratio"] or 0.0) > 0.0,
+                "external_ekf2_fusion_disabled":
+                    external["ekf2_external_fusion_enabled"] is False,
                 "external_geometric_jump_count_zero": external["geometric_jump_count"] == 0,
                 "external_pose_frame_frd": external["pose_frame"] == 2,
                 "external_velocity_frame_body_frd": external["velocity_frame"] == 3,

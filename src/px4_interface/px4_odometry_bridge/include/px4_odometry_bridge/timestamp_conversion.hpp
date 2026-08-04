@@ -8,6 +8,7 @@ namespace px4_odometry_bridge {
 
 struct TimestampConversionResult {
   bool valid{false};
+  bool suppressed{false};
   std::string source_domain{"UNRESOLVED"};
   std::string target_domain{"PX4_TIME_UNRESOLVED"};
   std::uint64_t measurement_time_us{0};
@@ -18,7 +19,12 @@ struct TimestampConversionResult {
 };
 
 struct TimestampConversionDiagnostics {
+  // regression_count is retained as a compatibility aggregate. The
+  // reason-specific counters below are the authoritative diagnostics.
   std::uint64_t regression_count{0};
+  std::uint64_t timestamp_sample_regression_count{0};
+  std::uint64_t publication_timestamp_regression_count{0};
+  std::uint64_t duplicate_measurement_suppressed_count{0};
   std::uint64_t conversion_failure_count{0};
   std::string failure_reason{"NONE"};
 };

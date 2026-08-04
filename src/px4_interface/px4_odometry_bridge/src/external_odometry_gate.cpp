@@ -15,8 +15,9 @@ ExternalOdometryGateResult evaluate_external_odometry_gate(
   result.supervisor_fresh = input.supervisor_fresh;
   result.frame_valid = input.frame_valid;
   result.geometric_jump_latched = input.geometric_jump_latched;
+  result.publisher_ready = result.node_ready && result.transport_ready;
   result.publication_ready =
-      result.node_ready && result.transport_ready && result.timestamp_ready &&
+      result.publisher_ready && result.timestamp_ready &&
       result.covariance_ready && result.supervisor_authorized &&
       result.public_frame_generation_valid && result.corrected_propagated_fresh &&
       result.supervisor_fresh && result.frame_valid &&

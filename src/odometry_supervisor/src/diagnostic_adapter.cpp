@@ -46,6 +46,15 @@ std::string DiagnosticSnapshot::string(const std::string& key, std::string fallb
   return iterator == values.end() ? std::move(fallback) : iterator->second;
 }
 
+bool externalPublisherReady(const DiagnosticSnapshot& snapshot,
+                            const std::int64_t now_ns,
+                            const std::int64_t maximum_age_ns) {
+  return snapshot.found && snapshot.string("diagnostic_schema_version") == "2" &&
+         snapshot.boolean("publisher_ready") && snapshot.stamp_ns > 0 &&
+         now_ns >= snapshot.stamp_ns &&
+         now_ns - snapshot.stamp_ns <= maximum_age_ns;
+}
+
 DiagnosticSnapshot selectDiagnostic(
     const diagnostic_msgs::msg::DiagnosticArray& array, const std::string& name) {
   DiagnosticSnapshot result;

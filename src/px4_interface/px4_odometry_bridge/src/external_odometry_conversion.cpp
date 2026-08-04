@@ -82,6 +82,30 @@ std::optional<Eigen::Vector3d> transformed_covariance_diagonal(
   return diagonal;
 }
 
+std::optional<float> positive_variance_to_px4_float(const double value) {
+  if (!valid_variance(value)) {
+    return std::nullopt;
+  }
+  const float converted = static_cast<float>(value);
+  if (!std::isfinite(converted) || converted <= 0.0F) {
+    return std::nullopt;
+  }
+  return converted;
+}
+
+std::optional<std::array<float, 3>> positive_variances_to_px4_float(
+    const Eigen::Vector3d& values) {
+  std::array<float, 3> converted{};
+  for (Eigen::Index index = 0; index < 3; ++index) {
+    const auto value = positive_variance_to_px4_float(values[index]);
+    if (!value) {
+      return std::nullopt;
+    }
+    converted[static_cast<std::size_t>(index)] = *value;
+  }
+  return converted;
+}
+
 std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     const nav_msgs::msg::Odometry& message) {
   if (message.header.frame_id != "lio_odom" ||

@@ -107,6 +107,27 @@ TEST(ExternalOdometryConversionTest, PreservesPositiveVarianceBelowExampleFloor)
   EXPECT_DOUBLE_EQ(converted->position_variance.x(), small_variance);
 }
 
+TEST(ExternalOdometryConversionTest, RequiresPositiveFiniteFloatRepresentableVariance) {
+  EXPECT_TRUE(positive_variance_to_px4_float(1e-12).has_value());
+  EXPECT_TRUE(positive_variance_to_px4_float(
+                  static_cast<double>(std::numeric_limits<float>::denorm_min()))
+                  .has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(
+                   static_cast<double>(std::numeric_limits<float>::denorm_min()) * 0.5)
+                   .has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(
+                   static_cast<double>(std::numeric_limits<float>::max()) * 2.0)
+                   .has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(0.0).has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(-1.0).has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(
+                   std::numeric_limits<double>::quiet_NaN())
+                   .has_value());
+  EXPECT_FALSE(positive_variance_to_px4_float(
+                   std::numeric_limits<double>::infinity())
+                   .has_value());
+}
+
 TEST(ExternalOdometryConversionTest, RejectsZeroTimestampQuaternionFrameAndUnavailableCovariance) {
   auto message = valid_message();
   message.header.stamp.sec = 0;

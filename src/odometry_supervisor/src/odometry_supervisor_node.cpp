@@ -876,14 +876,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     // the bridge.  Using the old schema-v1/"ready" field here would create a
     // circular dependency: the bridge would need supervisor authorization to
     // become ready, while the supervisor would wait for that readiness.
-    input.external_publisher_ready = external_diagnostics_.found &&
-                                     external_diagnostics_.string(
-                                         "diagnostic_schema_version") == "2" &&
-                                     external_diagnostics_.boolean("publisher_ready") &&
-                                     external_diagnostics_.stamp_ns > 0 &&
-                                     now_ns >= external_diagnostics_.stamp_ns &&
-                                     now_ns - external_diagnostics_.stamp_ns <=
-                                         config_.diagnostics_max_age_ns;
+    input.external_publisher_ready = externalPublisherReady(
+        external_diagnostics_, now_ns, config_.diagnostics_max_age_ns);
     input.propagated_age_ns = propagated_age;
     input.corrected_age_ns = corrected_age;
     input.px4_age_ns = px4_age;

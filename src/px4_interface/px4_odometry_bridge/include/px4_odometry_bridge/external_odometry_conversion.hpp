@@ -34,6 +34,14 @@ struct ExternalOdometryFrame {
     const std::array<double, 36>& covariance, std::size_t block_offset,
     const Eigen::Matrix3d& transform);
 
+// PX4 receives float variances. A positive double is representable only if
+// the converted float remains finite and strictly positive; otherwise the
+// bridge must reject it instead of silently publishing zero or infinity.
+[[nodiscard]] std::optional<float> positive_variance_to_px4_float(double value);
+
+[[nodiscard]] std::optional<std::array<float, 3>>
+positive_variances_to_px4_float(const Eigen::Vector3d& values);
+
 [[nodiscard]] std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     const nav_msgs::msg::Odometry& message);
 

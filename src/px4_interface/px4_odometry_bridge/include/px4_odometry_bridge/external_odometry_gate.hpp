@@ -28,6 +28,7 @@ struct ExternalOdometryGateResult {
   bool supervisor_fresh{false};
   bool frame_valid{false};
   bool geometric_jump_latched{false};
+  bool publisher_ready{false};
   bool publication_ready{false};
   std::string reason{"GATE_CLOSED"};
 };
