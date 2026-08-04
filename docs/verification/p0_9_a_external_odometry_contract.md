@@ -13,7 +13,9 @@ timestamp conversion, and in-flight restart remain deferred.
 | Branch | `feat/p0.9-a-external-odometry-contract` |
 | Starting HEAD | `94b6722e025ec9eabdbff1c39b4c9bc635f2f6a3` |
 | P0.8 closure | `e9f6cee23f279776fa8960f7f432b05664a80baf` |
-| Final HEAD | `f0dcab2b97e0fdf02aa4889ab2f305d83f6cf050` |
+| Historical canonical transport HEAD | `f0dcab2b97e0fdf02aa4889ab2f305d83f6cf050` |
+| Corrected implementation HEAD | `a6d1b15` |
+| Report HEAD | documentation update after `a6d1b15` |
 | PX4 | `d6f12ad1c4f70ad3230afd7d86e971421e02fef4` |
 | px4_msgs | `86d8239e962f6939e05c3737784f60c02fa884db` |
 | Protected config SHA-256 | `2690d584703d709e24d7159759ddffd1ab6e5d6eb165870058b98af61c587f6f` |
@@ -31,6 +33,7 @@ f4fe590  feat(px4): enforce external odometry contract
 cffd06e  fix(px4): preserve genuine small external covariance
 add0bd1  fix(p0.9): separate publisher readiness from publication gate
 f0dcab2  test(p0.9): measure timestamp failures within dry-run window
+a6d1b15  fix(p0.9): decouple timestamp mapping generation
 ```
 
 ## Implemented contract
@@ -48,8 +51,12 @@ f0dcab2  test(p0.9): measure timestamp failures within dry-run window
   cross-covariance is ignored explicitly. Invalid covariance fails closed and
   no synthetic `1e-6` floor is introduced.
 - Timestamp conversion is explicit and accepts only proven SITL simulation-time
-  equivalence. Real hardware returns `TIME_DOMAIN_UNRESOLVED` until a tested
-  PX4 boot-time conversion exists.
+  equivalence. The SITL mapping uses a stable mapping generation for the
+  lifetime of that proven clock mapping; real hardware returns
+  `TIME_DOMAIN_UNRESOLVED` until a tested PX4 boot-time conversion exists.
+- Timestamp monotonicity is checked only after conversion to PX4 integer
+  microseconds. The converter stores accepted target-domain values and keeps
+  mapping-generation changes independent from LIO public-frame generations.
 - Publication uses one explicit gate. Publisher readiness is node/transport
   readiness; timestamp, supervisor authorization, public generation, freshness,
   covariance, frame, supervisor freshness, and jump-latch conditions remain
@@ -63,10 +70,10 @@ Static and focused validation was run serially after sourcing ROS 2 Jazzy and
 the workspace overlay:
 
 ```text
-workspace colcon tests: 416 passed, 0 errors, 0 failures, 0 skipped
-px4_odometry_bridge package: 5 test executables, 50 test cases passed
-odometry_supervisor package: 70 test cases passed
-tools/tests/test_p0_8_sitl_orchestrator.py: 25 passed
+make check: 421 tests, 0 errors, 0 failures, 0 skipped
+make vendor-check: vendor freeze OK (18 files, 2 pinned upstream SHAs, 3 patched files)
+px4_odometry_bridge focused tests: 5 test executables passed
+odometry_supervisor diagnostic adapter: passed
 ```
 
 The static/vendor checks were also run; generated build/install/log artifacts
@@ -74,7 +81,8 @@ remain machine-local and reproducible.
 
 ## Canonical SITL A/B evidence
 
-Both runs used the same final HEAD, PX4 checkout, protected configuration,
+Both historical runs used the same pre-closeout transport HEAD
+`f0dcab2b97e0fdf02aa4889ab2f305d83f6cf050`, PX4 checkout, protected configuration,
 `warmup=30 s`, and `measurement=60 s`. The PX4 EKF2 external-vision fusion
 configuration was not enabled or changed.
 
@@ -102,14 +110,16 @@ cycle; they were not hidden or reclassified as passes.
 | Frame and reset-counter contract | PASS |
 | Covariance transform/fail-closed contract | PASS |
 | SITL timestamp conversion | PASS for the measured simulation-time window; real hardware deferred |
-| SITL non-fusing transport dry run | PASS |
+| SITL non-fusing transport dry run | PASS_PRE_CLOSEOUT_HEAD |
 | Incremental/runtime stability | PASS on canonical A/B; noisy non-canonical attempts retained |
 | Real hardware timestamp/timesync | `DEFERRED_P0.9-B` |
 | PX4 EKF2 fusion/innovation/aiding | `DEFERRED_P0.9-D` |
 | In-flight LIO restart | `DEFERRED_P0.10` |
 
-The final P0.9-A contract is therefore closed without claiming PX4 estimator
-fusion or navigation improvement.
+The historical P0.9-A transport contract is closed for the pre-closeout HEAD;
+the corrected implementation's static contract is closed without claiming PX4
+estimator fusion or navigation improvement. Corrected-head dynamic transport
+remains `BLOCKED_RUNTIME_BASELINE`.
 
 ## P0.9-A-CLOSEOUT revalidation — 2026-08-04
 
@@ -121,7 +131,8 @@ run. The earlier artifacts were classified before the corrective edits:
 | `.artifacts/verification/p0.9-a-sitl-on-20260804T0750Z` | Canonical external-enabled artifact for the pre-closeout HEAD | `pass=true`, `acceptance_eligible=true`; 165 messages at 2.75 Hz, FRD/BODY-FRD frames, reset `{1}`, timestamp-failure delta `0`, publication active. It is not evidence for the corrected HEAD because its harness SHA is `f0dcab2`. |
 | `.artifacts/verification/p0.9-a-sitl-off-20260804T0820Z` | Canonical external-disabled comparison for the pre-closeout HEAD | `pass=true`, `acceptance_eligible=true`; FAST-LIO no drops/load shedding/overflow and max queue `17`. It is not evidence for the corrected HEAD because its harness SHA is `f0dcab2`. |
 
-The unresolved review items were corrected in commit `72f85ad`:
+The unresolved review items were corrected in commits `72f85ad` and
+`a6d1b15`:
 
 - timestamp sample regression, duplicate suppression, publication regression,
   equal publication timestamps, generation reset, and the three required
@@ -132,14 +143,22 @@ The unresolved review items were corrected in commit `72f85ad`:
 - schema-v2 external publisher readiness is tested and isolated from timestamp
   and supervisor authorization, and `publication_active` now requires the
   readiness gate as well as a recent publication;
+- `lio_public_frame_generation` no longer controls timestamp monotonicity;
+  `timestamp_mapping_generation` is stable for SITL, mapping changes reset only
+  timestamp state, and the bridge reports the mapping generation and change
+  count;
+- monotonicity is evaluated on accepted PX4 microseconds, so distinct source
+  nanoseconds that quantize to one PX4 microsecond are suppressed.
 - the runner records published sample strictness, publication nondecreasing
   behavior, timestamp counter deltas, readiness/active/authorization ratios,
   public-generation uniqueness, covariance rejection deltas, gate transitions,
   PX4 subscription count, and the explicit non-fusing verdict.
 
-Focused validation on the corrected HEAD passed: the two affected packages
-built as `RelWithDebInfo`; `px4_odometry_bridge` ran 35 tests, supervisor ran
-71 tests, and the tools/runtime/simulation suites ran 36, 20, and 17 tests.
+Focused validation on the corrected implementation HEAD passed: the affected
+package built as `RelWithDebInfo`; all five `px4_odometry_bridge` test
+executables and the supervisor diagnostic adapter passed, including the
+mapping-generation and PX4-microsecond tests. The final static checks are
+recorded in the validation block above.
 
 The required same-HEAD 30 s warmup / 60 s measurement revalidation was run, but
 did not produce a canonical PASS:
@@ -156,3 +175,16 @@ absolute SITL/runtime verdict remains `BLOCKED_RUNTIME_BASELINE`. No claim is
 made that the corrected HEAD has passed dynamic external publication until a
 clean 30/60 A/B pair completes. PX4 EKF2 fusion, real-hardware time conversion,
 and in-flight restart remain deferred as before.
+
+## P0.9-A-FINAL independent verdicts
+
+| Verdict | Result |
+| --- | --- |
+| P0.9-A static message contract | `PASS` |
+| Timestamp mapping-generation contract | `PASS` |
+| PX4 microsecond monotonicity | `PASS` |
+| Historical transport evidence | `PASS_PRE_CLOSEOUT_HEAD` |
+| Corrected-head dynamic transport | `BLOCKED_RUNTIME_BASELINE` |
+| Real hardware timesync | `DEFERRED_P0.9-B` |
+| EKF2 fusion | `DEFERRED_P0.9-D` |
+| In-flight restart | `DEFERRED_P0.10` |

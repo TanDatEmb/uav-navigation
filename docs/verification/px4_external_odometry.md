@@ -51,7 +51,14 @@ publication timestamp when its sample timestamp increased; a decrease is
 rejected as `PUBLICATION_TIMESTAMP_REGRESSION`. The bridge exposes separate
 `timestamp_sample_regression_count`, `publication_timestamp_regression_count`,
 and `duplicate_measurement_suppressed_count` diagnostics. A public generation
-change starts a new timestamp epoch.
+change changes only the output `reset_counter`; it does not reset timestamp
+history. Timestamp monotonicity uses the accepted PX4 integer microseconds, not
+the source nanoseconds. Distinct source timestamps that quantize to the same
+measurement microsecond are therefore suppressed. A separate stable
+`timestamp_mapping_generation` identifies the source-to-PX4 clock mapping;
+only a mapping-generation change resets timestamp state. Diagnostics expose
+`timestamp_mapping_generation` and
+`timestamp_mapping_generation_change_count`.
 
 The gate independently requires node readiness, PX4 input transport,
 timestamp conversion, supervisor authorization, valid LIO public generation,

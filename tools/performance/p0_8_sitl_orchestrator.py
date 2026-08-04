@@ -1680,6 +1680,10 @@ class SitlOrchestrator:
                 "timestamp_conversion_failure_count_total": external_failure_total,
                 "timestamp_conversion_valid": parse_bool(
                     external_diagnostics.get("timestamp_conversion_valid")),
+                "timestamp_mapping_generation": parse_int(
+                    external_diagnostics.get("timestamp_mapping_generation")),
+                "timestamp_mapping_generation_change_count": diagnostic_delta(
+                    "timestamp_mapping_generation_change_count"),
                 "covariance_rejected_count": diagnostic_delta("covariance_rejected_count"),
                 "covariance_rejected_count_total": parse_int(
                     external_diagnostics.get("covariance_rejected_count")),
@@ -1765,6 +1769,9 @@ class SitlOrchestrator:
                 "external_timestamp_conversion_valid": external["timestamp_conversion_valid"] is True,
                 "external_timestamp_conversion_rejections_zero":
                     external["timestamp_conversion_failure_count"] == 0,
+                "external_timestamp_mapping_generation_stable":
+                    external["timestamp_mapping_generation"] == 1 and
+                    external["timestamp_mapping_generation_change_count"] == 0,
                 "external_timestamp_sample_regressions_zero":
                     external["timestamp_sample_regression_count"] == 0,
                 "external_publication_timestamp_regressions_zero":
