@@ -12,6 +12,17 @@ odometry_supervisor:
       lock_stable_windows: 3
       lock_max_translation_step_m: 0.10
       lock_max_yaw_step_rad: 0.05
+      # At least four new exact-time pairs are required per proof transition;
+      # this prevents overlapping 31/32-sample windows from counting as new
+      # evidence. The 0.15 m/0.10 rad cluster caps are absolute guards.
+      minimum_novel_pairs: 4
+      candidate_history_capacity: 8
+      max_cluster_translation_m: 0.15
+      max_cluster_yaw_rad: 0.10
+      # Chi-square(4 dof), 95% quantile: translation XYZ plus yaw NIS.
+      covariance_nis_chi_square: 9.487729
+      revalidation_samples: 3
+      revalidation_failure_limit: 3
       minimum_horizontal_excitation_m: 0.20
     freshness:
       propagated_max_age_ns: 120000000

@@ -564,6 +564,12 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
             "supervisor_diagnostics", DiagnosticArray,
             TopicSpec("supervisor_diagnostics", "/navigation/odometry_supervisor/diagnostics", "diagnostic_msgs/msg/DiagnosticArray", SUPERVISOR_QOS),
             self._on_supervisor_diagnostics)
+        self._subscribe(
+            "external_diagnostics", DiagnosticArray,
+            TopicSpec("external_diagnostics", "/px4/external_odometry_diagnostics",
+                      "diagnostic_msgs/msg/DiagnosticArray", SUPERVISOR_QOS),
+            lambda message: self._observe("external_diagnostics", message,
+                                           {"status_names": [s.name for s in message.status]}))
 
     @staticmethod
     def _odom_summary(message: Any) -> dict[str, Any]:
@@ -1141,6 +1147,7 @@ class Preflight:
             "px4_odometry_bridge": "px4_odometry_bridge_node",
             "fast_lio": "fast_lio_node",
             "supervisor": "odometry_supervisor_node",
+            "external_odometry": "px4_odometry_bridge_external_node",
         }
         conflicts: list[dict[str, Any]] = []
         try:
@@ -1284,7 +1291,8 @@ class SitlOrchestrator:
         if self.monitor is None:
             return {}
         names = ("px4_odometry_bridge", "fast_lio/estimator", "fast_lio/transport",
-                 "fast_lio/propagated_odometry", "odometry_supervisor")
+                 "fast_lio/propagated_odometry", "odometry_supervisor",
+                 "px4_external_odometry_bridge")
         return {name: self.monitor.diagnostics.snapshot(name) for name in names}
 
     def _log_tails(self, limit: int = 80) -> dict[str, list[str]]:
@@ -1322,6 +1330,7 @@ class SitlOrchestrator:
                         "px4_odometry_bridge": FailureCode.PX4_INGRESS_EXITED,
                         "fast_lio": FailureCode.FAST_LIO_EXITED,
                         "supervisor": FailureCode.SUPERVISOR_EXITED,
+                        "external_odometry": FailureCode.MEASUREMENT_CONTRACT_FAILED,
                     }.get(role, policy.timeout_failure)
                     raise QualificationFailure(code, f"owned process exited: {role}", stage)
             if predicate():
@@ -1453,7 +1462,9 @@ class SitlOrchestrator:
             self.monitor.supervisor_status_count > 0 and bool(values) and
             int_value(self.monitor.supervisor_status.health) != 0 and
             parse_bool(values.get("alignment_valid")) is True and
-            values.get("alignment_source") == "initial_prior.startup_coincident_identity"
+            parse_bool(values.get("alignment_locked")) is True and
+            parse_bool(values.get("alignment_valid_for_comparison")) is True and
+            values.get("alignment_source")
         )
 
     def _measurement_summary(self) -> dict[str, Any]:
@@ -1617,19 +1628,28 @@ class SitlOrchestrator:
                        lambda: {"status_count": self.monitor.supervisor_status_count,
                                  "diagnostics": self.monitor.diagnostics.snapshot("odometry_supervisor")},
                        ("supervisor", "fast_lio", "px4_odometry_bridge"))
+        if os.environ.get("P08_EXTERNAL_ODOMETRY", "0") in {"1", "true", "yes"}:
+            use_sim_time = os.environ.get("P08_EXTERNAL_USE_SIM_TIME", "true")
+            self._launch("external_odometry", [
+                "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_external_node",
+                "--ros-args", "-p", f"use_sim_time:={use_sim_time}"])
+            if not self.registry.alive("external_odometry"):
+                raise QualificationFailure(FailureCode.MEASUREMENT_CONTRACT_FAILED,
+                                            "external odometry bridge exited at startup")
+        external_roles = ("external_odometry",) if self.registry.alive("external_odometry") else ()
         self._warmup_end_ns = self.monitor.latest_clock_ns + int((self.policy.warmup_sim_s or 0.0) * 1_000_000_000)
         self._wait(Stage.WARMUP,
                    lambda: self.monitor.latest_clock_ns >= self._warmup_end_ns,
                    lambda: {"clock_ns": self.monitor.latest_clock_ns, "target_ns": self._warmup_end_ns},
                    ("fast_lio", "px4_odometry_bridge", "ros_gz_bridge", "px4_gazebo") +
-                   (("supervisor",) if self.policy.supervisor_enabled else ()))
+                   (("supervisor",) if self.policy.supervisor_enabled else ()) + external_roles)
         self.monitor.start_measurement(self.policy.measurement_sim_s or 0.0)
         self._wait(Stage.MEASURING,
                    lambda: self.monitor.latest_clock_ns >= (self.monitor.measurement_end_ns or 0),
                    lambda: {"clock_ns": self.monitor.latest_clock_ns,
                              "target_ns": self.monitor.measurement_end_ns},
                    ("fast_lio", "px4_odometry_bridge", "ros_gz_bridge", "px4_gazebo") +
-                   (("supervisor",) if self.policy.supervisor_enabled else ()))
+                   (("supervisor",) if self.policy.supervisor_enabled else ()) + external_roles)
         self.measurement_result = self._measurement_summary()
         atomic_write_json(self.output / "measurement.json", self.measurement_result)
         atomic_write_json(self.output / "acceptance.json", self.measurement_result.get("acceptance", {}))

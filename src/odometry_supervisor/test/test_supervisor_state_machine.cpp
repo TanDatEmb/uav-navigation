@@ -17,6 +17,9 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.px4_continuity_valid = true;
   input.px4_post_reset_stable = true;
   input.alignment_valid = true;
+  input.alignment_locked = true;
+  input.alignment_valid_for_comparison = true;
+  input.alignment_lifecycle = odometry_supervisor::AlignmentLifecycleState::kLocked;
   input.lio_diagnostics_valid = true;
   input.px4_diagnostics_valid = true;
   input.lio_diagnostics_schema_valid = true;
@@ -33,6 +36,7 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.aligned_comparison_fresh = true;
   input.residual.valid = true;
   input.px4_reset_generation = 1;
+  input.px4_frame_generation = 1;
   input.px4_time_generation = 1;
   return input;
 }
@@ -120,6 +124,28 @@ TEST(OdometrySupervisorStateMachine, CorrelatedAuthorizationNeedsFreshComparison
   EXPECT_TRUE(with_evidence.cross_comparison_valid);
   EXPECT_TRUE(with_evidence.external_measurement_authorized);
   EXPECT_TRUE(with_evidence.external_odometry_allowed);
+}
+
+TEST(OdometrySupervisorStateMachine, ProvisionalAndRevalidatingAlignmentCloseProductionGates) {
+  odometry_supervisor::SupervisorConfig config;
+  config.reference_mode = odometry_supervisor::ReferenceMode::kCorrelated;
+  odometry_supervisor::SupervisorStateMachine machine(config);
+  auto provisional = healthy_input(1'000'000'000);
+  provisional.alignment_locked = false;
+  provisional.alignment_valid_for_comparison = false;
+  provisional.alignment_lifecycle =
+      odometry_supervisor::AlignmentLifecycleState::kProvisional;
+  const auto provisional_output = machine.evaluate(provisional);
+  EXPECT_FALSE(provisional_output.comparison_valid);
+  EXPECT_FALSE(provisional_output.external_measurement_authorized);
+
+  auto revalidating = healthy_input(1'100'000'000);
+  revalidating.alignment_revalidating = true;
+  revalidating.alignment_lifecycle =
+      odometry_supervisor::AlignmentLifecycleState::kRevalidating;
+  const auto revalidating_output = machine.evaluate(revalidating);
+  EXPECT_FALSE(revalidating_output.comparison_valid);
+  EXPECT_FALSE(revalidating_output.external_measurement_authorized);
 }
 
 TEST(OdometrySupervisorStateMachine, SingleOutlierDoesNotLeaveHealthy) {

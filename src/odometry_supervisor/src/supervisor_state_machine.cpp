@@ -51,6 +51,16 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
       config.alignment_lock_max_translation_step_m < 0.0 ||
       !std::isfinite(config.alignment_lock_max_yaw_step_rad) ||
       config.alignment_lock_max_yaw_step_rad < 0.0 ||
+      config.alignment_minimum_novel_pairs == 0 ||
+      config.alignment_candidate_history_capacity < config.alignment_lock_stable_windows ||
+      !std::isfinite(config.alignment_max_cluster_translation_m) ||
+      config.alignment_max_cluster_translation_m < 0.0 ||
+      !std::isfinite(config.alignment_max_cluster_yaw_rad) ||
+      config.alignment_max_cluster_yaw_rad < 0.0 ||
+      !std::isfinite(config.alignment_covariance_nis_chi_square) ||
+      config.alignment_covariance_nis_chi_square <= 0.0 ||
+      config.alignment_revalidation_samples == 0 ||
+      config.alignment_revalidation_failure_limit == 0 ||
       !std::isfinite(config.alignment_minimum_horizontal_excitation_m) ||
       config.alignment_minimum_horizontal_excitation_m < 0.0) {
     throw std::invalid_argument("alignment window/excitation configuration is invalid");
@@ -172,7 +182,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool comparison_valid = input.px4_available && input.px4_fresh &&
                                 input.px4_continuity_valid && input.lio_diagnostics_valid &&
                                 input.px4_diagnostics_valid && input.aligned_comparison_fresh &&
-                                input.alignment_valid && input.residual.valid &&
+                                input.alignment_valid && input.alignment_locked &&
+                                !input.alignment_revalidating && input.residual.valid &&
                                 input.propagated_fresh && input.corrected_fresh &&
                                 input.alignment_gap_ns >= 0 &&
                                 input.alignment_gap_ns <= config_.maximum_alignment_gap_ns &&
@@ -272,7 +283,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
       input.lio_generation_locked && !input.lio_resetting &&
       !input.continuity_unrecoverable;
   const bool correlated_reference_evidence =
-      comparison_valid && input.alignment_valid && input.px4_available &&
+      comparison_valid && input.alignment_locked && !input.alignment_revalidating &&
+      input.alignment_valid_for_comparison && input.px4_available &&
       input.px4_fresh && input.px4_continuity_valid && input.px4_post_reset_stable;
   const bool health_allows_external = state_ == HealthState::kHealthy ||
                                       state_ == HealthState::kSuspect;
@@ -293,6 +305,10 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.px4_valid = input.px4_available && input.px4_fresh && input.px4_continuity_valid;
   output.time_aligned = comparison_valid;
   output.alignment_valid = input.alignment_valid;
+  output.alignment_candidate_valid = input.alignment_candidate_valid;
+  output.alignment_locked = input.alignment_locked;
+  output.alignment_revalidating = input.alignment_revalidating;
+  output.alignment_valid_for_comparison = input.alignment_valid_for_comparison;
   output.alignment_lifecycle = input.alignment_lifecycle;
   output.alignment = input.alignment;
   output.evaluation_time_ns = input.evaluation_time_ns;
@@ -310,7 +326,9 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.pending_query_age_ns = input.pending_query_age_ns;
   output.residual = input.residual;
   output.px4_reset_generation = input.px4_reset_generation;
+  output.px4_frame_generation = input.px4_frame_generation;
   output.px4_time_generation = input.px4_time_generation;
+  output.alignment_frame_generation = input.alignment_frame_generation;
   output.lio_generation = input.lio_generation;
   output.correction_quality_valid = input.correction_quality_valid;
   output.timestamp_valid = input.timestamp_valid;
@@ -348,6 +366,14 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.query_rtt_p99_ms = input.query_rtt_p99_ms;
   output.query_rtt_max_ms = input.query_rtt_max_ms;
   output.stale_residual_reuse_count = input.stale_residual_reuse_count;
+  output.alignment_candidate_estimate_count = input.alignment_candidate_estimate_count;
+  output.alignment_candidate_transition_count = input.alignment_candidate_transition_count;
+  output.alignment_revalidation_sample_count = input.alignment_revalidation_sample_count;
+  output.alignment_revalidation_success_count = input.alignment_revalidation_success_count;
+  output.alignment_revalidation_failure_count = input.alignment_revalidation_failure_count;
+  output.alignment_revalidation_start_count = input.alignment_revalidation_start_count;
+  output.alignment_revalidation_start_epoch_ns = input.alignment_revalidation_start_epoch_ns;
+  output.alignment_locked_transform_age_ns = input.alignment_locked_transform_age_ns;
   if (input.px4_available && !input.alignment_valid &&
              state_ != HealthState::kDiverged) {
     output.reason_code = kReasonAlignmentFailed;

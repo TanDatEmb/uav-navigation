@@ -150,6 +150,7 @@ bool OdometryAlignmentEstimator::addSample(AlignmentSample sample) {
     if (sample.timestamp_ns <= previous.timestamp_ns ||
         sample.lio_generation != previous.lio_generation ||
         sample.px4_reset_generation != previous.px4_reset_generation ||
+        sample.px4_frame_generation != previous.px4_frame_generation ||
         sample.px4_time_generation != previous.px4_time_generation) {
       samples_.clear();
     }
@@ -172,6 +173,7 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
     }
     if (sample.lio_generation != first.lio_generation ||
         sample.px4_reset_generation != first.px4_reset_generation ||
+        sample.px4_frame_generation != first.px4_frame_generation ||
         sample.px4_time_generation != first.px4_time_generation) {
       return invalid(AlignmentEstimateStatus::kGenerationChanged,
                      "alignment window crosses a generation", samples_.size());
@@ -385,6 +387,7 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   result.alignment.epoch_end_ns = samples_.back().timestamp_ns;
   result.alignment.sample_count = inliers.size();
   result.alignment.reset_generation = first.px4_reset_generation;
+  result.alignment.frame_generation = first.px4_frame_generation;
   result.alignment.time_generation = first.px4_time_generation;
   result.alignment.lio_generation = first.lio_generation;
   result.alignment.source = "paired_timestamp.4dof.circular_mean";
@@ -413,6 +416,7 @@ AlignmentEstimate OdometryAlignmentEstimator::estimate() const {
   result.epoch_end_ns = samples_.back().timestamp_ns;
   result.lio_generation = first.lio_generation;
   result.px4_reset_generation = first.px4_reset_generation;
+  result.px4_frame_generation = first.px4_frame_generation;
   result.px4_time_generation = first.px4_time_generation;
   return result;
 }

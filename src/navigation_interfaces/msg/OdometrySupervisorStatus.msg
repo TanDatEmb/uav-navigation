@@ -42,6 +42,10 @@ bool lio_valid
 bool px4_valid
 bool time_aligned
 bool alignment_valid
+bool alignment_candidate_valid
+bool alignment_locked
+bool alignment_revalidating
+bool alignment_valid_for_comparison
 uint8 ALIGNMENT_UNALIGNED=0
 uint8 ALIGNMENT_COLLECTING=1
 uint8 ALIGNMENT_PROVISIONAL=2
@@ -68,8 +72,17 @@ int64 alignment_epoch_end_ns
 uint64 lio_generation
 string alignment_rejection_reason
 uint64 alignment_reset_generation
+uint64 alignment_frame_generation
 uint64 alignment_time_generation
 uint64 alignment_reinitialization_count
+uint64 alignment_candidate_estimate_count
+uint64 alignment_candidate_transition_count
+uint64 alignment_revalidation_sample_count
+uint64 alignment_revalidation_success_count
+uint64 alignment_revalidation_failure_count
+uint64 alignment_revalidation_start_count
+int64 alignment_revalidation_start_epoch_ns
+int64 alignment_locked_transform_age_ns
 
 bool external_odometry_allowed
 bool cross_comparison_valid
@@ -97,6 +110,7 @@ float64 yaw_error_rad
 float64 position_error_growth_m_s
 
 uint64 px4_reset_generation
+uint64 px4_frame_generation
 uint64 px4_time_generation
 bool correction_quality_valid
 bool timestamp_valid

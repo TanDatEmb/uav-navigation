@@ -21,6 +21,7 @@ struct AlignmentSample {
   double weight{1.0};
   std::uint64_t lio_generation{0};
   std::uint64_t px4_reset_generation{0};
+  std::uint64_t px4_frame_generation{0};
   std::uint64_t px4_time_generation{0};
   bool lio_tracking{false};
   bool px4_continuity_valid{false};
@@ -80,6 +81,7 @@ struct AlignmentEstimate {
   std::int64_t epoch_end_ns{0};
   std::uint64_t lio_generation{0};
   std::uint64_t px4_reset_generation{0};
+  std::uint64_t px4_frame_generation{0};
   std::uint64_t px4_time_generation{0};
   std::string rejection_reason;
 

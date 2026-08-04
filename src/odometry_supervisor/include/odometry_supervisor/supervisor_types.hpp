@@ -93,6 +93,7 @@ struct WorldAlignment {
   std::int64_t epoch_start_ns{0};
   std::int64_t epoch_end_ns{0};
   std::uint64_t lio_generation{0};
+  std::uint64_t frame_generation{0};
   std::string rejection_reason;
   std::int64_t epoch_ns{0};
   std::uint64_t reset_generation{0};
@@ -110,6 +111,7 @@ struct AlignedComparison {
   std::int64_t response_received_ros_time_ns{0};
   std::uint64_t query_sequence{0};
   std::uint64_t reset_generation{0};
+  std::uint64_t frame_generation{0};
   std::uint64_t time_generation{0};
   std::uint32_t component_validity_mask{0};
   std::uint32_t covariance_availability_mask{0};
@@ -140,6 +142,13 @@ struct SupervisorConfig {
   std::size_t alignment_lock_stable_windows{3};
   double alignment_lock_max_translation_step_m{0.10};
   double alignment_lock_max_yaw_step_rad{0.05};
+  std::size_t alignment_minimum_novel_pairs{4};
+  std::size_t alignment_candidate_history_capacity{8};
+  double alignment_max_cluster_translation_m{0.15};
+  double alignment_max_cluster_yaw_rad{0.10};
+  double alignment_covariance_nis_chi_square{9.487729};
+  std::size_t alignment_revalidation_samples{3};
+  std::size_t alignment_revalidation_failure_limit{3};
   double alignment_minimum_horizontal_excitation_m{0.20};
   ResidualThresholds suspect{0.30, 0.30, 0.2094395102, 0.1396263402};
   ResidualThresholds degraded{0.75, 0.75, 0.5235987756, 0.3490658504};
@@ -169,6 +178,10 @@ struct EvaluationInput {
   bool px4_continuity_valid{false};
   bool px4_post_reset_stable{false};
   bool alignment_valid{false};
+  bool alignment_candidate_valid{false};
+  bool alignment_locked{false};
+  bool alignment_revalidating{false};
+  bool alignment_valid_for_comparison{false};
   bool lio_diagnostics_valid{false};
   bool px4_diagnostics_valid{false};
   bool lio_diagnostics_schema_valid{false};
@@ -187,7 +200,9 @@ struct EvaluationInput {
   AlignmentLifecycleState alignment_lifecycle{AlignmentLifecycleState::kUnaligned};
   bool time_generation_changed{false};
   std::uint64_t px4_reset_generation{0};
+  std::uint64_t px4_frame_generation{0};
   std::uint64_t px4_time_generation{0};
+  std::uint64_t alignment_frame_generation{0};
   std::uint64_t lio_generation{0};
   std::int64_t propagated_age_ns{-1};
   std::int64_t corrected_age_ns{-1};
@@ -217,6 +232,14 @@ struct EvaluationInput {
   double query_rtt_p99_ms{0.0};
   double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
+  std::size_t alignment_candidate_estimate_count{0};
+  std::size_t alignment_candidate_transition_count{0};
+  std::size_t alignment_revalidation_sample_count{0};
+  std::size_t alignment_revalidation_success_count{0};
+  std::size_t alignment_revalidation_failure_count{0};
+  std::size_t alignment_revalidation_start_count{0};
+  std::int64_t alignment_revalidation_start_epoch_ns{0};
+  std::int64_t alignment_locked_transform_age_ns{-1};
   WorldAlignment alignment;
   Residual residual;
 };
@@ -232,6 +255,10 @@ struct SupervisorOutput {
   bool px4_valid{false};
   bool time_aligned{false};
   bool alignment_valid{false};
+  bool alignment_candidate_valid{false};
+  bool alignment_locked{false};
+  bool alignment_revalidating{false};
+  bool alignment_valid_for_comparison{false};
   bool external_odometry_allowed{false};
   bool external_measurement_publishable{false};
   bool external_measurement_authorized{false};
@@ -254,7 +281,9 @@ struct SupervisorOutput {
   std::int64_t pending_query_age_ns{-1};
   Residual residual;
   std::uint64_t px4_reset_generation{0};
+  std::uint64_t px4_frame_generation{0};
   std::uint64_t px4_time_generation{0};
+  std::uint64_t alignment_frame_generation{0};
   std::uint64_t lio_generation{0};
   bool correction_quality_valid{false};
   bool timestamp_valid{false};
@@ -290,6 +319,14 @@ struct SupervisorOutput {
   double query_rtt_p99_ms{0.0};
   double query_rtt_max_ms{0.0};
   std::uint64_t stale_residual_reuse_count{0};
+  std::size_t alignment_candidate_estimate_count{0};
+  std::size_t alignment_candidate_transition_count{0};
+  std::size_t alignment_revalidation_sample_count{0};
+  std::size_t alignment_revalidation_success_count{0};
+  std::size_t alignment_revalidation_failure_count{0};
+  std::size_t alignment_revalidation_start_count{0};
+  std::int64_t alignment_revalidation_start_epoch_ns{0};
+  std::int64_t alignment_locked_transform_age_ns{-1};
   WorldAlignment alignment;
 };
 

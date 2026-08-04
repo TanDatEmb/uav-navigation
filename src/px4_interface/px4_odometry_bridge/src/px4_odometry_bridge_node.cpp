@@ -111,7 +111,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
           response->reason = "";
           response->odometry = to_ros(result->value);
           response->interpolated = result->interpolated;
-          response->reset_generation = result->value.reset_generation;
+          response->reset_generation = reset_event_generation_;
+          response->reset_event_generation = reset_event_generation_;
+          response->frame_generation = result->value.frame_generation;
           response->time_generation = result->value.time_generation;
           response->component_validity_mask = component_validity_mask(result->value);
           response->covariance_availability_mask = covariance_availability_mask(result->value);
@@ -274,6 +276,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     if (time_result.event == TimestampEvent::kProbableSourceRestart) {
+      ++frame_generation_;
       history_.clear();
       local_reset_history_.clear();
       attitude_reset_history_.clear();
@@ -315,8 +318,29 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     }
     const auto metadata = detailed_metadata_for(*timestamp_ns);
     const DetailedResetMetadata associated_metadata = metadata.value_or(DetailedResetMetadata{});
+    const bool reset_counter_changed = last_input_reset_counter_.has_value() &&
+                                       *last_input_reset_counter_ != sample.reset_counter;
     auto observation = reset_compensator_.observe(*converted.value, associated_metadata);
     last_reset_observation_status_ = toString(observation.status);
+    if (observation.status == ResetObservationStatus::kResetTransitionSuppressed) {
+      ++reset_event_generation_;
+    }
+    if (reset_counter_changed && output_valid_ &&
+        (observation.status == ResetObservationStatus::kInvalidMetadata ||
+         observation.status == ResetObservationStatus::kCounterDiscontinuity ||
+         observation.status == ResetObservationStatus::kInvalidResetRotation)) {
+      // The reset cannot be compensated, so the old public PX4 frame ends.
+      // This is distinct from the reset event counter and from the geometric
+      // jump guard in the external publisher.
+      ++frame_generation_;
+      history_.clear();
+      reset_compensator_.clear();
+      converter_.reset_sign_continuity();
+      startup_origin_rebased_ = false;
+      continuity_valid_ = false;
+      observation = reset_compensator_.observe(*converted.value);
+      last_reset_observation_status_ = toString(observation.status);
+    }
     if (!observation.accepted() && !output_valid_ &&
         observation.status == ResetObservationStatus::kMetadataPending &&
         !associated_metadata.association_invalid) {
@@ -346,6 +370,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     auto continuous = std::move(observation.sample);
+    continuous->frame_generation = frame_generation_;
+    continuous->reset_generation = reset_event_generation_;
+    continuous->reset_event_generation = reset_event_generation_;
     if (!startup_origin_rebased_) {
       const auto startup_origin = reset_compensator_.rebasePositionAtCurrentOutput();
       if (!startup_origin.has_value()) {
@@ -368,6 +395,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     last_world_convention_ = converted.value->world_convention;
     last_valid_sample_time_ns_ = continuous->timestamp_ns;
     last_time_generation_ = time_result.generation;
+    last_input_reset_counter_ = sample.reset_counter;
     last_px4_timestamp_sample_ns_ = continuous->timestamp_ns;
     last_px4_ros_output_stamp_ns_ =
         static_cast<std::int64_t>(output.header.stamp.sec) * 1'000'000'000LL +
@@ -398,7 +426,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     add_value("output_valid", output_valid_ ? "true" : "false");
     add_value("continuity_valid", continuity_valid_ ? "true" : "false");
     add_value("last_valid_sample_time_ns", std::to_string(last_valid_sample_time_ns_));
-    add_value("reset_generation", std::to_string(reset_compensator_.reset_generation()));
+    add_value("reset_generation", std::to_string(reset_event_generation_));
+    add_value("reset_event_generation", std::to_string(reset_event_generation_));
+    add_value("frame_generation", std::to_string(frame_generation_));
     add_value("time_generation", std::to_string(last_time_generation_));
     add_value("post_reset_stable", history_.postResetStable() ? "true" : "false");
     add_value("post_reset_stable_sample_count",
@@ -528,6 +558,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   bool startup_origin_rebased_{false};
   std::int64_t last_valid_sample_time_ns_{0};
   std::uint64_t last_time_generation_{0};
+  std::uint64_t frame_generation_{1};
+  std::uint64_t reset_event_generation_{0};
+  std::optional<std::uint8_t> last_input_reset_counter_;
   WorldConvention last_world_convention_{WorldConvention::kUnknown};
 };
 

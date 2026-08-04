@@ -34,6 +34,7 @@ class OdometryRingBuffer {
   bool postResetStable() const { return post_reset_stable_; }
 
  private:
+  static std::uint64_t frameGeneration(const ConvertedOdometry& sample);
   static ConvertedOdometry interpolate(const ConvertedOdometry &a,
                                        const ConvertedOdometry &b,
                                        std::int64_t timestamp_ns);

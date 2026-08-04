@@ -53,6 +53,8 @@ struct ConvertedOdometry {
   Eigen::Vector3d velocity_variance{Eigen::Vector3d::Constant(-1.0)};
   Eigen::Vector3d orientation_variance{Eigen::Vector3d::Constant(-1.0)};
   std::uint8_t reset_counter{0};
+  std::uint64_t reset_event_generation{0};
+  std::uint64_t frame_generation{0};
   std::uint64_t reset_generation{0};
   std::uint64_t time_generation{0};
   bool position_covariance_available{false};

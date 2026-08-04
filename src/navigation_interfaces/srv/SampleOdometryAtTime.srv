@@ -5,6 +5,8 @@ string reason
 nav_msgs/Odometry odometry
 bool interpolated
 uint64 reset_generation
+uint64 reset_event_generation
+uint64 frame_generation
 uint64 time_generation
 uint32 component_validity_mask
 uint32 covariance_availability_mask

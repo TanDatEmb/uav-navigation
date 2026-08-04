@@ -47,9 +47,17 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     supervisor_sub_ = create_subscription<SupervisorStatus>(
         "/navigation/odometry_supervisor/status",
         rclcpp::QoS(1).reliable().transient_local(),
-        [this](SupervisorStatus::ConstSharedPtr message) { supervisor_ = *message; });
+        [this](SupervisorStatus::ConstSharedPtr message) {
+          if (!last_supervisor_frame_generation_.has_value() ||
+              *last_supervisor_frame_generation_ != message->px4_frame_generation) {
+            jump_latched_ = false;
+          }
+          last_supervisor_frame_generation_ = message->px4_frame_generation;
+          supervisor_ = *message;
+        });
     diagnostics_timer_ = create_wall_timer(std::chrono::milliseconds(500),
                                            [this] { publish_diagnostics(); });
+    node_ready_ = true;
   }
 
  private:
@@ -65,7 +73,15 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     const auto now_ns = now().nanoseconds();
+    last_sample_timestamp_ns_ = frame->timestamp_ns;
+    last_transport_timestamp_ns_ = now_ns;
+    const bool use_sim_time = get_parameter("use_sim_time").as_bool();
+    const bool timestamp_conversion_valid = use_sim_time && now_ns > 0 &&
+                                            frame->timestamp_ns > 0 &&
+                                            std::llabs(now_ns - frame->timestamp_ns) <= max_age_ns_;
+    const bool transport_ready = output_->get_subscription_count() > 0;
     if (!supervisor_.has_value() || !supervisor_->external_measurement_authorized ||
+        !node_ready_ || !transport_ready || !timestamp_conversion_valid ||
         time_ns(supervisor_->evaluation_time) <= 0 ||
         now_ns < time_ns(supervisor_->evaluation_time) ||
         now_ns - time_ns(supervisor_->evaluation_time) > max_age_ns_) {
@@ -80,10 +96,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
                        orientation_jump_rad_;
     }
     if (frame_jump && !jump_latched_) {
-      ++reset_counter_;
+      ++geometric_jump_count_;
       jump_latched_ = true;
-    } else if (!frame_jump) {
-      jump_latched_ = false;
+    }
+    if (frame_jump || jump_latched_) {
+      ++gated_count_;
+      return;
     }
 
     VehicleOdometry output;
@@ -113,7 +131,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output.velocity_variance = {static_cast<float>(frame->velocity_variance.x()),
                                 static_cast<float>(frame->velocity_variance.y()),
                                 static_cast<float>(frame->velocity_variance.z())};
-    output.reset_counter = reset_counter_;
+    output.reset_counter = static_cast<std::uint8_t>(
+        supervisor_->px4_frame_generation & 0xffU);
     output.quality = supervisor_->health == SupervisorStatus::HEALTHY ? 100 : 50;
     output_->publish(output);
     last_published_ = *frame;
@@ -126,9 +145,18 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     array.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus status;
     status.name = "px4_external_odometry_bridge";
-    status.level = ready_ ? diagnostic_msgs::msg::DiagnosticStatus::OK
+    const bool transport_ready = output_->get_subscription_count() > 0;
+    const auto now_ns = now().nanoseconds();
+    const bool use_sim_time = get_parameter("use_sim_time").as_bool();
+    const bool timestamp_conversion_valid = use_sim_time && now_ns > 0 &&
+                                            last_sample_timestamp_ns_ > 0 &&
+                                            std::llabs(now_ns - last_sample_timestamp_ns_) <= max_age_ns_;
+    const bool time_sync_ready = timestamp_conversion_valid;
+    const bool infrastructure_ready = node_ready_ && transport_ready && time_sync_ready;
+    status.level = infrastructure_ready ? diagnostic_msgs::msg::DiagnosticStatus::OK
                           : diagnostic_msgs::msg::DiagnosticStatus::WARN;
-    status.message = supervisor_.has_value() && supervisor_->external_measurement_authorized
+    status.message = !infrastructure_ready ? "external odometry infrastructure is not ready"
+                         : supervisor_.has_value() && supervisor_->external_measurement_authorized
                          ? "external odometry publishing is enabled"
                          : "external odometry gate is closed";
     const auto add = [&status](std::string key, std::string value) {
@@ -138,7 +166,17 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       status.values.push_back(std::move(item));
     };
     add("diagnostic_schema_version", "1");
-    add("ready", ready_ ? "true" : "false");
+    add("ready", infrastructure_ready ? "true" : "false");
+    add("node_ready", node_ready_ ? "true" : "false");
+    add("transport_ready", transport_ready ? "true" : "false");
+    add("time_sync_ready", time_sync_ready ? "true" : "false");
+    add("publication_authorized", supervisor_.has_value() &&
+                                      supervisor_->external_measurement_authorized
+                                  ? "true" : "false");
+    add("publisher_subscription_count",
+        std::to_string(output_->get_subscription_count()));
+    add("timestamp_domain", use_sim_time ? "ros_sim_time" : "TIME_DOMAIN_UNRESOLVED");
+    add("timestamp_conversion_valid", timestamp_conversion_valid ? "true" : "false");
     add("publisher_topic", versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"));
     add("pose_frame", "POSE_FRAME_FRD");
     add("velocity_frame", "VELOCITY_FRAME_BODY_FRD");
@@ -146,14 +184,22 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     add("published_count", std::to_string(published_count_));
     add("gated_count", std::to_string(gated_count_));
     add("rejected_count", std::to_string(rejected_count_));
-    add("reset_counter", std::to_string(reset_counter_));
+    add("reset_counter", std::to_string(supervisor_.has_value()
+                                            ? supervisor_->px4_frame_generation
+                                            : 0));
+    add("frame_generation", std::to_string(supervisor_.has_value()
+                                                ? supervisor_->px4_frame_generation
+                                                : 0));
+    add("geometric_jump_count", std::to_string(geometric_jump_count_));
+    add("geometric_jump_gate_closed", jump_latched_ ? "true" : "false");
+    add("last_sample_timestamp_ns", std::to_string(last_sample_timestamp_ns_));
+    add("last_transport_timestamp_ns", std::to_string(last_transport_timestamp_ns_));
     add("last_published_time_ns", std::to_string(last_published_time_ns_));
     add("supervisor_gate", supervisor_.has_value() &&
                                    supervisor_->external_measurement_authorized
                                ? "true" : "false");
     array.status.push_back(std::move(status));
     diagnostics_->publish(std::move(array));
-    ready_ = true;
   }
 
   rclcpp::Publisher<VehicleOdometry>::SharedPtr output_;
@@ -167,12 +213,15 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   double position_jump_m_{0.75};
   double orientation_jump_rad_{0.35};
   std::int64_t last_published_time_ns_{0};
+  std::int64_t last_sample_timestamp_ns_{0};
+  std::int64_t last_transport_timestamp_ns_{0};
   std::uint64_t published_count_{0};
   std::uint64_t gated_count_{0};
   std::uint64_t rejected_count_{0};
-  std::uint8_t reset_counter_{0};
+  std::uint64_t geometric_jump_count_{0};
   bool jump_latched_{false};
-  bool ready_{false};
+  bool node_ready_{false};
+  std::optional<std::uint64_t> last_supervisor_frame_generation_;
 };
 
 }  // namespace px4_odometry_bridge

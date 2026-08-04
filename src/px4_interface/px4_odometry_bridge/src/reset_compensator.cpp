@@ -130,10 +130,14 @@ ResetObservation ResetCompensator::observe(
   sample.velocity_body = sample.orientation.toRotationMatrix().transpose() *
                          sample.velocity_world;
   sample.reset_generation = reset_generation_;
+  sample.reset_event_generation = reset_generation_;
   last_output_ = sample;
   result.status = ResetObservationStatus::kAccepted;
   result.sample = std::move(sample);
   result.reset_generation = reset_generation_;
+  if (result.sample) {
+    result.sample->reset_event_generation = reset_generation_;
+  }
   return result;
 }
 
