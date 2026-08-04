@@ -194,6 +194,74 @@ TEST(InitialStatePriorPipelineTest, PredictsFromExactPriorEpochWithBracketedImu)
   EXPECT_EQ(pipeline.stateTime()->nanoseconds(), 1'200'000'000);
 }
 
+TEST(InitialStatePriorPipelineTest,
+     PhysicalStatePredictionUsesPriorEpochWithoutSkippingOrDuplicatingImu) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  config.ikfom.maximum_integration_step_ns = 100'000'000;
+
+  constexpr std::int64_t t0_ns = 1'000'000'000;
+  constexpr std::int64_t tm_ns = 1'100'000'000;
+  constexpr std::int64_t t1_ns = 1'200'000'000;
+  constexpr double dt_s = 0.2;
+  constexpr double yaw_rate_rad_s = 1.5;
+  const Eigen::Vector3d initial_position(1.0, -2.0, 0.5);
+  const Eigen::Vector3d initial_velocity(2.0, -0.5, 0.25);
+  const Eigen::Quaterniond initial_orientation(
+      Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+
+  auto physicalImu = [=](std::int64_t time_ns) {
+    ImuSample sample = imu(time_ns);
+    sample.angular_velocity_imu_rad_s =
+        Eigen::Vector3d(0.0, 0.0, yaw_rate_rad_s);
+    return sample;
+  };
+
+  FastLioPipeline pipeline(config);
+  InitialStatePrior prior = topicPrior(t0_ns);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.position_odom_base_m = initial_position;
+  prior.orientation_odom_base = initial_orientation;
+  prior.linear_velocity_base_m_s = initial_velocity;
+  prior.angular_velocity_base_rad_s =
+      Eigen::Vector3d(0.0, 0.0, yaw_rate_rad_s);
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(t1_ns);
+  group.scan.end_time = Timestamp(t1_ns);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {physicalImu(t0_ns), physicalImu(tm_ns), physicalImu(t1_ns)};
+  group.propagation_start_time = Timestamp(t1_ns);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  ASSERT_EQ(result.status_after, EstimatorStatus::kInitializingMap)
+      << result.rejection_reason << " / " << result.diagnostics.reason;
+  ASSERT_TRUE(result.predicted_estimate.has_value());
+
+  const Eigen::Vector3d expected_position = initial_position + initial_velocity * dt_s;
+  const Eigen::Quaterniond expected_orientation =
+      Eigen::Quaterniond(Eigen::AngleAxisd(yaw_rate_rad_s * dt_s,
+                                           Eigen::Vector3d::UnitZ())) *
+      initial_orientation;
+  EXPECT_TRUE(result.predicted_estimate->state.position_odom_imu_m().isApprox(
+      expected_position, 1e-6));
+  EXPECT_TRUE(result.predicted_estimate->state.velocity_odom_imu_m_s().isApprox(
+      initial_velocity, 1e-6));
+  EXPECT_LT(result.predicted_estimate->state.orientation_odom_imu().angularDistance(
+                expected_orientation),
+            1e-6);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), t1_ns);
+  EXPECT_TRUE(result.diagnostics.initial_prior.propagated_to_application);
+  EXPECT_EQ(result.diagnostics.initial_prior.time_delta_ns, t1_ns - t0_ns);
+}
+
 TEST(InitialStatePriorPipelineTest, InFlightPriorDoesNotUseStationaryInitializer) {
   auto config = topicConfig();
   config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
