@@ -9,9 +9,21 @@ sys.path.insert(0, str(RUNTIME))
 
 from monitor import StreamStats
 import report
+import runner
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
+        self.assertEqual(
+            runner.NO_RVIZ_ENV,
+            {
+                "ENABLE_RVIZ": "0",
+                "RVIZ_ENABLE": "0",
+                "DISABLE_RVIZ": "1",
+                "NAVIGATION_NO_RVIZ": "1",
+            },
+        )
+
     def test_first_sample_does_not_create_stale_event(self) -> None:
         stats = StreamStats("external_odometry", "/fmu/in/vehicle_visual_odometry", stale_after_s=0.1)
         start = 1_000_000_000

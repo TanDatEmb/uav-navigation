@@ -3,7 +3,9 @@ SHELL := /bin/bash
 DATASET ?=
 RATE ?= 1.0
 PX4_DIR ?= $(HOME)/Dev/Autopilot
-ROS_ENV = source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
+# Keep legacy runtime environments from re-enabling the old RViz sidecar.
+NO_RVIZ_ENV = export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1;
+ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 
 .PHONY: help build test replay dataset-check sim-check sim status stop clean
@@ -39,10 +41,10 @@ dataset-check:
 	@$(ROS_ENV) python3 tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)"
 
 sim-check:
-	@PX4_DIR="$(PX4_DIR)" $(ROS_ENV) python3 tools/runtime/runner.py sim-check
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim-check
 
 sim:
-	@PX4_DIR="$(PX4_DIR)" $(ROS_ENV) python3 tools/runtime/runner.py sim
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim
 
 status:
 	@$(ROS_ENV) python3 tools/runtime/runner.py status

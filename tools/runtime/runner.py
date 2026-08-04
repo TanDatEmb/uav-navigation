@@ -23,6 +23,12 @@ import report
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
 ARTIFACT_ROOT = ROOT / ".artifacts/runtime"
+NO_RVIZ_ENV = {
+    "ENABLE_RVIZ": "0",
+    "RVIZ_ENABLE": "0",
+    "DISABLE_RVIZ": "1",
+    "NAVIGATION_NO_RVIZ": "1",
+}
 
 
 def load_config(name: str) -> dict[str, Any]:
@@ -39,7 +45,10 @@ def load_config(name: str) -> dict[str, Any]:
 
 
 def _ros_shell(command: list[str]) -> list[str]:
-    parts = ["source /opt/ros/jazzy/setup.bash"]
+    parts = [
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1",
+        "source /opt/ros/jazzy/setup.bash",
+    ]
     install = ROOT / "install/setup.bash"
     if install.is_file():
         parts.append(f"source {shlex.quote(str(install))}")
@@ -395,6 +404,10 @@ def _number(value: Any) -> float:
 
 
 def main() -> int:
+    # The canonical runtime workflows never launch a visualizer. Enforce this
+    # for direct runner invocations as well as Makefile calls, even when a
+    # stale shell still exports ENABLE_RVIZ=1.
+    os.environ.update(NO_RVIZ_ENV)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     dataset = sub.add_parser("dataset-check")

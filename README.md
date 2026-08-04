@@ -18,8 +18,9 @@ make clean
 `make sim-check` is headless and runs the deterministic offboard trajectory.
 `make sim` starts the same PX4/Gazebo/LIO stack with the Gazebo GUI and waits
 for manual control; it has no automatic flight scenario and does not start
-RViz. `make replay` is an alias for the dataset workflow and also does not
-start RViz. Set `PX4_DIR` when
+RViz. Both workflows force the legacy RViz environment variables off, so an
+inherited `ENABLE_RVIZ=1` cannot re-enable it. `make replay` is an alias for
+the dataset workflow and also does not start RViz. Set `PX4_DIR` when
 the PX4 checkout is outside `$HOME/Dev/Autopilot`.
 
 Prepared datasets live outside the repository under `UAV_NAV_DATA_HOME` (or
