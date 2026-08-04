@@ -193,6 +193,7 @@ struct EvaluationInput {
   bool timestamp_valid{false};
   bool covariance_valid{false};
   bool lio_generation_locked{false};
+  bool lio_public_frame_generation_valid{false};
   bool continuity_unrecoverable{false};
   bool external_publisher_ready{false};
   bool external_measurement_publishable{false};
@@ -205,6 +206,7 @@ struct EvaluationInput {
   std::uint64_t px4_time_generation{0};
   std::uint64_t alignment_frame_generation{0};
   std::uint64_t lio_generation{0};
+  std::uint64_t lio_public_frame_generation{0};
   std::int64_t propagated_age_ns{-1};
   std::int64_t corrected_age_ns{-1};
   std::int64_t px4_age_ns{-1};
@@ -293,10 +295,12 @@ struct SupervisorOutput {
   std::uint64_t px4_time_generation{0};
   std::uint64_t alignment_frame_generation{0};
   std::uint64_t lio_generation{0};
+  std::uint64_t lio_public_frame_generation{0};
   bool correction_quality_valid{false};
   bool timestamp_valid{false};
   bool covariance_valid{false};
   bool lio_generation_locked{false};
+  bool lio_public_frame_generation_valid{false};
   bool continuity_unrecoverable{false};
   bool external_publisher_ready{false};
   std::uint64_t state_transition_count{0};

@@ -70,6 +70,8 @@ uint64 alignment_sample_count
 int64 alignment_epoch_start_ns
 int64 alignment_epoch_end_ns
 uint64 lio_generation
+uint64 lio_public_frame_generation
+bool lio_public_frame_generation_valid
 string alignment_rejection_reason
 uint64 alignment_reset_generation
 uint64 alignment_frame_generation

@@ -12,6 +12,7 @@
 #include "fast_lio_core/navigation/base_link_state_converter.hpp"
 #include "fast_lio_core/navigation/base_link_covariance_projector.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
+#include "fast_lio_ros/lio_public_frame_generation.hpp"
 #include "fast_lio_ros/propagated_odometry_worker.hpp"
 #include "fast_lio_ros/runtime_diagnostics.hpp"
 
@@ -19,7 +20,9 @@ namespace uav::nav::lio {
 
 class RosOutputPublisher {
  public:
-  RosOutputPublisher(rclcpp::Node& node, RosParameters parameters);
+  RosOutputPublisher(rclcpp::Node& node, RosParameters parameters,
+                     std::shared_ptr<LioPublicFrameGeneration>
+                         public_frame_generation);
   void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
   [[nodiscard]] std::shared_ptr<CovarianceProjectionRuntime>
   covarianceProjectionRuntime() const noexcept {
@@ -51,6 +54,7 @@ class RosOutputPublisher {
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
+  std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
 };
 
 }  // namespace uav::nav::lio

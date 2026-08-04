@@ -28,8 +28,10 @@ odometry_supervisor::EvaluationInput healthy_input(std::int64_t time) {
   input.timestamp_valid = true;
   input.covariance_valid = true;
   input.lio_generation_locked = true;
+  input.lio_public_frame_generation_valid = true;
   input.external_publisher_ready = true;
   input.lio_generation = 1;
+  input.lio_public_frame_generation = 1;
   input.alignment_gap_ns = 0;
   input.comparison_epoch_ns = time;
   input.new_comparison_sample = true;
@@ -90,6 +92,15 @@ TEST(OdometrySupervisorStateMachine, ExternalGateRequiresEverySafetyInput) {
     input.*gate = false;
     EXPECT_FALSE(machine.evaluate(input).external_odometry_allowed);
   }
+}
+
+TEST(OdometrySupervisorStateMachine, ExternalGateRequiresKnownPublicLioGeneration) {
+  odometry_supervisor::SupervisorStateMachine machine;
+  auto input = healthy_input(1'000'000'000);
+  input.lio_public_frame_generation_valid = false;
+  const auto output = machine.evaluate(input);
+  EXPECT_FALSE(output.external_measurement_publishable);
+  EXPECT_FALSE(output.external_measurement_authorized);
 }
 
 TEST(OdometrySupervisorStateMachine, IndependentAuthorizationDoesNotNeedPx4Evidence) {

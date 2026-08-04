@@ -848,6 +848,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.px4_post_reset_stable = input.px4_diagnostics_valid &&
                                   px4_diagnostics_.boolean("post_reset_stable");
     input.lio_generation = lio_diagnostics_.unsignedInteger("lio_generation");
+    input.lio_public_frame_generation =
+        lio_diagnostics_.unsignedInteger("lio_public_frame_generation");
+    input.lio_public_frame_generation_valid =
+        input.lio_diagnostics_valid &&
+        lio_diagnostics_.boolean("lio_public_frame_generation_valid") &&
+        input.lio_public_frame_generation > 0;
     input.lio_generation_locked = input.lio_diagnostics_valid &&
                                   lio_diagnostics_.boolean("lio_generation_locked");
     input.correction_quality_valid = input.lio_diagnostics_valid &&
@@ -1063,6 +1069,9 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.alignment_epoch_start_ns = output.alignment.epoch_start_ns;
     message.alignment_epoch_end_ns = output.alignment.epoch_end_ns;
     message.lio_generation = output.lio_generation;
+    message.lio_public_frame_generation = output.lio_public_frame_generation;
+    message.lio_public_frame_generation_valid =
+        output.lio_public_frame_generation_valid;
     message.alignment_rejection_reason = output.alignment.rejection_reason;
     message.alignment_reset_generation = output.alignment.reset_generation;
     message.alignment_frame_generation = output.alignment_frame_generation;
@@ -1201,6 +1210,10 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               std::to_string(output.alignment.effective_sample_count));
     add_value("alignment_yaw_mode", output.alignment.yaw_mode);
     add_value("lio_generation", std::to_string(output.lio_generation));
+    add_value("lio_public_frame_generation",
+              std::to_string(output.lio_public_frame_generation));
+    add_value("lio_public_frame_generation_valid",
+              output.lio_public_frame_generation_valid ? "true" : "false");
     add_value("px4_frame_generation", std::to_string(output.px4_frame_generation));
     add_value("lio_generation_locked", output.lio_generation_locked ? "true" : "false");
     add_value("correction_quality_valid", output.correction_quality_valid ? "true" : "false");

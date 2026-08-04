@@ -108,7 +108,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           parameters_.lidar_input_frame,
           parseClockDomain(parameters_.input_clock_domain),
           livoxTimestampPolicy(parameters_)),
-      output_publisher_(*this, parameters_),
+      public_frame_generation_(std::make_shared<LioPublicFrameGeneration>()),
+      output_publisher_(*this, parameters_, public_frame_generation_),
       transform_publisher_(*this, parameters_) {
   runtime_diagnostics_.imu_queue_capacity =
       static_cast<std::size_t>(parameters_.imu_queue_capacity);

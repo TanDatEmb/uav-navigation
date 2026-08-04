@@ -20,6 +20,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(${PROJECT_NAME}
+  src/lio_public_frame_generation.cpp
   src/parameter_loader.cpp
   src/propagated_odometry_worker.cpp
   src/qos_profiles.cpp
@@ -79,6 +80,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_ros_odometry_serializer
     test/test_ros_odometry_serializer.cpp)
   target_link_libraries(test_ros_odometry_serializer ${PROJECT_NAME})
+  ament_add_gtest(test_lio_public_frame_generation
+    test/test_lio_public_frame_generation.cpp)
+  target_link_libraries(test_lio_public_frame_generation ${PROJECT_NAME})
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

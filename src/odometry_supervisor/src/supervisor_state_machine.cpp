@@ -283,7 +283,8 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   const bool external_measurement_publishable =
       input.lio_valid && input.propagated_fresh && input.corrected_fresh &&
       input.correction_quality_valid && input.timestamp_valid && input.covariance_valid &&
-      input.lio_generation_locked && !input.lio_resetting &&
+      input.lio_generation_locked && input.lio_public_frame_generation_valid &&
+      !input.lio_resetting &&
       !input.continuity_unrecoverable;
   const bool correlated_reference_evidence =
       comparison_valid && input.alignment_locked && !input.alignment_revalidating &&
@@ -333,10 +334,13 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.px4_time_generation = input.px4_time_generation;
   output.alignment_frame_generation = input.alignment_frame_generation;
   output.lio_generation = input.lio_generation;
+  output.lio_public_frame_generation = input.lio_public_frame_generation;
   output.correction_quality_valid = input.correction_quality_valid;
   output.timestamp_valid = input.timestamp_valid;
   output.covariance_valid = input.covariance_valid;
   output.lio_generation_locked = input.lio_generation_locked;
+  output.lio_public_frame_generation_valid =
+      input.lio_public_frame_generation_valid;
   output.continuity_unrecoverable = input.continuity_unrecoverable;
   output.external_publisher_ready = input.external_publisher_ready;
   output.external_measurement_publishable = external_measurement_publishable;

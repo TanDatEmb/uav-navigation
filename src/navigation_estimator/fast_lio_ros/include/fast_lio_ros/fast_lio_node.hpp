@@ -16,6 +16,7 @@
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
 #include "fast_lio_core/navigation/base_link_state_converter.hpp"
 #include "fast_lio_ros/parameter_loader.hpp"
+#include "fast_lio_ros/lio_public_frame_generation.hpp"
 #include "fast_lio_ros/propagated_odometry_worker.hpp"
 #include "fast_lio_ros/ros_imu_adapter.hpp"
 #include "fast_lio_ros/ros_lidar_adapter.hpp"
@@ -74,6 +75,7 @@ class FastLioNode : public rclcpp::Node {
   RosImuAdapter imu_adapter_;
   RosLidarAdapter lidar_adapter_;
   RosLivoxCustomAdapter livox_custom_adapter_;
+  std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   RosOutputPublisher output_publisher_;
   RosTransformPublisher transform_publisher_;
   std::unique_ptr<RosPropagatedOdometryPublisher>

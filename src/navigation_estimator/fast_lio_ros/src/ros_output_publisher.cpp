@@ -255,10 +255,13 @@ void appendCovarianceProjectionValues(
 
 }  // namespace
 
-RosOutputPublisher::RosOutputPublisher(rclcpp::Node& node, RosParameters parameters)
+RosOutputPublisher::RosOutputPublisher(
+    rclcpp::Node& node, RosParameters parameters,
+    std::shared_ptr<LioPublicFrameGeneration> public_frame_generation)
     : parameters_(std::move(parameters)),
       clock_(node.get_clock()),
-      covariance_runtime_(std::make_shared<CovarianceProjectionRuntime>()) {
+      covariance_runtime_(std::make_shared<CovarianceProjectionRuntime>()),
+      public_frame_generation_(std::move(public_frame_generation)) {
   odometry_ = node.create_publisher<nav_msgs::msg::Odometry>(
       "/lio/odometry_corrected", QosProfiles::estimatorOutput());
   registered_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -372,6 +375,23 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("lio_generation", std::to_string(result.diagnostics.lio_generation)),
       keyValue("lio_generation_locked",
                result.diagnostics.lio_generation_locked ? "true" : "false"),
+      keyValue("lio_public_frame_generation",
+               std::to_string(public_frame_generation_
+                                  ? public_frame_generation_->snapshot().generation
+                                  : 0U)),
+      keyValue("lio_public_frame_generation_valid",
+               public_frame_generation_ &&
+                       public_frame_generation_->snapshot().valid
+                   ? "true"
+                   : "false"),
+      keyValue("lio_public_frame_discontinuity_count",
+               std::to_string(public_frame_generation_
+                                  ? public_frame_generation_->snapshot().discontinuity_count
+                                  : 0U)),
+      keyValue("lio_public_frame_last_event",
+               public_frame_generation_
+                   ? public_frame_generation_->snapshot().last_event
+                   : "PUBLIC_FRAME_GENERATION_OWNER_UNAVAILABLE"),
       keyValue("config_path", parameters_.config_path),
       keyValue("config_sha256", parameters_.config_sha256),
       keyValue("estimate_validity", toString(result.estimate_validity)),
