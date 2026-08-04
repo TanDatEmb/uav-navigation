@@ -1227,6 +1227,9 @@ class Preflight:
         frozen = product_paths_unchanged(self.workspace)
         git_sha = command_output(["git", "rev-parse", "HEAD"], self.workspace)
         git_status = command_output(["git", "status", "--porcelain"], self.workspace)
+        runner_workspace = TOOLS.parents[1]
+        runner_sha = command_output(["git", "rev-parse", "HEAD"], runner_workspace)
+        runner_status = command_output(["git", "status", "--porcelain"], runner_workspace)
         if self.expected_git_sha is not None and git_sha != self.expected_git_sha:
             raise QualificationFailure(
                 FailureCode.PROVENANCE_INVALID,
@@ -1297,6 +1300,8 @@ class Preflight:
             "workspace": str(self.workspace),
             "product_base_sha": PRODUCT_BASE_SHA,
             "qualification_harness_sha": git_sha,
+            "qualification_runner_sha": runner_sha,
+            "qualification_runner_dirty": bool(runner_status),
             "workspace_dirty": bool(git_status),
             "product_paths_unchanged_from_base": frozen,
             "acceptance_eligible": not bool(git_status),
