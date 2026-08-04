@@ -369,6 +369,10 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
                  : diagnostic_msgs::msg::DiagnosticStatus::WARN);
   status.message =
       result.rejection_reason.empty() ? result.diagnostics.reason : result.rejection_reason;
+  const auto public_frame = public_frame_generation_
+                                ? public_frame_generation_->snapshot()
+                                : LioPublicFrameGenerationSnapshot{0U, false, 0U,
+                                                                   "OWNER_UNAVAILABLE"};
   status.values = {
       keyValue("diagnostic_schema_version", "1"),
       keyValue("status", toString(result.status_after)),
@@ -376,22 +380,14 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("lio_generation_locked",
                result.diagnostics.lio_generation_locked ? "true" : "false"),
       keyValue("lio_public_frame_generation",
-               std::to_string(public_frame_generation_
-                                  ? public_frame_generation_->snapshot().generation
-                                  : 0U)),
+               std::to_string(public_frame.generation)),
       keyValue("lio_public_frame_generation_valid",
-               public_frame_generation_ &&
-                       public_frame_generation_->snapshot().valid
-                   ? "true"
-                   : "false"),
+               public_frame.valid ? "true" : "false"),
       keyValue("lio_public_frame_discontinuity_count",
-               std::to_string(public_frame_generation_
-                                  ? public_frame_generation_->snapshot().discontinuity_count
-                                  : 0U)),
+               std::to_string(public_frame.discontinuity_count)),
       keyValue("lio_public_frame_last_event",
-               public_frame_generation_
-                   ? public_frame_generation_->snapshot().last_event
-                   : "PUBLIC_FRAME_GENERATION_OWNER_UNAVAILABLE"),
+               public_frame_generation_ ? public_frame.last_event
+                                        : "PUBLIC_FRAME_GENERATION_OWNER_UNAVAILABLE"),
       keyValue("config_path", parameters_.config_path),
       keyValue("config_sha256", parameters_.config_sha256),
       keyValue("estimate_validity", toString(result.estimate_validity)),
