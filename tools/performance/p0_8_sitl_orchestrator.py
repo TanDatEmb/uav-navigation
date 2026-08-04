@@ -568,8 +568,7 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
             "external_diagnostics", DiagnosticArray,
             TopicSpec("external_diagnostics", "/px4/external_odometry_diagnostics",
                       "diagnostic_msgs/msg/DiagnosticArray", SUPERVISOR_QOS),
-            lambda message: self._observe("external_diagnostics", message,
-                                           {"status_names": [s.name for s in message.status]}))
+            self._on_external_diagnostics)
 
     @staticmethod
     def _odom_summary(message: Any) -> dict[str, Any]:
@@ -615,6 +614,11 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         if pending is not None:
             self.status_accumulator.record_pending_query(
                 event_ns, pending, parse_int(values.get("pending_query_age_ns")))
+
+    def _on_external_diagnostics(self, message: Any) -> None:
+        self._observe("external_diagnostics", message,
+                      {"status_names": [s.name for s in message.status]})
+        self.diagnostics.update(message)
 
     def _on_supervisor_status(self, message: Any) -> None:
         self._observe("supervisor_status", message, {
@@ -695,7 +699,8 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.measurement_baseline_diagnostics = {
             name: self.diagnostics.snapshot(name)
             for name in ("fast_lio/estimator", "fast_lio/transport",
-                         "fast_lio/propagated_odometry", "odometry_supervisor")
+                         "fast_lio/propagated_odometry", "odometry_supervisor",
+                         "px4_external_odometry_bridge")
         }
 
     def as_topics(self) -> dict[str, Any]:
