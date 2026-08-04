@@ -10,7 +10,6 @@ TEST(LioPublicFrameGenerationTest, IgnoresNonPublicGenerationEvents) {
   generation.observe(PublicFrameEvent::kInternalLioGenerationChange);
   generation.observe(PublicFrameEvent::kCorrectedPropagatedHandoff);
   generation.observe(PublicFrameEvent::kPx4Reset);
-  generation.observe(PublicFrameEvent::kSupervisorGateChange);
   generation.observe(PublicFrameEvent::kPublicFrameDiscontinuity);
   EXPECT_EQ(generation.snapshot().generation, 1U);
   EXPECT_EQ(generation.snapshot().discontinuity_count, 0U);

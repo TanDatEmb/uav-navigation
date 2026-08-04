@@ -1,0 +1,82 @@
+fast_lio:
+  ros__parameters:
+    frames:
+      odom: lio_odom
+      base: base_link
+      imu: livox_imu_frame
+      lidar: livox_frame
+    input:
+      lidar_topic: /lidar/points
+      imu_topic: /lidar/imu
+      lidar_frame: livox_frame
+      imu_frame: livox_imu_frame
+      lidar_message_type: pointcloud2
+      qos_reliability: best_effort
+    timing:
+      lidar_mode: simultaneous_scan
+      clock_domain: simulation_time
+      livox_timestamp_policy: require_header_match
+      max_imu_gap_ns: 20000000
+      reject_timestamp_regression: true
+    initial_prior:
+      source: topic
+      context: ground_startup
+      source_frame: px4_odom
+      source_frame_transform: startup_coincident
+      components: {position: true, velocity: true, attitude: yaw_only}
+      topic: /px4/estimator_odometry
+      topic_wait_timeout_ns: 2000000000
+      maximum_topic_prior_age_ns: 500000000
+      ground_fallback: zero
+      maximum_full_attitude_tilt_disagreement_rad: 0.1745329252
+      fixed:
+        position_m: [0.0, 0.0, 0.0]
+        orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
+        linear_velocity_m_s: [0.0, 0.0, 0.0]
+        angular_velocity_rad_s: [0.0, 0.0, 0.0]
+    tracking:
+      maximum_recoverable_imu_gap_ns: 50000000
+      recovery_confirmation_updates: 3
+      discontinuity_covariance_inflation: 10.0
+    extrinsic:
+      estimate_online: false
+      translation_imu_lidar: [-0.011, -0.02329, 0.04412]
+      rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
+    initialization:
+      minimum_imu_samples: 200
+      require_stationary: true
+    preprocessing:
+      minimum_range_m: 0.1
+      maximum_range_m: 40.0
+      scan_voxel_size_m: 0.2
+    registration: {maximum_iterations: 10}
+    mapping:
+      registration_map: {voxel_size_m: 0.3}
+      local_map:
+        half_extent_m: [30.0, 30.0, 15.0]
+        crop_trigger_distance_m: 5.0
+        # The previous headless run peaked at 63388 points at 0.2 m. Keep
+        # simulation limits proportional to its shorter trajectory.
+        soft_point_limit: 80000
+        hard_point_limit: 100000
+        target_point_count_after_prune: 70000
+        distance_shell_size_m: 5.0
+      dynamic_filter: {enabled: false}
+    output:
+      publish_registered_points: false
+      publish_local_map: false
+    propagated_odometry:
+      enabled: true
+      publish_rate_hz: 50.0
+      imu_ingress_capacity: 4096
+      imu_history_duration_ns: 1000000000
+      maximum_correction_age_ns: 300000000
+    runtime:
+      imu_queue_capacity: 4096
+      lidar_queue_capacity: 16
+      maximum_processing_lag_ms: 500
+      overload_policy: fail
+simulation:
+  ros__parameters:
+    world: px4_lio_smoke
+    model: x500_mid360

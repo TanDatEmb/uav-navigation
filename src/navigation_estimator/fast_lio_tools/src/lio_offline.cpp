@@ -268,8 +268,6 @@ int run(const std::filesystem::path& bag_path,
       [&](const std::filesystem::path& path) {
     std::ofstream summary(path);
     summary << "{\n"
-          << "  \"config_path\": \"" << profile.config_path << "\",\n"
-          << "  \"config_SHA256\": \"" << profile.config_sha256 << "\",\n"
           << "  \"maximum_imu_gap_ns\": "
           << profile.estimator.synchronization.maximum_imu_gap_ns << ",\n"
           << "  \"deskew_mode\": \"" << profile.lidar_timing_mode << "\",\n"

@@ -22,7 +22,7 @@ class ParameterLoaderTest : public ::testing::Test {
 
 std::filesystem::path canonicalConfigWithout(std::string_view line,
                                              std::string_view suffix) {
-  std::ifstream source(FAST_LIO_ROS_SOURCE_DIR "/config/mid360_real.yaml");
+  std::ifstream source(UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   std::string contents((std::istreambuf_iterator<char>(source)),
                        std::istreambuf_iterator<char>());
   const auto position = contents.find(line);
@@ -151,35 +151,30 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
       ros.local_map.half_extent_m, 0.0));
 }
 
-TEST_F(ParameterLoaderTest, CanonicalConfigParsesAndRecordsSha) {
-  const std::string path =
-      FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360_real.yaml";
+TEST_F(ParameterLoaderTest, CanonicalConfigParses) {
+  const std::string path = UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml";
   const auto profile = loadCanonicalEstimatorProfile(path);
-  EXPECT_EQ(profile.config_sha256, sha256File(path));
-  EXPECT_EQ(profile.config_sha256.size(), 64U);
   EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 10U);
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
-  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
+  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
 }
 
-TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
-  const std::string path =
-      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_real.yaml";
+TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
+  const std::string path = UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml";
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", path});
   rclcpp::Node node{"fast_lio", options};
   const auto parameters = ParameterLoader::declareAndLoad(node);
   const auto profile = makeEstimatorProfile(parameters);
 
-  EXPECT_EQ(parameters.lidar_topic, "/livox/lidar");
-  EXPECT_EQ(parameters.imu_topic, "/livox/imu");
+  EXPECT_EQ(parameters.lidar_topic, "/lidar/points");
+  EXPECT_EQ(parameters.imu_topic, "/lidar/imu");
   EXPECT_EQ(parameters.lidar_frame, "livox_frame");
   EXPECT_EQ(parameters.imu_frame, "livox_imu_frame");
   EXPECT_EQ(parameters.lidar_input_frame, "livox_frame");
   EXPECT_EQ(parameters.imu_input_frame, "livox_imu_frame");
-  EXPECT_EQ(parameters.lidar_message_type, "livox_custom");
+  EXPECT_EQ(parameters.lidar_message_type, "pointcloud2");
   EXPECT_EQ(profile.lidar_timing_mode, "per_point");
   EXPECT_EQ(profile.clock_domain, ClockDomain::kSensorTime);
   EXPECT_EQ(profile.timestamp_policy,
@@ -191,23 +186,23 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
   EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
   EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.translation_imu_lidar_m,
-            (std::array<double, 3>{-0.011, -0.02329, 0.04412}));
+            (std::array<double, 3>{-0.019391, -0.000278, 0.080926}));
   EXPECT_EQ(parameters.rotation_imu_lidar_xyzw,
             (std::array<double, 4>{0.0, 0.0, 0.0, 1.0}));
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
-  EXPECT_TRUE(parameters.require_stationary);
+  EXPECT_FALSE(parameters.require_stationary);
   EXPECT_DOUBLE_EQ(parameters.minimum_range_m, 0.1);
   EXPECT_DOUBLE_EQ(parameters.maximum_range_m, 40.0);
   EXPECT_DOUBLE_EQ(parameters.scan_voxel_size_m, 0.9);
-  EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.2);
+  EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.3);
   EXPECT_EQ(parameters.maximum_registration_iterations, 10);
-  EXPECT_TRUE(parameters.publish_registered_points);
+  EXPECT_FALSE(parameters.publish_registered_points);
   EXPECT_FALSE(parameters.publish_local_map);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
   EXPECT_EQ(parameters.maximum_processing_lag_ms, 500);
   EXPECT_EQ(parameters.overload_policy, "fail");
-  EXPECT_EQ(parameters.input_qos_reliability, "best_effort");
+  EXPECT_EQ(parameters.input_qos_reliability, "reliable");
   EXPECT_TRUE(parameters.propagated_odometry_enabled);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
   EXPECT_EQ(parameters.propagated_odometry_imu_ingress_capacity, 4096);
@@ -219,7 +214,7 @@ TEST_F(ParameterLoaderTest, Mid360RealProfileUsesCanonicalHardwareContract) {
 
 TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
   const auto profile = loadCanonicalEstimatorProfile(
-      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
+      UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   RosParameters parameters;
   parameters.imu_frame = "livox_imu_frame";
   parameters.lidar_frame = "livox_frame";
@@ -246,7 +241,7 @@ TEST_F(ParameterLoaderTest, PriorFrameRequiresExplicitStartupTransform) {
 
 TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
   const auto profile = loadCanonicalEstimatorProfile(
-      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
+      UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   EXPECT_EQ(profile.lidar_input_frame, "livox_frame");
   EXPECT_EQ(profile.imu_input_frame, "livox_imu_frame");
   EXPECT_EQ(profile.estimator.extrinsic.translation_imu_lidar_m,
@@ -255,11 +250,11 @@ TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
 
 TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {
   const auto profile = loadCanonicalEstimatorProfile(
-      FAST_LIO_ROS_SOURCE_DIR "/config/mid360_aist_replay.yaml");
+      UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
-  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.2);
-  EXPECT_TRUE(
+  EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
+  EXPECT_FALSE(
       profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
 }
 
@@ -276,8 +271,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
   for (const auto& [line, suffix] :
        std::array<std::pair<std::string_view, std::string_view>, 2>{
            std::pair{"      scan_voxel_size_m: 0.9\n", "scan_voxel"},
-           std::pair{"    mapping:\n"
-                     "      registration_map: {voxel_size_m: 0.2}\n",
+           std::pair{"      registration_map: {voxel_size_m: 0.3}\n",
                      "registration_map_voxel"}}) {
     const auto path = canonicalConfigWithout(line, suffix);
     EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
@@ -318,18 +312,14 @@ TEST_F(ParameterLoaderTest, RejectsInvalidTrackingRecoveryPolicy) {
 }
 
 TEST_F(ParameterLoaderTest, LoadsEveryCanonicalEstimatorYaml) {
-  for (const auto* filename :
-       {"mid360_aist_replay.yaml", "mid360_real.yaml",
-        "mid360_px4_gazebo.yaml"}) {
+  for (const auto* filename : {"dataset.yaml", "sim.yaml"}) {
     EXPECT_NO_THROW(loadCanonicalEstimatorProfile(
-        std::string{FAST_LIO_ROS_SOURCE_DIR "/config/"} + filename));
+        std::string{UAV_NAV_RUNTIME_CONFIG_DIR "/"} + filename));
   }
 }
 
 TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
-  const std::string path =
-      FAST_LIO_ROS_SOURCE_DIR
-      "/config/mid360_real.yaml";
+  const std::string path = UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml";
   const auto direct = loadCanonicalEstimatorProfile(path);
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", path});
@@ -337,7 +327,6 @@ TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
   const auto ros =
       makeEstimatorProfile(ParameterLoader::declareAndLoad(ros_node));
   expectEstimatorConfigsEqual(direct.estimator, ros.estimator);
-  EXPECT_EQ(direct.config_sha256, ros.config_sha256);
   EXPECT_EQ(direct.lidar_topic, ros.lidar_topic);
   EXPECT_EQ(direct.imu_topic, ros.imu_topic);
   EXPECT_EQ(direct.lidar_input_frame, ros.lidar_input_frame);
@@ -349,7 +338,7 @@ TEST_F(ParameterLoaderTest, DirectAndRosConfigEquivalentFieldByField) {
 TEST_F(ParameterLoaderTest, InvalidConfigIsRejectedWithoutDefaults) {
   const auto path =
       std::filesystem::temp_directory_path() /
-      "m1_d2_missing_required_estimator_config.yaml";
+      "runtime_missing_required_estimator_config.yaml";
   {
     std::ofstream stream(path);
     stream << "fast_lio:\n  ros__parameters:\n"

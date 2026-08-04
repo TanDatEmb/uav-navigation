@@ -128,7 +128,7 @@ IkfomEstimator::IkfomEstimator(IkfomEstimatorConfig config,
       !(config_.initial_covariance > 0.0) ||
       config_.estimate_extrinsic) {
     throw std::invalid_argument(
-        "IKFoM M1 configuration is invalid or requests online extrinsics");
+        "IKFoM runtime configuration is invalid or requests online extrinsics");
   }
   std::array<double, IkfomState::DOF> limits{};
   limits.fill(config_.convergence_limit);

@@ -11,10 +11,9 @@ ExternalOdometryGateInput ready_input() {
   input.transport_ready = true;
   input.timestamp_ready = true;
   input.covariance_ready = true;
-  input.supervisor_authorized = true;
   input.public_frame_generation_valid = true;
-  input.corrected_propagated_fresh = true;
-  input.supervisor_fresh = true;
+  input.lio_valid = true;
+  input.lio_fresh = true;
   input.frame_valid = true;
   return input;
 }
@@ -28,10 +27,9 @@ TEST(ExternalOdometryGateTest, RequiresEveryIndependentGate) {
                     &ExternalOdometryGateInput::transport_ready,
                     &ExternalOdometryGateInput::timestamp_ready,
                     &ExternalOdometryGateInput::covariance_ready,
-                    &ExternalOdometryGateInput::supervisor_authorized,
                     &ExternalOdometryGateInput::public_frame_generation_valid,
-                    &ExternalOdometryGateInput::corrected_propagated_fresh,
-                    &ExternalOdometryGateInput::supervisor_fresh,
+                    &ExternalOdometryGateInput::lio_valid,
+                    &ExternalOdometryGateInput::lio_fresh,
                     &ExternalOdometryGateInput::frame_valid}) {
     auto input = ready_input();
     input.*gate = false;

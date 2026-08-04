@@ -1,0 +1,43 @@
+# Runtime contract shared by dataset-check, sim-check and sim.
+runtime:
+  artifact_root: .artifacts/runtime
+  monitor_queue_depth: 100
+  thresholds:
+    minimum_rate_fraction: 0.90
+    maximum_synchronization_tolerance_ms: 20.0
+    stale_after_s: 1.0
+    replay_tail_grace_s: 0.5
+  frames:
+    odom: lio_odom
+    base: base_link
+    imu: livox_imu_frame
+    lidar: livox_frame
+  topics:
+    imu: /lidar/imu
+    lidar: /lidar/points
+    corrected_odometry: /lio/odometry_corrected
+    propagated_odometry: /lio/odometry_propagated
+    diagnostics: /lio/diagnostics
+    tf: /tf
+    tf_static: /tf_static
+    external_odometry: /fmu/in/vehicle_visual_odometry
+  streams:
+    imu: {expected_hz: 200.0, stale_after_s: 0.10}
+    lidar: {expected_hz: 10.0, stale_after_s: 0.50}
+    corrected_odometry: {expected_hz: 10.0, stale_after_s: 1.00}
+    propagated_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
+    external_odometry: {expected_hz: 50.0, stale_after_s: 0.20}
+    px4_odometry: {expected_hz: 30.0, stale_after_s: 1.00}
+    vehicle_status: {expected_hz: 10.0, stale_after_s: 1.00}
+    local_position: {expected_hz: 30.0, stale_after_s: 1.00}
+    estimator_status_flags: {expected_hz: 10.0, stale_after_s: 1.00}
+    aid_ev_pos: {expected_hz: 10.0, stale_after_s: 1.00}
+    aid_ev_vel: {expected_hz: 10.0, stale_after_s: 1.00}
+    aid_ev_yaw: {expected_hz: 10.0, stale_after_s: 1.00}
+  timeouts:
+    startup_s: 90
+    lio_tracking_s: 90
+    external_odometry_s: 45
+    replay_s: 900
+    drain_s: 120
+    post_flight_monitor_s: 5

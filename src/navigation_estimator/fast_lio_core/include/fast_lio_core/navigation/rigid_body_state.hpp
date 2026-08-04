@@ -13,7 +13,7 @@ namespace uav::nav::lio {
 // coordinates into reference coordinates; the two linear-velocity fields make
 // their expression frames explicit. This type intentionally has no
 // covariance: StateEstimate::covariance remains an IMU-origin error-state
-// covariance until the P0.5 projection contract exists.
+// covariance until the covariance projection contract is available.
 struct RigidBodyState {
   Timestamp time;
 
@@ -32,7 +32,8 @@ struct RigidBodyState {
   Eigen::Vector3d linear_velocity_reference_body_m_s{Eigen::Vector3d::Zero()};
   Eigen::Vector3d linear_velocity_body_m_s{Eigen::Vector3d::Zero()};
 
-  // P0.2 requires this input from the caller. There is no zero fallback.
+  // The runtime contract requires this input from the caller. There is no
+  // zero fallback.
   std::optional<Eigen::Vector3d> angular_velocity_body_rad_s;
 
   [[nodiscard]] bool allFinite() const noexcept {

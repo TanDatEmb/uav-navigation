@@ -8,7 +8,6 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    default_config = [FindPackageShare("fast_lio_ros"), "/config/mid360_real.yaml"]
     frames_launch = [
         FindPackageShare("uav_description"),
         "/launch/publish_sensor_frames.launch.py",
@@ -17,7 +16,6 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "config_file",
-                default_value=default_config,
                 description="Path to the fast_lio_ros parameter YAML.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),

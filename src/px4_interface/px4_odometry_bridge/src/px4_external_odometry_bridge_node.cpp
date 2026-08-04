@@ -14,8 +14,6 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include <navigation_interfaces/msg/odometry_supervisor_status.hpp>
-
 #include "px4_odometry_bridge/external_odometry_conversion.hpp"
 #include "px4_odometry_bridge/external_odometry_gate.hpp"
 #include "px4_odometry_bridge/geometric_jump_latch.hpp"
@@ -27,17 +25,19 @@ namespace px4_odometry_bridge {
 class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
  public:
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
-  using SupervisorStatus = navigation_interfaces::msg::OdometrySupervisorStatus;
   static constexpr std::uint64_t kSimulationTimestampMappingGeneration = 1;
 
   Px4ExternalOdometryBridgeNode() : Node("px4_external_odometry_bridge") {
     max_age_ns_ = declare_parameter<std::int64_t>(
-        "external_odometry.maximum_age_ns", 150'000'000);
+        "external_odometry.maximum_age_ns", 500'000'000);
+    diagnostics_max_age_ns_ = declare_parameter<std::int64_t>(
+        "external_odometry.diagnostics_maximum_age_ns", 2'000'000'000);
     position_jump_m_ = declare_parameter<double>(
         "external_odometry.position_jump_m", 0.75);
     orientation_jump_rad_ = declare_parameter<double>(
         "external_odometry.orientation_jump_rad", 0.35);
-    if (max_age_ns_ <= 0 || !std::isfinite(position_jump_m_) || position_jump_m_ <= 0.0 ||
+    if (max_age_ns_ <= 0 || diagnostics_max_age_ns_ <= 0 ||
+        !std::isfinite(position_jump_m_) || position_jump_m_ <= 0.0 ||
         !std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0) {
       throw std::invalid_argument("invalid external odometry bridge gate parameters");
     }
@@ -45,26 +45,18 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output_ = create_publisher<VehicleOdometry>(
         versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"),
         rclcpp::QoS(10).best_effort());
-    diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-        "/px4/external_odometry_diagnostics", rclcpp::QoS(1).transient_local());
     lio_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/lio/odometry_propagated", rclcpp::QoS(20).reliable(),
         [this](nav_msgs::msg::Odometry::ConstSharedPtr message) { on_lio(*message); });
-    supervisor_sub_ = create_subscription<SupervisorStatus>(
-        "/navigation/odometry_supervisor/status",
-        rclcpp::QoS(1).reliable().transient_local(),
-        [this](SupervisorStatus::ConstSharedPtr message) { on_supervisor(*message); });
-    diagnostics_timer_ = create_wall_timer(std::chrono::milliseconds(500),
-                                            [this] { publish_diagnostics(); });
+    lio_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+        "/lio/diagnostics", rclcpp::QoS(20).best_effort(),
+        [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
+          on_lio_diagnostics(*message);
+        });
     node_ready_ = true;
   }
 
  private:
-  static std::int64_t time_ns(const builtin_interfaces::msg::Time& time) {
-    return static_cast<std::int64_t>(time.sec) * 1'000'000'000LL +
-           static_cast<std::int64_t>(time.nanosec);
-  }
-
   static bool fits_px4_float(const ExternalOdometryFrame& frame) {
     const auto finite_float = [](const double value) {
       return std::isfinite(static_cast<float>(value));
@@ -84,20 +76,63 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     return true;
   }
 
-  void on_supervisor(const SupervisorStatus& message) {
-    const bool generation_changed = jump_latch_.observePublicFrameGeneration(
-        message.lio_public_frame_generation_valid,
-        message.lio_public_frame_generation);
-    const bool operator_reset = jump_latch_.observeOperatorReset(
-        message.reinitialization_requested,
-        message.reinitialization_request_sequence);
-    // Only an authoritative LIO public generation or an explicit operator
-    // reset can recover a geometric-jump latch. PX4 frame/reset generations
-    // are observed for diagnostics and never control this state.
-    if (generation_changed || operator_reset) {
-      last_published_.reset();
+  static bool value_is_true(const diagnostic_msgs::msg::DiagnosticStatus& status,
+                            const std::string& key) {
+    for (const auto& item : status.values) {
+      if (item.key == key) return item.value == "true";
     }
-    supervisor_ = message;
+    return false;
+  }
+
+  static std::uint64_t value_uint(const diagnostic_msgs::msg::DiagnosticStatus& status,
+                                  const std::string& key) {
+    for (const auto& item : status.values) {
+      if (item.key == key) {
+        try {
+          return static_cast<std::uint64_t>(std::stoull(item.value));
+        } catch (const std::exception&) {
+          return 0U;
+        }
+      }
+    }
+    return 0U;
+  }
+
+  void on_lio_diagnostics(const diagnostic_msgs::msg::DiagnosticArray& message) {
+    const auto now_ns = now().nanoseconds();
+    for (const auto& status : message.status) {
+      if (status.name == "fast_lio/estimator") {
+        const auto generation = value_uint(status, "lio_public_frame_generation");
+        const bool generation_valid = value_is_true(status, "lio_public_frame_generation_valid");
+        const bool generation_changed = jump_latch_.observePublicFrameGeneration(
+            generation_valid, generation);
+        if (generation_changed) {
+          last_published_.reset();
+        }
+        lio_public_frame_generation_ = generation;
+        lio_public_frame_generation_valid_ = generation_valid;
+        lio_valid_ = status.level == diagnostic_msgs::msg::DiagnosticStatus::OK &&
+                     value_is_true(status, "navigation_valid") &&
+                     value_is_true(status, "corrected_estimate_valid") &&
+                     std::any_of(status.values.begin(), status.values.end(),
+                                 [](const auto& item) {
+                                   return item.key == "status" && item.value == "TRACKING";
+                                 });
+        lio_covariance_valid_ = value_is_true(status, "pose_covariance_available") &&
+                                value_is_true(status, "twist_covariance_available");
+        last_lio_diagnostics_ns_ = now_ns;
+      }
+    }
+  }
+
+  bool lio_diagnostics_fresh(std::int64_t now_ns) const {
+    // The propagated odometry callback is the authoritative high-rate
+    // freshness signal.  Its diagnostic heartbeat is intentionally slower
+    // and may be delivered late while the executor is busy with a motion
+    // transition; requiring both clocks here can close an otherwise healthy
+    // external-odometry stream for a full heartbeat interval.
+    return last_lio_diagnostics_ns_ > 0 && now_ns >= last_lio_diagnostics_ns_ &&
+           now_ns - last_lio_diagnostics_ns_ <= diagnostics_max_age_ns_;
   }
 
   void on_lio(const nav_msgs::msg::Odometry& message) {
@@ -144,25 +179,17 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     last_transport_timestamp_ns_ = now_ns;
     const bool use_sim_time = get_parameter("use_sim_time").as_bool();
     const std::uint64_t public_generation =
-        supervisor_.has_value() && supervisor_->lio_public_frame_generation_valid
-            ? supervisor_->lio_public_frame_generation
-            : 0U;
+        lio_public_frame_generation_valid_ ? lio_public_frame_generation_ : 0U;
     last_timestamp_result_ = timestamp_converter_->convert(
         frame->timestamp_ns, now_ns, use_sim_time,
         kSimulationTimestampMappingGeneration);
     const bool timestamp_ready = last_timestamp_result_.valid;
     const bool transport_ready = output_->get_subscription_count() > 0;
-    const bool supervisor_fresh = supervisor_.has_value() &&
-                                 time_ns(supervisor_->evaluation_time) > 0 &&
-                                 now_ns >= time_ns(supervisor_->evaluation_time) &&
-                                 now_ns - time_ns(supervisor_->evaluation_time) <= max_age_ns_;
-    const bool lio_fresh = supervisor_.has_value() &&
-                           supervisor_->lio_propagated_age_ns >= 0 &&
-                           supervisor_->lio_propagated_age_ns <= max_age_ns_ &&
-                           supervisor_->lio_corrected_age_ns >= 0 &&
-                           supervisor_->lio_corrected_age_ns <= max_age_ns_;
-    const bool supervisor_authorized =
-        supervisor_.has_value() && supervisor_->external_measurement_authorized;
+    // The callback carries the high-rate propagated odometry and its timestamp
+    // is checked above. A slow propagated-diagnostics heartbeat may report a
+    // transient stale correction while this stream is already current; it is
+    // therefore not an independent publication gate.
+    const bool lio_fresh = lio_diagnostics_fresh(now_ns);
 
     bool frame_jump = false;
     if (last_published_.has_value()) {
@@ -177,14 +204,11 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     gate_input.node_ready = node_ready_;
     gate_input.transport_ready = transport_ready;
     gate_input.timestamp_ready = timestamp_ready;
-    gate_input.covariance_ready = frame->covariance_valid && supervisor_.has_value() &&
-                                  supervisor_->covariance_valid;
-    gate_input.supervisor_authorized = supervisor_authorized;
-    gate_input.public_frame_generation_valid =
-        supervisor_.has_value() && supervisor_->lio_public_frame_generation_valid &&
-        public_generation > 0;
-    gate_input.corrected_propagated_fresh = lio_fresh;
-    gate_input.supervisor_fresh = supervisor_fresh;
+    gate_input.covariance_ready = frame->covariance_valid && lio_covariance_valid_;
+    gate_input.public_frame_generation_valid = lio_public_frame_generation_valid_ &&
+                                               public_generation > 0;
+    gate_input.lio_valid = lio_valid_;
+    gate_input.lio_fresh = lio_fresh;
     gate_input.frame_valid = frame->frame_valid;
     gate_input.geometric_jump_latched = jump_latch_.latched();
     last_gate_ = evaluate_external_odometry_gate(gate_input);
@@ -218,7 +242,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output.velocity_variance = *velocity_variance_float;
     output.reset_counter =
         public_frame_generation_to_reset_counter(public_generation);
-    output.quality = supervisor_->health == SupervisorStatus::HEALTHY ? 100 : 50;
+    output.quality = lio_valid_ ? 100 : 50;
     output_->publish(output);
     last_published_ = *frame;
     last_published_time_ns_ = frame->timestamp_ns;
@@ -227,123 +251,15 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     publication_active_ = true;
   }
 
-  void publish_diagnostics() {
-    diagnostic_msgs::msg::DiagnosticArray array;
-    array.header.stamp = now();
-    diagnostic_msgs::msg::DiagnosticStatus status;
-    status.name = "px4_external_odometry_bridge";
-    const bool transport_ready = output_->get_subscription_count() > 0;
-    const auto now_ns = now().nanoseconds();
-    const bool supervisor_fresh = supervisor_.has_value() &&
-                                  time_ns(supervisor_->evaluation_time) > 0 &&
-                                  now_ns >= time_ns(supervisor_->evaluation_time) &&
-                                  now_ns - time_ns(supervisor_->evaluation_time) <= max_age_ns_;
-    const bool timestamp_ready = last_timestamp_result_.valid;
-    const bool infrastructure_ready = node_ready_ && transport_ready && timestamp_ready;
-    status.level = infrastructure_ready ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                                         : diagnostic_msgs::msg::DiagnosticStatus::WARN;
-    status.message = publication_ready_ ? "external odometry publication is active"
-                       : "external odometry publication gate is closed";
-    const auto add = [&status](std::string key, std::string value) {
-      diagnostic_msgs::msg::KeyValue item;
-      item.key = std::move(key);
-      item.value = std::move(value);
-      status.values.push_back(std::move(item));
-    };
-    const auto timestamp_diagnostics = timestamp_converter_->diagnostics();
-    const bool publisher_ready = node_ready_ && transport_ready;
-    add("diagnostic_schema_version", "2");
-    add("ready", infrastructure_ready ? "true" : "false");
-    add("publisher_ready", publisher_ready ? "true" : "false");
-    add("node_ready", node_ready_ ? "true" : "false");
-    add("transport_ready", transport_ready ? "true" : "false");
-    add("timestamp_ready", timestamp_ready ? "true" : "false");
-    add("covariance_ready", last_gate_.covariance_ready ? "true" : "false");
-    add("supervisor_authorized",
-        last_gate_.supervisor_authorized ? "true" : "false");
-    add("public_frame_generation_valid",
-        last_gate_.public_frame_generation_valid ? "true" : "false");
-    add("corrected_propagated_fresh",
-        last_gate_.corrected_propagated_fresh ? "true" : "false");
-    add("supervisor_fresh", supervisor_fresh ? "true" : "false");
-    add("frame_valid", last_frame_valid_ ? "true" : "false");
-    add("geometric_jump_latched", jump_latch_.latched() ? "true" : "false");
-    add("publication_ready", publication_ready_ ? "true" : "false");
-    add("publication_active",
-        (publication_ready_ && publication_active_ && last_published_time_ns_ > 0 &&
-         now_ns >= last_published_time_ns_ &&
-         now_ns - last_published_time_ns_ <= max_age_ns_)
-            ? "true"
-            : "false");
-    add("publication_authorized", last_gate_.supervisor_authorized ? "true" : "false");
-    add("publisher_subscription_count", std::to_string(output_->get_subscription_count()));
-    add("publisher_topic", versioned_topic<VehicleOdometry>(
-                                "/fmu/in/vehicle_visual_odometry"));
-    add("pose_frame", "POSE_FRAME_FRD");
-    add("velocity_frame", "VELOCITY_FRAME_BODY_FRD");
-    add("timestamp_source_domain", last_timestamp_result_.source_domain);
-    add("timestamp_target_domain", last_timestamp_result_.target_domain);
-    add("timestamp_conversion_valid", last_timestamp_result_.valid ? "true" : "false");
-    add("timestamp_conversion_generation",
-        std::to_string(last_timestamp_result_.timestamp_mapping_generation));
-    add("timestamp_mapping_generation",
-        std::to_string(timestamp_diagnostics.timestamp_mapping_generation));
-    add("timestamp_mapping_generation_change_count",
-        std::to_string(timestamp_diagnostics.timestamp_mapping_generation_change_count));
-    add("timestamp_sample_us",
-        std::to_string(last_timestamp_result_.measurement_time_us));
-    add("publication_timestamp_us",
-        std::to_string(last_timestamp_result_.publication_time_us));
-    add("timestamp_age_ns", std::to_string(last_timestamp_result_.timestamp_age_ns));
-    add("timestamp_regression_count",
-        std::to_string(timestamp_diagnostics.regression_count));
-    add("timestamp_sample_regression_count",
-        std::to_string(timestamp_diagnostics.timestamp_sample_regression_count));
-    add("publication_timestamp_regression_count",
-        std::to_string(timestamp_diagnostics.publication_timestamp_regression_count));
-    add("duplicate_measurement_suppressed_count",
-        std::to_string(timestamp_diagnostics.duplicate_measurement_suppressed_count));
-    add("timestamp_conversion_failure_count",
-        std::to_string(timestamp_diagnostics.conversion_failure_count));
-    add("timestamp_failure_reason", timestamp_diagnostics.failure_reason);
-    add("timestamp_reason", last_timestamp_result_.reason);
-    add("published_count", std::to_string(published_count_));
-    add("gated_count", std::to_string(gated_count_));
-    add("rejected_count", std::to_string(rejected_count_));
-    add("covariance_rejected_count", std::to_string(covariance_rejected_count_));
-    add("covariance_rejection_reason", last_rejection_reason_ ==
-                                            "COVARIANCE_NOT_FLOAT_REPRESENTABLE"
-                                        ? last_rejection_reason_
-                                        : "NONE");
-    add("last_rejection_reason", last_rejection_reason_);
-    add("lio_public_frame_generation",
-        std::to_string(supervisor_.has_value()
-                           ? supervisor_->lio_public_frame_generation
-                           : 0U));
-    add("reset_counter", std::to_string(last_reset_counter_));
-    add("geometric_jump_count", std::to_string(jump_latch_.count()));
-    add("last_sample_timestamp_ns", std::to_string(last_sample_timestamp_ns_));
-    add("last_transport_timestamp_ns", std::to_string(last_transport_timestamp_ns_));
-    add("last_published_time_ns", std::to_string(last_published_time_ns_));
-    add("supervisor_gate", last_gate_.supervisor_authorized ? "true" : "false");
-    add("gate_reason", last_gate_.reason);
-    add("px4_frame_generation_observed",
-        std::to_string(supervisor_.has_value() ? supervisor_->px4_frame_generation : 0U));
-    array.status.push_back(std::move(status));
-    diagnostics_->publish(std::move(array));
-  }
-
   rclcpp::Publisher<VehicleOdometry>::SharedPtr output_;
-  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_sub_;
-  rclcpp::Subscription<SupervisorStatus>::SharedPtr supervisor_sub_;
-  rclcpp::TimerBase::SharedPtr diagnostics_timer_;
-  std::optional<SupervisorStatus> supervisor_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr lio_diagnostics_sub_;
   std::optional<ExternalOdometryFrame> last_published_;
   std::unique_ptr<TimestampConverter> timestamp_converter_;
   TimestampConversionResult last_timestamp_result_;
   ExternalOdometryGateResult last_gate_;
-  std::int64_t max_age_ns_{150'000'000};
+  std::int64_t max_age_ns_{500'000'000};
+  std::int64_t diagnostics_max_age_ns_{2'000'000'000};
   double position_jump_m_{0.75};
   double orientation_jump_rad_{0.35};
   std::int64_t last_published_time_ns_{0};
@@ -355,7 +271,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t covariance_rejected_count_{0};
   std::uint8_t last_reset_counter_{0};
   GeometricJumpLatch jump_latch_;
+  std::uint64_t lio_public_frame_generation_{0};
+  std::int64_t last_lio_diagnostics_ns_{0};
   bool node_ready_{false};
+  bool lio_valid_{false};
+  bool lio_covariance_valid_{false};
+  bool lio_public_frame_generation_valid_{false};
   bool last_frame_valid_{false};
   bool publication_ready_{false};
   bool publication_active_{false};

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PARALLEL_WORKERS = os.environ.get("PARALLEL_WORKERS", "1")
 MAKE_JOBS = os.environ.get("MAKE_JOBS", "1")
 COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
-STANDALONE_EXCLUDED_PACKAGES = ("px4_msgs", "px4_odometry_bridge")
+STANDALONE_EXCLUDED_PACKAGES: tuple[str, ...] = ()
 MODES = {
     "release": {
         "build_type": "RelWithDebInfo",
@@ -160,7 +160,7 @@ def main() -> int:
         ]
 
     packages = getattr(args, "packages", None)
-    if args.action in {"build", "test"}:
+    if args.action in {"build", "test"} and STANDALONE_EXCLUDED_PACKAGES:
         command.extend(["--packages-skip", *STANDALONE_EXCLUDED_PACKAGES])
     if packages:
         command.extend(["--packages-select", *packages])

@@ -9,13 +9,11 @@ WS_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 detect_px4_dir() {
   if [[ -n "${PX4_DIR:-}" ]]; then printf '%s\n' "${PX4_DIR}"
-  elif [[ -d "${HOME}/Dev/Autopilot-p0.7-v1.17" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot-p0.7-v1.17"
   elif [[ -d "${HOME}/Dev/Autopilot" ]]; then printf '%s\n' "${HOME}/Dev/Autopilot"
   else printf '%s\n' "${HOME}/Autopilot"; fi
 }
 
 PX4_DIR="$(detect_px4_dir)"
-PX4_REQUIRED_GIT_SHA="${PX4_REQUIRED_GIT_SHA:-d6f12ad1c4f70ad3230afd7d86e971421e02fef4}"
 PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
 PX4_BIN="${PX4_BUILD}/bin/px4"
 PX4_ROOTFS="${PX4_BUILD}/rootfs"
@@ -26,7 +24,7 @@ WORLD_NAME="${PX4_GZ_WORLD:-px4_lio_smoke}"
 WORLD_FILE="${UAV_WORLDS}/${WORLD_NAME}.sdf"
 MODEL_NAME="${PX4_GZ_MODEL_NAME:-x500_mid360}"
 
-for required in "${PX4_DIR}/.git" "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
+for required in "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
   "${UAV_MODELS}/x500_mid360/model.sdf" "${UAV_MODELS}/lidar_mid360/model.sdf" \
   "${WORLD_FILE}"; do
   if [[ ! -e "${required}" ]]; then
@@ -35,13 +33,6 @@ for required in "${PX4_DIR}/.git" "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
     exit 1
   fi
 done
-PX4_ACTUAL_GIT_SHA="$(git -C "${PX4_DIR}" rev-parse HEAD)"
-[[ "${PX4_ACTUAL_GIT_SHA}" == "${PX4_REQUIRED_GIT_SHA}" ]] || {
-  echo "PX4 SHA mismatch: required ${PX4_REQUIRED_GIT_SHA}, actual ${PX4_ACTUAL_GIT_SHA}." >&2
-  exit 66
-}
-[[ -z "$(git -C "${PX4_DIR}" status --porcelain)" ]] || {
-  echo "PX4 source repository is dirty: ${PX4_DIR}" >&2; exit 66; }
 command -v gz >/dev/null 2>&1 || { echo "ERROR: Gazebo command 'gz' is unavailable." >&2; exit 1; }
 
 # PX4's generated environment supplies its Gazebo plugins/server config and its
@@ -63,8 +54,9 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   if [[ -n "${GZ_PID:-}" ]] && kill -0 "${GZ_PID}" 2>/dev/null; then
-    kill -TERM "${GZ_PID}" 2>/dev/null || true
-    wait "${GZ_PID}" 2>/dev/null || true
+    if kill -TERM "${GZ_PID}" 2>/dev/null; then
+      if wait "${GZ_PID}" 2>/dev/null; then :; fi
+    fi
   fi
   exit "${status}"
 }
@@ -100,12 +92,13 @@ export PX4_SIMULATOR=gz
 export PX4_GZ_WORLD="${WORLD_NAME}"
 export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
 export PX4_PARAM_UXRCE_DDS_SYNCT=0
-unset PX4_SIM_MODEL PX4_GZ_MODEL 2>/dev/null || true
+if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
+if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 
 echo
 echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
-echo "Other terminal: ros2 launch navigation_bringup fast_lio.launch.py config_file:=${WS_DIR}/src/navigation_estimator/fast_lio_ros/config/mid360_px4_gazebo.yaml use_sim_time:=true"
+echo "Runtime stack is started by tools/runtime/runner.py."
 echo
 cd "${PX4_ROOTFS}"
 # A background/headless session must keep stdin open. With immediate EOF the

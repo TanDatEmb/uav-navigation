@@ -1,29 +1,9 @@
-# PX4 MID-360 Flight Observability Harness
+# PX4/Gazebo runtime asset
 
-Each start creates an isolated directory under
-`.artifacts/simulation/px4-mid360-YYYYMMDD-HHMMSS/`; `latest` is an atomic
-symlink to the newest session. Historical sessions are not removed on start.
+`run_px4_mid360.sh` is the PX4/Gazebo child process used by
+`tools/runtime/runner.py`. It does not own a workflow, report, profile, or
+cleanup policy. The runner owns all child process groups and writes the single
+session artifact under `.artifacts/runtime/`.
 
-```bash
-make sim-px4-mid360
-make sim-px4-mid360-check
-make sim-px4-mid360-stop
-make sim-px4-mid360-report
-```
-
-Use `make sim-px4-mid360-headless` without Gazebo GUI/RViz. Prune explicitly
-with `make sim-px4-mid360-clean KEEP_SESSIONS=10`.
-
-The implementation is split by responsibility:
-
-- `session_manager.py` and the start/stop scripts own lifecycle and PID groups.
-- `sim_observer.py` is the ROS boundary and continuously writes stream/sync CSV.
-- `pointcloud_probe.py` performs bounded layout-aware XYZ sampling.
-- `gazebo_probe.py`, `process_probe.py`, and `ros_graph_probe.py` collect
-  subsystem-specific evidence.
-- `observer_core.py` contains the pure state machine and event lifecycle.
-- `snapshot_collector.py` captures best-effort evidence without GDB by default.
-- `report_generator.py` creates `summary.json` and `REPORT.md`.
-
-Thresholds are centralized in `config/px4_mid360_observer.yaml`. Generated
-sessions are machine-local evidence and remain intentionally untracked.
+The only simulation configuration is `config/runtime/sim.yaml`; the bridge
+asset is `src/uav_simulation/bridge/px4_mid360_bridge.yaml`.

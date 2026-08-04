@@ -4,25 +4,11 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
-#include <fstream>
-#include <iomanip>
-#include <memory>
-#include <openssl/evp.h>
-#include <sstream>
 #include <stdexcept>
 #include <vector>
 
 namespace uav::nav::lio {
 namespace {
-
-std::string parameterFileFromArguments(const std::vector<std::string>& arguments) {
-  for (std::size_t index = 0; index + 1 < arguments.size(); ++index) {
-    if (arguments[index] == "--params-file") {
-      return std::filesystem::absolute(arguments[index + 1]).lexically_normal();
-    }
-  }
-  return {};
-}
 
 LivoxTimestampPolicy parseTimestampPolicy(std::string_view value) {
   if (value == "require_header_match") {
@@ -116,43 +102,6 @@ void requireCanonicalFields(rclcpp::Node& node) {
 
 }  // namespace
 
-std::string sha256File(const std::string& path) {
-  std::ifstream stream(path, std::ios::binary);
-  if (!stream) {
-    throw std::invalid_argument("unable to open estimator config: " + path);
-  }
-  EVP_MD_CTX* raw_context = EVP_MD_CTX_new();
-  if (raw_context == nullptr) {
-    throw std::runtime_error("unable to allocate SHA-256 context");
-  }
-  const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(
-      raw_context, EVP_MD_CTX_free);
-  if (EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
-    throw std::runtime_error("unable to initialize SHA-256");
-  }
-  std::array<char, 8192> buffer{};
-  while (stream) {
-    stream.read(buffer.data(), buffer.size());
-    const auto count = stream.gcount();
-    if (count > 0 &&
-        EVP_DigestUpdate(context.get(), buffer.data(),
-                         static_cast<std::size_t>(count)) != 1) {
-      throw std::runtime_error("unable to update SHA-256");
-    }
-  }
-  std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
-  unsigned int digest_size = 0;
-  if (EVP_DigestFinal_ex(context.get(), digest.data(), &digest_size) != 1) {
-    throw std::runtime_error("unable to finalize SHA-256");
-  }
-  std::ostringstream output;
-  output << std::hex << std::setfill('0');
-  for (unsigned int index = 0; index < digest_size; ++index) {
-    output << std::setw(2) << static_cast<unsigned int>(digest[index]);
-  }
-  return output.str();
-}
-
 ClockDomain parseClockDomain(std::string_view value) {
   if (value == "ros_time") {
     return ClockDomain::kRosTime;
@@ -174,11 +123,6 @@ ClockDomain parseClockDomain(std::string_view value) {
 
 RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   RosParameters result;
-  result.config_path =
-      parameterFileFromArguments(node.get_node_options().arguments());
-  if (!result.config_path.empty()) {
-    result.config_sha256 = sha256File(result.config_path);
-  }
   result.odom_frame = node.declare_parameter("frames.odom", "lio_odom");
   result.base_frame = node.declare_parameter("frames.base", "base_link");
   result.imu_frame = node.declare_parameter("frames.imu", "livox_imu_frame");
@@ -336,8 +280,6 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
 EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   ParameterLoader::validate(parameters);
   EstimatorProfile profile;
-  profile.config_path = parameters.config_path;
-  profile.config_sha256 = parameters.config_sha256;
   profile.lidar_topic = parameters.lidar_topic;
   profile.imu_topic = parameters.imu_topic;
   profile.lidar_input_frame = parameters.lidar_input_frame;
@@ -455,15 +397,22 @@ EstimatorProfile loadCanonicalEstimatorProfile(const std::string& config_path) {
     throw std::invalid_argument("canonical estimator YAML does not exist: " +
                                 config_path);
   }
-  rclcpp::NodeOptions options;
-  options.arguments(
-      {"--ros-args", "--params-file",
-       std::filesystem::absolute(config_path).lexically_normal().string()});
-  rclcpp::Node node("fast_lio", options);
-  requireCanonicalFields(node);
-  auto parameters = ParameterLoader::declareAndLoad(node);
-  ParameterLoader::validateCanonicalFrameContract(parameters);
-  return makeEstimatorProfile(parameters);
+  try {
+    rclcpp::NodeOptions options;
+    options.arguments(
+        {"--ros-args", "--params-file",
+         std::filesystem::absolute(config_path).lexically_normal().string()});
+    rclcpp::Node node("fast_lio", options);
+    requireCanonicalFields(node);
+    auto parameters = ParameterLoader::declareAndLoad(node);
+    ParameterLoader::validateCanonicalFrameContract(parameters);
+    return makeEstimatorProfile(parameters);
+  } catch (const std::invalid_argument&) {
+    throw;
+  } catch (const std::exception& error) {
+    throw std::invalid_argument("invalid canonical estimator YAML " +
+                                config_path + ": " + error.what());
+  }
 }
 
 void ParameterLoader::validate(const RosParameters& p) {
@@ -530,7 +479,7 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument("extrinsic rotation quaternion is invalid");
   }
   if (p.estimate_extrinsic_online) {
-    throw std::invalid_argument("M1 production baseline requires extrinsic.estimate_online=false");
+    throw std::invalid_argument("runtime configurations require extrinsic.estimate_online=false");
   }
   if (!(p.scan_voxel_size_m > 0.0) ||
       !std::isfinite(p.scan_voxel_size_m)) {
@@ -605,18 +554,18 @@ void ParameterLoader::validateCanonicalFrameContract(const RosParameters& p) {
       p.lidar_input_frame != "livox_frame" ||
       p.imu_input_frame != "livox_imu_frame") {
     throw std::invalid_argument(
-        "canonical profiles require livox_frame and livox_imu_frame at both "
+        "runtime configurations require livox_frame and livox_imu_frame at both "
         "the estimator and input boundaries");
   }
   if (p.imu_frame == p.lidar_frame ||
       p.imu_input_frame == p.lidar_input_frame) {
     throw std::invalid_argument(
-        "canonical profiles require distinct LiDAR and IMU frames at both "
+        "runtime configurations require distinct LiDAR and IMU frames at both "
         "the estimator and input boundaries");
   }
   if (p.imu_frame != p.imu_input_frame || p.lidar_frame != p.lidar_input_frame) {
     throw std::invalid_argument(
-        "canonical profiles require input frames to match their estimator "
+        "runtime configurations require input frames to match their estimator "
         "sensor frames");
   }
 }

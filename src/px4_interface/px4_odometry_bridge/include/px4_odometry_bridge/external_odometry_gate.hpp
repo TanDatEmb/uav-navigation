@@ -9,10 +9,9 @@ struct ExternalOdometryGateInput {
   bool transport_ready{false};
   bool timestamp_ready{false};
   bool covariance_ready{false};
-  bool supervisor_authorized{false};
   bool public_frame_generation_valid{false};
-  bool corrected_propagated_fresh{false};
-  bool supervisor_fresh{false};
+  bool lio_valid{false};
+  bool lio_fresh{false};
   bool frame_valid{false};
   bool geometric_jump_latched{false};
 };
@@ -22,10 +21,9 @@ struct ExternalOdometryGateResult {
   bool transport_ready{false};
   bool timestamp_ready{false};
   bool covariance_ready{false};
-  bool supervisor_authorized{false};
   bool public_frame_generation_valid{false};
-  bool corrected_propagated_fresh{false};
-  bool supervisor_fresh{false};
+  bool lio_valid{false};
+  bool lio_fresh{false};
   bool frame_valid{false};
   bool geometric_jump_latched{false};
   bool publisher_ready{false};

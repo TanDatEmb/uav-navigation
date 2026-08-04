@@ -13,8 +13,6 @@
 namespace uav::nav::lio {
 
 struct RosParameters {
-  std::string config_path;
-  std::string config_sha256;
   std::string odom_frame;
   std::string base_frame;
   std::string imu_frame;
@@ -88,8 +86,6 @@ struct RosParameters {
 
 struct EstimatorProfile {
   EstimatorConfig estimator;
-  std::string config_path;
-  std::string config_sha256;
   std::string lidar_topic;
   std::string imu_topic;
   std::string lidar_input_frame;
@@ -107,7 +103,6 @@ struct EstimatorProfile {
     const RosParameters& parameters);
 [[nodiscard]] EstimatorProfile loadCanonicalEstimatorProfile(
     const std::string& config_path);
-[[nodiscard]] std::string sha256File(const std::string& path);
 
 class ParameterLoader {
  public:

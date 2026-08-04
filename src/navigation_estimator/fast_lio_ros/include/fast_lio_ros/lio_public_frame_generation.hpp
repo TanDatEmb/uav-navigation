@@ -14,7 +14,6 @@ enum class PublicFrameEvent {
   kInternalLioGenerationChange,
   kCorrectedPropagatedHandoff,
   kPx4Reset,
-  kSupervisorGateChange,
   kPublicFrameDiscontinuity,
 };
 

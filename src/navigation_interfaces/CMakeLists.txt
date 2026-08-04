@@ -8,7 +8,6 @@ find_package(nav_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/OdometrySupervisorStatus.msg"
   "srv/SampleOdometryAtTime.srv"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs)
 

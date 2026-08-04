@@ -119,7 +119,7 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   const auto base_to_imu = static_tf.resolve(parameters_.base_frame,
                                              parameters_.imu_frame);
   if (!base_to_imu.ok()) {
-    throw std::runtime_error("P0.3 static sensor geometry unavailable: " +
+    throw std::runtime_error("static sensor geometry unavailable: " +
                              base_to_imu.status().message());
   }
   const Status prior_geometry_status =
@@ -206,12 +206,11 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   RCLCPP_INFO(get_logger(),
               "Publishing corrected and propagated odometry in %s -> %s; "
               "dynamic TF owner=%s; static geometry resolved from %s -> %s; "
-              "config_sha256=%s",
+              "runtime diagnostics are available on /lio/diagnostics",
               parameters_.odom_frame.c_str(),
               parameters_.base_frame.c_str(),
               parameters_.propagated_odometry_enabled ? "propagated" : "corrected",
-              parameters_.base_frame.c_str(), parameters_.imu_frame.c_str(),
-              profile_.config_sha256.c_str());
+              parameters_.base_frame.c_str(), parameters_.imu_frame.c_str());
   transport_diagnostics_timer_ = create_wall_timer(
       std::chrono::seconds(1),
       [this] { publishTransportSnapshot(); });

@@ -388,8 +388,6 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       keyValue("lio_public_frame_last_event",
                public_frame_generation_ ? public_frame.last_event
                                         : "PUBLIC_FRAME_GENERATION_OWNER_UNAVAILABLE"),
-      keyValue("config_path", parameters_.config_path),
-      keyValue("config_sha256", parameters_.config_sha256),
       keyValue("estimate_validity", toString(result.estimate_validity)),
       keyValue("lidar_update_status", toString(result.lidar_update_status)),
       keyValue("predicted_estimate_valid",
@@ -654,6 +652,48 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
       std::to_string(processing.correctionSuccessRatio())));
   appendCovarianceProjectionValues(
       status.values, covariance_runtime_->snapshot());
+  // Keep the public diagnostics contract small.  Detailed counters remain
+  // available in the report artifacts, while this topic is the health gate
+  // consumed by the runtime monitor and PX4 bridge.
+  const auto covariance = covariance_runtime_->snapshot();
+  status.values.clear();
+  status.values = {
+      keyValue("state", toString(result.status_after)),
+      keyValue("status", toString(result.status_after)),
+      keyValue("navigation_valid", result.diagnostics.navigation_valid ? "true" : "false"),
+      keyValue("corrected_estimate_valid",
+               result.diagnostics.output.corrected_estimate_valid ? "true" : "false"),
+      keyValue("last_failure_code",
+               toString(result.diagnostics.last_update_failure_class)),
+      keyValue("last_failure_reason", status.message),
+      keyValue("output_time_ns", std::to_string(result.diagnostics.output.output_time_ns)),
+      keyValue("last_lidar_correction_time_ns",
+               std::to_string(result.diagnostics.output.last_lidar_correction_time_ns)),
+      keyValue("lio_generation", std::to_string(result.diagnostics.lio_generation)),
+      keyValue("lio_public_frame_generation", std::to_string(public_frame.generation)),
+      keyValue("lio_public_frame_generation_valid", public_frame.valid ? "true" : "false"),
+      keyValue("imu_received_count",
+               std::to_string(result.diagnostics.sensor.ros_received_imu_count)),
+      keyValue("lidar_received_count",
+               std::to_string(result.diagnostics.sensor.ros_received_lidar_count)),
+      keyValue("lidar_processed_count",
+               std::to_string(result.diagnostics.sensor.core_accepted_lidar_count)),
+      keyValue("imu_drop_count", std::to_string(result.diagnostics.sensor.imu_drop_count)),
+      keyValue("lidar_drop_count", std::to_string(result.diagnostics.sensor.lidar_drop_count)),
+      keyValue("timestamp_regression_count",
+               std::to_string(result.diagnostics.sensor.timestamp_regression_count)),
+      keyValue("queue_maximum",
+               std::to_string(result.diagnostics.sensor.processing_queue_high_water_mark)),
+      keyValue("correction_accepted_count",
+               std::to_string(result.diagnostics.processing.correction_success_count)),
+      keyValue("correction_rejected_count",
+               std::to_string(result.diagnostics.processing.correction_failure_count)),
+      keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
+      keyValue("pose_covariance_available",
+               covariance.pose_covariance_available ? "true" : "false"),
+      keyValue("twist_covariance_available",
+               covariance.twist_covariance_available ? "true" : "false"),
+  };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }
@@ -676,8 +716,6 @@ void RosOutputPublisher::publishTransportSnapshot(
                               ? "PROCESSING_LAG_LIMIT_EXCEEDED"
                               : "TRANSPORT_COUNTER_SNAPSHOT");
   status.values = {
-      keyValue("config_path", parameters_.config_path),
-      keyValue("config_sha256", parameters_.config_sha256),
       keyValue("ros_received_imu_count",
                std::to_string(sensor.ros_received_imu_count)),
       keyValue("ros_received_lidar_count",
@@ -716,6 +754,28 @@ void RosOutputPublisher::publishTransportSnapshot(
                std::to_string(processing.correctionSuccessRatio())),
   };
   appendRuntimeValues(status.values, runtime);
+  status.values.clear();
+  status.values = {
+      keyValue("transport_ok", status.level == diagnostic_msgs::msg::DiagnosticStatus::OK ? "true" : "false"),
+      keyValue("imu_received_count", std::to_string(sensor.ros_received_imu_count)),
+      keyValue("lidar_received_count", std::to_string(sensor.ros_received_lidar_count)),
+      keyValue("imu_drop_count", std::to_string(runtime.imu_drop_count)),
+      keyValue("lidar_drop_count", std::to_string(runtime.lidar_drop_count)),
+      keyValue("timestamp_regression_count",
+               std::to_string(runtime.reject_reason_timestamp_regression)),
+      keyValue("queue_depth", std::to_string(runtime.current_input_queue_depth)),
+      keyValue("queue_maximum", std::to_string(runtime.maximum_queue_depth)),
+      keyValue("processing_lag_ns", std::to_string(runtime.processing_lag_ns)),
+      keyValue("scan_processing_p95_us", std::to_string(runtime.p95_scan_processing_us)),
+      keyValue("correction_accepted_count",
+               std::to_string(processing.correction_success_count)),
+      keyValue("correction_rejected_count",
+               std::to_string(processing.correction_failure_count)),
+      keyValue("pose_covariance_available",
+               runtime.covariance_projection.pose_covariance_available ? "true" : "false"),
+      keyValue("twist_covariance_available",
+               runtime.covariance_projection.twist_covariance_available ? "true" : "false"),
+  };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }
@@ -823,6 +883,19 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
   status.values.push_back(keyValue(
       "angular_velocity_nonfinite_reject_count",
       std::to_string(core.angular_velocity.nonfinite_reject_count)));
+  status.values.clear();
+  status.values = {
+      keyValue("status", toString(core.status)),
+      keyValue("enabled", parameters_.propagated_odometry_enabled ? "true" : "false"),
+      keyValue("navigation_valid", propagated.navigation_valid ? "true" : "false"),
+      keyValue("latest_imu_time_ns", timeNs(core.latest_imu_time)),
+      keyValue("propagated_time_ns", timeNs(core.propagated_time)),
+      keyValue("last_correction_time_ns", timeNs(propagated.last_applied_correction_time)),
+      keyValue("timestamp_regression_count", std::to_string(core.timestamp_regression_count)),
+      keyValue("queue_overflow_count", std::to_string(propagated.queue_overflow_count)),
+      keyValue("publication_count", std::to_string(publication_count)),
+      keyValue("publication_skip_count", std::to_string(publication_skip_count)),
+  };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
 }

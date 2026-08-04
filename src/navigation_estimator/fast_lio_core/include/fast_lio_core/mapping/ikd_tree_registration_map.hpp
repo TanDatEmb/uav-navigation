@@ -20,7 +20,7 @@ struct IkdTreeRegistrationMapConfig {
   double voxel_size_m{0.2};
   double deletion_rebuild_ratio{0.5};
   double balance_rebuild_ratio{0.6};
-  // M1 production default is deterministic. Async remains opt-in for
+  // The runtime default is deterministic. Async remains opt-in for
   // controlled isolation and targeted stress testing only.
   bool enable_asynchronous_rebuild{false};
 };

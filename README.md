@@ -1,56 +1,33 @@
 # UAV Navigation
 
-ROS 2 Jazzy workspace for reliable LiDAR–IMU odometry and an
-incremental **registration map** in `odom`. The present scope ends at corrected
-odometry, registered points, and a local registration map; it intentionally
-does not contain planning, occupancy/world modelling, safety, or PX4 integration.
-
-## Prerequisites
-
-Ubuntu 24.04, ROS 2 Jazzy, and a C++20 compiler are the supported baseline.
-Source the ROS installation before building:
+ROS 2 Jazzy workspace for LiDAR–IMU odometry, propagated odometry, and PX4
+external-vision integration. Runtime validation has three entrypoints:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install
-source install/setup.bash
+make build
+make test
+make replay DATASET=aist-mid360-drive RATE=1.0
+make dataset-check DATASET=aist-mid360-drive RATE=1.0
+make sim-check
+make sim
+make status
+make stop
+make clean
 ```
 
-The first build validates package metadata and configuration files. Hardware
-operation additionally requires measured LiDAR/IMU extrinsics and confirmed
-sensor timestamp/frame semantics; defaults marked `PLACEHOLDER` are not a
-calibration and must not be used for flight or real-data acceptance.
+`make sim-check` is headless and runs the deterministic offboard trajectory.
+`make sim` starts the same PX4/Gazebo/LIO stack with the Gazebo GUI and waits
+for manual control; it has no automatic flight scenario and does not start
+RViz. `make replay` is an alias for the dataset workflow and also does not
+start RViz. Set `PX4_DIR` when
+the PX4 checkout is outside `$HOME/Dev/Autopilot`.
 
-The canonical sensor tree is `base_link -> livox_frame -> livox_imu_frame`.
-The real profile uses factory nominal LiDAR-to-IMU geometry, while the AIST
-profile retains its explicitly dataset-specific extrinsic.
+Prepared datasets live outside the repository under `UAV_NAV_DATA_HOME` (or
+the platform data directory). Runtime sessions and reports are written to
+`.artifacts/runtime/`; they are local evidence and are not committed. Read
+[runtime validation](docs/runtime_validation.md) for prerequisites, topic
+contracts, verdict semantics, and troubleshooting.
 
-Interactive dataset replay opens RViz by default. Use
-`make data-replay DATASET=aist-mid360-drive ENABLE_RVIZ=0` for a headless run.
-Replay owns its node, recorder, rosbag, collector, and RViz process groups and
-closes them after completion or interruption. If a terminal is lost or replay
-hangs, run `make data-replay-stop` (or `make replay-stop`) to stop only the
-registered replay processes from this repository. The default replay timeout
-is 900 seconds; override it with `REPLAY_TIMEOUT=...`.
-
-## Packages
-
-- `ikfom_vendor`: pinned IKFoM provenance and an explicit CMake interface target.
-- `fast_lio_core`: estimator algorithm (ROS-independent).
-- `fast_lio_ros`: ROS 2 adapters and corrected-output publisher.
-- `fast_lio_tools`: offline evaluation using the same core pipeline.
-- `navigation_bringup`: composition launch/configuration entry points.
-- `uav_description`: source-of-truth sensor-frame URDF/Xacro.
-- `uav_simulation`: Gazebo Harmonic launch assets for simultaneous-scan testing.
-
-Read the consolidated [FAST-LIO guide](docs/fast_lio.md) before selecting a
-sensor configuration or running dataset acceptance. Read
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing artifacts:
-vendored GPL-2.0-only dependencies require a distribution-license review.
-
-## Run boundaries
-
-Simulation may use `simultaneous_scan`, which explicitly bypasses deskew because
-all rays share one timestamp. Real sensors must use per-point timing only after
-the message layout and timestamps have been verified. Corrected odometry is
-published only after a successful LiDAR correction while tracking.
+The workspace contains the estimator core, ROS adapters, PX4 bridge, Gazebo
+assets, and the four canonical runtime YAML files under `config/runtime/`.
+There is no runtime Git-SHA compatibility gate.
