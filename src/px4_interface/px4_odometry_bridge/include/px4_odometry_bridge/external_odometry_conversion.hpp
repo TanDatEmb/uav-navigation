@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -15,10 +17,22 @@ struct ExternalOdometryFrame {
   Eigen::Quaterniond orientation_frd{Eigen::Quaterniond::Identity()};
   Eigen::Vector3d velocity_body_frd{Eigen::Vector3d::Zero()};
   Eigen::Vector3d angular_velocity_body_frd{Eigen::Vector3d::Zero()};
-  Eigen::Vector3d position_variance{Eigen::Vector3d::Constant(1e-6)};
-  Eigen::Vector3d orientation_variance{Eigen::Vector3d::Constant(1e-6)};
-  Eigen::Vector3d velocity_variance{Eigen::Vector3d::Constant(1e-6)};
+  Eigen::Vector3d position_variance{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d orientation_variance{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d velocity_variance{Eigen::Vector3d::Zero()};
+  bool frame_valid{false};
+  bool covariance_valid{false};
 };
+
+// Keep these matrices separate even though both are FRD/FLU sign changes.
+// The world matrix changes ROS local Z-up coordinates; the body matrix changes
+// ROS body FLU coordinates. The distinction is part of the public contract.
+[[nodiscard]] const Eigen::Matrix3d& C_world_frd_from_ros_local_zup() noexcept;
+[[nodiscard]] const Eigen::Matrix3d& C_body_frd_from_body_flu() noexcept;
+
+[[nodiscard]] std::optional<Eigen::Vector3d> transformed_covariance_diagonal(
+    const std::array<double, 36>& covariance, std::size_t block_offset,
+    const Eigen::Matrix3d& transform);
 
 [[nodiscard]] std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     const nav_msgs::msg::Odometry& message);

@@ -24,6 +24,9 @@ add_library(${PROJECT_NAME}_core
   src/frame_converter.cpp
   src/reference_point_converter.cpp
   src/external_odometry_conversion.cpp
+  src/external_odometry_gate.cpp
+  src/geometric_jump_latch.cpp
+  src/timestamp_conversion.cpp
   src/reset_compensator.cpp
   src/odometry_ring_buffer.cpp
   src/time_validator.cpp)
@@ -68,6 +71,21 @@ if(BUILD_TESTING)
   target_link_libraries(test_external_odometry_conversion ${PROJECT_NAME}_core)
   ament_target_dependencies(test_external_odometry_conversion
     nav_msgs rclcpp rosidl_default_runtime px4_msgs)
+  ament_add_gtest(test_external_odometry_gate
+    test/test_external_odometry_gate.cpp)
+  target_link_libraries(test_external_odometry_gate ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_external_odometry_gate
+    rclcpp rosidl_default_runtime)
+  ament_add_gtest(test_geometric_jump_latch
+    test/test_geometric_jump_latch.cpp)
+  target_link_libraries(test_geometric_jump_latch ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_geometric_jump_latch
+    rclcpp rosidl_default_runtime)
+  ament_add_gtest(test_timestamp_conversion
+    test/test_timestamp_conversion.cpp)
+  target_link_libraries(test_timestamp_conversion ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_timestamp_conversion
+    rclcpp rosidl_default_runtime)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

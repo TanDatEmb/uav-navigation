@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -16,6 +17,9 @@
 #include <navigation_interfaces/msg/odometry_supervisor_status.hpp>
 
 #include "px4_odometry_bridge/external_odometry_conversion.hpp"
+#include "px4_odometry_bridge/external_odometry_gate.hpp"
+#include "px4_odometry_bridge/geometric_jump_latch.hpp"
+#include "px4_odometry_bridge/timestamp_conversion.hpp"
 #include "px4_odometry_bridge/topic_version.hpp"
 
 namespace px4_odometry_bridge {
@@ -36,6 +40,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
         !std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0) {
       throw std::invalid_argument("invalid external odometry bridge gate parameters");
     }
+    timestamp_converter_ = std::make_unique<TimestampConverter>(max_age_ns_);
     output_ = create_publisher<VehicleOdometry>(
         versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"),
         rclcpp::QoS(10).best_effort());
@@ -47,16 +52,9 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     supervisor_sub_ = create_subscription<SupervisorStatus>(
         "/navigation/odometry_supervisor/status",
         rclcpp::QoS(1).reliable().transient_local(),
-        [this](SupervisorStatus::ConstSharedPtr message) {
-          if (!last_supervisor_frame_generation_.has_value() ||
-              *last_supervisor_frame_generation_ != message->px4_frame_generation) {
-            jump_latched_ = false;
-          }
-          last_supervisor_frame_generation_ = message->px4_frame_generation;
-          supervisor_ = *message;
-        });
+        [this](SupervisorStatus::ConstSharedPtr message) { on_supervisor(*message); });
     diagnostics_timer_ = create_wall_timer(std::chrono::milliseconds(500),
-                                           [this] { publish_diagnostics(); });
+                                            [this] { publish_diagnostics(); });
     node_ready_ = true;
   }
 
@@ -66,47 +64,118 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
            static_cast<std::int64_t>(time.nanosec);
   }
 
+  static bool fits_px4_float(const ExternalOdometryFrame& frame) {
+    const auto finite_float = [](const double value) {
+      return std::isfinite(static_cast<float>(value));
+    };
+    for (const double value : frame.position_frd) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.orientation_frd.coeffs()) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.velocity_body_frd) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.angular_velocity_body_frd) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.position_variance) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.orientation_variance) {
+      if (!finite_float(value)) return false;
+    }
+    for (const double value : frame.velocity_variance) {
+      if (!finite_float(value)) return false;
+    }
+    return true;
+  }
+
+  void on_supervisor(const SupervisorStatus& message) {
+    const bool generation_changed = jump_latch_.observePublicFrameGeneration(
+        message.lio_public_frame_generation_valid,
+        message.lio_public_frame_generation);
+    const bool operator_reset = jump_latch_.observeOperatorReset(
+        message.reinitialization_requested,
+        message.reinitialization_request_sequence);
+    // Only an authoritative LIO public generation or an explicit operator
+    // reset can recover a geometric-jump latch. PX4 frame/reset generations
+    // are observed for diagnostics and never control this state.
+    if (generation_changed || operator_reset) {
+      last_published_.reset();
+    }
+    supervisor_ = message;
+  }
+
   void on_lio(const nav_msgs::msg::Odometry& message) {
     const auto frame = convert_ros_lio_odometry(message);
-    if (!frame) {
+    if (!frame || !fits_px4_float(*frame)) {
       ++rejected_count_;
+      last_frame_valid_ = false;
+      publication_ready_ = false;
+      publication_active_ = false;
       return;
     }
+    last_frame_valid_ = true;
     const auto now_ns = now().nanoseconds();
     last_sample_timestamp_ns_ = frame->timestamp_ns;
     last_transport_timestamp_ns_ = now_ns;
     const bool use_sim_time = get_parameter("use_sim_time").as_bool();
-    const bool timestamp_conversion_valid = use_sim_time && now_ns > 0 &&
-                                            frame->timestamp_ns > 0 &&
-                                            std::llabs(now_ns - frame->timestamp_ns) <= max_age_ns_;
+    const std::uint64_t public_generation =
+        supervisor_.has_value() && supervisor_->lio_public_frame_generation_valid
+            ? supervisor_->lio_public_frame_generation
+            : 0U;
+    last_timestamp_result_ = timestamp_converter_->convert(
+        frame->timestamp_ns, now_ns, use_sim_time, public_generation);
+    const bool timestamp_ready = last_timestamp_result_.valid;
     const bool transport_ready = output_->get_subscription_count() > 0;
-    if (!supervisor_.has_value() || !supervisor_->external_measurement_authorized ||
-        !node_ready_ || !transport_ready || !timestamp_conversion_valid ||
-        time_ns(supervisor_->evaluation_time) <= 0 ||
-        now_ns < time_ns(supervisor_->evaluation_time) ||
-        now_ns - time_ns(supervisor_->evaluation_time) > max_age_ns_) {
-      ++gated_count_;
-      return;
-    }
+    const bool supervisor_fresh = supervisor_.has_value() &&
+                                 time_ns(supervisor_->evaluation_time) > 0 &&
+                                 now_ns >= time_ns(supervisor_->evaluation_time) &&
+                                 now_ns - time_ns(supervisor_->evaluation_time) <= max_age_ns_;
+    const bool lio_fresh = supervisor_.has_value() &&
+                           supervisor_->lio_propagated_age_ns >= 0 &&
+                           supervisor_->lio_propagated_age_ns <= max_age_ns_ &&
+                           supervisor_->lio_corrected_age_ns >= 0 &&
+                           supervisor_->lio_corrected_age_ns <= max_age_ns_;
+    const bool supervisor_authorized =
+        supervisor_.has_value() && supervisor_->external_measurement_authorized;
 
     bool frame_jump = false;
     if (last_published_.has_value()) {
-      frame_jump = (frame->position_frd - last_published_->position_frd).norm() > position_jump_m_ ||
-                   last_published_->orientation_frd.angularDistance(frame->orientation_frd) >
-                       orientation_jump_rad_;
+      frame_jump = (frame->position_frd - last_published_->position_frd).norm() >
+                       position_jump_m_ ||
+                   last_published_->orientation_frd.angularDistance(
+                       frame->orientation_frd) > orientation_jump_rad_;
     }
-    if (frame_jump && !jump_latched_) {
-      ++geometric_jump_count_;
-      jump_latched_ = true;
-    }
-    if (frame_jump || jump_latched_) {
+    (void)jump_latch_.observeGeometricJump(frame_jump);
+
+    ExternalOdometryGateInput gate_input;
+    gate_input.node_ready = node_ready_;
+    gate_input.transport_ready = transport_ready;
+    gate_input.timestamp_ready = timestamp_ready;
+    gate_input.covariance_ready = frame->covariance_valid && supervisor_.has_value() &&
+                                  supervisor_->covariance_valid;
+    gate_input.supervisor_authorized = supervisor_authorized;
+    gate_input.public_frame_generation_valid =
+        supervisor_.has_value() && supervisor_->lio_public_frame_generation_valid &&
+        public_generation > 0;
+    gate_input.corrected_propagated_fresh = lio_fresh;
+    gate_input.supervisor_fresh = supervisor_fresh;
+    gate_input.frame_valid = frame->frame_valid;
+    gate_input.geometric_jump_latched = jump_latch_.latched();
+    last_gate_ = evaluate_external_odometry_gate(gate_input);
+    publication_ready_ = last_gate_.publication_ready;
+    if (!publication_ready_) {
       ++gated_count_;
+      publication_active_ = false;
       return;
     }
 
     VehicleOdometry output;
-    output.timestamp = static_cast<std::uint64_t>(now_ns / 1'000);
-    output.timestamp_sample = static_cast<std::uint64_t>(frame->timestamp_ns / 1'000);
+    output.timestamp = last_timestamp_result_.publication_time_us;
+    output.timestamp_sample = last_timestamp_result_.measurement_time_us;
     output.pose_frame = VehicleOdometry::POSE_FRAME_FRD;
     output.velocity_frame = VehicleOdometry::VELOCITY_FRAME_BODY_FRD;
     output.position = {static_cast<float>(frame->position_frd.x()),
@@ -131,13 +200,15 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output.velocity_variance = {static_cast<float>(frame->velocity_variance.x()),
                                 static_cast<float>(frame->velocity_variance.y()),
                                 static_cast<float>(frame->velocity_variance.z())};
-    output.reset_counter = static_cast<std::uint8_t>(
-        supervisor_->px4_frame_generation & 0xffU);
+    output.reset_counter =
+        public_frame_generation_to_reset_counter(public_generation);
     output.quality = supervisor_->health == SupervisorStatus::HEALTHY ? 100 : 50;
     output_->publish(output);
     last_published_ = *frame;
     last_published_time_ns_ = frame->timestamp_ns;
+    last_reset_counter_ = output.reset_counter;
     ++published_count_;
+    publication_active_ = true;
   }
 
   void publish_diagnostics() {
@@ -147,57 +218,83 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     status.name = "px4_external_odometry_bridge";
     const bool transport_ready = output_->get_subscription_count() > 0;
     const auto now_ns = now().nanoseconds();
-    const bool use_sim_time = get_parameter("use_sim_time").as_bool();
-    const bool timestamp_conversion_valid = use_sim_time && now_ns > 0 &&
-                                            last_sample_timestamp_ns_ > 0 &&
-                                            std::llabs(now_ns - last_sample_timestamp_ns_) <= max_age_ns_;
-    const bool time_sync_ready = timestamp_conversion_valid;
-    const bool infrastructure_ready = node_ready_ && transport_ready && time_sync_ready;
+    const bool supervisor_fresh = supervisor_.has_value() &&
+                                  time_ns(supervisor_->evaluation_time) > 0 &&
+                                  now_ns >= time_ns(supervisor_->evaluation_time) &&
+                                  now_ns - time_ns(supervisor_->evaluation_time) <= max_age_ns_;
+    const bool timestamp_ready = last_timestamp_result_.valid;
+    const bool infrastructure_ready = node_ready_ && transport_ready && timestamp_ready;
     status.level = infrastructure_ready ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                          : diagnostic_msgs::msg::DiagnosticStatus::WARN;
-    status.message = !infrastructure_ready ? "external odometry infrastructure is not ready"
-                         : supervisor_.has_value() && supervisor_->external_measurement_authorized
-                         ? "external odometry publishing is enabled"
-                         : "external odometry gate is closed";
+                                         : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    status.message = publication_ready_ ? "external odometry publication is active"
+                       : "external odometry publication gate is closed";
     const auto add = [&status](std::string key, std::string value) {
       diagnostic_msgs::msg::KeyValue item;
       item.key = std::move(key);
       item.value = std::move(value);
       status.values.push_back(std::move(item));
     };
-    add("diagnostic_schema_version", "1");
+    const auto timestamp_diagnostics = timestamp_converter_->diagnostics();
+    add("diagnostic_schema_version", "2");
     add("ready", infrastructure_ready ? "true" : "false");
     add("node_ready", node_ready_ ? "true" : "false");
     add("transport_ready", transport_ready ? "true" : "false");
-    add("time_sync_ready", time_sync_ready ? "true" : "false");
-    add("publication_authorized", supervisor_.has_value() &&
-                                      supervisor_->external_measurement_authorized
-                                  ? "true" : "false");
-    add("publisher_subscription_count",
-        std::to_string(output_->get_subscription_count()));
-    add("timestamp_domain", use_sim_time ? "ros_sim_time" : "TIME_DOMAIN_UNRESOLVED");
-    add("timestamp_conversion_valid", timestamp_conversion_valid ? "true" : "false");
-    add("publisher_topic", versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"));
+    add("timestamp_ready", timestamp_ready ? "true" : "false");
+    add("covariance_ready", last_gate_.covariance_ready ? "true" : "false");
+    add("supervisor_authorized",
+        last_gate_.supervisor_authorized ? "true" : "false");
+    add("public_frame_generation_valid",
+        last_gate_.public_frame_generation_valid ? "true" : "false");
+    add("corrected_propagated_fresh",
+        last_gate_.corrected_propagated_fresh ? "true" : "false");
+    add("supervisor_fresh", supervisor_fresh ? "true" : "false");
+    add("frame_valid", last_frame_valid_ ? "true" : "false");
+    add("geometric_jump_latched", jump_latch_.latched() ? "true" : "false");
+    add("publication_ready", publication_ready_ ? "true" : "false");
+    add("publication_active",
+        (publication_active_ && last_published_time_ns_ > 0 &&
+         now_ns >= last_published_time_ns_ &&
+         now_ns - last_published_time_ns_ <= max_age_ns_)
+            ? "true"
+            : "false");
+    add("publication_authorized", last_gate_.supervisor_authorized ? "true" : "false");
+    add("publisher_subscription_count", std::to_string(output_->get_subscription_count()));
+    add("publisher_topic", versioned_topic<VehicleOdometry>(
+                                "/fmu/in/vehicle_visual_odometry"));
     add("pose_frame", "POSE_FRAME_FRD");
     add("velocity_frame", "VELOCITY_FRAME_BODY_FRD");
-    add("timestamp_source", "measurement_header_stamp_for_timestamp_sample");
+    add("timestamp_source_domain", last_timestamp_result_.source_domain);
+    add("timestamp_target_domain", last_timestamp_result_.target_domain);
+    add("timestamp_conversion_valid", last_timestamp_result_.valid ? "true" : "false");
+    add("timestamp_conversion_generation",
+        std::to_string(last_timestamp_result_.generation));
+    add("timestamp_sample_us",
+        std::to_string(last_timestamp_result_.measurement_time_us));
+    add("publication_timestamp_us",
+        std::to_string(last_timestamp_result_.publication_time_us));
+    add("timestamp_age_ns", std::to_string(last_timestamp_result_.timestamp_age_ns));
+    add("timestamp_regression_count",
+        std::to_string(timestamp_diagnostics.regression_count));
+    add("timestamp_conversion_failure_count",
+        std::to_string(timestamp_diagnostics.conversion_failure_count));
+    add("timestamp_failure_reason", timestamp_diagnostics.failure_reason);
+    add("timestamp_reason", last_timestamp_result_.reason);
     add("published_count", std::to_string(published_count_));
     add("gated_count", std::to_string(gated_count_));
     add("rejected_count", std::to_string(rejected_count_));
-    add("reset_counter", std::to_string(supervisor_.has_value()
-                                            ? supervisor_->px4_frame_generation
-                                            : 0));
-    add("frame_generation", std::to_string(supervisor_.has_value()
-                                                ? supervisor_->px4_frame_generation
-                                                : 0));
-    add("geometric_jump_count", std::to_string(geometric_jump_count_));
-    add("geometric_jump_gate_closed", jump_latched_ ? "true" : "false");
+    add("lio_public_frame_generation",
+        std::to_string(supervisor_.has_value()
+                           ? supervisor_->lio_public_frame_generation
+                           : 0U));
+    add("reset_counter", std::to_string(last_reset_counter_));
+    add("geometric_jump_count", std::to_string(jump_latch_.count()));
     add("last_sample_timestamp_ns", std::to_string(last_sample_timestamp_ns_));
     add("last_transport_timestamp_ns", std::to_string(last_transport_timestamp_ns_));
     add("last_published_time_ns", std::to_string(last_published_time_ns_));
-    add("supervisor_gate", supervisor_.has_value() &&
-                                   supervisor_->external_measurement_authorized
-                               ? "true" : "false");
+    add("supervisor_gate", last_gate_.supervisor_authorized ? "true" : "false");
+    add("gate_reason", last_gate_.reason);
+    add("px4_frame_generation_observed",
+        std::to_string(supervisor_.has_value() ? supervisor_->px4_frame_generation : 0U));
     array.status.push_back(std::move(status));
     diagnostics_->publish(std::move(array));
   }
@@ -209,6 +306,9 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   rclcpp::TimerBase::SharedPtr diagnostics_timer_;
   std::optional<SupervisorStatus> supervisor_;
   std::optional<ExternalOdometryFrame> last_published_;
+  std::unique_ptr<TimestampConverter> timestamp_converter_;
+  TimestampConversionResult last_timestamp_result_;
+  ExternalOdometryGateResult last_gate_;
   std::int64_t max_age_ns_{150'000'000};
   double position_jump_m_{0.75};
   double orientation_jump_rad_{0.35};
@@ -218,10 +318,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t published_count_{0};
   std::uint64_t gated_count_{0};
   std::uint64_t rejected_count_{0};
-  std::uint64_t geometric_jump_count_{0};
-  bool jump_latched_{false};
+  std::uint8_t last_reset_counter_{0};
+  GeometricJumpLatch jump_latch_;
   bool node_ready_{false};
-  std::optional<std::uint64_t> last_supervisor_frame_generation_;
+  bool last_frame_valid_{false};
+  bool publication_ready_{false};
+  bool publication_active_{false};
 };
 
 }  // namespace px4_odometry_bridge
