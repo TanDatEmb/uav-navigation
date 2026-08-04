@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <stdexcept>
 
 #include "odometry_supervisor/supervisor_state_machine.hpp"
@@ -70,6 +71,23 @@ TEST(OdometrySupervisorStateMachine, WorldAlignmentIsRequiredBeforeComparison) {
   EXPECT_FALSE(output.comparison_valid);
   EXPECT_FALSE(output.monitoring_available);
   EXPECT_EQ(output.reason, "WORLD_ALIGNMENT_UNAVAILABLE");
+}
+
+TEST(OdometrySupervisorStateMachine, ExternalGateRequiresEverySafetyInput) {
+  const std::array<bool odometry_supervisor::EvaluationInput::*, 7> gates{
+      &odometry_supervisor::EvaluationInput::correction_quality_valid,
+      &odometry_supervisor::EvaluationInput::timestamp_valid,
+      &odometry_supervisor::EvaluationInput::covariance_valid,
+      &odometry_supervisor::EvaluationInput::lio_generation_locked,
+      &odometry_supervisor::EvaluationInput::alignment_valid,
+      &odometry_supervisor::EvaluationInput::external_publisher_ready,
+      &odometry_supervisor::EvaluationInput::propagated_fresh};
+  for (const auto gate : gates) {
+    odometry_supervisor::SupervisorStateMachine machine;
+    auto input = healthy_input(1'000'000'000);
+    input.*gate = false;
+    EXPECT_FALSE(machine.evaluate(input).external_odometry_allowed);
+  }
 }
 
 TEST(OdometrySupervisorStateMachine, SingleOutlierDoesNotLeaveHealthy) {
