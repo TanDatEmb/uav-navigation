@@ -1,6 +1,7 @@
 # Odometry decision ledger
 
-Status: P0.8 correctness closure, maintained on `fix/p0.8-correctness-closure`.
+Status: P0.9-A external odometry contract and non-fusing dry run, maintained on
+`feat/p0.9-a-external-odometry-contract`.
 
 This ledger records decisions that are closed for the current odometry
 lifecycle. They are not reopened by ordinary runtime noise; reopening requires
@@ -16,7 +17,13 @@ a reproducible contract/test failure.
 | D-005 | PX4-LIO alignment is yaw plus XYZ only. | The alignment math contract uses `p_lio = Rz(yaw) p_px4 + t`; roll and pitch remain residual quality checks and are rejected rather than absorbed into the public transform. |
 | D-006 | `PROVISIONAL` is not production-valid; `LOCKED` is comparison-valid only. | Candidate stability, novel-pair, covariance/PSD, generation, and revalidation gates are separate from the state-machine production gates. |
 | D-007 | A compensated PX4 reset does not change the public `px4_odom` frame. | The reset event starts frozen-transform revalidation while frame generation remains unchanged. An uncompensated reset invalidates the locked transform and requires a new public frame. |
-| D-008 | External odometry and in-flight restart semantics are deferred. | External PX4 fusion is `DEFERRED_P0.9`; in-flight restart is `DEFERRED_P0.10`. P0.8 closes lifecycle correctness without authorizing either integration. |
+| D-008 | In-flight restart semantics remain deferred. | In-flight restart is `DEFERRED_P0.10`; P0.8 closes lifecycle correctness without authorizing restart integration. |
+| D-009 | The LIO producer owns the public external-frame generation. | `FastLioNode` publishes the authoritative generation and validity fields. Internal LIO generation changes, corrected/propagated handoff, PX4 reset, supervisor gate changes, and geometric jumps do not increment it. |
+| D-010 | `VehicleOdometry.reset_counter` is derived from the LIO public generation. | The bridge publishes `uint8_t(public_generation % 256)`. PX4 frame generation is diagnostic-only and cannot author the external reset counter. |
+| D-011 | External pose and velocity frames are explicit and separate. | Pose uses ROS local Z-up to world FRD; body velocity uses body FLU to body FRD. The quaternion is `C_world * R_lio * inverse(C_body)`; no ENU/FRD alias is permitted. |
+| D-012 | Covariance is transformed and fail-closed without a synthetic floor. | Position XYZ, orientation small-angle XYZ, and body velocity XYZ are validated as finite, symmetric, PSD, and positive; full 3x3 blocks are transformed before publishing diagonal variances. Cross-covariances are ignored explicitly. |
+| D-013 | P0.9-A supports only proven SITL timestamp equivalence. | `ROS_SIMULATION_TIME -> PX4_SIMULATION_TIME` is accepted with explicit measurement/publication timestamps. Unresolved real-hardware conversion remains fail-closed and deferred to P0.9-B. |
+| D-014 | Publication and fusion are separate states. | The bridge may publish only after its explicit gate is ready; P0.9-A does not enable EKF2 external-vision fusion and makes no aiding, innovation, or estimator-improvement claim. |
 
 ## Query and revalidation contract
 
