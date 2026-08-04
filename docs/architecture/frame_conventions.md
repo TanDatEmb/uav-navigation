@@ -25,17 +25,27 @@ reset offset from the local-odometry origin while preserving later motion
 increments. The anchor is one-shot; a later reset increments the bridge reset
 generation and is not silently treated as a new LIO origin.
 
-The supervisor captures one alignment record only after FAST-LIO has accepted a
-ground-startup prior from `px4_odom`. The configured transform is
-`^lio_odom T_px4_odom = Identity` at that startup epoch, represented by
-`WorldAlignment{target_frame=lio_odom, source_frame=px4_odom}`. This is an
-explicit startup-coincident contract, not a sign flip, yaw offset, topic
-relabel, or runtime threshold adjustment. Every PX4 service response is
-transformed using the captured record before residual calculation. The record
-contains source/target frames, epoch, PX4 reset/time generations, source, and
-reinitialization count. A generation change invalidates the comparison and
-requires a new startup-coincident alignment; missing or mismatched alignment
-fails closed.
+The supervisor owns the runtime alignment record
+`^lio_odom T_px4_odom = (R_z(yaw), t_xyz)`. It estimates only yaw and XYZ
+translation from exact-time, same-generation PX4/LIO pairs; roll and pitch are
+never absorbed into this boundary. The estimator requires excitation,
+weighted circular-yaw consistency, translation residual gates, dispersion,
+trend, and covariance floors. Missing, stale, mismatched, or rejected samples
+fail closed. A PX4 or LIO generation change invalidates the record and
+requires a fresh estimate; there is no general identity-alignment latch.
+
+The one-time `startup_coincident` value is separate: it is an explicit prior
+contract used only to seed FAST-LIO at ground startup, before runtime
+alignment is estimated. It is not a runtime fallback, sign flip, yaw offset,
+topic relabel, or threshold adjustment. Every PX4 service response is
+transformed using the accepted runtime alignment before residual calculation.
+The record contains source/target frames, epoch, PX4 reset/time generations,
+source, quality fields, and reinitialization count.
+
+The external-odometry boundary converts the public ROS `lio_odom` output to
+PX4 `POSE_FRAME_FRD` and `VELOCITY_FRAME_BODY_FRD`: local ROS Z-up is mapped
+to PX4 local FRD and body FLU to FRD. It publishes only while the supervisor
+gate is valid, with `timestamp_sample` equal to the LIO measurement epoch.
 
 Notation `^A T_B` transforms coordinates from B to A. The core state estimates
 `^lio_odom T_imu`; point registration uses
