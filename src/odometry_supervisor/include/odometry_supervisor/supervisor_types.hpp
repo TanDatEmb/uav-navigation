@@ -136,6 +136,7 @@ struct SupervisorConfig {
   std::int64_t maximum_alignment_gap_ns{50'000'000};
   std::int64_t service_timeout_ns{100'000'000};
   std::int64_t maximum_comparison_age_ns{150'000'000};
+  std::int64_t query_epoch_max_age_ns{150'000'000};
   bool authoritative_yaw{false};
   std::size_t alignment_window_size{32};
   std::size_t alignment_minimum_samples{8};
@@ -226,6 +227,13 @@ struct EvaluationInput {
   std::uint64_t query_service_unavailable_count{0};
   std::uint64_t query_success_count{0};
   std::uint64_t query_failure_count{0};
+  std::uint64_t query_epoch_not_yet_buffered_count{0};
+  std::uint64_t query_epoch_expired_count{0};
+  std::uint64_t query_duplicate_suppressed_count{0};
+  std::uint64_t query_transport_failure_count{0};
+  std::uint64_t query_geometric_failure_count{0};
+  std::string query_failure_class{"NONE"};
+  std::string query_last_failure_reason;
   std::uint64_t query_rtt_count{0};
   double query_rtt_p50_ms{0.0};
   double query_rtt_p95_ms{0.0};
@@ -313,6 +321,13 @@ struct SupervisorOutput {
   std::uint64_t query_service_unavailable_count{0};
   std::uint64_t query_success_count{0};
   std::uint64_t query_failure_count{0};
+  std::uint64_t query_epoch_not_yet_buffered_count{0};
+  std::uint64_t query_epoch_expired_count{0};
+  std::uint64_t query_duplicate_suppressed_count{0};
+  std::uint64_t query_transport_failure_count{0};
+  std::uint64_t query_geometric_failure_count{0};
+  std::string query_failure_class{"NONE"};
+  std::string query_last_failure_reason;
   std::uint64_t query_rtt_count{0};
   double query_rtt_p50_ms{0.0};
   double query_rtt_p95_ms{0.0};

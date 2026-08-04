@@ -6,6 +6,7 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 
 #include "px4_odometry_bridge/frame_converter.hpp"
+#include "px4_odometry_bridge/frame_generation_policy.hpp"
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
 #include "px4_odometry_bridge/reset_compensator.hpp"
 #include "px4_odometry_bridge/time_validator.hpp"
@@ -25,6 +26,7 @@ px4_odometry_bridge::ConvertedOdometry sample(std::int64_t time) {
   value.position_variance = Eigen::Vector3d::Ones();
   value.velocity_variance = Eigen::Vector3d::Ones();
   value.orientation_variance = Eigen::Vector3d::Ones();
+  value.frame_generation = 1;
   return value;
 }
 }  // namespace
@@ -525,6 +527,7 @@ TEST(Px4RingBuffer, RequiresStableSamplesAfterGenerationChange) {
       .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 3});
   auto first = sample(1'000'000'000);
   first.reset_generation = 2;
+  first.frame_generation = 2;
   EXPECT_FALSE(buffer.push(first));
   first.timestamp_ns += 10'000'000;
   EXPECT_FALSE(buffer.push(first));
@@ -533,6 +536,23 @@ TEST(Px4RingBuffer, RequiresStableSamplesAfterGenerationChange) {
   EXPECT_TRUE(buffer.postResetStable());
   EXPECT_EQ(buffer.stableSampleCount(), 3U);
   EXPECT_TRUE(buffer.sample(first.timestamp_ns).has_value());
+}
+
+TEST(Px4RingBuffer, ExplicitFrameGenerationDoesNotFallBackToResetGeneration) {
+  px4_odometry_bridge::OdometryRingBuffer buffer({
+      .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 1});
+  auto value = sample(1'000'000'000);
+  value.frame_generation = 0;
+  value.reset_generation = 9;
+  EXPECT_FALSE(buffer.push(value));
+}
+
+TEST(Px4FrameGenerationPolicy, StartupRestartKeepsFirstPublicFrameGeneration) {
+  EXPECT_EQ(px4_odometry_bridge::frame_generation_after_source_restart(1, false), 1U);
+}
+
+TEST(Px4FrameGenerationPolicy, RestartAfterPublicOutputCreatesNewFrame) {
+  EXPECT_EQ(px4_odometry_bridge::frame_generation_after_source_restart(1, true), 2U);
 }
 
 TEST(Px4RingBuffer, InvalidTimestampResetsStableGate) {
@@ -544,4 +564,24 @@ TEST(Px4RingBuffer, InvalidTimestampResetsStableGate) {
   EXPECT_FALSE(buffer.push(invalid));
   EXPECT_EQ(buffer.stableSampleCount(), 0U);
   EXPECT_FALSE(buffer.postResetStable());
+}
+
+TEST(Px4RingBuffer, FrameAndTimeGenerationChangesRejectCrossBoundaryInterpolation) {
+  px4_odometry_bridge::OdometryRingBuffer frame_buffer({
+      .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 1});
+  auto first = sample(1'000'000'000);
+  auto second = sample(1'020'000'000);
+  second.frame_generation = 2;
+  ASSERT_TRUE(frame_buffer.push(first));
+  ASSERT_TRUE(frame_buffer.push(second));
+  EXPECT_FALSE(frame_buffer.sample(1'010'000'000).has_value());
+
+  px4_odometry_bridge::OdometryRingBuffer time_buffer({
+      .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 1});
+  first = sample(2'000'000'000);
+  second = sample(2'020'000'000);
+  second.time_generation = 1;
+  ASSERT_TRUE(time_buffer.push(first));
+  ASSERT_TRUE(time_buffer.push(second));
+  EXPECT_FALSE(time_buffer.sample(2'010'000'000).has_value());
 }

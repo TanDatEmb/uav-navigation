@@ -26,6 +26,7 @@
 
 #include "px4_odometry_bridge/frame_converter.hpp"
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
+#include "px4_odometry_bridge/frame_generation_policy.hpp"
 #include "px4_odometry_bridge/reset_compensator.hpp"
 #include "px4_odometry_bridge/time_validator.hpp"
 #include "px4_odometry_bridge/topic_version.hpp"
@@ -276,7 +277,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     if (time_result.event == TimestampEvent::kProbableSourceRestart) {
-      ++frame_generation_;
+      frame_generation_ = frame_generation_after_source_restart(frame_generation_, output_valid_);
       history_.clear();
       local_reset_history_.clear();
       attitude_reset_history_.clear();

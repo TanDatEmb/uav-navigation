@@ -24,11 +24,14 @@ struct AlignmentCandidateObservation {
 
 struct AlignmentRevalidationObservation {
   bool exact_time_pair_valid{false};
-  bool residual_valid{false};
+  Residual residual;
+  bool covariance_available{false};
+  double nis{0.0};
   std::int64_t epoch_ns{0};
   std::uint64_t lio_generation{0};
   std::uint64_t frame_generation{0};
   std::uint64_t time_generation{0};
+  std::uint64_t evidence_id{0};
 };
 
 struct AlignmentLifecycleConfig {
@@ -45,6 +48,8 @@ struct AlignmentLifecycleConfig {
   double covariance_nis_chi_square{9.487729};
   std::size_t revalidation_samples{3};
   std::size_t revalidation_failure_limit{3};
+  ResidualThresholds revalidation_residual{0.75, 0.75, 0.5235987756, 0.3490658504};
+  double revalidation_covariance_nis_chi_square{9.487729};
 };
 
 struct AlignmentLifecycleSnapshot {
@@ -76,6 +81,10 @@ class AlignmentLifecycleManager {
   void reset();
   void invalidate(const std::string& reason);
   void rejectCandidate(const std::string& reason);
+  // A transport/service failure does not constitute geometric evidence.  It
+  // records the reason while preserving a locked transform and revalidation
+  // counters.
+  void observeTransportFailure(const std::string& reason);
 
   // A public frame change means the old transform no longer has a defined
   // geometric meaning.  Time/LIO changes clear the candidate proof; the
@@ -123,8 +132,10 @@ class AlignmentLifecycleManager {
   void clearCandidateProof();
   void invalidateLocked(const std::string& reason);
   bool passesProof(const WorldAlignment& candidate) const;
+  static bool covarianceValid(const Eigen::Matrix4d& covariance);
   bool covarianceNisAcceptable(const WorldAlignment& a,
                                const WorldAlignment& b) const;
+  bool residualPasses(const AlignmentRevalidationObservation& observation) const;
   static double wrappedYawDelta(double lhs, double rhs) noexcept;
 
   AlignmentLifecycleConfig config_;
@@ -147,6 +158,8 @@ class AlignmentLifecycleManager {
   std::uint64_t frame_generation_{0};
   std::uint64_t time_generation_{0};
   std::uint64_t reset_event_generation_{0};
+  std::int64_t last_revalidation_epoch_ns_{0};
+  std::uint64_t last_revalidation_evidence_id_{0};
   std::string rejection_reason_;
 };
 

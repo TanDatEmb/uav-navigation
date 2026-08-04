@@ -136,6 +136,13 @@ uint64 query_service_unavailable_count
 uint64 stale_residual_reuse_count
 uint64 query_success_count
 uint64 query_failure_count
+uint64 query_epoch_not_yet_buffered_count
+uint64 query_epoch_expired_count
+uint64 query_duplicate_suppressed_count
+uint64 query_transport_failure_count
+uint64 query_geometric_failure_count
+string query_failure_class
+string query_last_failure_reason
 uint64 query_rtt_count
 float64 query_rtt_p50_ms
 float64 query_rtt_p95_ms

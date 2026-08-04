@@ -8,6 +8,9 @@ odometry_supervisor:
       maximum_gap_ns: 50000000
       service_timeout_ns: 100000000
       maximum_comparison_age_ns: 150000000
+      # Exact-time candidates older than this are expired rather than
+      # repeatedly submitted after the PX4 buffer has moved on.
+      query_epoch_max_age_ns: 150000000
       # SITL is stationary; PX4's orientation is the authoritative yaw aid
       # for the otherwise unobservable static 4-DOF alignment proof.
       authoritative_yaw: true

@@ -2,28 +2,38 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 #include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 
 namespace odometry_supervisor {
 namespace {
 constexpr double kPi = 3.141592653589793238462643383279502884;
 
-bool finiteCovariance(const Eigen::Matrix4d& covariance) {
-  return covariance.allFinite();
-}
 }  // namespace
 
 AlignmentLifecycleManager::AlignmentLifecycleManager(AlignmentLifecycleConfig config)
     : config_(std::move(config)) {
-  if (config_.stable_candidate_estimates == 0) config_.stable_candidate_estimates = 1;
-  if (config_.minimum_novel_pairs == 0) config_.minimum_novel_pairs = 1;
-  if (config_.candidate_history_capacity < config_.stable_candidate_estimates) {
-    config_.candidate_history_capacity = config_.stable_candidate_estimates;
+  const auto positive_finite = [](double value) {
+    return std::isfinite(value) && value > 0.0;
+  };
+  if (config_.stable_candidate_estimates == 0 || config_.minimum_novel_pairs == 0 ||
+      config_.revalidation_samples == 0 || config_.revalidation_failure_limit == 0 ||
+      config_.candidate_history_capacity < config_.stable_candidate_estimates ||
+      !positive_finite(config_.max_translation_step_m) ||
+      !positive_finite(config_.max_yaw_step_rad) ||
+      !positive_finite(config_.max_cluster_translation_m) ||
+      !positive_finite(config_.max_cluster_yaw_rad) ||
+      !positive_finite(config_.covariance_nis_chi_square) ||
+      !positive_finite(config_.revalidation_covariance_nis_chi_square) ||
+      !positive_finite(config_.revalidation_residual.position_m) ||
+      !positive_finite(config_.revalidation_residual.velocity_m_s) ||
+      !positive_finite(config_.revalidation_residual.orientation_rad) ||
+      !positive_finite(config_.revalidation_residual.yaw_rad)) {
+    throw std::invalid_argument("invalid alignment lifecycle configuration");
   }
-  if (config_.revalidation_samples == 0) config_.revalidation_samples = 1;
-  if (config_.revalidation_failure_limit == 0) config_.revalidation_failure_limit = 1;
 }
 
 void AlignmentLifecycleManager::reset() {
@@ -41,6 +51,8 @@ void AlignmentLifecycleManager::reset() {
   frame_generation_ = 0;
   time_generation_ = 0;
   reset_event_generation_ = 0;
+  last_revalidation_epoch_ns_ = 0;
+  last_revalidation_evidence_id_ = 0;
   rejection_reason_.clear();
 }
 
@@ -56,6 +68,10 @@ void AlignmentLifecycleManager::rejectCandidate(const std::string& reason) {
     clearCandidateProof();
     state_ = AlignmentLifecycleState::kCollecting;
   }
+  rejection_reason_ = reason;
+}
+
+void AlignmentLifecycleManager::observeTransportFailure(const std::string& reason) {
   rejection_reason_ = reason;
 }
 
@@ -106,6 +122,8 @@ void AlignmentLifecycleManager::observeResetEvent(std::uint64_t reset_event_gene
   reset_event_generation_ = reset_event_generation;
   if (compensated && locked_alignment_) {
     beginRevalidation("compensated PX4 reset", epoch_ns);
+  } else if (!compensated && locked_alignment_) {
+    invalidateLocked("uncompensated PX4 reset changed public frame");
   } else if (!locked_alignment_) {
     clearCandidateProof();
     state_ = AlignmentLifecycleState::kCollecting;
@@ -126,6 +144,8 @@ void AlignmentLifecycleManager::beginRevalidation(const std::string& reason,
   revalidation_sample_count_ = 0;
   revalidation_success_count_ = 0;
   revalidation_failure_count_ = 0;
+  last_revalidation_epoch_ns_ = 0;
+  last_revalidation_evidence_id_ = 0;
   ++revalidation_start_count_;
   revalidation_start_epoch_ns_ = epoch_ns;
   rejection_reason_ = reason;
@@ -138,9 +158,17 @@ double AlignmentLifecycleManager::wrappedYawDelta(double lhs, double rhs) noexce
   return delta;
 }
 
+bool AlignmentLifecycleManager::covarianceValid(const Eigen::Matrix4d& covariance) {
+  if (!covariance.allFinite()) return false;
+  if (!covariance.isApprox(covariance.transpose(), 1e-10)) return false;
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver(covariance);
+  if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite()) return false;
+  return solver.eigenvalues().minCoeff() >= -1e-10;
+}
+
 bool AlignmentLifecycleManager::covarianceNisAcceptable(const WorldAlignment& a,
                                                         const WorldAlignment& b) const {
-  if (!finiteCovariance(a.covariance) || !finiteCovariance(b.covariance)) return false;
+  if (!covarianceValid(a.covariance) || !covarianceValid(b.covariance)) return false;
   Eigen::Vector4d delta;
   delta.head<3>() = a.target_from_source_translation - b.target_from_source_translation;
   delta[3] = wrappedYawDelta(a.yaw_rad, b.yaw_rad);
@@ -152,6 +180,37 @@ bool AlignmentLifecycleManager::covarianceNisAcceptable(const WorldAlignment& a,
   if (factor.info() != Eigen::Success || !solved.allFinite()) return false;
   const double nis = delta.dot(solved);
   return std::isfinite(nis) && nis >= 0.0 && nis <= config_.covariance_nis_chi_square;
+}
+
+bool AlignmentLifecycleManager::residualPasses(
+    const AlignmentRevalidationObservation& observation) const {
+  const auto& residual = observation.residual;
+  if (!residual.valid || !residual.heading_observable ||
+      observation.epoch_ns <= 0 || observation.evidence_id == 0 ||
+      residual.timestamp_ns != observation.epoch_ns ||
+      !std::isfinite(residual.position_error_m) ||
+      !std::isfinite(residual.velocity_error_m_s) ||
+      !std::isfinite(residual.orientation_error_rad) ||
+      !std::isfinite(residual.yaw_error_rad) ||
+      !std::isfinite(residual.euler_yaw_error_rad) ||
+      !std::isfinite(residual.robust_heading_lio_rad) ||
+      !std::isfinite(residual.robust_heading_px4_rad) ||
+      !residual.q_error_axis.allFinite() || !std::isfinite(residual.body_z_dot) ||
+      !std::isfinite(residual.body_x_horizontal_norm_lio) ||
+      !std::isfinite(residual.body_x_horizontal_norm_px4) ||
+      !std::isfinite(residual.position_error_growth_m_s) ||
+      std::abs(residual.position_error_m) > config_.revalidation_residual.position_m ||
+      std::abs(residual.velocity_error_m_s) > config_.revalidation_residual.velocity_m_s ||
+      std::abs(residual.orientation_error_rad) > config_.revalidation_residual.orientation_rad ||
+      std::abs(residual.yaw_error_rad) > config_.revalidation_residual.yaw_rad) {
+    return false;
+  }
+  if (observation.covariance_available &&
+      (!std::isfinite(observation.nis) || observation.nis < 0.0 ||
+       observation.nis > config_.revalidation_covariance_nis_chi_square)) {
+    return false;
+  }
+  return true;
 }
 
 bool AlignmentLifecycleManager::passesProof(const WorldAlignment& candidate) const {
@@ -179,7 +238,8 @@ bool AlignmentLifecycleManager::observeCandidate(
   observeBindingGeneration(observation.lio_generation, observation.frame_generation,
                            observation.time_generation);
   if (!observation.alignment.valid || observation.evidence_id == 0 ||
-      observation.novel_pair_count == 0) {
+      observation.novel_pair_count == 0 ||
+      !covarianceValid(observation.alignment.covariance)) {
     rejection_reason_ = "candidate lacks valid novel exact-time evidence";
     if (!locked_alignment_) state_ = AlignmentLifecycleState::kCollecting;
     return false;
@@ -236,11 +296,18 @@ bool AlignmentLifecycleManager::observeCandidate(
 bool AlignmentLifecycleManager::observeRevalidation(
     const AlignmentRevalidationObservation& observation) {
   if (state_ != AlignmentLifecycleState::kRevalidating || !locked_alignment_) return false;
-  ++revalidation_sample_count_;
   const bool generation_matches = observation.lio_generation == lio_generation_ &&
                                   observation.frame_generation == frame_generation_ &&
                                   observation.time_generation == time_generation_;
-  if (observation.exact_time_pair_valid && observation.residual_valid && generation_matches) {
+  if (observation.epoch_ns <= last_revalidation_epoch_ns_ ||
+      observation.evidence_id <= last_revalidation_evidence_id_) {
+    rejection_reason_ = "duplicate or non-monotonic revalidation evidence";
+    return false;
+  }
+  last_revalidation_epoch_ns_ = observation.epoch_ns;
+  last_revalidation_evidence_id_ = observation.evidence_id;
+  ++revalidation_sample_count_;
+  if (observation.exact_time_pair_valid && generation_matches && residualPasses(observation)) {
     ++revalidation_success_count_;
     rejection_reason_.clear();
     if (revalidation_success_count_ >= config_.revalidation_samples) {

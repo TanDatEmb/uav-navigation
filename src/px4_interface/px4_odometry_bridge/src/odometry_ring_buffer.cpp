@@ -5,16 +5,13 @@
 namespace px4_odometry_bridge {
 
 std::uint64_t OdometryRingBuffer::frameGeneration(const ConvertedOdometry &sample) {
-  // Legacy unit fixtures only populate reset_generation.  Runtime samples
-  // populate the explicit public frame generation, which is the continuity
-  // boundary used for interpolation and exact-time queries.
-  return sample.frame_generation != 0 ? sample.frame_generation : sample.reset_generation;
+  return sample.frame_generation;
 }
 
 OdometryRingBuffer::OdometryRingBuffer(RingBufferConfig config) : config_(config) {}
 
 bool OdometryRingBuffer::push(const ConvertedOdometry &sample) {
-  if (sample.timestamp_ns <= 0 ||
+  if (sample.timestamp_ns <= 0 || sample.frame_generation == 0 ||
       (!samples_.empty() && sample.timestamp_ns <= samples_.back().timestamp_ns)) {
     samples_.clear();
     post_reset_stable_ = false;

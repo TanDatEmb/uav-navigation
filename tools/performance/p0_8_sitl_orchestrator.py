@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as datetime_module
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
@@ -1851,6 +1851,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="optional exact workspace SHA required by qualification")
     parser.add_argument("--repeat", type=int, default=1,
                         help="repeat smoke-on in this entrypoint and write a series artifact")
+    parser.add_argument("--warmup-s", type=float, default=None,
+                        help="optional targeted-run warmup duration in simulation seconds")
+    parser.add_argument("--measurement-s", type=float, default=None,
+                        help="optional targeted-run measurement duration in simulation seconds")
     return parser
 
 
@@ -1863,9 +1867,19 @@ def main(argv: list[str] | None = None) -> int:
         args.output = args.workspace / ".artifacts" / "verification" / "p0.8-sitl" / f"{args.mode}-{stamp}"
     if args.repeat > 1:
         return run_series(args)
+    policy = MODE_POLICIES[RunMode(args.mode)]
+    if args.warmup_s is not None or args.measurement_s is not None:
+        if policy.warmup_sim_s is None or policy.measurement_sim_s is None:
+            raise SystemExit("targeted durations require a measuring SITL mode")
+        if args.warmup_s is not None and args.warmup_s <= 0:
+            raise SystemExit("--warmup-s must be positive")
+        if args.measurement_s is not None and args.measurement_s <= 0:
+            raise SystemExit("--measurement-s must be positive")
+        policy = replace(policy,
+                         warmup_sim_s=args.warmup_s or policy.warmup_sim_s,
+                         measurement_sim_s=args.measurement_s or policy.measurement_sim_s)
     return SitlOrchestrator(args.workspace, args.px4_dir, args.output,
-                            MODE_POLICIES[RunMode(args.mode)], args.allow_dirty,
-                            args.expected_git_sha).run()
+                            policy, args.allow_dirty, args.expected_git_sha).run()
 
 
 if __name__ == "__main__":

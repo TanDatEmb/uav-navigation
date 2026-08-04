@@ -26,6 +26,7 @@
 #include "odometry_supervisor/residual_calculator.hpp"
 #include "odometry_supervisor/supervisor_state_machine.hpp"
 #include "odometry_supervisor/world_alignment.hpp"
+#include "odometry_supervisor/query_epoch_eligibility.hpp"
 
 namespace odometry_supervisor {
 namespace {
@@ -120,7 +121,9 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         .max_cluster_yaw_rad = config_.alignment_max_cluster_yaw_rad,
         .covariance_nis_chi_square = config_.alignment_covariance_nis_chi_square,
         .revalidation_samples = config_.alignment_revalidation_samples,
-        .revalidation_failure_limit = config_.alignment_revalidation_failure_limit});
+        .revalidation_failure_limit = config_.alignment_revalidation_failure_limit,
+        .revalidation_residual = config_.degraded,
+        .revalidation_covariance_nis_chi_square = config_.alignment_covariance_nis_chi_square});
     status_ = create_publisher<StatusMessage>(
         "/navigation/odometry_supervisor/status", rclcpp::QoS(1).reliable().transient_local());
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -216,6 +219,8 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                                   config.service_timeout_ns);
     config.maximum_comparison_age_ns = declare_parameter(
         "alignment.maximum_comparison_age_ns", config.maximum_comparison_age_ns);
+    config.query_epoch_max_age_ns = declare_parameter(
+        "alignment.query_epoch_max_age_ns", config.query_epoch_max_age_ns);
     config.authoritative_yaw = declare_parameter("alignment.authoritative_yaw", false);
     config.alignment_window_size = static_cast<std::size_t>(declare_parameter<std::int64_t>(
         "alignment.window_size", static_cast<std::int64_t>(config.alignment_window_size)));
@@ -301,18 +306,14 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   }
 
   std::optional<OdometryState> latest_propagated_epoch_available_to_px4() const {
-    if (!latest_px4_ || propagated_history_.empty()) return std::nullopt;
-    const auto upper = std::upper_bound(
-        propagated_history_.begin(), propagated_history_.end(), latest_px4_->timestamp_ns,
-        [](std::int64_t timestamp, const OdometryState& state) {
-          return timestamp < state.timestamp_ns;
-        });
-    if (upper == propagated_history_.begin()) return std::nullopt;
-    return *std::prev(upper);
+    return odometry_supervisor::latest_propagated_epoch_available_to_px4(
+               propagated_history_, latest_px4_)
+        .state;
   }
 
   struct PendingQuery {
     std::uint64_t sequence{0};
+    QueryEpochKey key;
     std::int64_t requested_epoch_ns{0};
     std::uint64_t expected_reset_generation{0};
     std::uint64_t expected_frame_generation{0};
@@ -324,6 +325,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
 
   struct PendingAlignmentQuery {
     std::uint64_t sequence{0};
+    QueryEpochKey key;
     std::int64_t requested_epoch_ns{0};
     std::uint64_t expected_lio_generation{0};
     std::uint64_t expected_reset_generation{0};
@@ -332,6 +334,97 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     OdometryState lio;
     std::chrono::steady_clock::time_point started{};
   };
+
+  void set_query_failure(const char* failure_class, const std::string& reason) {
+    query_failure_class_ = failure_class;
+    query_last_failure_reason_ = reason;
+  }
+
+  void suppress_query_epoch(const QueryEpochKey& key) {
+    last_query_key_ = key;
+    suppressed_query_key_ = key;
+  }
+
+  void clear_query_suppression() {
+    last_query_key_.reset();
+    suppressed_query_key_.reset();
+    service_retry_key_.reset();
+    service_retry_attempts_ = 0;
+    last_expired_query_key_.reset();
+    last_not_yet_buffered_epoch_.reset();
+  }
+
+  bool prepare_query_epoch(const QueryEpochKey& key) {
+    if (pending_query_ || pending_alignment_query_) return false;
+    if ((suppressed_query_key_ && *suppressed_query_key_ == key) ||
+        (last_query_key_ && *last_query_key_ == key)) {
+      ++query_duplicate_suppressed_count_;
+      set_query_failure("EPOCH_ELIGIBILITY", "query epoch already submitted or suppressed");
+      return false;
+    }
+    if (!query_client_->service_is_ready()) {
+      ++query_service_unavailable_count_;
+      ++query_transport_failure_count_;
+      set_query_failure("TRANSPORT_FAILURE", "PX4 sampling service unavailable");
+      if (!service_retry_key_ || *service_retry_key_ != key) {
+        service_retry_key_ = key;
+        service_retry_attempts_ = 0;
+      }
+      const auto now_steady = std::chrono::steady_clock::now();
+      if (now_steady < next_service_retry_) return false;
+      ++service_retry_attempts_;
+      if (service_retry_attempts_ >= kMaxServiceRetryAttempts) {
+        suppress_query_epoch(key);
+        ++query_failure_count_;
+        query_last_failure_reason_ = "PX4 sampling service retry budget exhausted";
+      } else {
+        next_service_retry_ = now_steady +
+                              std::chrono::milliseconds(10U << (service_retry_attempts_ - 1U));
+      }
+      return false;
+    }
+    service_retry_key_.reset();
+    service_retry_attempts_ = 0;
+    last_query_key_ = key;
+    return true;
+  }
+
+  void record_transport_failure(const QueryEpochKey& key, const std::string& reason) {
+    suppress_query_epoch(key);
+    ++query_transport_failure_count_;
+    set_query_failure("TRANSPORT_FAILURE", reason);
+    invalidate_comparison();
+    alignment_manager_.observeTransportFailure(reason);
+  }
+
+  void record_contract_failure(const QueryEpochKey& key, const std::string& reason) {
+    suppress_query_epoch(key);
+    ++query_failure_count_;
+    set_query_failure("GENERATION_CONTRACT_FAILURE", reason);
+    invalidate_comparison();
+    alignment_manager_.observeTransportFailure(reason);
+  }
+
+  void record_geometric_failure(const QueryEpochKey& key, const std::string& reason) {
+    suppress_query_epoch(key);
+    ++query_geometric_failure_count_;
+    ++query_failure_count_;
+    set_query_failure("GEOMETRIC_FAILURE", reason);
+    alignment_manager_.beginRevalidation(reason, key.epoch_ns);
+    invalidate_comparison();
+  }
+
+  static AlignmentRevalidationObservation invalid_revalidation(
+      const QueryEpochKey& key, std::uint64_t evidence_id) {
+    AlignmentRevalidationObservation observation;
+    observation.exact_time_pair_valid = false;
+    observation.epoch_ns = key.epoch_ns;
+    observation.lio_generation = key.lio_generation;
+    observation.frame_generation = key.frame_generation;
+    observation.time_generation = key.time_generation;
+    observation.evidence_id = evidence_id;
+    return observation;
+  }
 
   void record_query_result(const PendingQuery& pending, bool success) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
@@ -397,11 +490,36 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                                    input.px4_frame_generation,
                                                    input.px4_time_generation);
     }
-    if (!pending_alignment_query_ && latest_propagated_.has_value() &&
-        latest_propagated_->timestamp_ns > last_alignment_pair_epoch_ns_) {
-      request_alignment_at(*latest_propagated_, input.lio_generation,
-                           input.px4_reset_generation, input.px4_frame_generation,
-                           input.px4_time_generation);
+    const auto eligibility = odometry_supervisor::latest_propagated_epoch_available_to_px4(
+        propagated_history_, latest_px4_);
+    if (!eligibility.state) {
+      if (eligibility.reason == QueryEpochEligibilityReason::kLioEpochAheadOfPx4 &&
+          latest_propagated_ &&
+          (!last_not_yet_buffered_epoch_ ||
+           *last_not_yet_buffered_epoch_ != latest_propagated_->timestamp_ns)) {
+        last_not_yet_buffered_epoch_ = latest_propagated_->timestamp_ns;
+        ++query_epoch_not_yet_buffered_count_;
+        set_query_failure("EPOCH_ELIGIBILITY", "LIO epoch is not yet buffered by PX4");
+      }
+      return;
+    }
+    last_not_yet_buffered_epoch_.reset();
+    const auto& lio = *eligibility.state;
+    if (input.evaluation_time_ns > lio.timestamp_ns &&
+        input.evaluation_time_ns - lio.timestamp_ns > config_.query_epoch_max_age_ns) {
+      const auto key = query_epoch_key(lio, input.lio_generation,
+                                       input.px4_frame_generation, input.px4_time_generation);
+      if (!last_expired_query_key_ || *last_expired_query_key_ != key) {
+        last_expired_query_key_ = key;
+        ++query_epoch_expired_count_;
+        set_query_failure("EPOCH_ELIGIBILITY", "eligible LIO epoch expired before submission");
+      }
+      suppress_query_epoch(key);
+      return;
+    }
+    if (lio.timestamp_ns > last_alignment_pair_epoch_ns_) {
+      request_alignment_at(lio, input.lio_generation, input.px4_reset_generation,
+                           input.px4_frame_generation, input.px4_time_generation);
     }
   }
 
@@ -410,16 +528,15 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                             std::uint64_t expected_reset_generation,
                             std::uint64_t expected_frame_generation,
                             std::uint64_t expected_time_generation) {
-    if (pending_alignment_query_ || alignment_manager_.state() == AlignmentLifecycleState::kLocked ||
-        !query_client_->service_is_ready()) {
-      if (!query_client_->service_is_ready()) ++query_service_unavailable_count_;
-      return;
-    }
+    const auto key = query_epoch_key(lio, expected_lio_generation,
+                                     expected_frame_generation, expected_time_generation);
+    if (!prepare_query_epoch(key) ||
+        alignment_manager_.state() == AlignmentLifecycleState::kLocked) return;
     auto request = std::make_shared<QueryService::Request>();
     request->sample_time = ros_time(lio.timestamp_ns);
     const auto sequence = ++query_sequence_;
     pending_alignment_query_ = PendingAlignmentQuery{
-        sequence, lio.timestamp_ns, expected_lio_generation,
+        sequence, key, lio.timestamp_ns, expected_lio_generation,
         expected_reset_generation, expected_frame_generation, expected_time_generation, lio,
         std::chrono::steady_clock::now()};
     query_client_->async_send_request(
@@ -432,6 +549,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
           pending_alignment_query_.reset();
           PendingQuery timing_query;
           timing_query.sequence = pending.sequence;
+          timing_query.key = pending.key;
           timing_query.requested_epoch_ns = pending.requested_epoch_ns;
           timing_query.started = pending.started;
           QueryService::Response::SharedPtr response;
@@ -439,15 +557,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
             response = future.get();
           } catch (const std::exception&) {
             record_query_result(timing_query, false);
-            if (alignment_manager_.revalidating()) {
-              alignment_manager_.observeRevalidation(
-                  {false, false, pending.requested_epoch_ns, pending.expected_lio_generation,
-                   pending.expected_frame_generation, pending.expected_time_generation});
-            } else if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation("alignment query failed", pending.requested_epoch_ns);
-            } else {
-              alignment_manager_.rejectCandidate("alignment query failed");
-            }
+            record_transport_failure(pending.key, "alignment query transport exception");
             return;
           }
           if (!response || !response->success ||
@@ -456,16 +566,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->odometry.child_frame_id != kBaseLinkFrame) {
             record_query_result(timing_query, false);
             alignment_rejection_reason_ = "exact-time PX4 alignment query rejected";
-            if (alignment_manager_.revalidating()) {
-              alignment_manager_.observeRevalidation(
-                  {false, false, pending.requested_epoch_ns, pending.expected_lio_generation,
-                   pending.expected_frame_generation, pending.expected_time_generation});
-            } else if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation(alignment_rejection_reason_,
-                                                   pending.requested_epoch_ns);
-            } else {
-              alignment_manager_.rejectCandidate(alignment_rejection_reason_);
-            }
+            record_contract_failure(pending.key, alignment_rejection_reason_);
             return;
           }
           record_query_result(timing_query, true);
@@ -474,16 +575,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
           if ((response->component_validity_mask & required_components) != required_components) {
             ++query_invalid_component_count_;
             alignment_rejection_reason_ = "PX4 alignment response component validity failed";
-            if (alignment_manager_.revalidating()) {
-              alignment_manager_.observeRevalidation(
-                  {false, false, pending.requested_epoch_ns, pending.expected_lio_generation,
-                   pending.expected_frame_generation, pending.expected_time_generation});
-            } else if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation(alignment_rejection_reason_,
-                                                   pending.requested_epoch_ns);
-            } else {
-              alignment_manager_.rejectCandidate(alignment_rejection_reason_);
-            }
+            record_contract_failure(pending.key, alignment_rejection_reason_);
             return;
           }
           const auto current_lio_generation = lio_diagnostics_.unsignedInteger("lio_generation");
@@ -499,16 +591,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->time_generation != pending.expected_time_generation) {
             ++query_generation_mismatch_count_;
             alignment_rejection_reason_ = "alignment query generation mismatch";
-            if (alignment_manager_.revalidating()) {
-              alignment_manager_.observeRevalidation(
-                  {false, false, pending.requested_epoch_ns, pending.expected_lio_generation,
-                   pending.expected_frame_generation, pending.expected_time_generation});
-            } else if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation(alignment_rejection_reason_,
-                                                   pending.requested_epoch_ns);
-            } else {
-              alignment_manager_.rejectCandidate(alignment_rejection_reason_);
-            }
+            record_contract_failure(pending.key, alignment_rejection_reason_);
             return;
           }
           last_alignment_pair_epoch_ns_ = pending.requested_epoch_ns;
@@ -520,10 +603,24 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                                       ? ResidualCalculator::compare(pending.lio, *aligned_px4,
                                                                     previous_residual_)
                                       : std::nullopt;
-            alignment_manager_.observeRevalidation(
-                {true, residual.has_value(), pending.requested_epoch_ns,
-                 pending.expected_lio_generation, pending.expected_frame_generation,
-                 pending.expected_time_generation});
+            if (!residual) {
+              ++query_geometric_failure_count_;
+              ++query_failure_count_;
+              set_query_failure("GEOMETRIC_FAILURE", "frozen alignment residual unavailable");
+              alignment_manager_.observeRevalidation(
+                  invalid_revalidation(pending.key, pending.sequence));
+              invalidate_comparison();
+            } else {
+              AlignmentRevalidationObservation observation;
+              observation.exact_time_pair_valid = true;
+              observation.residual = *residual;
+              observation.epoch_ns = pending.requested_epoch_ns;
+              observation.lio_generation = pending.expected_lio_generation;
+              observation.frame_generation = pending.expected_frame_generation;
+              observation.time_generation = pending.expected_time_generation;
+              observation.evidence_id = pending.sequence;
+              alignment_manager_.observeRevalidation(observation);
+            }
             return;
           }
           AlignmentSample sample;
@@ -572,15 +669,14 @@ class OdometrySupervisorNode final : public rclcpp::Node {
                       std::uint64_t expected_frame_generation,
                       std::uint64_t expected_time_generation,
                       const WorldAlignment& alignment) {
-    if (pending_query_ || !alignment.valid) return;
-    if (!query_client_->service_is_ready()) {
-      ++query_service_unavailable_count_;
-      return;
-    }
+    if (!alignment.valid) return;
+    const auto key = query_epoch_key(lio, alignment.lio_generation,
+                                     expected_frame_generation, expected_time_generation);
+    if (!prepare_query_epoch(key)) return;
     auto request = std::make_shared<QueryService::Request>();
     request->sample_time = ros_time(lio.timestamp_ns);
     const auto sequence = ++query_sequence_;
-    pending_query_ = PendingQuery{sequence, lio.timestamp_ns, expected_reset_generation,
+    pending_query_ = PendingQuery{sequence, key, lio.timestamp_ns, expected_reset_generation,
                                   expected_frame_generation, expected_time_generation, lio, alignment,
                                   std::chrono::steady_clock::now()};
     query_client_->async_send_request(
@@ -597,10 +693,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
             response = future.get();
           } catch (const std::exception&) {
             record_query_result(pending, false);
-            if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation("comparison query failed", pending.requested_epoch_ns);
-              invalidate_comparison();
-            }
+            record_transport_failure(pending.key, "comparison query transport exception");
             return;
           }
           if (!response || !response->success ||
@@ -608,14 +701,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->odometry.header.frame_id != kPx4OdomFrame ||
               response->odometry.child_frame_id != kBaseLinkFrame) {
             record_query_result(pending, false);
-            if (response && time_ns(response->odometry.header.stamp) != pending.requested_epoch_ns) {
-              invalidate_comparison();
-            }
-            if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation("comparison exact-time query rejected",
-                                                   pending.requested_epoch_ns);
-              invalidate_comparison();
-            }
+            record_contract_failure(pending.key, "comparison exact-time query rejected");
             return;
           }
           record_query_result(pending, true);
@@ -625,11 +711,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
           if ((response->component_validity_mask & required_components) != required_components) {
             ++query_failure_count_;
             ++query_invalid_component_count_;
-            invalidate_comparison();
-            if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation("comparison component validity failed",
-                                                   pending.requested_epoch_ns);
-            }
+            record_contract_failure(pending.key, "comparison component validity failed");
             return;
           }
           const auto current_reset_generation =
@@ -645,35 +727,25 @@ class OdometrySupervisorNode final : public rclcpp::Node {
               response->frame_generation != current_frame_generation ||
               response->time_generation != current_time_generation) {
             ++query_generation_mismatch_count_;
-            ++query_failure_count_;
-            invalidate_comparison();
-            if (alignment_manager_.locked()) {
-              alignment_manager_.beginRevalidation("comparison query generation mismatch",
-                                                   pending.requested_epoch_ns);
-            }
+            record_contract_failure(pending.key, "comparison query generation mismatch");
             return;
           }
           const auto locked_alignment = alignment_manager_.lockedAlignment();
           if (!locked_alignment || !locked_alignment->valid ||
               locked_alignment->frame_generation != pending.alignment.frame_generation ||
               locked_alignment->time_generation != pending.alignment.time_generation) {
-            alignment_manager_.beginRevalidation("locked alignment binding changed",
-                                                 pending.requested_epoch_ns);
+            record_contract_failure(pending.key, "locked alignment binding changed");
             return;
           }
           const auto px4_source = state_from_ros(response->odometry);
           const auto px4 = applyWorldAlignment(px4_source, *locked_alignment);
           if (!px4) {
-            alignment_manager_.beginRevalidation("frozen alignment application failed",
-                                                 pending.requested_epoch_ns);
-            invalidate_comparison();
+            record_geometric_failure(pending.key, "frozen alignment application failed");
             return;
           }
           const auto residual = ResidualCalculator::compare(pending.lio, *px4, previous_residual_);
           if (!residual) {
-            alignment_manager_.beginRevalidation("frozen alignment residual validation failed",
-                                                 pending.requested_epoch_ns);
-            invalidate_comparison();
+            record_geometric_failure(pending.key, "frozen alignment residual validation failed");
             return;
           }
           aligned_comparison_ = AlignedComparison{pending.lio,
@@ -711,34 +783,28 @@ class OdometrySupervisorNode final : public rclcpp::Node {
       const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::chrono::steady_clock::now() - pending_query_->started).count();
       if (elapsed > config_.service_timeout_ns) {
+        const auto pending = *pending_query_;
         pending_query_.reset();
         ++query_timeout_count_;
-        ++query_failure_count_;
-        if (alignment_manager_.locked()) {
-          alignment_manager_.beginRevalidation("comparison query timed out", now_ns);
-          invalidate_comparison();
-        }
+        record_query_result(pending, false);
+        record_transport_failure(pending.key, "comparison query timed out");
       }
     }
     if (pending_alignment_query_) {
       const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::chrono::steady_clock::now() - pending_alignment_query_->started).count();
       if (elapsed > config_.service_timeout_ns) {
+        const auto pending = *pending_alignment_query_;
         pending_alignment_query_.reset();
         ++query_timeout_count_;
-        ++query_failure_count_;
         alignment_rejection_reason_ = "alignment query timed out";
-        if (alignment_manager_.revalidating()) {
-          alignment_manager_.observeRevalidation(
-              {false, false, now_ns,
-               lio_diagnostics_.unsignedInteger("lio_generation"),
-               px4_diagnostics_.unsignedInteger("frame_generation"),
-               px4_diagnostics_.unsignedInteger("time_generation")});
-        } else if (alignment_manager_.locked()) {
-          alignment_manager_.beginRevalidation(alignment_rejection_reason_, now_ns);
-        } else {
-          alignment_manager_.rejectCandidate(alignment_rejection_reason_);
-        }
+        PendingQuery timing_query;
+        timing_query.sequence = pending.sequence;
+        timing_query.key = pending.key;
+        timing_query.requested_epoch_ns = pending.requested_epoch_ns;
+        timing_query.started = pending.started;
+        record_query_result(timing_query, false);
+        record_transport_failure(pending.key, alignment_rejection_reason_);
       }
     }
     std::int64_t propagated_age = -1;
@@ -816,7 +882,19 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.px4_reset_generation = px4_diagnostics_.unsignedInteger("reset_generation");
     input.px4_frame_generation = px4_diagnostics_.unsignedInteger("frame_generation");
     input.px4_time_generation = px4_diagnostics_.unsignedInteger("time_generation");
-    const auto lio_epoch = latest_propagated_epoch_available_to_px4();
+    auto lio_epoch = latest_propagated_epoch_available_to_px4();
+    if (lio_epoch && now_ns > lio_epoch->timestamp_ns &&
+        now_ns - lio_epoch->timestamp_ns > config_.query_epoch_max_age_ns) {
+      const auto key = query_epoch_key(*lio_epoch, input.lio_generation,
+                                       input.px4_frame_generation, input.px4_time_generation);
+      if (!last_expired_query_key_ || *last_expired_query_key_ != key) {
+        last_expired_query_key_ = key;
+        ++query_epoch_expired_count_;
+        set_query_failure("EPOCH_ELIGIBILITY", "eligible LIO epoch expired before comparison");
+      }
+      suppress_query_epoch(key);
+      lio_epoch.reset();
+    }
     input.latest_eligible_epoch_ns = lio_epoch ? lio_epoch->timestamp_ns : 0;
     input.alignment_gap_ns = aligned_comparison_
                                  ? std::llabs(aligned_comparison_->px4.timestamp_ns -
@@ -846,6 +924,13 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     input.query_service_unavailable_count = query_service_unavailable_count_;
     input.query_success_count = query_success_count_;
     input.query_failure_count = query_failure_count_;
+    input.query_epoch_not_yet_buffered_count = query_epoch_not_yet_buffered_count_;
+    input.query_epoch_expired_count = query_epoch_expired_count_;
+    input.query_duplicate_suppressed_count = query_duplicate_suppressed_count_;
+    input.query_transport_failure_count = query_transport_failure_count_;
+    input.query_geometric_failure_count = query_geometric_failure_count_;
+    input.query_failure_class = query_failure_class_;
+    input.query_last_failure_reason = query_last_failure_reason_;
     input.query_rtt_count = query_rtt_count_;
     input.query_rtt_p50_ms = query_rtt_percentile(0.50);
     input.query_rtt_p95_ms = query_rtt_percentile(0.95);
@@ -862,6 +947,7 @@ class OdometrySupervisorNode final : public rclcpp::Node {
         input.time_generation_changed = true;
         pending_query_.reset();
         pending_alignment_query_.reset();
+        clear_query_suppression();
         invalidate_comparison();
       }
       const bool reset_event_changed = last_seen_px4_reset_generation_ &&
@@ -876,6 +962,12 @@ class OdometrySupervisorNode final : public rclcpp::Node {
       alignment_manager_.observeBindingGeneration(input.lio_generation,
                                                   input.px4_frame_generation,
                                                   input.px4_time_generation);
+      if (last_query_key_ &&
+          (last_query_key_->lio_generation != input.lio_generation ||
+           last_query_key_->frame_generation != input.px4_frame_generation ||
+           last_query_key_->time_generation != input.px4_time_generation)) {
+        clear_query_suppression();
+      }
       last_seen_px4_reset_generation_ = input.px4_reset_generation;
       last_seen_px4_frame_generation_ = input.px4_frame_generation;
       last_seen_px4_time_generation_ = input.px4_time_generation;
@@ -1034,6 +1126,13 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     message.query_service_unavailable_count = output.query_service_unavailable_count;
     message.query_success_count = output.query_success_count;
     message.query_failure_count = output.query_failure_count;
+    message.query_epoch_not_yet_buffered_count = output.query_epoch_not_yet_buffered_count;
+    message.query_epoch_expired_count = output.query_epoch_expired_count;
+    message.query_duplicate_suppressed_count = output.query_duplicate_suppressed_count;
+    message.query_transport_failure_count = output.query_transport_failure_count;
+    message.query_geometric_failure_count = output.query_geometric_failure_count;
+    message.query_failure_class = output.query_failure_class;
+    message.query_last_failure_reason = output.query_last_failure_reason;
     message.query_rtt_count = output.query_rtt_count;
     message.query_rtt_p50_ms = output.query_rtt_p50_ms;
     message.query_rtt_p95_ms = output.query_rtt_p95_ms;
@@ -1145,6 +1244,17 @@ class OdometrySupervisorNode final : public rclcpp::Node {
     add_value("query_service_unavailable_count", std::to_string(output.query_service_unavailable_count));
     add_value("query_success_count", std::to_string(output.query_success_count));
     add_value("query_failure_count", std::to_string(output.query_failure_count));
+    add_value("query_epoch_not_yet_buffered_count",
+              std::to_string(output.query_epoch_not_yet_buffered_count));
+    add_value("query_epoch_expired_count", std::to_string(output.query_epoch_expired_count));
+    add_value("query_duplicate_suppressed_count",
+              std::to_string(output.query_duplicate_suppressed_count));
+    add_value("query_transport_failure_count",
+              std::to_string(output.query_transport_failure_count));
+    add_value("query_geometric_failure_count",
+              std::to_string(output.query_geometric_failure_count));
+    add_value("query_failure_class", output.query_failure_class);
+    add_value("query_last_failure_reason", output.query_last_failure_reason);
     add_value("query_rtt_count", std::to_string(output.query_rtt_count));
     add_value("query_rtt_p50_ms", std::to_string(output.query_rtt_p50_ms));
     add_value("query_rtt_p95_ms", std::to_string(output.query_rtt_p95_ms));
@@ -1223,6 +1333,21 @@ class OdometrySupervisorNode final : public rclcpp::Node {
   double query_rtt_max_ms_{0.0};
   std::uint64_t query_success_count_{0};
   std::uint64_t query_failure_count_{0};
+  std::uint64_t query_epoch_not_yet_buffered_count_{0};
+  std::uint64_t query_epoch_expired_count_{0};
+  std::uint64_t query_duplicate_suppressed_count_{0};
+  std::uint64_t query_transport_failure_count_{0};
+  std::uint64_t query_geometric_failure_count_{0};
+  std::string query_failure_class_{"NONE"};
+  std::string query_last_failure_reason_;
+  std::optional<QueryEpochKey> last_query_key_;
+  std::optional<QueryEpochKey> suppressed_query_key_;
+  std::optional<QueryEpochKey> service_retry_key_;
+  std::optional<QueryEpochKey> last_expired_query_key_;
+  std::optional<std::int64_t> last_not_yet_buffered_epoch_;
+  std::size_t service_retry_attempts_{0};
+  std::chrono::steady_clock::time_point next_service_retry_{};
+  static constexpr std::size_t kMaxServiceRetryAttempts = 3;
   std::uint64_t stale_residual_reuse_count_{0};
   bool new_comparison_sample_pending_{false};
   std::optional<std::uint64_t> last_seen_px4_time_generation_;

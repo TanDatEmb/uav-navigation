@@ -40,6 +40,9 @@ void SupervisorStateMachine::validateConfig(const SupervisorConfig& config) {
                            config.maximum_alignment_gap_ns, config.service_timeout_ns}) {
     if (value < 0) throw std::invalid_argument("freshness/alignment limits must be nonnegative");
   }
+  if (config.query_epoch_max_age_ns <= 0) {
+    throw std::invalid_argument("query epoch maximum age must be positive");
+  }
   if (config.maximum_comparison_age_ns <= 0 ||
       config.maximum_comparison_age_ns < config.service_timeout_ns) {
     throw std::invalid_argument("maximum comparison age is incompatible with service timeout");
@@ -360,6 +363,13 @@ SupervisorOutput SupervisorStateMachine::evaluate(const EvaluationInput& input) 
   output.query_service_unavailable_count = input.query_service_unavailable_count;
   output.query_success_count = input.query_success_count;
   output.query_failure_count = input.query_failure_count;
+  output.query_epoch_not_yet_buffered_count = input.query_epoch_not_yet_buffered_count;
+  output.query_epoch_expired_count = input.query_epoch_expired_count;
+  output.query_duplicate_suppressed_count = input.query_duplicate_suppressed_count;
+  output.query_transport_failure_count = input.query_transport_failure_count;
+  output.query_geometric_failure_count = input.query_geometric_failure_count;
+  output.query_failure_class = input.query_failure_class;
+  output.query_last_failure_reason = input.query_last_failure_reason;
   output.query_rtt_count = input.query_rtt_count;
   output.query_rtt_p50_ms = input.query_rtt_p50_ms;
   output.query_rtt_p95_ms = input.query_rtt_p95_ms;
