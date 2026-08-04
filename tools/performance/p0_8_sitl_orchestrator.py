@@ -66,6 +66,8 @@ PX4_REQUIRED_SHA = "d6f12ad1c4f70ad3230afd7d86e971421e02fef4"
 PX4_MSGS_REQUIRED_SHA = "86d8239e962f6939e05c3737784f60c02fa884db"
 RAW_ODOMETRY_RE = re.compile(r"^/fmu/out/vehicle_odometry(?:_v\d+)?$")
 RAW_ODOMETRY_TYPE = "px4_msgs/msg/VehicleOdometry"
+EXTERNAL_ODOMETRY_TOPIC = "/fmu/in/vehicle_visual_odometry"
+EXTERNAL_ODOMETRY_TYPE = "px4_msgs/msg/VehicleOdometry"
 GAZEBO_CLOCK_TOPIC = "/world/px4_lio_smoke/clock"
 FROZEN_PRODUCT_PATHS = (
     "src/navigation_estimator/fast_lio_core",
@@ -483,6 +485,13 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self.status_accumulator: StatusEventAccumulator | None = None
         self.measurement_end_ns: int | None = None
         self.measurement_baseline_diagnostics: dict[str, Any] = {}
+        self.external_measurement_samples: list[dict[str, int]] = []
+        self.external_last_timestamp_us: int | None = None
+        self.external_last_sample_us: int | None = None
+        self.external_timestamp_regression_count = 0
+        self.external_timestamp_age_max_ns = 0
+        self.external_reset_counters: list[int] = []
+        self.external_baseline_message_count = 0
         self._qualification_subscriptions: dict[str, Any] = {}
         self._create_static_subscriptions()
 
@@ -569,6 +578,11 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
             TopicSpec("external_diagnostics", "/px4/external_odometry_diagnostics",
                       "diagnostic_msgs/msg/DiagnosticArray", SUPERVISOR_QOS),
             self._on_external_diagnostics)
+        self._subscribe(
+            "external_odometry", VehicleOdometry,
+            TopicSpec("external_odometry", EXTERNAL_ODOMETRY_TOPIC,
+                      EXTERNAL_ODOMETRY_TYPE, RAW_QOS),
+            self._on_external_odometry)
 
     @staticmethod
     def _odom_summary(message: Any) -> dict[str, Any]:
@@ -619,6 +633,31 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
         self._observe("external_diagnostics", message,
                       {"status_names": [s.name for s in message.status]})
         self.diagnostics.update(message)
+
+    def _on_external_odometry(self, message: Any) -> None:
+        timestamp_us = int(message.timestamp)
+        sample_us = int(message.timestamp_sample)
+        self._observe("external_odometry", message, {
+            "timestamp_us": timestamp_us,
+            "timestamp_sample_us": sample_us,
+            "pose_frame": int(message.pose_frame),
+            "velocity_frame": int(message.velocity_frame),
+            "reset_counter": int(message.reset_counter),
+        })
+        if self.status_accumulator is None:
+            return
+        if self.external_last_timestamp_us is not None and timestamp_us <= self.external_last_timestamp_us:
+            self.external_timestamp_regression_count += 1
+        self.external_last_timestamp_us = timestamp_us
+        self.external_last_sample_us = sample_us
+        self.external_timestamp_age_max_ns = max(
+            self.external_timestamp_age_max_ns, abs(timestamp_us - sample_us) * 1000)
+        self.external_reset_counters.append(int(message.reset_counter))
+        self.external_measurement_samples.append({
+            "timestamp_us": timestamp_us,
+            "timestamp_sample_us": sample_us,
+            "reset_counter": int(message.reset_counter),
+        })
 
     def _on_supervisor_status(self, message: Any) -> None:
         self._observe("supervisor_status", message, {
@@ -702,6 +741,15 @@ class RosReadinessMonitor(Node):  # type: ignore[misc]
                          "fast_lio/propagated_odometry", "odometry_supervisor",
                          "px4_external_odometry_bridge")
         }
+        self.external_measurement_samples = []
+        self.external_last_timestamp_us = None
+        self.external_last_sample_us = None
+        self.external_timestamp_regression_count = 0
+        self.external_timestamp_age_max_ns = 0
+        self.external_reset_counters = []
+        self.external_baseline_message_count = (
+            self.topic("external_odometry").message_count
+            if self.topic("external_odometry") is not None else 0)
 
     def as_topics(self) -> dict[str, Any]:
         return {
@@ -1512,6 +1560,42 @@ class SitlOrchestrator:
             "current_lidar_queue_depth": parse_int(transport.get("current_lidar_queue_depth")),
         }
         result["fast_lio_metrics"] = metrics
+        external_enabled = self.registry.alive("external_odometry")
+        if external_enabled:
+            external_diagnostics = self.monitor.diagnostics_values(
+                "px4_external_odometry_bridge")
+            external_topic = self.monitor.topic("external_odometry")
+            measurement_duration_s = max(
+                1e-9, (self.monitor.status_accumulator.end_ns -
+                       self.monitor.status_accumulator.start_ns) / 1e9)
+            external_message_count = len(self.monitor.external_measurement_samples)
+            reset_values = set(self.monitor.external_reset_counters)
+            external_metrics = {
+                "message_count": external_message_count,
+                "publication_rate_hz": external_message_count / measurement_duration_s,
+                "topic_message_delta": ((external_topic.message_count -
+                                          self.monitor.external_baseline_message_count)
+                                         if external_topic is not None else 0),
+                "timestamp_regression_count":
+                    self.monitor.external_timestamp_regression_count,
+                "timestamp_age_max_ns": self.monitor.external_timestamp_age_max_ns,
+                "reset_counter_values": sorted(reset_values),
+                "reset_counter_change_count": max(0, len(reset_values) - 1),
+                "pose_frame": external_topic.latest_payload_summary.get("pose_frame")
+                    if external_topic and external_topic.latest_payload_summary else None,
+                "velocity_frame": external_topic.latest_payload_summary.get("velocity_frame")
+                    if external_topic and external_topic.latest_payload_summary else None,
+                "timestamp_conversion_failure_count": parse_int(
+                    external_diagnostics.get("timestamp_conversion_failure_count")),
+                "timestamp_conversion_valid": parse_bool(
+                    external_diagnostics.get("timestamp_conversion_valid")),
+                "publication_ready": parse_bool(external_diagnostics.get("publication_ready")),
+                "publication_active": parse_bool(external_diagnostics.get("publication_active")),
+                "geometric_jump_count": parse_int(
+                    external_diagnostics.get("geometric_jump_count")),
+                "reset_counter": parse_int(external_diagnostics.get("reset_counter")),
+            }
+            result["external_odometry_metrics"] = external_metrics
         if self.policy.mode is RunMode.MEMORY_ON and self.monitor.status_accumulator.start_ns is not None:
             start_ns = self.monitor.status_accumulator.start_ns
             end_ns = self.monitor.status_accumulator.end_ns or self.monitor.latest_clock_ns
@@ -1545,7 +1629,7 @@ class SitlOrchestrator:
         for key in ("navigation_valid", "corrected_estimate_valid", "p95_corrected_scan_end_to_end_us",
                     "maximum_queue_depth", "processing_lag_exceeded", "load_shedding_count",
                     "imu_drop_count", "lidar_drop_count", "overflow_detected",
-                    "invalid_timestamp_rejected_count"):
+                 "invalid_timestamp_rejected_count"):
             value = metrics[key]
             checks[f"fast_lio_{key}"] = value is not None and (
                 value is True if key in {"navigation_valid", "corrected_estimate_valid"} else
@@ -1553,6 +1637,20 @@ class SitlOrchestrator:
                  (value is False if key == "overflow_detected" else value == 0 if key in {
                      "load_shedding_count", "imu_drop_count", "lidar_drop_count",
                      "invalid_timestamp_rejected_count"} else value is not None)))
+        if external_enabled:
+            external = result["external_odometry_metrics"]
+            checks.update({
+                "external_topic_samples_present": external["message_count"] > 0,
+                "external_timestamp_monotonic": external["timestamp_regression_count"] == 0,
+                "external_timestamp_age_bounded": external["timestamp_age_max_ns"] <= 150_000_000,
+                "external_reset_counter_stable": external["reset_counter_change_count"] == 0,
+                "external_timestamp_conversion_valid": external["timestamp_conversion_valid"] is True,
+                "external_timestamp_conversion_rejections_zero":
+                    external["timestamp_conversion_failure_count"] == 0,
+                "external_geometric_jump_count_zero": external["geometric_jump_count"] == 0,
+                "external_pose_frame_frd": external["pose_frame"] == 2,
+                "external_velocity_frame_body_frd": external["velocity_frame"] == 3,
+            })
         result["acceptance"] = checks
         if self.policy.mode is RunMode.MEMORY_ON:
             checks["memory_rss_growth"] = result.get("memory", {}).get("pass", False)
