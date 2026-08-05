@@ -91,19 +91,55 @@ export PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}"
 export PX4_SIMULATOR=gz
 export PX4_GZ_WORLD="${WORLD_NAME}"
 export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
+
+###############################################################################
+# PX4 Parameters
+###############################################################################
+
+# Simulation clock authority
 export PX4_PARAM_UXRCE_DDS_SYNCT=0
-# PX4's rcS applies PX4_PARAM_* before it starts the Gazebo bridge.  The
-# upstream bridge otherwise enables SIM_GZ_EN_ODOM by default, subscribes to
-# this model's /model/x500_mid360/odometry_with_covariance, and publishes that
-# simulator truth directly as vehicle_visual_odometry.  That creates a second
-# visual-odometry source alongside the ROS LIO bridge and makes EKF2 jump
-# between truth and LIO.  Keep the simulation estimator LIO-EV-only.
-export PX4_PARAM_SIM_GZ_EN_ODOM=0
+
+###############################################################################
+# MODE 1 : Standard PX4
+# ---------------------------------------------------------------------------
+# Use:
+#   - GPS
+#   - Barometer
+#   - Magnetometer
+#   - Range Finder
+#   - All standard EKF2 sensors
+#
+# Uncomment this block and comment MODE 2.
+###############################################################################
+
+# export PX4_PARAM_SIM_GZ_EN_GPS=1
+# export PX4_PARAM_SIM_GPS_USED=30
+# export PX4_PARAM_EKF2_GPS_CTRL=7
+# export PX4_PARAM_EKF2_BARO_CTRL=1
+# export PX4_PARAM_EKF2_RNG_CTRL=1
+# export PX4_PARAM_EKF2_MAG_TYPE=0
+# export PX4_PARAM_EKF2_HGT_REF=1
+# export PX4_PARAM_EKF2_EV_CTRL=0
+
+
+###############################################################################
+# MODE 2 : External Vision Only (LIO / VIO)
+# ---------------------------------------------------------------------------
+# Disable ALL navigation sensors from Gazebo and use ONLY External Vision.
+#
+# Sensors disabled:
+#   - GPS
+#   - Barometer
+#   - Magnetometer
+#   - Range Finder
+#
+# Navigation source:
+#   - External Vision (ROS2 LIO / VIO)
+#
+# Comment MODE 1 above and uncomment this block.
+###############################################################################
+
 export PX4_PARAM_SIM_GZ_EN_GPS=0
-# Keep the simulated barometer transport available for PX4 preflight health
-# checks. EKF2_BARO_CTRL below still forbids it as an estimator aid, so this
-# cannot introduce a second height/odometry source.
-export PX4_PARAM_SIM_GZ_EN_BARO=1
 export PX4_PARAM_SIM_GPS_USED=0
 export PX4_PARAM_EKF2_GPS_CTRL=0
 export PX4_PARAM_EKF2_BARO_CTRL=0
@@ -111,6 +147,10 @@ export PX4_PARAM_EKF2_RNG_CTRL=0
 export PX4_PARAM_EKF2_MAG_TYPE=5
 export PX4_PARAM_EKF2_HGT_REF=3
 export PX4_PARAM_EKF2_EV_CTRL=15
+#
+# Optional:
+# export PX4_PARAM_SIM_GZ_EN_ODOM=0
+
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 
