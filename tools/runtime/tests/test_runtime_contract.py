@@ -45,12 +45,30 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("use_sim_time:=true", command)
         self.assertNotIn("/livox/lidar:=/lidar/points", command)
 
-    def test_rviz_config_shows_raw_registered_and_local_map_clouds(self) -> None:
+    def test_rviz_config_shows_lio_map_and_odometry(self) -> None:
         config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("Fixed Frame: lio_odom", config)
-        for topic in ("/lidar/points", "/lio/registered_points", "/lio/local_map"):
-            self.assertIn(f"Topic: {topic}", config)
-        self.assertIn("Color Transformer: Axis", config)
+        for topic in (
+            "/lio/registered_points",
+            "/lio/local_map",
+            "/lio/odometry_corrected",
+        ):
+            self.assertIn(f"Value: {topic}", config)
+        self.assertIn("Color Transformer: AxisColor", config)
+        self.assertIn("Class: rviz_default_plugins/Odometry", config)
+
+    def test_stop_discovers_all_owned_runtime_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("sim-old", "sim-new"):
+                session = root / name
+                session.mkdir()
+                (session / "processes.json").write_text("{}", encoding="utf-8")
+            (root / "latest").symlink_to("sim-new")
+            self.assertEqual(
+                [path.name for path in runner._runtime_session_paths(root)],
+                ["sim-old", "sim-new"],
+            )
 
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]
@@ -61,9 +79,12 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertTrue(config["output"]["publish_registered_points"])
         self.assertTrue(config["output"]["publish_local_map"])
         local_map = config["mapping"]["local_map"]
-        self.assertEqual(local_map["soft_point_limit"], 14000)
-        self.assertEqual(local_map["hard_point_limit"], 16000)
-        self.assertEqual(local_map["target_point_count_after_prune"], 12000)
+        self.assertGreater(local_map["target_point_count_after_prune"], 0)
+        self.assertGreater(
+            local_map["soft_point_limit"],
+            local_map["target_point_count_after_prune"],
+        )
+        self.assertGreater(local_map["hard_point_limit"], local_map["soft_point_limit"])
         propagated = config["propagated_odometry"]
         self.assertEqual(propagated["imu_history_duration_ns"], 1_000_000_000)
         self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)

@@ -19,7 +19,7 @@ help:
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
-	@echo "  make stop                                  stop only the latest session process groups and report"
+	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
 	@echo "  make clean                                 remove generated runtime artifacts only"
 	@echo "Artifacts: .artifacts/runtime/<workflow>-*/REPORT.md and report.json"
 	@echo "PASS requires samples, freshness, validity, cleanup, and workflow-specific acceptance."

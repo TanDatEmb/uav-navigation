@@ -23,7 +23,7 @@ import report
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
 ARTIFACT_ROOT = ROOT / ".artifacts/runtime"
-RVIZ_CONFIG = ROOT / "src/navigation_estimator/livox_ros_driver2_interface/config/display_point_cloud_ROS2.rviz"
+RVIZ_CONFIG = ROOT / "src/navigation_bringup/rviz/fast_lio.rviz"
 NO_RVIZ_ENV = {
     "ENABLE_RVIZ": "0",
     "RVIZ_ENABLE": "0",
@@ -411,20 +411,63 @@ def status() -> int:
     return 0
 
 
+def _runtime_session_paths(root: Path) -> list[Path]:
+    """Return all workspace-owned runtime sessions, newest first."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and (path / "processes.json").is_file()
+        ),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+
+
 def stop() -> int:
     session_path = resolve_latest(ARTIFACT_ROOT)
+    session_paths = _runtime_session_paths(ARTIFACT_ROOT)
+    if session_path not in session_paths:
+        session_paths.append(session_path)
+    cleanup_failures: list[str] = []
+    for path in session_paths:
+        session = Session.from_path(path)
+        failures = session.stop()
+        if failures:
+            existing = _load_runtime_failures(session)
+            _write_runtime(
+                session,
+                failures=existing + [f"cleanup: {item}" for item in failures],
+            )
+            cleanup_failures.extend(f"{path.name}: {item}" for item in failures)
+        session.mark_stopped("make stop")
+
     session = Session.from_path(session_path)
     workflow = str(session.state().get("workflow", "sim"))
     config_path = RUNTIME_CONFIG / ("dataset.yaml" if workflow == "dataset" else "sim.yaml")
-    failures = session.stop()
-    if failures:
-        _write_runtime(session, failures=[f"cleanup: {item}" for item in failures])
-    session.mark_stopped("make stop")
     px4_dir = Path(session.state().get("px4_dir", "")) if session.state().get("px4_dir") else None
-    result = report.build(session.directory, workflow, config_path, ROOT, px4_dir, observation_complete=workflow == "sim" and not session.state().get("headless", False))
-    print(result["verdict"])
+    result = report.build(
+        session.directory,
+        workflow,
+        config_path,
+        ROOT,
+        px4_dir,
+        observation_complete=workflow == "sim" and not session.state().get("headless", False),
+    )
+    if cleanup_failures:
+        print("FAIL")
+        for failure in cleanup_failures:
+            print(f"cleanup: {failure}")
+    else:
+        print("STOPPED")
+        if result["verdict"] not in {"OBSERVATION_COMPLETE", "PASS"}:
+            print(f"Runtime report: {result['verdict']} (cleanup succeeded)")
     print(session_path)
-    return 0 if result["verdict"] in {"OBSERVATION_COMPLETE", "PASS"} and not failures else 1
+    return 0 if not cleanup_failures else 1
 
 
 def clean() -> int:

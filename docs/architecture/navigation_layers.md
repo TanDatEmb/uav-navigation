@@ -13,7 +13,9 @@ world model, planning input, obstacle representation, or safety authority.
 Planning, world modelling, and flight safety are outside this repository.
 
 The package dependency direction is
-`ikfom_vendor -> fast_lio_core -> fast_lio_ros -> navigation_bringup`, with
-`fast_lio_tools` consuming the core and `px4_odometry_bridge` consuming the
-ROS product outputs. ROS, Gazebo, bags, and PX4 types must not enter
+`ikfom_vendor/ikd_tree_vendor -> fast_lio_core -> fast_lio_ros -> navigation_bringup`,
+with `livox_ros_driver2` supplying the sensor package and custom message,
+`fast_lio_tools` consuming the core, and
+`navigation_interfaces -> px4_odometry_bridge` defining the PX4 bridge
+contract. ROS, Gazebo, bags, PX4 types, and vendor drivers must not enter
 `fast_lio_core`.
