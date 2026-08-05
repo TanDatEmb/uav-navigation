@@ -130,12 +130,24 @@ def _first_tracking_wall_ns(samples: list[dict[str, Any]]) -> int | None:
     return min(tracking_times) if tracking_times else None
 
 
-def _active_stale_count(
+def _active_stale_times(
     row: dict[str, Any],
     runtime: dict[str, Any],
     samples: list[dict[str, Any]] | None = None,
-) -> int:
-    times = row.get("stale_event_times_ns", [])
+) -> list[int] | None:
+    raw_times = row.get("stale_event_times_ns", [])
+    if not isinstance(raw_times, list):
+        return None
+    if not raw_times and int(row.get("stale_event_count", 0)):
+        # Older or partial monitor snapshots may retain the aggregate but not
+        # the individual event times. The caller must then fail closed.
+        return None
+    times: list[int] = []
+    for value in raw_times:
+        try:
+            times.append(int(value))
+        except (TypeError, ValueError):
+            return None
     first_tracking_ns = _first_tracking_wall_ns(samples or [])
     # A stream can pause while LIO is still collecting its startup state. That
     # is not a tracking-time freshness violation; if TRACKING is never
@@ -146,11 +158,110 @@ def _active_stale_count(
         if first_tracking_ns is None or int(value) >= first_tracking_ns
     ]
     replay_finished = runtime.get("replay_finished_wall_ns")
-    if isinstance(times, list) and replay_finished:
+    if replay_finished:
         grace_ns = int(_number(runtime.get("replay_tail_grace_s"), 0.5) * 1e9)
         active_until = int(replay_finished) - grace_ns
-        return sum(value < active_until for value in active_times)
-    return len(active_times) if samples is not None else int(row.get("stale_event_count", 0))
+        return [value for value in active_times if value < active_until]
+    return active_times
+
+
+def _active_stale_count(
+    row: dict[str, Any],
+    runtime: dict[str, Any],
+    samples: list[dict[str, Any]] | None = None,
+) -> int:
+    active_times = _active_stale_times(row, runtime, samples)
+    return len(active_times) if active_times is not None else int(row.get("stale_event_count", 0))
+
+
+def _stale_classification(
+    name: str,
+    row: dict[str, Any],
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Separate source-time loss from a delayed monitor callback.
+
+    ``arrival_wall_ns`` is when this observer dispatched a callback, not when
+    DDS delivered the sample. A callback gap alone is therefore retained as a
+    diagnostic, but is not treated as a source-data outage when consecutive
+    message timestamps around it remain within the stream freshness budget.
+    Missing bracketing samples or a source-time gap still fail closed.
+    """
+    active_times = _active_stale_times(row, runtime, samples)
+    raw_count = int(row.get("stale_event_count", 0))
+    if active_times is None:
+        return {
+            "active_callback_stall_count": raw_count,
+            "source_stale_event_count": raw_count,
+            "observer_dispatch_stall_count": 0,
+            "maximum_observer_dispatch_source_gap_ms": None,
+        }
+    result = {
+        "active_callback_stall_count": len(active_times),
+        "source_stale_event_count": 0,
+        "observer_dispatch_stall_count": 0,
+        "maximum_observer_dispatch_source_gap_ms": None,
+    }
+    if not active_times:
+        return result
+
+    runtime_config = config.get("runtime", {})
+    stream_config = runtime_config.get("streams", {}).get(name, {})
+    stale_after_s = _number(
+        stream_config.get(
+            "stale_after_s", runtime_config.get("thresholds", {}).get("stale_after_s", 1.0)
+        )
+    )
+    stale_after_ns = int(stale_after_s * 1e9)
+    records: list[tuple[int, int]] = []
+    for item in _series(samples, name):
+        try:
+            arrival_ns = int(item.get("arrival_wall_ns", 0))
+            timestamp_ns = int(item.get("timestamp_ns", 0))
+        except (TypeError, ValueError):
+            continue
+        if arrival_ns > 0:
+            records.append((arrival_ns, timestamp_ns))
+    records.sort()
+    if stale_after_ns <= 0 or not records:
+        result["source_stale_event_count"] = len(active_times)
+        return result
+
+    maximum_source_gap_ms: float | None = None
+    next_index = 0
+    for event_ns in sorted(active_times):
+        while next_index < len(records) and records[next_index][0] <= event_ns:
+            next_index += 1
+        before = records[next_index - 1] if next_index else None
+        after = records[next_index] if next_index < len(records) else None
+        if before is None or after is None:
+            result["source_stale_event_count"] += 1
+            continue
+        source_gap_ns = after[1] - before[1]
+        if before[1] <= 0 or after[1] <= 0 or source_gap_ns <= 0 or source_gap_ns > stale_after_ns:
+            result["source_stale_event_count"] += 1
+            continue
+        result["observer_dispatch_stall_count"] += 1
+        source_gap_ms = source_gap_ns / 1e6
+        maximum_source_gap_ms = (
+            source_gap_ms
+            if maximum_source_gap_ms is None
+            else max(maximum_source_gap_ms, source_gap_ms)
+        )
+    result["maximum_observer_dispatch_source_gap_ms"] = maximum_source_gap_ms
+    return result
+
+
+def _annotate_stale_classification(
+    streams: dict[str, dict[str, Any]],
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    samples: list[dict[str, Any]],
+) -> None:
+    for name, row in streams.items():
+        row.update(_stale_classification(name, row, config, runtime, samples))
 
 
 def _metric_summary(values: list[float]) -> dict[str, Any]:
@@ -334,6 +445,44 @@ def _map_point_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "mean": sum(values) / len(values) if values else None,
         "p95": _p(values, 0.95),
         "final": values[-1] if values else None,
+    }
+
+
+def _map_maintenance_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize bounded-map maintenance without hiding prune-side effects."""
+    prune_counts: list[int] = []
+    maintenance_us: list[float] = []
+    snapshot_us: list[float] = []
+    hard_limit_trigger_count = 0
+    recovery_failure_count = 0
+    for item in _series(samples, "diagnostics"):
+        statuses = item.get("payload", {}).get("statuses", [])
+        if not isinstance(statuses, list):
+            continue
+        for status in statuses:
+            if not isinstance(status, dict) or status.get("name") != "fast_lio/estimator":
+                continue
+            values = status.get("values", {})
+            if not isinstance(values, dict):
+                continue
+            pruned = int(_number(values.get("distance_pruned_count"), 0.0))
+            if pruned > 0:
+                prune_counts.append(pruned)
+            hard_limit_trigger_count += int(bool(values.get("hard_limit_triggered", False)))
+            recovery_failure_count += int(bool(values.get("hard_limit_recovery_failed", False)))
+            maintenance = _number(values.get("map_maintenance_us"), -1.0)
+            snapshot = _number(values.get("snapshot_us"), -1.0)
+            if maintenance >= 0.0:
+                maintenance_us.append(maintenance)
+            if snapshot >= 0.0:
+                snapshot_us.append(snapshot)
+    return {
+        "prune_event_count": len(prune_counts),
+        "largest_prune_count": max(prune_counts) if prune_counts else 0,
+        "hard_limit_trigger_count": hard_limit_trigger_count,
+        "hard_limit_recovery_failure_count": recovery_failure_count,
+        "maximum_maintenance_us": max(maintenance_us) if maintenance_us else None,
+        "maximum_snapshot_us": max(snapshot_us) if snapshot_us else None,
     }
 
 
@@ -817,8 +966,10 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
     samples = _samples(session / "samples.jsonl")
+    _annotate_stale_classification(streams, config, runtime, samples)
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
+    map_maintenance = _map_maintenance_summary(samples)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -827,7 +978,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         expected = _number(config.get("runtime", {}).get("streams", {}).get(name, {}).get("expected_hz"))
         if expected and row["mean_rate_hz"] < expected * minimum_fraction:
             reasons.append(f"{name} rate below contract")
-        if row["timestamp_regression_count"] or _active_stale_count(row, runtime, samples) or row["nonfinite_message_count"]:
+        if row["timestamp_regression_count"] or row["source_stale_event_count"] or row["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     diagnostics = _diag_values(snapshot)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
@@ -865,6 +1016,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "scan_processing_p95_us": diagnostics.get("p95_scan_processing_us", "NOT_AVAILABLE"),
             "scan_processing_p99_us": diagnostics.get("p99_scan_processing_us", "NOT_AVAILABLE"),
             "map_point_count": map_point_count,
+            "map_maintenance": map_maintenance,
         },
         "accuracy": "NOT_AVAILABLE",
         "provenance": provenance(workspace),
@@ -873,24 +1025,24 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
 
 def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags", "aid_ev_pos", "aid_ev_vel", "aid_ev_yaw")
+    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
     samples = _samples(session / "samples.jsonl")
+    _annotate_stale_classification(streams, config, runtime, samples)
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
+    map_maintenance = _map_maintenance_summary(samples)
     reasons: list[str] = []
-    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry"):
+    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
-        if streams[name]["timestamp_regression_count"] or _active_stale_count(streams[name], runtime, samples) or streams[name]["nonfinite_message_count"]:
+        if streams[name]["timestamp_regression_count"] or streams[name]["source_stale_event_count"] or streams[name]["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     external_expected = _number(config.get("runtime", {}).get("streams", {}).get("external_odometry", {}).get("expected_hz"))
     if external_expected and streams["external_odometry"]["mean_rate_hz"] < external_expected * _number(thresholds.get("minimum_rate_fraction"), 0.90):
         reasons.append("external odometry rate below contract")
-    if streams["estimator_status_flags"]["sample_count"] <= 0 or streams["aid_ev_pos"]["sample_count"] <= 0:
-        reasons.append("PX4 estimator aid-source verification is BLOCKED")
     diagnostics = _diag_values(snapshot)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
     if not tracking_observed:
@@ -906,8 +1058,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     scenario_reasons = list(scenario.get("failures", []))
     reasons.extend(str(item) for item in scenario_reasons)
     reasons.extend(failures)
-    blocked = streams["estimator_status_flags"]["sample_count"] <= 0 or streams["aid_ev_pos"]["sample_count"] <= 0
-    verdict = "BLOCKED" if blocked else ("PASS" if not reasons else "FAIL")
+    verdict = "PASS" if not reasons else "FAIL"
     return {
         "workflow": "sim",
         "verdict": verdict,
@@ -917,18 +1068,18 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "estimator_initialized": streams["estimator_status_flags"]["sample_count"] > 0,
             "local_position_valid": bool(snapshot.get("latest", {}).get("local_position", {}).get("xy_valid")) and bool(snapshot.get("latest", {}).get("local_position", {}).get("z_valid")),
             "local_velocity_valid": bool(snapshot.get("latest", {}).get("local_position", {}).get("v_xy_valid")) and bool(snapshot.get("latest", {}).get("local_position", {}).get("v_z_valid")),
-            "external_vision_position_fused": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_pos")),
-            "external_vision_velocity_fused": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_vel")),
-            "external_vision_yaw_fused": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_yaw")),
+            "external_vision_position_control_enabled": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_pos")),
+            "external_vision_velocity_control_enabled": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_vel")),
+            "external_vision_yaw_control_enabled": bool(snapshot.get("latest", {}).get("estimator_status_flags", {}).get("cs_ev_yaw")),
+            "external_vision_status_interpretation": "PX4 control-status observation only; not per-sample fusion proof",
             "dead_reckoning_events": int(bool(snapshot.get("latest", {}).get("local_position", {}).get("dead_reckoning"))),
             "estimator_fault_events": int(bool(snapshot.get("latest", {}).get("estimator_status", {}).get("filter_fault_flags"))),
-            "fusion_verification": "BLOCKED" if blocked else "OBSERVED",
-            "aid_sources": {name: streams[name] for name in ("aid_ev_pos", "aid_ev_vel", "aid_ev_yaw")},
         },
         "lio": {
             "state": diagnostics.get("state", "NOT_AVAILABLE"),
             "tracking_observed": tracking_observed,
             "map_point_count": map_point_count,
+            "map_maintenance": map_maintenance,
         },
         "residuals": residuals,
         "conversion_contract": conversion_contract,
@@ -977,9 +1128,9 @@ def _json(value: Any) -> str:
 def render(report: dict[str, Any]) -> str:
     lines = [f"# Runtime report: {report.get('workflow', 'unknown')}", "", f"- Verdict: **{report.get('verdict')}**", f"- Session: `{report.get('session', '')}`", ""]
     reasons = report.get("reasons", [])
-    lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
-        lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('stale_event_count', 0)} | {row.get('timestamp_regression_count', 0)} |")
+        lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
     for section in ("lio", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]

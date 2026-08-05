@@ -236,12 +236,12 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.local_map_crop_trigger_distance_m = node.declare_parameter(
       "mapping.local_map.crop_trigger_distance_m", 5.0);
   result.local_map_soft_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.soft_point_limit", 20000);
+      "mapping.local_map.soft_point_limit", 14000);
   result.local_map_hard_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.hard_point_limit", 24000);
+      "mapping.local_map.hard_point_limit", 16000);
   result.local_map_target_point_count_after_prune =
       node.declare_parameter<std::int64_t>(
-          "mapping.local_map.target_point_count_after_prune", 16000);
+          "mapping.local_map.target_point_count_after_prune", 12000);
   result.local_map_distance_shell_size_m = node.declare_parameter(
       "mapping.local_map.distance_shell_size_m", 5.0);
   result.dynamic_filter_enabled =
@@ -272,7 +272,7 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "propagated_odometry.imu_history_duration_ns", 1'000'000'000);
   result.propagated_odometry_maximum_correction_age_ns =
       node.declare_parameter<std::int64_t>(
-          "propagated_odometry.maximum_correction_age_ns", 300'000'000);
+          "propagated_odometry.maximum_correction_age_ns", 750'000'000);
   validate(result);
   return result;
 }

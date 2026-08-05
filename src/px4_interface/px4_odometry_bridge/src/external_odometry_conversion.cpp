@@ -110,6 +110,9 @@ std::optional<std::array<float, 3>> positive_variances_to_px4_float(
 
 std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
     const nav_msgs::msg::Odometry& message) {
+  // This exact frame pair is a source-authentication boundary, not cosmetic
+  // metadata.  Gazebo truth arrives as world/odom -> base_link and must never
+  // be normalized or relabeled into an external-vision measurement here.
   if (message.header.frame_id != "lio_odom" ||
       message.child_frame_id != "base_link") {
     return std::nullopt;

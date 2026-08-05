@@ -455,5 +455,13 @@ TEST(RegistrationMapTest, RejectsInvalidLocalMapLimitOrdering) {
                std::invalid_argument);
 }
 
+TEST(RegistrationMapTest, DefaultsKeepTheReplayScaleHardCeiling) {
+  const LocalMapManagerConfig config;
+  EXPECT_EQ(config.soft_point_limit, 14000U);
+  EXPECT_EQ(config.hard_point_limit, 16000U);
+  EXPECT_EQ(config.target_point_count_after_prune, 12000U);
+  EXPECT_NO_THROW(static_cast<void>(LocalMapManager{config}));
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

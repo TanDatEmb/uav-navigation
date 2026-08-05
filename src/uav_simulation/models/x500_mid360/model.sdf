@@ -10,10 +10,11 @@
       <parent>base_link</parent><child>livox_frame</child>
       <pose relative_to="base_link">0 0 0.28 0 0 0</pose>
     </joint>
-    <!-- Gazebo ground truth in ENU/FLU.  PX4's simulator bridge consumes the
-         same model through NED/FRD; keep this topic available so every frame
-         conversion can be checked against the simulator, not against another
-         transformed estimate. -->
+    <!-- Evaluation-only Gazebo ground truth in ENU/FLU.  The repository ROS
+         bridge exposes it only as /sim/ground_truth/odometry for monitor and
+         report comparison.  The launcher disables PX4's direct Gazebo
+         odometry subscriber (SIM_GZ_EN_ODOM=0), so this plugin must never
+         become a source for /fmu/in/vehicle_visual_odometry or LIO. -->
     <plugin filename="gz-sim-odometry-publisher-system"
             name="gz::sim::systems::OdometryPublisher">
       <dimensions>3</dimensions>

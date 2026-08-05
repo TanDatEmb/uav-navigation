@@ -71,7 +71,6 @@ def _rviz_command(*, use_sim_time: bool = False) -> list[str]:
     ]
     if use_sim_time:
         command.extend(["-p", "use_sim_time:=true"])
-    command.extend(["-r", "/livox/lidar:=/lidar/points"])
     return command
 
 
@@ -404,7 +403,7 @@ def status() -> int:
         print(f"{label}: {_number(row.get('mean_rate_hz')):.2f} Hz")
     print(f"LIO state: {diagnostics.get('state', 'NOT_AVAILABLE')}")
     print(f"PX4 estimator state: {latest.get('estimator_status_flags', {})}")
-    print(f"External vision fusion state: {latest.get('estimator_status_flags', {}).get('cs_ev_pos', 'NOT_AVAILABLE')}")
+    print(f"PX4 EV position control flag: {latest.get('estimator_status_flags', {}).get('cs_ev_pos', 'NOT_AVAILABLE')}")
     print(f"Offboard state: {latest.get('vehicle_status', {}).get('nav_state', 'NOT_AVAILABLE')}")
     print(f"Drop count: {diagnostics.get('values', {}).get('imu_drop_count', 0)}/{diagnostics.get('values', {}).get('lidar_drop_count', 0)}")
     print(f"Queue depth: {diagnostics.get('values', {}).get('current_queue_depth', diagnostics.get('values', {}).get('current_input_queue_depth', 'NOT_AVAILABLE'))}")

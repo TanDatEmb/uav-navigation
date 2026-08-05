@@ -175,5 +175,22 @@ TEST(ExternalOdometryConversionTest, RejectsZeroTimestampQuaternionFrameAndUnava
   EXPECT_FALSE(convert_ros_lio_odometry(message).has_value());
 }
 
+TEST(ExternalOdometryConversionTest, RejectsSimulatorGroundTruthFrames) {
+  // Gazebo OdometryPublisher uses world/odom-style frames with the same body
+  // frame.  It must not cross the LIO-to-PX4 boundary merely because its pose,
+  // twist, timestamp, and covariance otherwise look valid.
+  auto message = valid_message();
+  message.header.frame_id = "odom";
+  EXPECT_FALSE(convert_ros_lio_odometry(message).has_value());
+
+  message = valid_message();
+  message.header.frame_id = "world";
+  EXPECT_FALSE(convert_ros_lio_odometry(message).has_value());
+
+  message = valid_message();
+  message.header.frame_id = "x500_mid360/odom";
+  EXPECT_FALSE(convert_ros_lio_odometry(message).has_value());
+}
+
 }  // namespace
 }  // namespace px4_odometry_bridge

@@ -20,7 +20,8 @@ namespace uav::nav::lio {
 struct PropagatedOdometryWorkerConfig {
   ImuStatePropagatorConfig propagator{};
   std::size_t imu_ingress_capacity{4096U};
-  std::int64_t maximum_correction_age_ns{300'000'000};
+  // The default leaves 250 ms of one-second IMU history for re-anchoring.
+  std::int64_t maximum_correction_age_ns{750'000'000};
   double publish_rate_hz{50.0};
 };
 

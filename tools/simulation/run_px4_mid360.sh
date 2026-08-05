@@ -92,12 +92,32 @@ export PX4_SIMULATOR=gz
 export PX4_GZ_WORLD="${WORLD_NAME}"
 export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
 export PX4_PARAM_UXRCE_DDS_SYNCT=0
+# PX4's rcS applies PX4_PARAM_* before it starts the Gazebo bridge.  The
+# upstream bridge otherwise enables SIM_GZ_EN_ODOM by default, subscribes to
+# this model's /model/x500_mid360/odometry_with_covariance, and publishes that
+# simulator truth directly as vehicle_visual_odometry.  That creates a second
+# visual-odometry source alongside the ROS LIO bridge and makes EKF2 jump
+# between truth and LIO.  Keep the simulation estimator LIO-EV-only.
+export PX4_PARAM_SIM_GZ_EN_ODOM=0
+export PX4_PARAM_SIM_GZ_EN_GPS=0
+# Keep the simulated barometer transport available for PX4 preflight health
+# checks. EKF2_BARO_CTRL below still forbids it as an estimator aid, so this
+# cannot introduce a second height/odometry source.
+export PX4_PARAM_SIM_GZ_EN_BARO=1
+export PX4_PARAM_SIM_GPS_USED=0
+export PX4_PARAM_EKF2_GPS_CTRL=0
+export PX4_PARAM_EKF2_BARO_CTRL=0
+export PX4_PARAM_EKF2_RNG_CTRL=0
+export PX4_PARAM_EKF2_MAG_TYPE=5
+export PX4_PARAM_EKF2_HGT_REF=3
+export PX4_PARAM_EKF2_EV_CTRL=15
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 
 echo
 echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
+echo "PX4 visual odometry: ROS LIO only (SIM_GZ_EN_ODOM=0; EKF2 EV=15; GPS/baro/range fusion=0)"
 echo "Runtime stack is started by tools/runtime/runner.py."
 echo
 cd "${PX4_ROOTFS}"

@@ -60,22 +60,26 @@ fast_lio:
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0
-        # Replay measurements stay around 10k-16k map points. Keep one to two
-        # scan periods of headroom, then prune back to the observed range;
-        # never allocate a 100k+ point map for this dataset contract.
-        soft_point_limit: 20000
-        hard_point_limit: 24000
-        target_point_count_after_prune: 16000
+        # Replay measurements stay around 10k-16k points. Keep 12k nearby
+        # registration support, start maintenance at 14k, and use 16k as an
+        # enforceable ceiling instead of retaining the old 450k/500k profile.
+        soft_point_limit: 14000
+        hard_point_limit: 16000
+        target_point_count_after_prune: 12000
         distance_shell_size_m: 5.0
     output:
-      publish_registered_points: false
-      publish_local_map: false
+      publish_registered_points: true
+      publish_local_map: true
     propagated_odometry:
       enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      maximum_correction_age_ns: 300000000
+      # Replay scan corrections can be separated by normal scheduling jitter.
+      # Permit 750 ms of IMU propagation, leaving 250 ms before the retained
+      # one-second history expires; a genuinely stale LIO correction still
+      # stops publication fail-closed.
+      maximum_correction_age_ns: 750000000
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16

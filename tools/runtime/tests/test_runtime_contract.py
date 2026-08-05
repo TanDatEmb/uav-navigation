@@ -5,6 +5,7 @@ import time
 import unittest
 
 RUNTIME = Path(__file__).resolve().parents[1]
+ROOT = RUNTIME.parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from monitor import StreamStats
@@ -37,12 +38,83 @@ class RuntimeContractTest(unittest.TestCase):
         command = runner._ros_shell(["rviz2"], enable_rviz=True)[-1]
         self.assertIn("export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RVIZ=0", command)
 
-    def test_rviz_command_uses_runtime_cloud_and_sim_clock(self) -> None:
+    def test_rviz_command_uses_sim_clock_without_legacy_topic_remap(self) -> None:
         command = runner._rviz_command(use_sim_time=True)
         self.assertIn("--ros-args", command)
         self.assertIn("-p", command)
         self.assertIn("use_sim_time:=true", command)
-        self.assertIn("/livox/lidar:=/lidar/points", command)
+        self.assertNotIn("/livox/lidar:=/lidar/points", command)
+
+    def test_rviz_config_shows_raw_registered_and_local_map_clouds(self) -> None:
+        config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
+        self.assertIn("Fixed Frame: lio_odom", config)
+        for topic in ("/lidar/points", "/lio/registered_points", "/lio/local_map"):
+            self.assertIn(f"Topic: {topic}", config)
+        self.assertIn("Color Transformer: Axis", config)
+
+    def test_simulation_config_is_lio_only_at_startup(self) -> None:
+        config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]
+        prior = config["initial_prior"]
+        self.assertEqual(prior["source"], "zero")
+        self.assertEqual(prior["source_frame"], "lio_odom")
+        self.assertEqual(prior["source_frame_transform"], "same_frame")
+        self.assertTrue(config["output"]["publish_registered_points"])
+        self.assertTrue(config["output"]["publish_local_map"])
+        local_map = config["mapping"]["local_map"]
+        self.assertEqual(local_map["soft_point_limit"], 14000)
+        self.assertEqual(local_map["hard_point_limit"], 16000)
+        self.assertEqual(local_map["target_point_count_after_prune"], 12000)
+        propagated = config["propagated_odometry"]
+        self.assertEqual(propagated["imu_history_duration_ns"], 1_000_000_000)
+        self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)
+
+    def test_replay_and_simulation_preserve_propagation_recovery_headroom(self) -> None:
+        for config_name in ("sim.yaml", "dataset.yaml"):
+            propagated = runner.load_config(config_name)["fast_lio"]["ros__parameters"]["propagated_odometry"]
+            self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)
+            self.assertGreater(
+                propagated["imu_history_duration_ns"] - propagated["maximum_correction_age_ns"],
+                0,
+            )
+
+    def test_estimator_status_flags_rate_matches_px4_diagnostic_publication(self) -> None:
+        runtime = runner.load_config("common.yaml")["runtime"]
+        status_flags = runtime["streams"]["estimator_status_flags"]
+        self.assertEqual(status_flags["expected_hz"], 1.0)
+        self.assertEqual(status_flags["stale_after_s"], 2.5)
+
+    def test_external_odometry_bridge_accepts_only_lio_not_simulator_truth(self) -> None:
+        source = (ROOT / "src/px4_interface/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated"', source)
+        self.assertEqual(source.count("create_subscription<nav_msgs::msg::Odometry>"), 1)
+        self.assertIn("kLioPropagatedOdometryTopic", source)
+        self.assertNotIn("/sim/ground_truth/odometry", source)
+
+    def test_runtime_never_depends_on_nonexistent_ev_aid_source_topics(self) -> None:
+        for path in (
+            RUNTIME / "monitor.py",
+            RUNTIME / "report.py",
+            ROOT / "config/runtime/common.yaml",
+        ):
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("estimator_aid_src_ev", source)
+            self.assertNotIn("EstimatorAidSource", source)
+
+    def test_lio_diagnostics_expose_map_pruning_and_propagation_latency(self) -> None:
+        source = (ROOT / "src/navigation_estimator/fast_lio_ros/src/ros_output_publisher.cpp").read_text(
+            encoding="utf-8"
+        )
+        for key in (
+            'keyValue("hard_limit_triggered"',
+            'keyValue("distance_pruned_count"',
+            'keyValue("map_maintenance_us"',
+            'keyValue("snapshot_us"',
+            'keyValue("maximum_replay_runtime_us"',
+            'keyValue("maximum_imu_batch_size"',
+        ):
+            self.assertIn(key, source)
 
     def test_first_sample_does_not_create_stale_event(self) -> None:
         stats = StreamStats("external_odometry", "/fmu/in/vehicle_visual_odometry", stale_after_s=0.1)
@@ -181,6 +253,57 @@ class RuntimeContractTest(unittest.TestCase):
             }
         ]
         self.assertEqual(report._active_stale_count(row, {}, samples), 1)
+
+    def test_callback_stall_with_continuous_source_timestamps_is_not_source_stale(self) -> None:
+        row = {"stale_event_count": 1, "stale_event_times_ns": [250_000_000]}
+        samples = [
+            {"stream": "imu", "arrival_wall_ns": 100_000_000, "timestamp_ns": 1_000_000_000},
+            {"stream": "imu", "arrival_wall_ns": 300_000_000, "timestamp_ns": 1_008_000_000},
+        ]
+        config = {"runtime": {"streams": {"imu": {"stale_after_s": 0.1}}}}
+        result = report._stale_classification("imu", row, config, {}, samples)
+        self.assertEqual(result["active_callback_stall_count"], 1)
+        self.assertEqual(result["observer_dispatch_stall_count"], 1)
+        self.assertEqual(result["source_stale_event_count"], 0)
+        self.assertEqual(result["maximum_observer_dispatch_source_gap_ms"], 8.0)
+
+    def test_callback_stall_with_a_source_timestamp_gap_fails_closed(self) -> None:
+        row = {"stale_event_count": 1, "stale_event_times_ns": [250_000_000]}
+        samples = [
+            {"stream": "external_odometry", "arrival_wall_ns": 100_000_000, "timestamp_ns": 1_000_000_000},
+            {"stream": "external_odometry", "arrival_wall_ns": 300_000_000, "timestamp_ns": 1_300_000_000},
+        ]
+        config = {"runtime": {"streams": {"external_odometry": {"stale_after_s": 0.2}}}}
+        result = report._stale_classification("external_odometry", row, config, {}, samples)
+        self.assertEqual(result["active_callback_stall_count"], 1)
+        self.assertEqual(result["observer_dispatch_stall_count"], 0)
+        self.assertEqual(result["source_stale_event_count"], 1)
+
+    def test_map_maintenance_summary_keeps_pruning_evidence(self) -> None:
+        samples = [
+            {
+                "stream": "diagnostics",
+                "payload": {
+                    "statuses": [
+                        {
+                            "name": "fast_lio/estimator",
+                            "values": {
+                                "distance_pruned_count": 4099,
+                                "hard_limit_triggered": True,
+                                "hard_limit_recovery_failed": False,
+                                "map_maintenance_us": 21606,
+                                "snapshot_us": 831,
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+        result = report._map_maintenance_summary(samples)
+        self.assertEqual(result["prune_event_count"], 1)
+        self.assertEqual(result["largest_prune_count"], 4099)
+        self.assertEqual(result["hard_limit_recovery_failure_count"], 0)
+        self.assertEqual(result["maximum_maintenance_us"], 21606.0)
 
 
 if __name__ == "__main__":

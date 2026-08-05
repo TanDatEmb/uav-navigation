@@ -693,6 +693,30 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
                covariance.pose_covariance_available ? "true" : "false"),
       keyValue("twist_covariance_available",
                covariance.twist_covariance_available ? "true" : "false"),
+      // Small, per-correction map-maintenance contract. These values make a
+      // threshold prune auditable without publishing the full internal
+      // diagnostic payload at LiDAR rate.
+      keyValue("map_size_after_insert",
+               std::to_string(result.diagnostics.map.map_size_after_insert)),
+      keyValue("map_size_after_maintenance",
+               std::to_string(result.diagnostics.map.map_size_after_maintenance)),
+      keyValue("crop_performed",
+               result.diagnostics.map.crop_performed ? "true" : "false"),
+      keyValue("crop_triggered_by_point_threshold",
+               result.diagnostics.map.crop_triggered_by_point_threshold ? "true" : "false"),
+      keyValue("soft_limit_triggered",
+               result.diagnostics.map.soft_limit_triggered ? "true" : "false"),
+      keyValue("hard_limit_triggered",
+               result.diagnostics.map.hard_limit_triggered ? "true" : "false"),
+      keyValue("hard_limit_recovery_failed",
+               result.diagnostics.map.hard_limit_recovery_failed ? "true" : "false"),
+      keyValue("distance_pruned_count",
+               std::to_string(result.diagnostics.map.distance_pruned_count)),
+      keyValue("snapshot_point_count",
+               std::to_string(result.diagnostics.map.snapshot_point_count)),
+      keyValue("map_maintenance_us",
+               std::to_string(result.diagnostics.map.map_maintenance_us)),
+      keyValue("snapshot_us", std::to_string(result.diagnostics.timing.snapshot_us)),
   };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);
@@ -895,6 +919,20 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("queue_overflow_count", std::to_string(propagated.queue_overflow_count)),
       keyValue("publication_count", std::to_string(publication_count)),
       keyValue("publication_skip_count", std::to_string(publication_skip_count)),
+      // These 1 Hz counters explain a propagated-odometry pause without
+      // inflating the high-rate estimator health status.
+      keyValue("last_received_correction_time_ns", timeNs(propagated.last_correction_time)),
+      keyValue("last_applied_correction_time_ns", timeNs(propagated.last_applied_correction_time)),
+      keyValue("reanchor_count", std::to_string(core.reanchor_count)),
+      keyValue("replay_count", std::to_string(core.replay_count)),
+      keyValue("last_replay_sample_count", std::to_string(core.last_replay_sample_count)),
+      keyValue("last_replay_runtime_us", std::to_string(propagated.last_replay_runtime_us)),
+      keyValue("maximum_replay_runtime_us", std::to_string(propagated.maximum_replay_runtime_us)),
+      keyValue("replay_in_progress", propagated.replay_in_progress ? "true" : "false"),
+      keyValue("requires_reanchor", core.requires_reanchor ? "true" : "false"),
+      keyValue("load_shedding_count", std::to_string(propagated.load_shedding_count)),
+      keyValue("maximum_imu_batch_size", std::to_string(propagated.maximum_imu_batch_size)),
+      keyValue("stale_stop_count", std::to_string(propagated.stale_stop_count)),
   };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);

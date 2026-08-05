@@ -40,3 +40,17 @@ def test_px4_lio_smoke_world_and_bridge_contract():
     assert "/world/px4_lio_smoke/clock" in bridge
     assert "/sim/mid360/scan/points" in bridge
     assert "/sim/mid360/imu" in bridge
+    assert "/sim/ground_truth/odometry" in bridge
+
+
+def test_launcher_disables_px4_gazebo_truth_odometry_source():
+    launcher = (ROOT.parents[1] / "tools/simulation/run_px4_mid360.sh").read_text()
+    # PX4's GZ bridge otherwise republishes this model's odometry as internal
+    # vehicle_visual_odometry, competing with the ROS LIO external-vision path.
+    assert "export PX4_PARAM_SIM_GZ_EN_ODOM=0" in launcher
+    assert "export PX4_PARAM_EKF2_EV_CTRL=15" in launcher
+    assert "export PX4_PARAM_EKF2_GPS_CTRL=0" in launcher
+    # Barometer transport is retained only for PX4 sensor-health preflight;
+    # EKF2 must not fuse it into the LIO external-vision estimate.
+    assert "export PX4_PARAM_SIM_GZ_EN_BARO=1" in launcher
+    assert "export PX4_PARAM_EKF2_BARO_CTRL=0" in launcher

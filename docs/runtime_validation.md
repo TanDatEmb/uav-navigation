@@ -55,15 +55,18 @@ SHA fields.
 | product | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | required |
 | transform | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | required |
 | health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | single surface |
-| simulator truth | `/sim/ground_truth/odometry` | `nav_msgs/msg/Odometry` | independent ENU/FLU accuracy reference |
+| simulator truth | `/sim/ground_truth/odometry` | `nav_msgs/msg/Odometry` | evaluation-only ENU/FLU reference; never an LIO/PX4 input |
 | PX4 input | `/fmu/in/vehicle_visual_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation only |
 | PX4 output | `/fmu/out/vehicle_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation observation |
 | PX4 output | `/fmu/out/vehicle_status_v1` | `px4_msgs/msg/VehicleStatus` | simulation observation |
-| PX4 aid | `/fmu/out/estimator_status_flags`, `/fmu/out/estimator_aid_src_ev_*` | PX4 estimator messages | fusion evidence |
+| PX4 estimator telemetry | `/fmu/out/estimator_status_flags` | `px4_msgs/msg/EstimatorStatusFlags` | observed control status only; not per-sample fusion proof |
 
-The monitor measures sample count, rate, maximum gap, stale events, timestamp
-duplicates/regressions, finite values, quaternion validity, covariance
-validity, and frame IDs. Topic discovery alone is never readiness evidence.
+The monitor measures sample count, rate, maximum source-timestamp gap,
+callback stalls, timestamp duplicates/regressions, finite values, quaternion
+validity, covariance validity, and frame IDs. A callback stall is retained in
+the artifact, but only a matching source-timestamp gap is a freshness failure:
+the monitor's own delayed callback dispatch must not masquerade as dropped
+sensor or PX4 data. Topic discovery alone is never readiness evidence.
 For dataset replay, the report allows the configured 0.5 s tail grace after
 rosbag EOF so queued messages can drain; the raw monitor counters remain in the
 artifact, while only active stale events affect the verdict.
@@ -87,6 +90,18 @@ odometry callback during a transient correction-replay warning. It fails
 closed on stale, invalid, non-finite, regressed, or LOST data. No odometry
 supervisor process is part of the canonical workflows.
 
+Its sole odometry input is `/lio/odometry_propagated` with the exact
+`lio_odom -> base_link` frame pair. `/sim/ground_truth/odometry` is not
+subscribed by LIO or the PX4 external bridge. The PX4 launcher also sets
+`SIM_GZ_EN_ODOM=0` before boot, which disables PX4's built-in Gazebo path that
+would otherwise publish the same simulator truth as internal visual odometry.
+
+The propagated output accepts a corrected-LIO age of at most 750 ms. This
+covers the measured 600 ms scan-correction gap and callback ordering margin,
+while the one-second IMU history keeps 250 ms of recovery margin. Beyond that
+bound, publication stops fail-closed; this is not a ground-truth fallback and
+no simulator truth is ever substituted for a missing correction.
+
 ## Verdicts and artifacts
 
 Each session is under `.artifacts/runtime/<workflow>-<timestamp>-<pid>/` and
@@ -97,11 +112,18 @@ through `.artifacts/runtime/latest`.
 The report verdict is one of `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN`, or
 `OBSERVATION_COMPLETE`. Dataset PASS requires valid/fresh sensor and LIO
 streams, TRACKING, no drops, and complete cleanup. Simulation PASS additionally
-requires the fixed offboard scenario and observed PX4 estimator aid topics.
-If estimator aid topics are unavailable, the result is explicitly BLOCKED;
-it is not inferred from local-position output. Pre-fusion accuracy is
-`NOT_AVAILABLE`, and any LIO/PX4 residual is reported as an observed
-comparison rather than circular truth.
+requires the fixed offboard scenario, the real PX4 output/status streams, and
+the LIO-to-PX4 frame/timestamp contract. No unsupported aid-source topic is
+used. PX4 status flags are observational telemetry, while accuracy is
+calculated against the separate simulator truth.
+
+## RViz products
+
+`make sim` and `make replay DATASET=<name>` start RViz with the project config.
+It uses `lio_odom` as fixed frame and shows `/lidar/points`,
+`/lio/registered_points`, and `/lio/local_map` with height-based rainbow color.
+The LIO runtime configurations publish the registered scan and bounded local
+map; those visualization outputs do not alter map insertion or pruning.
 
 `make stop` signals only process groups recorded for the latest session. It
 does not use global name-based termination and does not affect unrelated ROS,
@@ -113,7 +135,7 @@ Gazebo, or PX4 processes.
 |---|---|---|
 | LiDAR/IMU ingestion and synchronization | dataset-check, sim-check | keep |
 | deskew and initialization | dataset-check, sim-check | keep |
-| LiDAR correction and registration map | LIO product pipeline | keep; map topics disabled in runtime configs |
+| LiDAR correction and registration map | LIO product pipeline | keep; bounded map topics published for RViz |
 | corrected and propagated odometry | all runtime workflows | keep |
 | covariance and TF | all runtime workflows | keep |
 | PX4 ingress, time/frame conversion | sim-check, sim | keep |

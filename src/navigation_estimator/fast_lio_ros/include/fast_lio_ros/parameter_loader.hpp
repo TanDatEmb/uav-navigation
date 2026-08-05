@@ -81,7 +81,9 @@ struct RosParameters {
   double propagated_odometry_publish_rate_hz{50.0};
   std::int64_t propagated_odometry_imu_ingress_capacity{4096};
   std::int64_t propagated_odometry_imu_history_duration_ns{1'000'000'000};
-  std::int64_t propagated_odometry_maximum_correction_age_ns{300'000'000};
+  // Tolerates measured 600 ms scan-correction jitter plus callback ordering,
+  // while preserving 250 ms of one-second history as fail-closed headroom.
+  std::int64_t propagated_odometry_maximum_correction_age_ns{750'000'000};
 };
 
 struct EstimatorProfile {

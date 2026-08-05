@@ -158,6 +158,9 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParses) {
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
+  EXPECT_EQ(profile.estimator.local_map.soft_point_limit, 14000U);
+  EXPECT_EQ(profile.estimator.local_map.hard_point_limit, 16000U);
+  EXPECT_EQ(profile.estimator.local_map.target_point_count_after_prune, 12000U);
 }
 
 TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
@@ -196,8 +199,8 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_DOUBLE_EQ(parameters.scan_voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.3);
   EXPECT_EQ(parameters.maximum_registration_iterations, 10);
-  EXPECT_FALSE(parameters.publish_registered_points);
-  EXPECT_FALSE(parameters.publish_local_map);
+  EXPECT_TRUE(parameters.publish_registered_points);
+  EXPECT_TRUE(parameters.publish_local_map);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
   EXPECT_EQ(parameters.maximum_processing_lag_ms, 500);
@@ -209,7 +212,7 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_EQ(parameters.propagated_odometry_imu_history_duration_ns,
             1'000'000'000);
   EXPECT_EQ(parameters.propagated_odometry_maximum_correction_age_ns,
-            300'000'000);
+            750'000'000);
 }
 
 TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
@@ -248,13 +251,13 @@ TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
             (Eigen::Vector3d{-0.019391, -0.000278, 0.080926}));
 }
 
-TEST_F(ParameterLoaderTest, AistUsesIndependentScanAndRegistrationMapVoxels) {
+TEST_F(ParameterLoaderTest, AistUsesIndependentScanRegistrationAndVisualMapOutputs) {
   const auto profile = loadCanonicalEstimatorProfile(
       UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
-  EXPECT_FALSE(
+  EXPECT_TRUE(
       profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
 }
 

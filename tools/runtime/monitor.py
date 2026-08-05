@@ -361,9 +361,6 @@ class RuntimeMonitor:
         if self.workflow != "dataset":
             try:
                 from px4_msgs.msg import (
-                    EstimatorAidSource1d,
-                    EstimatorAidSource2d,
-                    EstimatorAidSource3d,
                     EstimatorInnovations,
                     EstimatorStatus,
                     EstimatorStatusFlags,
@@ -397,6 +394,9 @@ class RuntimeMonitor:
                         "reset_count_quat": int(m.reset_count_quat),
                     }),
                     TopicSpec("estimator_status_flags", "/fmu/out/estimator_status_flags", EstimatorStatusFlags, lambda m: {
+                        # PX4 calls these control-status flags.  They are useful
+                        # telemetry but not proof that a particular EV sample
+                        # fused, so the report labels them as observations only.
                         "timestamp_us": int(m.timestamp), "cs_ev_pos": bool(m.cs_ev_pos),
                         "cs_ev_vel": bool(m.cs_ev_vel), "cs_ev_yaw": bool(m.cs_ev_yaw),
                         "cs_inertial_dead_reckoning": bool(m.cs_inertial_dead_reckoning),
@@ -408,21 +408,6 @@ class RuntimeMonitor:
                         "gps_hpos": [_finite(v) for v in m.gps_hpos], "gps_vpos": _finite(m.gps_vpos),
                         "ev_hpos": [_finite(v) for v in m.ev_hpos], "ev_vpos": _finite(m.ev_vpos),
                         "ev_vel": [_finite(v) for v in m.ev_vel], "heading": _finite(m.heading),
-                    }),
-                    TopicSpec("aid_ev_pos", "/fmu/out/estimator_aid_src_ev_pos", EstimatorAidSource2d, lambda m: {
-                        "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
-                        "innovation": [_finite(v) for v in m.innovation], "test_ratio": [_finite(v) for v in m.test_ratio],
-                        "fused": bool(m.fused), "innovation_rejected": bool(m.innovation_rejected),
-                    }),
-                    TopicSpec("aid_ev_vel", "/fmu/out/estimator_aid_src_ev_vel", EstimatorAidSource3d, lambda m: {
-                        "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
-                        "innovation": [_finite(v) for v in m.innovation], "test_ratio": [_finite(v) for v in m.test_ratio],
-                        "fused": bool(m.fused), "innovation_rejected": bool(m.innovation_rejected),
-                    }),
-                    TopicSpec("aid_ev_yaw", "/fmu/out/estimator_aid_src_ev_yaw", EstimatorAidSource1d, lambda m: {
-                        "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
-                        "innovation": _finite(m.innovation), "test_ratio": _finite(m.test_ratio),
-                        "fused": bool(m.fused), "innovation_rejected": bool(m.innovation_rejected),
                     }),
                 ])
             except ImportError as error:

@@ -17,9 +17,11 @@
   gz_type_name: gz.msgs.IMU
   direction: GZ_TO_ROS
 
-# Gazebo OdometryPublisher ground truth.  The message is ENU/FLU (odom frame
-# and base_link child frame); the PX4 bridge must convert it to NED/FRD before
-# publishing /fmu/in/vehicle_visual_odometry.
+# Evaluation-only Gazebo OdometryPublisher ground truth in ENU/FLU (odom/world
+# frame and base_link child frame).  This ROS topic is consumed only by the
+# runtime monitor/report.  It must never be remapped to LIO or to
+# /fmu/in/vehicle_visual_odometry; run_px4_mid360.sh disables PX4's direct GZ
+# odometry subscriber with PX4_PARAM_SIM_GZ_EN_ODOM=0.
 - ros_topic_name: /sim/ground_truth/odometry
   gz_topic_name: /model/x500_mid360/odometry_with_covariance
   ros_type_name: nav_msgs/msg/Odometry

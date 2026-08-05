@@ -19,15 +19,15 @@ fast_lio:
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
     initial_prior:
-      source: topic
+      # LIO starts from its stationary IMU initializer.  Do not subscribe to
+      # PX4 or Gazebo odometry: /sim/ground_truth/odometry is evaluation-only
+      # and PX4 is a consumer of LIO external vision, not an LIO input.
+      source: zero
       context: ground_startup
-      # /px4/estimator_odometry is already converted to ROS ENU/FLU by the
-      # PX4 ingress bridge. startup_coincident is an explicit identity only at
-      # the initial local origin; it is not raw NED-to-ENU conversion.
-      source_frame: px4_odom
-      source_frame_transform: startup_coincident
+      source_frame: lio_odom
+      source_frame_transform: same_frame
       components: {position: true, velocity: true, attitude: yaw_only}
-      topic: /px4/estimator_odometry
+      topic: /initial_state_prior
       topic_wait_timeout_ns: 2000000000
       maximum_topic_prior_age_ns: 500000000
       ground_fallback: zero
@@ -58,22 +58,26 @@ fast_lio:
       local_map:
         half_extent_m: [30.0, 30.0, 15.0]
         crop_trigger_distance_m: 5.0
-        # Keep simulator memory on the same bounded scale as replay. The
-        # ground-truth trajectory does not need a 100k+ point registration map.
-        soft_point_limit: 20000
-        hard_point_limit: 24000
-        target_point_count_after_prune: 16000
+        # Keep simulator memory on the same 10k-16k bounded scale as replay.
+        # Farthest-point pruning retains 12k nearby registration points, so
+        # map memory cannot grow toward the old 450k/500k profile.
+        soft_point_limit: 14000
+        hard_point_limit: 16000
+        target_point_count_after_prune: 12000
         distance_shell_size_m: 5.0
       dynamic_filter: {enabled: false}
     output:
-      publish_registered_points: false
-      publish_local_map: false
+      publish_registered_points: true
+      publish_local_map: true
     propagated_odometry:
       enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      maximum_correction_age_ns: 300000000
+      # Measured simulator scan corrections can be 600 ms apart. Keep
+      # propagating through that normal jitter plus callback ordering margin,
+      # while retaining 250 ms before the one-second IMU history expires.
+      maximum_correction_age_ns: 750000000
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16

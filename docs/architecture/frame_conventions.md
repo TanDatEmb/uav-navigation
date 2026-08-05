@@ -10,7 +10,7 @@ TF tree is:
 | FAST-LIO corrected/propagated | `lio_odom` | `base_link` | `/lio/odometry_corrected`, `/lio/odometry_propagated` |
 | PX4 ingress bridge | `px4_odom` | `base_link` | `/px4/estimator_odometry` |
 | external odometry bridge input | `lio_odom` | `base_link` | `/lio/odometry_propagated` |
-| Gazebo ground truth | `world`/`odom` | `base_link` | `/sim/ground_truth/odometry` |
+| Gazebo ground truth (evaluation only) | `world`/`odom` | `base_link` | `/sim/ground_truth/odometry` |
 
 ## Coordinate contract
 
@@ -77,27 +77,55 @@ covariance as valid external odometry.
 
 ## Initial prior
 
-The simulation configuration uses the explicit ground-startup prior contract:
+Simulation and replay use the LIO-local zero prior. The stationary IMU
+initializer establishes the initial LIO state; LIO does not subscribe to PX4
+or simulator odometry at startup:
 
 ```yaml
 initial_prior:
-  source: topic
+  source: zero
   context: ground_startup
-  source_frame: px4_odom
-  source_frame_transform: startup_coincident
-  topic: /px4/estimator_odometry
+  source_frame: lio_odom
+  source_frame_transform: same_frame
 ```
 
-The dataset configuration uses the same-frame zero prior. These are workflow
-inputs, not runtime alignment fallbacks.
+`/px4/estimator_odometry` remains an observation topic emitted by the ingress
+bridge. It is not an input to FAST-LIO. This removes startup yaw/position
+feedback from PX4 and makes the LIO estimate independent of simulator truth.
 
-`/px4/estimator_odometry` is subscribed only after PX4 NED/FRD has been decoded
-by `FrameConverter`. The initial-prior callback copies the full converted
-quaternion and body-FLU velocity; it does not extract a raw PX4 yaw angle.
-`yaw_only` changes only the yaw relative to the gravity-aligned IMU attitude,
-while preserving the measured roll/pitch. This makes the startup yaw reference
-an explicit ENU quantity rather than a silent NED scalar.
+## Ground-truth isolation and PX4 estimator sources
 
-The simulator ground-truth topic is independent of LIO and PX4 estimates. The
-runtime report compares position, world/body velocity, angular velocity,
-attitude, frame IDs, and absolute timestamps against it.
+`/sim/ground_truth/odometry` is an evaluation reference only. Its only
+repository consumers are the runtime monitor and report. The external odometry
+bridge subscribes only to `/lio/odometry_propagated` and additionally requires
+the exact `lio_odom -> base_link` frame pair, so a Gazebo `world`/`odom`
+message is rejected even when all numeric fields are valid.
+
+PX4's upstream Gazebo bridge normally enables `SIM_GZ_EN_ODOM=1`. That setting
+subscribes to the same Gazebo `odometry_with_covariance` topic and internally
+publishes it as `vehicle_visual_odometry`, creating a second source that can
+compete with the ROS LIO bridge. The project launcher sets the following before
+PX4 `rcS` starts the Gazebo bridge and EKF2:
+
+| PX4 parameter | Value | Purpose |
+|---|---:|---|
+| `SIM_GZ_EN_ODOM` | `0` | prohibit direct Gazebo truth -> `vehicle_visual_odometry` |
+| `SIM_GZ_EN_GPS`, `SIM_GPS_USED`, `EKF2_GPS_CTRL` | `0` | prohibit simulated GPS aiding |
+| `SIM_GZ_EN_BARO` | `1` | retain barometer transport solely for PX4 preflight health checks |
+| `EKF2_BARO_CTRL`, `EKF2_RNG_CTRL` | `0` | prohibit barometer/rangefinder height aiding |
+| `EKF2_MAG_TYPE` | `5` | prohibit competing magnetometer yaw aid |
+| `EKF2_EV_CTRL` | `15` | enable EV horizontal position, vertical position, velocity, and yaw |
+| `EKF2_HGT_REF` | `3` | select vision as the height reference |
+
+Therefore the only runtime route into PX4 visual odometry is:
+
+```text
+/lio/odometry_propagated (ENU/FLU, lio_odom -> base_link)
+  -> px4_external_odometry_bridge (exact ENU/FLU -> NED/FRD conversion)
+  -> /fmu/in/vehicle_visual_odometry
+```
+
+The PX4 startup log prints these effective parameters for each session. The
+runtime monitor's `estimator_status_flags` are retained as telemetry only;
+they do not claim per-sample fusion evidence. The report compares LIO, PX4
+input, and PX4 output against simulator truth only after recording them.

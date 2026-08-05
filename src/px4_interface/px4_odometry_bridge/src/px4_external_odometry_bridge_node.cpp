@@ -22,6 +22,10 @@
 
 namespace px4_odometry_bridge {
 
+namespace {
+constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated";
+}  // namespace
+
 class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
  public:
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
@@ -45,8 +49,10 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     output_ = create_publisher<VehicleOdometry>(
         versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"),
         rclcpp::QoS(10).best_effort());
+    // This is deliberately the only odometry input. Never substitute
+    // simulator ground truth here: it is evaluation-only.
     lio_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-        "/lio/odometry_propagated", rclcpp::QoS(20).reliable(),
+        kLioPropagatedOdometryTopic, rclcpp::QoS(20).reliable(),
         [this](nav_msgs::msg::Odometry::ConstSharedPtr message) { on_lio(*message); });
     lio_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
         "/lio/diagnostics", rclcpp::QoS(20).best_effort(),
