@@ -1,6 +1,12 @@
 fast_lio:
   ros__parameters:
-    frames: {odom: lio_odom, base: base_link, imu: livox_imu_frame, lidar: livox_frame}
+    frames:
+      {
+        odom: lio_odom,
+        base: base_link,
+        imu: livox_imu_frame,
+        lidar: livox_frame,
+      }
     input:
       lidar_topic: /lidar/points
       imu_topic: /lidar/imu
@@ -27,7 +33,7 @@ fast_lio:
       context: ground_startup
       source_frame: lio_odom
       source_frame_transform: same_frame
-      components: {position: true, velocity: true, attitude: yaw_only}
+      components: { position: true, velocity: true, attitude: yaw_only }
       topic: /initial_state_prior
       topic_wait_timeout_ns: 2000000000
       maximum_topic_prior_age_ns: 500000000
@@ -46,26 +52,26 @@ fast_lio:
       estimate_online: false
       translation_imu_lidar: [-0.019391, -0.000278, 0.080926]
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
-    initialization: {minimum_imu_samples: 200, require_stationary: false}
+    initialization: { minimum_imu_samples: 200, require_stationary: false }
     preprocessing:
       minimum_range_m: 0.1
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.9
-    registration: {maximum_iterations: 10}
+    registration: { maximum_iterations: 10 }
     mapping:
       # Replay scans contain roughly 10k-16k points. Keep a bounded multi-scan
       # local map instead of retaining the old 450k/500k default capacity.
-      registration_map: {voxel_size_m: 0.3}
-      dynamic_filter: {enabled: false}
+      registration_map: { voxel_size_m: 0.3 }
+      dynamic_filter: { enabled: false }
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0
         # Replay measurements stay around 10k-16k points. Keep 12k nearby
         # registration support, start maintenance at 14k, and use 16k as an
         # enforceable ceiling instead of retaining the old 450k/500k profile.
-        soft_point_limit: 14000
-        hard_point_limit: 16000
-        target_point_count_after_prune: 12000
+        soft_point_limit: 80000
+        hard_point_limit: 100000
+        target_point_count_after_prune: 70000
         distance_shell_size_m: 5.0
     output:
       publish_registered_points: true

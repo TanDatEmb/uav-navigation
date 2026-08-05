@@ -26,7 +26,7 @@ fast_lio:
       context: ground_startup
       source_frame: lio_odom
       source_frame_transform: same_frame
-      components: {position: true, velocity: true, attitude: yaw_only}
+      components: { position: true, velocity: true, attitude: yaw_only }
       topic: /initial_state_prior
       topic_wait_timeout_ns: 2000000000
       maximum_topic_prior_age_ns: 500000000
@@ -52,20 +52,20 @@ fast_lio:
       minimum_range_m: 0.1
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.2
-    registration: {maximum_iterations: 10}
+    registration: { maximum_iterations: 10 }
     mapping:
-      registration_map: {voxel_size_m: 0.3}
+      registration_map: { voxel_size_m: 0.3 }
       local_map:
         half_extent_m: [30.0, 30.0, 15.0]
         crop_trigger_distance_m: 5.0
         # Keep simulator memory on the same 10k-16k bounded scale as replay.
         # Farthest-point pruning retains 12k nearby registration points, so
         # map memory cannot grow toward the old 450k/500k profile.
-        soft_point_limit: 14000
-        hard_point_limit: 16000
-        target_point_count_after_prune: 12000
+        soft_point_limit: 80000
+        hard_point_limit: 100000
+        target_point_count_after_prune: 70000
         distance_shell_size_m: 5.0
-      dynamic_filter: {enabled: false}
+      dynamic_filter: { enabled: false }
     output:
       publish_registered_points: true
       publish_local_map: true
