@@ -13,7 +13,55 @@ detect_px4_dir() {
   else printf '%s\n' "${HOME}/Autopilot"; fi
 }
 
+sanitize_path_for_gzsim() {
+  local old_path="${PATH:-}"
+  local cleaned=""
+  local part
+  IFS=':' read -r -a _parts <<< "${old_path}"
+  for part in "${_parts[@]}"; do
+    [[ -z "${part}" ]] && continue
+    [[ "${part}" == "/opt/ros/jazzy/opt/gz_tools_vendor/bin" ]] && continue
+    if [[ -z "${cleaned}" ]]; then
+      cleaned="${part}"
+    else
+      cleaned="${cleaned}:${part}"
+    fi
+  done
+  export PATH="${cleaned}"
+}
+
+detect_gz_command() {
+  local candidate
+  if [[ -n "${GZ_COMMAND:-}" ]]; then
+    candidate="${GZ_COMMAND}"
+    if command -v "${candidate}" >/dev/null 2>&1 && env -u GZ_CONFIG_PATH "${candidate}" sim --versions >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  fi
+  # ROS may prepend a non-simulator `gz` wrapper; scan every visible binary.
+  while IFS= read -r candidate; do
+    [[ -z "${candidate}" ]] && continue
+    if env -u GZ_CONFIG_PATH "${candidate}" sim --versions >/dev/null 2>&1; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done < <(type -aP gz 2>/dev/null)
+
+  # Fallback for shells where `type -aP` is unavailable.
+  if command -v gz >/dev/null 2>&1 && env -u GZ_CONFIG_PATH gz sim --versions >/dev/null 2>&1; then
+    printf '%s\n' "gz"
+    return 0
+  fi
+  return 1
+}
+
+gz_run() {
+  env -u GZ_CONFIG_PATH "${GZ_COMMAND}" "$@"
+}
+
 PX4_DIR="$(detect_px4_dir)"
+GZ_COMMAND="$(detect_gz_command || true)"
 PX4_BUILD="${PX4_DIR}/build/px4_sitl_default"
 PX4_BIN="${PX4_BUILD}/bin/px4"
 PX4_ROOTFS="${PX4_BUILD}/rootfs"
@@ -33,7 +81,12 @@ for required in "${PX4_BIN}" "${PX4_ROOTFS}" "${PX4_GZ_ENV}" \
     exit 1
   fi
 done
-command -v gz >/dev/null 2>&1 || { echo "ERROR: Gazebo command 'gz' is unavailable." >&2; exit 1; }
+if [[ -z "${GZ_COMMAND}" ]]; then
+  echo "ERROR: Gazebo Simulator is unavailable. Install Gazebo Harmonic so 'gz sim' works, or set GZ_COMMAND to a simulator-capable binary." >&2
+  echo "Hint: the currently visible 'gz' only provides topic/service/log/param/msg tools, not 'sim'." >&2
+  exit 1
+fi
+echo "Gazebo command : ${GZ_COMMAND}"
 
 # PX4's generated environment supplies its Gazebo plugins/server config and its
 # upstream x500 resources. Initialise variables first because this script uses
@@ -45,6 +98,10 @@ export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH:-}"
 source "${PX4_GZ_ENV}"
 export GZ_SIM_RESOURCE_PATH="${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
 export GZ_IP="${GZ_IP:-127.0.0.1}"
+# ROS setup may point GZ_CONFIG_PATH to tools-only vendor entries.
+# Clear it so Gazebo Sim and PX4's gzsim rcS checks use the real simulator libs.
+unset GZ_CONFIG_PATH
+sanitize_path_for_gzsim
 
 GZ_LOG_DIR="${SESSION_DIR:-${WS_DIR}/log/px4_mid360}/logs"
 mkdir -p "${GZ_LOG_DIR}"
@@ -63,9 +120,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [[ "${GZ_GUI:-1}" == "0" ]]; then
-  gz sim -r -s "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
+  gz_run sim -r -s "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
 else
-  gz sim -r "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
+  gz_run sim -r "${WORLD_FILE}" >"${GZ_LOG}" 2>&1 &
 fi
 GZ_PID=$!
 
@@ -76,13 +133,13 @@ echo "Existing model : ${MODEL_NAME}"
 echo "PX4 autostart  : 4001 (standard x500)"
 
 for _ in $(seq 1 30); do
-  if gz topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then break; fi
+  if gz_run topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then break; fi
   if ! kill -0 "${GZ_PID}" 2>/dev/null; then
     echo "ERROR: Gazebo exited during startup. See ${GZ_LOG}" >&2; exit 1
   fi
   sleep 1
 done
-if ! gz topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then
+if ! gz_run topic -l 2>/dev/null | grep -qx "/world/${WORLD_NAME}/clock"; then
   echo "ERROR: timed out waiting for Gazebo world ${WORLD_NAME}. See ${GZ_LOG}" >&2; exit 1
 fi
 

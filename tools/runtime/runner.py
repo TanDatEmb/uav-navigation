@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import signal
 import subprocess
+from shutil import which
 import sys
 import time
 from typing import Any, Callable
@@ -37,6 +38,39 @@ RVIZ_ENV = {
     "NAVIGATION_NO_RVIZ": "0",
 }
 
+GUI_ENV_REMOVE = {
+    "GTK_MODULES",
+    "GTK_PATH",
+    "GIO_MODULE_DIR",
+}
+
+
+def _filtered_xdg_data_dirs(value: str | None) -> str | None:
+    if not value:
+        return None
+    kept = []
+    for entry in value.split(":"):
+        if not entry:
+            continue
+        if "/snap/" in entry or entry.endswith("/var/lib/snapd/desktop") or entry == "/var/lib/snapd/desktop":
+            continue
+        kept.append(entry)
+    return ":".join(kept) if kept else None
+
+
+def _gui_environment(base: dict[str, str], *, rviz: bool = False) -> dict[str, str]:
+    environment = dict(base)
+    for key in GUI_ENV_REMOVE:
+        environment.pop(key, None)
+    filtered_data_dirs = _filtered_xdg_data_dirs(environment.get("XDG_DATA_DIRS"))
+    if filtered_data_dirs is None:
+        environment.pop("XDG_DATA_DIRS", None)
+    else:
+        environment["XDG_DATA_DIRS"] = filtered_data_dirs
+    if rviz:
+        environment.update(RVIZ_ENV)
+    return environment
+
 
 def load_config(name: str) -> dict[str, Any]:
     path = RUNTIME_CONFIG / name
@@ -52,7 +86,7 @@ def load_config(name: str) -> dict[str, Any]:
 
 
 def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
-    environment = RVIZ_ENV if enable_rviz else NO_RVIZ_ENV
+    environment = _gui_environment(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV, rviz=enable_rviz)
     parts = [
         "export " + " ".join(f"{key}={value}" for key, value in environment.items()),
         "source /opt/ros/jazzy/setup.bash",
@@ -81,16 +115,76 @@ def _start_rviz(session: Session, *, use_sim_time: bool = False) -> None:
         "rviz",
         _ros_shell(_rviz_command(use_sim_time=use_sim_time), enable_rviz=True),
         cwd=ROOT,
+        env=_gui_environment(os.environ, rviz=True),
+        env_remove=GUI_ENV_REMOVE,
     )
 
 
 def _command_exists(name: str) -> bool:
-    from shutil import which
     return which(name) is not None
+
+
+def _executable_candidates(name: str) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = Path(directory) / name
+        try:
+            resolved = str(candidate.resolve())
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            seen.add(resolved)
+            result.append(str(candidate))
+    return result
+
+
+def _detect_gz_command() -> str | None:
+    override = os.environ.get("GZ_COMMAND")
+    candidates = [override] if override else []
+    candidates.extend(_executable_candidates("gz"))
+    if not candidates:
+        first = which("gz")
+        if first:
+            candidates.append(first)
+    checked: set[str] = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        key = str(candidate)
+        if key in checked:
+            continue
+        checked.add(key)
+        try:
+            probe = subprocess.run(
+                [candidate, "sim", "--versions"],
+                cwd=ROOT,
+                env=_gz_runtime_env(),
+                text=True,
+                capture_output=True,
+                timeout=5.0,
+                check=False,
+            )
+        except OSError:
+            continue
+        if probe.returncode == 0:
+            return candidate
+    return None
 
 
 def _run(command: list[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=timeout, check=False)
+
+
+def _gz_runtime_env() -> dict[str, str]:
+    environment = os.environ.copy()
+    # ROS's gz vendor config can shadow Gazebo Sim and hide `gz sim`.
+    environment.pop("GZ_CONFIG_PATH", None)
+    return environment
 
 
 def _write_runtime(session: Session, **values: Any) -> None:
@@ -244,11 +338,13 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
     return 0 if result["verdict"] == "PASS" else 1
 
 
-def _sim_prerequisites(px4_dir: Path) -> list[str]:
+def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
     missing: list[str] = []
-    for command in ("ros2", "python3", "gz", "MicroXRCEAgent"):
+    for command in ("ros2", "python3", "MicroXRCEAgent"):
         if not _command_exists(command):
             missing.append(f"missing command: {command}")
+    if not gz_command:
+        missing.append("missing Gazebo simulator command: no 'gz' binary with 'sim --versions' support")
     for path in (
         px4_dir / "build/px4_sitl_default/bin/px4",
         px4_dir / "build/px4_sitl_default/rootfs/gz_env.sh",
@@ -263,11 +359,20 @@ def _sim_prerequisites(px4_dir: Path) -> list[str]:
     return missing
 
 
-def _wait_gazebo(world: str, timeout_s: float) -> None:
+def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     deadline = time.monotonic() + timeout_s
     topic = f"/world/{world}/clock"
+    env = _gz_runtime_env()
     while time.monotonic() < deadline:
-        result = _run(["gz", "topic", "-l"], timeout=5.0)
+        result = subprocess.run(
+            [gz_command, "topic", "-l"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
         if result.returncode == 0 and topic in result.stdout.splitlines():
             return
         time.sleep(0.5)
@@ -278,6 +383,7 @@ def run_sim(headless: bool) -> int:
     config = load_config("sim.yaml")
     offboard_config = load_config("offboard.yaml")
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
+    gz_command = _detect_gz_command()
     session = Session.create(ARTIFACT_ROOT, "sim-check" if headless else "sim")
     session.write_state({"workflow": "sim", "headless": headless, "px4_dir": str(px4_dir)})
     _write_runtime(
@@ -286,10 +392,11 @@ def run_sim(headless: bool) -> int:
         headless=headless,
         rviz=not headless,
         px4_dir=str(px4_dir),
+        gz_command=gz_command,
         failures=[],
         startup_complete=False,
     )
-    prereq = _sim_prerequisites(px4_dir)
+    prereq = _sim_prerequisites(px4_dir, gz_command)
     if prereq:
         _write_runtime(session, failures=prereq)
         result = _stop_and_report(session, "sim", RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir)
@@ -307,13 +414,22 @@ def run_sim(headless: bool) -> int:
             "px4_gazebo",
             ["bash", str(ROOT / "tools/simulation/run_px4_mid360.sh")],
             cwd=ROOT,
-            env={"PX4_DIR": str(px4_dir), "GZ_GUI": "0" if headless else "1", "SESSION_DIR": str(session.directory)},
+            env=_gui_environment({
+                **os.environ,
+                "PX4_DIR": str(px4_dir),
+                "GZ_GUI": "0" if headless else "1",
+                "SESSION_DIR": str(session.directory),
+                "GZ_COMMAND": gz_command or "",
+            }),
+            env_remove=GUI_ENV_REMOVE,
         )
         simulation = config.get("simulation", {})
         if isinstance(simulation, dict) and "ros__parameters" in simulation:
             simulation = simulation["ros__parameters"]
         world = str(simulation["world"])
-        _wait_gazebo(world, float(config["runtime"]["timeouts"]["startup_s"]))
+        if not gz_command:
+            raise RuntimeError("Gazebo simulator command is unavailable")
+        _wait_gazebo(world, float(config["runtime"]["timeouts"]["startup_s"]), gz_command)
         session.start("xrce_agent", ["MicroXRCEAgent", "udp4", "-p", "8888"], cwd=ROOT)
         bridge_config = ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml"
         session.start("bridge", _ros_shell([
@@ -370,7 +486,8 @@ def run_sim(headless: bool) -> int:
                     break
                 time.sleep(0.5)
     except KeyboardInterrupt:
-        _write_runtime(session, failures=["session interrupted"])
+        _write_runtime(session, failures=[])
+        session.mark_stopped("user interrupt")
     except Exception as error:
         _write_runtime(session, failures=[str(error)])
     finally:

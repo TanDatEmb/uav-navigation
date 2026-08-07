@@ -138,10 +138,14 @@ class Session:
         *,
         cwd: Path,
         env: dict[str, str] | None = None,
+        env_remove: set[str] | None = None,
     ) -> subprocess.Popen[Any]:
         log_path = self.logs / f"{role}.log"
         log = log_path.open("a", encoding="utf-8")
         child_env = os.environ.copy()
+        if env_remove:
+            for key in env_remove:
+                child_env.pop(key, None)
         if env:
             child_env.update(env)
         try:
