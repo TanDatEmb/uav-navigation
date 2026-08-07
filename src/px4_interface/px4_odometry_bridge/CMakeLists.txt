@@ -25,6 +25,7 @@ add_library(${PROJECT_NAME}_core
   src/reference_point_converter.cpp
   src/external_odometry_conversion.cpp
   src/external_odometry_gate.cpp
+  src/geometric_jump_continuity.cpp
   src/geometric_jump_latch.cpp
   src/timestamp_conversion.cpp
   src/reset_compensator.cpp
@@ -80,6 +81,11 @@ if(BUILD_TESTING)
     test/test_geometric_jump_latch.cpp)
   target_link_libraries(test_geometric_jump_latch ${PROJECT_NAME}_core)
   ament_target_dependencies(test_geometric_jump_latch
+    rclcpp rosidl_default_runtime)
+  ament_add_gtest(test_geometric_jump_continuity
+    test/test_geometric_jump_continuity.cpp)
+  target_link_libraries(test_geometric_jump_continuity ${PROJECT_NAME}_core)
+  ament_target_dependencies(test_geometric_jump_continuity
     rclcpp rosidl_default_runtime)
   ament_add_gtest(test_timestamp_conversion
     test/test_timestamp_conversion.cpp)

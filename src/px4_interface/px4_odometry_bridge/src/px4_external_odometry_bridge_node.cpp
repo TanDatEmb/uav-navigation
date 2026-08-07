@@ -16,6 +16,7 @@
 
 #include "px4_odometry_bridge/external_odometry_conversion.hpp"
 #include "px4_odometry_bridge/external_odometry_gate.hpp"
+#include "px4_odometry_bridge/geometric_jump_continuity.hpp"
 #include "px4_odometry_bridge/geometric_jump_latch.hpp"
 #include "px4_odometry_bridge/timestamp_conversion.hpp"
 #include "px4_odometry_bridge/topic_version.hpp"
@@ -40,11 +41,33 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
         "external_odometry.position_jump_m", 0.75);
     orientation_jump_rad_ = declare_parameter<double>(
         "external_odometry.orientation_jump_rad", 0.35);
+    maximum_expected_speed_mps_ = declare_parameter<double>(
+      "external_odometry.maximum_expected_speed_mps", 10.0);
+    maximum_expected_angular_rate_rad_s_ = declare_parameter<double>(
+      "external_odometry.maximum_expected_angular_rate_rad_s", 6.0);
+    minimum_continuity_dt_s_ = declare_parameter<double>(
+      "external_odometry.minimum_continuity_dt_s", 1e-4);
+    maximum_continuity_dt_s_ = declare_parameter<double>(
+      "external_odometry.maximum_continuity_dt_s", 0.5);
     if (max_age_ns_ <= 0 || diagnostics_max_age_ns_ <= 0 ||
         !std::isfinite(position_jump_m_) || position_jump_m_ <= 0.0 ||
-        !std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0) {
+      !std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0 ||
+      !std::isfinite(maximum_expected_speed_mps_) ||
+        maximum_expected_speed_mps_ <= 0.0 ||
+      !std::isfinite(maximum_expected_angular_rate_rad_s_) ||
+        maximum_expected_angular_rate_rad_s_ <= 0.0 ||
+      !std::isfinite(minimum_continuity_dt_s_) || minimum_continuity_dt_s_ <= 0.0 ||
+      !std::isfinite(maximum_continuity_dt_s_) ||
+        maximum_continuity_dt_s_ < minimum_continuity_dt_s_) {
       throw std::invalid_argument("invalid external odometry bridge gate parameters");
     }
+    jump_continuity_config_.position_jump_margin_m = position_jump_m_;
+    jump_continuity_config_.orientation_jump_margin_rad = orientation_jump_rad_;
+    jump_continuity_config_.maximum_expected_speed_mps = maximum_expected_speed_mps_;
+    jump_continuity_config_.maximum_expected_angular_rate_rad_s =
+      maximum_expected_angular_rate_rad_s_;
+    jump_continuity_config_.minimum_continuity_dt_s = minimum_continuity_dt_s_;
+    jump_continuity_config_.maximum_continuity_dt_s = maximum_continuity_dt_s_;
     timestamp_converter_ = std::make_unique<TimestampConverter>(max_age_ns_);
     output_ = create_publisher<VehicleOdometry>(
         versioned_topic<VehicleOdometry>("/fmu/in/vehicle_visual_odometry"),
@@ -114,6 +137,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
             generation_valid, generation);
         if (generation_changed) {
           last_published_.reset();
+          jump_continuity_state_.continuity_trusted = false;
         }
         lio_public_frame_generation_ = generation;
         lio_public_frame_generation_valid_ = generation_valid;
@@ -148,6 +172,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       last_frame_valid_ = false;
       last_rejection_reason_ = "EXTERNAL_ODOMETRY_CONVERSION_REJECTED";
       last_gate_ = ExternalOdometryGateResult{};
+      jump_continuity_state_.continuity_trusted = false;
       publication_ready_ = false;
       publication_active_ = false;
       return;
@@ -157,6 +182,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       last_frame_valid_ = false;
       last_rejection_reason_ = "EXTERNAL_ODOMETRY_NOT_FLOAT_REPRESENTABLE";
       last_gate_ = ExternalOdometryGateResult{};
+      jump_continuity_state_.continuity_trusted = false;
       publication_ready_ = false;
       publication_active_ = false;
       return;
@@ -174,6 +200,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       last_frame_valid_ = false;
       last_rejection_reason_ = "COVARIANCE_NOT_FLOAT_REPRESENTABLE";
       last_gate_ = ExternalOdometryGateResult{};
+      jump_continuity_state_.continuity_trusted = false;
       publication_ready_ = false;
       publication_active_ = false;
       return;
@@ -196,15 +223,16 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     // transient stale correction while this stream is already current; it is
     // therefore not an independent publication gate.
     const bool lio_fresh = lio_diagnostics_fresh(now_ns);
-
-    bool frame_jump = false;
-    if (last_published_.has_value()) {
-      frame_jump = (frame->position_ned - last_published_->position_ned).norm() >
-                       position_jump_m_ ||
-                   last_published_->orientation_ned.angularDistance(
-                       frame->orientation_ned) > orientation_jump_rad_;
-    }
-    (void)jump_latch_.observeGeometricJump(frame_jump);
+    const bool source_continuity_valid =
+      lio_valid_ && frame->frame_valid && lio_public_frame_generation_valid_ &&
+      public_generation > 0U;
+    jump_continuity_state_.last_received = last_received_;
+    last_jump_observation_ = observe_geometric_jump_continuity(
+      *frame, source_continuity_valid,
+      lio_public_frame_generation_valid_ && public_generation > 0U,
+      public_generation, jump_continuity_config_, jump_continuity_state_);
+    last_received_ = jump_continuity_state_.last_received;
+    (void)jump_latch_.observeGeometricJump(last_jump_observation_.jumped);
 
     ExternalOdometryGateInput gate_input;
     gate_input.node_ready = node_ready_;
@@ -219,6 +247,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     gate_input.geometric_jump_latched = jump_latch_.latched();
     last_gate_ = evaluate_external_odometry_gate(gate_input);
     publication_ready_ = last_gate_.publication_ready;
+
     if (!publication_ready_) {
       ++gated_count_;
       publication_active_ = false;
@@ -263,13 +292,21 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr lio_diagnostics_sub_;
   std::optional<ExternalOdometryFrame> last_published_;
+  std::optional<ExternalOdometryFrame> last_received_;
+  GeometricJumpContinuityState jump_continuity_state_;
   std::unique_ptr<TimestampConverter> timestamp_converter_;
+  GeometricJumpContinuityConfig jump_continuity_config_;
+  GeometricJumpContinuityObservation last_jump_observation_;
   TimestampConversionResult last_timestamp_result_;
   ExternalOdometryGateResult last_gate_;
   std::int64_t max_age_ns_{500'000'000};
   std::int64_t diagnostics_max_age_ns_{2'000'000'000};
   double position_jump_m_{0.75};
   double orientation_jump_rad_{0.35};
+  double maximum_expected_speed_mps_{10.0};
+  double maximum_expected_angular_rate_rad_s_{6.0};
+  double minimum_continuity_dt_s_{1e-4};
+  double maximum_continuity_dt_s_{0.5};
   std::int64_t last_published_time_ns_{0};
   std::int64_t last_sample_timestamp_ns_{0};
   std::int64_t last_transport_timestamp_ns_{0};
