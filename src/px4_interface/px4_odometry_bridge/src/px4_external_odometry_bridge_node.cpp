@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -133,9 +134,20 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       if (status.name == "fast_lio/estimator") {
         const auto generation = value_uint(status, "lio_public_frame_generation");
         const bool generation_valid = value_is_true(status, "lio_public_frame_generation_valid");
+        const bool previous_latched = jump_latch_.latched();
         const bool generation_changed = jump_latch_.observePublicFrameGeneration(
             generation_valid, generation);
         if (generation_changed) {
+          RCLCPP_INFO(
+              get_logger(),
+              "public generation changed: previous=%llu current=%llu generation_valid=%s "
+              "latch_cleared=%s published_count=%llu gated_count=%llu",
+              static_cast<unsigned long long>(lio_public_frame_generation_),
+              static_cast<unsigned long long>(generation),
+              generation_valid ? "true" : "false",
+              (previous_latched && !jump_latch_.latched()) ? "true" : "false",
+              static_cast<unsigned long long>(published_count_),
+              static_cast<unsigned long long>(gated_count_));
           last_published_.reset();
           jump_continuity_state_.continuity_trusted = false;
         }
@@ -166,6 +178,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   }
 
   void on_lio(const nav_msgs::msg::Odometry& message) {
+    const bool previous_publication_active = publication_active_;
     const auto frame = convert_ros_lio_odometry(message);
     if (!frame) {
       ++rejected_count_;
@@ -226,13 +239,15 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     const bool source_continuity_valid =
       lio_valid_ && frame->frame_valid && lio_public_frame_generation_valid_ &&
       public_generation > 0U;
+    const bool previous_latched = jump_latch_.latched();
     jump_continuity_state_.last_received = last_received_;
     last_jump_observation_ = observe_geometric_jump_continuity(
       *frame, source_continuity_valid,
       lio_public_frame_generation_valid_ && public_generation > 0U,
       public_generation, jump_continuity_config_, jump_continuity_state_);
     last_received_ = jump_continuity_state_.last_received;
-    (void)jump_latch_.observeGeometricJump(last_jump_observation_.jumped);
+    const bool jump_set_now = jump_latch_.observeGeometricJump(
+      last_jump_observation_.jumped);
 
     ExternalOdometryGateInput gate_input;
     gate_input.node_ready = node_ready_;
@@ -245,8 +260,13 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     gate_input.lio_fresh = lio_fresh;
     gate_input.frame_valid = frame->frame_valid;
     gate_input.geometric_jump_latched = jump_latch_.latched();
+    const auto previous_gate_reason = last_gate_.reason;
     last_gate_ = evaluate_external_odometry_gate(gate_input);
     publication_ready_ = last_gate_.publication_ready;
+    publication_active_ = publication_ready_;
+
+    maybe_log_runtime_transitions(previous_gate_reason, previous_publication_active,
+                                  previous_latched, jump_set_now, now_ns, *frame);
 
     if (!publication_ready_) {
       ++gated_count_;
@@ -325,7 +345,124 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   bool last_frame_valid_{false};
   bool publication_ready_{false};
   bool publication_active_{false};
+  bool transition_timestamp_known_{false};
+  bool transition_diagnostics_known_{false};
+  bool transition_transport_known_{false};
+  bool last_timestamp_ready_{false};
+  bool last_diagnostics_fresh_{false};
+  bool last_transport_ready_{false};
   std::string last_rejection_reason_{"NONE"};
+
+  [[nodiscard]] std::string log_gate_context(
+      const std::string& previous_reason,
+      const ExternalOdometryFrame& frame,
+      const std::int64_t now_ns) const {
+    std::ostringstream stream;
+    const double age_ms = now_ns >= frame.timestamp_ns
+                              ? static_cast<double>(now_ns - frame.timestamp_ns) * 1e-6
+                              : -1.0;
+    stream << "previous_gate_reason=" << previous_reason
+           << " current_gate_reason=" << last_gate_.reason
+           << " publication_active=" << (publication_active_ ? "true" : "false")
+           << " lio_valid=" << (last_gate_.lio_valid ? "true" : "false")
+           << " lio_status_fresh=" << (last_gate_.lio_fresh ? "true" : "false")
+           << " odometry_sample_age_ms=" << age_ms
+           << " transport_ready=" << (last_gate_.transport_ready ? "true" : "false")
+           << " timestamp_ready=" << (last_gate_.timestamp_ready ? "true" : "false")
+           << " covariance_ready=" << (last_gate_.covariance_ready ? "true" : "false")
+           << " frame_valid=" << (last_gate_.frame_valid ? "true" : "false")
+           << " public_generation="
+           << static_cast<unsigned long long>(lio_public_frame_generation_)
+           << " generation_valid="
+           << (lio_public_frame_generation_valid_ ? "true" : "false")
+           << " geometric_jump_latched="
+           << (last_gate_.geometric_jump_latched ? "true" : "false")
+           << " jump_reason=" << to_string(last_jump_observation_.reason);
+    if (last_jump_observation_.evaluated) {
+      stream << " dt_ms=" << last_jump_observation_.dt_s * 1e3
+             << " position_delta_m=" << last_jump_observation_.position_delta_m
+             << " allowed_position_delta_m="
+             << last_jump_observation_.allowed_position_delta_m
+             << " orientation_delta_rad="
+             << last_jump_observation_.orientation_delta_rad
+             << " allowed_orientation_delta_rad="
+             << last_jump_observation_.allowed_orientation_delta_rad;
+    }
+    stream << " published_count=" << static_cast<unsigned long long>(published_count_)
+           << " gated_count=" << static_cast<unsigned long long>(gated_count_);
+    return stream.str();
+  }
+
+  void maybe_log_runtime_transitions(const std::string& previous_gate_reason,
+                                     const bool previous_publication_active,
+                                     const bool previous_latched,
+                                     const bool jump_set_now,
+                                     const std::int64_t now_ns,
+                                     const ExternalOdometryFrame& frame) {
+    const auto context = log_gate_context(previous_gate_reason, frame, now_ns);
+    if (previous_gate_reason != last_gate_.reason) {
+      if (last_gate_.publication_ready) {
+        RCLCPP_INFO(get_logger(), "external odometry gate transitioned to READY: %s",
+                    context.c_str());
+      } else {
+        RCLCPP_WARN(get_logger(), "external odometry gate transitioned closed: %s",
+                    context.c_str());
+      }
+    }
+    if (previous_publication_active != publication_active_) {
+      if (publication_active_) {
+        RCLCPP_INFO(get_logger(), "external odometry publication resumed: %s",
+                    context.c_str());
+      } else {
+        RCLCPP_WARN(get_logger(), "external odometry publication stopped: %s",
+                    context.c_str());
+      }
+    }
+    if (!previous_latched && jump_latch_.latched() && jump_set_now) {
+      RCLCPP_WARN(get_logger(), "geometric jump latch set: %s", context.c_str());
+    }
+    if (previous_latched && !jump_latch_.latched()) {
+      RCLCPP_INFO(get_logger(), "geometric jump latch cleared: %s", context.c_str());
+    }
+
+    if (!transition_timestamp_known_) {
+      transition_timestamp_known_ = true;
+      last_timestamp_ready_ = last_gate_.timestamp_ready;
+    } else if (last_timestamp_ready_ != last_gate_.timestamp_ready) {
+      if (last_gate_.timestamp_ready) {
+        RCLCPP_INFO(get_logger(), "timestamp conversion recovered: %s", context.c_str());
+      } else {
+        RCLCPP_WARN(get_logger(), "timestamp conversion failed: %s", context.c_str());
+      }
+      last_timestamp_ready_ = last_gate_.timestamp_ready;
+    }
+
+    if (!transition_diagnostics_known_) {
+      transition_diagnostics_known_ = true;
+      last_diagnostics_fresh_ = last_gate_.lio_fresh;
+    } else if (last_diagnostics_fresh_ != last_gate_.lio_fresh) {
+      if (last_gate_.lio_fresh) {
+        RCLCPP_INFO(get_logger(), "lio diagnostics freshness recovered: %s", context.c_str());
+      } else {
+        RCLCPP_WARN(get_logger(), "lio diagnostics freshness failed: %s", context.c_str());
+      }
+      last_diagnostics_fresh_ = last_gate_.lio_fresh;
+    }
+
+    if (!transition_transport_known_) {
+      transition_transport_known_ = true;
+      last_transport_ready_ = last_gate_.transport_ready;
+    } else if (last_transport_ready_ != last_gate_.transport_ready) {
+      if (last_gate_.transport_ready) {
+        RCLCPP_INFO(get_logger(), "px4 subscription count transitioned to >0: %s",
+                    context.c_str());
+      } else {
+        RCLCPP_WARN(get_logger(), "px4 subscription count transitioned to 0: %s",
+                    context.c_str());
+      }
+      last_transport_ready_ = last_gate_.transport_ready;
+    }
+  }
 };
 
 }  // namespace px4_odometry_bridge
