@@ -10,7 +10,7 @@ artifacts.
 
 ## Locked contract
 
-At HEAD `38e665df2e87e8ec95b0ae79c15b22c4e3416eaa`, LiDAR enters
+At reviewed baseline `12264df520221cb5668215dda371d44349982cef`, LiDAR enters
 `FastLioNode::onLidar` or `onLivoxCustom`, then bounded input queues feed
 `FastLioPipeline::pushLidar`. `MeasurementSynchronizer` canonicalizes the scan
 interval and rejects timestamp regressions. `ScanDeskewer::deskew` uses the
@@ -56,11 +56,24 @@ localization registration voxel (`0.90 m`). The bounded navigation map uses
 `0.30 m` voxels in production profiles to keep the update budget finite. QoS
 is best-effort, volatile, keep-last 1.
 
-For RViz/debug sessions, `rog_map_ros` can additionally publish occupied and
-inflated voxel centers as `sensor_msgs/msg/PointCloud2` on
-`/rog_map/occupied_voxels` and `/rog_map/inflated_voxels`. This is disabled by
-default and enabled by the replay/interactive launch path; it does not change
-map insertion, pruning, or planner queries.
+For RViz/debug sessions, `rog_map_ros` can publish derived visualization views:
+`/rog_map/occupied_voxels` contains centers whose log odds exceed the occupied
+threshold, `/rog_map/inflated_voxels` is the full derived keep-out set, and
+`/rog_map/inflation_surface` is its six-connected boundary. The core does not
+store a second inflated map: planner collision checks use
+`NavigationMap::query()` and `NavigationMap::isInflatedOccupied()`, while the
+topics are visualization-only. `/rog_map/local_bounds` is the current
+axis-aligned sliding-window box in `lio_odom`. Visualization is disabled in
+headless/production profiles and uses lazy, subscriber-gated, latest-only work
+on a separate worker; it does not change map insertion, pruning, or planner
+queries.
+
+The navigation observation contract uses `mapping.observation.min_range_m:
+0.50`; points below it produce neither FREE nor OCCUPIED updates. Finite hits
+within maximum range produce a FREE ray and OCCUPIED endpoint. Points beyond
+maximum range produce only a FREE ray clipped at that range. The map
+resolution is `0.30 m`; the navigation observation voxel remains `0.80 m`,
+while FAST-LIO registration remains `0.90 m`.
 
 ROG-Map was inspected at `https://github.com/hku-mars/ROG-Map`, main SHA
 `df59c21304579a13fb3875100f8ce9523ba379a0`. Its `LICENSE` is GPL-3.0. No
@@ -77,17 +90,19 @@ python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
 python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
 ```
 
-P1 tests cover FREE/OCCUPIED/UNKNOWN, raycasting, inflation, sliding,
-validity, exact integer timestamp pairing, bounded duplicate/capacity handling,
-and numeric identity/yaw/extrinsic transforms. AIST OFF/publisher/full
-comparison, memory plateau, headless SITL and interactive RViz evidence remain
-required for a PASS verdict. The available AIST full run at 1.0x is recorded at
-`.artifacts/runtime/dataset-20260810T023230-61232`: 55435 IMU, 2756 corrected
-odom, 2756 paired/integrated mapping observations, zero mapping drops or
-timestamp mismatches, map queue bound 1, 72 shifts, allocated voxels 204999,
-and mapping update p99 72.4 ms against the measured 100 ms scan period. This is
-strong full-path evidence, but it does not replace the missing OFF/publisher
-comparison or the two SITL validation levels required by the prompt.
+P1 tests cover FREE/OCCUPIED/UNKNOWN, finite-hit versus truncated-ray versus
+minimum-range behavior, spherical inflation, six-connected surface
+extraction, sliding validity, exact integer timestamp pairing, bounded
+duplicate/capacity handling, and numeric identity/yaw/extrinsic transforms.
+Post-change AIST OFF is recorded at
+`.artifacts/runtime/dataset-20260810T072954-26445/REPORT.md`; AIST full with
+RViz subscribers is recorded at
+`.artifacts/runtime/dataset-20260810T073455-27290/REPORT.md`. Both preserve all
+2756 corrections and full mapping preserves 2756 paired/integrated observations
+with queue bound 1 and map p99 below 100 ms. Headless SITL artifacts are
+recorded in `docs/p1_acceptance_results.md`; they failed due to simulator
+external-odometry freshness/OFFBOARD loss. Manual yaw/frame and lifecycle
+clear evidence is still required, so the verdict remains NOT YET ACCEPTED.
 
 P2 may use `NavigationMap::query`, `isInflatedOccupied`, `resolution`,
 `localBounds`, and `validity`. Inputs are always `lio_odom`; `kOutside` and

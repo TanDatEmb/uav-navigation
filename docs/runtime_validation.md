@@ -38,10 +38,13 @@ activating the environment used to run the acceptance command. The runner
 checks both `numpy` and the sourced ROS 2 `rclpy` module before starting PX4 or
 FAST-LIO and reports a missing dependency immediately.
 
-RViz/replay mode enables ROG visualization automatically. The optional
-PointCloud2 displays use fixed frame `lio_odom` and show occupied and inflated
-voxels on `/rog_map/occupied_voxels` and `/rog_map/inflated_voxels`. Headless
-production workflows keep visualization disabled.
+RViz/replay mode enables ROG visualization automatically. The semantic
+PointCloud2 displays use fixed frame `lio_odom`, `Boxes`, and `0.30 m` voxel
+size. They show measured occupied centers on `/rog_map/occupied_voxels`, the
+six-connected derived keep-out surface on `/rog_map/inflation_surface`, and
+keep the full inflated debug volume disabled by default. `/rog_map/local_bounds`
+is a cyan `LINE_LIST` marker. Headless production workflows keep visualization
+disabled.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
@@ -74,6 +77,8 @@ diagnostics do not expose config or Git SHA fields.
 | health | `/rog_map/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | mapping state/accounting |
 | visualization | `/rog_map/occupied_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
 | visualization | `/rog_map/inflated_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
+| visualization | `/rog_map/inflation_surface` | `sensor_msgs/msg/PointCloud2` | optional; derived keep-out boundary |
+| visualization | `/rog_map/local_bounds` | `visualization_msgs/msg/Marker` | optional; sliding local-map bounds |
 | product | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | required |
 | transform | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | required |
 | health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | single surface |
@@ -149,6 +154,14 @@ It uses `lio_odom` as fixed frame and shows `/lidar/points`,
 `/lio/registered_points`, and `/lio/local_map` with height-based rainbow color.
 The LIO runtime configurations publish the registered scan and bounded local
 map; those visualization outputs do not alter map insertion or pruning.
+
+The navigation map uses `mapping.observation.min_range_m: 0.50`,
+`mapping.local_map.resolution_m: 0.30`, and `mapping.visualization.publish_rate_hz:
+2.0`. Maximum-range observations are free-only truncated rays. The runtime
+diagnostics distinguish the update-path `inflated_voxel_upper_bound` from the
+exact lazy snapshot fields `inflated_snapshot_voxel_count` and
+`inflation_surface_voxel_count`, and expose visualization build/publish/skip
+counters and latest/max build time.
 
 `make stop` signals only process groups recorded for the latest session. It
 does not use global name-based termination and does not affect unrelated ROS,
