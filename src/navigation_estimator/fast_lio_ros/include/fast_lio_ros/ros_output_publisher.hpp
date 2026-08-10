@@ -62,6 +62,7 @@ class RosOutputPublisher {
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
+  RuntimeDiagnostics runtime_snapshot_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewed_points_;
   std::mutex deskewed_mutex_;

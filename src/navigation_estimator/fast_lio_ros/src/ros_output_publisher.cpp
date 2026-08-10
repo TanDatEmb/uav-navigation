@@ -748,6 +748,7 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
   // available in the report artifacts, while this topic is the health gate
   // consumed by the runtime monitor and PX4 bridge.
   const auto covariance = covariance_runtime_->snapshot();
+  const auto& runtime = runtime_snapshot_;
   status.values.clear();
   status.values = {
       keyValue("state", toString(result.status_after)),
@@ -776,10 +777,35 @@ void RosOutputPublisher::publishDiagnostics(const ProcessResult& result,
                std::to_string(result.diagnostics.sensor.timestamp_regression_count)),
       keyValue("queue_maximum",
                std::to_string(result.diagnostics.sensor.processing_queue_high_water_mark)),
+      keyValue("processing_lag_ns", std::to_string(runtime.processing_lag_ns)),
+      keyValue("scan_processing_p50_us", std::to_string(runtime.p50_scan_processing_us)),
+      keyValue("scan_processing_p95_us", std::to_string(runtime.p95_scan_processing_us)),
+      keyValue("scan_processing_p99_us", std::to_string(runtime.p99_scan_processing_us)),
+      keyValue("scan_processing_maximum_us", std::to_string(runtime.maximum_scan_processing_us)),
+      keyValue("pipeline_push_lidar_p50_us", std::to_string(runtime.p50_pipeline_push_lidar_us)),
+      keyValue("pipeline_push_lidar_p95_us", std::to_string(runtime.p95_pipeline_push_lidar_us)),
+      keyValue("pipeline_push_lidar_p99_us", std::to_string(runtime.p99_pipeline_push_lidar_us)),
+      keyValue("result_processing_p50_us", std::to_string(runtime.p50_result_processing_us)),
+      keyValue("result_processing_p95_us", std::to_string(runtime.p95_result_processing_us)),
+      keyValue("result_processing_p99_us", std::to_string(runtime.p99_result_processing_us)),
+      keyValue("corrected_scan_end_to_end_p50_us", std::to_string(runtime.p50_corrected_scan_end_to_end_us)),
+      keyValue("corrected_scan_end_to_end_p95_us", std::to_string(runtime.p95_corrected_scan_end_to_end_us)),
+      keyValue("corrected_scan_end_to_end_p99_us", std::to_string(runtime.p99_corrected_scan_end_to_end_us)),
+      keyValue("registration_update_p50_us", std::to_string(runtime.p50_registration_update_us)),
+      keyValue("registration_update_p95_us", std::to_string(runtime.p95_registration_update_us)),
+      keyValue("registration_update_p99_us", std::to_string(runtime.p99_registration_update_us)),
       keyValue("correction_accepted_count",
                std::to_string(result.diagnostics.processing.correction_success_count)),
       keyValue("correction_rejected_count",
                std::to_string(result.diagnostics.processing.correction_failure_count)),
+      keyValue("raw_lidar_count",
+               std::to_string(result.diagnostics.processing.raw_lidar_count)),
+      keyValue("buffer_accepted_lidar_count",
+               std::to_string(result.diagnostics.processing.buffer_accepted_lidar_count)),
+      keyValue("synchronized_group_count",
+               std::to_string(result.diagnostics.processing.synchronized_group_count)),
+      keyValue("correction_attempt_count",
+               std::to_string(result.diagnostics.processing.correction_attempt_count)),
       keyValue("map_point_count", std::to_string(result.diagnostics.map.map_point_count)),
       keyValue("pose_covariance_available",
                covariance.pose_covariance_available ? "true" : "false"),
@@ -818,6 +844,7 @@ void RosOutputPublisher::publishTransportSnapshot(
     const SensorDiagnostics& sensor,
     const ProcessingStatistics& processing,
     const RuntimeDiagnostics& runtime) {
+  runtime_snapshot_ = runtime;
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = clock_->now();
   diagnostic_msgs::msg::DiagnosticStatus status;
