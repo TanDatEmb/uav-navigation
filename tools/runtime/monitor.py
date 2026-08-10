@@ -77,6 +77,21 @@ def _recursive_nonfinite(value: Any) -> int:
     return 0
 
 
+def _rss_kib(pid: int) -> int | None:
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            fields = line.split()
+            try:
+                return int(fields[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
 @dataclass
 class StreamStats:
     name: str
@@ -297,6 +312,10 @@ class RuntimeMonitor:
         self.samples_path = output / "samples.jsonl"
         self.latest_path = output / "monitor.json"
         self._sample_stream = self.samples_path.open("a", encoding="utf-8")
+        self._processes_path = output / "processes.json"
+        self._monitor_started_monotonic = time.monotonic()
+        self._memory_warmup_s = float(config.get("runtime", {}).get("memory_warmup_s", 30.0))
+        self._memory: dict[str, dict[str, Any]] = {}
         self._rclpy = rclpy
         self.node = Node("uav_navigation_runtime_monitor")
         depth = int(config.get("runtime", {}).get("monitor_queue_depth", 100))
@@ -341,6 +360,7 @@ class RuntimeMonitor:
                 "linear_acceleration": [_finite(m.linear_acceleration.x), _finite(m.linear_acceleration.y), _finite(m.linear_acceleration.z)],
             }),
             TopicSpec("lidar", str(self.config["fast_lio"]["ros__parameters"]["input"]["lidar_topic"]), PointCloud2, lambda m: _pointcloud_payload(m)[0]),
+            TopicSpec("deskewed_points", "/lio/deskewed_points", PointCloud2, lambda m: _pointcloud_payload(m)[0]),
             TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
             TopicSpec("propagated_odometry", "/lio/odometry_propagated", Odometry, _odom_payload),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
@@ -510,6 +530,41 @@ class RuntimeMonitor:
         temporary.write_text(json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
         temporary.replace(self.latest_path)
 
+    def _memory_snapshot(self) -> dict[str, Any]:
+        try:
+            registry = json.loads(self._processes_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            registry = {}
+        elapsed_s = time.monotonic() - self._monitor_started_monotonic
+        for record in registry.get("processes", []) if isinstance(registry, dict) else []:
+            role = str(record.get("role", ""))
+            try:
+                pid = int(record["pid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            current = _rss_kib(pid)
+            if current is None:
+                continue
+            row = self._memory.setdefault(
+                role,
+                {
+                    "sample_count": 0,
+                    "current_rss_kib": None,
+                    "peak_rss_kib": 0,
+                    "rss_after_warmup_kib": None,
+                },
+            )
+            row["sample_count"] += 1
+            row["current_rss_kib"] = current
+            row["peak_rss_kib"] = max(int(row["peak_rss_kib"]), current)
+            if elapsed_s >= self._memory_warmup_s and row["rss_after_warmup_kib"] is None:
+                row["rss_after_warmup_kib"] = current
+        return {
+            "warmup_s": self._memory_warmup_s,
+            "elapsed_s": elapsed_s,
+            "roles": self._memory,
+        }
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "workflow": self.workflow,
@@ -519,6 +574,7 @@ class RuntimeMonitor:
             "diagnostics": self.diagnostics,
             "mapping_diagnostics": self.mapping_diagnostics,
             "blocked_topics": self.blocked_topics,
+            "memory": self._memory_snapshot(),
         }
 
     def close(self) -> None:

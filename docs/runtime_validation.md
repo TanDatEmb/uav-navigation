@@ -8,6 +8,7 @@ runner, one monitor, one report schema, and one owned process-group registry.
 ```bash
 make build
 make test
+make runtime-deps
 make replay DATASET=aist-mid360-drive RATE=1.0
 make dataset-check DATASET=aist-mid360-drive RATE=1.0 MAPPING_MODE=full
 make dataset-check DATASET=aist-mid360-drive RATE=1.0 MAPPING_MODE=off
@@ -29,6 +30,13 @@ headless dataset contract. `MAPPING_MODE=off` disables the producer and map,
 `publisher` enables only `/lio/deskewed_points`, and `full` enables both the
 producer and the independent `rog_map` worker. The same option is available on
 `sim-check` and `sim`.
+
+The runtime monitor runs with the same Python interpreter as the runner. Its
+reproducible non-ROS dependency is pinned in
+`tools/runtime/requirements.txt`; install it with `make runtime-deps` after
+activating the environment used to run the acceptance command. The runner
+checks both `numpy` and the sourced ROS 2 `rclpy` module before starting PX4 or
+FAST-LIO and reports a missing dependency immediately.
 
 RViz/replay mode enables ROG visualization automatically. The optional
 PointCloud2 displays use fixed frame `lio_odom` and show occupied and inflated
@@ -130,6 +138,9 @@ requires the fixed offboard scenario, the real PX4 output/status streams, and
 the LIO-to-PX4 frame/timestamp contract. No unsupported aid-source topic is
 used. PX4 status flags are observational telemetry, while accuracy is
 calculated against the separate simulator truth.
+
+The monitor also records per-process current RSS, peak RSS, and the first RSS
+sample after the configured 30-second warm-up in the artifact report.
 
 ## RViz products
 

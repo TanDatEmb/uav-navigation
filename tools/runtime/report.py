@@ -978,7 +978,7 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
 
 def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry")}
+    streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "deskewed_points", "corrected_odometry", "propagated_odometry")}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
     samples = _samples(session / "samples.jsonl")
@@ -988,7 +988,11 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     map_maintenance = _map_maintenance_summary(samples)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
-    for name, row in streams.items():
+    required_streams = ("imu", "lidar", "corrected_odometry", "propagated_odometry")
+    if str(runtime.get("mapping_mode", "full")) != "off":
+        required_streams = (*required_streams, "deskewed_points")
+    for name in required_streams:
+        row = streams[name]
         if row["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
         expected = _number(config.get("runtime", {}).get("streams", {}).get(name, {}).get("expected_hz"))
@@ -1030,13 +1034,19 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "time_to_tracking_s": diagnostics.get("time_to_tracking_s", "NOT_AVAILABLE"),
             "tracking_percentage": diagnostics.get("tracking_percentage", "NOT_AVAILABLE"),
             "lost_count": diagnostics.get("lost_count", "NOT_AVAILABLE"),
-            "correction_accepted": diagnostics.get("correction_success_count", diagnostics.get("correction_accepted_count", "NOT_AVAILABLE")),
-            "correction_rejected": diagnostics.get("correction_failure_count", diagnostics.get("correction_rejected_count", "NOT_AVAILABLE")),
+            "correction_accepted": diagnostics.get("correction_accepted_count", diagnostics.get("correction_success_count", "NOT_AVAILABLE")),
+            "correction_rejected": diagnostics.get("correction_rejected_count", diagnostics.get("correction_failure_count", "NOT_AVAILABLE")),
+            "lidar_received": diagnostics.get("lidar_received_count", "NOT_AVAILABLE"),
+            "lidar_synchronized": diagnostics.get("synchronized_group_count", "NOT_AVAILABLE"),
+            "lidar_corrected": diagnostics.get("correction_accepted_count", diagnostics.get("correction_success_count", "NOT_AVAILABLE")),
+            "lidar_drop_count": diagnostics.get("lidar_drop_count", "NOT_AVAILABLE"),
+            "input_queue_high_water_mark": diagnostics.get("queue_maximum", "NOT_AVAILABLE"),
+            "deskewed_points_published": streams["deskewed_points"]["sample_count"],
             "queue_maximum": diagnostics.get("maximum_queue_depth", "NOT_AVAILABLE"),
-            "processing_lag_maximum": diagnostics.get("maximum_processing_lag_ms", diagnostics.get("processing_lag_ns", "NOT_AVAILABLE")),
-            "scan_processing_p50_us": diagnostics.get("p50_scan_processing_us", "NOT_AVAILABLE"),
-            "scan_processing_p95_us": diagnostics.get("p95_scan_processing_us", "NOT_AVAILABLE"),
-            "scan_processing_p99_us": diagnostics.get("p99_scan_processing_us", "NOT_AVAILABLE"),
+            "processing_lag_maximum_ns": diagnostics.get("processing_lag_ns", diagnostics.get("maximum_processing_lag_ms", "NOT_AVAILABLE")),
+            "scan_processing_p50_us": diagnostics.get("scan_processing_p50_us", diagnostics.get("p50_scan_processing_us", "NOT_AVAILABLE")),
+            "scan_processing_p95_us": diagnostics.get("scan_processing_p95_us", diagnostics.get("p95_scan_processing_us", "NOT_AVAILABLE")),
+            "scan_processing_p99_us": diagnostics.get("scan_processing_p99_us", diagnostics.get("p99_scan_processing_us", "NOT_AVAILABLE")),
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
         },
@@ -1077,6 +1087,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "observation_age_us": mapping_values.get("observation_age_us_latest", "NOT_AVAILABLE"),
             "observation_age_max_us": mapping_values.get("observation_age_us_max", "NOT_AVAILABLE"),
         },
+        "memory": snapshot.get("memory", {}),
         "accuracy": "NOT_AVAILABLE",
         "provenance": provenance(workspace),
     }
@@ -1084,7 +1095,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
 
 def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
+    names = ("imu", "lidar", "deskewed_points", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
@@ -1094,7 +1105,10 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
     reasons: list[str] = []
-    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
+    required_streams = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags")
+    if str(runtime.get("mapping_mode", "full")) != "off":
+        required_streams = (*required_streams, "deskewed_points")
+    for name in required_streams:
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
         if streams[name]["timestamp_regression_count"] or streams[name]["source_stale_event_count"] or streams[name]["nonfinite_message_count"]:
@@ -1139,11 +1153,18 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "tracking_observed": tracking_observed,
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
+            "deskewed_points_published": streams["deskewed_points"]["sample_count"],
+            "lidar_received": diagnostics.get("lidar_received_count", "NOT_AVAILABLE"),
+            "lidar_synchronized": diagnostics.get("synchronized_group_count", "NOT_AVAILABLE"),
+            "lidar_corrected": diagnostics.get("correction_accepted_count", diagnostics.get("correction_success_count", "NOT_AVAILABLE")),
+            "lidar_drop_count": diagnostics.get("lidar_drop_count", "NOT_AVAILABLE"),
+            "input_queue_high_water_mark": diagnostics.get("queue_maximum", "NOT_AVAILABLE"),
         },
         "residuals": residuals,
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
         "offboard": scenario,
+        "memory": snapshot.get("memory", {}),
         "provenance": provenance(workspace, px4_dir),
     }
 
@@ -1190,7 +1211,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "mapping", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
+    for section in ("lio", "mapping", "memory", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

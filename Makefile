@@ -9,12 +9,13 @@ NO_RVIZ_ENV = export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RV
 ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 
-.PHONY: help build test replay dataset-check sim-check sim status stop clean
+.PHONY: help build test runtime-deps replay dataset-check sim-check sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
 	@echo "  make build                                 static ROS build; no runtime data required"
 	@echo "  make test                                  unit/integration tests; not a runtime verdict"
+	@echo "  make runtime-deps                          install pinned runtime Python dependencies"
 	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 MAPPING_MODE=full"
 	@echo "                                             MAPPING_MODE=off|publisher|full"
@@ -33,6 +34,9 @@ test:
 	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py test
 	@python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
 	@python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
+
+runtime-deps:
+	@python3 -m pip install --requirement tools/runtime/requirements.txt
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }

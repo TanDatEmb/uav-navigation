@@ -1,0 +1,2 @@
+# Runtime-only Python dependencies. ROS 2 packages are supplied by /opt/ros/jazzy.
+numpy==1.26.4

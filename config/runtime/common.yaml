@@ -2,6 +2,7 @@
 runtime:
   artifact_root: .artifacts/runtime
   monitor_queue_depth: 100
+  memory_warmup_s: 30.0
   thresholds:
     minimum_rate_fraction: 0.90
     maximum_synchronization_tolerance_ms: 20.0
@@ -26,6 +27,7 @@ runtime:
   streams:
     imu: {expected_hz: 200.0, stale_after_s: 0.10}
     lidar: {expected_hz: 10.0, stale_after_s: 0.50}
+    deskewed_points: {expected_hz: 10.0, stale_after_s: 0.50}
     corrected_odometry: {expected_hz: 10.0, stale_after_s: 1.00}
     propagated_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
     mapping_diagnostics: {expected_hz: 1.0, stale_after_s: 2.00}

@@ -227,18 +227,52 @@ def _stream_count(session: Session, name: str) -> int:
     return int(_monitor_snapshot(session).get("streams", {}).get(name, {}).get("received", 0))
 
 
-def _wait_until(session: Session, predicate: Callable[[dict[str, Any]], bool], timeout_s: float, description: str) -> None:
+def _runtime_python_prerequisites() -> list[str]:
+    requirements = ROOT / "tools/runtime/requirements.txt"
+    try:
+        import numpy  # type: ignore[import-not-found]
+    except ImportError:
+        return [
+            f"missing runtime Python dependency: numpy for {sys.executable}; "
+            f"install with {shlex.quote(sys.executable)} -m pip install --requirement {requirements}"
+        ]
+    version = tuple(int(part) for part in numpy.__version__.split(".")[:2])
+    if version < (1, 26) or version >= (2, 0):
+        return [
+            f"unsupported numpy version {numpy.__version__} for {sys.executable}; "
+            f"install with {shlex.quote(sys.executable)} -m pip install --requirement {requirements}"
+        ]
+    try:
+        import rclpy  # type: ignore[import-not-found]  # noqa: F401
+    except ImportError as error:
+        return [
+            f"ROS 2 Python environment is unavailable for {sys.executable}: {error}; "
+            "source /opt/ros/jazzy/setup.bash before starting the runtime"
+        ]
+    return []
+
+
+def _wait_until(
+    session: Session,
+    predicate: Callable[[dict[str, Any]], bool],
+    timeout_s: float,
+    description: str,
+    *,
+    watched_processes: dict[str, subprocess.Popen[Any]] | None = None,
+) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         snapshot = _monitor_snapshot(session)
         if predicate(snapshot):
             return
-        for record in session.records():
-            if record.get("role") in {"monitor", "lio", "px4_gazebo", "bridge", "px4_ingress"}:
-                # A monitor snapshot is the authoritative readiness signal, but
-                # an early process exit must be reported immediately.
-                if not Path(f"/proc/{record.get('pid')}").exists() and record.get("role") == "monitor":
-                    raise RuntimeError("runtime monitor exited before readiness")
+        for role, process in (watched_processes or {}).items():
+            return_code = process.poll()
+            if return_code is not None:
+                log_path = session.directory / "logs" / f"{role}.log"
+                raise RuntimeError(
+                    f"runtime {role} exited with code {return_code} while waiting for {description}; "
+                    f"see {log_path}"
+                )
         time.sleep(0.25)
     raise TimeoutError(f"timed out waiting for {description}")
 
@@ -291,6 +325,13 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False, mapping
     )
     monitor_process: subprocess.Popen[Any] | None = None
     try:
+        prerequisites = _runtime_python_prerequisites()
+        if prerequisites:
+            _write_runtime(session, failures=prerequisites)
+            result = _stop_and_report(session, "dataset", RUNTIME_CONFIG / "dataset.yaml")
+            print(result["verdict"])
+            print(session.directory)
+            return 1
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml", mapping_mode=mapping_mode)
@@ -315,7 +356,13 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False, mapping
         if enable_rviz:
             _start_rviz(session)
         timeout_s = float(config["runtime"]["timeouts"]["startup_s"])
-        _wait_until(session, lambda snapshot: _stream_count(session, "diagnostics") > 0, timeout_s, "LIO diagnostics")
+        _wait_until(
+            session,
+            lambda snapshot: _stream_count(session, "diagnostics") > 0,
+            timeout_s,
+            "LIO diagnostics",
+            watched_processes={"monitor": monitor_process},
+        )
         replay = session.start(
             "replay",
             _ros_shell([
@@ -337,6 +384,7 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False, mapping
             and _stream_count(session, "propagated_odometry") > 0,
             float(config["runtime"]["timeouts"]["drain_s"]),
             "dataset outputs and queue drain",
+            watched_processes={"monitor": monitor_process},
         )
         _write_runtime(session, failures=[])
     except Exception as error:
@@ -349,7 +397,7 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False, mapping
 
 
 def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
-    missing: list[str] = []
+    missing = _runtime_python_prerequisites()
     for command in ("ros2", "python3", "MicroXRCEAgent"):
         if not _command_exists(command):
             missing.append(f"missing command: {command}")
@@ -461,9 +509,9 @@ def run_sim(headless: bool, *, mapping_mode: str = "full") -> int:
         ], enable_rviz=not headless), cwd=ROOT)
         if not headless:
             _start_rviz(session, use_sim_time=True)
-        _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
-        _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING")
-        _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
+        _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams", watched_processes={"monitor": monitor})
+        _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING", watched_processes={"monitor": monitor})
+        _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry", watched_processes={"monitor": monitor})
         _write_runtime(session, startup_complete=True)
         if headless:
             scenario = session.start(
