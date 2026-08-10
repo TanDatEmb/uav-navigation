@@ -34,7 +34,7 @@ VoxelOccupancyMap::VoxelOccupancyMap(VoxelMapConfig config) : config_(config) {
 }
 
 void VoxelOccupancyMap::reset() {
-  cells_.clear(); inflated_voxel_count_ = 0; occupied_voxel_count_ = 0;
+  cells_.clear(); inflated_voxel_upper_bound_ = 0; occupied_voxel_count_ = 0;
   center_.setZero(); shift_count_ = 0;
   validity_ = MapValidity::kWaitingForLio; rebuildBounds();
 }
@@ -98,6 +98,7 @@ void VoxelOccupancyMap::updateCell(const Key& key, const double delta) {
 
 void VoxelOccupancyMap::raycast(const Eigen::Vector3d& origin,
                                 const Eigen::Vector3d& endpoint,
+                                const bool endpoint_is_hit,
                                 MapUpdateStats& stats,
                                 std::unordered_set<Key, KeyHash>& free_updated) {
   const Eigen::Vector3d delta = endpoint - origin;
@@ -138,21 +139,36 @@ void VoxelOccupancyMap::raycast(const Eigen::Vector3d& origin,
     t_max[axis] += t_delta[axis];
   }
   if (key == end_key && keyInBounds(end_key)) {
-    updateCell(end_key, config_.hit_log_odds); ++stats.occupied_voxels_updated;
+    if (endpoint_is_hit) {
+      updateCell(end_key, config_.hit_log_odds); ++stats.occupied_voxels_updated;
+    } else if (free_updated.insert(end_key).second) {
+      updateCell(end_key, config_.miss_log_odds); ++stats.free_voxels_updated;
+    }
   }
 }
 
-std::size_t VoxelOccupancyMap::inflatedVoxelEstimate() const noexcept {
+std::size_t VoxelOccupancyMap::inflatedVoxelUpperBoundEstimate() const noexcept {
   const auto radius = static_cast<std::int64_t>(
       std::ceil(config_.inflation_radius_m / config_.resolution_m));
-  const auto side = static_cast<std::size_t>(2 * radius + 1);
-  const auto stencil = side * side * side;
+  std::size_t stencil = 0;
+  for (std::int64_t dx = -radius; dx <= radius; ++dx) {
+    for (std::int64_t dy = -radius; dy <= radius; ++dy) {
+      for (std::int64_t dz = -radius; dz <= radius; ++dz) {
+        const Eigen::Vector3d offset(static_cast<double>(dx), static_cast<double>(dy),
+                                     static_cast<double>(dz));
+        if (offset.norm() * config_.resolution_m <= config_.inflation_radius_m + kEpsilon) {
+          ++stencil;
+        }
+      }
+    }
+  }
   const auto x = static_cast<std::size_t>(std::ceil(config_.size_m.x() / config_.resolution_m));
   const auto y = static_cast<std::size_t>(std::ceil(config_.size_m.y() / config_.resolution_m));
   const auto z = static_cast<std::size_t>(std::ceil(config_.size_m.z() / config_.resolution_m));
   const auto bounded_volume = x * y * z;
   const auto occupied = occupied_voxel_count_;
-  if (occupied == 0 || stencil == 0 || occupied > bounded_volume / stencil) return bounded_volume;
+  if (occupied == 0 || stencil == 0) return 0;
+  if (occupied > bounded_volume / stencil) return bounded_volume;
   return std::min(bounded_volume, occupied * stencil);
 }
 
@@ -168,14 +184,15 @@ MapUpdateStats VoxelOccupancyMap::update(
     if (!std::isfinite(range) || range < config_.raycast_min_range_m) continue;
     if (range > config_.raycast_max_range_m) {
       raycast(origin, origin + (point - origin) * (config_.raycast_max_range_m / range),
-              stats, free_updated);
+              false, stats, free_updated);
     } else {
-      raycast(origin, point, stats, free_updated); ++stats.points_integrated;
+      raycast(origin, point, true, stats, free_updated); ++stats.points_integrated;
     }
   }
   stats.shift_count = shift_count_; stats.occupied_voxel_count = occupied_voxel_count_;
-  inflated_voxel_count_ = inflatedVoxelEstimate();
-  stats.inflated_voxel_count = inflated_voxel_count_; stats.allocated_voxel_count = cells_.size();
+  inflated_voxel_upper_bound_ = inflatedVoxelUpperBoundEstimate();
+  stats.inflated_voxel_upper_bound = inflated_voxel_upper_bound_;
+  stats.allocated_voxel_count = cells_.size();
   return stats;
 }
 
@@ -217,23 +234,6 @@ std::vector<Eigen::Vector3d> VoxelOccupancyMap::occupiedVoxelCenters() const {
   for (const auto& [key, cell] : cells_) {
     if (cell.log_odds > config_.occupied_threshold && keyInBounds(key)) {
       result.push_back(keyCenter(key));
-    }
-  }
-  return result;
-}
-
-std::vector<Eigen::Vector3d> VoxelOccupancyMap::inflatedVoxelCenters() const {
-  std::vector<Eigen::Vector3d> result;
-  const Key min_key = keyFor(bounds_.min);
-  const Key max_key = keyFor(bounds_.max);
-  result.reserve(inflated_voxel_count_);
-  for (std::int64_t x = min_key.x; x <= max_key.x; ++x) {
-    for (std::int64_t y = min_key.y; y <= max_key.y; ++y) {
-      for (std::int64_t z = min_key.z; z <= max_key.z; ++z) {
-        const Key key{x, y, z};
-        const auto center = keyCenter(key);
-        if (keyInBounds(key) && isInflatedOccupied(center)) result.push_back(center);
-      }
     }
   }
   return result;

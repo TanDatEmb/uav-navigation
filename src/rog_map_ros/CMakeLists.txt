@@ -13,12 +13,13 @@ find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_executable(rog_map_node src/rog_map_node.cpp)
 target_compile_features(rog_map_node PRIVATE cxx_std_20)
 target_include_directories(rog_map_node PRIVATE include)
 ament_target_dependencies(rog_map_node diagnostic_msgs geometry_msgs nav_msgs rclcpp rog_map_core
-  sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
+  sensor_msgs tf2 tf2_geometry_msgs tf2_ros visualization_msgs)
 install(TARGETS rog_map_node DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

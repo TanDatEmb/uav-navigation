@@ -94,12 +94,12 @@ rog_map:
       corrected_odometry_topic: /lio/odometry_corrected
       diagnostics_topic: /lio/diagnostics
     mapping:
-      observation: {min_range_m: 0.30, max_range_m: 15.0, unmatched_timeout_ms: 500, cache_depth: 16, update_queue_depth: 1}
+      observation: {min_range_m: 0.50, max_range_m: 15.0, unmatched_timeout_ms: 500, cache_depth: 16, update_queue_depth: 1}
       local_map: {resolution_m: 0.30, size_m: [30.0, 30.0, 12.0], shift_threshold_m: 1.0}
       occupancy: {hit_log_odds: 0.85, miss_log_odds: -0.40, occupied_threshold: 0.0, clamp_min: -2.0, clamp_max: 3.5}
       inflation: {radius_m: 0.50}
       lifecycle: {stale_timeout_ms: 500}
-      visualization: {enabled: false, occupied_topic: /rog_map/occupied_voxels, inflated_topic: /rog_map/inflated_voxels}
+      visualization: {enabled: false, publish_rate_hz: 2.0, occupied_topic: /rog_map/occupied_voxels, inflated_topic: /rog_map/inflated_voxels, inflation_surface_topic: /rog_map/inflation_surface, local_bounds_topic: /rog_map/local_bounds}
 simulation:
   ros__parameters:
     world: px4_lio_smoke

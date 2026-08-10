@@ -31,7 +31,7 @@ struct MapUpdateStats {
   std::size_t occupied_voxels_updated{0};
   std::size_t shift_count{0};
   std::size_t occupied_voxel_count{0};
-  std::size_t inflated_voxel_count{0};
+  std::size_t inflated_voxel_upper_bound{0};
   std::size_t allocated_voxel_count{0};
 };
 
@@ -46,14 +46,17 @@ class VoxelOccupancyMap final : public NavigationMap {
   [[nodiscard]] bool isInflatedOccupied(
       const Eigen::Vector3d& position_lio_odom) const override;
   [[nodiscard]] double resolution() const override { return config_.resolution_m; }
+  [[nodiscard]] double raycastMinRange() const noexcept { return config_.raycast_min_range_m; }
   [[nodiscard]] MapBounds localBounds() const override { return bounds_; }
   [[nodiscard]] MapValidity validity() const override { return validity_; }
   [[nodiscard]] std::size_t occupiedVoxelCount() const noexcept;
-  [[nodiscard]] std::size_t inflatedVoxelCount() const noexcept { return inflated_voxel_count_; }
+  [[nodiscard]] std::size_t inflatedVoxelUpperBound() const noexcept {
+    return inflated_voxel_upper_bound_;
+  }
   [[nodiscard]] std::size_t allocatedVoxelCount() const noexcept { return cells_.size(); }
   [[nodiscard]] std::size_t shiftCount() const noexcept { return shift_count_; }
   [[nodiscard]] std::vector<Eigen::Vector3d> occupiedVoxelCenters() const;
-  [[nodiscard]] std::vector<Eigen::Vector3d> inflatedVoxelCenters() const;
+  [[nodiscard]] double inflationRadius() const noexcept { return config_.inflation_radius_m; }
 
  private:
   struct Key {
@@ -73,15 +76,16 @@ class VoxelOccupancyMap final : public NavigationMap {
   void shiftIfNeeded(const Eigen::Vector3d& origin);
   void rebuildBounds();
   void evictOutsideBounds();
-  [[nodiscard]] std::size_t inflatedVoxelEstimate() const noexcept;
+  [[nodiscard]] std::size_t inflatedVoxelUpperBoundEstimate() const noexcept;
   void raycast(const Eigen::Vector3d& origin, const Eigen::Vector3d& endpoint,
-               MapUpdateStats& stats, std::unordered_set<Key, KeyHash>& free_updated);
+               bool endpoint_is_hit, MapUpdateStats& stats,
+               std::unordered_set<Key, KeyHash>& free_updated);
   VoxelMapConfig config_;
   Eigen::Vector3d center_{Eigen::Vector3d::Zero()};
   MapBounds bounds_;
   MapValidity validity_{MapValidity::kWaitingForLio};
   std::unordered_map<Key, Cell, KeyHash> cells_;
-  std::size_t inflated_voxel_count_{0};
+  std::size_t inflated_voxel_upper_bound_{0};
   std::size_t occupied_voxel_count_{0};
   std::size_t shift_count_{0};
 };

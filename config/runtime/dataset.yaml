@@ -103,7 +103,7 @@ rog_map:
       diagnostics_topic: /lio/diagnostics
     mapping:
       observation:
-        min_range_m: 0.30
+        min_range_m: 0.50
         max_range_m: 15.0
         unmatched_timeout_ms: 500
         cache_depth: 16
@@ -122,5 +122,8 @@ rog_map:
       lifecycle: {stale_timeout_ms: 500}
       visualization:
         enabled: false
+        publish_rate_hz: 2.0
         occupied_topic: /rog_map/occupied_voxels
         inflated_topic: /rog_map/inflated_voxels
+        inflation_surface_topic: /rog_map/inflation_surface
+        local_bounds_topic: /rog_map/local_bounds
