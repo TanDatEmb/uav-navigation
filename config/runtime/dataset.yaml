@@ -59,16 +59,16 @@ fast_lio:
       scan_voxel_size_m: 0.9
     registration: { maximum_iterations: 10 }
     mapping:
-      # Replay scans contain roughly 10k-16k points. Keep a bounded multi-scan
-      # local map instead of retaining the old 450k/500k default capacity.
+      # Keep the replay local map bounded at the explicit 70k/80k/100k
+      # target/maintenance/ceiling runtime budget.
       registration_map: { voxel_size_m: 0.3 }
       dynamic_filter: { enabled: false }
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0
-        # Replay measurements stay around 10k-16k points. Keep 12k nearby
-        # registration support, start maintenance at 14k, and use 16k as an
-        # enforceable ceiling instead of retaining the old 450k/500k profile.
+        # Runtime values are intentionally larger than the code defaults:
+        # retain 70k nearby points, start maintenance at 80k, and enforce a
+        # 100k ceiling.
         soft_point_limit: 80000
         hard_point_limit: 100000
         target_point_count_after_prune: 70000

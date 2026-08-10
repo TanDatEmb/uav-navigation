@@ -58,9 +58,9 @@ fast_lio:
       local_map:
         half_extent_m: [30.0, 30.0, 15.0]
         crop_trigger_distance_m: 5.0
-        # Keep simulator memory on the same 10k-16k bounded scale as replay.
-        # Farthest-point pruning retains 12k nearby registration points, so
-        # map memory cannot grow toward the old 450k/500k profile.
+        # Keep simulator memory on the explicit 70k/80k/100k runtime budget:
+        # retain 70k nearby points, start maintenance at 80k, and enforce a
+        # 100k ceiling.
         soft_point_limit: 80000
         hard_point_limit: 100000
         target_point_count_after_prune: 70000

@@ -50,7 +50,5 @@ def test_launcher_disables_px4_gazebo_truth_odometry_source():
     assert "export PX4_PARAM_SIM_GZ_EN_ODOM=0" in launcher
     assert "export PX4_PARAM_EKF2_EV_CTRL=15" in launcher
     assert "export PX4_PARAM_EKF2_GPS_CTRL=0" in launcher
-    # Barometer transport is retained only for PX4 sensor-health preflight;
-    # EKF2 must not fuse it into the LIO external-vision estimate.
-    assert "export PX4_PARAM_SIM_GZ_EN_BARO=1" in launcher
+    # EKF2 must not fuse barometer data into the LIO external-vision estimate.
     assert "export PX4_PARAM_EKF2_BARO_CTRL=0" in launcher

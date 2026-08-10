@@ -158,9 +158,9 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParses) {
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
-  EXPECT_EQ(profile.estimator.local_map.soft_point_limit, 14000U);
-  EXPECT_EQ(profile.estimator.local_map.hard_point_limit, 16000U);
-  EXPECT_EQ(profile.estimator.local_map.target_point_count_after_prune, 12000U);
+  EXPECT_EQ(profile.estimator.local_map.soft_point_limit, 80000U);
+  EXPECT_EQ(profile.estimator.local_map.hard_point_limit, 100000U);
+  EXPECT_EQ(profile.estimator.local_map.target_point_count_after_prune, 70000U);
 }
 
 TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
@@ -274,7 +274,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
   for (const auto& [line, suffix] :
        std::array<std::pair<std::string_view, std::string_view>, 2>{
            std::pair{"      scan_voxel_size_m: 0.9\n", "scan_voxel"},
-           std::pair{"      registration_map: {voxel_size_m: 0.3}\n",
+           std::pair{"      registration_map: { voxel_size_m: 0.3 }\n",
                      "registration_map_voxel"}}) {
     const auto path = canonicalConfigWithout(line, suffix);
     EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),

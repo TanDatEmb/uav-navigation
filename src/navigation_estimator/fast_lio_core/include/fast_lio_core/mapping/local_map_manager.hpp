@@ -10,13 +10,9 @@ namespace uav::nav::lio {
 struct LocalMapManagerConfig {
   Eigen::Vector3d half_extent_m{Eigen::Vector3d(50.0, 50.0, 25.0)};
   double crop_trigger_distance_m{5.0};
-  // Canonical runtime scale for this repository's replay and smoke data.
-  // YAML may specialize it, but an omitted parameter must not silently restore
-  // the old 100k/120k/80k memory profile. The defaults retain 12k nearby
-  // points and enforce the measured replay-scale 16k hard ceiling.
-  std::size_t soft_point_limit{14000};
-  std::size_t hard_point_limit{16000};
-  std::size_t target_point_count_after_prune{12000};
+  std::size_t soft_point_limit{80000};
+  std::size_t hard_point_limit{100000};
+  std::size_t target_point_count_after_prune{70000};
   double distance_shell_size_m{5.0};
 };
 
