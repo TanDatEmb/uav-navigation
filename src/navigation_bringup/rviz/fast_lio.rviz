@@ -8,17 +8,17 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 0.5
+    - Alpha: 0.25
       Cell Size: 1
       Class: rviz_default_plugins/Grid
-      Color: 160; 160; 164
+      Color: 120; 124; 130
       Enabled: true
       Name: Grid
       Plane: XY
       Plane Cell Count: 40
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/TF
-      Enabled: true
+      Enabled: false
       Frame Timeout: 15
       Marker Scale: 0.5
       Name: TF
@@ -32,8 +32,8 @@ Visualization Manager:
       Enabled: false
       Name: Local Map (RGB axis)
       Position Transformer: XYZ
-      Queue Size: 10
-      Selectable: true
+      Queue Size: 1
+      Selectable: false
       Size (Pixels): 2
       Size (m): 0.02
       Style: Points
@@ -47,16 +47,16 @@ Visualization Manager:
       Axis: Z
       Min Value: -3
       Max Value: 8
-    - Alpha: 0.95
+    - Alpha: 1
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
-      Color: 255; 190; 40
-      Decay Time: 1
-      Enabled: true
+      Color: 166; 181; 194
+      Decay Time: 0
+      Enabled: false
       Name: ROG / Measured Obstacles
       Position Transformer: XYZ
-      Queue Size: 3
-      Selectable: true
+      Queue Size: 1
+      Selectable: false
       Size (Pixels): 4
       Size (m): 0.30
       Style: Boxes
@@ -67,16 +67,16 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/occupied_voxels
       Use Fixed Frame: true
-    - Alpha: 0.30
+    - Alpha: 1
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
-      Color: 255; 60; 40
-      Decay Time: 1
-      Enabled: true
+      Color: 217; 139; 55
+      Decay Time: 0
+      Enabled: false
       Name: ROG / Keep-out Surface
       Position Transformer: XYZ
-      Queue Size: 3
-      Selectable: true
+      Queue Size: 1
+      Selectable: false
       Size (Pixels): 3
       Size (m): 0.30
       Style: Boxes
@@ -90,13 +90,13 @@ Visualization Manager:
     - Alpha: 0.15
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
-      Color: 255; 60; 40
-      Decay Time: 1
+      Color: 217; 139; 55
+      Decay Time: 0
       Enabled: false
       Name: ROG / Full Inflated Volume (Debug)
       Position Transformer: XYZ
-      Queue Size: 3
-      Selectable: true
+      Queue Size: 1
+      Selectable: false
       Size (Pixels): 3
       Size (m): 0.30
       Style: Boxes
@@ -108,7 +108,7 @@ Visualization Manager:
         Value: /rog_map/inflated_voxels
       Use Fixed Frame: true
     - Class: rviz_default_plugins/Marker
-      Enabled: true
+      Enabled: false
       Name: ROG / Local Bounds
       Namespaces: {}
       Queue Size: 10
@@ -118,15 +118,26 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /rog_map/local_bounds
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: ROG / Semantic Map
+      Namespaces: {}
+      Queue Size: 1
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /rog_map/semantic_map
     - Alpha: 1
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: AxisColor
-      Decay Time: 3
+      Decay Time: 0
       Enabled: false
       Name: Registered Points (RGB axis)
       Position Transformer: XYZ
-      Queue Size: 10
-      Selectable: true
+      Queue Size: 1
+      Selectable: false
       Size (Pixels): 3
       Size (m): 0.03
       Style: Points
@@ -143,17 +154,17 @@ Visualization Manager:
     - Angle Tolerance: 0.01
       Class: rviz_default_plugins/Odometry
       Enabled: true
-      Keep: 1000
+      Keep: 1
       Name: Corrected LIO Odometry
       Position Tolerance: 0.01
       Shape:
-        Axes Length: 0.5
-        Axes Radius: 0.05
-        Color: 255; 25; 0
+        Axes Length: 0.35
+        Axes Radius: 0.02
+        Color: 180; 180; 180
         Head Length: 0.3
         Head Radius: 0.1
         Shaft Length: 1
-        Shaft Radius: 0.05
+        Shaft Radius: 0.02
         Value: Axes
       Topic:
         Depth: 20
@@ -163,7 +174,7 @@ Visualization Manager:
         Value: /lio/odometry_corrected
   Enabled: true
   Global Options:
-    Background Color: 48; 48; 48
+    Background Color: 34; 39; 46
     Fixed Frame: lio_odom
     Frame Rate: 30
   Name: root

@@ -3,7 +3,9 @@
 Current verdict: `P1 NOT YET ACCEPTED`.
 
 The implementation and automated unit/build gates are complete for this
-checkout. Post-change AIST OFF and RViz-backed visualization runs pass. The
+checkout. Post-change AIST OFF and RViz-backed visualization runs pass. A
+fresh canonical-RViz replay was also attempted but failed at the existing LIO
+replay startup/bracket condition, so it is not used as a visual PASS. The
 headless SITL attempt failed because of simulator/external-odometry freshness
 and OFFBOARD loss in both mapping-on and mapping-off runs. Manual yaw/frame
 and lifecycle-clear observations also remain required.
@@ -43,6 +45,13 @@ Post-change artifacts:
   and integrated, zero drops/mismatches, queue bound 1, map update p99 65.022
   ms, 552 visualization frames built/published, 0 skipped, exact inflated
   snapshot 36109, surface 23709, build p95/p99/max 12736/15101/20570 us.
+- canonical-RViz replay attempt after the semantic-map change:
+  `.artifacts/runtime/dataset-20260810T081523-37605/REPORT.md` — FAIL before
+  stable completion (`Prediction IMU start bracket is missing`), 16 snapshots
+  built/published, queue bound 1, map update p99 6.033 ms over the partial
+  interval. Its diagnostics recorded maximum occupied/full-surface overlap 0,
+  occupied churn 0.040107, and full-surface churn 0.024974; lifecycle clearing
+  reset the final counts to zero as designed.
 
 ## Headless SITL
 
@@ -59,12 +68,18 @@ Artifacts:
 
 ## Visualization contract and remaining gates
 
-The visualization outputs are `/rog_map/occupied_voxels` (measured occupied
-centers), `/rog_map/inflated_voxels` (derived full keep-out debug set),
+The canonical visualization output is `/rog_map/semantic_map`
+(`visualization_msgs/msg/MarkerArray`): stable ids 0/1/2 represent measured
+occupied cubes, disjoint clearance-surface cubes, and local bounds. The legacy
+outputs remain `/rog_map/occupied_voxels` (measured occupied centers),
+`/rog_map/inflated_voxels` (derived full keep-out debug set),
 `/rog_map/inflation_surface` (derived six-connected boundary), and
 `/rog_map/local_bounds` (LINE_LIST bounds). They share `frame_id=lio_odom` and
 the last integrated observation stamp. Production/headless visualization is
-OFF; interactive mode is subscriber-gated at `2.0 Hz`.
+OFF; interactive mode is subscriber-gated at `2.0 Hz`. At 2 Hz, the previous
+legacy decay of 1 s could retain roughly two snapshots; the canonical profile
+uses marker lifetime zero and RViz legacy debug decay 0/queue 1, so one latest
+snapshot is retained. Membership churn is reported rather than smoothed.
 
 The fixed-frame manual gate remains pending: rotate an asymmetric object/vehicle
 through approximately 0, +90, -90 and 180 degrees, then record timestamped
@@ -72,7 +87,8 @@ screenshots or a checklist showing stable occupied geometry, surface coverage,
 axis-aligned bounds, unchanged continuity epoch, no yaw-following ring, and
 correct min-range behavior. No manual PASS is claimed here.
 
-Lifecycle clear was not independently observed after a controlled reset in
-these sessions.
+The fresh partial replay observed the clear path when the map became invalid,
+but controlled yaw screenshots and a full stable A/B visual replay remain
+pending. No manual visual PASS is claimed here.
 
 Current verdict: `P1 NOT YET ACCEPTED`.

@@ -126,4 +126,6 @@ rog_map:
         occupied_topic: /rog_map/occupied_voxels
         inflated_topic: /rog_map/inflated_voxels
         inflation_surface_topic: /rog_map/inflation_surface
+        semantic_map_topic: /rog_map/semantic_map
+        cube_scale_ratio: 0.90
         local_bounds_topic: /rog_map/local_bounds

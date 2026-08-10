@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -71,12 +72,54 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("Style: Boxes", config)
         self.assertIn("Enabled: false\n      Name: ROG / Full Inflated Volume (Debug)", config)
 
+    def test_rviz_defaults_are_temporally_stable_and_semantic(self) -> None:
+        config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
+        self.assertIn("Background Color: 34; 39; 46", config)
+        self.assertIn("Alpha: 0.25\n      Cell Size: 1\n      Class: rviz_default_plugins/Grid", config)
+        self.assertIn("Enabled: true\n      Name: Grid", config)
+        self.assertIn("Class: rviz_default_plugins/MarkerArray\n      Enabled: true\n      Name: ROG / Semantic Map", config)
+        self.assertIn("Value: /rog_map/semantic_map", config)
+        self.assertIn("Enabled: false\n      Frame Timeout", config)
+        self.assertIn("Keep: 1", config)
+        self.assertIn("Axes Length: 0.35", config)
+        self.assertIn("Axes Radius: 0.02", config)
+        for name in (
+            "ROG / Measured Obstacles",
+            "ROG / Keep-out Surface",
+            "ROG / Full Inflated Volume (Debug)",
+        ):
+            block = re.search(
+                rf"(?ms)^    - .*?^      Name: {re.escape(name)}\n(.*?)(?=^    - |^  Enabled:)",
+                config,
+            )
+            self.assertIsNotNone(block, name)
+            assert block is not None
+            self.assertIn("Enabled: false", block.group(0))
+            self.assertIn("Decay Time: 0", block.group(0))
+            self.assertIn("Queue Size: 1", block.group(0))
+            self.assertIn("Selectable: false", block.group(0))
+        self.assertIn("Color: 166; 181; 194", config)
+        self.assertIn("Color: 217; 139; 55", config)
+        self.assertNotIn("Enabled: true\n      Name: ROG / Local Bounds", config)
+        self.assertNotIn("Enabled: true\n      Name: Registered Points", config)
+        self.assertNotIn("Enabled: true\n      Name: Local Map", config)
+        pointcloud_blocks = re.findall(
+            r"(?ms)^    - .*?^      Class: rviz_default_plugins/PointCloud2\n(.*?)(?=^    - |^  Enabled:)",
+            config,
+        )
+        self.assertEqual(len(pointcloud_blocks), 5)
+        for block in pointcloud_blocks:
+            self.assertIn("Decay Time: 0", block)
+            self.assertIn("Queue Size: 1", block)
+
     def test_runtime_mapping_contract_uses_navigation_min_range_and_visualization_rate(self) -> None:
         for filename in ("dataset.yaml", "sim.yaml"):
             config = (ROOT / "config/runtime" / filename).read_text(encoding="utf-8")
             self.assertIn("min_range_m: 0.50", config)
             self.assertIn("publish_rate_hz: 2.0", config)
             self.assertIn("inflation_surface_topic", config)
+            self.assertIn("semantic_map_topic: /rog_map/semantic_map", config)
+            self.assertIn("cube_scale_ratio: 0.90", config)
             self.assertIn("local_bounds_topic", config)
 
     def test_stop_discovers_all_owned_runtime_sessions(self) -> None:

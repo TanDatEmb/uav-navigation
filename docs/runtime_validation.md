@@ -38,13 +38,13 @@ activating the environment used to run the acceptance command. The runner
 checks both `numpy` and the sourced ROS 2 `rclpy` module before starting PX4 or
 FAST-LIO and reports a missing dependency immediately.
 
-RViz/replay mode enables ROG visualization automatically. The semantic
-PointCloud2 displays use fixed frame `lio_odom`, `Boxes`, and `0.30 m` voxel
-size. They show measured occupied centers on `/rog_map/occupied_voxels`, the
-six-connected derived keep-out surface on `/rog_map/inflation_surface`, and
-keep the full inflated debug volume disabled by default. `/rog_map/local_bounds`
-is a cyan `LINE_LIST` marker. Headless production workflows keep visualization
-disabled.
+RViz/replay mode enables ROG visualization automatically. The default semantic
+display is `/rog_map/semantic_map` (`MarkerArray`) in fixed frame `lio_odom`:
+id 0 is measured occupied, id 1 is disjoint clearance surface, and id 2 is
+the local bounds `LINE_LIST`. Cubes use `resolution * 0.90` (0.27 m for the
+0.30 m map). Legacy PointCloud2 views remain available for debugging but are
+disabled with decay 0 and queue 1. Headless production workflows keep
+visualization disabled.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
@@ -75,6 +75,7 @@ diagnostics do not expose config or Git SHA fields.
 | product | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | required |
 | product | `/lio/deskewed_points` | `sensor_msgs/msg/PointCloud2` | navigation observation; exact scan-end epoch |
 | health | `/rog_map/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | mapping state/accounting |
+| visualization | `/rog_map/semantic_map` | `visualization_msgs/msg/MarkerArray` | canonical; subscriber-gated semantic layers |
 | visualization | `/rog_map/occupied_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
 | visualization | `/rog_map/inflated_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
 | visualization | `/rog_map/inflation_surface` | `sensor_msgs/msg/PointCloud2` | optional; derived keep-out boundary |
@@ -161,7 +162,10 @@ The navigation map uses `mapping.observation.min_range_m: 0.50`,
 diagnostics distinguish the update-path `inflated_voxel_upper_bound` from the
 exact lazy snapshot fields `inflated_snapshot_voxel_count` and
 `inflation_surface_voxel_count`, and expose visualization build/publish/skip
-counters and latest/max build time.
+counters and latest/max build time. They also expose canonical occupied/full
+surface counts, exact occupied/full-surface overlap, and consecutive occupied
+and full-surface symmetric-difference churn ratios. These values diagnose
+mapping membership churn separately from RViz retention flicker.
 
 `make stop` signals only process groups recorded for the latest session. It
 does not use global name-based termination and does not affect unrelated ROS,

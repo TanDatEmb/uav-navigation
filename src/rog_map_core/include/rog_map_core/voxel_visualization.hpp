@@ -34,6 +34,12 @@ struct VisualizationVoxelKeyHash {
 using VisualizationVoxelSet =
     std::unordered_set<VisualizationVoxelKey, VisualizationVoxelKeyHash>;
 
+inline bool operator<(const VisualizationVoxelKey& lhs, const VisualizationVoxelKey& rhs) {
+  if (lhs.x != rhs.x) return lhs.x < rhs.x;
+  if (lhs.y != rhs.y) return lhs.y < rhs.y;
+  return lhs.z < rhs.z;
+}
+
 inline VisualizationVoxelKey visualizationKeyFor(const Eigen::Vector3d& point,
                                                   const double resolution) {
   return {static_cast<std::int64_t>(std::floor(point.x() / resolution)),
@@ -118,6 +124,43 @@ inline VisualizationVoxelSet extractInflationSurface(
     if (boundary) surface.insert(voxel);
   }
   return surface;
+}
+
+inline VisualizationVoxelSet deriveClearanceSurface(
+    const VisualizationVoxelSet& full_surface,
+    const VisualizationVoxelSet& occupied) {
+  VisualizationVoxelSet clearance;
+  clearance.reserve(full_surface.size());
+  for (const auto& voxel : full_surface) {
+    if (!occupied.contains(voxel)) clearance.insert(voxel);
+  }
+  return clearance;
+}
+
+inline std::vector<VisualizationVoxelKey> sortedVisualizationVoxelKeys(
+    const VisualizationVoxelSet& voxels) {
+  std::vector<VisualizationVoxelKey> result(voxels.begin(), voxels.end());
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
+inline std::size_t symmetricDifferenceSize(const VisualizationVoxelSet& lhs,
+                                           const VisualizationVoxelSet& rhs) {
+  std::size_t result = 0;
+  for (const auto& key : lhs) result += !rhs.contains(key);
+  for (const auto& key : rhs) result += !lhs.contains(key);
+  return result;
+}
+
+inline std::vector<Eigen::Vector3d> sortedCentersFromVisualizationSet(
+    const VisualizationVoxelSet& voxels, const double resolution) {
+  const auto keys = sortedVisualizationVoxelKeys(voxels);
+  std::vector<Eigen::Vector3d> result;
+  result.reserve(keys.size());
+  for (const auto& voxel : keys) {
+    result.push_back(visualizationKeyCenter(voxel, resolution));
+  }
+  return result;
 }
 
 inline std::vector<Eigen::Vector3d> centersFromVisualizationSet(

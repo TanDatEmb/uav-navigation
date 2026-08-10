@@ -35,6 +35,7 @@
 #include "rog_map_core/voxel_visualization.hpp"
 #include "rog_map_ros/exact_pairing.hpp"
 #include "rog_map_ros/frame_transform.hpp"
+#include "rog_map_ros/semantic_visualization.hpp"
 
 namespace uav::nav::rog {
 namespace {
@@ -75,12 +76,16 @@ struct VisualizationInput {
   bool need_inflated{false};
   bool need_surface{false};
   bool need_bounds{false};
+  bool need_semantic{false};
 };
 
 struct VisualizationFrame {
   VisualizationInput input;
   std::vector<Eigen::Vector3d> inflated_centers;
   std::vector<Eigen::Vector3d> surface_centers;
+  VisualizationVoxelSet occupied_voxels;
+  VisualizationVoxelSet full_surface_voxels;
+  visualization_msgs::msg::MarkerArray semantic_markers;
   std::size_t exact_inflated_count{0};
 };
 
@@ -114,8 +119,12 @@ class RogMapNode final : public rclcpp::Node {
             "mapping.visualization.inflated_topic", "/rog_map/inflated_voxels")),
         inflation_surface_visualization_topic_(declare_parameter(
             "mapping.visualization.inflation_surface_topic", "/rog_map/inflation_surface")),
+        semantic_map_visualization_topic_(declare_parameter(
+            "mapping.visualization.semantic_map_topic", "/rog_map/semantic_map")),
         local_bounds_visualization_topic_(declare_parameter(
             "mapping.visualization.local_bounds_topic", "/rog_map/local_bounds")),
+        cube_scale_ratio_(declare_parameter(
+            "mapping.visualization.cube_scale_ratio", 0.90)),
         map_(loadMapConfig()) {
     if (queue_depth_ != 1 || cache_capacity_ <= 0 || unmatched_timeout_ms_ <= 0 ||
         stale_timeout_ms_ <= 0) {
@@ -126,6 +135,7 @@ class RogMapNode final : public rclcpp::Node {
       throw std::invalid_argument(
           "mapping.visualization.publish_rate_hz must be finite, > 0 and <= 10 Hz");
     }
+    validateCubeScaleRatio(cube_scale_ratio_);
     cache_ = std::make_unique<PairCache>(static_cast<std::size_t>(cache_capacity_));
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
@@ -149,6 +159,8 @@ class RogMapNode final : public rclcpp::Node {
           inflated_visualization_topic_, rclcpp::SensorDataQoS().keep_last(1));
       inflation_surface_visualization_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
           inflation_surface_visualization_topic_, rclcpp::SensorDataQoS().keep_last(1));
+      semantic_map_visualization_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+          semantic_map_visualization_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
       local_bounds_visualization_publisher_ = create_publisher<visualization_msgs::msg::Marker>(
           local_bounds_visualization_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
       visualization_timer_ = create_wall_timer(
@@ -446,6 +458,8 @@ class RogMapNode final : public rclcpp::Node {
     add("update_queue_depth", pending_pair_ ? "1" : "0"); add("update_queue_bound", "1");
     add("visualization_enabled", visualization_enabled_ ? "true" : "false");
     add("visualization_publish_rate_hz", std::to_string(visualization_publish_rate_hz_));
+    add("semantic_map_topic", semantic_map_visualization_topic_);
+    add("semantic_cube_scale_ratio", std::to_string(cube_scale_ratio_));
     add("visualization_snapshot_epoch", std::to_string(visualization_snapshot_epoch_.load()));
     add("visualization_snapshot_stamp_ns", std::to_string(visualization_snapshot_stamp_ns_.load()));
     add("visualization_frames_built", std::to_string(visualization_frames_built_.load()));
@@ -459,6 +473,13 @@ class RogMapNode final : public rclcpp::Node {
         visualization_state == 3 ? "SKIPPED_OR_CLEARED" : "NOT_BUILT");
     add("inflated_snapshot_voxel_count", std::to_string(visualization_inflated_count_.load()));
     add("inflation_surface_voxel_count", std::to_string(visualization_surface_count_.load()));
+    add("semantic_occupied_count", std::to_string(semantic_occupied_count_.load()));
+    add("semantic_clearance_count", std::to_string(semantic_clearance_count_.load()));
+    add("semantic_full_surface_count", std::to_string(semantic_full_surface_count_.load()));
+    add("semantic_occupied_surface_overlap_count", std::to_string(semantic_overlap_count_.load()));
+    add("semantic_occupied_surface_overlap_ratio", std::to_string(semantic_overlap_ratio_.load()));
+    add("semantic_occupied_churn_ratio", std::to_string(semantic_occupied_churn_ratio_.load()));
+    add("semantic_surface_churn_ratio", std::to_string(semantic_surface_churn_ratio_.load()));
     add("min_range_m", std::to_string(map_.raycastMinRange()));
     array.status.push_back(std::move(status)); diagnostics_publisher_->publish(std::move(array));
   }
@@ -542,6 +563,14 @@ class RogMapNode final : public rclcpp::Node {
       last_cleared_state_ = state;
       pending_visualization_.reset();
       visualization_generation_.fetch_add(1);
+      visualization_metric_reset_serial_.fetch_add(1);
+      semantic_occupied_count_.store(0);
+      semantic_clearance_count_.store(0);
+      semantic_full_surface_count_.store(0);
+      semantic_overlap_count_.store(0);
+      semantic_overlap_ratio_.store(0.0);
+      semantic_occupied_churn_ratio_.store(0.0);
+      semantic_surface_churn_ratio_.store(0.0);
       should_clear = true;
     }
     if (!should_clear) return;
@@ -560,6 +589,10 @@ class RogMapNode final : public rclcpp::Node {
       local_bounds_visualization_publisher_->publish(
           makeBoundsMarker(odom_frame_, input, true));
     }
+    if (semantic_map_visualization_publisher_) {
+      semantic_map_visualization_publisher_->publish(
+          makeSemanticDeleteArray(odom_frame_, input.stamp_ns));
+    }
   }
 
   void requestVisualizationBuild() {
@@ -572,7 +605,9 @@ class RogMapNode final : public rclcpp::Node {
                               inflation_surface_visualization_publisher_->get_subscription_count() > 0;
     const bool need_bounds = local_bounds_visualization_publisher_ &&
                              local_bounds_visualization_publisher_->get_subscription_count() > 0;
-    if (!need_occupied && !need_inflated && !need_surface && !need_bounds) return;
+    const bool need_semantic = semantic_map_visualization_publisher_ &&
+                               semantic_map_visualization_publisher_->get_subscription_count() > 0;
+    if (!need_occupied && !need_inflated && !need_surface && !need_bounds && !need_semantic) return;
 
     VisualizationInput input;
     {
@@ -586,7 +621,8 @@ class RogMapNode final : public rclcpp::Node {
       input.need_inflated = need_inflated;
       input.need_surface = need_surface;
       input.need_bounds = need_bounds;
-      if (need_occupied || need_inflated || need_surface) {
+      input.need_semantic = need_semantic;
+      if (need_occupied || need_inflated || need_surface || need_semantic) {
         input.occupied_centers = map_.occupiedVoxelCenters();
       }
     }
@@ -604,6 +640,10 @@ class RogMapNode final : public rclcpp::Node {
   }
 
   void visualizationLoop() {
+    VisualizationVoxelSet previous_occupied;
+    VisualizationVoxelSet previous_surface;
+    std::uint64_t previous_reset_serial = visualization_metric_reset_serial_.load();
+    bool have_previous_snapshot = false;
     while (true) {
       VisualizationInput input;
       {
@@ -619,18 +659,36 @@ class RogMapNode final : public rclcpp::Node {
       const auto started = std::chrono::steady_clock::now();
       VisualizationFrame frame;
       frame.input = std::move(input);
-      if (frame.input.need_inflated || frame.input.need_surface) {
+      const auto reset_serial = visualization_metric_reset_serial_.load();
+      if (reset_serial != previous_reset_serial) {
+        previous_occupied.clear();
+        previous_surface.clear();
+        have_previous_snapshot = false;
+        previous_reset_serial = reset_serial;
+      }
+      if (frame.input.need_inflated || frame.input.need_surface || frame.input.need_semantic) {
         const auto inflated = deriveInflatedVoxelSet(
             frame.input.occupied_centers, frame.input.bounds, frame.input.resolution,
             frame.input.inflation_radius);
         frame.exact_inflated_count = inflated.size();
+        if (frame.input.need_semantic) {
+          frame.occupied_voxels = visualizationSetFromCenters(
+              frame.input.occupied_centers, frame.input.resolution);
+          frame.full_surface_voxels = extractInflationSurface(
+              inflated, frame.input.bounds, frame.input.resolution);
+          frame.semantic_markers = makeSemanticMarkerArray(
+              odom_frame_, frame.input.stamp_ns, frame.occupied_voxels,
+              frame.full_surface_voxels, frame.input.bounds, frame.input.resolution,
+              cube_scale_ratio_);
+        }
         if (frame.input.need_inflated) {
-          frame.inflated_centers = centersFromVisualizationSet(inflated, frame.input.resolution);
+          frame.inflated_centers = sortedCentersFromVisualizationSet(inflated, frame.input.resolution);
         }
         if (frame.input.need_surface) {
-          const auto surface = extractInflationSurface(
-              inflated, frame.input.bounds, frame.input.resolution);
-          frame.surface_centers = centersFromVisualizationSet(surface, frame.input.resolution);
+          const auto surface = frame.input.need_semantic
+              ? frame.full_surface_voxels
+              : extractInflationSurface(inflated, frame.input.bounds, frame.input.resolution);
+          frame.surface_centers = sortedCentersFromVisualizationSet(surface, frame.input.resolution);
         }
       }
       const auto build_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -643,7 +701,8 @@ class RogMapNode final : public rclcpp::Node {
       visualization_snapshot_epoch_.store(frame.input.epoch);
       visualization_snapshot_stamp_ns_.store(frame.input.stamp_ns);
       visualization_inflated_count_.store(frame.exact_inflated_count);
-      visualization_surface_count_.store(frame.surface_centers.size());
+      visualization_surface_count_.store(
+          frame.input.need_semantic ? frame.full_surface_voxels.size() : frame.surface_centers.size());
 
       {
         std::lock_guard lock(visualization_mutex_);
@@ -654,6 +713,36 @@ class RogMapNode final : public rclcpp::Node {
         visualization_last_state_.store(3);
         visualization_frames_skipped_.fetch_add(1);
         continue;
+      }
+      if (frame.input.need_semantic) {
+        const auto clearance = deriveClearanceSurface(
+            frame.full_surface_voxels, frame.occupied_voxels);
+        std::size_t overlap = 0;
+        for (const auto& key : frame.occupied_voxels) {
+          overlap += frame.full_surface_voxels.contains(key);
+        }
+        semantic_occupied_count_.store(frame.occupied_voxels.size());
+        semantic_clearance_count_.store(clearance.size());
+        semantic_full_surface_count_.store(frame.full_surface_voxels.size());
+        semantic_overlap_count_.store(overlap);
+        semantic_overlap_ratio_.store(
+            static_cast<double>(overlap) /
+            static_cast<double>(std::max<std::size_t>(frame.occupied_voxels.size(), 1U)));
+        if (have_previous_snapshot) {
+          semantic_occupied_churn_ratio_.store(
+              static_cast<double>(symmetricDifferenceSize(
+                  frame.occupied_voxels, previous_occupied)) /
+              static_cast<double>(std::max<std::size_t>(
+                  frame.occupied_voxels.size() + previous_occupied.size(), 1U)));
+          semantic_surface_churn_ratio_.store(
+              static_cast<double>(symmetricDifferenceSize(
+                  frame.full_surface_voxels, previous_surface)) /
+              static_cast<double>(std::max<std::size_t>(
+                  frame.full_surface_voxels.size() + previous_surface.size(), 1U)));
+        }
+        previous_occupied = frame.occupied_voxels;
+        previous_surface = frame.full_surface_voxels;
+        have_previous_snapshot = true;
       }
       bool published = false;
       if (occupied_visualization_publisher_ &&
@@ -680,6 +769,11 @@ class RogMapNode final : public rclcpp::Node {
             makeBoundsMarker(odom_frame_, frame.input, false));
         published = true;
       }
+      if (frame.input.need_semantic && semantic_map_visualization_publisher_ &&
+          semantic_map_visualization_publisher_->get_subscription_count() > 0) {
+        semantic_map_visualization_publisher_->publish(frame.semantic_markers);
+        published = true;
+      }
       if (published) visualization_frames_published_.fetch_add(1);
       visualization_last_state_.store(published ? 2 : 1);
     }
@@ -690,7 +784,9 @@ class RogMapNode final : public rclcpp::Node {
   bool visualization_enabled_{false};
   double visualization_publish_rate_hz_{2.0};
   std::string occupied_visualization_topic_, inflated_visualization_topic_;
-  std::string inflation_surface_visualization_topic_, local_bounds_visualization_topic_;
+  std::string inflation_surface_visualization_topic_, semantic_map_visualization_topic_;
+  std::string local_bounds_visualization_topic_;
+  double cube_scale_ratio_{0.90};
   std::int64_t unmatched_timeout_ms_, cache_capacity_, queue_depth_, stale_timeout_ms_;
   VoxelOccupancyMap map_;
   std::unique_ptr<PairCache> cache_;
@@ -703,6 +799,7 @@ class RogMapNode final : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupied_visualization_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inflated_visualization_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inflation_surface_visualization_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr semantic_map_visualization_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr local_bounds_visualization_publisher_;
   rclcpp::TimerBase::SharedPtr cache_timer_;
   rclcpp::TimerBase::SharedPtr visualization_timer_;
@@ -737,6 +834,12 @@ class RogMapNode final : public rclcpp::Node {
   std::atomic<std::int64_t> visualization_build_us_max_{0};
   std::atomic<std::size_t> visualization_inflated_count_{0};
   std::atomic<std::size_t> visualization_surface_count_{0};
+  std::atomic<std::uint64_t> visualization_metric_reset_serial_{0};
+  std::atomic<std::size_t> semantic_occupied_count_{0}, semantic_clearance_count_{0};
+  std::atomic<std::size_t> semantic_full_surface_count_{0}, semantic_overlap_count_{0};
+  std::atomic<double> semantic_overlap_ratio_{0.0};
+  std::atomic<double> semantic_occupied_churn_ratio_{0.0};
+  std::atomic<double> semantic_surface_churn_ratio_{0.0};
   std::atomic<int> visualization_last_state_{0};
 };
 

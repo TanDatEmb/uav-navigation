@@ -99,7 +99,7 @@ rog_map:
       occupancy: {hit_log_odds: 0.85, miss_log_odds: -0.40, occupied_threshold: 0.0, clamp_min: -2.0, clamp_max: 3.5}
       inflation: {radius_m: 0.50}
       lifecycle: {stale_timeout_ms: 500}
-      visualization: {enabled: false, publish_rate_hz: 2.0, occupied_topic: /rog_map/occupied_voxels, inflated_topic: /rog_map/inflated_voxels, inflation_surface_topic: /rog_map/inflation_surface, local_bounds_topic: /rog_map/local_bounds}
+      visualization: {enabled: false, publish_rate_hz: 2.0, occupied_topic: /rog_map/occupied_voxels, inflated_topic: /rog_map/inflated_voxels, inflation_surface_topic: /rog_map/inflation_surface, semantic_map_topic: /rog_map/semantic_map, cube_scale_ratio: 0.90, local_bounds_topic: /rog_map/local_bounds}
 simulation:
   ros__parameters:
     world: px4_lio_smoke

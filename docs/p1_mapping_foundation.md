@@ -10,7 +10,7 @@ artifacts.
 
 ## Locked contract
 
-At reviewed baseline `12264df520221cb5668215dda371d44349982cef`, LiDAR enters
+At reviewed baseline `91d1831fd0f0514ccb4353d4ab08da20fa38407b`, LiDAR enters
 `FastLioNode::onLidar` or `onLivoxCustom`, then bounded input queues feed
 `FastLioPipeline::pushLidar`. `MeasurementSynchronizer` canonicalizes the scan
 interval and rejects timestamp regressions. `ScanDeskewer::deskew` uses the
@@ -68,6 +68,17 @@ headless/production profiles and uses lazy, subscriber-gated, latest-only work
 on a separate worker; it does not change map insertion, pruning, or planner
 queries.
 
+The canonical semantic topic is `/rog_map/semantic_map`, a
+`visualization_msgs/msg/MarkerArray` with exactly three stable markers in
+`ns=rog_map/semantic`: id 0 is measured occupied `CUBE_LIST`, id 1 is the
+disjoint clearance surface (`full_surface - occupied`) `CUBE_LIST`, and id 2
+is the current local-bounds `LINE_LIST`. All markers use `lio_odom`, the last
+integrated stamp, identity orientation, zero lifetime, sorted `(x,y,z)` voxel
+keys, and a `0.90` cube scale ratio (`0.27 m` at `0.30 m` resolution). Legacy
+PointCloud2 topics remain available as disabled debug views with decay 0 and
+queue 1. Lifecycle/reset transitions explicitly delete all three canonical
+markers once per transition.
+
 The navigation observation contract uses `mapping.observation.min_range_m:
 0.50`; points below it produce neither FREE nor OCCUPIED updates. Finite hits
 within maximum range produce a FREE ray and OCCUPIED endpoint. Points beyond
@@ -92,7 +103,8 @@ python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
 
 P1 tests cover FREE/OCCUPIED/UNKNOWN, finite-hit versus truncated-ray versus
 minimum-range behavior, spherical inflation, six-connected surface
-extraction, sliding validity, exact integer timestamp pairing, bounded
+extraction, canonical clearance disjointness/subset rules, deterministic
+MarkerArray serialization and lifecycle deletion, sliding validity, exact integer timestamp pairing, bounded
 duplicate/capacity handling, and numeric identity/yaw/extrinsic transforms.
 Post-change AIST OFF is recorded at
 `.artifacts/runtime/dataset-20260810T072954-26445/REPORT.md`; AIST full with

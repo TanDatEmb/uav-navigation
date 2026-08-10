@@ -141,5 +141,15 @@ TEST(VoxelVisualizationTest, BoundaryVoxelIsSurfaceAndNoDuplicates) {
   EXPECT_TRUE(surface.contains({0, 0, 0}));
 }
 
+TEST(VoxelVisualizationTest, CanonicalClearanceSubtractsMeasuredOccupiedVoxels) {
+  const auto occupied = visualizationSetFromCenters({{0.5, 0.5, 0.5}}, 1.0);
+  const auto full_surface = visualizationSetFromCenters(
+      {{0.5, 0.5, 0.5}, {1.5, 0.5, 0.5}}, 1.0);
+  const auto clearance = deriveClearanceSurface(full_surface, occupied);
+  EXPECT_EQ(clearance.size(), 1U);
+  EXPECT_TRUE(clearance.contains({1, 0, 0}));
+  EXPECT_FALSE(clearance.contains({0, 0, 0}));
+}
+
 }  // namespace
 }  // namespace uav::nav::rog

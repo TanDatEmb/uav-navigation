@@ -525,6 +525,45 @@ def _mapping_visualization_summary(samples: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def _mapping_semantic_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize canonical semantic-layer membership and temporal churn."""
+    fields = {
+        "occupied_count": "semantic_occupied_count",
+        "clearance_count": "semantic_clearance_count",
+        "full_surface_count": "semantic_full_surface_count",
+        "overlap_count": "semantic_occupied_surface_overlap_count",
+        "overlap_ratio": "semantic_occupied_surface_overlap_ratio",
+        "occupied_churn_ratio": "semantic_occupied_churn_ratio",
+        "surface_churn_ratio": "semantic_surface_churn_ratio",
+    }
+    series: dict[str, list[float]] = {name: [] for name in fields}
+    for item in _series(samples, "mapping_diagnostics"):
+        values = item.get("payload", {}).get("values", {})
+        for name, key in fields.items():
+            value = _number(values.get(key), -1.0)
+            if value >= 0.0:
+                series[name].append(value)
+    return {
+        "sample_count": len(series["occupied_count"]),
+        "occupied_count_latest": series["occupied_count"][-1] if series["occupied_count"] else None,
+        "occupied_count_max": max(series["occupied_count"]) if series["occupied_count"] else None,
+        "clearance_count_latest": series["clearance_count"][-1] if series["clearance_count"] else None,
+        "clearance_count_max": max(series["clearance_count"]) if series["clearance_count"] else None,
+        "full_surface_count_latest": series["full_surface_count"][-1] if series["full_surface_count"] else None,
+        "full_surface_count_max": max(series["full_surface_count"]) if series["full_surface_count"] else None,
+        "overlap_count_max": max(series["overlap_count"]) if series["overlap_count"] else None,
+        "overlap_ratio_max": max(series["overlap_ratio"]) if series["overlap_ratio"] else None,
+        "occupied_churn_ratio_p50": _p(series["occupied_churn_ratio"], 0.50),
+        "occupied_churn_ratio_p95": _p(series["occupied_churn_ratio"], 0.95),
+        "occupied_churn_ratio_max": max(series["occupied_churn_ratio"]) if series["occupied_churn_ratio"] else None,
+        "surface_churn_ratio_p50": _p(series["surface_churn_ratio"], 0.50),
+        "surface_churn_ratio_p95": _p(series["surface_churn_ratio"], 0.95),
+        "surface_churn_ratio_max": max(series["surface_churn_ratio"]) if series["surface_churn_ratio"] else None,
+        "legacy_decay_at_2hz_old_expected_retained_snapshots": 2,
+        "canonical_decay_zero_expected_retained_snapshots": 1,
+    }
+
+
 def _series(samples: list[dict[str, Any]], stream: str) -> list[dict[str, Any]]:
     return [item for item in samples if item.get("stream") == stream]
 
@@ -1031,6 +1070,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     mapping_stream = _rate_row(snapshot, "mapping_diagnostics")
     mapping_update = _mapping_update_summary(samples)
     mapping_visualization = _mapping_visualization_summary(samples)
+    mapping_semantic = _mapping_semantic_summary(samples)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
     if not tracking_observed:
         reasons.append("LIO did not finish in TRACKING")
@@ -1115,6 +1155,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "visualization_snapshot_epoch": mapping_values.get("visualization_snapshot_epoch", "NOT_AVAILABLE"),
             "visualization_snapshot_stamp_ns": mapping_values.get("visualization_snapshot_stamp_ns", "NOT_AVAILABLE"),
             "visualization_build_timing": mapping_visualization,
+            "semantic_visualization": mapping_semantic,
             "update_timing_us": mapping_values.get("map_update_us_latest", "NOT_AVAILABLE"),
             "update_timing_max_us": mapping_values.get("map_update_us_max", "NOT_AVAILABLE"),
             "update_timing_summary": mapping_update,
