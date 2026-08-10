@@ -29,7 +29,7 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: AxisColor
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Name: Local Map (RGB axis)
       Position Transformer: XYZ
       Queue Size: 10
@@ -47,19 +47,19 @@ Visualization Manager:
       Axis: Z
       Min Value: -3
       Max Value: 8
-    - Alpha: 1
+    - Alpha: 0.95
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
-      Color: 255; 60; 60
-      Decay Time: 0
+      Color: 255; 190; 40
+      Decay Time: 1
       Enabled: true
-      Name: ROG Occupied Voxels
+      Name: ROG / Measured Obstacles
       Position Transformer: XYZ
       Queue Size: 3
       Selectable: true
       Size (Pixels): 4
-      Size (m): 0.03
-      Style: Points
+      Size (m): 0.30
+      Style: Boxes
       Topic:
         Depth: 1
         Durability Policy: Volatile
@@ -67,19 +67,39 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/occupied_voxels
       Use Fixed Frame: true
-    - Alpha: 0.35
+    - Alpha: 0.30
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
-      Color: 255; 180; 40
-      Decay Time: 0
+      Color: 255; 60; 40
+      Decay Time: 1
       Enabled: true
-      Name: ROG Inflated Voxels
+      Name: ROG / Keep-out Surface
       Position Transformer: XYZ
       Queue Size: 3
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.03
-      Style: Points
+      Size (m): 0.30
+      Style: Boxes
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /rog_map/inflation_surface
+      Use Fixed Frame: true
+    - Alpha: 0.15
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: FlatColor
+      Color: 255; 60; 40
+      Decay Time: 1
+      Enabled: false
+      Name: ROG / Full Inflated Volume (Debug)
+      Position Transformer: XYZ
+      Queue Size: 3
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.30
+      Style: Boxes
       Topic:
         Depth: 1
         Durability Policy: Volatile
@@ -87,11 +107,22 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/inflated_voxels
       Use Fixed Frame: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: ROG / Local Bounds
+      Namespaces: {}
+      Queue Size: 10
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /rog_map/local_bounds
     - Alpha: 1
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: AxisColor
       Decay Time: 3
-      Enabled: true
+      Enabled: false
       Name: Registered Points (RGB axis)
       Position Transformer: XYZ
       Queue Size: 10

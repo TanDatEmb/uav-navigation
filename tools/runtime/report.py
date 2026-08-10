@@ -502,6 +502,29 @@ def _mapping_update_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _mapping_visualization_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize visualization-worker timing from sampled map diagnostics."""
+    build_us: list[float] = []
+    skipped: list[float] = []
+    published: list[float] = []
+    for item in _series(samples, "mapping_diagnostics"):
+        values = item.get("payload", {}).get("values", {})
+        latest = _number(values.get("visualization_build_us_latest"), -1.0)
+        if latest >= 0.0:
+            build_us.append(latest)
+        skipped.append(_number(values.get("visualization_frames_skipped"), 0.0))
+        published.append(_number(values.get("visualization_frames_published"), 0.0))
+    return {
+        "sample_count": len(build_us),
+        "build_us_p50": _p(build_us, 0.50),
+        "build_us_p95": _p(build_us, 0.95),
+        "build_us_p99": _p(build_us, 0.99),
+        "build_us_max": max(build_us) if build_us else None,
+        "frames_skipped_final": skipped[-1] if skipped else None,
+        "frames_published_final": published[-1] if published else None,
+    }
+
+
 def _series(samples: list[dict[str, Any]], stream: str) -> list[dict[str, Any]]:
     return [item for item in samples if item.get("stream") == stream]
 
@@ -1007,6 +1030,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         mapping_values = {}
     mapping_stream = _rate_row(snapshot, "mapping_diagnostics")
     mapping_update = _mapping_update_summary(samples)
+    mapping_visualization = _mapping_visualization_summary(samples)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
     if not tracking_observed:
         reasons.append("LIO did not finish in TRACKING")
@@ -1080,7 +1104,17 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "queue_bound": mapping_values.get("update_queue_bound", "NOT_AVAILABLE"),
             "allocated_voxels": mapping_values.get("allocated_voxel_count", "NOT_AVAILABLE"),
             "occupied_voxels": mapping_values.get("occupied_voxel_count", "NOT_AVAILABLE"),
-            "inflated_occupied_voxels": mapping_values.get("inflated_voxel_count", "NOT_AVAILABLE"),
+            "inflated_voxel_upper_bound": mapping_values.get("inflated_voxel_upper_bound", "NOT_AVAILABLE"),
+            "inflated_snapshot_voxels": mapping_values.get("inflated_snapshot_voxel_count", "NOT_AVAILABLE"),
+            "inflation_surface_voxels": mapping_values.get("inflation_surface_voxel_count", "NOT_AVAILABLE"),
+            "visualization_enabled": mapping_values.get("visualization_enabled", "NOT_AVAILABLE"),
+            "visualization_publish_rate_hz": mapping_values.get("visualization_publish_rate_hz", "NOT_AVAILABLE"),
+            "visualization_frames_built": mapping_values.get("visualization_frames_built", "NOT_AVAILABLE"),
+            "visualization_frames_published": mapping_values.get("visualization_frames_published", "NOT_AVAILABLE"),
+            "visualization_frames_skipped": mapping_values.get("visualization_frames_skipped", "NOT_AVAILABLE"),
+            "visualization_snapshot_epoch": mapping_values.get("visualization_snapshot_epoch", "NOT_AVAILABLE"),
+            "visualization_snapshot_stamp_ns": mapping_values.get("visualization_snapshot_stamp_ns", "NOT_AVAILABLE"),
+            "visualization_build_timing": mapping_visualization,
             "update_timing_us": mapping_values.get("map_update_us_latest", "NOT_AVAILABLE"),
             "update_timing_max_us": mapping_values.get("map_update_us_max", "NOT_AVAILABLE"),
             "update_timing_summary": mapping_update,

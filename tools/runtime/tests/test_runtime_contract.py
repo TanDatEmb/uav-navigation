@@ -57,6 +57,28 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("Color Transformer: AxisColor", config)
         self.assertIn("Class: rviz_default_plugins/Odometry", config)
 
+    def test_rviz_config_exposes_semantic_rog_displays(self) -> None:
+        config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
+        self.assertIn("Name: ROG / Measured Obstacles", config)
+        self.assertIn("Name: ROG / Keep-out Surface", config)
+        self.assertIn("Name: ROG / Full Inflated Volume (Debug)", config)
+        self.assertIn("Name: ROG / Local Bounds", config)
+        self.assertIn("Value: /rog_map/occupied_voxels", config)
+        self.assertIn("Value: /rog_map/inflation_surface", config)
+        self.assertIn("Value: /rog_map/inflated_voxels", config)
+        self.assertIn("Value: /rog_map/local_bounds", config)
+        self.assertEqual(config.count("Size (m): 0.30"), 3)
+        self.assertIn("Style: Boxes", config)
+        self.assertIn("Enabled: false\n      Name: ROG / Full Inflated Volume (Debug)", config)
+
+    def test_runtime_mapping_contract_uses_navigation_min_range_and_visualization_rate(self) -> None:
+        for filename in ("dataset.yaml", "sim.yaml"):
+            config = (ROOT / "config/runtime" / filename).read_text(encoding="utf-8")
+            self.assertIn("min_range_m: 0.50", config)
+            self.assertIn("publish_rate_hz: 2.0", config)
+            self.assertIn("inflation_surface_topic", config)
+            self.assertIn("local_bounds_topic", config)
+
     def test_stop_discovers_all_owned_runtime_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
