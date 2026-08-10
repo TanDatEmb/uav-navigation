@@ -305,6 +305,7 @@ class RuntimeMonitor:
         self.streams: dict[str, StreamStats] = {}
         self.latest: dict[str, dict[str, Any]] = {}
         self.diagnostics: dict[str, Any] = {"values": {}, "statuses": [], "state": "STARTUP"}
+        self.mapping_diagnostics: dict[str, Any] = {"values": {}, "statuses": [], "state": "WAITING"}
         self.blocked_topics: dict[str, str] = {}
         self.specs = self._specs()
         for spec in self.specs:
@@ -343,6 +344,7 @@ class RuntimeMonitor:
             TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
             TopicSpec("propagated_odometry", "/lio/odometry_propagated", Odometry, _odom_payload),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
+            TopicSpec("mapping_diagnostics", "/rog_map/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
         if self.workflow != "dataset":
             # Gazebo's OdometryPublisher is the independent simulator truth.
@@ -449,6 +451,8 @@ class RuntimeMonitor:
             self.latest[spec.name] = payload
             if spec.name == "diagnostics":
                 self._update_diagnostic_state(payload)
+            elif spec.name == "mapping_diagnostics":
+                self._update_mapping_diagnostic_state(payload)
             sample = {
                 "kind": "sample",
                 "stream": spec.name,
@@ -478,6 +482,20 @@ class RuntimeMonitor:
         self.diagnostics["last_failure_reason"] = str(values.get("last_failure_reason", payload.get("message", "")))
         self.diagnostics["values"] = values
 
+    def _update_mapping_diagnostic_state(self, payload: dict[str, Any]) -> None:
+        values: dict[str, Any] = {}
+        for status in payload.get("statuses", []):
+            candidate = status.get("values", {})
+            if isinstance(candidate, dict):
+                values.update(candidate)
+        state = values.get("mapping_state", values.get("state", "WAITING"))
+        self.mapping_diagnostics = {
+            "state": str(state),
+            "values": values,
+            "statuses": payload.get("statuses", []),
+            "last_stamp_ns": payload.get("stamp_ns", 0),
+        }
+
     def _tick(self) -> None:
         now_ns = time.time_ns()
         for stats in self.streams.values():
@@ -499,6 +517,7 @@ class RuntimeMonitor:
             "streams": {name: stats.as_dict() for name, stats in self.streams.items()},
             "latest": self.latest,
             "diagnostics": self.diagnostics,
+            "mapping_diagnostics": self.mapping_diagnostics,
             "blocked_topics": self.blocked_topics,
         }
 

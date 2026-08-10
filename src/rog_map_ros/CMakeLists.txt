@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.16)
+project(rog_map_ros)
+
+find_package(ament_cmake REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rog_map_core REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+
+add_executable(rog_map_node src/rog_map_node.cpp)
+target_compile_features(rog_map_node PRIVATE cxx_std_20)
+target_include_directories(rog_map_node PRIVATE include)
+ament_target_dependencies(rog_map_node diagnostic_msgs geometry_msgs nav_msgs rclcpp rog_map_core
+  sensor_msgs tf2 tf2_geometry_msgs tf2_ros)
+install(TARGETS rog_map_node DESTINATION lib/${PROJECT_NAME})
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_exact_pairing test/test_exact_pairing.cpp)
+  target_include_directories(test_exact_pairing PRIVATE include)
+  ament_add_gtest(test_frame_transform test/test_frame_transform.cpp)
+  target_include_directories(test_frame_transform PRIVATE include)
+  target_link_libraries(test_frame_transform Eigen3::Eigen)
+endif()
+
+ament_package()

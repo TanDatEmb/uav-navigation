@@ -199,13 +199,20 @@ def _write_runtime(session: Session, **values: Any) -> None:
     path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _ros_params(session: Session, source: Path) -> Path:
+def _ros_params(session: Session, source: Path, *, mapping_mode: str = "full") -> Path:
     """Keep runner metadata out of the ROS parameter file passed to launch."""
+    if mapping_mode not in {"off", "publisher", "full"}:
+        raise ValueError(f"unsupported mapping mode: {mapping_mode}")
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "fast_lio" not in value:
         raise ValueError(f"runtime ROS config is missing fast_lio: {source}")
     target = session.directory / "fast_lio_params.yaml"
-    target.write_text(yaml.safe_dump({"fast_lio": value["fast_lio"]}, sort_keys=False), encoding="utf-8")
+    ros_parameters = {"fast_lio": value["fast_lio"]}
+    output = ros_parameters["fast_lio"].setdefault("ros__parameters", {}).setdefault("output", {})
+    output["publish_deskewed_points"] = mapping_mode in {"publisher", "full"}
+    if "rog_map" in value:
+        ros_parameters["rog_map"] = value["rog_map"]
+    target.write_text(yaml.safe_dump(ros_parameters, sort_keys=False), encoding="utf-8")
     return target
 
 
@@ -263,7 +270,7 @@ def _dataset_context(dataset: str) -> tuple[dict[str, Any], dict[str, int]]:
     return context, data.bag_topic_counts(context)
 
 
-def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
+def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False, mapping_mode: str = "full") -> int:
     if not dataset:
         raise ValueError("DATASET is required")
     if rate <= 0:
@@ -277,6 +284,7 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
         workflow="dataset",
         dataset=dataset,
         rate=rate,
+        mapping_mode=mapping_mode,
         rviz=enable_rviz,
         replay_tail_grace_s=float(config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)),
         failures=[],
@@ -285,7 +293,7 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
     try:
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
-        ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
+        ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml", mapping_mode=mapping_mode)
         monitor_process = session.start(
             "monitor",
             [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml")],
@@ -297,6 +305,8 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
                 "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
                 f"config_file:={ros_config}",
                 "use_sim_time:=false", "enable_external_odometry:=false",
+                f"enable_rog_map:={'true' if mapping_mode == 'full' else 'false'}",
+                f"enable_rog_visualization:={'true' if enable_rviz and mapping_mode == 'full' else 'false'}",
                 "publish_sensor_frames:=true", "livox_mount_xyz:=0 0 0",
                 "livox_mount_rpy:=0 0 0",
             ], enable_rviz=enable_rviz),
@@ -379,7 +389,7 @@ def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     raise TimeoutError(f"Gazebo clock did not appear: {topic}")
 
 
-def run_sim(headless: bool) -> int:
+def run_sim(headless: bool, *, mapping_mode: str = "full") -> int:
     config = load_config("sim.yaml")
     offboard_config = load_config("offboard.yaml")
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
@@ -390,6 +400,7 @@ def run_sim(headless: bool) -> int:
         session,
         workflow="sim",
         headless=headless,
+        mapping_mode=mapping_mode,
         rviz=not headless,
         px4_dir=str(px4_dir),
         gz_command=gz_command,
@@ -404,7 +415,7 @@ def run_sim(headless: bool) -> int:
         print(session.directory)
         return 1
     try:
-        ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
+        ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml", mapping_mode=mapping_mode)
         monitor = session.start(
             "monitor",
             [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml")],
@@ -444,6 +455,8 @@ def run_sim(headless: bool) -> int:
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
             "enable_external_odometry:=true", "publish_sensor_frames:=true",
+            f"enable_rog_map:={'true' if mapping_mode == 'full' else 'false'}",
+            f"enable_rog_visualization:={'true' if not headless and mapping_mode == 'full' else 'false'}",
             "livox_mount_xyz:=0 0 0.28", "livox_mount_rpy:=0 0 0",
         ], enable_rviz=not headless), cwd=ROOT)
         if not headless:
@@ -611,8 +624,11 @@ def main() -> int:
     dataset.add_argument("--dataset", required=True)
     dataset.add_argument("--rate", type=float, required=True)
     dataset.add_argument("--rviz", action="store_true", help="launch RViz for this replay")
-    sub.add_parser("sim-check")
-    sub.add_parser("sim")
+    dataset.add_argument("--mapping-mode", choices=("off", "publisher", "full"), default="full")
+    sim_check = sub.add_parser("sim-check")
+    sim_check.add_argument("--mapping-mode", choices=("off", "publisher", "full"), default="full")
+    sim = sub.add_parser("sim")
+    sim.add_argument("--mapping-mode", choices=("off", "publisher", "full"), default="full")
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
@@ -620,11 +636,11 @@ def main() -> int:
     enable_rviz = args.command == "sim" or (args.command == "dataset-check" and args.rviz)
     os.environ.update(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV)
     if args.command == "dataset-check":
-        return run_dataset(args.dataset, args.rate, enable_rviz=args.rviz)
+        return run_dataset(args.dataset, args.rate, enable_rviz=args.rviz, mapping_mode=args.mapping_mode)
     if args.command == "sim-check":
-        return run_sim(True)
+        return run_sim(True, mapping_mode=args.mapping_mode)
     if args.command == "sim":
-        return run_sim(False)
+        return run_sim(False, mapping_mode=args.mapping_mode)
     if args.command == "status":
         return status()
     if args.command == "stop":

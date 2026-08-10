@@ -9,7 +9,9 @@ runner, one monitor, one report schema, and one owned process-group registry.
 make build
 make test
 make replay DATASET=aist-mid360-drive RATE=1.0
-make dataset-check DATASET=aist-mid360-drive RATE=1.0
+make dataset-check DATASET=aist-mid360-drive RATE=1.0 MAPPING_MODE=full
+make dataset-check DATASET=aist-mid360-drive RATE=1.0 MAPPING_MODE=off
+make dataset-check DATASET=aist-mid360-drive RATE=1.0 MAPPING_MODE=publisher
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
 PX4_DIR=$HOME/Dev/Autopilot make sim
 make status
@@ -23,7 +25,15 @@ workflow starts FAST-LIO with `config/runtime/dataset.yaml`, remaps the
 prepared input to `/lidar/points` and `/lidar/imu`, waits for TRACKING, drains
 the queues, and writes its report automatically. `make replay` is the same
 workflow entrypoint and always launches RViz; `dataset-check` remains the
-headless dataset contract.
+headless dataset contract. `MAPPING_MODE=off` disables the producer and map,
+`publisher` enables only `/lio/deskewed_points`, and `full` enables both the
+producer and the independent `rog_map` worker. The same option is available on
+`sim-check` and `sim`.
+
+RViz/replay mode enables ROG visualization automatically. The optional
+PointCloud2 displays use fixed frame `lio_odom` and show occupied and inflated
+voxels on `/rog_map/occupied_voxels` and `/rog_map/inflated_voxels`. Headless
+production workflows keep visualization disabled.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
@@ -41,9 +51,9 @@ stack with the Gazebo GUI and RViz, but no controller; stopping it produces
 | `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
 | `config/runtime/offboard.yaml` | headless simulation | one deterministic flight trajectory |
 
-The runner passes only the `fast_lio` ROS parameter tree to the node. Workflow
-metadata stays in the session, so ROS diagnostics do not expose config or Git
-SHA fields.
+The runner passes the `fast_lio` and (when present) `rog_map` ROS parameter
+trees to the launch file. Workflow metadata stays in the session, so ROS
+diagnostics do not expose config or Git SHA fields.
 
 ## Required runtime topics
 
@@ -52,6 +62,10 @@ SHA fields.
 | sensor | `/lidar/points` | `sensor_msgs/msg/PointCloud2` | required |
 | sensor | `/lidar/imu` | `sensor_msgs/msg/Imu` | required |
 | product | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | required |
+| product | `/lio/deskewed_points` | `sensor_msgs/msg/PointCloud2` | navigation observation; exact scan-end epoch |
+| health | `/rog_map/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | mapping state/accounting |
+| visualization | `/rog_map/occupied_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
+| visualization | `/rog_map/inflated_voxels` | `sensor_msgs/msg/PointCloud2` | optional; enabled only for RViz/debug |
 | product | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | required |
 | transform | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | required |
 | health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | single surface |

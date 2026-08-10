@@ -3,6 +3,10 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <chrono>
+#include <array>
+#include <cmath>
+#include <functional>
+#include <unordered_set>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include "fast_lio_ros/qos_profiles.hpp"
@@ -270,6 +274,22 @@ RosOutputPublisher::RosOutputPublisher(
                                                                     QosProfiles::mapOutput());
   diagnostics_ = node.create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/lio/diagnostics", QosProfiles::estimatorOutput());
+  if (parameters_.publish_deskewed_points) {
+    deskewed_points_ = node.create_publisher<sensor_msgs::msg::PointCloud2>(
+        "/lio/deskewed_points", QosProfiles::deskewedObservationOutput());
+    deskewed_publisher_thread_ = std::thread([this] { deskewedPublisherLoop(); });
+  }
+}
+
+RosOutputPublisher::~RosOutputPublisher() {
+  if (deskewed_publisher_thread_.joinable()) {
+    {
+      std::lock_guard lock(deskewed_mutex_);
+      deskewed_stopping_ = true;
+    }
+    deskewed_ready_.notify_all();
+    deskewed_publisher_thread_.join();
+  }
 }
 
 void RosOutputPublisher::setBaseLinkConverter(
@@ -302,6 +322,73 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
     ++z;
   }
   return cloud;
+}
+
+sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeDeskewedCloud(
+    const DeskewedObservation& observation) const {
+  std::vector<Eigen::Vector3f> points;
+  points.reserve(observation.scan.points.size());
+  std::unordered_set<std::array<std::int64_t, 3>,
+                     std::function<std::size_t(const std::array<std::int64_t, 3>&)>>
+      occupied_voxels(0, [](const std::array<std::int64_t, 3>& key) {
+        std::size_t hash = 1469598103934665603ULL;
+        for (const auto value : key) {
+          hash ^= static_cast<std::size_t>(value);
+          hash *= 1099511628211ULL;
+        }
+        return hash;
+      });
+  const double voxel = parameters_.deskewed_points_voxel_size_m;
+  if (voxel > 0.0) occupied_voxels.reserve(points.capacity());
+  for (const auto& point : observation.scan.points) {
+    const Eigen::Vector3d p = point.position_lidar_m.cast<double>();
+    const double range = p.norm();
+    if (!p.allFinite() || !std::isfinite(range) ||
+        range < parameters_.minimum_range_m || range > parameters_.maximum_range_m) {
+      continue;
+    }
+    if (voxel > 0.0) {
+      const std::array<std::int64_t, 3> key{
+          static_cast<std::int64_t>(std::floor(p.x() / voxel)),
+          static_cast<std::int64_t>(std::floor(p.y() / voxel)),
+          static_cast<std::int64_t>(std::floor(p.z() / voxel))};
+      if (!occupied_voxels.insert(key).second) continue;
+    }
+    points.push_back(point.position_lidar_m);
+  }
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = RosTimeConverter::toRos(observation.scan.end_time);
+  cloud.header.frame_id = parameters_.lidar_frame;
+  cloud.height = 1;
+  cloud.width = static_cast<std::uint32_t>(points.size());
+  sensor_msgs::PointCloud2Modifier modifier(cloud);
+  modifier.setPointCloud2FieldsByString(1, "xyz");
+  modifier.resize(points.size());
+  sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
+  sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
+  sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
+  for (const auto& point : points) {
+    *x = point.x(); *y = point.y(); *z = point.z();
+    ++x; ++y; ++z;
+  }
+  return cloud;
+}
+
+void RosOutputPublisher::deskewedPublisherLoop() {
+  while (true) {
+    std::shared_ptr<const DeskewedObservation> observation;
+    {
+      std::unique_lock lock(deskewed_mutex_);
+      deskewed_ready_.wait(lock, [this] {
+        return deskewed_stopping_ || pending_deskewed_observation_ != nullptr;
+      });
+      if (deskewed_stopping_ && !pending_deskewed_observation_) return;
+      observation = std::move(pending_deskewed_observation_);
+    }
+    if (observation && deskewed_points_) {
+      deskewed_points_->publish(makeDeskewedCloud(*observation));
+    }
+  }
 }
 
 void RosOutputPublisher::publish(const ProcessResult& result) {
@@ -339,6 +426,11 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
       if (odometry.ok()) {
         odometry_stamp = odometry.value().header.stamp;
         odometry_->publish(odometry.value());
+        if (deskewed_points_ && result.deskewed_observation) {
+          std::lock_guard lock(deskewed_mutex_);
+          pending_deskewed_observation_ = result.deskewed_observation;
+          deskewed_ready_.notify_one();
+        }
       }
     }
   }

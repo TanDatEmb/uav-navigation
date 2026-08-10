@@ -205,8 +205,7 @@ export PX4_PARAM_EKF2_MAG_TYPE=5
 export PX4_PARAM_EKF2_HGT_REF=3
 export PX4_PARAM_EKF2_EV_CTRL=15
 #
-# Optional:
-# export PX4_PARAM_SIM_GZ_EN_ODOM=0
+export PX4_PARAM_SIM_GZ_EN_ODOM=0
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi

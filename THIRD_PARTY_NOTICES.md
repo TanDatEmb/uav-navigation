@@ -20,3 +20,11 @@ The root `LICENSE` applies only to project-owned material to the extent it is
 legally separable from the GPL-licensed vendored/integrated work. Individual ROS
 package `<license>` declarations are not a substitute for the required release
 licensing analysis.
+## ROG-Map reference (not imported)
+
+The ROG-Map reference repository was inspected at
+`https://github.com/hku-mars/ROG-Map`, main SHA
+`df59c21304579a13fb3875100f8ce9523ba379a0`. Its `LICENSE` is GPL-3.0.
+No source from ROG-Map or SUPER is distributed in this repository. The P1
+`rog_map_core` implementation is original Apache-2.0 project code because
+importing GPL-3.0 source into this Apache-2.0 workspace was not compatible.

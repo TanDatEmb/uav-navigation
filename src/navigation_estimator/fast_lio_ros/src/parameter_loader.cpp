@@ -251,6 +251,12 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.publish_registered_points =
       node.declare_parameter("output.publish_registered_points", true);
   result.publish_local_map = node.declare_parameter("output.publish_local_map", true);
+  result.publish_deskewed_points =
+      node.declare_parameter("output.publish_deskewed_points", false);
+  result.deskewed_points_voxel_size_m = node.declare_parameter(
+      "output.deskewed_points_voxel_size_m", 0.0);
+  result.deskewed_points_queue_depth = node.declare_parameter<std::int64_t>(
+      "output.deskewed_points_queue_depth", 1);
   result.imu_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
   result.lidar_queue_capacity =
@@ -516,6 +522,12 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.maximum_processing_lag_ms <= 0 || p.overload_policy != "fail") {
     throw std::invalid_argument(
         "runtime queues must be positive and overload_policy must be fail");
+  }
+  if (p.deskewed_points_queue_depth != 1 ||
+      !std::isfinite(p.deskewed_points_voxel_size_m) ||
+      p.deskewed_points_voxel_size_m < 0.0) {
+    throw std::invalid_argument(
+        "output deskewed observation queue must be depth 1 and voxel size non-negative");
   }
   if (p.input_qos_reliability != "best_effort" &&
       p.input_qos_reliability != "reliable") {

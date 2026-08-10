@@ -7,6 +7,7 @@ It does not contain estimator or PX4 business logic.
 
 - the canonical `uav_description` sensor-frame publisher;
 - the `fast_lio_ros` estimator node;
+- the independent `rog_map_ros` navigation occupancy-map node;
 - the optional PX4 external-odometry bridge;
 
 Interactive workflows use the project-owned RViz profile in `rviz/`. The

@@ -486,6 +486,22 @@ def _map_maintenance_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _mapping_update_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    values: list[float] = []
+    for item in _series(samples, "mapping_diagnostics"):
+        value = item.get("payload", {}).get("values", {}).get("map_update_us_latest")
+        number = _number(value, -1.0)
+        if number >= 0.0:
+            values.append(number)
+    return {
+        "sample_count": len(values),
+        "p50_us": _p(values, 0.50),
+        "p95_us": _p(values, 0.95),
+        "p99_us": _p(values, 0.99),
+        "maximum_us": max(values) if values else None,
+    }
+
+
 def _series(samples: list[dict[str, Any]], stream: str) -> list[dict[str, Any]]:
     return [item for item in samples if item.get("stream") == stream]
 
@@ -981,6 +997,12 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         if row["timestamp_regression_count"] or row["source_stale_event_count"] or row["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     diagnostics = _diag_values(snapshot)
+    mapping_snapshot = snapshot.get("mapping_diagnostics", {})
+    mapping_values = mapping_snapshot.get("values", {}) if isinstance(mapping_snapshot, dict) else {}
+    if not isinstance(mapping_values, dict):
+        mapping_values = {}
+    mapping_stream = _rate_row(snapshot, "mapping_diagnostics")
+    mapping_update = _mapping_update_summary(samples)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
     if not tracking_observed:
         reasons.append("LIO did not finish in TRACKING")
@@ -1017,6 +1039,43 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "scan_processing_p99_us": diagnostics.get("p99_scan_processing_us", "NOT_AVAILABLE"),
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
+        },
+        "mapping": {
+            "diagnostics_samples": mapping_stream["sample_count"],
+            "state": mapping_snapshot.get("state", "NOT_AVAILABLE") if isinstance(mapping_snapshot, dict) else "NOT_AVAILABLE",
+            "validity": mapping_values.get("mapping_state", "NOT_AVAILABLE"),
+            "continuity_epoch": mapping_values.get("continuity_epoch", "NOT_AVAILABLE"),
+            "cloud_received": mapping_values.get("cloud_received", "NOT_AVAILABLE"),
+            "corrected_odom_received": mapping_values.get("corrected_odom_received", "NOT_AVAILABLE"),
+            "paired_count": mapping_values.get("paired_observations", "NOT_AVAILABLE"),
+            "integrated_count": mapping_values.get("integrated_observations", "NOT_AVAILABLE"),
+            "expired_cloud": mapping_values.get("expired_cloud", "NOT_AVAILABLE"),
+            "expired_odom": mapping_values.get("expired_odom", "NOT_AVAILABLE"),
+            "duplicate_cloud": mapping_values.get("duplicate_cloud", "NOT_AVAILABLE"),
+            "duplicate_odom": mapping_values.get("duplicate_odom", "NOT_AVAILABLE"),
+            "timestamp_mismatch_count": mapping_values.get("timestamp_mismatch", "NOT_AVAILABLE"),
+            "out_of_order_count": mapping_values.get("out_of_order", "NOT_AVAILABLE"),
+            "rejected_count": mapping_values.get("rejected_invalid_state", "NOT_AVAILABLE"),
+            "dropped_count": mapping_values.get("dropped_after_pair", "NOT_AVAILABLE"),
+            "invalid_frame": mapping_values.get("invalid_frame", "NOT_AVAILABLE"),
+            "invalid_pose": mapping_values.get("invalid_pose", "NOT_AVAILABLE"),
+            "map_update_count": mapping_values.get("map_update_count", "NOT_AVAILABLE"),
+            "map_shift_count": mapping_values.get("map_shift_count", "NOT_AVAILABLE"),
+            "map_reset_count": mapping_values.get("map_reset_count", "NOT_AVAILABLE"),
+            "cache_depths": {
+                "cloud": mapping_values.get("unmatched_cloud_cache_depth", "NOT_AVAILABLE"),
+                "odom": mapping_values.get("unmatched_odom_cache_depth", "NOT_AVAILABLE"),
+                "paired_queue": mapping_values.get("update_queue_depth", "NOT_AVAILABLE"),
+            },
+            "queue_bound": mapping_values.get("update_queue_bound", "NOT_AVAILABLE"),
+            "allocated_voxels": mapping_values.get("allocated_voxel_count", "NOT_AVAILABLE"),
+            "occupied_voxels": mapping_values.get("occupied_voxel_count", "NOT_AVAILABLE"),
+            "inflated_occupied_voxels": mapping_values.get("inflated_voxel_count", "NOT_AVAILABLE"),
+            "update_timing_us": mapping_values.get("map_update_us_latest", "NOT_AVAILABLE"),
+            "update_timing_max_us": mapping_values.get("map_update_us_max", "NOT_AVAILABLE"),
+            "update_timing_summary": mapping_update,
+            "observation_age_us": mapping_values.get("observation_age_us_latest", "NOT_AVAILABLE"),
+            "observation_age_max_us": mapping_values.get("observation_age_us_max", "NOT_AVAILABLE"),
         },
         "accuracy": "NOT_AVAILABLE",
         "provenance": provenance(workspace),
@@ -1131,7 +1190,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
+    for section in ("lio", "mapping", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

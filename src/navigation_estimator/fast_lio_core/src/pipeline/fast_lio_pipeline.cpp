@@ -423,8 +423,15 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.deskew.point_time_max_ns = deskewed.value().point_time_max_ns;
   diagnostics_.deskew.interpolation_failure_count = deskewed.value().interpolation_failure_count;
 
+  // Transfer the already motion-compensated scan into the result.  The
+  // estimator and the asynchronous ROS output worker then share this
+  // immutable ownership; no second deskew or dense point copy is required.
+  auto deskewed_observation = std::make_shared<DeskewedObservation>();
+  deskewed_observation->scan = std::move(deskewed.value().scan);
+  result.deskewed_observation = deskewed_observation;
+
   const auto preprocessing_started = std::chrono::steady_clock::now();
-  auto preprocessed = preprocessor_.process(deskewed.value().scan);
+  auto preprocessed = preprocessor_.process(deskewed_observation->scan);
   diagnostics_.timing.preprocessing_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - preprocessing_started)

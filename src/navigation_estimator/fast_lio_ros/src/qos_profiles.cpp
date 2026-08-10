@@ -16,6 +16,10 @@ rclcpp::QoS QosProfiles::livoxImuInput() {
   return rclcpp::QoS{rclcpp::KeepLast{256}}.reliable().durability_volatile();
 }
 
+rclcpp::QoS QosProfiles::deskewedObservationOutput() {
+  return rclcpp::SensorDataQoS().keep_last(1);
+}
+
 rclcpp::QoS QosProfiles::estimatorOutput() { return rclcpp::QoS{rclcpp::KeepLast{10}}.reliable(); }
 
 rclcpp::QoS QosProfiles::mapOutput() {

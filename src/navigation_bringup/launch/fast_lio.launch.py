@@ -20,6 +20,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("enable_external_odometry", default_value="false"),
+            DeclareLaunchArgument("enable_rog_map", default_value="true"),
+            DeclareLaunchArgument("enable_rog_visualization", default_value="false"),
             DeclareLaunchArgument(
                 "publish_sensor_frames",
                 default_value="true",
@@ -66,6 +68,22 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(LaunchConfiguration("enable_external_odometry")),
                 parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+            ),
+            Node(
+                package="rog_map_ros",
+                executable="rog_map_node",
+                name="rog_map",
+                output="screen",
+                condition=IfCondition(LaunchConfiguration("enable_rog_map")),
+                parameters=[
+                    LaunchConfiguration("config_file"),
+                    {
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                        "mapping.visualization.enabled": LaunchConfiguration(
+                            "enable_rog_visualization"
+                        ),
+                    },
+                ],
             ),
         ]
     )

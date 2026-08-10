@@ -73,6 +73,9 @@ struct RosParameters {
   std::int64_t maximum_registration_iterations{};
   bool publish_registered_points{};
   bool publish_local_map{};
+  bool publish_deskewed_points{false};
+  double deskewed_points_voxel_size_m{0.0};
+  std::int64_t deskewed_points_queue_depth{1};
   std::int64_t imu_queue_capacity{};
   std::int64_t lidar_queue_capacity{};
   std::int64_t maximum_processing_lag_ms{};

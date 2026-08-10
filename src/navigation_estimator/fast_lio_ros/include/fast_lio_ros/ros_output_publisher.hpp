@@ -1,7 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <optional>
+#include <thread>
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -23,6 +27,7 @@ class RosOutputPublisher {
   RosOutputPublisher(rclcpp::Node& node, RosParameters parameters,
                      std::shared_ptr<LioPublicFrameGeneration>
                          public_frame_generation);
+  ~RosOutputPublisher();
   void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
   [[nodiscard]] std::shared_ptr<CovarianceProjectionRuntime>
   covarianceProjectionRuntime() const noexcept {
@@ -43,6 +48,9 @@ class RosOutputPublisher {
  private:
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(
       const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const;
+  [[nodiscard]] sensor_msgs::msg::PointCloud2 makeDeskewedCloud(
+      const DeskewedObservation& observation) const;
+  void deskewedPublisherLoop();
   void publishDiagnostics(const ProcessResult& result, const builtin_interfaces::msg::Time& stamp);
 
   RosParameters parameters_;
@@ -55,6 +63,12 @@ class RosOutputPublisher {
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewed_points_;
+  std::mutex deskewed_mutex_;
+  std::condition_variable deskewed_ready_;
+  std::shared_ptr<const DeskewedObservation> pending_deskewed_observation_;
+  bool deskewed_stopping_{false};
+  std::thread deskewed_publisher_thread_;
 };
 
 }  // namespace uav::nav::lio

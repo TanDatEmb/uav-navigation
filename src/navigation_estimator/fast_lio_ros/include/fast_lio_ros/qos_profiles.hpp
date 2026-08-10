@@ -10,6 +10,7 @@ class QosProfiles {
   [[nodiscard]] static rclcpp::QoS reliableSensorInput();
   [[nodiscard]] static rclcpp::QoS livoxLidarInput();
   [[nodiscard]] static rclcpp::QoS livoxImuInput();
+  [[nodiscard]] static rclcpp::QoS deskewedObservationOutput();
   [[nodiscard]] static rclcpp::QoS estimatorOutput();
   [[nodiscard]] static rclcpp::QoS mapOutput();
 };
