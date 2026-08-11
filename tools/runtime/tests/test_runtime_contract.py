@@ -257,6 +257,17 @@ class RuntimeContractTest(unittest.TestCase):
         runtime = {"replay_finished_wall_ns": 1_000_000_000, "replay_tail_grace_s": 0.1}
         self.assertEqual(report._active_stale_count(row, runtime), 1)
 
+    def test_runtime_shutdown_tail_stale_events_are_ignored(self) -> None:
+        row = {
+            "stale_event_count": 3,
+            "stale_event_times_ns": [700_000_000, 950_000_000, 1_010_000_000],
+        }
+        runtime = {
+            "observation_finished_wall_ns": 1_000_000_000,
+            "observation_tail_grace_s": 0.1,
+        }
+        self.assertEqual(report._active_stale_count(row, runtime), 1)
+
     def test_startup_stale_event_before_tracking_is_not_runtime_violation(self) -> None:
         row = {"stale_event_count": 2, "stale_event_times_ns": [100, 300]}
         samples = [

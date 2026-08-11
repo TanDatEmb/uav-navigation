@@ -36,6 +36,11 @@ def test_x500_mid360_mount_contract():
 def test_px4_lio_smoke_world_and_bridge_contract():
     world = element_tree.parse(ROOT / "worlds/px4_lio_smoke.sdf")
     assert world.find(".//world").attrib["name"] == "px4_lio_smoke"
+    physics = world.find(".//physics")
+    assert physics is not None
+    assert physics.findtext("max_step_size") == "0.004"
+    assert physics.findtext("real_time_factor") == "0.8"
+    assert physics.findtext("real_time_update_rate") == "200"
     bridge = (ROOT / "bridge/px4_mid360_bridge.yaml").read_text()
     assert "/world/px4_lio_smoke/clock" in bridge
     assert "/sim/mid360/scan/points" in bridge

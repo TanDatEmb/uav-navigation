@@ -247,6 +247,10 @@ def _wait_process(process: subprocess.Popen[Any], timeout_s: float, description:
 
 
 def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
+    # Bound the measured interval before processes are stopped.  A monitor
+    # timer can otherwise report a final stale event after its publishers have
+    # intentionally begun shutting down.
+    _write_runtime(session, observation_finished_wall_ns=time.time_ns())
     cleanup_failures = session.stop()
     if cleanup_failures:
         failures = _load_runtime_failures(session)
