@@ -685,7 +685,10 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.timing.map_bookkeeping_us =
       map_timing_after.bookkeeping_us - map_timing_before.bookkeeping_us;
   ++corrected_scan_count_;
-  diagnostics_.reason = "LIDAR_CORRECTION_CONVERGED";
+  diagnostics_.reason =
+      correction.converged
+          ? "LIDAR_CORRECTION_CONVERGED"
+          : "LIDAR_CORRECTION_ACCEPTED_AT_ITERATION_LIMIT";
   diagnostics_.timing.total_processing_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - total_started)

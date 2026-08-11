@@ -21,7 +21,7 @@ struct PropagatedOdometryWorkerConfig {
   ImuStatePropagatorConfig propagator{};
   std::size_t imu_ingress_capacity{4096U};
   // The default leaves 250 ms of one-second IMU history for re-anchoring.
-  std::int64_t maximum_correction_age_ns{750'000'000};
+  std::int64_t maximum_correction_age_ns{250'000'000};
   double publish_rate_hz{50.0};
 };
 

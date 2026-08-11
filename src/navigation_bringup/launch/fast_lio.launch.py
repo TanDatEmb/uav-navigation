@@ -31,9 +31,13 @@ def generate_launch_description():
             DeclareLaunchArgument("livox_mount_xyz"),
             DeclareLaunchArgument("livox_mount_rpy"),
             DeclareLaunchArgument(
-                "livox_lidar_to_imu_xyz", default_value="0.011 0.02329 -0.04412"
+                "livox_lidar_to_imu_xyz",
+                description="Required lidar-frame to IMU-frame translation.",
             ),
-            DeclareLaunchArgument("livox_lidar_to_imu_rpy", default_value="0 0 0"),
+            DeclareLaunchArgument(
+                "livox_lidar_to_imu_rpy",
+                description="Required lidar-frame to IMU-frame rotation.",
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(frames_launch),
                 condition=IfCondition(LaunchConfiguration("publish_sensor_frames")),
@@ -65,7 +69,10 @@ def generate_launch_description():
                 name="px4_external_odometry_bridge",
                 output="screen",
                 condition=IfCondition(LaunchConfiguration("enable_external_odometry")),
-                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+                parameters=[
+                    LaunchConfiguration("config_file"),
+                    {"use_sim_time": LaunchConfiguration("use_sim_time")},
+                ],
             ),
         ]
     )

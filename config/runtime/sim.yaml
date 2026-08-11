@@ -27,16 +27,6 @@ fast_lio:
       source_frame: lio_odom
       source_frame_transform: same_frame
       components: { position: true, velocity: true, attitude: yaw_only }
-      topic: /initial_state_prior
-      topic_wait_timeout_ns: 2000000000
-      maximum_topic_prior_age_ns: 500000000
-      ground_fallback: zero
-      maximum_full_attitude_tilt_disagreement_rad: 0.1745329252
-      fixed:
-        position_m: [0.0, 0.0, 0.0]
-        orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
-        linear_velocity_m_s: [0.0, 0.0, 0.0]
-        angular_velocity_rad_s: [0.0, 0.0, 0.0]
     tracking:
       # Keep the simulator on the same strict recovery boundary as dataset and
       # production profiles; performance regressions must not be hidden by a
@@ -72,15 +62,33 @@ fast_lio:
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      # Measured simulator scan corrections can be 600 ms apart. Keep
-      # propagating through that normal jitter plus callback ordering margin,
-      # while retaining 250 ms before the one-second IMU history expires.
-      maximum_correction_age_ns: 750000000
+      # Match the dataset safety boundary. Host/Gazebo stalls are validation
+      # failures and must not be hidden by continued dead-reckoning output.
+      maximum_correction_age_ns: 250000000
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16
-      maximum_processing_lag_ms: 500
+      maximum_processing_lag_ms: 200
       overload_policy: fail
+px4_external_odometry_bridge:
+  ros__parameters:
+    external_odometry:
+      maximum_age_ns: 500000000
+      diagnostics_maximum_age_ns: 2000000000
+      position_jump_m: 0.75
+      orientation_jump_rad: 0.35
+      maximum_expected_speed_mps: 10.0
+      maximum_expected_angular_rate_rad_s: 6.0
+      minimum_continuity_dt_s: 0.0001
+      maximum_continuity_dt_s: 0.5
+px4_odometry_bridge:
+  ros__parameters:
+    simulation_clock: true
+    xrce_synchronized: false
+    reset:
+      maximum_metadata_age_ns: 100000000
+      maximum_event_association_gap_ns: 5000000
+      stable_samples_after_reset: 3
 simulation:
   ros__parameters:
     world: px4_lio_smoke

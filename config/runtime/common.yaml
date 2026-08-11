@@ -1,27 +1,11 @@
 # Runtime contract shared by dataset-check, sim-check and sim.
 runtime:
-  artifact_root: .artifacts/runtime
   monitor_queue_depth: 100
   thresholds:
     minimum_rate_fraction: 0.90
     maximum_synchronization_tolerance_ms: 20.0
     stale_after_s: 1.0
     replay_tail_grace_s: 0.5
-  frames:
-    odom: lio_odom
-    base: base_link
-    imu: livox_imu_frame
-    lidar: livox_frame
-  topics:
-    imu: /lidar/imu
-    lidar: /lidar/points
-    corrected_odometry: /lio/odometry_corrected
-    propagated_odometry: /lio/odometry_propagated
-    diagnostics: /lio/diagnostics
-    tf: /tf
-    tf_static: /tf_static
-    external_odometry: /fmu/in/vehicle_visual_odometry
-    ground_truth_odometry: /sim/ground_truth/odometry
   streams:
     imu: {expected_hz: 200.0, stale_after_s: 0.10}
     lidar: {expected_hz: 10.0, stale_after_s: 0.50}

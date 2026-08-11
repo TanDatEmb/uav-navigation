@@ -20,9 +20,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "livox_lidar_to_imu_xyz",
-                default_value="0.011 0.02329 -0.04412",
+                description="Required lidar-frame to IMU-frame translation.",
             ),
-            DeclareLaunchArgument("livox_lidar_to_imu_rpy", default_value="0 0 0"),
+            DeclareLaunchArgument(
+                "livox_lidar_to_imu_rpy",
+                description="Required lidar-frame to IMU-frame rotation.",
+            ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             Node(
                 package="robot_state_publisher",

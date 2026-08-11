@@ -159,7 +159,7 @@ export PX4_PARAM_UXRCE_DDS_SYNCT=0
 # This headless acceptance harness has no RC receiver or MAVLink joystick.
 # Disable stick input so an incidental manual-control sample cannot latch and
 # repeatedly trigger manual-control-loss failsafe during OFFBOARD flight.
-export PX4_PARAM_COM_RC_IN_MODE=4
+export PX4_PARAM_COM_RC_IN_MODE=2
 
 # Ground-truth model odometry must never compete with ROS LIO external vision.
 export PX4_PARAM_SIM_GZ_EN_ODOM=0
@@ -205,6 +205,7 @@ export PX4_PARAM_SIM_GZ_EN_ODOM=0
 ###############################################################################
 
 export PX4_PARAM_SIM_GZ_EN_GPS=0
+export PX4_PARAM_SIM_GZ_EN_BARO=1
 export PX4_PARAM_SIM_GPS_USED=0
 export PX4_PARAM_EKF2_GPS_CTRL=0
 export PX4_PARAM_EKF2_BARO_CTRL=0

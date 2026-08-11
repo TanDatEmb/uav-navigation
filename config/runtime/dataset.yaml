@@ -34,16 +34,6 @@ fast_lio:
       source_frame: lio_odom
       source_frame_transform: same_frame
       components: { position: true, velocity: true, attitude: yaw_only }
-      topic: /initial_state_prior
-      topic_wait_timeout_ns: 2000000000
-      maximum_topic_prior_age_ns: 500000000
-      ground_fallback: zero
-      maximum_full_attitude_tilt_disagreement_rad: 0.1745329252
-      fixed:
-        position_m: [0.0, 0.0, 0.0]
-        orientation_xyzw: [0.0, 0.0, 0.0, 1.0]
-        linear_velocity_m_s: [0.0, 0.0, 0.0]
-        angular_velocity_rad_s: [0.0, 0.0, 0.0]
     tracking:
       maximum_recoverable_imu_gap_ns: 50000000
       recovery_confirmation_updates: 3
@@ -74,13 +64,11 @@ fast_lio:
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      # Replay scan corrections can be separated by normal scheduling jitter.
-      # Permit 750 ms of IMU propagation, leaving 250 ms before the retained
-      # one-second history expires; a genuinely stale LIO correction still
-      # stops publication fail-closed.
-      maximum_correction_age_ns: 750000000
+      # At 10 Hz, 250 ms permits one delayed correction without allowing a
+      # sustained estimator stall to masquerade as healthy propagation.
+      maximum_correction_age_ns: 250000000
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16
-      maximum_processing_lag_ms: 500
+      maximum_processing_lag_ms: 200
       overload_policy: fail

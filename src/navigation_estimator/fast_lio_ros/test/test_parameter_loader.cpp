@@ -201,7 +201,7 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_FALSE(parameters.publish_registered_points);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
-  EXPECT_EQ(parameters.maximum_processing_lag_ms, 500);
+  EXPECT_EQ(parameters.maximum_processing_lag_ms, 200);
   EXPECT_EQ(parameters.overload_policy, "fail");
   EXPECT_EQ(parameters.input_qos_reliability, "reliable");
   EXPECT_TRUE(parameters.propagated_odometry_enabled);
@@ -210,7 +210,7 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_EQ(parameters.propagated_odometry_imu_history_duration_ns,
             1'000'000'000);
   EXPECT_EQ(parameters.propagated_odometry_maximum_correction_age_ns,
-            750'000'000);
+            250'000'000);
 }
 
 TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
@@ -369,6 +369,14 @@ TEST_F(ParameterLoaderTest, InvalidConfigIsRejectedWithoutDefaults) {
   parameters.scan_voxel_size_m = 0.2;
   parameters.rotation_imu_lidar_xyzw = {0.0, 0.0, 0.0, 2.0};
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
+TEST_F(ParameterLoaderTest, RejectsUnknownParameterOverride) {
+  rclcpp::NodeOptions options;
+  options.arguments(
+      {"--ros-args", "-p", "registration.stale_option:=1"});
+  rclcpp::Node node{"parameter_loader_unknown_override_test", options};
+  EXPECT_THROW(ParameterLoader::declareAndLoad(node), std::invalid_argument);
 }
 
 }  // namespace uav::nav::lio

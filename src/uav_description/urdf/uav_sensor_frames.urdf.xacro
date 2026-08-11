@@ -1,10 +1,9 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="uav_sensor_frames">
   <!--
-    The numeric extrinsics below are explicit PLACEHOLDERS, not calibration.
-    Replace them with measured values and record their provenance before using
-    real sensor data. The arrangement is the one source of truth for the
-    standalone base_link -> livox_frame -> livox_imu_frame tree.
+    Runtime launchers must supply both mount and LiDAR-to-IMU geometry. Required
+    sentinels prevent this xacro from becoming a second calibration source for
+    the base_link -> livox_frame -> livox_imu_frame tree.
   -->
   <!--
     Xacro requires every arg declaration to carry a default. These sentinels
@@ -13,8 +12,8 @@
   -->
   <xacro:arg name="livox_mount_xyz" default="__required_livox_mount_xyz__"/>
   <xacro:arg name="livox_mount_rpy" default="__required_livox_mount_rpy__"/>
-  <xacro:arg name="livox_lidar_to_imu_xyz" default="0.011 0.02329 -0.04412"/>
-  <xacro:arg name="livox_lidar_to_imu_rpy" default="0 0 0"/>
+  <xacro:arg name="livox_lidar_to_imu_xyz" default="__required_livox_lidar_to_imu_xyz__"/>
+  <xacro:arg name="livox_lidar_to_imu_rpy" default="__required_livox_lidar_to_imu_rpy__"/>
 
   <!-- base_link origin: UAV reference, intended near the centre of mass. -->
   <link name="base_link"/>

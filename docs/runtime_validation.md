@@ -36,14 +36,16 @@ stack with the Gazebo GUI and RViz, but no controller; stopping it produces
 
 | File | Owner | Purpose |
 |---|---|---|
-| `config/runtime/common.yaml` | monitor/report | canonical topics, frames, rates, thresholds, timeouts |
+| `config/runtime/common.yaml` | monitor/report | stream rates, freshness thresholds, and workflow timeouts |
 | `config/runtime/dataset.yaml` | dataset runner | real AIST timing, frames, extrinsic, input QoS |
 | `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
 | `config/runtime/offboard.yaml` | headless simulation | one deterministic flight trajectory |
 
-The runner passes only the `fast_lio` ROS parameter tree to the node. Workflow
-metadata stays in the session, so ROS diagnostics do not expose config or Git
-SHA fields.
+The runner passes only explicit ROS node parameter trees (`fast_lio` and, for
+simulation, the two PX4 bridge nodes). Workflow metadata stays in the session,
+so ROS diagnostics do not expose config or Git SHA fields. The static
+`livox_frame -> livox_imu_frame` transform is derived by inverting the same
+`extrinsic` value used by FAST-LIO; it is not maintained as a second calibration.
 
 ## Required runtime topics
 
@@ -96,11 +98,11 @@ subscribed by LIO or the PX4 external bridge. The PX4 launcher also sets
 `SIM_GZ_EN_ODOM=0` before boot, which disables PX4's built-in Gazebo path that
 would otherwise publish the same simulator truth as internal visual odometry.
 
-The propagated output accepts a corrected-LIO age of at most 750 ms. This
-covers the measured 600 ms scan-correction gap and callback ordering margin,
-while the one-second IMU history keeps 250 ms of recovery margin. Beyond that
-bound, publication stops fail-closed; this is not a ground-truth fallback and
-no simulator truth is ever substituted for a missing correction.
+The propagated output accepts a corrected-LIO age of at most 250 ms. At the
+10 Hz correction rate this permits one delayed correction, but a sustained
+estimator or host stall stops publication fail-closed. The retained one-second
+IMU history remains recovery-only; no simulator truth is ever substituted for
+a missing correction.
 
 ## Verdicts and artifacts
 
@@ -120,10 +122,10 @@ calculated against the separate simulator truth.
 ## RViz products
 
 `make sim` and `make replay DATASET=<name>` start RViz with the project config.
-It uses `lio_odom` as fixed frame and shows `/lidar/points`,
-`/lio/registered_points`, and `/lio/local_map` with height-based rainbow color.
-The LIO runtime configurations publish the registered scan and bounded local
-map; those visualization outputs do not alter map insertion or pruning.
+It uses `lio_odom` as fixed frame and shows the canonical TF tree plus
+`/lio/odometry_corrected`. Product profiles do not publish registered-point or
+local-map debug clouds; those serializers must stay in an explicit debug-only
+workflow if reintroduced.
 
 `make stop` signals only process groups recorded for the latest session. It
 does not use global name-based termination and does not affect unrelated ROS,
@@ -135,7 +137,7 @@ Gazebo, or PX4 processes.
 |---|---|---|
 | LiDAR/IMU ingestion and synchronization | dataset-check, sim-check | keep |
 | deskew and initialization | dataset-check, sim-check | keep |
-| LiDAR correction and registration map | LIO product pipeline | keep; bounded map topics published for RViz |
+| LiDAR correction and registration map | LIO product pipeline | keep; no product debug-cloud serialization |
 | corrected and propagated odometry | all runtime workflows | keep |
 | covariance and TF | all runtime workflows | keep |
 | PX4 ingress, time/frame conversion | sim-check, sim | keep |

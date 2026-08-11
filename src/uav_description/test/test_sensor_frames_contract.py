@@ -19,7 +19,10 @@ def test_sensor_xacro_has_canonical_chain_and_required_mount():
         "__required_livox_mount_rpy__"
     )
     assert args["livox_lidar_to_imu_xyz"].attrib["default"] == (
-        "0.011 0.02329 -0.04412"
+        "__required_livox_lidar_to_imu_xyz__"
+    )
+    assert args["livox_lidar_to_imu_rpy"].attrib["default"] == (
+        "__required_livox_lidar_to_imu_rpy__"
     )
 
     joints = {joint.attrib["name"]: joint for joint in tree.findall("joint")}

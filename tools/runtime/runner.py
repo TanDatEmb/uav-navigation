@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -37,6 +38,12 @@ RVIZ_ENV = {
     "DISABLE_RVIZ": "0",
     "NAVIGATION_NO_RVIZ": "0",
 }
+
+ROS_PARAMETER_NODES = (
+    "fast_lio",
+    "px4_external_odometry_bridge",
+    "px4_odometry_bridge",
+)
 
 GUI_ENV_REMOVE = {
     "GTK_MODULES",
@@ -200,13 +207,55 @@ def _write_runtime(session: Session, **values: Any) -> None:
 
 
 def _ros_params(session: Session, source: Path) -> Path:
-    """Keep runner metadata out of the ROS parameter file passed to launch."""
+    """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "fast_lio" not in value:
         raise ValueError(f"runtime ROS config is missing fast_lio: {source}")
+    node_parameters = {
+        name: value[name]
+        for name in ROS_PARAMETER_NODES
+        if name in value
+    }
     target = session.directory / "fast_lio_params.yaml"
-    target.write_text(yaml.safe_dump({"fast_lio": value["fast_lio"]}, sort_keys=False), encoding="utf-8")
+    target.write_text(yaml.safe_dump(node_parameters, sort_keys=False), encoding="utf-8")
     return target
+
+
+def _lidar_to_imu_launch_arguments(config: dict[str, Any]) -> tuple[str, str]:
+    """Invert the estimator's ^I T_L extrinsic for the static ^L T_I TF."""
+    extrinsic = config["fast_lio"]["ros__parameters"]["extrinsic"]
+    translation = tuple(float(value) for value in extrinsic["translation_imu_lidar"])
+    quaternion = tuple(float(value) for value in extrinsic["rotation_imu_lidar_xyzw"])
+    if len(translation) != 3 or len(quaternion) != 4:
+        raise ValueError("estimator extrinsic must contain xyz translation and xyzw rotation")
+    if not all(math.isfinite(value) for value in (*translation, *quaternion)):
+        raise ValueError("estimator extrinsic must be finite")
+    x, y, z, w = quaternion
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if not math.isfinite(norm) or abs(norm - 1.0) > 1e-6:
+        raise ValueError("estimator extrinsic quaternion is invalid")
+    x, y, z, w = (value / norm for value in quaternion)
+
+    # R_LI = R_IL^T and t_LI = -R_IL^T t_IL.
+    rotation_lidar_imu = (
+        (1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)),
+        (2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w)),
+        (2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y)),
+    )
+    translation_lidar_imu = tuple(
+        -sum(rotation_lidar_imu[row][column] * translation[column] for column in range(3))
+        for row in range(3)
+    )
+    pitch = math.asin(max(-1.0, min(1.0, -rotation_lidar_imu[2][0])))
+    if abs(math.cos(pitch)) > 1e-9:
+        roll = math.atan2(rotation_lidar_imu[2][1], rotation_lidar_imu[2][2])
+        yaw = math.atan2(rotation_lidar_imu[1][0], rotation_lidar_imu[0][0])
+    else:
+        roll = math.atan2(-rotation_lidar_imu[1][2], rotation_lidar_imu[1][1])
+        yaw = 0.0
+    xyz = " ".join(format(value, ".17g") for value in translation_lidar_imu)
+    rpy = " ".join(format(value, ".17g") for value in (roll, pitch, yaw))
+    return xyz, rpy
 
 
 def _monitor_snapshot(session: Session) -> dict[str, Any]:
@@ -290,6 +339,7 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
+        lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
             "monitor",
             [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml")],
@@ -303,6 +353,8 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
                 "use_sim_time:=false", "enable_external_odometry:=false",
                 "publish_sensor_frames:=true", "livox_mount_xyz:=0 0 0",
                 "livox_mount_rpy:=0 0 0",
+                f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
+                f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
             ], enable_rviz=enable_rviz),
             cwd=ROOT,
         )
@@ -409,6 +461,7 @@ def run_sim(headless: bool) -> int:
         return 1
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
+        lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
             "monitor",
             [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml")],
@@ -442,13 +495,15 @@ def run_sim(headless: bool) -> int:
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("px4_ingress", _ros_shell([
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
-            "-p", "use_sim_time:=true", "-p", "simulation_clock:=true",
+            "--params-file", str(ros_config), "-p", "use_sim_time:=true",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
             "enable_external_odometry:=true", "publish_sensor_frames:=true",
             "livox_mount_xyz:=0 0 0.28", "livox_mount_rpy:=0 0 0",
+            f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
+            f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
         ], enable_rviz=not headless), cwd=ROOT)
         if not headless:
             _start_rviz(session, use_sim_time=True)

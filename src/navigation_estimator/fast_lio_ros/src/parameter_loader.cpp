@@ -251,7 +251,7 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.lidar_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.lidar_queue_capacity", 8);
   result.maximum_processing_lag_ms = node.declare_parameter<std::int64_t>(
-      "runtime.maximum_processing_lag_ms", 500);
+      "runtime.maximum_processing_lag_ms", 200);
   result.overload_policy =
       node.declare_parameter("runtime.overload_policy", "fail");
   result.input_qos_reliability =
@@ -267,7 +267,16 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "propagated_odometry.imu_history_duration_ns", 1'000'000'000);
   result.propagated_odometry_maximum_correction_age_ns =
       node.declare_parameter<std::int64_t>(
-          "propagated_odometry.maximum_correction_age_ns", 750'000'000);
+          "propagated_odometry.maximum_correction_age_ns", 250'000'000);
+  const auto& overrides =
+      node.get_node_parameters_interface()->get_parameter_overrides();
+  for (const auto& [name, unused_value] : overrides) {
+    static_cast<void>(unused_value);
+    if (name != "use_sim_time" && !node.has_parameter(name)) {
+      throw std::invalid_argument("unknown estimator parameter override: " +
+                                  name);
+    }
+  }
   validate(result);
   return result;
 }

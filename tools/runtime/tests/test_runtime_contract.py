@@ -45,16 +45,26 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("use_sim_time:=true", command)
         self.assertNotIn("/livox/lidar:=/lidar/points", command)
 
-    def test_rviz_config_shows_lio_map_and_odometry(self) -> None:
+    def test_static_sensor_tf_is_derived_from_each_estimator_extrinsic(self) -> None:
+        expected = {
+            "dataset.yaml": (0.019391, 0.000278, -0.080926),
+            "sim.yaml": (0.011, 0.02329, -0.04412),
+        }
+        for config_name, expected_xyz in expected.items():
+            xyz, rpy = runner._lidar_to_imu_launch_arguments(
+                runner.load_config(config_name)
+            )
+            for actual, reference in zip(map(float, xyz.split()), expected_xyz):
+                self.assertAlmostEqual(actual, reference, places=12)
+            for value in map(float, rpy.split()):
+                self.assertAlmostEqual(value, 0.0, places=12)
+
+    def test_product_rviz_config_shows_only_published_odometry(self) -> None:
         config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("Fixed Frame: lio_odom", config)
-        for topic in (
-            "/lio/registered_points",
-            "/lio/local_map",
-            "/lio/odometry_corrected",
-        ):
-            self.assertIn(f"Value: {topic}", config)
-        self.assertIn("Color Transformer: AxisColor", config)
+        self.assertIn("Value: /lio/odometry_corrected", config)
+        self.assertNotIn("/lio/registered_points", config)
+        self.assertNotIn("/lio/local_map", config)
         self.assertIn("Class: rviz_default_plugins/Odometry", config)
 
     def test_stop_discovers_all_owned_runtime_sessions(self) -> None:
@@ -81,12 +91,24 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertGreater(local_map["absolute_map_point_guard"], 0)
         propagated = config["propagated_odometry"]
         self.assertEqual(propagated["imu_history_duration_ns"], 1_000_000_000)
-        self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)
+        self.assertEqual(propagated["maximum_correction_age_ns"], 250_000_000)
+
+    def test_simulation_bridge_gates_are_explicit_profile_parameters(self) -> None:
+        config = runner.load_config("sim.yaml")
+        external = config["px4_external_odometry_bridge"]["ros__parameters"]
+        self.assertEqual(external["external_odometry"]["maximum_age_ns"], 500_000_000)
+        ingress = config["px4_odometry_bridge"]["ros__parameters"]
+        self.assertTrue(ingress["simulation_clock"])
+        self.assertEqual(ingress["reset"]["stable_samples_after_reset"], 3)
+        launcher = (ROOT / "tools/simulation/run_px4_mid360.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("export PX4_PARAM_SIM_GZ_EN_BARO=1", launcher)
 
     def test_replay_and_simulation_preserve_propagation_recovery_headroom(self) -> None:
         for config_name in ("sim.yaml", "dataset.yaml"):
             propagated = runner.load_config(config_name)["fast_lio"]["ros__parameters"]["propagated_odometry"]
-            self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)
+            self.assertEqual(propagated["maximum_correction_age_ns"], 250_000_000)
             self.assertGreater(
                 propagated["imu_history_duration_ns"] - propagated["maximum_correction_age_ns"],
                 0,
