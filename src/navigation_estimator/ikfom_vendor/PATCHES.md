@@ -21,7 +21,7 @@ the measurement update, restores the propagated state and covariance, and is
 reported as a numerical failure; it never silently falls back to a dense
 inverse.
 
-Project-owned differential tests compare the compact path with the original
+Project-owned differential tests compare the active-subspace path with the original
 dense expression across measurement dimensions below, equal to, and above 23,
 multiple fixed seeds, multi-scale noise, near-rank-deficient Jacobians, and
 wide-spectrum covariance. They compare gain action, `K H`, tangent correction,

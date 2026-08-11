@@ -99,8 +99,11 @@ int run(const std::filesystem::path& bag_path,
                  "residual_rms,iterations,measurement_callback_count,"
                  "final_increment_norm,map_points,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
-                 "ikfom_update_us,measurement_model_us,ikfom_solver_only_us,"
+                 "ikfom_update_us,measurement_model_us,nearest_search_us,"
+                 "plane_and_gate_us,jacobian_build_us,ikfom_solver_only_us,"
                  "map_insert_crop_us,map_maintenance_us,"
+                 "map_prepare_us,map_sort_us,map_add_points_us,map_crop_us,"
+                 "map_bookkeeping_us,"
                  "total_processing_us,map_size_before_insert,map_candidate_count,"
                  "map_inserted_count,map_size_after_insert,crop_performed,"
                  "crop_removed_count,crop_triggered_by_motion,"
@@ -192,9 +195,17 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.timing.residual_build_us << ','
                   << diagnostic.timing.ikfom_update_us << ','
                   << diagnostic.timing.measurement_model_us << ','
+                  << diagnostic.timing.nearest_search_us << ','
+                  << diagnostic.timing.plane_and_gate_us << ','
+                  << diagnostic.timing.jacobian_build_us << ','
                   << diagnostic.timing.ikfom_solver_only_us << ','
                   << diagnostic.timing.map_insert_crop_us << ','
                   << diagnostic.timing.map_maintenance_us << ','
+                  << diagnostic.timing.map_prepare_us << ','
+                  << diagnostic.timing.map_sort_us << ','
+                  << diagnostic.timing.map_add_points_us << ','
+                  << diagnostic.timing.map_crop_us << ','
+                  << diagnostic.timing.map_bookkeeping_us << ','
                   << diagnostic.timing.total_processing_us << ','
                   << diagnostic.map.map_size_before_insert << ','
                   << diagnostic.map.map_candidate_count << ','

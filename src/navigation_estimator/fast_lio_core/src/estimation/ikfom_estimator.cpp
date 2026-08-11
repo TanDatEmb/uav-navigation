@@ -296,7 +296,11 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_points_ = points_lidar_m;
   active_map_ = &map;
   measurement_call_count_ = 0U;
+  active_nearest_search_query_count_ = 0U;
   active_residual_runtime_us_ = 0;
+  active_nearest_search_runtime_us_ = 0;
+  active_plane_and_gate_runtime_us_ = 0;
+  active_jacobian_build_runtime_us_ = 0;
   last_residual_diagnostics_ = {};
 
   struct ActiveGuard {
@@ -321,6 +325,10 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.solver_only_runtime_us = std::max<std::int64_t>(
       0, result.ikfom_total_runtime_us - result.measurement_model_runtime_us);
   result.measurement_callback_count = measurement_call_count_;
+  result.nearest_search_query_count = active_nearest_search_query_count_;
+  result.nearest_search_runtime_us = active_nearest_search_runtime_us_;
+  result.plane_and_gate_runtime_us = active_plane_and_gate_runtime_us_;
+  result.jacobian_build_runtime_us = active_jacobian_build_runtime_us_;
   if (!config_.estimate_extrinsic) {
     IkfomState fixed_state = filter_.get_x();
     fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
@@ -330,6 +338,8 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
   result.residual_diagnostics = last_residual_diagnostics_;
+  result.residual_diagnostics.query_count =
+      result.nearest_search_query_count;
   result.iteration_count =
       static_cast<std::size_t>(std::max(update.iteration_count, 0));
   result.final_increment_norm = update.final_increment_norm;
@@ -405,6 +415,14 @@ Eigen::VectorXd IkfomEstimator::buildMeasurement(
   const ResidualBuildView measurement_view =
       residual_builder_.buildInto(active_points_, view, *active_map_);
   last_residual_diagnostics_ = measurement_view.diagnostics;
+  active_nearest_search_query_count_ +=
+      measurement_view.diagnostics.query_count;
+  active_nearest_search_runtime_us_ +=
+      measurement_view.diagnostics.nearest_search_runtime_us;
+  active_plane_and_gate_runtime_us_ +=
+      measurement_view.diagnostics.plane_and_gate_runtime_us;
+  active_jacobian_build_runtime_us_ +=
+      measurement_view.diagnostics.jacobian_build_runtime_us;
   active_residual_runtime_us_ +=
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - residual_started)

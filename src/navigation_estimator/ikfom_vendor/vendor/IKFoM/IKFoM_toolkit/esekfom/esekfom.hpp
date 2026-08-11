@@ -59,23 +59,37 @@ using namespace Eigen;
 
 namespace detail {
 
-template <typename Scalar, int StateDof>
-bool solve_compact_normal_equations(
+template <typename Scalar, int StateDof, int ActiveDof>
+bool solve_active_normal_equations(
 	const Eigen::Matrix<Scalar, StateDof, StateDof>& covariance,
 	const Eigen::Matrix<Scalar, Eigen::Dynamic, StateDof>& measurement_jacobian,
 	const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& variance,
-	Eigen::Matrix<Scalar, StateDof, Eigen::Dynamic>& gain)
+	const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& innovation,
+	Eigen::Matrix<Scalar, StateDof, 1>& gain_innovation,
+	Eigen::Matrix<Scalar, StateDof, StateDof>& gain_times_jacobian)
 {
+	static_assert(ActiveDof > 0 && ActiveDof <= StateDof);
 	if (!covariance.allFinite() || !measurement_jacobian.allFinite() ||
-		!variance.allFinite() ||
+		!variance.allFinite() || !innovation.allFinite() ||
+		measurement_jacobian.rows() != variance.rows() ||
+		innovation.rows() != variance.rows() ||
 		(variance.array() <= Scalar(0)).any())
 	{
 		return false;
 	}
+	if constexpr (ActiveDof < StateDof)
+	{
+		if (!measurement_jacobian.rightCols(StateDof - ActiveDof).isZero(
+				std::numeric_limits<Scalar>::epsilon()))
+		{
+			return false;
+		}
+	}
 
-	Eigen::LLT<Eigen::Matrix<Scalar, StateDof, StateDof>> covariance_solver(
+	Eigen::LDLT<Eigen::Matrix<Scalar, StateDof, StateDof>> covariance_solver(
 		covariance);
-	if (covariance_solver.info() != Eigen::Success)
+	if (covariance_solver.info() != Eigen::Success ||
+		!covariance_solver.isPositive())
 	{
 		return false;
 	}
@@ -88,22 +102,34 @@ bool solve_compact_normal_equations(
 		return false;
 	}
 
-	const Eigen::Matrix<Scalar, Eigen::Dynamic, StateDof> weighted_jacobian =
-		(measurement_jacobian.array().colwise() / variance.array()).matrix();
-	const Eigen::Matrix<Scalar, StateDof, StateDof> information =
-		measurement_jacobian.transpose() * weighted_jacobian +
-		covariance_inverse;
-	Eigen::LDLT<Eigen::Matrix<Scalar, StateDof, StateDof>> information_solver(
+	const Eigen::Matrix<Scalar, Eigen::Dynamic, ActiveDof> weighted_active =
+		(measurement_jacobian.template leftCols<ActiveDof>().array().colwise() /
+		 variance.array()).matrix();
+	const Eigen::Matrix<Scalar, ActiveDof, ActiveDof> weighted_normal =
+		measurement_jacobian.template leftCols<ActiveDof>().transpose() *
+		weighted_active;
+	const Eigen::Matrix<Scalar, ActiveDof, 1> weighted_rhs =
+		weighted_active.transpose() * innovation;
+	Eigen::Matrix<Scalar, StateDof, StateDof> information = covariance_inverse;
+	information.template topLeftCorner<ActiveDof, ActiveDof>() += weighted_normal;
+	information = (information + information.transpose()).eval() / Scalar(2);
+	Eigen::LLT<Eigen::Matrix<Scalar, StateDof, StateDof>> information_solver(
 		information);
-	if (information_solver.info() != Eigen::Success ||
-		!information_solver.isPositive() ||
-		(information_solver.vectorD().array() <=
-		 std::numeric_limits<Scalar>::epsilon()).any())
+	if (information_solver.info() != Eigen::Success)
 	{
 		return false;
 	}
-	gain = information_solver.solve(weighted_jacobian.transpose());
-	return information_solver.info() == Eigen::Success && gain.allFinite();
+	Eigen::Matrix<Scalar, StateDof, 1> embedded_rhs =
+		Eigen::Matrix<Scalar, StateDof, 1>::Zero();
+	embedded_rhs.template head<ActiveDof>() = weighted_rhs;
+	Eigen::Matrix<Scalar, StateDof, StateDof> embedded_normal =
+		Eigen::Matrix<Scalar, StateDof, StateDof>::Zero();
+	embedded_normal.template topLeftCorner<ActiveDof, ActiveDof>() =
+		weighted_normal;
+	gain_innovation = information_solver.solve(embedded_rhs);
+	gain_times_jacobian = information_solver.solve(embedded_normal);
+	return information_solver.info() == Eigen::Success &&
+		gain_innovation.allFinite() && gain_times_jacobian.allFinite();
 }
 
 }  // namespace detail
@@ -1480,9 +1506,13 @@ public:
 			}
 
 			Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> K_;
+			cov K_x;
+			Matrix<scalar_type, n, 1> gain_innovation;
 			if(n > dof_Measurement)
 			{
 				K_= P_ * h_x.transpose() * (h_x * P_ * h_x.transpose() + h_v * R * h_v.transpose()).inverse();
+				K_x = K_ * h_x;
+				gain_innovation = K_ * (z - h);
 			}
 			else
 			{
@@ -1510,9 +1540,8 @@ public:
 						variance = compact_diagonal_noise
 							? Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.col(0))
 							: Eigen::Matrix<scalar_type, Eigen::Dynamic, 1>(R.diagonal());
-					Eigen::Matrix<scalar_type, n, Eigen::Dynamic> compact_gain;
-					if (!detail::solve_compact_normal_equations<scalar_type, n>(
-							P_, h_x, variance, compact_gain))
+					if (!detail::solve_active_normal_equations<scalar_type, n, 12>(
+							P_, h_x, variance, z - h, gain_innovation, K_x))
 					{
 						x_ = x_propagated;
 						P_ = P_propagated;
@@ -1520,7 +1549,6 @@ public:
 						update_result.numerical_failure = true;
 						return update_result;
 					}
-					K_ = compact_gain;
 				}
 				else
 				{
@@ -1528,11 +1556,13 @@ public:
 						(h_v * R * h_v.transpose()).inverse();
 					K_ = (h_x.transpose() * R_in * h_x + P_.inverse()).inverse() *
 						h_x.transpose() * R_in;
+					K_x = K_ * h_x;
+					gain_innovation = K_ * (z - h);
 				}
 			}
 
-			cov K_x = K_ * h_x;
-			Matrix<scalar_type, n, 1> dx_ = K_ * (z - h) + (K_x - Matrix<scalar_type, n, n>::Identity()) * dx_new; 
+			Matrix<scalar_type, n, 1> dx_ = gain_innovation +
+				(K_x - Matrix<scalar_type, n, n>::Identity()) * dx_new;
 			state x_before = x_;
 			x_.boxplus(dx_);
 			update_result.iteration_count = i + 1;

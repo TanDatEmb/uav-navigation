@@ -8,7 +8,7 @@
 #include <iostream>
 #include <random>
 
-#include "reference/compact_ikfom_measurement_update.hpp"
+#include "reference/active_ikfom_measurement_update.hpp"
 #include "reference/dense_ikfom_measurement_update.hpp"
 
 namespace uav::nav::lio {
@@ -91,6 +91,7 @@ CaseInput makeCase(std::size_t measurement_dimension, std::uint32_t seed,
     input.covariance =
         orthogonal * eigenvalues.asDiagonal() * orthogonal.transpose();
   }
+  input.jacobian.rightCols(11).setZero();
 
   const Eigen::Matrix<double, 23, 23> information =
       input.jacobian.transpose() *
@@ -114,10 +115,10 @@ void expectEquivalent(const CaseInput& input, double absolute_tolerance,
   const auto dense = test_reference::denseMeasurementUpdate(
       input.covariance, input.jacobian, input.variance, input.innovation,
       input.dx_new, state, kConvergenceLimit);
-  test_reference::MeasurementUpdate compact;
-  ASSERT_TRUE(test_reference::compactMeasurementUpdate(
+  test_reference::MeasurementUpdate active;
+  ASSERT_TRUE(test_reference::activeMeasurementUpdate(
       input.covariance, input.jacobian, input.variance, input.innovation,
-      input.dx_new, state, kConvergenceLimit, compact))
+      input.dx_new, state, kConvergenceLimit, active))
       << "condition number: " << input.condition_number;
 
   const auto error_limit = [&](double reference_norm) {
@@ -125,15 +126,15 @@ void expectEquivalent(const CaseInput& input, double absolute_tolerance,
            relative_tolerance * std::max(reference_norm, 1.0);
   };
   const double gain_action_error =
-      (compact.gain * input.innovation - dense.gain * input.innovation)
+      (active.gain_innovation - dense.gain_innovation)
           .cwiseAbs()
           .maxCoeff();
   const double kh_error =
-      (compact.gain_times_jacobian - dense.gain_times_jacobian)
+      (active.gain_times_jacobian - dense.gain_times_jacobian)
           .cwiseAbs()
           .maxCoeff();
   const double increment_error =
-      (compact.increment - dense.increment).cwiseAbs().maxCoeff();
+      (active.increment - dense.increment).cwiseAbs().maxCoeff();
   maximum_errors.gain_action =
       std::max(maximum_errors.gain_action, gain_action_error);
   maximum_errors.gain_times_jacobian =
@@ -141,20 +142,20 @@ void expectEquivalent(const CaseInput& input, double absolute_tolerance,
   maximum_errors.increment =
       std::max(maximum_errors.increment, increment_error);
   EXPECT_LE(gain_action_error,
-            error_limit((dense.gain * input.innovation).norm()));
+            error_limit(dense.gain_innovation.norm()));
   EXPECT_LE(kh_error,
             error_limit(dense.gain_times_jacobian.norm()));
   EXPECT_LE(increment_error,
             error_limit(dense.increment.norm()));
   Eigen::Matrix<double, 23, 1> state_difference;
-  compact.corrected_state.boxminus(state_difference, dense.corrected_state);
+  active.corrected_state.boxminus(state_difference, dense.corrected_state);
   const double state_error = state_difference.cwiseAbs().maxCoeff();
   const double covariance_error =
-      (compact.corrected_covariance - dense.corrected_covariance)
+      (active.corrected_covariance - dense.corrected_covariance)
           .cwiseAbs()
           .maxCoeff();
   const double norm_error =
-      std::abs(compact.final_increment_norm - dense.final_increment_norm);
+      std::abs(active.final_increment_norm - dense.final_increment_norm);
   maximum_errors.manifold_state =
       std::max(maximum_errors.manifold_state, state_error);
   maximum_errors.covariance =
@@ -165,7 +166,7 @@ void expectEquivalent(const CaseInput& input, double absolute_tolerance,
             error_limit(dense.increment.norm()));
   EXPECT_LE(covariance_error,
             error_limit(dense.corrected_covariance.norm()));
-  EXPECT_EQ(compact.converged, dense.converged);
+  EXPECT_EQ(active.converged, dense.converged);
   EXPECT_LE(norm_error,
             error_limit(dense.final_increment_norm));
 }
@@ -184,11 +185,11 @@ void runMatrix(Conditioning conditioning, double absolute_tolerance,
   }
 }
 
-TEST(IkfomCompactEquivalence, DenseVsCompactWellConditioned) {
+TEST(IkfomActiveSubspaceEquivalence, DenseVsActiveWellConditioned) {
   runMatrix(Conditioning::kWellConditioned, 1e-9, 1e-9);
 }
 
-TEST(IkfomCompactEquivalence, DenseVsCompactLargeMeasurement) {
+TEST(IkfomActiveSubspaceEquivalence, DenseVsActiveLargeMeasurement) {
   for (std::uint32_t seed = 0; seed < 20; ++seed) {
     expectEquivalent(
         makeCase(200, 0xB00U + seed, Conditioning::kWellConditioned),
@@ -196,30 +197,51 @@ TEST(IkfomCompactEquivalence, DenseVsCompactLargeMeasurement) {
   }
 }
 
-TEST(IkfomCompactEquivalence, DenseVsCompactNearDegenerate) {
+TEST(IkfomActiveSubspaceEquivalence, DenseVsActiveNearDegenerate) {
   runMatrix(Conditioning::kNearDegenerate, 1e-8, 1e-7);
   runMatrix(Conditioning::kWideCovarianceSpectrum, 1e-8, 1e-7);
 }
 
-TEST(IkfomCompactEquivalence, DenseVsCompactMultipleNoiseScales) {
+TEST(IkfomActiveSubspaceEquivalence, DenseVsActiveMultipleNoiseScales) {
   runMatrix(Conditioning::kMultipleNoiseScales, 1e-8, 1e-7);
 }
 
-TEST(IkfomCompactEquivalence, CompactSolverFailureIsRejected) {
+TEST(IkfomActiveSubspaceEquivalence, ActiveSolverFailureIsRejected) {
   Eigen::Matrix<double, 23, 23> covariance =
       Eigen::Matrix<double, 23, 23>::Zero();
   Eigen::MatrixXd jacobian = Eigen::MatrixXd::Random(50, 23);
   Eigen::VectorXd variance = Eigen::VectorXd::Ones(50);
-  Eigen::Matrix<double, 23, Eigen::Dynamic> gain;
-  EXPECT_FALSE((esekfom::detail::solve_compact_normal_equations<double, 23>(
-      covariance, jacobian, variance, gain)));
+  jacobian.rightCols(11).setZero();
+  Eigen::VectorXd innovation = Eigen::VectorXd::Random(50);
+  Eigen::Matrix<double, 23, 1> gain_innovation;
+  Eigen::Matrix<double, 23, 23> gain_times_jacobian;
+  EXPECT_FALSE((esekfom::detail::solve_active_normal_equations<double, 23, 12>(
+      covariance, jacobian, variance, innovation, gain_innovation,
+      gain_times_jacobian)));
   covariance.setIdentity();
   variance[3] = 0.0;
-  EXPECT_FALSE((esekfom::detail::solve_compact_normal_equations<double, 23>(
-      covariance, jacobian, variance, gain)));
+  EXPECT_FALSE((esekfom::detail::solve_active_normal_equations<double, 23, 12>(
+      covariance, jacobian, variance, innovation, gain_innovation,
+      gain_times_jacobian)));
 }
 
-TEST(IkfomCompactEquivalence, ReportsMaximumDifferentialErrors) {
+TEST(IkfomActiveSubspaceEquivalence, InactiveJacobianColumnsAreRejected) {
+  const Eigen::Matrix<double, 23, 23> covariance =
+      Eigen::Matrix<double, 23, 23>::Identity();
+  Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(50, 23);
+  jacobian.leftCols(12).setRandom();
+  jacobian(0, 12) = 1.0;
+  const Eigen::VectorXd variance = Eigen::VectorXd::Ones(50);
+  const Eigen::VectorXd innovation = Eigen::VectorXd::Random(50);
+  Eigen::Matrix<double, 23, 1> gain_innovation;
+  Eigen::Matrix<double, 23, 23> gain_times_jacobian;
+
+  EXPECT_FALSE((esekfom::detail::solve_active_normal_equations<double, 23, 12>(
+      covariance, jacobian, variance, innovation, gain_innovation,
+      gain_times_jacobian)));
+}
+
+TEST(IkfomActiveSubspaceEquivalence, ReportsMaximumDifferentialErrors) {
   std::cout << "maximum_gain_action_error="
             << maximum_errors.gain_action
             << " maximum_KH_error="

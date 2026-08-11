@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -101,14 +102,23 @@ class IkdTreeRegistrationMap::Impl {
   }
 
   [[nodiscard]] std::size_t validPointCount() const noexcept {
+    const auto started = std::chrono::steady_clock::now();
     const int signed_count = tree->validnum();
     if (signed_count >= 0) {
       cached_valid_point_count = static_cast<std::size_t>(signed_count);
+      stage_timings.bookkeeping_us +=
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - started)
+              .count();
       return cached_valid_point_count;
     }
     // validnum() uses trylock and returns -1 while an asynchronous root
     // rebuild owns the working state. Bookkeeping must never wait for it.
     ++valid_point_count_busy_count;
+    stage_timings.bookkeeping_us +=
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started)
+            .count();
     return cached_valid_point_count;
   }
 
@@ -116,6 +126,7 @@ class IkdTreeRegistrationMap::Impl {
   bool built{false};
   mutable std::size_t cached_valid_point_count{0U};
   mutable std::size_t valid_point_count_busy_count{0U};
+  mutable IkdTreeStageTimingTotals stage_timings;
 };
 
 IkdTreeRegistrationMap::IkdTreeRegistrationMap(
@@ -165,6 +176,7 @@ bool IkdTreeRegistrationMap::nearestSearch(
 
 std::size_t IkdTreeRegistrationMap::insert(
     std::span<const Eigen::Vector3d> points_odom_m) {
+  const auto prepare_started = std::chrono::steady_clock::now();
   UpstreamPointVector points;
   points.reserve(points_odom_m.size());
   for (const Eigen::Vector3d& point_odom_m : points_odom_m) {
@@ -172,13 +184,23 @@ std::size_t IkdTreeRegistrationMap::insert(
       points.push_back(toUpstreamPoint(point_odom_m));
     }
   }
+  impl_->stage_timings.prepare_us +=
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - prepare_started)
+          .count();
   if (points.empty()) {
     return 0U;
   }
+  const auto sort_started = std::chrono::steady_clock::now();
   std::sort(points.begin(), points.end(), upstreamPointLess);
+  impl_->stage_timings.sort_us +=
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - sort_started)
+          .count();
 
   const std::size_t size_before =
       impl_->built ? impl_->validPointCount() : 0U;
+  const auto add_points_started = std::chrono::steady_clock::now();
   if (!impl_->built || size_before == 0U) {
     UpstreamPointVector initial_point{points.front()};
     impl_->tree->Build(initial_point);
@@ -188,6 +210,10 @@ std::size_t IkdTreeRegistrationMap::insert(
   if (!points.empty()) {
     static_cast<void>(impl_->tree->Add_Points(points, true));
   }
+  impl_->stage_timings.add_points_us +=
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - add_points_started)
+          .count();
   const std::size_t size_after = impl_->validPointCount();
   return size_after > size_before ? size_after - size_before : 0U;
 }
@@ -271,7 +297,12 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
              {keep_max[0], keep_max[1], tree_max[2]});
 
   if (!deletion_boxes.empty()) {
+    const auto crop_started = std::chrono::steady_clock::now();
     static_cast<void>(impl_->tree->Delete_Point_Boxes(deletion_boxes));
+    impl_->stage_timings.crop_us +=
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - crop_started)
+            .count();
     if (impl_->validPointCount() == 0U) {
       impl_->built = false;
     }
@@ -299,6 +330,11 @@ std::size_t IkdTreeRegistrationMap::size() const {
 
 std::size_t IkdTreeRegistrationMap::validPointCountBusyCount() const noexcept {
   return impl_->valid_point_count_busy_count;
+}
+
+IkdTreeStageTimingTotals
+IkdTreeRegistrationMap::stageTimingTotals() const noexcept {
+  return impl_->stage_timings;
 }
 
 void IkdTreeRegistrationMap::clear() {

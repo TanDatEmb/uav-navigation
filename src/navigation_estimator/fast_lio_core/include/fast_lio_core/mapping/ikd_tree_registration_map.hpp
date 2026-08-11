@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
@@ -22,6 +23,14 @@ struct IkdTreeRegistrationMapConfig {
   // Product uses the vendor's background rebuild. Deterministic tests can
   // explicitly set this false.
   bool enable_asynchronous_rebuild{true};
+};
+
+struct IkdTreeStageTimingTotals {
+  std::int64_t prepare_us{0};
+  std::int64_t sort_us{0};
+  std::int64_t add_points_us{0};
+  std::int64_t crop_us{0};
+  std::int64_t bookkeeping_us{0};
 };
 
 // Production wrapper around the pinned hku-mars ikd-Tree KD_TREE.
@@ -55,6 +64,7 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
   [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
   [[nodiscard]] std::size_t size() const override;
   [[nodiscard]] std::size_t validPointCountBusyCount() const noexcept;
+  [[nodiscard]] IkdTreeStageTimingTotals stageTimingTotals() const noexcept;
   void clear() override;
 
   [[nodiscard]] constexpr RegistrationMapBackend backend() const noexcept {

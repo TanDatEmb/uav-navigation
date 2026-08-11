@@ -36,6 +36,9 @@ struct ResidualBuildDiagnostics {
   std::size_t accepted_residual_count{0};
   std::size_t rejected_residual_count{0};
   double residual_rms_m{0.0};
+  std::int64_t nearest_search_runtime_us{0};
+  std::int64_t plane_and_gate_runtime_us{0};
+  std::int64_t jacobian_build_runtime_us{0};
 };
 
 struct ResidualBuildResult {
@@ -68,11 +71,13 @@ class ResidualWorkspace {
   };
 
   struct Candidate {
+    NeighborSet neighbors;
     Eigen::Vector3d point_odom_m{Eigen::Vector3d::Zero()};
     Eigen::Vector3d normal_odom{Eigen::Vector3d::Zero()};
     double signed_distance_m{0.0};
     double plane_variance_m2{0.0};
     double robust_weight{0.0};
+    bool neighbors_valid{false};
     CandidateOutcome outcome{CandidateOutcome::kInsufficientNeighbors};
   };
 

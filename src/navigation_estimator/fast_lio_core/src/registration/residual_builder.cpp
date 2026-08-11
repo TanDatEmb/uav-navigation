@@ -1,6 +1,7 @@
 #include "fast_lio_core/registration/residual_builder.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -62,7 +63,6 @@ ResidualBuildView ResidualBuilder::buildInto(
             diagnostics};
   }
 
-  diagnostics.query_count = points_lidar_m.size();
   const Eigen::Matrix3d rotation_odom_imu =
       state.orientation_odom_imu().toRotationMatrix();
   const Eigen::Matrix3d rotation_imu_lidar =
@@ -76,35 +76,65 @@ ResidualBuildView ResidualBuilder::buildInto(
     const std::size_t index = static_cast<std::size_t>(signed_index);
     const Eigen::Vector3d& point_lidar_m = points_lidar_m[index];
     ResidualWorkspace::Candidate& candidate = workspace_.candidates[index];
+    candidate.outcome =
+        ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors;
+    candidate.neighbors_valid = false;
     candidate.point_odom_m =
         state.transformLidarPointToOdom(point_lidar_m);
     const Eigen::Vector3d& point_odom_m = candidate.point_odom_m;
     if (!point_lidar_m.allFinite() || !point_odom_m.allFinite()) {
+      continue;
+    }
+  }
+
+  std::size_t query_count = 0U;
+  const auto nearest_search_started = std::chrono::steady_clock::now();
+#pragma omp parallel for schedule(static) \
+    num_threads(config_.parallel_thread_count) if (point_count >= 256) \
+    reduction(+ : query_count)
+  for (std::int64_t signed_index = 0; signed_index < point_count;
+       ++signed_index) {
+    const std::size_t index = static_cast<std::size_t>(signed_index);
+    ResidualWorkspace::Candidate& candidate = workspace_.candidates[index];
+    if (!candidate.point_odom_m.allFinite()) {
+      continue;
+    }
+    ++query_count;
+    candidate.neighbors_valid =
+        map.nearestSearch(
+            candidate.point_odom_m,
+            config_.correspondence_search.maximum_neighbor_distance_m,
+            candidate.neighbors) &&
+        candidate.neighbors.complete();
+  }
+  diagnostics.nearest_search_runtime_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - nearest_search_started)
+          .count();
+  diagnostics.query_count = query_count;
+
+  const auto plane_and_gate_started = std::chrono::steady_clock::now();
+#pragma omp parallel for schedule(static) \
+    num_threads(config_.parallel_thread_count) if (point_count >= 256)
+  for (std::int64_t signed_index = 0; signed_index < point_count;
+       ++signed_index) {
+    const std::size_t index = static_cast<std::size_t>(signed_index);
+    ResidualWorkspace::Candidate& candidate = workspace_.candidates[index];
+    if (!candidate.neighbors_valid ||
+        !candidate.point_odom_m.allFinite()) {
       candidate.outcome =
           ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors;
       continue;
     }
-
-    NeighborSet neighbors;
-    if (!map.nearestSearch(point_odom_m,
-                           config_.correspondence_search
-                               .maximum_neighbor_distance_m,
-                           neighbors) ||
-        !neighbors.complete()) {
-      candidate.outcome =
-          ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors;
-      continue;
-    }
-
     const std::span<const Eigen::Vector3d> neighbor_span(
-        neighbors.points.data(), NeighborSet::kCapacity);
+        candidate.neighbors.points.data(), NeighborSet::kCapacity);
     const std::optional<Plane> plane = plane_estimator_.estimate(neighbor_span);
     if (!plane.has_value()) {
       candidate.outcome = ResidualWorkspace::CandidateOutcome::kRejectedPlane;
       continue;
     }
     candidate.signed_distance_m =
-        plane->normal_odom.dot(point_odom_m - plane->centroid_odom_m);
+        plane->normal_odom.dot(candidate.point_odom_m - plane->centroid_odom_m);
     const ResidualGateDecision decision =
         residual_gate_.evaluate(*plane, candidate.signed_distance_m);
     if (!decision.accepted) {
@@ -118,7 +148,12 @@ ResidualBuildView ResidualBuilder::buildInto(
     candidate.robust_weight = decision.robust_weight;
     candidate.outcome = ResidualWorkspace::CandidateOutcome::kAccepted;
   }
+  diagnostics.plane_and_gate_runtime_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - plane_and_gate_started)
+          .count();
 
+  const auto jacobian_build_started = std::chrono::steady_clock::now();
   const double sensor_variance =
       config_.point_measurement_standard_deviation_m *
       config_.point_measurement_standard_deviation_m;
@@ -178,6 +213,10 @@ ResidualBuildView ResidualBuilder::buildInto(
                       .squaredNorm() /
                   static_cast<double>(last_row_count_));
   }
+  diagnostics.jacobian_build_runtime_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - jacobian_build_started)
+          .count();
   last_diagnostics_ = diagnostics;
   return {&workspace_.H, &workspace_.residual, &workspace_.variance,
           last_row_count_, diagnostics};

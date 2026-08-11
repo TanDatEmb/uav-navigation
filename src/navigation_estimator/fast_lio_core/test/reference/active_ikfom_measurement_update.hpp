@@ -8,22 +8,20 @@
 
 namespace uav::nav::lio::test_reference {
 
-inline bool compactMeasurementUpdate(
+inline bool activeMeasurementUpdate(
     const Eigen::Matrix<double, 23, 23>& covariance,
     const Eigen::MatrixXd& jacobian, const Eigen::VectorXd& variance,
     const Eigen::VectorXd& innovation,
     const Eigen::Matrix<double, 23, 1>& dx_new,
     const IkfomState& initial_state, double convergence_limit,
     MeasurementUpdate& result) {
-  Eigen::Matrix<double, 23, Eigen::Dynamic> gain;
-  if (!esekfom::detail::solve_compact_normal_equations<double, 23>(
-          covariance, jacobian, variance, gain)) {
+  if (!esekfom::detail::solve_active_normal_equations<double, 23, 12>(
+          covariance, jacobian, variance, innovation,
+          result.gain_innovation, result.gain_times_jacobian)) {
     return false;
   }
-  result.gain = gain;
-  result.gain_times_jacobian = gain * jacobian;
   result.increment =
-      gain * innovation +
+      result.gain_innovation +
       (result.gain_times_jacobian -
        Eigen::Matrix<double, 23, 23>::Identity()) *
           dx_new;
@@ -36,7 +34,7 @@ inline bool compactMeasurementUpdate(
   result.converged =
       (result.increment.array().abs() <= convergence_limit).all();
   result.final_increment_norm = result.increment.norm();
-  return result.gain.allFinite() && result.increment.allFinite() &&
+  return result.gain_innovation.allFinite() && result.increment.allFinite() &&
          result.corrected_covariance.allFinite();
 }
 

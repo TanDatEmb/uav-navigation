@@ -250,9 +250,17 @@ struct StageTimingDiagnostics {
   std::int64_t residual_build_us{0};
   std::int64_t ikfom_update_us{0};
   std::int64_t measurement_model_us{0};
+  std::int64_t nearest_search_us{0};
+  std::int64_t plane_and_gate_us{0};
+  std::int64_t jacobian_build_us{0};
   std::int64_t ikfom_solver_only_us{0};
   std::int64_t map_insert_crop_us{0};
   std::int64_t map_maintenance_us{0};
+  std::int64_t map_prepare_us{0};
+  std::int64_t map_sort_us{0};
+  std::int64_t map_add_points_us{0};
+  std::int64_t map_crop_us{0};
+  std::int64_t map_bookkeeping_us{0};
   std::int64_t total_processing_us{0};
 };
 

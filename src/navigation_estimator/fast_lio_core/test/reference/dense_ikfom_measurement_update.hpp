@@ -8,6 +8,7 @@ namespace uav::nav::lio::test_reference {
 
 struct MeasurementUpdate {
   Eigen::MatrixXd gain;
+  Eigen::Matrix<double, 23, 1> gain_innovation;
   Eigen::Matrix<double, 23, 23> gain_times_jacobian;
   Eigen::Matrix<double, 23, 1> increment;
   IkfomState corrected_state;
@@ -28,9 +29,10 @@ inline MeasurementUpdate denseMeasurementUpdate(
       variance.asDiagonal().toDenseMatrix();
   result.gain =
       covariance * jacobian.transpose() * residual_covariance.inverse();
+  result.gain_innovation = result.gain * innovation;
   result.gain_times_jacobian = result.gain * jacobian;
   result.increment =
-      result.gain * innovation +
+      result.gain_innovation +
       (result.gain_times_jacobian -
        Eigen::Matrix<double, 23, 23>::Identity()) *
           dx_new;

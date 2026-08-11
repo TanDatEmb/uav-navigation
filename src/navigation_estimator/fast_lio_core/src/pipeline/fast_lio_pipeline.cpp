@@ -507,6 +507,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.timing.ikfom_update_us = correction.ikfom_update_runtime_us;
   diagnostics_.timing.measurement_model_us =
       correction.measurement_model_runtime_us;
+  diagnostics_.timing.nearest_search_us =
+      correction.nearest_search_runtime_us;
+  diagnostics_.timing.plane_and_gate_us =
+      correction.plane_and_gate_runtime_us;
+  diagnostics_.timing.jacobian_build_us =
+      correction.jacobian_build_runtime_us;
   diagnostics_.timing.ikfom_solver_only_us =
       correction.solver_only_runtime_us;
 
@@ -600,6 +606,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   insertion_context.transform_finite = state_.allFinite();
   insertion_context.filtered_point_count = points_lidar_m.size();
   const bool insertion_allowed = local_map_manager_.insertionAllowed();
+  const IkdTreeStageTimingTotals map_timing_before =
+      registration_map_.stageTimingTotals();
   diagnostics_.map.map_insertion_frozen = !insertion_allowed;
   if (insertion_allowed && insertion_policy_.permits(insertion_context)) {
     diagnostics_.map.map_update_performed = true;
@@ -664,6 +672,18 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         diagnostics_.map.map_maintenance_us;
   }
   diagnostics_.map.map_point_count = registration_map_.size();
+  const IkdTreeStageTimingTotals map_timing_after =
+      registration_map_.stageTimingTotals();
+  diagnostics_.timing.map_prepare_us =
+      map_timing_after.prepare_us - map_timing_before.prepare_us;
+  diagnostics_.timing.map_sort_us =
+      map_timing_after.sort_us - map_timing_before.sort_us;
+  diagnostics_.timing.map_add_points_us =
+      map_timing_after.add_points_us - map_timing_before.add_points_us;
+  diagnostics_.timing.map_crop_us =
+      map_timing_after.crop_us - map_timing_before.crop_us;
+  diagnostics_.timing.map_bookkeeping_us =
+      map_timing_after.bookkeeping_us - map_timing_before.bookkeeping_us;
   ++corrected_scan_count_;
   diagnostics_.reason = "LIDAR_CORRECTION_CONVERGED";
   diagnostics_.timing.total_processing_us =
