@@ -154,6 +154,15 @@ int KD_TREE<PointType>::validnum(){
 }
 
 template <typename PointType>
+bool KD_TREE<PointType>::asynchronous_rebuild_in_progress(){
+    if (!asynchronous_rebuild_enabled) return false;
+    if (pthread_mutex_trylock(&rebuild_ptr_mutex_lock) != 0) return true;
+    bool active = Rebuild_Ptr != nullptr || rebuild_flag;
+    pthread_mutex_unlock(&rebuild_ptr_mutex_lock);
+    return active;
+}
+
+template <typename PointType>
 void KD_TREE<PointType>::root_alpha(float &alpha_bal, float &alpha_del){
     if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != Root_Node){
         alpha_bal = Root_Node->alpha_bal;

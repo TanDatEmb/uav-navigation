@@ -243,6 +243,7 @@ public:
     void InitializeKDTree(float delete_param = 0.5, float balance_param = 0.7, float box_length = 0.2); 
     int size();
     int validnum();
+    bool asynchronous_rebuild_in_progress();
     void root_alpha(float &alpha_bal, float &alpha_del);
     void Build(PointVector point_cloud);
     void Nearest_Search(PointType point, int k_nearest, PointVector &Nearest_Points, vector<float> & Point_Distance, double max_dist = INFINITY);

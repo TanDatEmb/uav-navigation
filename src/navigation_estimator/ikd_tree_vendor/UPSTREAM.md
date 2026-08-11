@@ -11,9 +11,10 @@
   - `ikd-Tree/ikd_Tree.cpp`
   - upstream `LICENSE` and `README.md`
 - Excluded content: examples, papers, images, Git metadata and build files.
-- Source differences: see `PATCHES.md`. The project adds an opt-in
-  asynchronous-rebuild constructor switch and minimal rebuild replacement
-  safety fixes while retaining the pinned upstream algorithms and API shape.
+- Source differences: see `PATCHES.md`. The project adds a configurable
+  asynchronous-rebuild constructor, an allocation-free caller-buffer nearest
+  search API, and minimal rebuild replacement safety fixes while retaining the
+  pinned upstream algorithms.
 - Build behavior: compiles the actual upstream implementation, exports
   `ikd_tree_vendor::ikd_tree_vendor`, runs an API smoke test, and fails CMake
   configuration if the pinned source is absent.
