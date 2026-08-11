@@ -37,7 +37,6 @@ set(CORE_SOURCES
   src/preprocessing/point_filter.cpp
   src/preprocessing/voxel_filter.cpp
   src/propagation/imu_state_propagator.cpp
-  src/registration/correspondence_search.cpp
   src/registration/linearized_measurement.cpp
   src/registration/plane_estimator.cpp
   src/registration/residual_builder.cpp

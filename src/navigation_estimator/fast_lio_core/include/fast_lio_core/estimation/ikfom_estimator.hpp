@@ -42,6 +42,10 @@ struct IkfomCorrectionResult {
   double final_increment_norm{0.0};
   double correction_translation_norm_m{0.0};
   double correction_rotation_norm_rad{0.0};
+  std::size_t measurement_callback_count{0};
+  std::int64_t measurement_model_runtime_us{0};
+  std::int64_t solver_only_runtime_us{0};
+  std::int64_t ikfom_total_runtime_us{0};
   std::int64_t residual_build_runtime_us{0};
   std::int64_t ikfom_update_runtime_us{0};
 };
@@ -80,6 +84,7 @@ class IkfomEstimator {
   std::span<const Eigen::Vector3d> active_points_;
   const RegistrationMap* active_map_{nullptr};
   ResidualBuildResult last_residual_build_;
+  ResidualBuildDiagnostics last_residual_diagnostics_;
   std::size_t measurement_call_count_{0};
   std::int64_t active_residual_runtime_us_{0};
   Eigen::Quaterniond fixed_rotation_imu_lidar_{

@@ -5,9 +5,15 @@
 #include <optional>
 #include <span>
 
-#include "fast_lio_core/registration/correspondence.hpp"
-
 namespace uav::nav::lio {
+
+struct Plane {
+  Eigen::Vector3d centroid_odom_m{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d normal_odom{Eigen::Vector3d::UnitZ()};
+  double rms_error_m{0.0};
+  double maximum_error_m{0.0};
+  double planarity{0.0};
+};
 
 struct PlaneEstimatorConfig {
   std::size_t minimum_neighbor_count{5};
