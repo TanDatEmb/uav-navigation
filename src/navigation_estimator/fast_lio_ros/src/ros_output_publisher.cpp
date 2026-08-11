@@ -98,6 +98,13 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
       result.diagnostics.processing.correction_success_count;
   health.correction_rejected_count =
       result.diagnostics.processing.correction_failure_count;
+  health.recovery_covariance_clamp_count =
+      result.diagnostics.recovery_covariance_clamp_count;
+  health.recovery_covariance_maximum_eigenvalue_before_clamp =
+      result.diagnostics
+          .recovery_covariance_maximum_eigenvalue_before_clamp;
+  health.recovery_covariance_maximum_eigenvalue_after_clamp =
+      result.diagnostics.recovery_covariance_maximum_eigenvalue_after_clamp;
   health.map_point_count = result.diagnostics.map.map_point_count;
   health.valid_point_count_busy_count =
       result.diagnostics.map.valid_point_count_busy_count;
@@ -247,6 +254,14 @@ void RosOutputPublisher::publishDiagnostics(const EstimatorHealthSnapshot& healt
                std::to_string(health.correction_accepted_count)),
       keyValue("correction_rejected_count",
                std::to_string(health.correction_rejected_count)),
+      keyValue("recovery_covariance_clamp_count",
+               std::to_string(health.recovery_covariance_clamp_count)),
+      keyValue("recovery_covariance_maximum_eigenvalue_before_clamp",
+               std::to_string(
+                   health.recovery_covariance_maximum_eigenvalue_before_clamp)),
+      keyValue("recovery_covariance_maximum_eigenvalue_after_clamp",
+               std::to_string(
+                   health.recovery_covariance_maximum_eigenvalue_after_clamp)),
       keyValue("map_point_count", std::to_string(health.map_point_count)),
       keyValue("pose_covariance_available",
                covariance.pose_covariance_available ? "true" : "false"),

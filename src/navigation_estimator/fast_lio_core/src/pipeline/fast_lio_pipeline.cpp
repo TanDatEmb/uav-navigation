@@ -22,16 +22,28 @@ constexpr std::int64_t kPriorImuHistoryDurationNs = 1'000'000'000;
 // navigation validity is still controlled by the lifecycle state machine.
 constexpr double kMaximumRecoveryCovarianceEigenvalue = 100.0;
 
-[[nodiscard]] bool inflateRecoveryCovariance(
+struct RecoveryCovarianceInflationResult {
+  bool successful{false};
+  bool clamped{false};
+  double maximum_eigenvalue_before_clamp{0.0};
+  double maximum_eigenvalue_after_clamp{0.0};
+};
+
+[[nodiscard]] RecoveryCovarianceInflationResult inflateRecoveryCovariance(
     ManifoldState::Covariance& covariance, const double inflation) {
+  RecoveryCovarianceInflationResult result;
   const ManifoldState::Covariance symmetric =
       0.5 * (covariance + covariance.transpose());
   Eigen::SelfAdjointEigenSolver<ManifoldState::Covariance> solver(symmetric);
   if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite() ||
       solver.eigenvalues().minCoeff() < -1e-9) {
-    return false;
+    return result;
   }
   Eigen::VectorXd eigenvalues = solver.eigenvalues().cwiseMax(0.0);
+  result.maximum_eigenvalue_before_clamp =
+      eigenvalues.maxCoeff() * inflation;
+  result.clamped = result.maximum_eigenvalue_before_clamp >
+                   kMaximumRecoveryCovarianceEigenvalue;
   for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
     eigenvalues[index] = std::min(
         kMaximumRecoveryCovarianceEigenvalue,
@@ -40,7 +52,9 @@ constexpr double kMaximumRecoveryCovarianceEigenvalue = 100.0;
   covariance = solver.eigenvectors() * eigenvalues.asDiagonal() *
                solver.eigenvectors().transpose();
   covariance = 0.5 * (covariance + covariance.transpose());
-  return covariance.allFinite();
+  result.maximum_eigenvalue_after_clamp = eigenvalues.maxCoeff();
+  result.successful = covariance.allFinite();
+  return result;
 }
 
 EstimatorConfig normalizeConfig(EstimatorConfig config) {
@@ -974,9 +988,22 @@ ProcessResult FastLioPipeline::recoverFromDiscontinuity(
     const bool long_gap =
         discontinuity.gap_duration_ns >
         config_.tracking.maximum_recoverable_imu_gap_ns;
-    if (!inflateRecoveryCovariance(
+    const RecoveryCovarianceInflationResult inflation =
+        inflateRecoveryCovariance(
             covariance_,
-            config_.tracking.discontinuity_covariance_inflation)) {
+            config_.tracking.discontinuity_covariance_inflation);
+    diagnostics_.recovery_covariance_maximum_eigenvalue_before_clamp =
+        std::max(
+            diagnostics_.recovery_covariance_maximum_eigenvalue_before_clamp,
+            inflation.maximum_eigenvalue_before_clamp);
+    diagnostics_.recovery_covariance_maximum_eigenvalue_after_clamp =
+        std::max(
+            diagnostics_.recovery_covariance_maximum_eigenvalue_after_clamp,
+            inflation.maximum_eigenvalue_after_clamp);
+    if (inflation.clamped) {
+      ++diagnostics_.recovery_covariance_clamp_count;
+    }
+    if (!inflation.successful) {
       transitionTo(EstimatorStatus::kLost,
                    "IMU_DISCONTINUITY_COVARIANCE_INFLATION_FAILED");
       result.rejection_reason = diagnostics_.reason;

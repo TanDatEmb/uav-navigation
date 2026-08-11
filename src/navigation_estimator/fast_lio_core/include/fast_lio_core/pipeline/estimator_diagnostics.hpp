@@ -278,6 +278,9 @@ struct EstimatorDiagnostics {
   std::size_t consecutive_registration_failure_count{0};
   std::size_t propagation_discontinuity_count{0};
   std::int64_t last_propagation_gap_ns{0};
+  std::size_t recovery_covariance_clamp_count{0};
+  double recovery_covariance_maximum_eigenvalue_before_clamp{0.0};
+  double recovery_covariance_maximum_eigenvalue_after_clamp{0.0};
   std::size_t consecutive_uncorrected_lidar_updates{0};
   std::size_t consecutive_recovery_successes{0};
   std::size_t recovery_confirmation_updates_required{0};

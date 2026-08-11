@@ -66,6 +66,9 @@ class RosOutputPublisher {
     std::size_t queue_maximum{0};
     std::size_t correction_accepted_count{0};
     std::size_t correction_rejected_count{0};
+    std::size_t recovery_covariance_clamp_count{0};
+    double recovery_covariance_maximum_eigenvalue_before_clamp{0.0};
+    double recovery_covariance_maximum_eigenvalue_after_clamp{0.0};
     std::size_t map_point_count{0};
     std::size_t valid_point_count_busy_count{0};
     std::size_t measurement_callback_count{0};

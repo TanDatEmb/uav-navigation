@@ -510,6 +510,13 @@ TEST(FastLioPipelineTest, RepeatedDiscontinuityInflationRemainsValid) {
     EXPECT_TRUE(pipeline.covariance().allFinite());
     epoch_ns = end_ns;
   }
+  const EstimatorDiagnostics diagnostics = pipeline.diagnostics();
+  EXPECT_GT(diagnostics.recovery_covariance_clamp_count, 0U);
+  EXPECT_GT(
+      diagnostics.recovery_covariance_maximum_eigenvalue_before_clamp,
+      100.0);
+  EXPECT_LE(diagnostics.recovery_covariance_maximum_eigenvalue_after_clamp,
+            100.0 + 1e-9);
 }
 
 TEST(FastLioPipelineTest, InitialMapShortGapKeepsBootstrapForCorrection) {
