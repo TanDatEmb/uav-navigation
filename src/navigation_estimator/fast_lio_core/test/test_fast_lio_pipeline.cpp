@@ -444,7 +444,10 @@ TEST(FastLioPipelineTest, RepeatedDiscontinuityInflationRemainsValid) {
                  stationaryImu(100 * kMillisecondNs)})));
 
   std::int64_t epoch_ns = 100 * kMillisecondNs;
-  for (std::size_t index = 0; index < 5; ++index) {
+  // This exceeds the number of recovery inflations in the five-minute SITL
+  // reproduction. Without bounded eigenvalues, 10^N growth eventually makes
+  // IKFoM correction and then prediction non-finite.
+  for (std::size_t index = 0; index < 40; ++index) {
     const std::int64_t before_gap_ns = epoch_ns + 10 * kMillisecondNs;
     const std::int64_t resume_ns = epoch_ns + 40 * kMillisecondNs;
     const std::int64_t end_ns = epoch_ns + 50 * kMillisecondNs;
@@ -468,7 +471,22 @@ TEST(FastLioPipelineTest, RepeatedDiscontinuityInflationRemainsValid) {
         Eigen::EigenvaluesOnly);
     ASSERT_EQ(solver.info(), Eigen::Success);
     EXPECT_GE(solver.eigenvalues().minCoeff(), -1e-10);
+    EXPECT_LE(solver.eigenvalues().maxCoeff(), 100.0 + 1e-9);
     epoch_ns = resume_ns;
+  }
+
+  for (std::size_t recovery_index = 0; recovery_index < 3; ++recovery_index) {
+    const std::int64_t end_ns = epoch_ns + 100 * kMillisecondNs;
+    const ProcessResult recovered = pipeline.process(makeGroup(
+        makePlanarScan(end_ns), epoch_ns,
+        {stationaryImu(epoch_ns),
+         stationaryImu(epoch_ns + 50 * kMillisecondNs),
+         stationaryImu(end_ns)}));
+    EXPECT_EQ(recovered.lidar_update_status, LidarUpdateStatus::kSucceeded)
+        << recovered.rejection_reason;
+    EXPECT_TRUE(pipeline.state().allFinite());
+    EXPECT_TRUE(pipeline.covariance().allFinite());
+    epoch_ns = end_ns;
   }
 }
 

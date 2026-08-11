@@ -16,6 +16,32 @@ namespace uav::nav::lio {
 namespace {
 
 constexpr std::int64_t kPriorImuHistoryDurationNs = 1'000'000'000;
+// Repeated recovery events must not exponentially grow weakly observed state
+// blocks until the IKFoM normal equations overflow. This is a numerical guard,
+// not a claim that uncertainty above the cap has become smaller or trustworthy;
+// navigation validity is still controlled by the lifecycle state machine.
+constexpr double kMaximumRecoveryCovarianceEigenvalue = 100.0;
+
+[[nodiscard]] bool inflateRecoveryCovariance(
+    ManifoldState::Covariance& covariance, const double inflation) {
+  const ManifoldState::Covariance symmetric =
+      0.5 * (covariance + covariance.transpose());
+  Eigen::SelfAdjointEigenSolver<ManifoldState::Covariance> solver(symmetric);
+  if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite() ||
+      solver.eigenvalues().minCoeff() < -1e-9) {
+    return false;
+  }
+  Eigen::VectorXd eigenvalues = solver.eigenvalues().cwiseMax(0.0);
+  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
+    eigenvalues[index] = std::min(
+        kMaximumRecoveryCovarianceEigenvalue,
+        eigenvalues[index] * inflation);
+  }
+  covariance = solver.eigenvectors() * eigenvalues.asDiagonal() *
+               solver.eigenvectors().transpose();
+  covariance = 0.5 * (covariance + covariance.transpose());
+  return covariance.allFinite();
+}
 
 EstimatorConfig normalizeConfig(EstimatorConfig config) {
   config.residual_builder.estimate_extrinsic = config.extrinsic.estimate_online;
@@ -948,8 +974,14 @@ ProcessResult FastLioPipeline::recoverFromDiscontinuity(
     const bool long_gap =
         discontinuity.gap_duration_ns >
         config_.tracking.maximum_recoverable_imu_gap_ns;
-    covariance_ *= config_.tracking.discontinuity_covariance_inflation;
-    covariance_ = 0.5 * (covariance_ + covariance_.transpose());
+    if (!inflateRecoveryCovariance(
+            covariance_,
+            config_.tracking.discontinuity_covariance_inflation)) {
+      transitionTo(EstimatorStatus::kLost,
+                   "IMU_DISCONTINUITY_COVARIANCE_INFLATION_FAILED");
+      result.rejection_reason = diagnostics_.reason;
+      return finalizeResult(std::move(result));
+    }
     estimator_.rebase(state_, covariance_);
     state_time_ = discontinuity.resume_time;
     recordUncorrectedUpdate(
