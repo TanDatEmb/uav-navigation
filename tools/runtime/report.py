@@ -159,9 +159,13 @@ def _active_stale_times(
     ]
     observation_finished = runtime.get("observation_finished_wall_ns")
     if observation_finished:
-        grace_ns = int(_number(runtime.get("observation_tail_grace_s"), 0.1) * 1e9)
-        active_until = int(observation_finished) - grace_ns
-        active_times = [value for value in active_times if value < active_until]
+        # The observation boundary is captured before shutdown starts. Count
+        # freshness failures through that exact boundary; subtracting a grace
+        # period creates a blind window while the system is still observed.
+        active_times = [
+            value for value in active_times
+            if value < int(observation_finished)
+        ]
     replay_finished = runtime.get("replay_finished_wall_ns")
     if replay_finished:
         grace_ns = int(_number(runtime.get("replay_tail_grace_s"), 0.5) * 1e9)
