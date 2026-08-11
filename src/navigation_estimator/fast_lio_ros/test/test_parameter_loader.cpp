@@ -143,8 +143,6 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
   EXPECT_DOUBLE_EQ(
       direct.residual_builder.residual_gate.maximum_absolute_distance_m,
       ros.residual_builder.residual_gate.maximum_absolute_distance_m);
-  EXPECT_EQ(direct.residual_builder.correspondence_search.neighbor_count,
-            ros.residual_builder.correspondence_search.neighbor_count);
   EXPECT_EQ(direct.registration_map.voxel_size_m,
             ros.registration_map.voxel_size_m);
   EXPECT_TRUE(direct.local_map.half_extent_m.isApprox(

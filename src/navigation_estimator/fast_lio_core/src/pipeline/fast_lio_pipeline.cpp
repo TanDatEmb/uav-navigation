@@ -497,17 +497,17 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       correction.solver_only_runtime_us;
 
   diagnostics_.registration.query_count =
-      correction.residual_build.diagnostics.query_count;
+      correction.residual_diagnostics.query_count;
   diagnostics_.registration.valid_plane_count =
-      correction.residual_build.diagnostics.valid_plane_count;
+      correction.residual_diagnostics.valid_plane_count;
   diagnostics_.registration.accepted_residual_count =
-      correction.residual_build.diagnostics.accepted_residual_count;
+      correction.residual_diagnostics.accepted_residual_count;
   diagnostics_.registration.rejected_residual_count =
-      correction.residual_build.diagnostics.rejected_residual_count;
+      correction.residual_diagnostics.rejected_residual_count;
   diagnostics_.registration.measurement_callback_count =
       correction.measurement_callback_count;
   diagnostics_.registration.residual_rms_m =
-      correction.residual_build.diagnostics.residual_rms_m;
+      correction.residual_diagnostics.residual_rms_m;
   diagnostics_.registration.iteration_count = correction.iteration_count;
   diagnostics_.registration.final_increment_norm =
       correction.final_increment_norm;
@@ -582,7 +582,7 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   insertion_context.estimator_tracking = status_ == EstimatorStatus::kTracking;
   insertion_context.lidar_update_successful =
       result.lidar_update_status == LidarUpdateStatus::kSucceeded;
-  insertion_context.converged = correction.converged;
+  insertion_context.correction_usable = correction.successful;
   insertion_context.transform_finite = state_.allFinite();
   insertion_context.filtered_point_count = points_lidar_m.size();
   const bool insertion_allowed = local_map_manager_.insertionAllowed();
@@ -1361,6 +1361,8 @@ void FastLioPipeline::resetTransientDiagnostics() {
       diagnostics_.map.dynamic_evidence_voxel_count;
   diagnostics_.map = MapDiagnostics{};
   diagnostics_.map.map_point_count = map_point_count;
+  diagnostics_.map.valid_point_count_busy_count =
+      registration_map_.validPointCountBusyCount();
   diagnostics_.map.dynamic_filter_enabled = dynamic_filter_enabled;
   diagnostics_.map.dynamic_evidence_voxel_count =
       dynamic_evidence_voxel_count;

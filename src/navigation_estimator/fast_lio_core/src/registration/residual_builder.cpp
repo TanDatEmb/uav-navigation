@@ -38,9 +38,7 @@ ResidualBuilder::ResidualBuilder(ResidualBuilderConfig config)
     : config_(config),
       plane_estimator_(config_.plane_estimator),
       residual_gate_(config_.residual_gate) {
-  if (config_.correspondence_search.neighbor_count < 3U ||
-      config_.correspondence_search.neighbor_count > NeighborSet::kCapacity ||
-      !(config_.correspondence_search.maximum_neighbor_distance_m > 0.0) ||
+  if (!(config_.correspondence_search.maximum_neighbor_distance_m > 0.0) ||
       !std::isfinite(config_.correspondence_search.maximum_neighbor_distance_m) ||
       !(config_.point_measurement_standard_deviation_m > 0.0) ||
       !std::isfinite(config_.point_measurement_standard_deviation_m)) {
@@ -75,8 +73,6 @@ ResidualBuildView ResidualBuilder::buildInto(
   const double sensor_variance =
       config_.point_measurement_standard_deviation_m *
       config_.point_measurement_standard_deviation_m;
-  const std::size_t neighbor_count = config_.correspondence_search.neighbor_count;
-
   for (std::size_t index = 0U; index < points_lidar_m.size(); ++index) {
     const Eigen::Vector3d& point_lidar_m = points_lidar_m[index];
     const Eigen::Vector3d& point_odom_m = workspace_.points_odom[index];
@@ -90,13 +86,13 @@ ResidualBuildView ResidualBuilder::buildInto(
                            config_.correspondence_search
                                .maximum_neighbor_distance_m,
                            neighbors) ||
-        !neighbors.complete(neighbor_count)) {
+        !neighbors.complete()) {
       ++diagnostics.insufficient_neighbor_count;
       continue;
     }
 
     const std::span<const Eigen::Vector3d> neighbor_span(
-        neighbors.points.data(), neighbor_count);
+        neighbors.points.data(), NeighborSet::kCapacity);
     const std::optional<Plane> plane = plane_estimator_.estimate(neighbor_span);
     if (!plane.has_value()) {
       ++diagnostics.rejected_plane_count;

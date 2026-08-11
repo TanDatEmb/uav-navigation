@@ -38,12 +38,10 @@ fast_lio:
         linear_velocity_m_s: [0.0, 0.0, 0.0]
         angular_velocity_rad_s: [0.0, 0.0, 0.0]
     tracking:
-      # Headless Gazebo can skip a short sensor interval when the host is
-      # saturated by LiDAR registration. Keep detecting/rebasing gaps above
-      # the normal 20 ms synchronization contract, but reserve LOST for a
-      # genuinely prolonged outage. Dataset and production profiles retain
-      # their stricter 50 ms threshold.
-      maximum_recoverable_imu_gap_ns: 300000000
+      # Keep the simulator on the same strict recovery boundary as dataset and
+      # production profiles; performance regressions must not be hidden by a
+      # relaxed IMU outage threshold.
+      maximum_recoverable_imu_gap_ns: 50000000
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
     extrinsic:

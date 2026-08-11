@@ -67,6 +67,7 @@ class RosOutputPublisher {
     std::size_t correction_accepted_count{0};
     std::size_t correction_rejected_count{0};
     std::size_t map_point_count{0};
+    std::size_t valid_point_count_busy_count{0};
     std::size_t measurement_callback_count{0};
     std::int64_t measurement_model_us{0};
     std::int64_t ikfom_solver_only_us{0};

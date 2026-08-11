@@ -16,9 +16,8 @@ struct NeighborSet {
   std::array<float, kCapacity> squared_distances{};
   std::size_t count{0};
 
-  [[nodiscard]] bool complete(
-      std::size_t requested_count = kCapacity) const noexcept {
-    return requested_count <= kCapacity && count >= requested_count;
+  [[nodiscard]] bool complete() const noexcept {
+    return count == kCapacity;
   }
 };
 
@@ -40,8 +39,8 @@ class RegistrationMap {
   virtual std::size_t cropLocal(const Eigen::Vector3d& center_odom_m,
                                 const Eigen::Vector3d& half_extent_m) = 0;
   [[nodiscard]] virtual std::vector<Eigen::Vector3d> snapshot() const = 0;
-  // May throw when a backend cannot obtain a stable count before its bounded
-  // rebuild-state timeout. A busy backend must never be reported as size zero.
+  // Returns a non-blocking best-effort count. A backend rebuilding
+  // asynchronously may return its most recent cached count.
   [[nodiscard]] virtual std::size_t size() const = 0;
   virtual void clear() = 0;
 

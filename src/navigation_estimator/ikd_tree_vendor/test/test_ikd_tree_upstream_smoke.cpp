@@ -2,6 +2,7 @@
 
 #include <ikd_Tree.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -120,5 +121,56 @@ TEST(IkdTreeUpstreamSmoke, AsyncRebuildRandomizedOperationsUseFixedSeed) {
       tree->Delete_Points(exact_delete);
     }
     EXPECT_GE(tree->validnum(), -1);
+  }
+}
+
+TEST(IkdTreeUpstreamSmoke, AsyncRebuildSupportsAllocationFreeNearestSearch) {
+  constexpr std::uint32_t kSeed = 0xA11C0C0AU;
+  constexpr int kNeighborCount = 5;
+  std::mt19937 generator(kSeed);
+  std::uniform_real_distribution<float> coordinate(-30.0F, 30.0F);
+  auto tree = std::make_unique<KD_TREE<ikdTree_PointType>>(
+      0.3F, 0.6F, 0.05F, true);
+
+  KD_TREE<ikdTree_PointType>::PointVector initial;
+  initial.reserve(3000U);
+  for (std::size_t index = 0; index < 3000U; ++index) {
+    initial.emplace_back(coordinate(generator), coordinate(generator), coordinate(generator));
+  }
+  tree->Build(initial);
+
+  for (int operation = 0; operation < 3000; ++operation) {
+    SCOPED_TRACE(::testing::Message() << "seed=" << kSeed << " operation=" << operation);
+    KD_TREE<ikdTree_PointType>::PointVector addition{
+        ikdTree_PointType{coordinate(generator), coordinate(generator), coordinate(generator)}};
+    static_cast<void>(tree->Add_Points(addition, true));
+
+    if (operation % 11 == 0) {
+      const float slab_min = -30.0F + static_cast<float>((operation / 11) % 20);
+      BoxPointType slab{};
+      slab.vertex_min[0] = slab_min;
+      slab.vertex_min[1] = -35.0F;
+      slab.vertex_min[2] = -35.0F;
+      slab.vertex_max[0] = slab_min + 0.25F;
+      slab.vertex_max[1] = 35.0F;
+      slab.vertex_max[2] = 35.0F;
+      std::vector<BoxPointType> boxes{slab};
+      static_cast<void>(tree->Delete_Point_Boxes(boxes));
+    }
+
+    std::array<ikdTree_PointType, kNeighborCount> neighbors{};
+    std::array<float, kNeighborCount> squared_distances{};
+    std::array<KD_TREE<ikdTree_PointType>::PointType_CMP, 2 * kNeighborCount> heap_storage{};
+    int result_count = 0;
+    tree->Nearest_Search_Into(
+        ikdTree_PointType{coordinate(generator), coordinate(generator), coordinate(generator)},
+        kNeighborCount, neighbors.data(), squared_distances.data(),
+        static_cast<int>(neighbors.size()), result_count, heap_storage.data(),
+        static_cast<int>(heap_storage.size()), 100.0);
+    ASSERT_GE(result_count, 0);
+    ASSERT_LE(result_count, kNeighborCount);
+    for (int index = 0; index < result_count; ++index) {
+      EXPECT_GE(squared_distances[static_cast<std::size_t>(index)], 0.0F);
+    }
   }
 }

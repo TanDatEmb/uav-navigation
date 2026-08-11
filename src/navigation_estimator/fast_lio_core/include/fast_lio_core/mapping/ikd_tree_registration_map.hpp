@@ -54,6 +54,7 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
       const Eigen::Vector3d& half_extent_m) override;
   [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
   [[nodiscard]] std::size_t size() const override;
+  [[nodiscard]] std::size_t validPointCountBusyCount() const noexcept;
   void clear() override;
 
   [[nodiscard]] constexpr RegistrationMapBackend backend() const noexcept {

@@ -297,7 +297,6 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_map_ = &map;
   measurement_call_count_ = 0U;
   active_residual_runtime_us_ = 0;
-  last_residual_build_ = {};
   last_residual_diagnostics_ = {};
 
   struct ActiveGuard {
@@ -330,9 +329,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
   }
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
-  last_residual_build_ = residual_builder_.snapshotLast();
-  last_residual_build_.diagnostics = last_residual_diagnostics_;
-  result.residual_build = last_residual_build_;
+  result.residual_diagnostics = last_residual_diagnostics_;
   result.iteration_count =
       static_cast<std::size_t>(std::max(update.iteration_count, 0));
   result.final_increment_norm = update.final_increment_norm;
@@ -340,13 +337,13 @@ IkfomCorrectionResult IkfomEstimator::correct(
                   covarianceValid(result.corrected_covariance);
   const bool measurement_usable =
       update.measurement_valid && !update.numerical_failure &&
-      last_residual_build_.diagnostics.accepted_residual_count >=
+      result.residual_diagnostics.accepted_residual_count >=
           config_.minimum_accepted_residuals;
   result.converged = measurement_usable && update.converged;
   // FAST-LIO applies the finite terminal IKFoM iterate when the configured
-  // iteration budget is exhausted. Convergence remains a diagnostic and map
-  // insertion gate; it must not roll back an otherwise usable correction and
-  // strand the estimator on an increasingly stale map/state epoch.
+  // iteration budget is exhausted. Convergence remains a diagnostic; it must
+  // not roll back an otherwise usable correction or prevent the registration
+  // map from following the accepted state.
   result.successful = result.finite && measurement_usable;
   result.reason =
       result.successful

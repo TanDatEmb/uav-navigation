@@ -191,6 +191,7 @@ struct RegistrationDiagnostics {
 struct MapDiagnostics {
   bool map_update_performed{false};
   std::size_t map_point_count{0};
+  std::size_t valid_point_count_busy_count{0};
   std::size_t inserted_point_count{0};
   std::size_t removed_point_count{0};
   std::size_t map_size_before_insert{0};

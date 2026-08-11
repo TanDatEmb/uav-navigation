@@ -37,7 +37,7 @@ struct IkfomCorrectionResult {
   ManifoldState corrected_state;
   ManifoldState::Covariance corrected_covariance{
       ManifoldState::Covariance::Identity()};
-  ResidualBuildResult residual_build;
+  ResidualBuildDiagnostics residual_diagnostics;
   std::size_t iteration_count{0};
   double final_increment_norm{0.0};
   double correction_translation_norm_m{0.0};
@@ -83,7 +83,6 @@ class IkfomEstimator {
   IkfomFilter filter_;
   std::span<const Eigen::Vector3d> active_points_;
   const RegistrationMap* active_map_{nullptr};
-  ResidualBuildResult last_residual_build_;
   ResidualBuildDiagnostics last_residual_diagnostics_;
   std::size_t measurement_call_count_{0};
   std::int64_t active_residual_runtime_us_{0};

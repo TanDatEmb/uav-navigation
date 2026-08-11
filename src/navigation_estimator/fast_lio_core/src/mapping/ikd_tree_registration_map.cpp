@@ -11,13 +11,11 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
-#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -72,22 +70,6 @@ bool validConfig(const IkdTreeRegistrationMapConfig& config) {
          std::isfinite(config.balance_rebuild_ratio);
 }
 
-std::size_t safeValidPointCount(UpstreamTree& tree) {
-  constexpr auto kTimeout = std::chrono::milliseconds(10);
-  const auto deadline = std::chrono::steady_clock::now() + kTimeout;
-  do {
-    const int signed_count = tree.validnum();
-    if (signed_count >= 0) {
-      return static_cast<std::size_t>(signed_count);
-    }
-    // Upstream returns -1 while an asynchronous root rebuild owns its working
-    // state. Keep that state distinct from a genuinely empty tree.
-    std::this_thread::yield();
-  } while (std::chrono::steady_clock::now() < deadline);
-  throw std::runtime_error(
-      "ikd-Tree valid point count remained busy during rebuild");
-}
-
 }  // namespace
 
 class IkdTreeRegistrationMap::Impl {
@@ -101,7 +83,7 @@ class IkdTreeRegistrationMap::Impl {
 
   [[nodiscard]] UpstreamPointVector snapshotUpstream() const {
     UpstreamPointVector points;
-    if (!built || safeValidPointCount(*tree) == 0U) {
+    if (!built || validPointCount() == 0U) {
       return points;
     }
     const BoxPointType range = tree->tree_range();
@@ -118,8 +100,22 @@ class IkdTreeRegistrationMap::Impl {
     return points;
   }
 
+  [[nodiscard]] std::size_t validPointCount() const noexcept {
+    const int signed_count = tree->validnum();
+    if (signed_count >= 0) {
+      cached_valid_point_count = static_cast<std::size_t>(signed_count);
+      return cached_valid_point_count;
+    }
+    // validnum() uses trylock and returns -1 while an asynchronous root
+    // rebuild owns the working state. Bookkeeping must never wait for it.
+    ++valid_point_count_busy_count;
+    return cached_valid_point_count;
+  }
+
   std::unique_ptr<UpstreamTree> tree;
   bool built{false};
+  mutable std::size_t cached_valid_point_count{0U};
+  mutable std::size_t valid_point_count_busy_count{0U};
 };
 
 IkdTreeRegistrationMap::IkdTreeRegistrationMap(
@@ -182,7 +178,7 @@ std::size_t IkdTreeRegistrationMap::insert(
   std::sort(points.begin(), points.end(), upstreamPointLess);
 
   const std::size_t size_before =
-      impl_->built ? safeValidPointCount(*impl_->tree) : 0U;
+      impl_->built ? impl_->validPointCount() : 0U;
   if (!impl_->built || size_before == 0U) {
     UpstreamPointVector initial_point{points.front()};
     impl_->tree->Build(initial_point);
@@ -192,7 +188,7 @@ std::size_t IkdTreeRegistrationMap::insert(
   if (!points.empty()) {
     static_cast<void>(impl_->tree->Add_Points(points, true));
   }
-  const std::size_t size_after = safeValidPointCount(*impl_->tree);
+  const std::size_t size_after = impl_->validPointCount();
   return size_after > size_before ? size_after - size_before : 0U;
 }
 
@@ -214,10 +210,10 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
     return 0U;
   }
 
-  if (!impl_->built || safeValidPointCount(*impl_->tree) == 0U) {
+  if (!impl_->built || impl_->validPointCount() == 0U) {
     return 0U;
   }
-  const std::size_t size_before = safeValidPointCount(*impl_->tree);
+  const std::size_t size_before = impl_->validPointCount();
   const BoxPointType range = impl_->tree->tree_range();
   const std::array<float, 3> tree_min{
       range.vertex_min[0], range.vertex_min[1], range.vertex_min[2]};
@@ -276,11 +272,11 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
 
   if (!deletion_boxes.empty()) {
     static_cast<void>(impl_->tree->Delete_Point_Boxes(deletion_boxes));
-    if (safeValidPointCount(*impl_->tree) == 0U) {
+    if (impl_->validPointCount() == 0U) {
       impl_->built = false;
     }
   }
-  const std::size_t size_after = safeValidPointCount(*impl_->tree);
+  const std::size_t size_after = impl_->validPointCount();
   return size_before > size_after ? size_before - size_after : 0U;
 }
 
@@ -298,9 +294,11 @@ IkdTreeRegistrationMap::snapshot() const {
 }
 
 std::size_t IkdTreeRegistrationMap::size() const {
-  return impl_->built
-             ? safeValidPointCount(*impl_->tree)
-             : 0U;
+  return impl_->built ? impl_->validPointCount() : 0U;
+}
+
+std::size_t IkdTreeRegistrationMap::validPointCountBusyCount() const noexcept {
+  return impl_->valid_point_count_busy_count;
 }
 
 void IkdTreeRegistrationMap::clear() {

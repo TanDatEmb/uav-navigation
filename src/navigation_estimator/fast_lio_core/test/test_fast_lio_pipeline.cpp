@@ -77,7 +77,6 @@ EstimatorConfig testConfig() {
   config.preprocessing.point_filter.minimum_range_m = 0.01;
   config.preprocessing.point_filter.maximum_range_m = 10.0;
   config.preprocessing.enable_voxel_filter = false;
-  config.residual_builder.correspondence_search.neighbor_count = 5;
   config.residual_builder.correspondence_search.maximum_neighbor_distance_m = 1.5;
   config.ikfom.maximum_iterations = 4;
   config.ikfom.minimum_accepted_residuals = 9;
@@ -159,6 +158,29 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   for (const Eigen::Vector3d& point : tracked.registered_points_odom_m) {
     EXPECT_NEAR(point.z(), 0.0, 2e-7);
   }
+}
+
+TEST(FastLioPipelineTest, AcceptedTerminalIterateAlsoUpdatesRegistrationMap) {
+  auto config = testConfig();
+  config.ikfom.maximum_iterations = 1U;
+  config.ikfom.convergence_limit = 1e-12;
+  FastLioPipeline pipeline(config);
+  static_cast<void>(pipeline.process(makeGroup(
+      makePlanarScan(0), 0,
+      {stationaryImu(-20 * kMillisecondNs), stationaryImu(-10 * kMillisecondNs),
+       stationaryImu(0)})));
+
+  const ProcessResult accepted = pipeline.process(makeGroup(
+      makePlanarScan(100 * kMillisecondNs, 0.05), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
+       stationaryImu(100 * kMillisecondNs)}));
+
+  ASSERT_EQ(accepted.lidar_update_status, LidarUpdateStatus::kSucceeded)
+      << accepted.rejection_reason;
+  EXPECT_FALSE(accepted.diagnostics.registration.converged);
+  EXPECT_TRUE(accepted.diagnostics.map.map_update_performed);
+  EXPECT_GT(accepted.diagnostics.map.map_inserted_count, 0U);
+  EXPECT_FALSE(pipeline.registrationMapSnapshot().empty());
 }
 
 TEST(FastLioPipelineTest, FailedRegistrationTransitionsToDegradedWithoutMapInsertion) {

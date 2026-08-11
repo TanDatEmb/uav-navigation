@@ -99,6 +99,8 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
   health.correction_rejected_count =
       result.diagnostics.processing.correction_failure_count;
   health.map_point_count = result.diagnostics.map.map_point_count;
+  health.valid_point_count_busy_count =
+      result.diagnostics.map.valid_point_count_busy_count;
   health.measurement_callback_count =
       result.diagnostics.registration.measurement_callback_count;
   health.measurement_model_us = result.diagnostics.timing.measurement_model_us;
@@ -263,6 +265,8 @@ void RosOutputPublisher::publishDiagnostics(const EstimatorHealthSnapshot& healt
                std::to_string(health.map_size_after_insert)),
       keyValue("map_size_after_maintenance",
                std::to_string(health.map_size_after_maintenance)),
+      keyValue("valid_point_count_busy_count",
+               std::to_string(health.valid_point_count_busy_count)),
       keyValue("crop_performed", health.crop_performed ? "true" : "false"),
       keyValue("absolute_guard_triggered",
                health.absolute_guard_triggered ? "true" : "false"),

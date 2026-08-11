@@ -96,7 +96,8 @@ int run(const std::filesystem::path& bag_path,
                  "map_update_performed,scan_start_ns,scan_end_ns,scan_duration_ns,"
                  "imu_samples,imu_gap_ns,"
                  "input_points,filtered_points,queries,accepted_residuals,"
-                 "residual_rms,iterations,final_increment_norm,map_points,"
+                 "residual_rms,iterations,measurement_callback_count,"
+                 "final_increment_norm,map_points,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
                  "ikfom_update_us,measurement_model_us,ikfom_solver_only_us,"
                  "map_insert_crop_us,map_maintenance_us,"
@@ -182,6 +183,7 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.registration.accepted_residual_count << ','
                   << diagnostic.registration.residual_rms_m << ','
                   << diagnostic.registration.iteration_count << ','
+                  << diagnostic.registration.measurement_callback_count << ','
                   << diagnostic.registration.final_increment_norm << ','
                   << diagnostic.map.map_point_count << ','
                   << diagnostic.timing.imu_prediction_us << ','

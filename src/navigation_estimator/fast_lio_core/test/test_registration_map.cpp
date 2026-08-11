@@ -144,18 +144,18 @@ TEST(RegistrationMapTest, GuardFreezesInsertionWhenCropCannotRecover) {
   EXPECT_FALSE(manager.insertionAllowed());
 }
 
-TEST(RegistrationMapTest, InsertionPolicyRequiresCorrectedTrackingUpdate) {
+TEST(RegistrationMapTest, InsertionPolicyAcceptsUsableTerminalCorrection) {
   MapInsertionPolicyConfig config;
   config.minimum_point_count = 3;
   MapInsertionPolicy policy(config);
   MapInsertionContext context;
   context.estimator_tracking = true;
   context.lidar_update_successful = true;
-  context.converged = true;
+  context.correction_usable = true;
   context.transform_finite = true;
   context.filtered_point_count = 3;
   EXPECT_TRUE(policy.permits(context));
-  context.converged = false;
+  context.correction_usable = false;
   EXPECT_FALSE(policy.permits(context));
 }
 

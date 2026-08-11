@@ -7,7 +7,7 @@ namespace uav::nav::lio {
 struct MapInsertionContext {
   bool estimator_tracking{false};
   bool lidar_update_successful{false};
-  bool converged{false};
+  bool correction_usable{false};
   bool transform_finite{false};
   std::size_t filtered_point_count{0};
 };

@@ -17,7 +17,6 @@ struct ResidualBuilderConfig {
   // Kept as a configuration grouping for YAML/API compatibility. The search
   // abstraction itself is intentionally absent from the hot path.
   struct SearchConfig {
-    std::size_t neighbor_count{5};
     double maximum_neighbor_distance_m{2.0};
   } correspondence_search{};
   PlaneEstimatorConfig plane_estimator{};

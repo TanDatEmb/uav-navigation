@@ -122,7 +122,6 @@ TEST(IkfomEstimatorTest, ReportsConvergenceFromFinalUpstreamIncrement) {
   config.minimum_accepted_residuals = 5;
   config.convergence_limit = 1e-4;
   ResidualBuilderConfig residual_config;
-  residual_config.correspondence_search.neighbor_count = 5;
   residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
   IkfomEstimator estimator(config, residual_config);
   ManifoldState initial;
@@ -161,7 +160,6 @@ TEST(IkfomEstimatorTest, AcceptsFiniteTerminalIterateAtIterationLimit) {
   config.minimum_accepted_residuals = 5;
   config.convergence_limit = 1e-12;
   ResidualBuilderConfig residual_config;
-  residual_config.correspondence_search.neighbor_count = 5;
   residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
   IkfomEstimator estimator(config, residual_config);
   ManifoldState initial;
