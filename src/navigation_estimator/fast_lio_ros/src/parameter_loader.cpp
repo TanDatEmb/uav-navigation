@@ -235,22 +235,14 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
             result.local_map_half_extent_m.begin());
   result.local_map_crop_trigger_distance_m = node.declare_parameter(
       "mapping.local_map.crop_trigger_distance_m", 5.0);
-  result.local_map_soft_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.soft_point_limit", 14000);
-  result.local_map_hard_point_limit = node.declare_parameter<std::int64_t>(
-      "mapping.local_map.hard_point_limit", 16000);
-  result.local_map_target_point_count_after_prune =
-      node.declare_parameter<std::int64_t>(
-          "mapping.local_map.target_point_count_after_prune", 12000);
-  result.local_map_distance_shell_size_m = node.declare_parameter(
-      "mapping.local_map.distance_shell_size_m", 5.0);
+  result.local_map_absolute_point_guard = node.declare_parameter<std::int64_t>(
+      "mapping.local_map.absolute_map_point_guard", 250000);
   result.dynamic_filter_enabled =
       node.declare_parameter("mapping.dynamic_filter.enabled", false);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
   result.publish_registered_points =
-      node.declare_parameter("output.publish_registered_points", true);
-  result.publish_local_map = node.declare_parameter("output.publish_local_map", true);
+      node.declare_parameter("output.publish_registered_points", false);
   result.imu_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
   result.lidar_queue_capacity =
@@ -327,22 +319,14 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.scan_voxel_size_m;
   config.registration_map.voxel_size_m =
       parameters.registration_map_voxel_size_m;
-  config.lifecycle.enable_periodic_local_map_snapshot =
-      parameters.publish_local_map;
   config.local_map.half_extent_m = {
       parameters.local_map_half_extent_m[0],
       parameters.local_map_half_extent_m[1],
       parameters.local_map_half_extent_m[2]};
   config.local_map.crop_trigger_distance_m =
       parameters.local_map_crop_trigger_distance_m;
-  config.local_map.soft_point_limit =
-      static_cast<std::size_t>(parameters.local_map_soft_point_limit);
-  config.local_map.hard_point_limit =
-      static_cast<std::size_t>(parameters.local_map_hard_point_limit);
-  config.local_map.target_point_count_after_prune = static_cast<std::size_t>(
-      parameters.local_map_target_point_count_after_prune);
-  config.local_map.distance_shell_size_m =
-      parameters.local_map_distance_shell_size_m;
+  config.local_map.absolute_map_point_guard = static_cast<std::size_t>(
+      parameters.local_map_absolute_point_guard);
   config.dynamic_filter.enabled = parameters.dynamic_filter_enabled;
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
@@ -539,11 +523,7 @@ void ParameterLoader::validate(const RosParameters& p) {
       (local_half_extent.array() <= 0.0).any() ||
       !(p.local_map_crop_trigger_distance_m > 0.0) ||
       !std::isfinite(p.local_map_crop_trigger_distance_m) ||
-      p.local_map_target_point_count_after_prune <= 0 ||
-      p.local_map_target_point_count_after_prune >= p.local_map_soft_point_limit ||
-      p.local_map_soft_point_limit >= p.local_map_hard_point_limit ||
-      !(p.local_map_distance_shell_size_m > 0.0) ||
-      !std::isfinite(p.local_map_distance_shell_size_m)) {
+      p.local_map_absolute_point_guard <= 0) {
     throw std::invalid_argument("invalid mapping.local_map configuration");
   }
 }

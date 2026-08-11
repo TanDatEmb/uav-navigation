@@ -154,13 +154,11 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
 TEST_F(ParameterLoaderTest, CanonicalConfigParses) {
   const std::string path = UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml";
   const auto profile = loadCanonicalEstimatorProfile(path);
-  EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 10U);
+  EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 4U);
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
-  EXPECT_EQ(profile.estimator.local_map.soft_point_limit, 80000U);
-  EXPECT_EQ(profile.estimator.local_map.hard_point_limit, 100000U);
-  EXPECT_EQ(profile.estimator.local_map.target_point_count_after_prune, 70000U);
+  EXPECT_EQ(profile.estimator.local_map.absolute_map_point_guard, 250000U);
 }
 
 TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
@@ -198,9 +196,8 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_DOUBLE_EQ(parameters.maximum_range_m, 40.0);
   EXPECT_DOUBLE_EQ(parameters.scan_voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.3);
-  EXPECT_EQ(parameters.maximum_registration_iterations, 10);
-  EXPECT_TRUE(parameters.publish_registered_points);
-  EXPECT_TRUE(parameters.publish_local_map);
+  EXPECT_EQ(parameters.maximum_registration_iterations, 4);
+  EXPECT_FALSE(parameters.publish_registered_points);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
   EXPECT_EQ(parameters.maximum_processing_lag_ms, 500);
@@ -251,23 +248,18 @@ TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
             (Eigen::Vector3d{-0.019391, -0.000278, 0.080926}));
 }
 
-TEST_F(ParameterLoaderTest, AistUsesIndependentScanRegistrationAndVisualMapOutputs) {
+TEST_F(ParameterLoaderTest, AistKeepsDebugCloudOutputsDisabledByDefault) {
   const auto profile = loadCanonicalEstimatorProfile(
       UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
-  EXPECT_TRUE(
-      profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
-}
-
-TEST_F(ParameterLoaderTest, PublishLocalMapControlsPeriodicCoreSnapshot) {
-  rclcpp::Node node{"parameter_loader_publish_map_test"};
-  auto parameters = ParameterLoader::declareAndLoad(node);
-  parameters.publish_local_map = false;
-  const auto profile = makeEstimatorProfile(parameters);
-  EXPECT_FALSE(
-      profile.estimator.lifecycle.enable_periodic_local_map_snapshot);
+  rclcpp::NodeOptions options;
+  options.arguments({"--ros-args", "--params-file",
+                     UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml"});
+  rclcpp::Node node{"parameter_loader_debug_outputs_test", options};
+  const auto parameters = ParameterLoader::declareAndLoad(node);
+  EXPECT_FALSE(parameters.publish_registered_points);
 }
 
 TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {

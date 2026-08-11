@@ -106,6 +106,7 @@ class FastLioNode : public rclcpp::Node {
   std::int64_t previous_ros_imu_ns_{-1};
   std::uint64_t correction_sequence_{0U};
   rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;
+  rclcpp::TimerBase::SharedPtr estimator_diagnostics_timer_;
 };
 
 }  // namespace uav::nav::lio

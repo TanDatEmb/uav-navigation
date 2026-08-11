@@ -65,14 +65,10 @@ struct RosParameters {
   double registration_map_voxel_size_m{};
   std::array<double, 3> local_map_half_extent_m{};
   double local_map_crop_trigger_distance_m{};
-  std::int64_t local_map_soft_point_limit{};
-  std::int64_t local_map_hard_point_limit{};
-  std::int64_t local_map_target_point_count_after_prune{};
-  double local_map_distance_shell_size_m{};
+  std::int64_t local_map_absolute_point_guard{};
   bool dynamic_filter_enabled{};
   std::int64_t maximum_registration_iterations{};
   bool publish_registered_points{};
-  bool publish_local_map{};
   std::int64_t imu_queue_capacity{};
   std::int64_t lidar_queue_capacity{};
   std::int64_t maximum_processing_lag_ms{};

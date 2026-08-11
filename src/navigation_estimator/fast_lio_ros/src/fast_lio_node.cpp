@@ -214,6 +214,9 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
   transport_diagnostics_timer_ = create_wall_timer(
       std::chrono::seconds(1),
       [this] { publishTransportSnapshot(); });
+  estimator_diagnostics_timer_ = create_wall_timer(
+      std::chrono::milliseconds(500),
+      [this] { output_publisher_.publishDiagnosticsSnapshot(); });
   if (profile_.estimator.initial_prior.source == InitialStatePriorSource::kTopic) {
     initial_prior_startup_timer_ = create_wall_timer(
         std::chrono::milliseconds(10),
@@ -226,6 +229,12 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
 FastLioNode::~FastLioNode() {
   if (initial_prior_startup_timer_) {
     initial_prior_startup_timer_->cancel();
+  }
+  if (estimator_diagnostics_timer_) {
+    estimator_diagnostics_timer_->cancel();
+  }
+  if (transport_diagnostics_timer_) {
+    transport_diagnostics_timer_->cancel();
   }
   {
     std::lock_guard lock(input_mutex_);
@@ -692,7 +701,6 @@ void FastLioNode::publishAvailableResults() {
                     result_finished - timing->started_at)
                     .count());
             runtime_statistics_.recordRegistrationUpdate(
-                augmented.diagnostics.timing.residual_build_us +
                 augmented.diagnostics.timing.ikfom_update_us);
           }
           pending_lidar_timings_.erase(timing);

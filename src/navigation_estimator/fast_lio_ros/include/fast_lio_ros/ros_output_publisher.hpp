@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <string>
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -29,6 +32,9 @@ class RosOutputPublisher {
     return covariance_runtime_;
   }
   void publish(const ProcessResult& result);
+  // Publishes the latest health snapshot at the runtime diagnostic cadence.
+  // The estimator path only replaces this latest-only snapshot.
+  void publishDiagnosticsSnapshot();
   void publishTransportSnapshot(
       const SensorDiagnostics& sensor,
       const ProcessingStatistics& processing,
@@ -41,20 +47,54 @@ class RosOutputPublisher {
       std::optional<Timestamp> next_publish_deadline);
 
  private:
+  struct EstimatorHealthSnapshot {
+    EstimatorStatus status{EstimatorStatus::kWaitingForSensors};
+    LidarUpdateFailureClass failure_class{LidarUpdateFailureClass::kNone};
+    bool corrected_output{false};
+    bool navigation_valid{false};
+    bool corrected_estimate_valid{false};
+    std::string failure_reason;
+    std::int64_t output_time_ns{0};
+    std::int64_t last_lidar_correction_time_ns{0};
+    std::uint64_t lio_generation{0};
+    std::size_t imu_received_count{0};
+    std::size_t lidar_received_count{0};
+    std::size_t lidar_processed_count{0};
+    std::size_t imu_drop_count{0};
+    std::size_t lidar_drop_count{0};
+    std::size_t timestamp_regression_count{0};
+    std::size_t queue_maximum{0};
+    std::size_t correction_accepted_count{0};
+    std::size_t correction_rejected_count{0};
+    std::size_t map_point_count{0};
+    std::size_t measurement_callback_count{0};
+    std::int64_t measurement_model_us{0};
+    std::int64_t ikfom_solver_only_us{0};
+    std::size_t map_size_after_insert{0};
+    std::size_t map_size_after_maintenance{0};
+    bool crop_performed{false};
+    bool absolute_guard_triggered{false};
+    bool absolute_guard_recovery_failed{false};
+    bool map_insertion_frozen{false};
+    std::int64_t map_maintenance_us{0};
+  };
+
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(
       const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const;
-  void publishDiagnostics(const ProcessResult& result, const builtin_interfaces::msg::Time& stamp);
+  void publishDiagnostics(const EstimatorHealthSnapshot& health,
+                          const builtin_interfaces::msg::Time& stamp);
 
   RosParameters parameters_;
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr registered_points_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
+  mutable std::mutex diagnostics_mutex_;
+  std::optional<EstimatorHealthSnapshot> latest_diagnostic_health_;
 };
 
 }  // namespace uav::nav::lio
