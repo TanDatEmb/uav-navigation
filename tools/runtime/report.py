@@ -449,11 +449,9 @@ def _map_point_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _map_maintenance_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize bounded-map maintenance without hiding prune-side effects."""
-    prune_counts: list[int] = []
+    """Summarize geometric map maintenance and emergency guard events."""
     maintenance_us: list[float] = []
-    snapshot_us: list[float] = []
-    hard_limit_trigger_count = 0
+    guard_trigger_count = 0
     recovery_failure_count = 0
     for item in _series(samples, "diagnostics"):
         statuses = item.get("payload", {}).get("statuses", [])
@@ -465,24 +463,15 @@ def _map_maintenance_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
             values = status.get("values", {})
             if not isinstance(values, dict):
                 continue
-            pruned = int(_number(values.get("distance_pruned_count"), 0.0))
-            if pruned > 0:
-                prune_counts.append(pruned)
-            hard_limit_trigger_count += int(bool(values.get("hard_limit_triggered", False)))
-            recovery_failure_count += int(bool(values.get("hard_limit_recovery_failed", False)))
+            guard_trigger_count += int(bool(values.get("absolute_guard_triggered", False)))
+            recovery_failure_count += int(bool(values.get("absolute_guard_recovery_failed", False)))
             maintenance = _number(values.get("map_maintenance_us"), -1.0)
-            snapshot = _number(values.get("snapshot_us"), -1.0)
             if maintenance >= 0.0:
                 maintenance_us.append(maintenance)
-            if snapshot >= 0.0:
-                snapshot_us.append(snapshot)
     return {
-        "prune_event_count": len(prune_counts),
-        "largest_prune_count": max(prune_counts) if prune_counts else 0,
-        "hard_limit_trigger_count": hard_limit_trigger_count,
-        "hard_limit_recovery_failure_count": recovery_failure_count,
+        "absolute_guard_trigger_count": guard_trigger_count,
+        "absolute_guard_recovery_failure_count": recovery_failure_count,
         "maximum_maintenance_us": max(maintenance_us) if maintenance_us else None,
-        "maximum_snapshot_us": max(snapshot_us) if snapshot_us else None,
     }
 
 

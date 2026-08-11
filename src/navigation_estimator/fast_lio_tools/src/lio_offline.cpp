@@ -98,16 +98,17 @@ int run(const std::filesystem::path& bag_path,
                  "input_points,filtered_points,queries,accepted_residuals,"
                  "residual_rms,iterations,final_increment_norm,map_points,"
                  "prediction_us,deskew_us,preprocessing_us,residual_build_us,"
-                 "ikfom_update_us,map_insert_crop_us,map_maintenance_us,snapshot_us,"
+                 "ikfom_update_us,measurement_model_us,ikfom_solver_only_us,"
+                 "map_insert_crop_us,map_maintenance_us,"
                  "total_processing_us,map_size_before_insert,map_candidate_count,"
                  "map_inserted_count,map_size_after_insert,crop_performed,"
                  "crop_removed_count,crop_triggered_by_motion,"
-                 "crop_triggered_by_point_threshold,map_size_before_maintenance,"
-                 "confidence_pruned_count,distance_pruned_count,"
-                 "redundancy_pruned_count,map_size_after_maintenance,"
+                 "absolute_guard_triggered,absolute_guard_recovery_failed,"
+                 "map_insertion_frozen,map_size_before_maintenance,"
+                 "map_size_after_maintenance,"
                  "local_map_center_x,local_map_center_y,local_map_center_z,"
                  "local_map_half_extent_x,local_map_half_extent_y,"
-                 "local_map_half_extent_z,snapshot_point_count,"
+                 "local_map_half_extent_z,"
                  "dynamic_filter_enabled,dynamic_evidence_voxel_count,"
                  "dynamic_candidate_count\n";
   trajectory << "time_ns,x,y,z,qx,qy,qz,qw\n";
@@ -188,9 +189,10 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.timing.preprocessing_us << ','
                   << diagnostic.timing.residual_build_us << ','
                   << diagnostic.timing.ikfom_update_us << ','
+                  << diagnostic.timing.measurement_model_us << ','
+                  << diagnostic.timing.ikfom_solver_only_us << ','
                   << diagnostic.timing.map_insert_crop_us << ','
                   << diagnostic.timing.map_maintenance_us << ','
-                  << diagnostic.timing.snapshot_us << ','
                   << diagnostic.timing.total_processing_us << ','
                   << diagnostic.map.map_size_before_insert << ','
                   << diagnostic.map.map_candidate_count << ','
@@ -199,11 +201,10 @@ int run(const std::filesystem::path& bag_path,
                   << (diagnostic.map.crop_performed ? 1 : 0) << ','
                   << diagnostic.map.crop_removed_count << ','
                   << (diagnostic.map.crop_triggered_by_motion ? 1 : 0) << ','
-                  << (diagnostic.map.crop_triggered_by_point_threshold ? 1 : 0) << ','
+                  << (diagnostic.map.absolute_guard_triggered ? 1 : 0) << ','
+                  << (diagnostic.map.absolute_guard_recovery_failed ? 1 : 0) << ','
+                  << (diagnostic.map.map_insertion_frozen ? 1 : 0) << ','
                   << diagnostic.map.map_size_before_maintenance << ','
-                  << diagnostic.map.confidence_pruned_count << ','
-                  << diagnostic.map.distance_pruned_count << ','
-                  << diagnostic.map.redundancy_pruned_count << ','
                   << diagnostic.map.map_size_after_maintenance << ','
                   << diagnostic.map.local_map_center_odom_m.x() << ','
                   << diagnostic.map.local_map_center_odom_m.y() << ','
@@ -211,7 +212,6 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.map.local_map_half_extent_m.x() << ','
                   << diagnostic.map.local_map_half_extent_m.y() << ','
                   << diagnostic.map.local_map_half_extent_m.z() << ','
-                  << diagnostic.map.snapshot_point_count << ','
                   << (diagnostic.map.dynamic_filter_enabled ? 1 : 0) << ','
                   << diagnostic.map.dynamic_evidence_voxel_count << ','
                   << diagnostic.map.dynamic_candidate_count << '\n';
@@ -359,8 +359,8 @@ int run(const std::filesystem::path& bag_path,
           << final_diagnostics.map.map_size_after_maintenance << ",\n"
           << "  \"map_maintenance_us\": "
           << final_diagnostics.map.map_maintenance_us << ",\n"
-          << "  \"snapshot_point_count\": "
-          << final_diagnostics.map.snapshot_point_count << ",\n"
+          << "  \"absolute_guard_triggered\": "
+          << (final_diagnostics.map.absolute_guard_triggered ? "true" : "false") << ",\n"
           << "  \"wall_runtime_us\": " << elapsed_us << "\n"
           << "}\n";
   };

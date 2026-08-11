@@ -18,6 +18,10 @@ COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
 STANDALONE_EXCLUDED_PACKAGES: tuple[str, ...] = ()
 MODES = {
     "release": {
+        "build_type": "Release",
+        "flags": (),
+    },
+    "profile": {
         "build_type": "RelWithDebInfo",
         "flags": (),
     },

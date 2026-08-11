@@ -76,15 +76,9 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(prior["source"], "zero")
         self.assertEqual(prior["source_frame"], "lio_odom")
         self.assertEqual(prior["source_frame_transform"], "same_frame")
-        self.assertTrue(config["output"]["publish_registered_points"])
-        self.assertTrue(config["output"]["publish_local_map"])
+        self.assertFalse(config["output"]["publish_registered_points"])
         local_map = config["mapping"]["local_map"]
-        self.assertGreater(local_map["target_point_count_after_prune"], 0)
-        self.assertGreater(
-            local_map["soft_point_limit"],
-            local_map["target_point_count_after_prune"],
-        )
-        self.assertGreater(local_map["hard_point_limit"], local_map["soft_point_limit"])
+        self.assertGreater(local_map["absolute_map_point_guard"], 0)
         propagated = config["propagated_odometry"]
         self.assertEqual(propagated["imu_history_duration_ns"], 1_000_000_000)
         self.assertEqual(propagated["maximum_correction_age_ns"], 750_000_000)
@@ -123,15 +117,15 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("estimator_aid_src_ev", source)
             self.assertNotIn("EstimatorAidSource", source)
 
-    def test_lio_diagnostics_expose_map_pruning_and_propagation_latency(self) -> None:
+    def test_lio_diagnostics_expose_map_guard_and_propagation_latency(self) -> None:
         source = (ROOT / "src/navigation_estimator/fast_lio_ros/src/ros_output_publisher.cpp").read_text(
             encoding="utf-8"
         )
         for key in (
-            'keyValue("hard_limit_triggered"',
-            'keyValue("distance_pruned_count"',
+            'keyValue("absolute_guard_triggered"',
+            'keyValue("absolute_guard_recovery_failed"',
             'keyValue("map_maintenance_us"',
-            'keyValue("snapshot_us"',
+            'keyValue("measurement_model_us"',
             'keyValue("maximum_replay_runtime_us"',
             'keyValue("maximum_imu_batch_size"',
         ):
@@ -300,7 +294,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(result["observer_dispatch_stall_count"], 0)
         self.assertEqual(result["source_stale_event_count"], 1)
 
-    def test_map_maintenance_summary_keeps_pruning_evidence(self) -> None:
+    def test_map_maintenance_summary_keeps_guard_evidence(self) -> None:
         samples = [
             {
                 "stream": "diagnostics",
@@ -309,11 +303,9 @@ class RuntimeContractTest(unittest.TestCase):
                         {
                             "name": "fast_lio/estimator",
                             "values": {
-                                "distance_pruned_count": 4099,
-                                "hard_limit_triggered": True,
-                                "hard_limit_recovery_failed": False,
+                                "absolute_guard_triggered": True,
+                                "absolute_guard_recovery_failed": False,
                                 "map_maintenance_us": 21606,
-                                "snapshot_us": 831,
                             },
                         }
                     ]
@@ -321,9 +313,8 @@ class RuntimeContractTest(unittest.TestCase):
             }
         ]
         result = report._map_maintenance_summary(samples)
-        self.assertEqual(result["prune_event_count"], 1)
-        self.assertEqual(result["largest_prune_count"], 4099)
-        self.assertEqual(result["hard_limit_recovery_failure_count"], 0)
+        self.assertEqual(result["absolute_guard_trigger_count"], 1)
+        self.assertEqual(result["absolute_guard_recovery_failure_count"], 0)
         self.assertEqual(result["maximum_maintenance_us"], 21606.0)
 
 

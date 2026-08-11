@@ -156,6 +156,14 @@ export PX4_GZ_MODEL_NAME="${MODEL_NAME}"
 # Simulation clock authority
 export PX4_PARAM_UXRCE_DDS_SYNCT=0
 
+# This headless acceptance harness has no RC receiver or MAVLink joystick.
+# Disable stick input so an incidental manual-control sample cannot latch and
+# repeatedly trigger manual-control-loss failsafe during OFFBOARD flight.
+export PX4_PARAM_COM_RC_IN_MODE=4
+
+# Ground-truth model odometry must never compete with ROS LIO external vision.
+export PX4_PARAM_SIM_GZ_EN_ODOM=0
+
 ###############################################################################
 # MODE 1 : Standard PX4
 # ---------------------------------------------------------------------------
@@ -204,9 +212,7 @@ export PX4_PARAM_EKF2_RNG_CTRL=0
 export PX4_PARAM_EKF2_MAG_TYPE=5
 export PX4_PARAM_EKF2_HGT_REF=3
 export PX4_PARAM_EKF2_EV_CTRL=15
-#
-# Optional:
-# export PX4_PARAM_SIM_GZ_EN_ODOM=0
+
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
 if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
@@ -214,6 +220,7 @@ if [[ -v PX4_GZ_MODEL ]]; then unset PX4_GZ_MODEL; fi
 echo
 echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
+echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE} (headless OFFBOARD; stick input disabled)"
 echo "PX4 visual odometry: ROS LIO only (SIM_GZ_EN_ODOM=0; EKF2 EV=15; GPS/baro/range fusion=0)"
 echo "Runtime stack is started by tools/runtime/runner.py."
 echo

@@ -22,3 +22,4 @@ param show EKF2_GPS_CTRL
 param show EKF2_BARO_CTRL
 param show EKF2_RNG_CTRL
 param show EKF2_MAG_TYPE
+param show COM_RC_IN_MODE
