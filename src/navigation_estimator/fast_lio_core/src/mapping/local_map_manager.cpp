@@ -2,18 +2,13 @@
 
 #include <cmath>
 #include <stdexcept>
-#include <string>
 
 namespace uav::nav::lio {
 
 LocalMapManager::LocalMapManager(LocalMapManagerConfig config) : config_(config) {
   if (!config_.half_extent_m.allFinite() || (config_.half_extent_m.array() <= 0.0).any() ||
       !(config_.crop_trigger_distance_m > 0.0) || !std::isfinite(config_.crop_trigger_distance_m) ||
-      config_.target_point_count_after_prune == 0U ||
-      config_.target_point_count_after_prune >= config_.soft_point_limit ||
-      config_.soft_point_limit >= config_.hard_point_limit ||
-      !(config_.distance_shell_size_m > 0.0) ||
-      !std::isfinite(config_.distance_shell_size_m)) {
+      config_.absolute_map_point_guard == 0U) {
     throw std::invalid_argument("invalid local map manager configuration");
   }
 }
@@ -28,61 +23,25 @@ LocalMapUpdate LocalMapManager::update(RegistrationMap& map,
   }
 
   update.map_count_before = map.size();
-  update.soft_limit_triggered =
-      update.map_count_before > config_.soft_point_limit;
-  update.hard_limit_triggered =
-      update.map_count_before > config_.hard_point_limit;
-  if (update.map_count_before <= config_.target_point_count_after_prune) {
-    soft_maintenance_armed_ = true;
-  }
   const bool moved_beyond_trigger =
       !has_crop_center_ || (current_position_odom_m - last_crop_center_odom_m_).norm() >=
                                config_.crop_trigger_distance_m;
-  const bool soft_maintenance_due =
-      update.soft_limit_triggered && soft_maintenance_armed_;
-  if (!moved_beyond_trigger && !soft_maintenance_due &&
-      !update.hard_limit_triggered) {
+  update.absolute_guard_triggered =
+      update.map_count_before > config_.absolute_map_point_guard;
+  if (!moved_beyond_trigger && !update.absolute_guard_triggered) {
     update.map_count_after_crop = update.map_count_before;
-    update.map_count_after_prune = update.map_count_before;
     return update;
   }
 
   update.crop_performed = true;
   update.crop_triggered_by_motion = moved_beyond_trigger;
-  update.crop_triggered_by_point_threshold =
-      soft_maintenance_due || update.hard_limit_triggered;
   update.removed_point_count = map.cropLocal(current_position_odom_m, config_.half_extent_m);
   update.map_count_after_crop = map.size();
-  if (update.map_count_after_crop > config_.hard_point_limit) {
-    update.hard_limit_triggered = true;
-    update.distance_pruned_count = map.pruneFarthest(
-        current_position_odom_m, config_.target_point_count_after_prune,
-        config_.distance_shell_size_m);
-    update.removed_point_count += update.distance_pruned_count;
+  if (update.map_count_after_crop > config_.absolute_map_point_guard) {
+    update.absolute_guard_recovery_failed = true;
+    insertion_frozen_ = true;
   }
-  update.map_count_after_prune = map.size();
-  // A hard threshold can be crossed before the moving-cube crop and then be
-  // recovered by that crop alone. Only a hard-triggered prune is required to
-  // reach the target count; being above target while already back below the
-  // hard cap is a valid bounded-map state.
-  const bool hard_prune_required =
-      update.map_count_after_crop > config_.hard_point_limit;
-  update.hard_limit_recovery_failed =
-      hard_prune_required &&
-      update.map_count_after_prune > config_.target_point_count_after_prune;
-  if (update.hard_limit_recovery_failed) {
-    throw std::runtime_error(
-        "local map hard-limit recovery did not reach target point count " +
-        std::string("before=") + std::to_string(update.map_count_before) +
-        " after_crop=" + std::to_string(update.map_count_after_crop) +
-        " after_prune=" + std::to_string(update.map_count_after_prune) +
-        " target=" +
-        std::to_string(config_.target_point_count_after_prune) +
-        " pruned=" + std::to_string(update.distance_pruned_count));
-  }
-  if (soft_maintenance_due) {
-    soft_maintenance_armed_ = false;
-  }
+  update.insertion_frozen = insertion_frozen_;
   last_crop_center_odom_m_ = current_position_odom_m;
   has_crop_center_ = true;
   return update;
@@ -91,7 +50,7 @@ LocalMapUpdate LocalMapManager::update(RegistrationMap& map,
 void LocalMapManager::reset() noexcept {
   last_crop_center_odom_m_.setZero();
   has_crop_center_ = false;
-  soft_maintenance_armed_ = true;
+  insertion_frozen_ = false;
 }
 
 }  // namespace uav::nav::lio

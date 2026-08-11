@@ -29,8 +29,6 @@ struct LifecycleConfig {
   std::size_t maximum_initial_map_registration_failures{10};
   std::size_t degraded_after_registration_failures{1};
   std::size_t lost_after_registration_failures{5};
-  bool enable_periodic_local_map_snapshot{true};
-  std::size_t local_map_snapshot_period_scans{10};
 };
 
 struct TrackingConfig {

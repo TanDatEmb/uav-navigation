@@ -132,74 +132,39 @@ IkdTreeRegistrationMap::IkdTreeRegistrationMap(
   impl_ = std::make_unique<Impl>(config_);
 }
 
-IkdTreeRegistrationMap::~IkdTreeRegistrationMap() {
-  std::scoped_lock lock(mutex_);
-  impl_.reset();
-}
+IkdTreeRegistrationMap::~IkdTreeRegistrationMap() = default;
 
-NearestNeighborResult IkdTreeRegistrationMap::nearestNeighbors(
+bool IkdTreeRegistrationMap::nearestSearch(
     const Eigen::Vector3d& query_odom_m,
-    std::size_t neighbor_count,
-    double maximum_distance_m) const {
-  NearestNeighborResult result;
+    double maximum_distance_m,
+    NeighborSet& output) const {
+  output.count = 0U;
   if (!isRepresentableAsUpstreamPoint(query_odom_m) ||
-      neighbor_count == 0U ||
-      neighbor_count >
-          static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
       !(maximum_distance_m > 0.0) ||
       !std::isfinite(maximum_distance_m)) {
-    return result;
+    return false;
   }
 
-  std::scoped_lock lock(mutex_);
-  if (!impl_->built || safeValidPointCount(*impl_->tree) == 0U) {
-    return result;
+  if (!impl_->built) {
+    return false;
   }
 
-  UpstreamPointVector upstream_neighbors;
-  std::vector<float> upstream_squared_distances;
-  impl_->tree->Nearest_Search(
-      toUpstreamPoint(query_odom_m),
-      static_cast<int>(neighbor_count), upstream_neighbors,
-      upstream_squared_distances, maximum_distance_m);
-
-  struct Candidate {
-    Eigen::Vector3d point_odom_m;
-    double squared_distance_m2{0.0};
-  };
-  std::vector<Candidate> candidates;
-  candidates.reserve(upstream_neighbors.size());
-  const double maximum_squared_distance_m2 =
-      maximum_distance_m * maximum_distance_m;
-  for (const UpstreamPoint& upstream_point : upstream_neighbors) {
-    const Eigen::Vector3d point_odom_m =
-        toEigenPoint(upstream_point);
-    const double squared_distance_m2 =
-        (point_odom_m - query_odom_m).squaredNorm();
-    if (std::isfinite(squared_distance_m2) &&
-        squared_distance_m2 <= maximum_squared_distance_m2) {
-      candidates.push_back({point_odom_m, squared_distance_m2});
-    }
+  std::array<UpstreamPoint, NeighborSet::kCapacity> upstream_neighbors{};
+  std::array<float, NeighborSet::kCapacity> upstream_distances{};
+  std::array<UpstreamTree::PointType_CMP, 2U * NeighborSet::kCapacity>
+      heap_storage{};
+  int count = 0;
+  impl_->tree->Nearest_Search_Into(
+      toUpstreamPoint(query_odom_m), static_cast<int>(NeighborSet::kCapacity),
+      upstream_neighbors.data(), upstream_distances.data(),
+      static_cast<int>(upstream_neighbors.size()), count, heap_storage.data(),
+      static_cast<int>(heap_storage.size()), maximum_distance_m);
+  output.count = static_cast<std::size_t>(std::max(count, 0));
+  for (std::size_t index = 0U; index < output.count; ++index) {
+    output.points[index] = toEigenPoint(upstream_neighbors[index]);
+    output.squared_distances[index] = upstream_distances[index];
   }
-  std::sort(candidates.begin(), candidates.end(),
-            [](const Candidate& left, const Candidate& right) {
-              if (left.squared_distance_m2 !=
-                  right.squared_distance_m2) {
-                return left.squared_distance_m2 <
-                       right.squared_distance_m2;
-              }
-              return lexicographicPointLess(left.point_odom_m,
-                                            right.point_odom_m);
-            });
-
-  result.points_odom_m.reserve(candidates.size());
-  result.squared_distances_m2.reserve(candidates.size());
-  for (const Candidate& candidate : candidates) {
-    result.points_odom_m.push_back(candidate.point_odom_m);
-    result.squared_distances_m2.push_back(
-        candidate.squared_distance_m2);
-  }
-  return result;
+  return output.count == NeighborSet::kCapacity;
 }
 
 std::size_t IkdTreeRegistrationMap::insert(
@@ -216,7 +181,6 @@ std::size_t IkdTreeRegistrationMap::insert(
   }
   std::sort(points.begin(), points.end(), upstreamPointLess);
 
-  std::scoped_lock lock(mutex_);
   const std::size_t size_before =
       impl_->built ? safeValidPointCount(*impl_->tree) : 0U;
   if (!impl_->built || size_before == 0U) {
@@ -250,7 +214,6 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
     return 0U;
   }
 
-  std::scoped_lock lock(mutex_);
   if (!impl_->built || safeValidPointCount(*impl_->tree) == 0U) {
     return 0U;
   }
@@ -321,70 +284,8 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
   return size_before > size_after ? size_before - size_after : 0U;
 }
 
-std::size_t IkdTreeRegistrationMap::pruneFarthest(
-    const Eigen::Vector3d& center_odom_m,
-    std::size_t target_point_count,
-    double distance_shell_size_m) {
-  if (!isRepresentableAsUpstreamPoint(center_odom_m) ||
-      target_point_count == 0U || !(distance_shell_size_m > 0.0) ||
-      !std::isfinite(distance_shell_size_m)) {
-    return 0U;
-  }
-  std::scoped_lock lock(mutex_);
-  if (!impl_->built ||
-      safeValidPointCount(*impl_->tree) <= target_point_count) {
-    return 0U;
-  }
-  const std::size_t size_before = safeValidPointCount(*impl_->tree);
-  UpstreamPointVector points = impl_->snapshotUpstream();
-  if (points.size() != size_before) {
-    throw std::runtime_error(
-        "ikd-Tree snapshot count mismatch during local map prune");
-  }
-  const auto distance_key = [&](const UpstreamPoint& point) {
-    const double distance = (toEigenPoint(point) - center_odom_m).norm();
-    const auto shell =
-        static_cast<std::uint64_t>(std::floor(distance / distance_shell_size_m));
-    return std::pair{shell, distance};
-  };
-  std::nth_element(
-      points.begin(), points.begin() + static_cast<std::ptrdiff_t>(target_point_count),
-      points.end(), [&](const UpstreamPoint& left, const UpstreamPoint& right) {
-        const auto left_key = distance_key(left);
-        const auto right_key = distance_key(right);
-        if (left_key != right_key) {
-          return left_key < right_key;
-        }
-        return upstreamPointLess(left, right);
-      });
-
-  // The upstream Delete_Points() path can trigger synchronous subtree
-  // rebuilds while it is consuming the deletion vector. In a large batch,
-  // points after a rebuild may no longer be found, leaving valid points above
-  // the requested cap. Build the selected working set once and swap it in so
-  // the count and the retained geometry are exact for both sync and async
-  // backend modes.
-  points.resize(target_point_count);
-
-  auto replacement = std::make_unique<UpstreamTree>(
-      static_cast<float>(config_.deletion_rebuild_ratio),
-      static_cast<float>(config_.balance_rebuild_ratio),
-      static_cast<float>(config_.voxel_size_m),
-      config_.enable_asynchronous_rebuild);
-  replacement->Build(std::move(points));
-  const std::size_t size_after = safeValidPointCount(*replacement);
-  if (size_after != target_point_count) {
-    throw std::runtime_error(
-        "ikd-Tree replacement map did not reach target point count");
-  }
-  impl_->tree.swap(replacement);
-  impl_->built = true;
-  return size_before > size_after ? size_before - size_after : 0U;
-}
-
 std::vector<Eigen::Vector3d>
 IkdTreeRegistrationMap::snapshot() const {
-  std::scoped_lock lock(mutex_);
   const UpstreamPointVector upstream_points =
       impl_->snapshotUpstream();
   std::vector<Eigen::Vector3d> points;
@@ -397,14 +298,12 @@ IkdTreeRegistrationMap::snapshot() const {
 }
 
 std::size_t IkdTreeRegistrationMap::size() const {
-  std::scoped_lock lock(mutex_);
   return impl_->built
              ? safeValidPointCount(*impl_->tree)
              : 0U;
 }
 
 void IkdTreeRegistrationMap::clear() {
-  std::scoped_lock lock(mutex_);
   impl_ = std::make_unique<Impl>(config_);
 }
 

@@ -111,9 +111,17 @@ public:
                 cap = max_capacity;
                 heap = new PointType_CMP[max_capacity];
                 heap_size = 0;
+                owns_heap = true;
             }
 
-            ~MANUAL_HEAP(){ delete[] heap;}
+            MANUAL_HEAP(PointType_CMP* storage, int max_capacity){
+                cap = max_capacity;
+                heap = storage;
+                heap_size = 0;
+                owns_heap = false;
+            }
+
+            ~MANUAL_HEAP(){ if (owns_heap) delete[] heap;}
 
             void pop(){
                 if (heap_size == 0) return;
@@ -140,6 +148,7 @@ public:
             int heap_size = 0;
             int cap = 0;        
             PointType_CMP * heap;
+            bool owns_heap = true;
             void MoveDown(int heap_index){
                 int l = heap_index * 2 + 1;
                 PointType_CMP tmp = heap[heap_index];
@@ -237,6 +246,13 @@ public:
     void root_alpha(float &alpha_bal, float &alpha_del);
     void Build(PointVector point_cloud);
     void Nearest_Search(PointType point, int k_nearest, PointVector &Nearest_Points, vector<float> & Point_Distance, double max_dist = INFINITY);
+    // Allocation-free nearest-neighbor path for fixed-size estimator queries.
+    // The caller owns both output buffers and the heap storage.
+    void Nearest_Search_Into(PointType point, int k_nearest,
+                             PointType* nearest_points,
+                             float* point_distance, int output_capacity,
+                             int& output_count, PointType_CMP* heap_storage,
+                             int heap_capacity, double max_dist = INFINITY);
     void Box_Search(const BoxPointType &Box_of_Point, PointVector &Storage);
     void Radius_Search(PointType point, const float radius, PointVector &Storage);
     int Add_Points(PointVector & PointToAdd, bool downsample_on);
@@ -250,4 +266,3 @@ public:
     KD_TREE_NODE * Root_Node = nullptr;
     int max_queue_size = 0;
 };
-

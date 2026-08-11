@@ -418,6 +418,45 @@ void KD_TREE<PointType>::Nearest_Search(PointType point, int k_nearest, PointVec
 }
 
 template <typename PointType>
+void KD_TREE<PointType>::Nearest_Search_Into(
+    PointType point, int k_nearest, PointType* nearest_points,
+    float* point_distance, int output_capacity, int& output_count,
+    PointType_CMP* heap_storage, int heap_capacity, double max_dist) {
+    output_count = 0;
+    if (k_nearest <= 0 || output_capacity <= 0 || heap_storage == nullptr ||
+        nearest_points == nullptr || point_distance == nullptr ||
+        heap_capacity < 2 * k_nearest) {
+        return;
+    }
+    MANUAL_HEAP q(heap_storage, heap_capacity);
+    q.clear();
+    if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != Root_Node){
+        Search(Root_Node, k_nearest, point, q, max_dist);
+    } else {
+        pthread_mutex_lock(&search_flag_mutex);
+        while (search_mutex_counter == -1)
+        {
+            pthread_mutex_unlock(&search_flag_mutex);
+            usleep(1);
+            pthread_mutex_lock(&search_flag_mutex);
+        }
+        search_mutex_counter += 1;
+        pthread_mutex_unlock(&search_flag_mutex);
+        Search(Root_Node, k_nearest, point, q, max_dist);
+        pthread_mutex_lock(&search_flag_mutex);
+        search_mutex_counter -= 1;
+        pthread_mutex_unlock(&search_flag_mutex);
+    }
+    const int k_found = min(min(k_nearest, output_capacity), q.size());
+    for (int index = k_found - 1; index >= 0; --index) {
+        nearest_points[index] = q.top().point;
+        point_distance[index] = q.top().dist;
+        q.pop();
+    }
+    output_count = k_found;
+}
+
+template <typename PointType>
 void KD_TREE<PointType>::Box_Search(const BoxPointType &Box_of_Point, PointVector &Storage)
 {
     Storage.clear();

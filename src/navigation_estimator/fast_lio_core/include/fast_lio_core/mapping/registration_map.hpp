@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <array>
 #include <cstddef>
 #include <span>
 #include <string_view>
@@ -8,13 +9,16 @@
 
 namespace uav::nav::lio {
 
-struct NearestNeighborResult {
-  std::vector<Eigen::Vector3d> points_odom_m;
-  std::vector<double> squared_distances_m2;
+struct NeighborSet {
+  static constexpr std::size_t kCapacity = 5U;
 
-  [[nodiscard]] bool complete(std::size_t requested_count) const noexcept {
-    return points_odom_m.size() == requested_count &&
-           squared_distances_m2.size() == requested_count;
+  std::array<Eigen::Vector3d, kCapacity> points{};
+  std::array<float, kCapacity> squared_distances{};
+  std::size_t count{0};
+
+  [[nodiscard]] bool complete(
+      std::size_t requested_count = kCapacity) const noexcept {
+    return requested_count <= kCapacity && count >= requested_count;
   }
 };
 
@@ -22,9 +26,10 @@ class RegistrationMap {
  public:
   virtual ~RegistrationMap() = default;
 
-  [[nodiscard]] virtual NearestNeighborResult nearestNeighbors(const Eigen::Vector3d& query_odom_m,
-                                                               std::size_t neighbor_count,
-                                                               double maximum_distance_m) const = 0;
+  // Fixed-size, non-owning hot-path query. Implementations must not allocate.
+  [[nodiscard]] virtual bool nearestSearch(
+      const Eigen::Vector3d& query_odom_m, double maximum_distance_m,
+      NeighborSet& output) const = 0;
 
   // Input points are already corrected and expressed in odom. The return value
   // is the number of newly represented map points after downsampling.
@@ -34,14 +39,6 @@ class RegistrationMap {
   // of represented points removed.
   virtual std::size_t cropLocal(const Eigen::Vector3d& center_odom_m,
                                 const Eigen::Vector3d& half_extent_m) = 0;
-  // Threshold-triggered exact fallback. Implementations should use a partial
-  // selection and an atomic replacement/rebuild rather than a fragile batch
-  // of per-point deletions.
-  virtual std::size_t pruneFarthest(
-      const Eigen::Vector3d& center_odom_m,
-      std::size_t target_point_count,
-      double distance_shell_size_m) = 0;
-
   [[nodiscard]] virtual std::vector<Eigen::Vector3d> snapshot() const = 0;
   // May throw when a backend cannot obtain a stable count before its bounded
   // rebuild-state timeout. A busy backend must never be reported as size zero.

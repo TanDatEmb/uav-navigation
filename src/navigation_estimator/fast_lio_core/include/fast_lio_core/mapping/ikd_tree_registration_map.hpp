@@ -4,7 +4,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <vector>
 
@@ -20,19 +19,17 @@ struct IkdTreeRegistrationMapConfig {
   double voxel_size_m{0.2};
   double deletion_rebuild_ratio{0.5};
   double balance_rebuild_ratio{0.6};
-  // The runtime default is deterministic. Async remains opt-in for
-  // controlled isolation and targeted stress testing only.
-  bool enable_asynchronous_rebuild{false};
+  // Product uses the vendor's background rebuild. Deterministic tests can
+  // explicitly set this false.
+  bool enable_asynchronous_rebuild{true};
 };
 
 // Production wrapper around the pinned hku-mars ikd-Tree KD_TREE.
 //
 // The upstream tree owns a very large inline operation queue, so the concrete
-// KD_TREE is intentionally hidden behind a heap-allocated PIMPL. The wrapper
-// mutex is the sole project-side concurrency boundary around every upstream
-// call, including queries, incremental insertion, deletion, snapshots and
-// destruction/reset. Production selects the vendor's deterministic
-// synchronous rebuild mode.
+// KD_TREE is intentionally hidden behind a heap-allocated PIMPL. This wrapper
+// is single-owner: fast_lio_main is the only project-side caller. Vendor
+// rebuild synchronization remains an implementation detail.
 class IkdTreeRegistrationMap final : public RegistrationMap {
  public:
   explicit IkdTreeRegistrationMap(
@@ -46,20 +43,15 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
   IkdTreeRegistrationMap& operator=(
       IkdTreeRegistrationMap&&) = delete;
 
-  [[nodiscard]] NearestNeighborResult nearestNeighbors(
-      const Eigen::Vector3d& query_odom_m,
-      std::size_t neighbor_count,
-      double maximum_distance_m) const override;
+  [[nodiscard]] bool nearestSearch(
+      const Eigen::Vector3d& query_odom_m, double maximum_distance_m,
+      NeighborSet& output) const override;
 
   std::size_t insert(
       std::span<const Eigen::Vector3d> points_odom_m) override;
   std::size_t cropLocal(
       const Eigen::Vector3d& center_odom_m,
       const Eigen::Vector3d& half_extent_m) override;
-  std::size_t pruneFarthest(
-      const Eigen::Vector3d& center_odom_m,
-      std::size_t target_point_count,
-      double distance_shell_size_m) override;
   [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
   [[nodiscard]] std::size_t size() const override;
   void clear() override;
@@ -72,7 +64,6 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
   class Impl;
 
   IkdTreeRegistrationMapConfig config_;
-  mutable std::mutex mutex_;
   std::unique_ptr<Impl> impl_;
 };
 
