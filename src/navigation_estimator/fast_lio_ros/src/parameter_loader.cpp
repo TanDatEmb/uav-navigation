@@ -241,6 +241,9 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("mapping.dynamic_filter.enabled", false);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
+  result.correspondence_parallel_threads =
+      node.declare_parameter<std::int64_t>(
+          "registration.correspondence_parallel_threads", 3);
   result.publish_registered_points =
       node.declare_parameter("output.publish_registered_points", false);
   result.imu_queue_capacity =
@@ -363,6 +366,8 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.initial_prior_fixed_angular_velocity_rad_s[2]};
   config.ikfom.maximum_iterations =
       static_cast<std::size_t>(parameters.maximum_registration_iterations);
+  config.residual_builder.parallel_thread_count = static_cast<std::size_t>(
+      parameters.correspondence_parallel_threads);
   config.extrinsic.estimate_online = parameters.estimate_extrinsic_online;
   config.extrinsic.translation_imu_lidar_m = {
       parameters.translation_imu_lidar_m[0],
@@ -478,7 +483,9 @@ void ParameterLoader::validate(const RosParameters& p) {
   if (p.maximum_imu_gap_ns <= 0 ||
       p.maximum_recoverable_imu_gap_ns <= 0 ||
       p.recovery_confirmation_updates <= 0 || p.minimum_imu_samples <= 0 ||
-      p.maximum_registration_iterations <= 0 || p.minimum_range_m < 0.0 ||
+      p.maximum_registration_iterations <= 0 ||
+      p.correspondence_parallel_threads <= 0 ||
+      p.correspondence_parallel_threads > 32 || p.minimum_range_m < 0.0 ||
       p.maximum_range_m <= p.minimum_range_m ||
       !std::isfinite(p.minimum_range_m) ||
       !std::isfinite(p.maximum_range_m)) {

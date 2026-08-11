@@ -68,6 +68,7 @@ struct RosParameters {
   std::int64_t local_map_absolute_point_guard{};
   bool dynamic_filter_enabled{};
   std::int64_t maximum_registration_iterations{};
+  std::int64_t correspondence_parallel_threads{3};
   bool publish_registered_points{};
   std::int64_t imu_queue_capacity{};
   std::int64_t lidar_queue_capacity{};

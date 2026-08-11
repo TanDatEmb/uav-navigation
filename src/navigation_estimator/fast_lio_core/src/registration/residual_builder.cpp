@@ -17,10 +17,10 @@ Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& vector) {
 }  // namespace
 
 void ResidualWorkspace::ensureCapacity(const std::size_t point_count) {
-  if (points_odom.capacity() < point_count) {
-    points_odom.reserve(point_count);
+  if (candidates.capacity() < point_count) {
+    candidates.reserve(point_count);
   }
-  points_odom.resize(point_count);
+  candidates.resize(point_count);
   if (H.rows() < static_cast<Eigen::Index>(point_count) ||
       H.cols() != ManifoldState::kErrorStateDimension) {
     H.resize(static_cast<Eigen::Index>(point_count),
@@ -41,7 +41,9 @@ ResidualBuilder::ResidualBuilder(ResidualBuilderConfig config)
   if (!(config_.correspondence_search.maximum_neighbor_distance_m > 0.0) ||
       !std::isfinite(config_.correspondence_search.maximum_neighbor_distance_m) ||
       !(config_.point_measurement_standard_deviation_m > 0.0) ||
-      !std::isfinite(config_.point_measurement_standard_deviation_m)) {
+      !std::isfinite(config_.point_measurement_standard_deviation_m) ||
+      config_.parallel_thread_count == 0U ||
+      config_.parallel_thread_count > 32U) {
     throw std::invalid_argument("invalid residual builder configuration");
   }
 }
@@ -60,24 +62,26 @@ ResidualBuildView ResidualBuilder::buildInto(
             diagnostics};
   }
 
-  for (std::size_t index = 0U; index < points_lidar_m.size(); ++index) {
-    workspace_.points_odom[index] =
-        state.transformLidarPointToOdom(points_lidar_m[index]);
-  }
-
   diagnostics.query_count = points_lidar_m.size();
   const Eigen::Matrix3d rotation_odom_imu =
       state.orientation_odom_imu().toRotationMatrix();
   const Eigen::Matrix3d rotation_imu_lidar =
       state.rotation_imu_lidar().toRotationMatrix();
-  const double sensor_variance =
-      config_.point_measurement_standard_deviation_m *
-      config_.point_measurement_standard_deviation_m;
-  for (std::size_t index = 0U; index < points_lidar_m.size(); ++index) {
+  const std::int64_t point_count =
+      static_cast<std::int64_t>(points_lidar_m.size());
+#pragma omp parallel for schedule(static) \
+    num_threads(config_.parallel_thread_count) if (point_count >= 256)
+  for (std::int64_t signed_index = 0; signed_index < point_count;
+       ++signed_index) {
+    const std::size_t index = static_cast<std::size_t>(signed_index);
     const Eigen::Vector3d& point_lidar_m = points_lidar_m[index];
-    const Eigen::Vector3d& point_odom_m = workspace_.points_odom[index];
+    ResidualWorkspace::Candidate& candidate = workspace_.candidates[index];
+    candidate.point_odom_m =
+        state.transformLidarPointToOdom(point_lidar_m);
+    const Eigen::Vector3d& point_odom_m = candidate.point_odom_m;
     if (!point_lidar_m.allFinite() || !point_odom_m.allFinite()) {
-      ++diagnostics.insufficient_neighbor_count;
+      candidate.outcome =
+          ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors;
       continue;
     }
 
@@ -87,7 +91,8 @@ ResidualBuildView ResidualBuilder::buildInto(
                                .maximum_neighbor_distance_m,
                            neighbors) ||
         !neighbors.complete()) {
-      ++diagnostics.insufficient_neighbor_count;
+      candidate.outcome =
+          ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors;
       continue;
     }
 
@@ -95,42 +100,71 @@ ResidualBuildView ResidualBuilder::buildInto(
         neighbors.points.data(), NeighborSet::kCapacity);
     const std::optional<Plane> plane = plane_estimator_.estimate(neighbor_span);
     if (!plane.has_value()) {
+      candidate.outcome = ResidualWorkspace::CandidateOutcome::kRejectedPlane;
+      continue;
+    }
+    candidate.signed_distance_m =
+        plane->normal_odom.dot(point_odom_m - plane->centroid_odom_m);
+    const ResidualGateDecision decision =
+        residual_gate_.evaluate(*plane, candidate.signed_distance_m);
+    if (!decision.accepted) {
+      candidate.outcome =
+          ResidualWorkspace::CandidateOutcome::kRejectedResidual;
+      continue;
+    }
+    candidate.normal_odom = plane->normal_odom;
+    candidate.plane_variance_m2 =
+        plane->rms_error_m * plane->rms_error_m;
+    candidate.robust_weight = decision.robust_weight;
+    candidate.outcome = ResidualWorkspace::CandidateOutcome::kAccepted;
+  }
+
+  const double sensor_variance =
+      config_.point_measurement_standard_deviation_m *
+      config_.point_measurement_standard_deviation_m;
+  for (std::size_t index = 0U; index < points_lidar_m.size(); ++index) {
+    const ResidualWorkspace::Candidate& candidate =
+        workspace_.candidates[index];
+    if (candidate.outcome ==
+        ResidualWorkspace::CandidateOutcome::kInsufficientNeighbors) {
+      ++diagnostics.insufficient_neighbor_count;
+      continue;
+    }
+    if (candidate.outcome ==
+        ResidualWorkspace::CandidateOutcome::kRejectedPlane) {
       ++diagnostics.rejected_plane_count;
       continue;
     }
     ++diagnostics.valid_plane_count;
-    const double signed_distance_m =
-        plane->normal_odom.dot(point_odom_m - plane->centroid_odom_m);
-    const ResidualGateDecision decision =
-        residual_gate_.evaluate(*plane, signed_distance_m);
-    if (!decision.accepted) {
+    if (candidate.outcome ==
+        ResidualWorkspace::CandidateOutcome::kRejectedResidual) {
       ++diagnostics.rejected_residual_count;
       continue;
     }
 
+    const Eigen::Vector3d& point_lidar_m = points_lidar_m[index];
     const Eigen::Vector3d point_imu_m =
         rotation_imu_lidar * point_lidar_m + state.position_imu_lidar_m();
     auto jacobian = workspace_.H.row(static_cast<Eigen::Index>(last_row_count_));
     jacobian.setZero();
     jacobian.segment<3>(ManifoldState::kPositionOffset) =
-        plane->normal_odom.transpose();
+        candidate.normal_odom.transpose();
     jacobian.segment<3>(ManifoldState::kOrientationOffset) =
-        plane->normal_odom.transpose() *
+        candidate.normal_odom.transpose() *
         (-rotation_odom_imu * skewSymmetric(point_imu_m));
     if (config_.estimate_extrinsic) {
       jacobian.segment<3>(ManifoldState::kExtrinsicRotationOffset) =
-          plane->normal_odom.transpose() *
+          candidate.normal_odom.transpose() *
           (-rotation_odom_imu * rotation_imu_lidar *
            skewSymmetric(point_lidar_m));
       jacobian.segment<3>(ManifoldState::kExtrinsicPositionOffset) =
-          plane->normal_odom.transpose() * rotation_odom_imu;
+          candidate.normal_odom.transpose() * rotation_odom_imu;
     }
     workspace_.residual[static_cast<Eigen::Index>(last_row_count_)] =
-        signed_distance_m;
-    const double plane_variance = plane->rms_error_m * plane->rms_error_m;
+        candidate.signed_distance_m;
     workspace_.variance[static_cast<Eigen::Index>(last_row_count_)] =
-        (sensor_variance + plane_variance) /
-        std::max(decision.robust_weight, 1e-6);
+        (sensor_variance + candidate.plane_variance_m2) /
+        std::max(candidate.robust_weight, 1e-6);
     ++last_row_count_;
   }
 

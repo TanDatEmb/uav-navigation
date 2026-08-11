@@ -57,7 +57,9 @@ fast_lio:
       minimum_range_m: 0.1
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.9
-    registration: { maximum_iterations: 4 }
+    registration:
+      maximum_iterations: 4
+      correspondence_parallel_threads: 3
     mapping:
       registration_map: { voxel_size_m: 0.3 }
       dynamic_filter: { enabled: false }

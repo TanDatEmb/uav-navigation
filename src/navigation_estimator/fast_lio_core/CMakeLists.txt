@@ -11,6 +11,7 @@ find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(ikfom_vendor REQUIRED)
 find_package(ikd_tree_vendor REQUIRED)
+find_package(OpenMP REQUIRED)
 
 set(CORE_SOURCES
   src/deskew/scan_deskewer.cpp
@@ -54,7 +55,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
 target_link_libraries(${PROJECT_NAME}
-  Eigen3::Eigen ikd_tree_vendor::ikd_tree_vendor)
+  Eigen3::Eigen ikd_tree_vendor::ikd_tree_vendor OpenMP::OpenMP_CXX)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 ament_target_dependencies(${PROJECT_NAME} ikfom_vendor)
 

@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -23,6 +24,7 @@ struct ResidualBuilderConfig {
   ResidualGateConfig residual_gate{};
   double point_measurement_standard_deviation_m{0.03};
   bool estimate_extrinsic{false};
+  std::size_t parallel_thread_count{3};
 };
 
 struct ResidualBuildDiagnostics {
@@ -58,7 +60,23 @@ struct ResidualBuildView {
 // Capacity grows only when a larger scan arrives and is then reused.
 class ResidualWorkspace {
  public:
-  std::vector<Eigen::Vector3d> points_odom;
+  enum class CandidateOutcome : std::uint8_t {
+    kInsufficientNeighbors,
+    kRejectedPlane,
+    kRejectedResidual,
+    kAccepted,
+  };
+
+  struct Candidate {
+    Eigen::Vector3d point_odom_m{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d normal_odom{Eigen::Vector3d::Zero()};
+    double signed_distance_m{0.0};
+    double plane_variance_m2{0.0};
+    double robust_weight{0.0};
+    CandidateOutcome outcome{CandidateOutcome::kInsufficientNeighbors};
+  };
+
+  std::vector<Candidate> candidates;
   Eigen::MatrixXd H;
   Eigen::VectorXd residual;
   Eigen::VectorXd variance;

@@ -118,5 +118,55 @@ TEST(ResidualBuilderTest, PointToPlaneJacobianMatchesFiniteDifferenceAndFixedExt
   EXPECT_GT(nominal.measurement.residual_m[0], 0.0);
 }
 
+TEST(ResidualBuilderTest, ThreeThreadBuildMatchesSingleThread) {
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  map_config.enable_asynchronous_rebuild = false;
+  IkdTreeRegistrationMap map(map_config);
+  ASSERT_GT(map.insert(makePlanePoints()), 0U);
+
+  std::vector<Eigen::Vector3d> scan;
+  scan.reserve(1024U);
+  for (std::size_t index = 0U; index < 1024U; ++index) {
+    const double x = 0.05 * static_cast<double>(index % 32U) - 0.775;
+    const double y = 0.05 * static_cast<double>(index / 32U) - 0.775;
+    scan.emplace_back(x, y, 0.05);
+  }
+  ManifoldState state;
+
+  ResidualBuilderConfig serial_config;
+  serial_config.parallel_thread_count = 1U;
+  serial_config.correspondence_search.maximum_neighbor_distance_m = 0.8;
+  ResidualBuilder serial(serial_config);
+  const ResidualBuildResult expected = serial.build(scan, state, map);
+
+  ResidualBuilderConfig parallel_config = serial_config;
+  parallel_config.parallel_thread_count = 3U;
+  ResidualBuilder parallel(parallel_config);
+  const ResidualBuildResult actual = parallel.build(scan, state, map);
+
+  EXPECT_EQ(actual.diagnostics.input_point_count,
+            expected.diagnostics.input_point_count);
+  EXPECT_EQ(actual.diagnostics.query_count, expected.diagnostics.query_count);
+  EXPECT_EQ(actual.diagnostics.insufficient_neighbor_count,
+            expected.diagnostics.insufficient_neighbor_count);
+  EXPECT_EQ(actual.diagnostics.valid_plane_count,
+            expected.diagnostics.valid_plane_count);
+  EXPECT_EQ(actual.diagnostics.rejected_plane_count,
+            expected.diagnostics.rejected_plane_count);
+  EXPECT_EQ(actual.diagnostics.accepted_residual_count,
+            expected.diagnostics.accepted_residual_count);
+  EXPECT_EQ(actual.diagnostics.rejected_residual_count,
+            expected.diagnostics.rejected_residual_count);
+  EXPECT_DOUBLE_EQ(actual.diagnostics.residual_rms_m,
+                   expected.diagnostics.residual_rms_m);
+  EXPECT_TRUE(actual.measurement.jacobian.isApprox(
+      expected.measurement.jacobian, 1e-12));
+  EXPECT_TRUE(actual.measurement.residual_m.isApprox(
+      expected.measurement.residual_m, 1e-12));
+  EXPECT_TRUE(actual.measurement.variance_m2.isApprox(
+      expected.measurement.variance_m2, 1e-12));
+}
+
 }  // namespace
 }  // namespace uav::nav::lio

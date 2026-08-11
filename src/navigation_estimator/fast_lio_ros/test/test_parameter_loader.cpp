@@ -129,6 +129,8 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
   EXPECT_EQ(direct.initialization.require_stationary,
             ros.initialization.require_stationary);
   EXPECT_EQ(direct.ikfom.maximum_iterations, ros.ikfom.maximum_iterations);
+  EXPECT_EQ(direct.residual_builder.parallel_thread_count,
+            ros.residual_builder.parallel_thread_count);
   EXPECT_EQ(direct.extrinsic.estimate_online, ros.extrinsic.estimate_online);
   EXPECT_LT((direct.extrinsic.translation_imu_lidar_m -
              ros.extrinsic.translation_imu_lidar_m)
@@ -153,6 +155,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigParses) {
   const std::string path = UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml";
   const auto profile = loadCanonicalEstimatorProfile(path);
   EXPECT_EQ(profile.estimator.ikfom.maximum_iterations, 4U);
+  EXPECT_EQ(profile.estimator.residual_builder.parallel_thread_count, 3U);
   EXPECT_DOUBLE_EQ(
       profile.estimator.preprocessing.voxel_filter.voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(profile.estimator.registration_map.voxel_size_m, 0.3);
