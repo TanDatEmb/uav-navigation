@@ -155,6 +155,48 @@ TEST(IkfomEstimatorTest, ReportsConvergenceFromFinalUpstreamIncrement) {
   EXPECT_LT(correction.final_increment_norm, config.convergence_limit);
 }
 
+TEST(IkfomEstimatorTest, AcceptsFiniteTerminalIterateAtIterationLimit) {
+  IkfomEstimatorConfig config;
+  config.maximum_iterations = 1;
+  config.minimum_accepted_residuals = 5;
+  config.convergence_limit = 1e-12;
+  ResidualBuilderConfig residual_config;
+  residual_config.correspondence_search.neighbor_count = 5;
+  residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
+  IkfomEstimator estimator(config, residual_config);
+  ManifoldState initial;
+  initial.set_position_odom_imu_m({0.0, 0.0, 0.05});
+  estimator.initialize(initial);
+
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  map_config.enable_asynchronous_rebuild = false;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> plane;
+  for (int x = -4; x <= 4; ++x) {
+    for (int y = -4; y <= 4; ++y) {
+      plane.emplace_back(0.2 * x, 0.2 * y, 0.0);
+    }
+  }
+  ASSERT_GT(map.insert(plane), 0U);
+  const std::vector<Eigen::Vector3d> scan{
+      {-0.5, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, -0.5, 0.0},
+      {-0.5, 0.0, 0.0},  {0.0, 0.0, 0.0},  {0.5, 0.0, 0.0},
+      {-0.5, 0.5, 0.0},  {0.0, 0.5, 0.0},  {0.5, 0.5, 0.0},
+  };
+
+  const auto correction = estimator.correct(scan, map);
+
+  EXPECT_TRUE(correction.successful) << correction.reason;
+  EXPECT_FALSE(correction.converged);
+  EXPECT_EQ(correction.iteration_count, 1U);
+  EXPECT_EQ(correction.reason,
+            "IKFOM_LIDAR_UPDATE_ACCEPTED_AT_ITERATION_LIMIT");
+  EXPECT_GT(correction.final_increment_norm, config.convergence_limit);
+  EXPECT_LT(estimator.stateView().position_odom_imu_m().z(),
+            initial.position_odom_imu_m().z());
+}
+
 TEST(IkfomEstimatorTest, CovarianceRemainsSymmetricAndPsdAcrossHundredsOfPredictions) {
   IkfomEstimatorConfig config;
   config.maximum_integration_step_ns = 20'000'000;

@@ -23,7 +23,6 @@ struct ProcessResult {
   std::optional<Timestamp> last_lidar_correction_time;
   // Both point arrays are explicitly expressed in odom.
   std::vector<Eigen::Vector3d> registered_points_odom_m;
-  std::vector<Eigen::Vector3d> local_map_points_odom_m;
   EstimatorDiagnostics diagnostics;
   std::string rejection_reason;
 

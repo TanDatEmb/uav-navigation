@@ -15,7 +15,7 @@
 namespace uav::nav::lio {
 namespace {
 
-constexpr std::size_t kPriorImuHistoryCapacity = 2048U;
+constexpr std::int64_t kPriorImuHistoryDurationNs = 1'000'000'000;
 
 EstimatorConfig normalizeConfig(EstimatorConfig config) {
   config.residual_builder.estimate_extrinsic = config.extrinsic.estimate_online;
@@ -83,9 +83,7 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.tracking.discontinuity_covariance_inflation < 1.0 ||
       config_.tracking.discontinuity_covariance_inflation > 1000.0 ||
       config_.tracking.maximum_recoverable_imu_gap_ns <
-          config_.synchronization.maximum_imu_gap_ns ||
-      (config_.lifecycle.enable_periodic_local_map_snapshot &&
-       config_.lifecycle.local_map_snapshot_period_scans == 0U)) {
+          config_.synchronization.maximum_imu_gap_ns) {
     throw std::invalid_argument("invalid FAST-LIO pipeline configuration");
   }
   const Status prior_status = config_.initial_prior.validate();
@@ -467,6 +465,10 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.timing.residual_build_us =
       correction.residual_build_runtime_us;
   diagnostics_.timing.ikfom_update_us = correction.ikfom_update_runtime_us;
+  diagnostics_.timing.measurement_model_us =
+      correction.measurement_model_runtime_us;
+  diagnostics_.timing.ikfom_solver_only_us =
+      correction.solver_only_runtime_us;
 
   diagnostics_.registration.query_count =
       correction.residual_build.diagnostics.query_count;
@@ -476,6 +478,8 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       correction.residual_build.diagnostics.accepted_residual_count;
   diagnostics_.registration.rejected_residual_count =
       correction.residual_build.diagnostics.rejected_residual_count;
+  diagnostics_.registration.measurement_callback_count =
+      correction.measurement_callback_count;
   diagnostics_.registration.residual_rms_m =
       correction.residual_build.diagnostics.residual_rms_m;
   diagnostics_.registration.iteration_count = correction.iteration_count;
@@ -513,7 +517,10 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     tracking_ever_confirmed_ = true;
     consecutive_uncorrected_lidar_updates_ = 0U;
     consecutive_recovery_successes_ = 0U;
-    transitionTo(EstimatorStatus::kTracking, "LIDAR_CORRECTION_CONVERGED");
+    transitionTo(
+        EstimatorStatus::kTracking,
+        correction.converged ? "LIDAR_CORRECTION_CONVERGED"
+                             : "LIDAR_CORRECTION_ACCEPTED_AT_ITERATION_LIMIT");
   } else if (status_ == EstimatorStatus::kDegraded ||
              status_ == EstimatorStatus::kLost) {
     ++consecutive_recovery_successes_;
@@ -552,7 +559,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   insertion_context.converged = correction.converged;
   insertion_context.transform_finite = state_.allFinite();
   insertion_context.filtered_point_count = points_lidar_m.size();
-  if (insertion_policy_.permits(insertion_context)) {
+  const bool insertion_allowed = local_map_manager_.insertionAllowed();
+  diagnostics_.map.map_insertion_frozen = !insertion_allowed;
+  if (insertion_allowed && insertion_policy_.permits(insertion_context)) {
     diagnostics_.map.map_update_performed = true;
     const auto map_update_started = std::chrono::steady_clock::now();
     diagnostics_.map.map_size_before_insert = registration_map_.size();
@@ -579,27 +588,24 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
             .count();
     diagnostics_.map.map_size_after_maintenance = registration_map_.size();
     diagnostics_.map.crop_performed = local_map_update.crop_performed;
-    diagnostics_.map.crop_removed_count =
-        local_map_update.removed_point_count -
-        local_map_update.distance_pruned_count;
-    diagnostics_.map.distance_pruned_count =
-        local_map_update.distance_pruned_count;
+    diagnostics_.map.crop_removed_count = local_map_update.removed_point_count;
     diagnostics_.map.crop_triggered_by_motion =
         local_map_update.crop_triggered_by_motion;
-    diagnostics_.map.crop_triggered_by_point_threshold =
-        local_map_update.crop_triggered_by_point_threshold;
-    diagnostics_.map.soft_limit_triggered =
-        local_map_update.soft_limit_triggered;
-    diagnostics_.map.hard_limit_triggered =
-        local_map_update.hard_limit_triggered;
-    diagnostics_.map.hard_limit_recovery_failed =
-        local_map_update.hard_limit_recovery_failed;
+    diagnostics_.map.absolute_guard_triggered =
+        local_map_update.absolute_guard_triggered;
+    diagnostics_.map.absolute_guard_recovery_failed =
+        local_map_update.absolute_guard_recovery_failed;
+    diagnostics_.map.map_insertion_frozen =
+        local_map_update.insertion_frozen;
+    if (local_map_update.absolute_guard_recovery_failed &&
+        status_ == EstimatorStatus::kTracking) {
+      transitionTo(EstimatorStatus::kDegraded,
+                   "LOCAL_MAP_ABSOLUTE_GUARD_EXCEEDED");
+    }
     diagnostics_.map.map_count_before =
         local_map_update.map_count_before;
     diagnostics_.map.map_count_after_crop =
         local_map_update.map_count_after_crop;
-    diagnostics_.map.map_count_after_prune =
-        local_map_update.map_count_after_prune;
     diagnostics_.map.inserted_point_count = inserted;
     diagnostics_.map.removed_point_count = local_map_update.removed_point_count;
     diagnostics_.map.local_map_center_odom_m = local_map_update.center_odom_m;
@@ -619,21 +625,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
   diagnostics_.map.map_point_count = registration_map_.size();
   ++corrected_scan_count_;
-  if (config_.lifecycle.enable_periodic_local_map_snapshot &&
-      (corrected_scan_count_ == 1U ||
-       corrected_scan_count_ %
-               config_.lifecycle.local_map_snapshot_period_scans ==
-           0U)) {
-    const auto snapshot_started = std::chrono::steady_clock::now();
-    result.local_map_points_odom_m = registration_map_.snapshot();
-    diagnostics_.map.snapshot_point_count =
-        result.local_map_points_odom_m.size();
-    diagnostics_.timing.snapshot_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - snapshot_started)
-            .count();
-  }
-
   diagnostics_.reason = "LIDAR_CORRECTION_CONVERGED";
   diagnostics_.timing.total_processing_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
@@ -740,79 +731,98 @@ Status FastLioPipeline::buildPredictionImuSamples(
     return Status::Ok();
   };
 
-  const Status history_status = validate_sequence(prior_imu_history_);
-  if (!history_status.ok()) {
-    return history_status;
-  }
   const Status group_status = validate_sequence(group.imu_samples);
   if (!group_status.ok()) {
     return group_status;
   }
 
-  std::vector<ImuSample> merged;
-  merged.reserve(prior_imu_history_.size() + group.imu_samples.size());
-  merged.insert(merged.end(), prior_imu_history_.begin(), prior_imu_history_.end());
-  merged.insert(merged.end(), group.imu_samples.begin(), group.imu_samples.end());
-  std::stable_sort(merged.begin(), merged.end(),
-                   [](const ImuSample& left, const ImuSample& right) {
-                     return left.time.nanoseconds() < right.time.nanoseconds();
-                   });
-  std::vector<ImuSample> unique;
-  unique.reserve(merged.size());
-  for (const ImuSample& sample : merged) {
-    if (!unique.empty() &&
-        unique.back().time.nanoseconds() == sample.time.nanoseconds()) {
-      // Group samples are the current synchronization result and therefore
-      // take precedence over a retained copy at the same epoch.
-      unique.back() = sample;
-    } else {
-      unique.push_back(sample);
+  std::vector<ImuSample> merged_history;
+  std::span<const ImuSample> prediction_samples;
+  // During normal tracking, synchronization already supplies the complete
+  // bracket for the current scan. Do not merge the retained prior history on
+  // every correction. The history path is reserved for a prior/recovery whose
+  // application epoch predates the synchronized group.
+  const bool steady_state =
+      start_time.nanoseconds() == group.scan.start_time.nanoseconds();
+  if (steady_state) {
+    prediction_samples = group.imu_samples;
+  } else {
+    const Status history_status = validate_sequence(prior_imu_history_);
+    if (!history_status.ok()) {
+      return history_status;
     }
+    merged_history.reserve(prior_imu_history_.size() + group.imu_samples.size());
+    std::size_t history_index = 0U;
+    std::size_t group_index = 0U;
+    while (history_index < prior_imu_history_.size() ||
+           group_index < group.imu_samples.size()) {
+      if (history_index == prior_imu_history_.size()) {
+        merged_history.push_back(group.imu_samples[group_index++]);
+        continue;
+      }
+      if (group_index == group.imu_samples.size()) {
+        merged_history.push_back(prior_imu_history_[history_index++]);
+        continue;
+      }
+      const auto history_time =
+          prior_imu_history_[history_index].time.nanoseconds();
+      const auto group_time = group.imu_samples[group_index].time.nanoseconds();
+      if (history_time < group_time) {
+        merged_history.push_back(prior_imu_history_[history_index++]);
+      } else if (group_time < history_time) {
+        merged_history.push_back(group.imu_samples[group_index++]);
+      } else {
+        // The synchronized group is authoritative at duplicate epochs.
+        merged_history.push_back(group.imu_samples[group_index++]);
+        ++history_index;
+      }
+    }
+    prediction_samples = merged_history;
   }
-  if (unique.empty()) {
+  if (prediction_samples.empty()) {
     return Status(StatusCode::kMissingStartBracket,
                   "Prediction IMU history is empty");
   }
 
   const auto first_after_start = std::lower_bound(
-      unique.begin(), unique.end(), start_time.nanoseconds(),
+      prediction_samples.begin(), prediction_samples.end(), start_time.nanoseconds(),
       [](const ImuSample& sample, std::int64_t time_ns) {
         return sample.time.nanoseconds() < time_ns;
       });
   std::size_t first_index =
-      static_cast<std::size_t>(first_after_start - unique.begin());
-  if (first_index == unique.size() ||
+      static_cast<std::size_t>(first_after_start - prediction_samples.begin());
+  if (first_index == prediction_samples.size() ||
       (first_index > 0U &&
-       unique[first_index].time.nanoseconds() != start_time.nanoseconds())) {
+       prediction_samples[first_index].time.nanoseconds() != start_time.nanoseconds())) {
     if (first_index == 0U) {
       return Status(StatusCode::kMissingStartBracket,
                     "Prediction IMU start bracket is missing");
     }
     --first_index;
   }
-  if (unique[first_index].time.nanoseconds() > start_time.nanoseconds()) {
+  if (prediction_samples[first_index].time.nanoseconds() > start_time.nanoseconds()) {
     return Status(StatusCode::kMissingStartBracket,
                   "Prediction IMU start bracket is missing");
   }
 
   const auto last_before_end = std::upper_bound(
-      unique.begin(), unique.end(), end_time.nanoseconds(),
+      prediction_samples.begin(), prediction_samples.end(), end_time.nanoseconds(),
       [](std::int64_t time_ns, const ImuSample& sample) {
         return time_ns < sample.time.nanoseconds();
       });
-  if (last_before_end == unique.begin()) {
+  if (last_before_end == prediction_samples.begin()) {
     return Status(StatusCode::kMissingEndBracket,
                   "Prediction IMU end bracket is missing");
   }
   const std::size_t last_index =
-      static_cast<std::size_t>((last_before_end - unique.begin()) - 1U);
+      static_cast<std::size_t>((last_before_end - prediction_samples.begin()) - 1U);
   std::size_t end_index = last_index;
-  if (unique[last_index].time.nanoseconds() < end_time.nanoseconds() &&
-      last_index + 1U >= unique.size()) {
+  if (prediction_samples[last_index].time.nanoseconds() < end_time.nanoseconds() &&
+      last_index + 1U >= prediction_samples.size()) {
     return Status(StatusCode::kMissingEndBracket,
                   "Prediction IMU end bracket is missing");
   }
-  if (unique[last_index].time.nanoseconds() < end_time.nanoseconds()) {
+  if (prediction_samples[last_index].time.nanoseconds() < end_time.nanoseconds()) {
     end_index = last_index + 1U;
   }
 
@@ -823,8 +833,8 @@ Status FastLioPipeline::buildPredictionImuSamples(
   // retained sample immediately before an exact start bracket may itself be
   // separated by a discontinuity that was already handled by the rebase.
   for (std::size_t index = first_index + 1U; index <= end_index; ++index) {
-    const std::int64_t gap = unique[index].time.nanoseconds() -
-                             unique[index - 1U].time.nanoseconds();
+    const std::int64_t gap = prediction_samples[index].time.nanoseconds() -
+                             prediction_samples[index - 1U].time.nanoseconds();
     if (gap <= 0) {
       return Status(StatusCode::kTimestampRegression,
                     "Prediction IMU history timestamp regressed");
@@ -839,8 +849,9 @@ Status FastLioPipeline::buildPredictionImuSamples(
                   "Prediction IMU end bracket is missing");
   }
 
-  output.assign(unique.begin() + static_cast<std::ptrdiff_t>(first_index),
-                unique.begin() + static_cast<std::ptrdiff_t>(end_index + 1U));
+  output.assign(
+      prediction_samples.begin() + static_cast<std::ptrdiff_t>(first_index),
+      prediction_samples.begin() + static_cast<std::ptrdiff_t>(end_index + 1U));
   if (output.empty()) {
     return Status(StatusCode::kInsufficientData,
                   "Prediction IMU bracket produced no samples");
@@ -860,7 +871,10 @@ void FastLioPipeline::retainPriorImuSample(const ImuSample& sample) {
     }
   }
   prior_imu_history_.push_back(sample);
-  while (prior_imu_history_.size() > kPriorImuHistoryCapacity) {
+  while (prior_imu_history_.size() >= 2U &&
+         sample.time.nanoseconds() -
+                 prior_imu_history_.front().time.nanoseconds() >
+             kPriorImuHistoryDurationNs) {
     prior_imu_history_.pop_front();
   }
 }

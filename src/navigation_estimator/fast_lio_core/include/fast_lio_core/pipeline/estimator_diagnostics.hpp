@@ -181,6 +181,7 @@ struct RegistrationDiagnostics {
   std::size_t valid_plane_count{0};
   std::size_t accepted_residual_count{0};
   std::size_t rejected_residual_count{0};
+  std::size_t measurement_callback_count{0};
   double residual_rms_m{0.0};
   std::size_t iteration_count{0};
   double final_increment_norm{0.0};
@@ -199,23 +200,17 @@ struct MapDiagnostics {
   bool crop_performed{false};
   std::size_t crop_removed_count{0};
   bool crop_triggered_by_motion{false};
-  bool crop_triggered_by_point_threshold{false};
-  bool soft_limit_triggered{false};
-  bool hard_limit_triggered{false};
-  bool hard_limit_recovery_failed{false};
+  bool absolute_guard_triggered{false};
+  bool absolute_guard_recovery_failed{false};
+  bool map_insertion_frozen{false};
   std::size_t map_count_before{0};
   std::size_t map_count_after_crop{0};
-  std::size_t map_count_after_prune{0};
   std::size_t map_size_before_maintenance{0};
-  std::size_t confidence_pruned_count{0};
-  std::size_t distance_pruned_count{0};
-  std::size_t redundancy_pruned_count{0};
   std::size_t map_size_after_maintenance{0};
   Eigen::Vector3d local_map_center_odom_m{Eigen::Vector3d::Zero()};
   Eigen::Vector3d local_map_half_extent_m{Eigen::Vector3d::Zero()};
   std::int64_t map_update_runtime_us{0};
   std::int64_t map_maintenance_us{0};
-  std::size_t snapshot_point_count{0};
   bool dynamic_filter_enabled{false};
   std::size_t dynamic_evidence_voxel_count{0};
   std::size_t dynamic_candidate_count{0};
@@ -253,9 +248,10 @@ struct StageTimingDiagnostics {
   std::int64_t preprocessing_us{0};
   std::int64_t residual_build_us{0};
   std::int64_t ikfom_update_us{0};
+  std::int64_t measurement_model_us{0};
+  std::int64_t ikfom_solver_only_us{0};
   std::int64_t map_insert_crop_us{0};
   std::int64_t map_maintenance_us{0};
-  std::int64_t snapshot_us{0};
   std::int64_t total_processing_us{0};
 };
 

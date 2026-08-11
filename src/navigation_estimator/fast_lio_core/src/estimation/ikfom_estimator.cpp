@@ -25,6 +25,17 @@ namespace {
          solver.eigenvalues().minCoeff() >= -1e-10;
 }
 
+[[nodiscard]] bool covarianceSaneDuringPrediction(
+    const IkfomFilter::cov& covariance) {
+  if (!covariance.allFinite()) {
+    return false;
+  }
+  const double symmetry_error =
+      (covariance - covariance.transpose()).cwiseAbs().maxCoeff();
+  return std::isfinite(symmetry_error) && symmetry_error <= 1e-8 &&
+         covariance.diagonal().minCoeff() > -1e-10;
+}
+
 [[nodiscard]] Result<ImuSample> interpolateSample(
     std::span<const ImuSample> samples, const Timestamp& time) {
   const auto upper = std::lower_bound(
@@ -259,7 +270,8 @@ Result<ImuTrajectory> IkfomEstimator::predict(
     filter_.predict(dt_seconds, noise, toIkfomInput(previous, current));
     filter_mutated = true;
     const ManifoldState predicted = stateView();
-    if (!predicted.allFinite() || !covarianceValid(filter_.get_P())) {
+    if (!predicted.allFinite() ||
+        !covarianceSaneDuringPrediction(filter_.get_P())) {
       rollback();
       return Status(StatusCode::kNumericalFailure,
                     "IKFoM prediction produced non-finite state");
@@ -286,6 +298,7 @@ IkfomCorrectionResult IkfomEstimator::correct(
   measurement_call_count_ = 0U;
   active_residual_runtime_us_ = 0;
   last_residual_build_ = {};
+  last_residual_diagnostics_ = {};
 
   struct ActiveGuard {
     explicit ActiveGuard(IkfomEstimator* estimator) {
@@ -303,7 +316,12 @@ IkfomCorrectionResult IkfomEstimator::correct(
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - update_started)
           .count();
-  result.residual_build_runtime_us = active_residual_runtime_us_;
+  result.ikfom_total_runtime_us = result.ikfom_update_runtime_us;
+  result.measurement_model_runtime_us = active_residual_runtime_us_;
+  result.residual_build_runtime_us = result.measurement_model_runtime_us;
+  result.solver_only_runtime_us = std::max<std::int64_t>(
+      0, result.ikfom_total_runtime_us - result.measurement_model_runtime_us);
+  result.measurement_callback_count = measurement_call_count_;
   if (!config_.estimate_extrinsic) {
     IkfomState fixed_state = filter_.get_x();
     fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
@@ -312,20 +330,29 @@ IkfomCorrectionResult IkfomEstimator::correct(
   }
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
+  last_residual_build_ = residual_builder_.snapshotLast();
+  last_residual_build_.diagnostics = last_residual_diagnostics_;
   result.residual_build = last_residual_build_;
   result.iteration_count =
       static_cast<std::size_t>(std::max(update.iteration_count, 0));
   result.final_increment_norm = update.final_increment_norm;
   result.finite = result.corrected_state.allFinite() &&
                   covarianceValid(result.corrected_covariance);
-  result.converged =
-      update.measurement_valid && update.converged &&
+  const bool measurement_usable =
+      update.measurement_valid && !update.numerical_failure &&
       last_residual_build_.diagnostics.accepted_residual_count >=
           config_.minimum_accepted_residuals;
-  result.successful = result.finite && result.converged;
+  result.converged = measurement_usable && update.converged;
+  // FAST-LIO applies the finite terminal IKFoM iterate when the configured
+  // iteration budget is exhausted. Convergence remains a diagnostic and map
+  // insertion gate; it must not roll back an otherwise usable correction and
+  // strand the estimator on an increasingly stale map/state epoch.
+  result.successful = result.finite && measurement_usable;
   result.reason =
       result.successful
-          ? "IKFOM_LIDAR_UPDATE_CONVERGED"
+          ? (result.converged
+                 ? "IKFOM_LIDAR_UPDATE_CONVERGED"
+                 : "IKFOM_LIDAR_UPDATE_ACCEPTED_AT_ITERATION_LIMIT")
           : (update.numerical_failure
                  ? "IKFOM_LIDAR_UPDATE_NUMERICAL_FAILURE"
                  : (result.finite ? "IKFOM_LIDAR_UPDATE_NOT_CONVERGED"
@@ -378,34 +405,33 @@ Eigen::VectorXd IkfomEstimator::buildMeasurement(
   }
   const ManifoldState view = fromIkfomState(state);
   const auto residual_started = std::chrono::steady_clock::now();
-  last_residual_build_ =
-      residual_builder_.build(active_points_, view, *active_map_);
+  const ResidualBuildView measurement_view =
+      residual_builder_.buildInto(active_points_, view, *active_map_);
+  last_residual_diagnostics_ = measurement_view.diagnostics;
   active_residual_runtime_us_ +=
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - residual_started)
           .count();
-  const auto& measurement = last_residual_build_.measurement;
-  if (!measurement.valid() ||
-      static_cast<std::size_t>(measurement.residual_m.size()) <
-          config_.minimum_accepted_residuals) {
+  if (!measurement_view.valid() ||
+      measurement_view.row_count < config_.minimum_accepted_residuals) {
     data.valid = false;
     return {};
   }
-  const Eigen::Index rows = measurement.residual_m.size();
+  const Eigen::Index rows = static_cast<Eigen::Index>(measurement_view.row_count);
   data.valid = true;
-  data.h_x = measurement.jacobian;
+  data.h_x = measurement_view.jacobian->topRows(rows);
   if (rows >= IkfomState::DOF) {
     // This production measurement has independent scalar noise. Store only
     // its diagonal; the patched IKFoM normal-equation branch consumes this
     // compact representation without allocating two rows-by-rows matrices.
     data.h_v.resize(0, 0);
-    data.R = measurement.variance_m2;
+    data.R = measurement_view.variance_m2->head(rows);
   } else {
     data.h_v = Eigen::MatrixXd::Identity(rows, rows);
-    data.R = measurement.variance_m2.asDiagonal();
+    data.R = measurement_view.variance_m2->head(rows).asDiagonal();
   }
   data.z = Eigen::VectorXd::Zero(rows);
-  return measurement.residual_m;
+  return measurement_view.residual_m->head(rows);
 }
 
 IkfomFilter::processnoisecovariance IkfomEstimator::processNoise() const {

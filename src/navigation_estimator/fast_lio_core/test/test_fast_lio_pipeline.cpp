@@ -102,13 +102,11 @@ void expectTransientStagesCleared(const ProcessResult& result) {
   EXPECT_EQ(result.diagnostics.timing.ikfom_update_us, 0);
   EXPECT_EQ(result.diagnostics.timing.map_insert_crop_us, 0);
   EXPECT_EQ(result.diagnostics.timing.map_maintenance_us, 0);
-  EXPECT_EQ(result.diagnostics.timing.snapshot_us, 0);
   EXPECT_EQ(result.diagnostics.timing.total_processing_us, 0);
   EXPECT_FALSE(result.diagnostics.map.map_update_performed);
   EXPECT_EQ(result.diagnostics.map.map_candidate_count, 0U);
   EXPECT_EQ(result.diagnostics.map.map_inserted_count, 0U);
   EXPECT_EQ(result.diagnostics.map.crop_removed_count, 0U);
-  EXPECT_EQ(result.diagnostics.map.snapshot_point_count, 0U);
 }
 
 TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoints) {
@@ -653,77 +651,6 @@ TEST(FastLioPipelineTest, CorrectedResultsOwnIndependentTimingSnapshots) {
   EXPECT_TRUE(second.diagnostics.registration.correction_succeeded);
   EXPECT_TRUE(first.diagnostics.map.map_update_performed);
   EXPECT_TRUE(second.diagnostics.map.map_update_performed);
-}
-
-TEST(FastLioPipelineTest,
-     PeriodicLocalMapSnapshotUsesSuccessfulCorrectionCadence) {
-  auto config = testConfig();
-  config.lifecycle.local_map_snapshot_period_scans = 10;
-  config.lifecycle.lost_after_registration_failures = 20;
-  FastLioPipeline pipeline(config);
-  static_cast<void>(pipeline.process(makeGroup(
-      makeCornerScan(0), 0,
-      {stationaryImu(-20 * kMillisecondNs),
-       stationaryImu(-10 * kMillisecondNs), stationaryImu(0)})));
-
-  for (int correction = 1; correction <= 10; ++correction) {
-    SCOPED_TRACE(correction);
-    const auto time_ns = correction * 100 * kMillisecondNs;
-    auto propagation_start_ns =
-        (correction - 1) * 100 * kMillisecondNs;
-    if (correction == 5) {
-      auto invalid_group = makeGroup(
-          makeCornerScan(time_ns), propagation_start_ns,
-          {stationaryImu(propagation_start_ns),
-           stationaryImu(time_ns)});
-      invalid_group.has_start_bracket = false;
-      const auto failed = pipeline.process(invalid_group);
-      ASSERT_FALSE(failed.hasCorrectedOutput());
-      EXPECT_TRUE(failed.local_map_points_odom_m.empty());
-      EXPECT_EQ(failed.diagnostics.timing.snapshot_us, 0);
-    }
-    std::vector<ImuSample> correction_imu{
-        stationaryImu(propagation_start_ns)};
-    if (time_ns - 50 * kMillisecondNs > propagation_start_ns) {
-      correction_imu.push_back(
-          stationaryImu(time_ns - 50 * kMillisecondNs));
-    }
-    correction_imu.push_back(stationaryImu(time_ns));
-    const auto corrected = pipeline.process(
-        makeGroup(makeCornerScan(time_ns), propagation_start_ns,
-                  std::move(correction_imu)));
-    ASSERT_TRUE(corrected.hasCorrectedOutput());
-    if (correction == 1 || correction == 10) {
-      EXPECT_FALSE(corrected.local_map_points_odom_m.empty());
-      EXPECT_GT(corrected.diagnostics.map.snapshot_point_count, 0U);
-    } else {
-      EXPECT_TRUE(corrected.local_map_points_odom_m.empty());
-      EXPECT_EQ(corrected.diagnostics.timing.snapshot_us, 0);
-    }
-  }
-}
-
-TEST(FastLioPipelineTest,
-     DisabledPeriodicSnapshotSkipsOutputButFinalMapRemainsAvailable) {
-  auto config = testConfig();
-  config.lifecycle.enable_periodic_local_map_snapshot = false;
-  FastLioPipeline pipeline(config);
-  static_cast<void>(pipeline.process(makeGroup(
-      makePlanarScan(0), 0,
-      {stationaryImu(-20 * kMillisecondNs),
-       stationaryImu(-10 * kMillisecondNs), stationaryImu(0)})));
-  const auto corrected = pipeline.process(makeGroup(
-      makePlanarScan(100 * kMillisecondNs), 0,
-      {stationaryImu(0), stationaryImu(50 * kMillisecondNs),
-       stationaryImu(100 * kMillisecondNs)}));
-
-  ASSERT_TRUE(corrected.hasCorrectedOutput());
-  EXPECT_TRUE(corrected.local_map_points_odom_m.empty());
-  EXPECT_EQ(corrected.diagnostics.map.snapshot_point_count, 0U);
-  EXPECT_EQ(corrected.diagnostics.timing.snapshot_us, 0);
-  EXPECT_FALSE(pipeline.registrationMapSnapshot().empty());
-  EXPECT_EQ(corrected.diagnostics.map.map_point_count,
-            pipeline.registrationMapSnapshot().size());
 }
 
 }  // namespace
