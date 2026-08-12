@@ -54,6 +54,8 @@ def transport_values(session: Path) -> dict[str, Any]:
         "mapping_observation_publish_skip_count",
         "mapping_observation_skip_not_ready_count",
         "mapping_observation_skip_public_frame_invalid_count",
+        "mapping_observation_last_sequence",
+        "mapping_observation_stream_id",
     }
     for line in (session / "samples.jsonl").open(encoding="utf-8"):
         item = json.loads(line)
@@ -96,6 +98,17 @@ def resource_summary(resource_path: Path | None) -> dict[str, str]:
     }
 
 
+def runtime_metadata(session: Path) -> dict[str, Any]:
+    path = session / "runtime.json"
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def report_session(session: Path, resource_path: Path | None = None) -> str:
     values = samples(session)
     if not values:
@@ -122,6 +135,8 @@ def report_session(session: Path, resource_path: Path | None = None) -> str:
     published = number(transport.get("mapping_observation_publish_count"))
     received = number(final.get("mapping_observation_receive_count"))
     callback_skips = number(transport.get("mapping_observation_publish_skip_count"))
+    publisher_last_sequence = number(transport.get("mapping_observation_last_sequence"))
+    last_received_sequence = number(final.get("last_received_observation_sequence"))
     source_elapsed = max(
         0.0,
         number(final.get("last_input_stamp_ns")) - number(final.get("first_input_stamp_ns")),
@@ -136,12 +151,15 @@ def report_session(session: Path, resource_path: Path | None = None) -> str:
     wall_utilization = callback_mean_us * wall_rate_hz / 1e6
     source_utilization = callback_mean_us * source_rate_hz / 1e6
     resources = resource_summary(resource_path)
+    metadata = runtime_metadata(session)
     counter_delta = published - received
     return f"""## {session.name}
 
 | Metric | Value |
 |---|---:|
 | accepted observations | {accepted:.0f} |
+| mapping ROG resolution | {metadata.get('mapping_rog_resolution_m', 'NOT_AVAILABLE')} m |
+| mapping input voxel | {metadata.get('mapping_input_voxel_m', 'NOT_AVAILABLE')} m |
 | mapping candidate input points | {input_points:.0f} |
 | mapper filter output points | {filtered_points:.0f} |
 | mapper filter retention | {(filtered_points / input_points * 100 if input_points else 0):.3f}% |
@@ -166,7 +184,14 @@ def report_session(session: Path, resource_path: Path | None = None) -> str:
 | sensor-origin grid type | {final.get('sensor_origin_grid_type', 'NOT_AVAILABLE')} |
 | LIO mapping observations published | {published:.0f} |
 | mapper observations received/accepted | {received:.0f}/{accepted:.0f} |
-| publisher-to-mapper counter delta | {counter_delta:.0f} ({'inconsistent snapshot' if counter_delta < 0 else 'measured'}) |
+| publisher last sequence | {publisher_last_sequence:.0f} |
+| mapper last sequence | {last_received_sequence:.0f} |
+| mapper stream switches | {number(final.get('observation_sequence_stream_switch_count')):.0f} |
+| missing sequence count | {number(final.get('observation_sequence_missing_count')):.0f} |
+| duplicate sequence count | {number(final.get('observation_sequence_duplicate_count')):.0f} |
+| sequence regression count | {number(final.get('observation_sequence_regression_count')):.0f} |
+| maximum consecutive missing | {number(final.get('observation_sequence_max_consecutive_missing')):.0f} |
+| publisher-to-mapper counter delta | {counter_delta:.0f} ({'inconsistent snapshot' if counter_delta < 0 else 'legacy counter only'}) |
 | publisher-side skips | {callback_skips:.0f} |
 
 ### Timing distributions (microseconds)
@@ -220,12 +245,13 @@ def main() -> int:
     parser.add_argument("--session", action="append", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resource-summary", action="append", type=Path, default=[])
+    parser.add_argument("--baseline", default="dc60913")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# ROG-Map Ray/Voxel Correctness, Throughput and Scaling Benchmark",
         "",
-        "- Baseline commit: `5052f12e63e0fd106deafd662c489b2281dc87b6`",
+        f"- Baseline commit: `{args.baseline}`",
         "- Dataset: `aist-mid360-drive`",
         "- Source: aggregate `/navigation_mapping/diagnostics` samples",
         "- Percentiles are computed offline; no per-ray production logging is used.",
@@ -251,7 +277,7 @@ def main() -> int:
         "- FAST-LIO mapping-observation source cloud: `CONFIRMED` by source inspection.",
         "- FAST-LIO scan downsample affecting mapping observation: `NOT_SIGNIFICANT` for this path; it affects registration only.",
         "- Mapper-side point filter: `MEASURED`; input/output counters are in the session tables.",
-        "- DDS/consumer delivery: RATE 2 sessions show a positive publisher-to-mapper counter delta (155 in the resource-accounted run) while wall callback utilization reached 0.7970; RATE 1's final transport snapshot was internally inconsistent (-4). These counters establish overload-associated delivery loss, but do not identify the sole DDS cause without sequence IDs.",
+        "- Delivery classification: publisher skips are counted separately; sequence gaps are measured at the mapper. A positive sequence gap proves the published observation was not delivered to this callback, but application-level data cannot distinguish DDS loss from KeepLast(1) subscriber replacement. Mapper rejection is counted after receipt; duplicate/regression counters detect identity anomalies.",
         "- ROG raycast/sliding: `MEASURED` by aggregate counters and timings.",
         "- Visualization/RViz: `NOT_SIGNIFICANT` for the headless runs because map-output subscriber count is zero; RViz rendering was not benchmarked in this report.",
         "- Probability convergence and persistent-obstacle/free-space recall: `NOT_MEASURED`; AIST has no occupancy ground truth and the current offline runner does not yet build persistent endpoint cohorts.",

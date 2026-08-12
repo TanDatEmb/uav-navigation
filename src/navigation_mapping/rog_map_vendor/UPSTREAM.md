@@ -71,6 +71,14 @@ contents are otherwise unmodified.
 All modifications are scoped to the smallest possible diff and are
 individually justified below.
 
+### 0. Aggregate ray diagnostics without hash-set hot-path state (`src/rog_map/prob_map.cpp`, `include/rog_map/prob_map.h`)
+
+The product diagnostics layer previously kept per-update `std::unordered_set`
+instances for unique hit/miss voxel counts. Those sets added hashing and
+allocation work to every ray candidate. Unique counts now use the existing
+`operation_cnt` and `hit_cnt` arrays while preserving the ray/update-cache
+operations and map update semantics.
+
 ### 1. Lifecycle fix: per-instance init guard (`src/rog_map/prob_map.cpp`, `include/rog_map/prob_map.h`)
 
 **Problem.** `ProbMap::initProbMap()` guarded double-initialization with a

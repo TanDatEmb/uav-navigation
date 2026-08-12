@@ -204,8 +204,18 @@ TEST(RogMapAdapterGeometryTest, IdenticalAcceptedInputsHaveIdenticalDigest) {
     first.updateMap(cloud, pose);
     second.updateMap(cloud, pose);
   }
+  const auto& first_diagnostics = first.lastDiagnostics();
+  const auto& second_diagnostics = second.lastDiagnostics();
   EXPECT_EQ(first.deterministicDigest(), second.deterministicDigest())
       << first.deterministicDigest() << " vs " << second.deterministicDigest();
+  EXPECT_EQ(first_diagnostics.hit_candidate_count, second_diagnostics.hit_candidate_count);
+  EXPECT_EQ(first_diagnostics.miss_candidate_count, second_diagnostics.miss_candidate_count);
+  EXPECT_EQ(first_diagnostics.unique_hit_voxel_count,
+            second_diagnostics.unique_hit_voxel_count);
+  EXPECT_EQ(first_diagnostics.unique_miss_voxel_count,
+            second_diagnostics.unique_miss_voxel_count);
+  EXPECT_EQ(first_diagnostics.update_cache_entry_count,
+            second_diagnostics.update_cache_entry_count);
 }
 
 // --- I: inflation ------------------------------------------------------------

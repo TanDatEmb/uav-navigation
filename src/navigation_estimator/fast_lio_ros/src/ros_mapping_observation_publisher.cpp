@@ -1,5 +1,6 @@
 #include "fast_lio_ros/ros_mapping_observation_publisher.hpp"
 
+#include <chrono>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include "fast_lio_ros/qos_profiles.hpp"
@@ -12,6 +13,12 @@ RosMappingObservationPublisher::RosMappingObservationPublisher(
     std::shared_ptr<LioPublicFrameGeneration> public_frame_generation)
     : parameters_(std::move(parameters)),
       public_frame_generation_(std::move(public_frame_generation)) {
+  observation_stream_id_ = static_cast<std::uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count()) ^
+      static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+  if (observation_stream_id_ == 0) {
+    observation_stream_id_ = 1;
+  }
   if (!parameters_.mapping_observation_enabled) {
     return;
   }
@@ -78,7 +85,11 @@ void RosMappingObservationPublisher::publish(const ProcessResult& result) {
   }
 
   message.public_frame_generation = public_frame.generation;
+  message.observation_stream_id = observation_stream_id_;
+  const std::uint64_t sequence = last_published_sequence_.load(std::memory_order_relaxed) + 1U;
+  message.observation_sequence = sequence;
   publisher_->publish(message);
+  last_published_sequence_.store(sequence, std::memory_order_relaxed);
   ++published_count_;
 }
 

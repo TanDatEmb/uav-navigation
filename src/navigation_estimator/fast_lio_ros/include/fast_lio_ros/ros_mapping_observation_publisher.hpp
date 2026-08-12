@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include <navigation_interfaces/msg/lidar_mapping_observation.hpp>
@@ -36,6 +38,12 @@ class RosMappingObservationPublisher {
   [[nodiscard]] std::size_t skippedPublicFrameInvalidCount() const noexcept {
     return skipped_public_frame_invalid_count_;
   }
+  [[nodiscard]] std::uint64_t lastPublishedSequence() const noexcept {
+    return last_published_sequence_.load(std::memory_order_relaxed);
+  }
+  [[nodiscard]] std::uint64_t observationStreamId() const noexcept {
+    return observation_stream_id_;
+  }
 
  private:
   RosParameters parameters_;
@@ -44,6 +52,8 @@ class RosMappingObservationPublisher {
   std::size_t published_count_{0};
   std::size_t skipped_not_ready_count_{0};
   std::size_t skipped_public_frame_invalid_count_{0};
+  std::uint64_t observation_stream_id_{0};
+  std::atomic<std::uint64_t> last_published_sequence_{0};
 };
 
 }  // namespace uav::nav::lio

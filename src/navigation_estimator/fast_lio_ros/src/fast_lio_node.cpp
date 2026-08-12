@@ -731,6 +731,10 @@ void FastLioNode::publishTransportSnapshot() {
         mapping_observation_publisher_.skippedNotReadyCount();
     runtime.mapping_observation_skip_public_frame_invalid_count =
         mapping_observation_publisher_.skippedPublicFrameInvalidCount();
+    runtime.mapping_observation_last_sequence =
+        mapping_observation_publisher_.lastPublishedSequence();
+    runtime.mapping_observation_stream_id =
+        mapping_observation_publisher_.observationStreamId();
     runtime.mapping_observation_publish_skip_count =
         runtime.mapping_observation_skip_not_ready_count +
         runtime.mapping_observation_skip_public_frame_invalid_count;

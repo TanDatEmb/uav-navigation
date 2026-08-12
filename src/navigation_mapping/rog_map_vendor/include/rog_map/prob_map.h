@@ -27,7 +27,6 @@
 #include <queue>
 #include <cstddef>
 #include <cstdint>
-#include <unordered_set>
 #include <rog_map/inf_map.h>
 #include <rog_map/free_cnt_map.h>
 #include <rog_map/esdf_map.h>
@@ -188,9 +187,6 @@ namespace rog_map {
                                             "CacheNumber", "InflationNumber"};
 
         RaycastDiagnostics last_diagnostics_{};
-        std::unordered_set<int> current_hit_voxels_;
-        std::unordered_set<int> current_miss_voxels_;
-
         // standardization query
         // Known free < l_free
         // occupied >= l_occ

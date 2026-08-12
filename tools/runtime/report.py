@@ -996,6 +996,13 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "visualization_inflated_occupied_point_count",
         "visualization_unknown_point_count",
         "visualization_frontier_point_count",
+        "last_received_observation_sequence",
+        "last_received_observation_stream_id",
+        "observation_sequence_stream_switch_count",
+        "observation_sequence_missing_count",
+        "observation_sequence_duplicate_count",
+        "observation_sequence_regression_count",
+        "observation_sequence_max_consecutive_missing",
     )
     result: dict[str, Any] = {
         "topic": "/navigation_mapping/diagnostics",

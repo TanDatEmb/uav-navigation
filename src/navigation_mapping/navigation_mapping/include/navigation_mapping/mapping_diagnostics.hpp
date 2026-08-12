@@ -79,6 +79,13 @@ struct MappingDiagnostics {
   std::uint64_t mapping_observation_publish_skip_count{0};
   std::uint64_t mapping_observation_receive_count{0};
   std::uint64_t mapping_observation_rejection_count{0};
+  std::uint64_t last_received_observation_sequence{0};
+  std::uint64_t last_received_observation_stream_id{0};
+  std::uint64_t observation_sequence_stream_switch_count{0};
+  std::uint64_t observation_sequence_missing_count{0};
+  std::uint64_t observation_sequence_duplicate_count{0};
+  std::uint64_t observation_sequence_regression_count{0};
+  std::uint64_t observation_sequence_max_consecutive_missing{0};
 
   std::string sensor_origin_grid_type{"NOT_QUERIED"};
 

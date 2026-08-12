@@ -14,6 +14,11 @@
 #   points.header.frame_id == "livox_frame"
 #   public_frame_generation == the LioPublicFrameGeneration value active when
 #                            this observation was produced
+#   observation_stream_id == publisher process identity for
+#                           observation_sequence
+#   observation_sequence == monotonically increasing publisher identity for
+#                           published observations; skipped publications do
+#                           not consume a sequence value
 
 std_msgs/Header header
 
@@ -22,3 +27,7 @@ geometry_msgs/Pose sensor_pose
 sensor_msgs/PointCloud2 points
 
 uint64 public_frame_generation
+
+uint64 observation_stream_id
+
+uint64 observation_sequence

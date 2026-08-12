@@ -392,9 +392,6 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     last_diagnostics_.rog_inflation_us = static_cast<std::int64_t>(time_consuming_[3] * 1e6);
     time_consuming_[0] = tc.stop();
     last_diagnostics_.rog_total_update_us = static_cast<std::int64_t>(time_consuming_[0] * 1e6);
-    last_diagnostics_.unique_hit_voxel_count = current_hit_voxels_.size();
-    last_diagnostics_.unique_miss_voxel_count = current_miss_voxels_.size();
-
     /* Update ESDF map */
     if (cfg_.esdf_en) {
         esdf_map_->updateESDF3D(pos);
@@ -714,8 +711,6 @@ void ProbMap::missPointUpdate(const Vec3f& pos, const int& hash_id, const int& h
 }
 
 void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odom) {
-    current_hit_voxels_.clear();
-    current_miss_voxels_.clear();
     // bounding box of updated region
     raycast_data_.cache_box_min = cur_odom;
     raycast_data_.cache_box_max = cur_odom;
@@ -877,6 +872,8 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
 
 void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
     const auto& hash_id = getHashIndexFromGlobalIndex(id_g);
+    const auto operation_count_before = raycast_data_.operation_cnt[hash_id];
+    const auto hit_count_before = raycast_data_.hit_cnt[hash_id];
     raycast_data_.operation_cnt[hash_id]++;
     if (raycast_data_.operation_cnt[hash_id] == 1) {
         raycast_data_.update_cache_id_g.push(id_g);
@@ -884,10 +881,14 @@ void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
     if (is_hit) {
         raycast_data_.hit_cnt[hash_id]++;
         ++last_diagnostics_.hit_candidate_count;
-        current_hit_voxels_.insert(hash_id);
+        if (hit_count_before == 0) {
+            ++last_diagnostics_.unique_hit_voxel_count;
+        }
     } else {
         ++last_diagnostics_.miss_candidate_count;
-        current_miss_voxels_.insert(hash_id);
+        if (operation_count_before == hit_count_before) {
+            ++last_diagnostics_.unique_miss_voxel_count;
+        }
     }
 }
 

@@ -201,6 +201,28 @@ void NavigationMappingNode::onObservation(
   }
   diagnostics.last_callback_wall_ns = callback_wall_ns;
   ++diagnostics.mapping_observation_receive_count;
+  const std::uint64_t stream_id = message->observation_stream_id;
+  const std::uint64_t sequence = message->observation_sequence;
+  if (diagnostics.last_received_observation_stream_id == 0) {
+    diagnostics.last_received_observation_stream_id = stream_id;
+    diagnostics.last_received_observation_sequence = sequence;
+  } else if (stream_id != diagnostics.last_received_observation_stream_id) {
+    ++diagnostics.observation_sequence_stream_switch_count;
+    diagnostics.last_received_observation_stream_id = stream_id;
+    diagnostics.last_received_observation_sequence = sequence;
+  } else if (diagnostics.last_received_observation_sequence == 0) {
+    diagnostics.last_received_observation_sequence = sequence;
+  } else if (sequence > diagnostics.last_received_observation_sequence) {
+    const std::uint64_t missing = sequence - diagnostics.last_received_observation_sequence - 1U;
+    diagnostics.observation_sequence_missing_count += missing;
+    diagnostics.observation_sequence_max_consecutive_missing = std::max(
+        diagnostics.observation_sequence_max_consecutive_missing, missing);
+    diagnostics.last_received_observation_sequence = sequence;
+  } else if (sequence == diagnostics.last_received_observation_sequence) {
+    ++diagnostics.observation_sequence_duplicate_count;
+  } else {
+    ++diagnostics.observation_sequence_regression_count;
+  }
   if (!cloudHasXyzFloatFields(message->points)) {
     ++invalid_cloud_count_;
     ++diagnostics.mapping_observation_rejection_count;
@@ -230,13 +252,20 @@ void NavigationMappingNode::onObservation(
   diagnostics.ros_pointcloud_decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - decode_started).count();
 
+  const auto accepted_before = diagnostics.accepted_observation_count;
+  bool processing_failed = false;
   try {
     pipeline_->process(input);
   } catch (const std::exception& error) {
+    processing_failed = true;
     ++diagnostics.processing_exception_count;
     ++diagnostics.mapping_observation_rejection_count;
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
                           "ROG-Map update failed; keeping node alive: %s", error.what());
+  }
+  if (diagnostics.accepted_observation_count == accepted_before &&
+      !processing_failed) {
+    ++diagnostics.mapping_observation_rejection_count;
   }
   diagnostics.mapping_callback_total_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - callback_started).count();
@@ -468,6 +497,20 @@ void NavigationMappingNode::publishDiagnostics() {
       keyValue("sensor_origin_grid_type", diagnostics.sensor_origin_grid_type),
       keyValue("mapping_observation_receive_count", std::to_string(diagnostics.mapping_observation_receive_count)),
       keyValue("mapping_observation_rejection_count", std::to_string(diagnostics.mapping_observation_rejection_count)),
+      keyValue("last_received_observation_sequence",
+               std::to_string(diagnostics.last_received_observation_sequence)),
+      keyValue("last_received_observation_stream_id",
+               std::to_string(diagnostics.last_received_observation_stream_id)),
+      keyValue("observation_sequence_stream_switch_count",
+               std::to_string(diagnostics.observation_sequence_stream_switch_count)),
+      keyValue("observation_sequence_missing_count",
+               std::to_string(diagnostics.observation_sequence_missing_count)),
+      keyValue("observation_sequence_duplicate_count",
+               std::to_string(diagnostics.observation_sequence_duplicate_count)),
+      keyValue("observation_sequence_regression_count",
+               std::to_string(diagnostics.observation_sequence_regression_count)),
+      keyValue("observation_sequence_max_consecutive_missing",
+               std::to_string(diagnostics.observation_sequence_max_consecutive_missing)),
       keyValue("processing_exception_count",
                std::to_string(diagnostics.processing_exception_count)),
       keyValue("visualization_publish_count",
