@@ -25,6 +25,9 @@
 #pragma once
 
 #include <queue>
+#include <cstddef>
+#include <cstdint>
+#include <unordered_set>
 #include <rog_map/inf_map.h>
 #include <rog_map/free_cnt_map.h>
 #include <rog_map/esdf_map.h>
@@ -37,6 +40,46 @@ namespace rog_map {
 
     class ProbMap : public SlidingMap {
     public:
+        // Aggregate, per-update instrumentation. This is intentionally a
+        // snapshot rather than a per-ray log.
+        struct RaycastDiagnostics {
+            std::uint64_t endpoint_count{0};
+            std::uint64_t attempt_count{0};
+            std::uint64_t processed_count{0};
+            std::uint64_t clipped_count{0};
+            std::uint64_t skipped_count{0};
+            std::uint64_t skip_nonfinite{0};
+            std::uint64_t skip_intensity{0};
+            std::uint64_t skip_point_filter{0};
+            std::uint64_t skip_below_raycast_min_range{0};
+            std::uint64_t skip_endpoint_outside_local_map{0};
+            std::uint64_t clipped_virtual_ground_or_ceiling{0};
+            std::uint64_t clipped_raycast_max_range{0};
+            std::uint64_t clipped_local_update_box{0};
+            std::uint64_t ray_outside_local_map_step{0};
+            std::uint64_t voxel_traversal_count_total{0};
+            std::uint64_t voxel_traversal_count_max{0};
+            std::uint64_t hit_candidate_count{0};
+            std::uint64_t miss_candidate_count{0};
+            std::uint64_t unique_hit_voxel_count{0};
+            std::uint64_t unique_miss_voxel_count{0};
+            std::uint64_t update_cache_entry_count{0};
+            std::uint64_t unique_update_cache_voxel_count{0};
+            std::uint64_t map_slide_check_count{0};
+            std::uint64_t map_slide_count{0};
+            std::int64_t map_slide_voxel_shift_x{0};
+            std::int64_t map_slide_voxel_shift_y{0};
+            std::int64_t map_slide_voxel_shift_z{0};
+            std::uint64_t map_slide_cells_cleared{0};
+            std::uint64_t inflation_update_count{0};
+            std::int64_t rog_total_update_us{0};
+            std::int64_t rog_raycast_us{0};
+            std::int64_t rog_probability_update_us{0};
+            std::int64_t rog_inflation_us{0};
+            std::int64_t rog_slide_us{0};
+            std::uint64_t allocated_voxel_count{0};
+        };
+
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         typedef std::shared_ptr<ProbMap> Ptr;
 
@@ -99,6 +142,19 @@ namespace rog_map {
 
         void updateProbMap(const PointCloud &cloud, const Pose &pose);
 
+        [[nodiscard]] const RaycastDiagnostics& lastDiagnostics() const noexcept {
+            return last_diagnostics_;
+        }
+
+        [[nodiscard]] std::uint64_t allocatedVoxelCount() const noexcept {
+            return static_cast<std::uint64_t>(sc_.map_vox_num);
+        }
+
+        // Sparse-checkpoint helper. This is intentionally not called from the
+        // per-scan update path; it hashes the logical occupancy buffer only
+        // when an offline benchmark requests a checkpoint.
+        [[nodiscard]] std::uint64_t deterministicDigest() const noexcept;
+
     protected:
         rog_map::Config cfg_;
         InfMap::Ptr inf_map_;
@@ -114,6 +170,7 @@ namespace rog_map {
         // incompatible with the public-frame-generation reset contract, which
         // requires destroying and reconstructing the map in the same process.
         bool initialized_once_{false};
+        bool first_frame_clear_pending_{true};
 
         bool map_empty_{true};
         struct RaycastData {
@@ -129,6 +186,10 @@ namespace rog_map {
         vector<double> time_consuming_;
         vector<string> time_consuming_name_{"Total", "Raycast", "Update_cache", "Inflation", "PointCloudNumber",
                                             "CacheNumber", "InflationNumber"};
+
+        RaycastDiagnostics last_diagnostics_{};
+        std::unordered_set<int> current_hit_voxels_;
+        std::unordered_set<int> current_miss_voxels_;
 
         // standardization query
         // Known free < l_free

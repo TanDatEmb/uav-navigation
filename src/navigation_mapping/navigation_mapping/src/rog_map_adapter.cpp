@@ -128,4 +128,18 @@ const rog_map::ROGMap& RogMapAdapter::map() const {
   return *map_;
 }
 
+const rog_map::ProbMap::RaycastDiagnostics& RogMapAdapter::lastDiagnostics() const {
+  if (!map_) {
+    throw std::runtime_error("RogMapAdapter::lastDiagnostics() called before reset()");
+  }
+  return map_->lastDiagnostics();
+}
+
+std::uint64_t RogMapAdapter::deterministicDigest() const {
+  if (!map_) {
+    throw std::runtime_error("RogMapAdapter::deterministicDigest() called before reset()");
+  }
+  return map_->deterministicDigest();
+}
+
 }  // namespace navigation_mapping

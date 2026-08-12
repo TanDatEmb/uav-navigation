@@ -48,6 +48,7 @@ class NavigationMappingNode : public rclcpp::Node {
   double visualization_range_z_m_{6.0};
   std::size_t visualization_max_points_{150000};
   std::string visualization_frame_id_;
+  std::uint64_t last_visualization_update_count_{0};
 };
 
 }  // namespace navigation_mapping

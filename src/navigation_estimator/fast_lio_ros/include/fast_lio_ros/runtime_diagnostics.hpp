@@ -130,6 +130,10 @@ class CovarianceProjectionRuntime {
 };
 
 struct RuntimeDiagnostics {
+  std::size_t mapping_observation_publish_count{0};
+  std::size_t mapping_observation_publish_skip_count{0};
+  std::size_t mapping_observation_skip_not_ready_count{0};
+  std::size_t mapping_observation_skip_public_frame_invalid_count{0};
   std::size_t current_input_queue_depth{0};
   std::size_t current_imu_queue_depth{0};
   std::size_t current_lidar_queue_depth{0};

@@ -22,6 +22,8 @@
 */
 
 #include <rog_map/prob_map.h>
+#include <chrono>
+#include <cmath>
 using namespace rog_map;
 using namespace super_utils;
 
@@ -89,6 +91,20 @@ void ProbMap::initProbMap() {
 
     std::cout << GREEN << " -- [ProbMap] Init successfully -- ." << RESET << std::endl;
     printMapInformation();
+}
+
+std::uint64_t ProbMap::deterministicDigest() const noexcept {
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto mix = [&hash](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ULL;
+        }
+    };
+    mix(occupancy_buffer_.data(), occupancy_buffer_.size() * sizeof(float));
+    mix(local_map_origin_i_.data(), 3U * sizeof(local_map_origin_i_[0]));
+    return hash;
 }
 
 Vec3f ProbMap::getLocalMapOrigin() const {
@@ -296,7 +312,12 @@ void ProbMap::updateOccPointCloud(const PointCloud& input_cloud) {
 }
 
 void ProbMap::slideAllMap(const rog_map::Vec3f& pos) {
+    const auto slide_started = std::chrono::steady_clock::now();
+    const Vec3i old_origin = local_map_origin_i_;
+    Vec3i new_origin;
+    posToGlobalIndex(pos, new_origin);
     mapSliding(pos);
+    const Vec3i shift = new_origin - old_origin;
     inf_map_->mapSliding(pos);
     if (cfg_.frontier_extraction_en) {
         fcnt_map_->mapSliding(pos);
@@ -304,12 +325,25 @@ void ProbMap::slideAllMap(const rog_map::Vec3f& pos) {
     if (cfg_.esdf_en) {
         esdf_map_->mapSliding(pos);
     }
+    last_diagnostics_.map_slide_count++;
+    last_diagnostics_.map_slide_voxel_shift_x += shift.x();
+    last_diagnostics_.map_slide_voxel_shift_y += shift.y();
+    last_diagnostics_.map_slide_voxel_shift_z += shift.z();
+    last_diagnostics_.map_slide_cells_cleared += lastSlideCellsCleared();
+    last_diagnostics_.rog_slide_us += std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - slide_started).count();
 }
 
 void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
+    last_diagnostics_ = RaycastDiagnostics{};
+    last_diagnostics_.endpoint_count = cloud.size();
+    last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
     TimeConsuming tc("updateMap", false);
     const Vec3f& pos = pose.first;
     time_consuming_[4] = cloud.size();
+    if (cfg_.map_sliding_en) {
+        last_diagnostics_.map_slide_check_count = 1;
+    }
     if (cfg_.map_sliding_en && !insideLocalMap(pos) && raycast_data_.batch_update_counter == 0) {
         std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << std::endl;
@@ -339,17 +373,27 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     TimeConsuming t_raycast("raycast", false);
     raycastProcess(cloud, pos);
     time_consuming_[1] = t_raycast.stop();
+    last_diagnostics_.rog_raycast_us = static_cast<std::int64_t>(time_consuming_[1] * 1e6);
     raycast_data_.batch_update_counter++;
     if (raycast_data_.batch_update_counter >= cfg_.batch_update_size) {
         raycast_data_.batch_update_counter = 0;
         time_consuming_[5] = raycast_data_.update_cache_id_g.size();
+        last_diagnostics_.update_cache_entry_count = raycast_data_.update_cache_id_g.size();
+        last_diagnostics_.unique_update_cache_voxel_count = last_diagnostics_.update_cache_entry_count;
         TimeConsuming t_update("update", false);
         probabilisticMapFromCache();
         time_consuming_[2] = t_update.stop();
+        last_diagnostics_.rog_probability_update_us =
+            static_cast<std::int64_t>(time_consuming_[2] * 1e6);
         map_empty_ = false;
     }
     inf_map_->getInflationNumAndTime(time_consuming_[6], time_consuming_[3]);
+    last_diagnostics_.inflation_update_count = static_cast<std::uint64_t>(time_consuming_[6]);
+    last_diagnostics_.rog_inflation_us = static_cast<std::int64_t>(time_consuming_[3] * 1e6);
     time_consuming_[0] = tc.stop();
+    last_diagnostics_.rog_total_update_us = static_cast<std::int64_t>(time_consuming_[0] * 1e6);
+    last_diagnostics_.unique_hit_voxel_count = current_hit_voxels_.size();
+    last_diagnostics_.unique_miss_voxel_count = current_miss_voxels_.size();
 
     /* Update ESDF map */
     if (cfg_.esdf_en) {
@@ -357,9 +401,8 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     }
 
     /* For the first frame, clear all unknown around the robot */
-    static bool first = true;
-    if (first) {
-        first = false;
+    if (first_frame_clear_pending_) {
+        first_frame_clear_pending_ = false;
         for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min; dx += cfg_.resolution) {
             for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min; dy += cfg_.resolution) {
                 for (double dz = -cfg_.raycast_range_min; dz <= cfg_.raycast_range_min; dz += cfg_.resolution) {
@@ -671,6 +714,8 @@ void ProbMap::missPointUpdate(const Vec3f& pos, const int& hash_id, const int& h
 }
 
 void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odom) {
+    current_hit_voxels_.clear();
+    current_miss_voxels_.clear();
     // bounding box of updated region
     raycast_data_.cache_box_min = cur_odom;
     raycast_data_.cache_box_max = cur_odom;
@@ -694,11 +739,19 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         // 1.1) intensity filter
         if (cfg_.intensity_thresh > 0 &&
             pcl_p.intensity < cfg_.intensity_thresh) {
+            last_diagnostics_.skip_intensity++;
             continue;
         }
 
         // 1.2) temporal filter
         if (temperol_cnt++ % cfg_.point_filt_num) {
+            last_diagnostics_.skip_point_filter++;
+            continue;
+        }
+
+        last_diagnostics_.attempt_count++;
+        if (!std::isfinite(pcl_p.x) || !std::isfinite(pcl_p.y) || !std::isfinite(pcl_p.z)) {
+            last_diagnostics_.skip_nonfinite++;
             continue;
         }
 
@@ -710,6 +763,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             if (insideLocalMap(p)) {
                 double sqrdis = (p - cur_odom).squaredNorm();
                 if(sqrdis<cfg_.sqr_raycast_range_min){
+                    last_diagnostics_.skip_below_raycast_min_range++;
                     continue;
                 }
                 posToGlobalIndex(p, pt_id_g);
@@ -717,14 +771,20 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
                 // record cache box size;
                 raycast_data_.cache_box_min = raycast_data_.cache_box_min.cwiseMin(p);
                 raycast_data_.cache_box_max = raycast_data_.cache_box_max.cwiseMax(p);
+                last_diagnostics_.processed_count++;
+            } else {
+                last_diagnostics_.skip_endpoint_outside_local_map++;
             }
             continue;
         }
 
         bool update_hit{true};
+        bool clipped{false};
         // 1.3) filter for virtual ceil and ground
         if (p.z() > cfg_.virtual_ceil_height) {
             update_hit = false;
+            clipped = true;
+            last_diagnostics_.clipped_virtual_ground_or_ceiling++;
             // find the intersect point with the ceil
             const double dz = p.z() - cur_odom.z();
             const double pc = cfg_.virtual_ceil_height - cur_odom.z();
@@ -732,6 +792,8 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         }
         else if (p.z() < cfg_.virtual_ground_height) {
             update_hit = false;
+            clipped = true;
+            last_diagnostics_.clipped_virtual_ground_or_ceiling++;
             // find the intersect point with the ground
             const double dz = p.z() - cur_odom.z();
             const double pc = cfg_.virtual_ground_height - cur_odom.z();
@@ -745,9 +807,12 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             double k = cfg_.raycast_range_max / sqrt(sqr_dis);
             p = k * (p - cur_odom) + cur_odom;
             update_hit = false;
+            clipped = true;
+            last_diagnostics_.clipped_raycast_max_range++;
         }
 
         if(sqr_dis < cfg_.sqr_raycast_range_min) {
+            last_diagnostics_.skip_below_raycast_min_range++;
             continue;
         }
 
@@ -759,6 +824,12 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
                                       raycast_box_min,
                                       raycast_box_max);
             update_hit = false;
+            clipped = true;
+            last_diagnostics_.clipped_local_update_box++;
+        }
+
+        if (clipped) {
+            last_diagnostics_.clipped_count++;
         }
 
 
@@ -768,6 +839,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
 
         // 1.4) for all validate hit points, update probability
         raycasting_cloud.push_back(p);
+        last_diagnostics_.processed_count++;
 
         if (update_hit) {
             posToGlobalIndex(p, pt_id_g);
@@ -781,16 +853,26 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
             raycast_data_.raycaster.setInput(raycast_start, p);
             Vec3f ray_pt;
+            std::uint64_t ray_steps = 0;
             while (raycast_data_.raycaster.step(ray_pt)) {
+                ++ray_steps;
+                ++last_diagnostics_.voxel_traversal_count_total;
                 Vec3i cur_ray_id_g;
                 posToGlobalIndex(ray_pt, cur_ray_id_g);
                 if (!insideLocalMap(cur_ray_id_g)) {
+                    ++last_diagnostics_.ray_outside_local_map_step;
                     break;
                 }
                 insertUpdateCandidate(cur_ray_id_g, false);
             }
+            last_diagnostics_.voxel_traversal_count_max =
+                std::max(last_diagnostics_.voxel_traversal_count_max, ray_steps);
         }
     }
+    last_diagnostics_.skipped_count = last_diagnostics_.skip_nonfinite +
+        last_diagnostics_.skip_intensity + last_diagnostics_.skip_point_filter +
+        last_diagnostics_.skip_below_raycast_min_range +
+        last_diagnostics_.skip_endpoint_outside_local_map;
 }
 
 void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
@@ -801,6 +883,11 @@ void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {
     }
     if (is_hit) {
         raycast_data_.hit_cnt[hash_id]++;
+        ++last_diagnostics_.hit_candidate_count;
+        current_hit_voxels_.insert(hash_id);
+    } else {
+        ++last_diagnostics_.miss_candidate_count;
+        current_miss_voxels_.insert(hash_id);
     }
 }
 
@@ -846,4 +933,5 @@ void ProbMap::resetLocalMap() {
     raycast_data_.batch_update_counter = 0;
     std::fill(raycast_data_.operation_cnt.begin(), raycast_data_.operation_cnt.end(), 0);
     std::fill(raycast_data_.hit_cnt.begin(), raycast_data_.hit_cnt.end(), 0);
+    first_frame_clear_pending_ = true;
 }

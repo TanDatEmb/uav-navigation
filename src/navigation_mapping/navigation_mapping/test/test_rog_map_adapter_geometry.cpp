@@ -151,6 +151,63 @@ TEST(RogMapAdapterGeometryTest, AdapterCanResetRepeatedlyInSameProcess) {
   EXPECT_EQ(adapter.resetCount(), 6U);  // 1 from makeAdapter() + 5 here
 }
 
+TEST(RogMapAdapterGeometryTest, FirstFrameBootstrapIsPerMapGeneration) {
+  auto adapter = makeAdapter("first_frame_generation");
+  auto config = smallConfig();
+  config.ray_range_min_m = 0.2;
+  adapter.reset(config);
+  const T_odom_lidar first_pose{Eigen::Vector3d(0.0, 0.0, 0.0),
+                                Eigen::Quaterniond::Identity()};
+  adapter.updateMap(singlePointCloud(Eigen::Vector3d(2.0, 0.0, 0.0)), first_pose);
+  ASSERT_TRUE(adapter.map().isKnownFree(rog_map::Vec3f(0.0F, 0.0F, 0.0F)))
+      << "log_odds=" << adapter.map().getMapValue(rog_map::Vec3f(0.0F, 0.0F, 0.0F));
+
+  adapter.reset(config);
+  const T_odom_lidar second_pose{Eigen::Vector3d(3.0, 1.0, 0.0),
+                                 Eigen::Quaterniond::Identity()};
+  adapter.updateMap(singlePointCloud(Eigen::Vector3d(5.0, 1.0, 0.0)), second_pose);
+  EXPECT_TRUE(adapter.map().isKnownFree(rog_map::Vec3f(3.0F, 1.0F, 0.0F)));
+}
+
+TEST(RogMapAdapterGeometryTest, RayAccountingIsAggregateAndConservative) {
+  auto adapter = makeAdapter("ray_accounting");
+  const T_odom_lidar sensor_pose{};
+  adapter.updateMap(singlePointCloud(Eigen::Vector3d(3.0, 0.0, 0.0)), sensor_pose);
+  const auto& diagnostics = adapter.lastDiagnostics();
+  EXPECT_EQ(diagnostics.endpoint_count, 1U);
+  EXPECT_EQ(diagnostics.attempt_count, 1U);
+  EXPECT_EQ(diagnostics.processed_count, 1U);
+  EXPECT_EQ(diagnostics.skipped_count, 0U);
+  EXPECT_GT(diagnostics.miss_candidate_count, 0U);
+  EXPECT_GT(diagnostics.hit_candidate_count, 0U);
+  EXPECT_GT(diagnostics.voxel_traversal_count_total, 0U);
+  EXPECT_EQ(diagnostics.update_cache_entry_count,
+            diagnostics.unique_update_cache_voxel_count);
+  EXPECT_LE(diagnostics.unique_hit_voxel_count,
+            diagnostics.hit_candidate_count);
+  EXPECT_LE(diagnostics.unique_miss_voxel_count,
+            diagnostics.miss_candidate_count);
+  EXPECT_GT(diagnostics.rog_total_update_us, 0);
+}
+
+TEST(RogMapAdapterGeometryTest, IdenticalAcceptedInputsHaveIdenticalDigest) {
+  auto first = makeAdapter("digest_first");
+  auto second = makeAdapter("digest_second");
+  const std::vector<T_odom_lidar> poses = {
+      T_odom_lidar{Eigen::Vector3d(0.0, 0.0, 0.0), Eigen::Quaterniond::Identity()},
+      T_odom_lidar{Eigen::Vector3d(0.4, 0.1, 0.0), Eigen::Quaterniond::Identity()},
+      T_odom_lidar{Eigen::Vector3d(0.8, 0.2, 0.0), Eigen::Quaterniond::Identity()},
+  };
+  for (const auto& pose : poses) {
+    const Eigen::Vector3d endpoint = pose.translation_odom_m + Eigen::Vector3d(3.0, 0.0, 0.0);
+    const auto cloud = singlePointCloud(endpoint);
+    first.updateMap(cloud, pose);
+    second.updateMap(cloud, pose);
+  }
+  EXPECT_EQ(first.deterministicDigest(), second.deterministicDigest())
+      << first.deterministicDigest() << " vs " << second.deterministicDigest();
+}
+
 // --- I: inflation ------------------------------------------------------------
 
 TEST(RogMapAdapterGeometryTest, OccupiedInflationExpandsByConfiguredStep) {

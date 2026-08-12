@@ -245,6 +245,9 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_
 
 void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
     TimeConsuming ssss("updateMap", true);
+    last_diagnostics_ = ProbMap::RaycastDiagnostics{};
+    last_diagnostics_.endpoint_count = cloud.size();
+    last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
     if (cfg_.ros_callback_en) {
         std::cout << YELLOW << "ROS callback is enabled, can not insert map from updateMap API." << RESET
             << std::endl;

@@ -244,7 +244,8 @@ def _mapping_ready(snapshot: dict[str, Any]) -> bool:
         try:
             return (
                 int(values.get("accepted_observation_count", 0)) > 0
-                and int(values.get("visualization_publish_count", 0)) > 0
+                and (int(values.get("visualization_publish_count", 0)) > 0
+                     or int(values.get("visualization_subscriber_count", 0)) == 0)
                 and int(values.get("visualization_exception_count", 0)) == 0
             )
         except (TypeError, ValueError):

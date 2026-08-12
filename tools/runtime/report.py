@@ -988,6 +988,7 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "nonfinite_point_count",
         "processing_exception_count",
         "visualization_publish_count",
+        "visualization_subscriber_count",
         "visualization_exception_count",
         "visualization_occupied_point_count",
         "visualization_inflated_occupied_point_count",

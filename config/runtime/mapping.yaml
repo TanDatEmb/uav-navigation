@@ -23,7 +23,7 @@ navigation_mapping_node:
         maximum_range_m: 0.0
 
       rog:
-        resolution_m: 0.20
+        resolution_m: 0.2
         local_map_size_m: [30.0, 30.0, 12.0]
         raycasting_enabled: true
         sliding_enabled: true
@@ -46,7 +46,7 @@ navigation_mapping_node:
         enabled: true
         publish_unknown: true
         publish_frontier: true
-        publish_rate_hz: 2.0
+        publish_rate_hz: 10.0
         range_m: [15.0, 15.0, 6.0]
         max_points: 150000
         frame_id: lio_odom

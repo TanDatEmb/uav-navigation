@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -74,6 +75,8 @@ class RogMapAdapter {
 
   [[nodiscard]] rog_map::ROGMap& map();
   [[nodiscard]] const rog_map::ROGMap& map() const;
+  [[nodiscard]] const rog_map::ProbMap::RaycastDiagnostics& lastDiagnostics() const;
+  [[nodiscard]] std::uint64_t deterministicDigest() const;
   [[nodiscard]] std::size_t resetCount() const noexcept { return reset_count_; }
 
  private:

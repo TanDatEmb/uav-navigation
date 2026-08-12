@@ -164,15 +164,12 @@ through the now-removed `pcl_conversions.h` include (modification 5). This
 file now includes `<pcl/io/pcd_io.h>` directly instead, restoring the
 declaration without reintroducing the `pcl_conversions` dependency.
 
-- `ProbMap::raycastProcess` (`src/rog_map/prob_map.cpp`) uses a function-local
-  `static bool first` to clear unknown cells around the very first robot
-  position it observes. After a full map reset (destroy + reconstruct), this
-  flag is process-wide and will not re-trigger for the new instance, so the
-  "clear unknown near first pose" convenience is only applied once per
-  process, not once per map generation. This does not throw, does not corrupt
-  the map, and does not block reset; it only skips a cosmetic bootstrap
-  convenience for generations after the first. Left unmodified to keep the
-  patch surface minimal; revisit only if a synthetic test shows it matters.
+- `ProbMap::raycastProcess` (`src/rog_map/prob_map.cpp`) originally used a
+  function-local `static bool first` to clear unknown cells around the very
+  first robot position. Measurement/lifecycle testing showed that this was
+  process-wide and therefore skipped the bootstrap after a map-generation
+  reset. It is now an instance member reset by `resetLocalMap()`, so each map
+  generation receives the same bootstrap behavior.
 - `ROGMap::updateMap` (`src/rog_map/rog_map.cpp`) uses a function-local
   `static int local_cnt` purely to throttle an empty-cloud warning log line.
   Also process-wide, also non-blocking, also left unmodified.
@@ -183,6 +180,13 @@ declaration without reintroducing the `pcl_conversions` dependency.
   `std::ofstream::open` fails silently (no exception; writes are dropped).
   This is upstream debug-log behavior, not part of the ROG-Map algorithm, and
   is left as-is; it cannot crash the mapper process.
+
+### Deterministic-origin patch
+
+`SlidingMap::initSlidingMap` now initializes the local origin before the first
+sliding-enabled `mapSliding()` call. The upstream order left the origin index
+uninitialized and made fresh-map state nondeterministic; this was found by the
+deterministic digest benchmark.
 
 ## License metadata inconsistency found upstream
 

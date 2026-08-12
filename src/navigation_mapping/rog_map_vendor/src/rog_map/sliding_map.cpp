@@ -56,10 +56,11 @@ SlidingMap::initSlidingMap(const rog_map::Vec3i &half_map_size_i, const double &
     sc_.half_map_size_i = half_map_size_i;
     sc_.map_size_i = 2 * sc_.half_map_size_i + Vec3i::Constant(1);
     sc_.map_vox_num = sc_.map_size_i.prod();
-    if (!map_sliding_en) {
-        local_map_origin_d_ = fix_map_origin;
-        posToGlobalIndex(local_map_origin_d_, local_map_origin_i_);
-    }
+    // Initialize the origin before the first mapSliding call. Without this,
+    // sliding-enabled maps compared an uninitialized local_map_origin_i_
+    // against the requested origin, making fresh-map state nondeterministic.
+    local_map_origin_d_ = fix_map_origin;
+    posToGlobalIndex(local_map_origin_d_, local_map_origin_i_);
     had_been_initialized = true;
 }
 
@@ -114,6 +115,7 @@ void SlidingMap::clearMemoryOutOfMap(const vector<int> &clear_id, const int &i) 
 
 void SlidingMap::mapSliding(const Vec3f &odom) {
     TimeConsuming update_local_shift_timer("updateLocalShift", false);
+    last_slide_cells_cleared_ = 0;
     /// Compute the shifting index
     Vec3i new_origin_i;
     posToGlobalIndex(odom, new_origin_i);
@@ -124,6 +126,7 @@ void SlidingMap::mapSliding(const Vec3f &odom) {
         if (fabs(shift_num[i]) > sc_.map_size_i[i]) {
             // Clear all map
             resetLocalMap();
+            last_slide_cells_cleared_ = static_cast<std::uint64_t>(sc_.map_vox_num);
             updateLocalMapOriginAndBound(new_origin_d, new_origin_i);
             return;
         }
@@ -161,6 +164,9 @@ void SlidingMap::mapSliding(const Vec3f &odom) {
         if (clear_id.empty()) {
             continue;
         }
+        last_slide_cells_cleared_ += static_cast<std::uint64_t>(
+            clear_id.size() * sc_.map_size_i((i + 1) % 3) *
+            sc_.map_size_i((i + 2) % 3));
         clearMemoryOutOfMap(clear_id, i);
     }
 

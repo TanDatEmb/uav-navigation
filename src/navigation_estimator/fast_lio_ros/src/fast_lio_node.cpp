@@ -725,6 +725,15 @@ void FastLioNode::publishTransportSnapshot() {
     runtime.covariance_projection =
         output_publisher_.covarianceProjectionRuntime()->snapshot();
     runtime_statistics_.populate(runtime);
+    runtime.mapping_observation_publish_count =
+        mapping_observation_publisher_.publishedCount();
+    runtime.mapping_observation_skip_not_ready_count =
+        mapping_observation_publisher_.skippedNotReadyCount();
+    runtime.mapping_observation_skip_public_frame_invalid_count =
+        mapping_observation_publisher_.skippedPublicFrameInvalidCount();
+    runtime.mapping_observation_publish_skip_count =
+        runtime.mapping_observation_skip_not_ready_count +
+        runtime.mapping_observation_skip_public_frame_invalid_count;
     const auto tf = transform_publisher_.diagnostics();
     runtime.dynamic_tf_publication_count = tf.publication_count;
     runtime.dynamic_tf_timestamp_suppressed_count =

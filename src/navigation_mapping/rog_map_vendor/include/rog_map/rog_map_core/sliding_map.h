@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <rog_map/rog_map_core/config.hpp>
 #include <super_utils/scope_timer.hpp>
 
@@ -66,6 +67,10 @@ namespace rog_map {
 
         bool insideLocalMap(const Vec3i &id_g) const;
 
+        [[nodiscard]] std::uint64_t lastSlideCellsCleared() const noexcept {
+            return last_slide_cells_cleared_;
+        }
+
     protected:
         struct SlidingConfig {
             double resolution{0};
@@ -96,6 +101,8 @@ namespace rog_map {
          * */
 
         virtual void resetCell(const int & hash_id) = 0;
+
+        std::uint64_t last_slide_cells_cleared_{0};
 
         void clearMemoryOutOfMap(const vector<int> &clear_id, const int &i);
 
