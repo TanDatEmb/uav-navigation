@@ -246,6 +246,13 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "registration.correspondence_parallel_threads", 3);
   result.publish_registered_points =
       node.declare_parameter("output.publish_registered_points", false);
+  // Named under output.mapping_observation.* (not mapping.*) to avoid any
+  // confusion with this node's own mapping.local_map.*/mapping.dynamic_filter.*
+  // parameters, which configure the FAST-LIO registration map, not the
+  // navigation world model (see docs/architecture/navigation_layers.md,
+  // ADR-008).
+  result.mapping_observation_enabled =
+      node.declare_parameter("output.mapping_observation.enabled", false);
   result.imu_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
   result.lidar_queue_capacity =
@@ -329,6 +336,10 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.maximum_range_m;
   config.preprocessing.voxel_filter.voxel_size_m =
       parameters.scan_voxel_size_m;
+  // Retention cost is a single point-vector copy per scan and is paid only
+  // when the mapping observation output is actually enabled.
+  config.preprocessing.retain_mapping_candidate =
+      parameters.mapping_observation_enabled;
   config.registration_map.voxel_size_m =
       parameters.registration_map_voxel_size_m;
   config.local_map.half_extent_m = {

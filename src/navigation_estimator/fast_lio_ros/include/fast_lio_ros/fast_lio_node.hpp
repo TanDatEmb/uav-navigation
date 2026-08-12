@@ -22,6 +22,7 @@
 #include "fast_lio_ros/ros_lidar_adapter.hpp"
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 #include "fast_lio_ros/ros_output_publisher.hpp"
+#include "fast_lio_ros/ros_mapping_observation_publisher.hpp"
 #include "fast_lio_ros/ros_propagated_odometry_publisher.hpp"
 #include "fast_lio_ros/runtime_diagnostics.hpp"
 #include "fast_lio_ros/ros_transform_publisher.hpp"
@@ -77,6 +78,7 @@ class FastLioNode : public rclcpp::Node {
   RosLivoxCustomAdapter livox_custom_adapter_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   RosOutputPublisher output_publisher_;
+  RosMappingObservationPublisher mapping_observation_publisher_;
   RosTransformPublisher transform_publisher_;
   std::unique_ptr<RosPropagatedOdometryPublisher>
       propagated_odometry_publisher_;

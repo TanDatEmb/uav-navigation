@@ -81,6 +81,9 @@ struct RosParameters {
   // At 10 Hz this permits one delayed correction while stopping sustained
   // estimator stalls before propagated output can mask them.
   std::int64_t propagated_odometry_maximum_correction_age_ns{250'000'000};
+  // P1 mapping observation (navigation_mapping consumer). Disabled by default
+  // so existing deployments are unaffected until explicitly opted in.
+  bool mapping_observation_enabled{false};
 };
 
 struct EstimatorProfile {

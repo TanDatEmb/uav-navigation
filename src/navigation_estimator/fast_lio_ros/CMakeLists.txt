@@ -13,6 +13,7 @@ find_package(fast_lio_core REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(navigation_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
@@ -26,6 +27,7 @@ add_library(${PROJECT_NAME}
   src/ros_imu_adapter.cpp
   src/ros_lidar_adapter.cpp
   src/ros_livox_custom_adapter.cpp
+  src/ros_mapping_observation_publisher.cpp
   src/ros_odometry_serializer.cpp
   src/ros_output_publisher.cpp
   src/ros_propagated_odometry_publisher.cpp
@@ -38,7 +40,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 ament_target_dependencies(${PROJECT_NAME}
   diagnostic_msgs fast_lio_core geometry_msgs livox_ros_driver2 nav_msgs
-  rclcpp sensor_msgs tf2 tf2_ros)
+  navigation_interfaces rclcpp sensor_msgs tf2 tf2_ros)
 
 add_executable(fast_lio_node src/fast_lio_node.cpp src/main.cpp)
 target_link_libraries(fast_lio_node ${PROJECT_NAME})
@@ -86,5 +88,5 @@ endif()
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   diagnostic_msgs fast_lio_core geometry_msgs livox_ros_driver2 nav_msgs
-  rclcpp sensor_msgs tf2 tf2_ros)
+  navigation_interfaces rclcpp sensor_msgs tf2 tf2_ros)
 ament_package()

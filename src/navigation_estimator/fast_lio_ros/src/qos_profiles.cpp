@@ -22,4 +22,8 @@ rclcpp::QoS QosProfiles::mapOutput() {
   return rclcpp::QoS{rclcpp::KeepLast{1}}.reliable().transient_local();
 }
 
+rclcpp::QoS QosProfiles::mappingObservation() {
+  return rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort().durability_volatile();
+}
+
 }  // namespace uav::nav::lio

@@ -59,6 +59,11 @@ fast_lio:
         absolute_map_point_guard: 250000
     output:
       publish_registered_points: false
+      # P1: gated LidarMappingObservation for navigation_mapping (see
+      # docs/architecture/navigation_layers.md). Disabled by default;
+      # dataset scenarios exercising the mapper enable this explicitly.
+      mapping_observation:
+        enabled: false
     propagated_odometry:
       enabled: true
       publish_rate_hz: 50.0
