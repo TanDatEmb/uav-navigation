@@ -16,6 +16,11 @@ Result<PreprocessingResult> PointCloudPreprocessor::process(const LidarScan& sca
   output.scan.points = point_filter_.filter(scan.points);
   output.stats.range_filtered_point_count =
       output.stats.input_point_count - output.scan.points.size();
+  if (config_.retain_mapping_candidate) {
+    // Copy, not move: the estimator voxel filter below still needs its own
+    // input. This is the only extra cost of retaining the mapping candidate.
+    output.mapping_candidate_points = output.scan.points;
+  }
   if (config_.enable_voxel_filter) {
     output.scan.points = voxel_filter_.filter(output.scan.points);
   }

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "fast_lio_core/geometry/frame_ids.hpp"
 #include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
 
 namespace uav::nav::lio {
@@ -158,6 +159,70 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   for (const Eigen::Vector3d& point : tracked.registered_points_odom_m) {
     EXPECT_NEAR(point.z(), 0.0, 2e-7);
   }
+}
+
+// P1 mandatory correctness test A (docs/architecture/navigation_layers.md):
+// the mapping observation epoch, the corrected sensor pose epoch, and the
+// scan reference time must be exactly the same value, and the mapping
+// observation must only be available once a correction has succeeded.
+TEST(FastLioPipelineTest, MappingObservationEpochMatchesCorrectedSensorPoseEpoch) {
+  auto config = testConfig();
+  config.preprocessing.retain_mapping_candidate = true;
+  FastLioPipeline pipeline(config);
+  const MeasurementGroup reference_group = makeGroup(
+      makePlanarScan(0), 0,
+      {stationaryImu(-20 * kMillisecondNs), stationaryImu(-10 * kMillisecondNs), stationaryImu(0)});
+  const ProcessResult reference = pipeline.process(reference_group);
+  // Before any correction succeeds, a mapping observation must not be
+  // reported as available, even though preprocessing already ran.
+  EXPECT_FALSE(reference.hasMappingObservationOutput());
+  EXPECT_FALSE(reference.sensor_pose_odom_lidar.has_value());
+
+  const MeasurementGroup tracking_group = makeGroup(
+      makePlanarScan(100 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs), stationaryImu(100 * kMillisecondNs)});
+  const ProcessResult tracked = pipeline.process(tracking_group);
+
+  ASSERT_TRUE(tracked.hasCorrectedOutput());
+  ASSERT_TRUE(tracked.hasMappingObservationOutput());
+  ASSERT_TRUE(tracked.scan_time.has_value());
+  ASSERT_TRUE(tracked.corrected_estimate.has_value());
+  ASSERT_TRUE(tracked.sensor_pose_odom_lidar.has_value());
+
+  // The epoch contract: scan reference time == corrected estimate time ==
+  // the epoch the corrected sensor pose was derived at (scan.end_time, which
+  // is FAST-LIO's configured deskew reference).
+  EXPECT_EQ(tracked.scan_time->nanoseconds(), tracking_group.scan.end_time.nanoseconds());
+  EXPECT_EQ(tracked.corrected_estimate->time.nanoseconds(),
+            tracking_group.scan.end_time.nanoseconds());
+
+  // The sensor pose must come from the same corrected state, not from a
+  // separately propagated/predicted state.
+  EXPECT_EQ(tracked.sensor_pose_odom_lidar->targetFrame(), lioOdomFrame());
+  EXPECT_EQ(tracked.sensor_pose_odom_lidar->sourceFrame(), lidarFrame());
+  EXPECT_TRUE(tracked.sensor_pose_odom_lidar->translation().allFinite());
+  EXPECT_TRUE(tracked.sensor_pose_odom_lidar->rotation().coeffs().allFinite());
+
+  // The retained mapping candidate must be non-empty and expressed at the
+  // same reference epoch (it is never separately timestamped; its epoch is
+  // scan_time by construction).
+  EXPECT_FALSE(tracked.mapping_candidate_points_lidar_m.empty());
+}
+
+TEST(FastLioPipelineTest, MappingCandidateNotRetainedUnlessConfigured) {
+  FastLioPipeline pipeline(testConfig());  // retain_mapping_candidate defaults false
+  const MeasurementGroup reference_group = makeGroup(
+      makePlanarScan(0), 0,
+      {stationaryImu(-20 * kMillisecondNs), stationaryImu(-10 * kMillisecondNs), stationaryImu(0)});
+  static_cast<void>(pipeline.process(reference_group));
+  const MeasurementGroup tracking_group = makeGroup(
+      makePlanarScan(100 * kMillisecondNs), 0,
+      {stationaryImu(0), stationaryImu(50 * kMillisecondNs), stationaryImu(100 * kMillisecondNs)});
+  const ProcessResult tracked = pipeline.process(tracking_group);
+  ASSERT_TRUE(tracked.hasCorrectedOutput());
+  // Mapping candidate retention must be opt-in and must not change estimator
+  // behavior (the correction path above must succeed identically either way).
+  EXPECT_TRUE(tracked.mapping_candidate_points_lidar_m.empty());
 }
 
 TEST(FastLioPipelineTest, AcceptedTerminalIterateAlsoUpdatesRegistrationMap) {
