@@ -1,0 +1,50 @@
+# navigation_mapping_node runtime parameters (P1 baseline).
+#
+# This is the navigation world-model configuration surface, distinct from
+# fast_lio's own internal "mapping.*" parameters in dataset.yaml/sim.yaml
+# (those configure FAST-LIO's RegistrationMap, not this world model — see
+# docs/architecture/navigation_layers.md, ADR-008).
+#
+# Only P1-required parameters are exposed; the vendored ROG-Map's remaining
+# upstream defaults are used internally (see rog_map_vendor/UPSTREAM.md and
+# navigation_mapping/rog_map_adapter.hpp).
+navigation_mapping_node:
+  ros__parameters:
+    mapping:
+      enabled: true
+
+      frames:
+        odom: lio_odom
+        lidar: livox_frame
+
+      input:
+        voxel_size_m: 0.20
+        minimum_range_m: 0.0
+        maximum_range_m: 0.0
+
+      rog:
+        resolution_m: 0.20
+        local_map_size_m: [30.0, 30.0, 12.0]
+        raycasting_enabled: true
+        sliding_enabled: true
+        occupied_inflation_enabled: true
+        unknown_inflation_enabled: false
+        esdf_enabled: false
+        frontier_enabled: false
+        inflation_step: 1
+        point_filt_num: 1
+        ray_range_min_m: 0.3
+        ray_range_max_m: 15.0
+
+      qos:
+        # Initial candidate per P1 section 15: freshness over backlog.
+        # Switch to "reliable" if target-machine testing shows unacceptable
+        # BestEffort transport loss.
+        reliability: best_effort
+
+      visualization:
+        enabled: false
+
+      # Directory this node writes its translated upstream ROG-Map YAML
+      # config into at each reset (see RogMapAdapter). Must be writable.
+      generated_config_directory: /tmp/navigation_mapping

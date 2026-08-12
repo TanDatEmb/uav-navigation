@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>px4_odometry_bridge</exec_depend>
   <exec_depend>fast_lio_ros</exec_depend>
+  <exec_depend>navigation_mapping</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>uav_description</exec_depend>
