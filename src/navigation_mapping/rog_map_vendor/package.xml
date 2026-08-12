@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rog_map_vendor</name>
+  <version>0.1.0</version>
+  <description>
+    Vendored ROG-Map local navigation world-model implementation, pinned to
+    hku-mars/SUPER commit 2ad3419c127a617c6d7df6925e81a14175a9c096. See
+    UPSTREAM.md for provenance and local modifications.
+  </description>
+  <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
+  <!-- Upstream rog_map/package.xml declares BSD; upstream ros/ros1.package.xml
+       declares "TODO". This inconsistency is recorded in UPSTREAM.md and is
+       not resolved by this repository. -->
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>libyaml-cpp-dev</depend>
+  <depend>libfmt-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

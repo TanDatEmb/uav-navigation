@@ -1,0 +1,198 @@
+# Upstream provenance: ROG-Map
+
+## Source
+
+- Upstream repository: https://github.com/hku-mars/SUPER
+- Pinned commit: `2ad3419c127a617c6d7df6925e81a14175a9c096` (upstream `master` HEAD
+  at the time of import; also matches the `uav-navigation` HEAD used to start
+  this integration).
+- Imported subtree: `rog_map/` (upstream package root). No other SUPER
+  package (`super_planner/`, `mission_planner/`, `mars_uav_sim/`) is imported.
+
+## Imported files
+
+Copied verbatim from upstream `rog_map/`, license headers preserved:
+
+```
+include/rog_map/rog_map.h
+include/rog_map/prob_map.h
+include/rog_map/inf_map.h
+include/rog_map/esdf_map.h
+include/rog_map/free_cnt_map.h
+include/rog_map/rog_map_core/common_lib.hpp
+include/rog_map/rog_map_core/config.hpp
+include/rog_map/rog_map_core/counter_map.h
+include/rog_map/rog_map_core/raycaster.h
+include/rog_map/rog_map_core/sliding_map.h
+include/super_utils/eigen_alias.hpp
+include/super_utils/fmt_eigen.hpp
+include/super_utils/scope_timer.hpp
+include/super_utils/type_utils.hpp
+include/super_utils/yaml_loader.hpp
+include/super_utils/color_text.hpp
+src/rog_map/counter_map.cpp
+src/rog_map/esdf_map.cpp
+src/rog_map/inf_map.cpp
+src/rog_map/prob_map.cpp
+src/rog_map/rog_map.cpp
+src/rog_map/sliding_map.cpp
+```
+
+`include/rog_map/rog_map_core/raycaster.cpp` is upstream source relocated to
+`src/rog_map_core/raycaster.cpp` in this vendor package purely for build
+layout consistency (headers in `include/`, translation units in `src/`); its
+contents are otherwise unmodified.
+
+## Deliberately excluded
+
+- `include/rog_map_ros/rog_map_ros1.hpp`, `include/rog_map_ros/rog_map_ros2.hpp`,
+  `src/rog_map_ros/rog_map_ros1.cpp`: upstream's own ROS1/ROS2 automatic
+  subscription/callback wrapper. P1 requires exactly one product-owned
+  subscription path into ROG (`navigation_mapping::NavigationMappingNode`)
+  using the manual `ROGMap::updateMap()` API, so the upstream wrapper is not
+  vendored and must never become the production integration boundary.
+- `include/super_utils/backward.hpp` (stack-trace pretty-printer) and
+  `include/super_utils/tinycolormap.hpp` (visualization colormap table):
+  neither is included by any file under `include/rog_map/` or `src/rog_map/`
+  (verified by `grep`), so they fall outside the minimum required
+  dependency closure.
+- `include/super_utils/color_msg_utils.hpp`: only used by the excluded ROS
+  wrappers.
+- `include/fmt/*` (bundled fmt 9.x source, ~13 headers): replaced by the
+  system `libfmt-dev` package (see "Local modifications").
+- ROS1 `CMakeLists.txt`/`package.xml`, `ros/ros1.*`, `ros/ros2.*`, and
+  `config/visualization.cfg`: build/integration files, superseded by this
+  package's own `CMakeLists.txt`/`package.xml`.
+- `log/plot_performance_log.py`: offline plotting helper, not required to run
+  ROG-Map; not part of the runtime dependency closure.
+
+## Local modifications
+
+All modifications are scoped to the smallest possible diff and are
+individually justified below.
+
+### 1. Lifecycle fix: per-instance init guard (`src/rog_map/prob_map.cpp`, `include/rog_map/prob_map.h`)
+
+**Problem.** `ProbMap::initProbMap()` guarded double-initialization with a
+function-local `static bool init_once`. A function-local `static` is
+process-wide, not per-instance: the *first* `ROGMap`/`ProbMap` object
+constructed in a process sets it `true` forever, so constructing a *second*
+`ROGMap` instance later in the same process — even after the first one is
+fully destroyed — throws `std::runtime_error("ProbMap can only init once.")`.
+
+This directly blocks the P1 requirement that a public-frame-generation
+discontinuity trigger a complete map reset that continues operating in the
+same mapper process (see `docs/architecture/navigation_layers.md` and
+P1 acceptance criterion "public-frame generation changes reset map
+correctly").
+
+**Fix.** Replaced the function-local `static bool init_once` with a regular
+protected member `bool initialized_once_{false}` on `ProbMap`. Each new
+`ProbMap`/`ROGMap` instance gets its own guard, initialized to `false`, so
+repeated destroy-then-reconstruct cycles work. The original single-init
+safety check for *one* instance is preserved unchanged (still throws if the
+same instance's `initProbMap()` is called twice).
+
+**Regression test.** `test/test_rog_map_lifecycle.cpp` constructs, initializes,
+destroys, and reconstructs multiple `ROGMap`-derived instances in the same
+process and asserts each succeeds and produces a usable map.
+
+### 2. Build/ROS-integration layer replaced for ROS 2 Jazzy/ament (`CMakeLists.txt`, `package.xml`)
+
+Upstream ships a catkin (`ros/ros1.CMakeLists.txt`) and an ament
+(`ros/ros2.CMakeLists.txt`) build file that both recursively glob
+`include/*.h`, `include/*.hpp`, `include/*.cpp`, and `src/*.cpp`, hard-code
+`CMAKE_BUILD_TYPE Release`, and set `CMAKE_CXX_FLAGS` globally. This
+repository's conventions forbid recursive globbing, global compiler-flag
+overwrites, and forcing a repository-wide `Release` build. This package's
+`CMakeLists.txt` is a from-scratch `ament_cmake` file that:
+
+- lists every compiled source file explicitly;
+- does not set `CMAKE_BUILD_TYPE` or global `CMAKE_CXX_FLAGS`;
+- applies `-Wall` only to the `rog_map_vendor` target, not globally;
+- uses the top-level project's C++ standard (20) instead of upstream's C++17.
+
+This is a build/integration-layer replacement only; no algorithmic file
+content is affected by this change.
+
+### 3. System `fmt`/`yaml-cpp` instead of a bundled copy (`CMakeLists.txt`)
+
+Upstream vendors its own copy of the `fmt` library (~13 headers, ~14k lines)
+under `include/fmt/` purely to provide `fmt::print`/`fmt::format` used in 3
+files (`rog_map.h`, `rog_map.cpp`, `fmt_eigen.hpp`) and links against
+`yaml-cpp` for `Config`'s YAML loader. Ubuntu 24.04 ships first-class CMake
+config packages for both (`libfmt-dev` 9.1, `libyaml-cpp-dev` 0.8). Vendoring
+a second, divergent copy of `fmt` would risk ODR/version conflicts with any
+other package in this workspace that also links system `fmt` or `spdlog`, and
+adds ~14k lines of unrelated third-party source to this repository for no
+functional benefit. This package therefore depends on the system packages
+instead of importing `include/fmt/`. No ROG-Map source file needed any
+change to build against system `fmt`/`yaml-cpp` (its use is limited to the
+standard `fmt::print`, `fmt::format`, `fmt::color` API surface).
+
+### 4. `raycaster.cpp` include path fixup (`src/rog_map_core/raycaster.cpp`)
+
+Upstream's `raycaster.cpp` lives next to `raycaster.h` and includes it with a
+bare, same-directory `#include "raycaster.h"`. This vendor package moves the
+`.cpp` under `src/` while the header stays under `include/rog_map/rog_map_core/`
+(headers-in-`include/`, translation-units-in-`src/` layout), so the include was
+rewritten to `#include <rog_map/rog_map_core/raycaster.h>`. No other line in
+the file changed.
+
+### 5. Removed unused `pcl_conversions` include (`include/rog_map/rog_map_core/common_lib.hpp`)
+
+`common_lib.hpp` included `<pcl_conversions/pcl_conversions.h>` but no
+vendored source file (after excluding the ROS wrapper, which was the only
+caller of `pcl::fromROSMsg`/`toROSMsg`) actually calls any `pcl_conversions`
+function; verified with a repository-wide `grep` for `pcl::fromROSMsg`,
+`pcl::toROSMsg`, and `pcl_conversions::` across `include/` and `src/`, which
+returned no matches. `pcl_conversions` is a ROS package whose own CMake
+config depends on `rclcpp`, and linking against it (even only for its include
+path) pulled in `rclcpp`'s include tree without its own transitive
+`rcl_interfaces` include path resolved correctly in this build, breaking the
+build for every consumer of this package for no functional benefit. The
+unused include line was removed and the `pcl_conversions` build/exec
+dependency was dropped entirely from `CMakeLists.txt`/`package.xml`. This is
+the only line removed from any vendored file; no ROG-Map behavior is
+affected.
+
+### 6. Restored `pcl/io/pcd_io.h` include (`src/rog_map/rog_map.cpp`)
+
+`ROGMap::init()`'s optional `load_pcd_en` path (P1: disabled) calls
+`pcl::io::loadPCDFile`. That declaration was previously reached transitively
+through the now-removed `pcl_conversions.h` include (modification 5). This
+file now includes `<pcl/io/pcd_io.h>` directly instead, restoring the
+declaration without reintroducing the `pcl_conversions` dependency.
+
+- `ProbMap::raycastProcess` (`src/rog_map/prob_map.cpp`) uses a function-local
+  `static bool first` to clear unknown cells around the very first robot
+  position it observes. After a full map reset (destroy + reconstruct), this
+  flag is process-wide and will not re-trigger for the new instance, so the
+  "clear unknown near first pose" convenience is only applied once per
+  process, not once per map generation. This does not throw, does not corrupt
+  the map, and does not block reset; it only skips a cosmetic bootstrap
+  convenience for generations after the first. Left unmodified to keep the
+  patch surface minimal; revisit only if a synthetic test shows it matters.
+- `ROGMap::updateMap` (`src/rog_map/rog_map.cpp`) uses a function-local
+  `static int local_cnt` purely to throttle an empty-cloud warning log line.
+  Also process-wide, also non-blocking, also left unmodified.
+- `ROGMap::init()` opens `log/rm_info_log.csv` and `log/rm_performance_log.csv`
+  relative to `ROOT_DIR` (this package's source directory at build time) via
+  `std::ofstream::open`. If that path does not exist at runtime (e.g. this
+  package's source tree is not present on the deployed machine),
+  `std::ofstream::open` fails silently (no exception; writes are dropped).
+  This is upstream debug-log behavior, not part of the ROG-Map algorithm, and
+  is left as-is; it cannot crash the mapper process.
+
+## License metadata inconsistency found upstream
+
+Upstream `rog_map/package.xml` (ROS 2/ament) declares `<license>BSD</license>`,
+while `rog_map/ros/ros1.package.xml` (ROS1/catkin) declares
+`<license>TODO</license>` for the same source tree, and several source files'
+own header comments state GNU LGPL/GPL terms (see the header block reproduced
+verbatim at the top of each vendored file, e.g. `rog_map/rog_map_core/config.hpp`).
+This repository does not resolve or adjudicate that inconsistency. This
+package's `package.xml` declares `BSD` to match the ROS 2 package manifest we
+imported from, but this is **not** a claim that the final licensing terms are
+resolved or that BSD is authoritative over the per-file LGPL/GPL header text.
+Anyone redistributing this package must consult upstream directly.
