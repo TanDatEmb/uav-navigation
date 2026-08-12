@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -22,6 +23,9 @@ void MappingPipeline::process(const ObservationInput& input) {
   diagnostics_.last_input_stamp_ns =
       static_cast<std::int64_t>(input.header_stamp.sec) * 1'000'000'000 +
       static_cast<std::int64_t>(input.header_stamp.nanosec);
+  if (diagnostics_.first_input_stamp_ns == 0) {
+    diagnostics_.first_input_stamp_ns = diagnostics_.last_input_stamp_ns;
+  }
 
   const auto frame_result = validator_.validateFrames(
       input.header_frame_id, input.points_frame_id, input.header_stamp, input.points_stamp);
@@ -62,6 +66,8 @@ void MappingPipeline::process(const ObservationInput& input) {
   diagnostics_.mapping_filter_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - filter_started).count();
   diagnostics_.nonfinite_point_count += filter_stats.nonfinite_point_count;
+  diagnostics_.post_filter_nonfinite_point_count +=
+      filter_stats.post_filter_nonfinite_point_count;
   diagnostics_.mapping_filter_input_point_count += filter_stats.input_point_count;
   diagnostics_.mapping_filter_output_point_count += filter_stats.output_point_count;
   diagnostics_.filtered_point_count += filtered_points_lidar_m.size();
@@ -84,6 +90,11 @@ void MappingPipeline::process(const ObservationInput& input) {
     point.y = static_cast<float>(point_odom_m.y());
     point.z = static_cast<float>(point_odom_m.z());
     point.intensity = 0.0F;
+    if (!point_odom_m.allFinite() || !std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z)) {
+      ++diagnostics_.transform_nonfinite_point_count;
+      continue;
+    }
     cloud_odom_m.push_back(point);
   }
   diagnostics_.transform_to_odom_us = std::chrono::duration_cast<std::chrono::microseconds>(

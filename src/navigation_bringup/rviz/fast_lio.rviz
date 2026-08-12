@@ -35,7 +35,7 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
       Color: 255; 190; 40
-      Decay Time: 3600
+      Decay Time: 0
       Enabled: true
       Name: ROG-Map / Occupied (occ)
       Position Transformer: XYZ

@@ -21,6 +21,8 @@ struct MappingDiagnostics {
   std::uint64_t invalid_frame_count{0};
   std::uint64_t invalid_pose_count{0};
   std::uint64_t nonfinite_point_count{0};
+  std::uint64_t post_filter_nonfinite_point_count{0};
+  std::uint64_t transform_nonfinite_point_count{0};
   std::uint64_t invalid_cloud_count{0};
 
   std::uint64_t input_point_count{0};
@@ -81,7 +83,10 @@ struct MappingDiagnostics {
   std::string sensor_origin_grid_type{"NOT_QUERIED"};
 
   std::int64_t last_input_stamp_ns{0};
+  std::int64_t first_input_stamp_ns{0};
   std::int64_t last_successful_update_stamp_ns{0};
+  std::int64_t first_callback_wall_ns{0};
+  std::int64_t last_callback_wall_ns{0};
 
   std::int64_t map_update_us{0};
 

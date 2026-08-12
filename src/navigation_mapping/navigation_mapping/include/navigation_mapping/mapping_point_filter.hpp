@@ -18,6 +18,7 @@ struct MappingPointFilterStats {
   std::size_t input_point_count{0};
   std::size_t nonfinite_point_count{0};
   std::size_t range_filtered_point_count{0};
+  std::size_t post_filter_nonfinite_point_count{0};
   std::size_t output_point_count{0};
 };
 

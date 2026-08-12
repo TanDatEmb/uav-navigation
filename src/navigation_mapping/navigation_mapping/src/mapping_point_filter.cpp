@@ -1,6 +1,7 @@
 #include "navigation_mapping/mapping_point_filter.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <unordered_map>
 
 namespace navigation_mapping {
@@ -23,6 +24,11 @@ struct VoxelKeyHash {
     seed ^= std::hash<std::int64_t>{}(key.z) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
     return seed;
   }
+};
+
+struct VoxelAccumulator {
+  Eigen::Vector3d sum{Eigen::Vector3d::Zero()};
+  std::size_t count{0};
 };
 
 VoxelKey voxelKeyOf(const Eigen::Vector3d& point, double voxel_size_m) {
@@ -70,17 +76,23 @@ std::vector<Eigen::Vector3d> MappingPointFilter::filter(
     // filter semantics (see fast_lio_core VoxelFilter) at a coarser,
     // mapping-specific resolution. Deliberately not shared code: this is the
     // mapping-side voxelization, not the estimator's.
-    std::unordered_map<VoxelKey, std::pair<Eigen::Vector3d, int>, VoxelKeyHash> accumulator;
+    std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash> accumulator;
     accumulator.reserve(range_filtered.size());
     for (const Eigen::Vector3d& point : range_filtered) {
       auto& entry = accumulator[voxelKeyOf(point, config_.voxel_size_m)];
-      entry.first += point;
-      ++entry.second;
+      entry.sum += point;
+      ++entry.count;
     }
     output.reserve(accumulator.size());
-    for (const auto& [key, sum_and_count] : accumulator) {
+    for (const auto& [key, accumulator_entry] : accumulator) {
       static_cast<void>(key);
-      output.push_back(sum_and_count.first / static_cast<double>(sum_and_count.second));
+      const Eigen::Vector3d centroid =
+          accumulator_entry.sum / static_cast<double>(accumulator_entry.count);
+      if (!centroid.allFinite()) {
+        ++local_stats.post_filter_nonfinite_point_count;
+        continue;
+      }
+      output.push_back(centroid);
     }
   }
   local_stats.output_point_count = output.size();

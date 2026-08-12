@@ -986,6 +986,8 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "invalid_pose_count",
         "invalid_cloud_count",
         "nonfinite_point_count",
+        "post_filter_nonfinite_point_count",
+        "transform_nonfinite_point_count",
         "processing_exception_count",
         "visualization_publish_count",
         "visualization_subscriber_count",

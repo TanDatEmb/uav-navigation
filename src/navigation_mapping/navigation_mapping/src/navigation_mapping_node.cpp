@@ -193,7 +193,13 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
 void NavigationMappingNode::onObservation(
     const navigation_interfaces::msg::LidarMappingObservation::ConstSharedPtr& message) {
   const auto callback_started = std::chrono::steady_clock::now();
+  const auto callback_wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
   auto& diagnostics = pipeline_->diagnostics();
+  if (diagnostics.first_callback_wall_ns == 0) {
+    diagnostics.first_callback_wall_ns = callback_wall_ns;
+  }
+  diagnostics.last_callback_wall_ns = callback_wall_ns;
   ++diagnostics.mapping_observation_receive_count;
   if (!cloudHasXyzFloatFields(message->points)) {
     ++invalid_cloud_count_;
@@ -411,11 +417,18 @@ void NavigationMappingNode::publishDiagnostics() {
       keyValue("invalid_frame_count", std::to_string(diagnostics.invalid_frame_count)),
       keyValue("invalid_pose_count", std::to_string(diagnostics.invalid_pose_count)),
       keyValue("nonfinite_point_count", std::to_string(diagnostics.nonfinite_point_count)),
+      keyValue("post_filter_nonfinite_point_count",
+               std::to_string(diagnostics.post_filter_nonfinite_point_count)),
+      keyValue("transform_nonfinite_point_count",
+               std::to_string(diagnostics.transform_nonfinite_point_count)),
       keyValue("invalid_cloud_count", std::to_string(invalid_cloud_count_)),
       keyValue("input_point_count", std::to_string(diagnostics.input_point_count)),
       keyValue("filtered_point_count", std::to_string(diagnostics.filtered_point_count)),
       keyValue("mapping_point_count", std::to_string(diagnostics.mapping_point_count)),
       keyValue("last_input_stamp_ns", std::to_string(diagnostics.last_input_stamp_ns)),
+      keyValue("first_input_stamp_ns", std::to_string(diagnostics.first_input_stamp_ns)),
+      keyValue("first_callback_wall_ns", std::to_string(diagnostics.first_callback_wall_ns)),
+      keyValue("last_callback_wall_ns", std::to_string(diagnostics.last_callback_wall_ns)),
       keyValue("last_successful_update_stamp_ns",
                std::to_string(diagnostics.last_successful_update_stamp_ns)),
       keyValue("map_update_us", std::to_string(diagnostics.map_update_us)),
