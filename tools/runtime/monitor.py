@@ -343,6 +343,7 @@ class RuntimeMonitor:
             TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
             TopicSpec("propagated_odometry", "/lio/odometry_propagated", Odometry, _odom_payload),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
+            TopicSpec("mapping_diagnostics", "/navigation_mapping/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
         if self.workflow != "dataset":
             # Gazebo's OdometryPublisher is the independent simulator truth.

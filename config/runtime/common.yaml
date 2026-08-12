@@ -11,6 +11,7 @@ runtime:
     lidar: {expected_hz: 10.0, stale_after_s: 0.50}
     corrected_odometry: {expected_hz: 10.0, stale_after_s: 1.00}
     propagated_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
+    mapping_diagnostics: {expected_hz: 2.0, stale_after_s: 2.0}
     external_odometry: {expected_hz: 50.0, stale_after_s: 0.20}
     ground_truth_odometry: {expected_hz: 50.0, stale_after_s: 0.50}
     px4_odometry: {expected_hz: 30.0, stale_after_s: 1.00}

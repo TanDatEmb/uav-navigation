@@ -1,6 +1,11 @@
 #include "navigation_mapping/navigation_mapping_node.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <limits>
+#include <vector>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
@@ -15,6 +20,19 @@ diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
   result.key = std::move(key);
   result.value = std::move(value);
   return result;
+}
+
+builtin_interfaces::msg::Time rosTimeFromNanoseconds(std::int64_t nanoseconds) {
+  builtin_interfaces::msg::Time stamp;
+  const std::int64_t seconds = nanoseconds / 1'000'000'000;
+  const std::int64_t remainder = nanoseconds % 1'000'000'000;
+  stamp.sec = static_cast<std::int32_t>(seconds);
+  stamp.nanosec = static_cast<std::uint32_t>(remainder);
+  if (remainder < 0) {
+    --stamp.sec;
+    stamp.nanosec = static_cast<std::uint32_t>(remainder + 1'000'000'000);
+  }
+  return stamp;
 }
 
 bool cloudHasXyzFloatFields(const sensor_msgs::msg::PointCloud2& cloud) {
@@ -73,12 +91,31 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   pipeline_config.rog.ray_range_min_m = declare_parameter("mapping.rog.ray_range_min_m", 0.3);
   pipeline_config.rog.ray_range_max_m = declare_parameter("mapping.rog.ray_range_max_m", 15.0);
 
-  const bool visualization_enabled = declare_parameter("mapping.visualization.enabled", false);
-  if (visualization_enabled) {
+  visualization_enabled_ = declare_parameter("mapping.visualization.enabled", false);
+  publish_unknown_ = declare_parameter("mapping.visualization.publish_unknown", false);
+  publish_frontier_ = declare_parameter("mapping.visualization.publish_frontier", false);
+  const auto visualization_range = declare_parameter<std::vector<double>>(
+      "mapping.visualization.range_m", std::vector<double>{15.0, 15.0, 6.0});
+  if (visualization_range.size() == 3 &&
+      std::all_of(visualization_range.begin(), visualization_range.end(),
+                  [](double value) { return std::isfinite(value) && value > 0.0; })) {
+    visualization_range_x_m_ = visualization_range[0];
+    visualization_range_y_m_ = visualization_range[1];
+    visualization_range_z_m_ = visualization_range[2];
+  } else {
     RCLCPP_WARN(get_logger(),
-                "mapping.visualization.enabled is set but P1 does not implement "
-                "visualization; ignoring");
+                "mapping.visualization.range_m must contain three positive finite values; "
+                "using [15, 15, 6] m");
   }
+  const auto visualization_max_points = declare_parameter<std::int64_t>(
+      "mapping.visualization.max_points", 150000);
+  visualization_max_points_ = visualization_max_points > 0
+                                  ? static_cast<std::size_t>(visualization_max_points)
+                                  : 150000U;
+  visualization_frame_id_ = declare_parameter(
+      "mapping.visualization.frame_id", pipeline_config.contract.odom_frame_id);
+  const double visualization_rate_hz = declare_parameter(
+      "mapping.visualization.publish_rate_hz", 2.0);
   const std::string qos_reliability =
       declare_parameter("mapping.qos.reliability", std::string("best_effort"));
 
@@ -123,6 +160,34 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
           [this](const navigation_interfaces::msg::LidarMappingObservation::ConstSharedPtr&
                      message) { onObservation(message); },
           subscription_options);
+
+  if (visualization_enabled_) {
+    const auto qos = rclcpp::SensorDataQoS().keep_last(1);
+    occupied_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+        "/rog_map/occ", qos);
+    inflated_occupied_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+        "/rog_map/inf_occ", qos);
+    if (publish_unknown_) {
+      unknown_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+          "/rog_map/unk", qos);
+    }
+    if (publish_frontier_) {
+      frontier_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+          "/rog_map/frontier", qos);
+    }
+    const double period_s = std::isfinite(visualization_rate_hz) && visualization_rate_hz > 0.0
+                                ? 1.0 / visualization_rate_hz
+                                : 0.5;
+    visualization_timer_ = create_wall_timer(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::duration<double>(period_s)),
+        [this]() { publishMapVisualization(); }, mapping_callback_group_);
+    RCLCPP_INFO(get_logger(),
+                "ROG-Map visualization enabled: occ=/rog_map/occ inf_occ=/rog_map/inf_occ "
+                "unk=%s frontier=%s rate=%.2f Hz max_points=%zu",
+                publish_unknown_ ? "on" : "off", publish_frontier_ ? "on" : "off",
+                1.0 / period_s, visualization_max_points_);
+  }
 }
 
 void NavigationMappingNode::onObservation(
@@ -152,8 +217,100 @@ void NavigationMappingNode::onObservation(
                                       static_cast<double>(*z));
   }
 
-  pipeline_->process(input);
+  try {
+    pipeline_->process(input);
+  } catch (const std::exception& error) {
+    ++pipeline_->diagnostics().processing_exception_count;
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                          "ROG-Map update failed; keeping node alive: %s", error.what());
+  }
   publishDiagnostics();
+}
+
+sensor_msgs::msg::PointCloud2 NavigationMappingNode::makePointCloud(
+    const rog_map::vec_E<rog_map::Vec3f>& points,
+    const builtin_interfaces::msg::Time& stamp) const {
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = stamp;
+  cloud.header.frame_id = visualization_frame_id_;
+  cloud.height = 1;
+  cloud.is_bigendian = false;
+  cloud.is_dense = true;
+
+  const std::size_t stride = points.size() > visualization_max_points_
+                                 ? (points.size() + visualization_max_points_ - 1U) /
+                                       visualization_max_points_
+                                 : 1U;
+  const std::size_t output_count =
+      points.empty() ? 0U : (points.size() + stride - 1U) / stride;
+  cloud.width = static_cast<std::uint32_t>(std::min<std::size_t>(
+      output_count, std::numeric_limits<std::uint32_t>::max()));
+  sensor_msgs::PointCloud2Modifier modifier(cloud);
+  modifier.setPointCloud2FieldsByString(1, "xyz");
+  modifier.resize(cloud.width);
+  sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
+  sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
+  sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
+  for (std::size_t index = 0; index < points.size() && x != x.end(); index += stride) {
+    *x = static_cast<float>(points[index].x());
+    *y = static_cast<float>(points[index].y());
+    *z = static_cast<float>(points[index].z());
+    ++x;
+    ++y;
+    ++z;
+  }
+  return cloud;
+}
+
+void NavigationMappingNode::publishMapVisualization() {
+  if (!visualization_enabled_ || !pipeline_->adapter().isInitialized()) {
+    return;
+  }
+
+  try {
+    auto& map = pipeline_->adapter().map();
+    const auto center = map.getLocalMapOrigin();
+    const rog_map::Vec3f half_range(
+        visualization_range_x_m_ * 0.5, visualization_range_y_m_ * 0.5,
+        visualization_range_z_m_ * 0.5);
+    const rog_map::Vec3f box_min = center - half_range;
+    const rog_map::Vec3f box_max = center + half_range;
+    rog_map::vec_E<rog_map::Vec3f> occupied;
+    rog_map::vec_E<rog_map::Vec3f> inflated_occupied;
+    rog_map::vec_E<rog_map::Vec3f> unknown;
+    rog_map::vec_E<rog_map::Vec3f> frontier;
+    map.boxSearch(box_min, box_max, super_utils::OCCUPIED, occupied);
+    map.boxSearchInflate(box_min, box_max, super_utils::OCCUPIED, inflated_occupied);
+    if (publish_unknown_) {
+      map.boxSearch(box_min, box_max, super_utils::UNKNOWN, unknown);
+    }
+    if (publish_frontier_) {
+      map.boxSearch(box_min, box_max, super_utils::FRONTIER, frontier);
+    }
+
+    const auto& diagnostics = pipeline_->diagnostics();
+    const auto stamp = diagnostics.last_successful_update_stamp_ns > 0
+                           ? rosTimeFromNanoseconds(diagnostics.last_successful_update_stamp_ns)
+                           : rosTimeFromNanoseconds(get_clock()->now().nanoseconds());
+    occupied_publisher_->publish(makePointCloud(occupied, stamp));
+    inflated_occupied_publisher_->publish(makePointCloud(inflated_occupied, stamp));
+    if (unknown_publisher_) {
+      unknown_publisher_->publish(makePointCloud(unknown, stamp));
+    }
+    if (frontier_publisher_) {
+      frontier_publisher_->publish(makePointCloud(frontier, stamp));
+    }
+    auto& mutable_diagnostics = pipeline_->diagnostics();
+    ++mutable_diagnostics.visualization_publish_count;
+    mutable_diagnostics.visualization_occupied_point_count = occupied.size();
+    mutable_diagnostics.visualization_inflated_occupied_point_count = inflated_occupied.size();
+    mutable_diagnostics.visualization_unknown_point_count = unknown.size();
+    mutable_diagnostics.visualization_frontier_point_count = frontier.size();
+  } catch (const std::exception& error) {
+    ++pipeline_->diagnostics().visualization_exception_count;
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                          "ROG-Map visualization failed; keeping node alive: %s", error.what());
+  }
 }
 
 void NavigationMappingNode::publishDiagnostics() {
@@ -163,7 +320,10 @@ void NavigationMappingNode::publishDiagnostics() {
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "navigation_mapping/world_model";
   status.hardware_id = "rog_map";
-  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.level = diagnostics.processing_exception_count > 0 ||
+                         diagnostics.visualization_exception_count > 0
+                     ? diagnostic_msgs::msg::DiagnosticStatus::WARN
+                     : diagnostic_msgs::msg::DiagnosticStatus::OK;
   status.message = pipeline_->adapter().isInitialized() ? "map initialized" : "waiting for first generation";
   status.values = {
       keyValue("received_observation_count", std::to_string(diagnostics.received_observation_count)),
@@ -183,6 +343,20 @@ void NavigationMappingNode::publishDiagnostics() {
       keyValue("last_successful_update_stamp_ns",
                std::to_string(diagnostics.last_successful_update_stamp_ns)),
       keyValue("map_update_us", std::to_string(diagnostics.map_update_us)),
+      keyValue("processing_exception_count",
+               std::to_string(diagnostics.processing_exception_count)),
+      keyValue("visualization_publish_count",
+               std::to_string(diagnostics.visualization_publish_count)),
+      keyValue("visualization_exception_count",
+               std::to_string(diagnostics.visualization_exception_count)),
+      keyValue("visualization_occupied_point_count",
+               std::to_string(diagnostics.visualization_occupied_point_count)),
+      keyValue("visualization_inflated_occupied_point_count",
+               std::to_string(diagnostics.visualization_inflated_occupied_point_count)),
+      keyValue("visualization_unknown_point_count",
+               std::to_string(diagnostics.visualization_unknown_point_count)),
+      keyValue("visualization_frontier_point_count",
+               std::to_string(diagnostics.visualization_frontier_point_count)),
   };
   array.status.push_back(status);
   diagnostics_publisher_->publish(array);

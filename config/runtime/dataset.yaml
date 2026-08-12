@@ -63,7 +63,7 @@ fast_lio:
       # docs/architecture/navigation_layers.md). Disabled by default;
       # dataset scenarios exercising the mapper enable this explicitly.
       mapping_observation:
-        enabled: false
+        enabled: true
     propagated_odometry:
       enabled: true
       publish_rate_hz: 50.0

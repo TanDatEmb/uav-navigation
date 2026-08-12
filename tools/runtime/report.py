@@ -958,6 +958,60 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
     }
 
 
+def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Summarize the product-owned ROG-Map diagnostics surface."""
+    stream = snapshot.get("streams", {}).get("mapping_diagnostics", {})
+    latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
+    statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
+    values: dict[str, Any] = {}
+    level = "NOT_AVAILABLE"
+    message = "NOT_AVAILABLE"
+    for status in statuses:
+        if not str(status.get("name", "")).endswith("/world_model"):
+            continue
+        candidate = status.get("values", {})
+        if isinstance(candidate, dict):
+            values = candidate
+        level = status.get("level", "NOT_AVAILABLE")
+        message = status.get("message", "NOT_AVAILABLE")
+        break
+    integer_fields = (
+        "received_observation_count",
+        "accepted_observation_count",
+        "generation",
+        "generation_reset_count",
+        "old_generation_drop_count",
+        "invalid_stamp_count",
+        "invalid_frame_count",
+        "invalid_pose_count",
+        "invalid_cloud_count",
+        "nonfinite_point_count",
+        "processing_exception_count",
+        "visualization_publish_count",
+        "visualization_exception_count",
+        "visualization_occupied_point_count",
+        "visualization_inflated_occupied_point_count",
+        "visualization_unknown_point_count",
+        "visualization_frontier_point_count",
+    )
+    result: dict[str, Any] = {
+        "topic": "/navigation_mapping/diagnostics",
+        "sample_count": stream.get("received", 0),
+        "mean_rate_hz": stream.get("mean_rate_hz", 0.0),
+        "status_level": level,
+        "status_message": message,
+    }
+    for field in integer_fields:
+        result[field] = int(values.get(field, 0) or 0)
+    result["output_topics"] = [
+        "/rog_map/occ",
+        "/rog_map/inf_occ",
+        "/rog_map/unk",
+        "/rog_map/frontier",
+    ]
+    return result
+
+
 def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
     streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry")}
@@ -968,6 +1022,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
+    navigation_mapping = _navigation_mapping_summary(snapshot)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -1016,6 +1071,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
         },
+        "navigation_mapping": navigation_mapping,
         "accuracy": "NOT_AVAILABLE",
         "provenance": provenance(workspace),
     }
@@ -1032,6 +1088,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
+    navigation_mapping = _navigation_mapping_summary(snapshot)
     reasons: list[str] = []
     for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
@@ -1079,6 +1136,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
         },
+        "navigation_mapping": navigation_mapping,
         "residuals": residuals,
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
@@ -1129,7 +1187,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
+    for section in ("lio", "navigation_mapping", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

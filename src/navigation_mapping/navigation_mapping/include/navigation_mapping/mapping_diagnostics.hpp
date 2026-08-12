@@ -31,6 +31,14 @@ struct MappingDiagnostics {
 
   std::int64_t map_update_us{0};
 
+  std::uint64_t processing_exception_count{0};
+  std::uint64_t visualization_publish_count{0};
+  std::uint64_t visualization_exception_count{0};
+  std::uint64_t visualization_occupied_point_count{0};
+  std::uint64_t visualization_inflated_occupied_point_count{0};
+  std::uint64_t visualization_unknown_point_count{0};
+  std::uint64_t visualization_frontier_point_count{0};
+
   std::uint64_t latest_slot_replacement_count{0};
 };
 

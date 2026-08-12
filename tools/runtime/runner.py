@@ -221,6 +221,37 @@ def _ros_params(session: Session, source: Path) -> Path:
     return target
 
 
+def _mapping_params(session: Session, source: Path) -> Path:
+    """Copy the product-owned navigation_mapping parameter block."""
+    value = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or "navigation_mapping_node" not in value:
+        raise ValueError(f"runtime config is missing navigation_mapping_node: {source}")
+    target = session.directory / "navigation_mapping_params.yaml"
+    target.write_text(
+        yaml.safe_dump({"navigation_mapping_node": value["navigation_mapping_node"]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    return target
+
+
+def _mapping_ready(snapshot: dict[str, Any]) -> bool:
+    """Require an accepted ROG observation and at least one visualization tick."""
+    latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
+    for status in latest.get("statuses", []):
+        if not str(status.get("name", "")).endswith("/world_model"):
+            continue
+        values = status.get("values", {})
+        try:
+            return (
+                int(values.get("accepted_observation_count", 0)) > 0
+                and int(values.get("visualization_publish_count", 0)) > 0
+                and int(values.get("visualization_exception_count", 0)) == 0
+            )
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _lidar_to_imu_launch_arguments(config: dict[str, Any]) -> tuple[str, str]:
     """Invert the estimator's ^I T_L extrinsic for the static ^L T_I TF."""
     extrinsic = config["fast_lio"]["ros__parameters"]["extrinsic"]
@@ -339,10 +370,19 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
+        mapping_config = _mapping_params(session, RUNTIME_CONFIG / "mapping.yaml")
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
             "monitor",
             [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml")],
+            cwd=ROOT,
+        )
+        session.start(
+            "mapping",
+            _ros_shell([
+                "ros2", "launch", "navigation_bringup", "navigation_mapping.launch.py",
+                f"config_file:={mapping_config}", "use_sim_time:=false",
+            ], enable_rviz=enable_rviz),
             cwd=ROOT,
         )
         lio = session.start(
@@ -384,6 +424,9 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
             float(config["runtime"]["timeouts"]["drain_s"]),
             "dataset outputs and queue drain",
         )
+        _wait_until(session, _mapping_ready,
+                    float(config["runtime"]["timeouts"]["drain_s"]),
+                    "ROG-Map output and visualization")
         _write_runtime(session, failures=[])
     except Exception as error:
         _write_runtime(session, failures=[str(error)])
@@ -461,6 +504,7 @@ def run_sim(headless: bool) -> int:
         return 1
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
+        mapping_config = _mapping_params(session, RUNTIME_CONFIG / "mapping.yaml")
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
             "monitor",
@@ -497,6 +541,10 @@ def run_sim(headless: bool) -> int:
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
             "--params-file", str(ros_config), "-p", "use_sim_time:=true",
         ], enable_rviz=not headless), cwd=ROOT)
+        session.start("mapping", _ros_shell([
+            "ros2", "launch", "navigation_bringup", "navigation_mapping.launch.py",
+            f"config_file:={mapping_config}", "use_sim_time:=true",
+        ], enable_rviz=not headless), cwd=ROOT)
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
@@ -510,6 +558,9 @@ def run_sim(headless: bool) -> int:
         _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
         _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING")
         _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
+        _wait_until(session, _mapping_ready,
+                    float(config["runtime"]["timeouts"]["external_odometry_s"]),
+                    "ROG-Map output and visualization")
         _write_runtime(session, startup_complete=True)
         if headless:
             scenario = session.start(

@@ -51,6 +51,7 @@ class MappingPipeline {
   void process(const ObservationInput& input);
 
   [[nodiscard]] const MappingDiagnostics& diagnostics() const noexcept { return diagnostics_; }
+  [[nodiscard]] MappingDiagnostics& diagnostics() noexcept { return diagnostics_; }
   [[nodiscard]] RogMapAdapter& adapter() noexcept { return adapter_; }
   [[nodiscard]] const RogMapAdapter& adapter() const noexcept { return adapter_; }
 
