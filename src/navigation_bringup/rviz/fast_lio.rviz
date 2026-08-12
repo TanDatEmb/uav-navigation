@@ -1,12 +1,16 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+
   - Class: rviz_common/Selection
     Name: Selection
+
   - Class: rviz_common/Tool Properties
     Name: Tool Properties
+
 Visualization Manager:
   Class: ""
+
   Displays:
     - Alpha: 0.5
       Cell Size: 1
@@ -17,6 +21,7 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 40
       Reference Frame: <Fixed Frame>
+
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
@@ -25,6 +30,7 @@ Visualization Manager:
       Show Arrows: true
       Show Axes: true
       Show Names: true
+
     - Alpha: 0.95
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
@@ -45,6 +51,7 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/occ
       Use Fixed Frame: true
+
     - Alpha: 0.30
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
@@ -65,6 +72,7 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/inf_occ
       Use Fixed Frame: true
+
     - Alpha: 0.10
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
@@ -85,6 +93,7 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/unk
       Use Fixed Frame: true
+
     - Alpha: 1.0
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor
@@ -105,6 +114,7 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /rog_map/frontier
       Use Fixed Frame: true
+
     - Angle Tolerance: 0.01
       Class: rviz_default_plugins/Odometry
       Enabled: true
@@ -126,30 +136,36 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /lio/odometry_corrected
+
   Enabled: true
+
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: lio_odom
     Frame Rate: 30
+
   Name: root
+
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
+
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 18
+      Class: rviz_default_plugins/ThirdPersonFollower
+      Distance: 10
       Focal Point:
         X: 0
         Y: 0
-        Z: 1
+        Z: 0
       Name: Current View
       Pitch: 0.55
-      Target Frame: lio_odom
-      Yaw: 0.8
+      Target Frame: base_link
+      Yaw: 3.14159
+
 Window Geometry:
   Height: 900
   Width: 1440
