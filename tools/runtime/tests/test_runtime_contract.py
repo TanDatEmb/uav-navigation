@@ -4,6 +4,8 @@ import tempfile
 import time
 import unittest
 
+import yaml
+
 RUNTIME = Path(__file__).resolve().parents[1]
 ROOT = RUNTIME.parents[1]
 sys.path.insert(0, str(RUNTIME))
@@ -14,6 +16,20 @@ import runner
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session, ROOT / "config/runtime/mapping.yaml", interactive=True
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                "navigation_mapping_node"
+            ]["ros__parameters"]["mapping"]
+            self.assertTrue(parameters["visualization"]["enabled"])
+            self.assertTrue(parameters["visualization"]["publish_unknown"])
+            self.assertFalse(parameters["visualization"]["publish_frontier"])
+            self.assertFalse(parameters["rog"]["frontier_enabled"])
+
     def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
         self.assertEqual(
             runner.NO_RVIZ_ENV,

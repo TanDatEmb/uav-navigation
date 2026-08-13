@@ -364,7 +364,10 @@ In Gazebo with a static wall:
 
 ### Inflation test
 
-- inflated obstacles respect configured vehicle radius/safety margin;
+- inflated obstacles must eventually respect an authoritative vehicle
+  collision envelope plus static safety margin; the current repository does
+  not yet provide that physical source of truth, so this acceptance item is
+  blocked pending the physical-clearance contract;
 - collision queries fail inside inflated space and pass in valid free space.
 
 ### Dataset test
@@ -381,9 +384,11 @@ Replay the existing AIST pipeline and measure:
 
 ### Planning compatibility smoke test
 
-Use an upstream/simple A* only as a smoke test that start-to-goal collision-free search works against the map.
-
-Do not make A* a separate product subsystem at this phase.
+The current product-owned A* is a library/reference consumer used to validate
+the WorldModel boundary and start-to-goal search semantics. It is not a
+separate ROS runtime subsystem and must not become a per-voxel ROS planner
+interface. P2 may use or replace its internal path-search pieces as part of
+the minimum SUPER planning closure.
 
 ## Performance target
 

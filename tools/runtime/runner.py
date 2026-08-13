@@ -239,11 +239,13 @@ def _mapping_params(session: Session, source: Path, *, interactive: bool = False
     if input_voxel_override is not None:
         input_parameters["voxel_size_m"] = float(input_voxel_override)
     # Keep one authoritative mapping YAML. Runtime workflows select whether
-    # product-side visualization/frontier work is part of this invocation.
+    # product-side visualization is part of this invocation. Frontier
+    # extraction remains an explicit future/debug capability and is not
+    # coupled to opening RViz.
     visualization_parameters["enabled"] = interactive
     visualization_parameters["publish_unknown"] = interactive
-    visualization_parameters["publish_frontier"] = interactive
-    rog_parameters["frontier_enabled"] = interactive
+    visualization_parameters["publish_frontier"] = False
+    rog_parameters["frontier_enabled"] = False
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_mapping_node": parameters}, sort_keys=False),

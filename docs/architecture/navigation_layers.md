@@ -111,6 +111,28 @@ in-process `WorldModel` facade. It is not a separate ROS voxel-query process;
 the planner must not recreate the map through per-cell services or a duplicate
 DDS occupancy representation.
 
+### Planning policy and physical-clearance status
+
+The WorldModel has two distinct query layers. `Probability` plus
+`UnknownBlocked` is useful for fine-map semantics and regression tests, but it
+is not vehicle-clearance collision planning. `Inflated` plus `UnknownBlocked`
+is the intended conservative A* seed-path policy once an authoritative vehicle
+collision envelope and static safety margin are configured. The current
+repository has no such authoritative vehicle radius, so flight-safety closure
+is still blocked.
+
+`UnknownTraversable` is a reference/exploration policy only; it is not
+flight-safe execution by itself. An unknown-space exploration trajectory would
+require an independently safe known-free backup/stopping trajectory, which is
+not implemented yet. Future CIRI should consume raw occupied geometry and
+apply the same physical-clearance contract itself, rather than consuming
+already-inflated occupied points and double-inflating them.
+
+ROG's inflated `KnownFree` is the existing CounterMap threshold result. It
+means the coarse cell is not occupied and has fewer unknown fine subcells than
+ROG's configured threshold; it does not, by itself, assert that every fine
+probability subcell is known free.
+
 The original estimator-only package dependency direction is
 `ikfom_vendor/ikd_tree_vendor -> fast_lio_core -> fast_lio_ros -> navigation_bringup`,
 with `livox_ros_driver2` supplying the sensor package and custom message,
