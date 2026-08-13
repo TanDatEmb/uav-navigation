@@ -30,6 +30,18 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertFalse(parameters["visualization"]["publish_frontier"])
             self.assertFalse(parameters["rog"]["frontier_enabled"])
 
+            debug_target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                interactive=True,
+                frontier_debug=True,
+            )
+            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))[
+                "navigation_mapping_node"
+            ]["ros__parameters"]["mapping"]
+            self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
+            self.assertTrue(debug_parameters["rog"]["frontier_enabled"])
+
     def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
         self.assertEqual(
             runner.NO_RVIZ_ENV,

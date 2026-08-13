@@ -9,6 +9,7 @@ runner, one monitor, one report schema, and one owned process-group registry.
 make build
 make test
 make replay DATASET=aist-mid360-drive RATE=1.0
+make replay DATASET=aist-mid360-drive RATE=1.0 FRONTIER_DEBUG=1
 make dataset-check DATASET=aist-mid360-drive RATE=1.0
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
 PX4_DIR=$HOME/Dev/Autopilot make sim
@@ -24,6 +25,12 @@ prepared input to `/lidar/points` and `/lidar/imu`, waits for TRACKING, drains
 the queues, and writes its report automatically. `make replay` is the same
 workflow entrypoint and always launches RViz; `dataset-check` remains the
 headless dataset contract.
+
+Standard replay keeps ROG frontier extraction and frontier publication off,
+even when RViz is running. To inspect `/rog_map/frontier` in RViz, use the
+explicit debug profile shown above; it enables both
+`mapping.rog.frontier_enabled` and `mapping.visualization.publish_frontier`
+for that session only.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from

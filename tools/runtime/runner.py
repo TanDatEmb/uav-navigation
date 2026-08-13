@@ -221,7 +221,13 @@ def _ros_params(session: Session, source: Path) -> Path:
     return target
 
 
-def _mapping_params(session: Session, source: Path, *, interactive: bool = False) -> Path:
+def _mapping_params(
+    session: Session,
+    source: Path,
+    *,
+    interactive: bool = False,
+    frontier_debug: bool = False,
+) -> Path:
     """Copy the product-owned navigation_mapping parameter block."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "navigation_mapping_node" not in value:
@@ -244,8 +250,8 @@ def _mapping_params(session: Session, source: Path, *, interactive: bool = False
     # coupled to opening RViz.
     visualization_parameters["enabled"] = interactive
     visualization_parameters["publish_unknown"] = interactive
-    visualization_parameters["publish_frontier"] = False
-    rog_parameters["frontier_enabled"] = False
+    visualization_parameters["publish_frontier"] = frontier_debug
+    rog_parameters["frontier_enabled"] = frontier_debug
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_mapping_node": parameters}, sort_keys=False),
@@ -374,7 +380,13 @@ def _dataset_context(dataset: str) -> tuple[dict[str, Any], dict[str, int]]:
     return context, data.bag_topic_counts(context)
 
 
-def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
+def run_dataset(
+    dataset: str,
+    rate: float,
+    *,
+    enable_rviz: bool = False,
+    frontier_debug: bool = False,
+) -> int:
     if not dataset:
         raise ValueError("DATASET is required")
     if rate <= 0:
@@ -398,7 +410,10 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
         mapping_config = _mapping_params(
-            session, RUNTIME_CONFIG / "mapping.yaml", interactive=enable_rviz
+            session,
+            RUNTIME_CONFIG / "mapping.yaml",
+            interactive=enable_rviz,
+            frontier_debug=frontier_debug,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
@@ -752,6 +767,11 @@ def main() -> int:
     dataset.add_argument("--dataset", required=True)
     dataset.add_argument("--rate", type=float, required=True)
     dataset.add_argument("--rviz", action="store_true", help="launch RViz for this replay")
+    dataset.add_argument(
+        "--frontier-debug",
+        action="store_true",
+        help="enable ROG frontier extraction/publication for RViz debugging",
+    )
     sub.add_parser("sim-check")
     sub.add_parser("sim")
     sub.add_parser("status")
@@ -761,7 +781,12 @@ def main() -> int:
     enable_rviz = args.command == "sim" or (args.command == "dataset-check" and args.rviz)
     os.environ.update(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV)
     if args.command == "dataset-check":
-        return run_dataset(args.dataset, args.rate, enable_rviz=args.rviz)
+        return run_dataset(
+            args.dataset,
+            args.rate,
+            enable_rviz=args.rviz,
+            frontier_debug=args.frontier_debug,
+        )
     if args.command == "sim-check":
         return run_sim(True)
     if args.command == "sim":
