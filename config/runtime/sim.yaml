@@ -98,3 +98,12 @@ simulation:
   ros__parameters:
     world: px4_lio_smoke
     model: x500_mid360
+
+# Validation-only clearance derived from the external PX4 x500 collision boxes:
+# rotor centers are at +/-0.174 m and each rotor collision box is 0.27923 m
+# long, giving a conservative horizontal envelope of 0.314 m before margin.
+# This is not a real-flight vehicle profile.
+navigation:
+  collision:
+    vehicle_radius_m: 0.32
+    safety_margin_m: 0.05
