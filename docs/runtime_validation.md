@@ -26,11 +26,11 @@ the queues, and writes its report automatically. `make replay` is the same
 workflow entrypoint and always launches RViz; `dataset-check` remains the
 headless dataset contract.
 
-Standard replay keeps ROG frontier extraction and frontier publication off,
-even when RViz is running. To inspect `/rog_map/frontier` in RViz, use the
-explicit debug profile shown above; it enables both
-`mapping.rog.frontier_enabled` and `mapping.visualization.publish_frontier`
-for that session only.
+Standard replay keeps frontier extraction and publication off, even when RViz
+is running. To inspect
+`/navigation_mapping/visualization/frontier` in RViz, use the explicit debug
+profile shown above; `mapping.visualization.publish_frontier` is the single
+frontier-debug switch for that session.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from

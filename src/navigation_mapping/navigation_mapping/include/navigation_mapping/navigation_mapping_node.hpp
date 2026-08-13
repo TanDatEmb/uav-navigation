@@ -12,7 +12,7 @@
 
 namespace navigation_mapping {
 
-// Product-owned mapper node (P1 section 10). This is the single subscription
+// Product-owned mapper node. This is the single subscription
 // path into ROG-Map: the upstream ROS wrapper's automatic subscription path
 // (rog_map_ros1/rog_map_ros2) is never vendored or used as the production
 // integration boundary (see rog_map_vendor/UPSTREAM.md).

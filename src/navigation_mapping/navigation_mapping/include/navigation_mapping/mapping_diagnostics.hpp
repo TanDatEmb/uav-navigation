@@ -6,9 +6,8 @@
 
 namespace navigation_mapping {
 
-// Section 18 diagnostics surface. Deliberately a plain counters struct: no
-// rolling percentile logic here (see P1 section 18 — offline benchmarking
-// owns percentile reporting).
+// Deliberately a plain counters struct: percentile aggregation belongs to the
+// offline runtime report.
 struct MappingDiagnostics {
   std::uint64_t received_observation_count{0};
   std::uint64_t accepted_observation_count{0};

@@ -46,7 +46,8 @@ void MappingPipeline::process(const ObservationInput& input) {
     return;
   }
 
-  // Generation handling (P1 section 7): decide before touching the map.
+  // Decide the frame epoch before touching the map so stale observations
+  // cannot mutate a map belonging to a newer coordinate frame.
   const GenerationDecision decision = generation_tracker_.decide(input.public_frame_generation);
   if (decision == GenerationDecision::kRejectStaleGeneration) {
     ++diagnostics_.old_generation_drop_count;
@@ -82,7 +83,7 @@ void MappingPipeline::process(const ObservationInput& input) {
                          input.sensor_pose.orientation.y, input.sensor_pose.orientation.z)
           .normalized()};
 
-  // The single required transform (P1 section 11): p_odom = T_odom_lidar * p_lidar.
+  // Keep the observation geometry in the public odom frame before mapping.
   const auto transform_started = std::chrono::steady_clock::now();
   rog_map::PointCloud cloud_odom_m;
   cloud_odom_m.reserve(filtered_points_lidar_m.size());

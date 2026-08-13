@@ -1,13 +1,11 @@
-# navigation_mapping_node runtime parameters (P1 baseline).
+# navigation_mapping_node runtime parameters.
 #
 # This is the navigation world-model configuration surface, distinct from
 # fast_lio's own internal "mapping.*" parameters in dataset.yaml/sim.yaml
 # (those configure FAST-LIO's RegistrationMap, not this world model — see
 # docs/architecture/navigation_layers.md, ADR-008).
 #
-# Only P1-required parameters are exposed; the vendored ROG-Map's remaining
-# upstream defaults are used internally (see rog_map_vendor/UPSTREAM.md and
-# navigation_mapping/rog_map_adapter.hpp).
+# Vendor policy is kept internal to navigation_mapping.
 navigation_mapping_node:
   ros__parameters:
     mapping:
@@ -21,30 +19,21 @@ navigation_mapping_node:
         voxel_size_m: 0.20
         # Navigation-only sensor endpoint acceptance: suppress returns from
         # the vehicle/body shell before mapping voxelization and ROG raycast.
-        # This is intentionally distinct from mapping.rog.ray_range_min_m,
+        # This is intentionally distinct from mapping.raycast.min_range_m,
         # which controls ROG ray traversal/bootstrap free-space semantics.
-        minimum_range_m: 0.5
-        maximum_range_m: 0.0
+        min_range_m: 0.50
+        max_range_m: 0.0
 
-      rog:
+      map:
         resolution_m: 0.2
         inflation_resolution_m: 0.2
-        local_map_size_m: [30.0, 30.0, 12.0]
-        raycasting_enabled: true
-        sliding_enabled: true
-        occupied_inflation_enabled: true
-        unknown_inflation_enabled: false
-        esdf_enabled: false
-        frontier_enabled: false
-        inflation_step: 1
-        point_filt_num: 1
-        ray_range_min_m: 0.3
-        ray_range_max_m: 15.0
+        local_size_m: [30.0, 30.0, 12.0]
 
-      qos:
-        # Initial candidate per P1 section 15: freshness over backlog.
-        # Switch to "reliable" if target-machine testing shows unacceptable
-        # BestEffort transport loss.
+      raycast:
+        min_range_m: 0.3
+        max_range_m: 15.0
+
+      input_qos:
         reliability: best_effort
 
       visualization:
@@ -54,8 +43,3 @@ navigation_mapping_node:
         publish_rate_hz: 10.0
         range_m: [15.0, 15.0, 6.0]
         max_points: 150000
-        frame_id: lio_odom
-
-      # Directory this node writes its translated upstream ROG-Map YAML
-      # config into at each reset (see RogMapAdapter). Must be writable.
-      generated_config_directory: /tmp/navigation_mapping

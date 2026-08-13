@@ -46,7 +46,7 @@ struct MappingPointFilterStats {
   std::size_t output_point_count{0};
 };
 
-// Deliberately minimal: this is not a generic filter graph (P1 section 12).
+// Deliberately minimal: this is not a generic filter graph.
 // Operates in the sensor (lidar) frame, before the single transform into
 // lio_odom, matching the estimator's own common-filter/voxelize ordering.
 class MappingPointFilter {

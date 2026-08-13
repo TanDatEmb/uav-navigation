@@ -29,7 +29,6 @@ RogMapProductConfig smallConfig() {
   config.local_map_size_m = {10.0, 10.0, 6.0};
   config.ray_range_min_m = 0.05;
   config.ray_range_max_m = 10.0;
-  config.inflation_step = 2;
   return config;
 }
 
@@ -221,17 +220,18 @@ TEST(RogMapAdapterGeometryTest, IdenticalAcceptedInputsHaveIdenticalDigest) {
 
 // --- I: inflation ------------------------------------------------------------
 
-TEST(RogMapAdapterGeometryTest, OccupiedInflationExpandsByConfiguredStep) {
+TEST(RogMapAdapterGeometryTest, OccupiedInflationUsesCanonicalOneCellPolicy) {
   auto adapter = makeAdapter("inflation");
   const T_odom_lidar sensor_pose{};
   for (int i = 0; i < 10; ++i) {
     adapter.updateMap(singlePointCloud(Eigen::Vector3d(2.0, 0.0, 0.0)), sensor_pose);
   }
   const double resolution_m = smallConfig().resolution_m;
-  // inflation_step = 2, so neighbors within 2 cells must be inflated-occupied.
+  // The normal adapter policy inflates occupied cells to the configured
+  // one-cell vendor neighborhood.
   EXPECT_TRUE(adapter.map().isOccupiedInflate(
       rog_map::Vec3f(2.0 + resolution_m, 0.0, 0.0)));
-  EXPECT_TRUE(adapter.map().isOccupiedInflate(
+  EXPECT_FALSE(adapter.map().isOccupiedInflate(
       rog_map::Vec3f(2.0 + 2 * resolution_m, 0.0, 0.0)));
 }
 

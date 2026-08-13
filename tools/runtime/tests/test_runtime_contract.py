@@ -28,7 +28,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(parameters["visualization"]["enabled"])
             self.assertTrue(parameters["visualization"]["publish_unknown"])
             self.assertFalse(parameters["visualization"]["publish_frontier"])
-            self.assertFalse(parameters["rog"]["frontier_enabled"])
+            self.assertFalse(parameters["visualization"]["publish_frontier"])
 
             debug_target = runner._mapping_params(
                 session,
@@ -40,7 +40,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "navigation_mapping_node"
             ]["ros__parameters"]["mapping"]
             self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
-            self.assertTrue(debug_parameters["rog"]["frontier_enabled"])
+            self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
 
     def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
         self.assertEqual(

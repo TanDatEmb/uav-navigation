@@ -45,8 +45,8 @@ class MappingPipeline {
   MappingPipeline(MappingPipelineConfig config, std::function<double()> wall_clock_seconds,
                   std::string generated_config_directory);
 
-  // Processes exactly one observation to completion (P1 section 14: no
-  // internal queue). Never throws on malformed input; all rejection paths
+  // Processes exactly one observation to completion with no internal queue.
+  // Never throws on malformed input; all rejection paths
   // are diagnostic-counted instead.
   void process(const ObservationInput& input);
 

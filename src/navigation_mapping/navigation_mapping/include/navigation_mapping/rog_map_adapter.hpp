@@ -12,26 +12,17 @@
 
 namespace navigation_mapping {
 
-// P1 baseline product-level ROG configuration surface (section 20/13). Only
-// the parameters P1 actually needs are exposed; everything else keeps the
-// vendored ROG-Map defaults. Geometry-changing parameters are startup-only
-// (no runtime reconfiguration), per P1 scope.
+// Product-level ROG configuration. Vendor policy is deliberately not exposed
+// as a second public configuration surface; the adapter owns that policy.
 struct RogMapProductConfig {
   double resolution_m{0.20};
   double inflation_resolution_m{0.20};
   std::array<double, 3> local_map_size_m{30.0, 30.0, 12.0};
-  bool raycasting_enabled{true};
-  bool sliding_enabled{true};
-  bool occupied_inflation_enabled{true};
-  bool unknown_inflation_enabled{false};
-  bool esdf_enabled{false};
-  bool frontier_enabled{false};
-  int inflation_step{1};
-  int point_filt_num{1};
   double ray_range_min_m{0.3};
   double ray_range_max_m{15.0};
   double virtual_ground_height_m{-1000.0};
   double virtual_ceil_height_m{1000.0};
+  bool frontier_debug{false};
 };
 
 // Concrete instantiation of the abstract vendored ROGMap: only supplies the
@@ -55,7 +46,7 @@ class ConcreteRogMap : public rog_map::ROGMap {
 };
 
 // Owns the vendored ROGMap instance's lifecycle and is the single
-// product-owned entry point for map mutation (P1 sections 9, 10, 17). All
+// product-owned entry point for map mutation. All
 // reset/update/query calls must be made from a single serialized caller
 // (e.g. one ROS callback group); this class performs no internal locking.
 class RogMapAdapter {

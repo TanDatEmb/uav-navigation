@@ -11,32 +11,30 @@ namespace {
 
 std::string yamlBool(bool value) { return value ? "true" : "false"; }
 
-// Translates the coherent product configuration surface (section 20) into
-// the vendored ROG-Map's own upstream YAML schema (section 20: "use actual
-// upstream ROG parameter names internally"). Kept as a free function instead
-// of exposing every upstream parameter as a product parameter.
+constexpr int kNormalInflationStep = 1;
+
+// Translate the product configuration into the vendor schema without exposing
+// vendor-specific policy as public navigation parameters.
 std::string toUpstreamYaml(const RogMapProductConfig& config) {
-  const int effective_inflation_step =
-      config.occupied_inflation_enabled ? std::max(1, config.inflation_step) : 0;
   std::ostringstream out;
   out << "rog_map:\n"
       << "  resolution: " << config.resolution_m << "\n"
       << "  inflation_resolution: " << config.inflation_resolution_m << "\n"
-      << "  inflation_step: " << effective_inflation_step << "\n"
-      << "  unk_inflation_en: " << yamlBool(config.unknown_inflation_enabled) << "\n"
-      << "  unk_inflation_step: " << std::max(1, config.inflation_step) << "\n"
+      << "  inflation_step: " << kNormalInflationStep << "\n"
+      << "  unk_inflation_en: false\n"
+      << "  unk_inflation_step: 1\n"
       << "  intensity_thresh: -1\n"
-      << "  point_filt_num: " << config.point_filt_num << "\n"
+      << "  point_filt_num: 1\n"
       << "  map_size: [" << config.local_map_size_m[0] << ", " << config.local_map_size_m[1]
       << ", " << config.local_map_size_m[2] << "]\n"
       << "  fix_map_origin: [0.0, 0.0, 0.0]\n"
       << "  virtual_ground_height: " << config.virtual_ground_height_m << "\n"
       << "  virtual_ceil_height: " << config.virtual_ceil_height_m << "\n"
       << "  map_sliding:\n"
-      << "    enable: " << yamlBool(config.sliding_enabled) << "\n"
+      << "    enable: true\n"
       << "    threshold: -1.0\n"
       << "  load_pcd_en: false\n"
-      << "  frontier_extraction_en: " << yamlBool(config.frontier_enabled) << "\n"
+      << "  frontier_extraction_en: " << yamlBool(config.frontier_debug) << "\n"
       << "  ros_callback:\n"
       << "    enable: false\n"
       << "    cloud_topic: \"/unused\"\n"
@@ -51,12 +49,12 @@ std::string toUpstreamYaml(const RogMapProductConfig& config) {
       << "    frame_rate: 0\n"
       << "    range: [0.0, 0.0, 0.0]\n"
       << "  esdf:\n"
-      << "    enable: " << yamlBool(config.esdf_enabled) << "\n"
+      << "    enable: false\n"
       << "    resolution: " << config.resolution_m << "\n"
       << "    local_update_box: [" << config.local_map_size_m[0] << ", "
       << config.local_map_size_m[1] << ", " << config.local_map_size_m[2] << "]\n"
       << "  raycasting:\n"
-      << "    enable: " << yamlBool(config.raycasting_enabled) << "\n"
+      << "    enable: true\n"
       << "    batch_update_size: 1\n"
       << "    unk_thresh: 0.70\n"
       << "    p_hit: 0.70\n"
@@ -104,10 +102,6 @@ void RogMapAdapter::validateProductConfig(const RogMapProductConfig& config) {
       throw std::invalid_argument(
           "RogMapAdapter: local_map_size_m values must be finite and positive");
     }
-  }
-  if (config.inflation_step <= 0 || config.point_filt_num <= 0) {
-    throw std::invalid_argument(
-        "RogMapAdapter: inflation_step and point_filt_num must be positive");
   }
   if (!std::isfinite(config.ray_range_min_m) || !std::isfinite(config.ray_range_max_m) ||
       config.ray_range_min_m < 0.0 || config.ray_range_max_m <= config.ray_range_min_m) {

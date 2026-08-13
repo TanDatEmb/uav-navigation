@@ -23,14 +23,14 @@ RosMappingObservationPublisher::RosMappingObservationPublisher(
     return;
   }
   publisher_ = node.create_publisher<navigation_interfaces::msg::LidarMappingObservation>(
-      "/lio/mapping_observation", QosProfiles::mappingObservation());
+      "lio/mapping_observation", QosProfiles::mappingObservation());
 }
 
 void RosMappingObservationPublisher::publish(const ProcessResult& result) {
   if (!publisher_) {
     return;
   }
-  // Mapping publication gate (P1 section 6): tracking + corrected estimate +
+  // Mapping publication requires tracking, a corrected estimate,
   // navigation-valid + a finite corrected sensor pose, exactly mirroring the
   // corrected-odometry usability gate in RosOutputPublisher. No propagated
   // state ever reaches this path.

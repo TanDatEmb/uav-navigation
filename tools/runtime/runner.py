@@ -236,12 +236,12 @@ def _mapping_params(
     ros_parameters = parameters.setdefault("ros__parameters", {})
     mapping = ros_parameters.setdefault("mapping", {})
     input_parameters = mapping.setdefault("input", {})
-    rog_parameters = mapping.setdefault("rog", {})
+    map_parameters = mapping.setdefault("map", {})
     visualization_parameters = mapping.setdefault("visualization", {})
-    resolution_override = os.environ.get("MAPPING_ROG_RESOLUTION_M")
+    resolution_override = os.environ.get("MAPPING_RESOLUTION_M")
     input_voxel_override = os.environ.get("MAPPING_INPUT_VOXEL_M")
     if resolution_override is not None:
-        rog_parameters["resolution_m"] = float(resolution_override)
+        map_parameters["resolution_m"] = float(resolution_override)
     if input_voxel_override is not None:
         input_parameters["voxel_size_m"] = float(input_voxel_override)
     # Keep one authoritative mapping YAML. Runtime workflows select whether
@@ -251,7 +251,6 @@ def _mapping_params(
     visualization_parameters["enabled"] = interactive
     visualization_parameters["publish_unknown"] = interactive
     visualization_parameters["publish_frontier"] = frontier_debug
-    rog_parameters["frontier_enabled"] = frontier_debug
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_mapping_node": parameters}, sort_keys=False),
@@ -259,7 +258,7 @@ def _mapping_params(
     )
     _write_runtime(
         session,
-        mapping_rog_resolution_m=rog_parameters.get("resolution_m"),
+        mapping_rog_resolution_m=map_parameters.get("resolution_m"),
         mapping_input_voxel_m=input_parameters.get("voxel_size_m"),
         mapping_interactive=interactive,
     )

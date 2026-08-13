@@ -75,41 +75,29 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   pipeline_config.point_filter.voxel_size_m =
       declare_parameter("mapping.input.voxel_size_m", 0.20);
   pipeline_config.point_filter.minimum_range_m =
-      declare_parameter("mapping.input.minimum_range_m", 0.0);
+      declare_parameter("mapping.input.min_range_m", 0.0);
   pipeline_config.point_filter.maximum_range_m =
-      declare_parameter("mapping.input.maximum_range_m", 0.0);
+      declare_parameter("mapping.input.max_range_m", 0.0);
 
-  pipeline_config.rog.resolution_m = declare_parameter("mapping.rog.resolution_m", 0.20);
+  pipeline_config.rog.resolution_m = declare_parameter("mapping.map.resolution_m", 0.20);
   pipeline_config.rog.inflation_resolution_m =
-      declare_parameter("mapping.rog.inflation_resolution_m", 0.20);
+      declare_parameter("mapping.map.inflation_resolution_m", 0.20);
   const auto local_map_size = declare_parameter<std::vector<double>>(
-      "mapping.rog.local_map_size_m", std::vector<double>{30.0, 30.0, 12.0});
+      "mapping.map.local_size_m", std::vector<double>{30.0, 30.0, 12.0});
   if (local_map_size.size() == 3) {
     pipeline_config.rog.local_map_size_m = {local_map_size[0], local_map_size[1],
                                             local_map_size[2]};
   } else {
     RCLCPP_WARN(get_logger(),
-                "mapping.rog.local_map_size_m must have exactly 3 elements; using default");
+                "mapping.map.local_size_m must have exactly 3 elements; using default");
   }
-  pipeline_config.rog.raycasting_enabled =
-      declare_parameter("mapping.rog.raycasting_enabled", true);
-  pipeline_config.rog.sliding_enabled = declare_parameter("mapping.rog.sliding_enabled", true);
-  pipeline_config.rog.occupied_inflation_enabled =
-      declare_parameter("mapping.rog.occupied_inflation_enabled", true);
-  pipeline_config.rog.unknown_inflation_enabled =
-      declare_parameter("mapping.rog.unknown_inflation_enabled", false);
-  pipeline_config.rog.esdf_enabled = declare_parameter("mapping.rog.esdf_enabled", false);
-  pipeline_config.rog.frontier_enabled = declare_parameter("mapping.rog.frontier_enabled", false);
-  pipeline_config.rog.inflation_step =
-      static_cast<int>(declare_parameter<std::int64_t>("mapping.rog.inflation_step", 1));
-  pipeline_config.rog.point_filt_num =
-      static_cast<int>(declare_parameter<std::int64_t>("mapping.rog.point_filt_num", 1));
-  pipeline_config.rog.ray_range_min_m = declare_parameter("mapping.rog.ray_range_min_m", 0.3);
-  pipeline_config.rog.ray_range_max_m = declare_parameter("mapping.rog.ray_range_max_m", 15.0);
+  pipeline_config.rog.ray_range_min_m = declare_parameter("mapping.raycast.min_range_m", 0.3);
+  pipeline_config.rog.ray_range_max_m = declare_parameter("mapping.raycast.max_range_m", 15.0);
 
   visualization_enabled_ = declare_parameter("mapping.visualization.enabled", false);
   publish_unknown_ = declare_parameter("mapping.visualization.publish_unknown", false);
   publish_frontier_ = declare_parameter("mapping.visualization.publish_frontier", false);
+  pipeline_config.rog.frontier_debug = publish_frontier_;
   const auto visualization_range = declare_parameter<std::vector<double>>(
       "mapping.visualization.range_m", std::vector<double>{15.0, 15.0, 6.0});
   if (visualization_range.size() == 3 &&
@@ -133,7 +121,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   const double visualization_rate_hz = declare_parameter(
       "mapping.visualization.publish_rate_hz", 2.0);
   const std::string qos_reliability =
-      declare_parameter("mapping.qos.reliability", std::string("best_effort"));
+      declare_parameter("mapping.input_qos.reliability", std::string("best_effort"));
 
   const std::string generated_config_directory =
       declare_parameter("mapping.generated_config_directory",
@@ -145,7 +133,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
       generated_config_directory);
 
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-      "/navigation_mapping/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+      "navigation_mapping/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
 
   // Diagnostics are a periodic snapshot, not part of the observation hot
   // path. Create this in the same group as map mutation so the plain
@@ -163,7 +151,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
     return;
   }
 
-  // P1 section 17: all map-touching callbacks are serialized in one
+  // All map-touching callbacks are serialized in one
   // MutuallyExclusiveCallbackGroup. There is exactly one such callback today
   // (onObservation), but this makes the serialization requirement explicit
   // and future-proof rather than implicit in "there happens to be one
@@ -179,7 +167,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   }
   observation_subscription_ =
       create_subscription<navigation_interfaces::msg::LidarMappingObservation>(
-          "/lio/mapping_observation", qos,
+          "lio/mapping_observation", qos,
           [this](const navigation_interfaces::msg::LidarMappingObservation::ConstSharedPtr&
                      message) { onObservation(message); },
           subscription_options);
@@ -187,16 +175,16 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   if (visualization_enabled_) {
     const auto qos = rclcpp::SensorDataQoS().keep_last(1);
     occupied_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-        "/rog_map/occ", qos);
+        "navigation_mapping/visualization/occupied", qos);
     inflated_occupied_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-        "/rog_map/inf_occ", qos);
+        "navigation_mapping/visualization/inflated_occupied", qos);
     if (publish_unknown_) {
       unknown_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-          "/rog_map/unk", qos);
+          "navigation_mapping/visualization/unknown", qos);
     }
     if (publish_frontier_) {
       frontier_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-          "/rog_map/frontier", qos);
+          "navigation_mapping/visualization/frontier", qos);
     }
     const double period_s = std::isfinite(visualization_rate_hz) && visualization_rate_hz > 0.0
                                 ? 1.0 / visualization_rate_hz
@@ -206,7 +194,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
             std::chrono::duration<double>(period_s)),
         [this]() { publishMapVisualization(); }, mapping_callback_group_);
     RCLCPP_INFO(get_logger(),
-                "ROG-Map visualization enabled: occ=/rog_map/occ inf_occ=/rog_map/inf_occ "
+                "navigation_mapping visualization enabled under navigation_mapping/visualization "
                 "unk=%s frontier=%s rate=%.2f Hz max_points=%zu",
                 publish_unknown_ ? "on" : "off", publish_frontier_ ? "on" : "off",
                 1.0 / period_s, visualization_max_points_);

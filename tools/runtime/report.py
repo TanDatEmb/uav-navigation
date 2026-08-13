@@ -1014,10 +1014,10 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     for field in integer_fields:
         result[field] = int(values.get(field, 0) or 0)
     result["output_topics"] = [
-        "/rog_map/occ",
-        "/rog_map/inf_occ",
-        "/rog_map/unk",
-        "/rog_map/frontier",
+        "/navigation_mapping/visualization/occupied",
+        "/navigation_mapping/visualization/inflated_occupied",
+        "/navigation_mapping/visualization/unknown",
+        "/navigation_mapping/visualization/frontier",
     ]
     return result
 
