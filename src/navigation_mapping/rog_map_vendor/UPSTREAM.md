@@ -172,6 +172,15 @@ through the now-removed `pcl_conversions.h` include (modification 5). This
 file now includes `<pcl/io/pcd_io.h>` directly instead, restoring the
 declaration without reintroducing the `pcl_conversions` dependency.
 
+### 7. Disabled research timing output in product runtime (`src/rog_map/prob_map.cpp`, `src/rog_map/rog_map.cpp`)
+
+The product already records aggregate ROG timing in `MappingDiagnostics` and
+offline reports. The upstream `ROGMap::updateMap()` console timer and
+per-update `rm_performance_log.csv` write therefore provide no product
+semantic value and add work to every accepted observation. The product path
+keeps the upstream timing code and `writeTimeConsumingToLog()` available for
+comparison, but does not enable or invoke those outputs.
+
 - `ProbMap::raycastProcess` (`src/rog_map/prob_map.cpp`) originally used a
   function-local `static bool first` to clear unknown cells around the very
   first robot position. Measurement/lifecycle testing showed that this was
@@ -181,13 +190,12 @@ declaration without reintroducing the `pcl_conversions` dependency.
 - `ROGMap::updateMap` (`src/rog_map/rog_map.cpp`) uses a function-local
   `static int local_cnt` purely to throttle an empty-cloud warning log line.
   Also process-wide, also non-blocking, also left unmodified.
-- `ROGMap::init()` opens `log/rm_info_log.csv` and `log/rm_performance_log.csv`
-  relative to `ROOT_DIR` (this package's source directory at build time) via
-  `std::ofstream::open`. If that path does not exist at runtime (e.g. this
-  package's source tree is not present on the deployed machine),
-  `std::ofstream::open` fails silently (no exception; writes are dropped).
-  This is upstream debug-log behavior, not part of the ROG-Map algorithm, and
-  is left as-is; it cannot crash the mapper process.
+- `ROGMap::init()` opens `log/rm_info_log.csv` relative to `ROOT_DIR` (this
+  package's source directory at build time) via `std::ofstream::open`. The
+  product performance stream is deliberately not opened; the remaining info
+  log is upstream debug behavior, not part of the ROG-Map algorithm. If the
+  path does not exist at runtime, the stream fails silently and cannot crash
+  the mapper process.
 
 ### Deterministic-origin patch
 

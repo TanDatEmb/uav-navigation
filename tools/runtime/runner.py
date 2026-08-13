@@ -221,7 +221,7 @@ def _ros_params(session: Session, source: Path) -> Path:
     return target
 
 
-def _mapping_params(session: Session, source: Path) -> Path:
+def _mapping_params(session: Session, source: Path, *, interactive: bool = False) -> Path:
     """Copy the product-owned navigation_mapping parameter block."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "navigation_mapping_node" not in value:
@@ -231,12 +231,19 @@ def _mapping_params(session: Session, source: Path) -> Path:
     mapping = ros_parameters.setdefault("mapping", {})
     input_parameters = mapping.setdefault("input", {})
     rog_parameters = mapping.setdefault("rog", {})
+    visualization_parameters = mapping.setdefault("visualization", {})
     resolution_override = os.environ.get("MAPPING_ROG_RESOLUTION_M")
     input_voxel_override = os.environ.get("MAPPING_INPUT_VOXEL_M")
     if resolution_override is not None:
         rog_parameters["resolution_m"] = float(resolution_override)
     if input_voxel_override is not None:
         input_parameters["voxel_size_m"] = float(input_voxel_override)
+    # Keep one authoritative mapping YAML. Runtime workflows select whether
+    # product-side visualization/frontier work is part of this invocation.
+    visualization_parameters["enabled"] = interactive
+    visualization_parameters["publish_unknown"] = interactive
+    visualization_parameters["publish_frontier"] = interactive
+    rog_parameters["frontier_enabled"] = interactive
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_mapping_node": parameters}, sort_keys=False),
@@ -246,6 +253,7 @@ def _mapping_params(session: Session, source: Path) -> Path:
         session,
         mapping_rog_resolution_m=rog_parameters.get("resolution_m"),
         mapping_input_voxel_m=input_parameters.get("voxel_size_m"),
+        mapping_interactive=interactive,
     )
     return target
 
@@ -387,7 +395,9 @@ def run_dataset(dataset: str, rate: float, *, enable_rviz: bool = False) -> int:
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
-        mapping_config = _mapping_params(session, RUNTIME_CONFIG / "mapping.yaml")
+        mapping_config = _mapping_params(
+            session, RUNTIME_CONFIG / "mapping.yaml", interactive=enable_rviz
+        )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
             "monitor",
@@ -521,7 +531,9 @@ def run_sim(headless: bool) -> int:
         return 1
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
-        mapping_config = _mapping_params(session, RUNTIME_CONFIG / "mapping.yaml")
+        mapping_config = _mapping_params(
+            session, RUNTIME_CONFIG / "mapping.yaml", interactive=not headless
+        )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
             "monitor",

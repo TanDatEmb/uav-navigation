@@ -37,6 +37,7 @@ class NavigationMappingNode : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inflated_occupied_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr unknown_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frontier_publisher_;
+  rclcpp::TimerBase::SharedPtr diagnostics_timer_;
   rclcpp::TimerBase::SharedPtr visualization_timer_;
   rclcpp::CallbackGroup::SharedPtr mapping_callback_group_;
   std::uint64_t invalid_cloud_count_{0};

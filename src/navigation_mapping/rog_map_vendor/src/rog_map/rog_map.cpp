@@ -36,7 +36,6 @@ void ROGMap::init() {
     initProbMap();
 
     map_info_log_file_.open(DEBUG_FILE_DIR("rm_info_log.csv"), std::ios::out | std::ios::trunc);
-    time_log_file_.open(DEBUG_FILE_DIR("rm_performance_log.csv"), std::ios::out | std::ios::trunc);
 
 
     robot_state_.p = cfg_.fix_map_origin;
@@ -56,15 +55,6 @@ void ROGMap::init() {
 
     writeMapInfoToLog(map_info_log_file_);
     map_info_log_file_.close();
-    for (int i = 0; i < time_consuming_name_.size(); i++) {
-        time_log_file_ << time_consuming_name_[i];
-        if (i != time_consuming_name_.size() - 1) {
-            time_log_file_ << ", ";
-        }
-    }
-    time_log_file_ << endl;
-
-
     if (cfg_.load_pcd_en) {
         string pcd_path = cfg_.pcd_name;
         PointCloud::Ptr pcd_map(new PointCloud);
@@ -244,7 +234,9 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_
 }
 
 void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
-    TimeConsuming ssss("updateMap", true);
+    // Product runtime keeps timing in MappingDiagnostics; upstream's
+    // per-update console timer is research instrumentation.
+    TimeConsuming ssss("updateMap", false);
     last_diagnostics_ = ProbMap::RaycastDiagnostics{};
     last_diagnostics_.endpoint_count = cloud.size();
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
@@ -267,7 +259,6 @@ void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
     updateProbMap(cloud, pose);
 
 
-    writeTimeConsumingToLog(time_log_file_);
 }
 
 RobotState ROGMap::getRobotState() const {

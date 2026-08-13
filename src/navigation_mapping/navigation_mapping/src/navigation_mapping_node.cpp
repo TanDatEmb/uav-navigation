@@ -131,6 +131,15 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/navigation_mapping/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
 
+  // Diagnostics are a periodic snapshot, not part of the observation hot
+  // path. Create this in the same group as map mutation so the plain
+  // MappingDiagnostics struct is never read concurrently with an update.
+  mapping_callback_group_ =
+      create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  diagnostics_timer_ = create_wall_timer(
+      std::chrono::milliseconds{500}, [this]() { publishDiagnostics(); },
+      mapping_callback_group_);
+
   if (!mapping_enabled) {
     RCLCPP_INFO(get_logger(),
                 "mapping.enabled is false; navigation_mapping_node running idle "
@@ -143,8 +152,6 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   // (onObservation), but this makes the serialization requirement explicit
   // and future-proof rather than implicit in "there happens to be one
   // subscription".
-  mapping_callback_group_ =
-      create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   rclcpp::SubscriptionOptions subscription_options;
   subscription_options.callback_group = mapping_callback_group_;
 
@@ -226,7 +233,6 @@ void NavigationMappingNode::onObservation(
   if (!cloudHasXyzFloatFields(message->points)) {
     ++invalid_cloud_count_;
     ++diagnostics.mapping_observation_rejection_count;
-    publishDiagnostics();
     return;
   }
 
@@ -269,7 +275,6 @@ void NavigationMappingNode::onObservation(
   }
   diagnostics.mapping_callback_total_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - callback_started).count();
-  publishDiagnostics();
 }
 
 sensor_msgs::msg::PointCloud2 NavigationMappingNode::makePointCloud(
