@@ -12,6 +12,7 @@ find_package(navigation_mapping REQUIRED)
 
 add_library(navigation_planning
   src/a_star.cpp
+  src/planner.cpp
 )
 target_compile_features(navigation_planning PUBLIC cxx_std_20)
 target_include_directories(navigation_planning PUBLIC
@@ -42,6 +43,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_navigation_planning
     test/test_a_star.cpp
+    test/test_planner.cpp
     test/test_rog_world_model_integration.cpp
   )
   target_link_libraries(test_navigation_planning navigation_planning)

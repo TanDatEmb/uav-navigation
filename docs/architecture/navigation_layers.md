@@ -116,10 +116,16 @@ DDS occupancy representation.
 The WorldModel has two distinct query layers. `Probability` plus
 `UnknownBlocked` is useful for fine-map semantics and regression tests, but it
 is not vehicle-clearance collision planning. `Inflated` plus `UnknownBlocked`
-is the intended conservative A* seed-path policy once an authoritative vehicle
-collision envelope and static safety margin are configured. The current
-repository has no such authoritative vehicle radius, so flight-safety closure
-is still blocked.
+is the conservative path/corridor policy. `WorldModel::clearanceRadius()` is
+the separate physical contract consumed by the project-owned `Planner`.
+
+The current repository has no authoritative vehicle collision geometry: the
+local x500 model only includes the external `x500` model and the local
+`base_link` description is frame-only. Therefore the normal runtime leaves
+`navigation.collision.vehicle_radius_m` and
+`navigation.collision.safety_margin_m` unset; planning fails closed until a
+model-owned source is added. Synthetic planner tests provide explicit values
+only to validate the contract and algorithmic closure.
 
 `UnknownTraversable` is a reference/exploration policy only; it is not
 flight-safe execution by itself. An unknown-space exploration trajectory would

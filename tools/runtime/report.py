@@ -958,7 +958,54 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
     }
 
 
-def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _timing_distribution(values: list[float]) -> dict[str, Any]:
+    return {
+        "sample_count": len(values),
+        "mean": sum(values) / len(values) if values else None,
+        "p50": _p(values, 0.50),
+        "p95": _p(values, 0.95),
+        "p99": _p(values, 0.99),
+        "max": max(values) if values else None,
+    }
+
+
+def _diagnostic_timing_summary(
+    samples: list[dict[str, Any]], status_name: str, fields: tuple[str, ...]
+) -> dict[str, dict[str, Any]]:
+    values_by_field = {field: [] for field in fields}
+    for item in _series(samples, "diagnostics"):
+        statuses = item.get("payload", {}).get("statuses", [])
+        if not isinstance(statuses, list):
+            continue
+        for status in statuses:
+            if not isinstance(status, dict) or status.get("name") != status_name:
+                continue
+            status_values = status.get("values", {})
+            if not isinstance(status_values, dict):
+                continue
+            for field in fields:
+                value = _number(status_values.get(field), -1.0)
+                if value >= 0.0 and math.isfinite(value):
+                    values_by_field[field].append(value)
+    return {field: _timing_distribution(values) for field, values in values_by_field.items()}
+
+
+def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return _diagnostic_timing_summary(
+        samples,
+        "navigation_planning/planner",
+        (
+            "planning_path_search_us",
+            "planning_corridor_us",
+            "planning_trajectory_optimization_us",
+            "planning_total_us",
+        ),
+    )
+
+
+def _navigation_mapping_summary(
+    snapshot: dict[str, Any], samples: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Summarize the product-owned ROG-Map diagnostics surface."""
     stream = snapshot.get("streams", {}).get("mapping_diagnostics", {})
     latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
@@ -1014,6 +1061,21 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     for field in integer_fields:
         result[field] = int(values.get(field, 0) or 0)
+    result["timing_distributions"] = _diagnostic_timing_summary(
+        samples or [],
+        "navigation_mapping/world_model",
+        (
+            "ros_pointcloud_decode_us",
+            "mapping_filter_us",
+            "transform_to_odom_us",
+            "rog_raycast_us",
+            "rog_probability_update_us",
+            "rog_inflation_us",
+            "rog_slide_us",
+            "rog_total_update_us",
+            "mapping_callback_total_us",
+        ),
+    )
     result["output_topics"] = [
         "/navigation_mapping/visualization/occupied",
         "/navigation_mapping/visualization/inflated_occupied",
@@ -1033,7 +1095,8 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
-    navigation_mapping = _navigation_mapping_summary(snapshot)
+    navigation_mapping = _navigation_mapping_summary(snapshot, samples)
+    planning = _planning_timing_summary(samples)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -1083,6 +1146,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "map_maintenance": map_maintenance,
         },
         "navigation_mapping": navigation_mapping,
+        "planning": planning,
         "accuracy": "NOT_AVAILABLE",
         "provenance": provenance(workspace),
     }
@@ -1099,7 +1163,8 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     diagnostic_states = _diagnostic_states(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
-    navigation_mapping = _navigation_mapping_summary(snapshot)
+    navigation_mapping = _navigation_mapping_summary(snapshot, samples)
+    planning = _planning_timing_summary(samples)
     reasons: list[str] = []
     for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
@@ -1148,6 +1213,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "map_maintenance": map_maintenance,
         },
         "navigation_mapping": navigation_mapping,
+        "planning": planning,
         "residuals": residuals,
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,

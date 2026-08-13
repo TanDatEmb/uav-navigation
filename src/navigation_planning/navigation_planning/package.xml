@@ -2,7 +2,7 @@
 <package format="3">
   <name>navigation_planning</name>
   <version>0.1.0</version>
-  <description>ROS-independent navigation world-model queries and minimal 3-D A*.</description>
+  <description>Project-owned collision-safe path and trajectory planning over WorldModel.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
 

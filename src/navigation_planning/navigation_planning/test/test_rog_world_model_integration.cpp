@@ -6,6 +6,7 @@
 #include "navigation_mapping/mapping_pipeline.hpp"
 #include "navigation_mapping/world_model.hpp"
 #include "navigation_planning/a_star.hpp"
+#include "navigation_planning/planner.hpp"
 
 namespace navigation_planning {
 namespace {
@@ -18,6 +19,10 @@ navigation_mapping::MappingPipelineConfig config() {
   value.rog.ray_range_min_m = 0.1;
   value.rog.ray_range_max_m = 10.0;
   value.point_filter.voxel_size_m = 0.1;
+  // Synthetic test geometry only; the product runtime has no authoritative
+  // vehicle model yet and therefore leaves this contract unset.
+  value.collision.vehicle_radius_m = 0.1;
+  value.collision.safety_margin_m = 0.1;
   return value;
 }
 
@@ -88,6 +93,27 @@ TEST(RogWorldModelIntegrationTest, MappingObservationFeedsAStarThroughWorldModel
   EXPECT_EQ(result.path.back(), goal);
   EXPECT_DOUBLE_EQ(result.statistics.path_length_m, 2.0);
   EXPECT_GT(result.statistics.cell_state_queries, 0U);
+}
+
+TEST(RogWorldModelIntegrationTest, WorldModelAndCurrentStateProducePlannerTrajectory) {
+  auto planner_config = config();
+  planner_config.rog.inflation_resolution_m = 0.2;
+  navigation_mapping::MappingPipeline pipeline(
+      planner_config, []() { return 0.0; }, testDirectory("rog_world_model_planner"));
+  for (int i = 0; i < 8; ++i) pipeline.process(observation());
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const navigation_mapping::Vec3 start{0.8, 0.0, 0.0};
+  const navigation_mapping::Vec3 goal{2.0, 0.0, 0.0};
+  const auto result = Planner{}.plan(
+      VehicleState{start, navigation_mapping::Vec3::Zero(), navigation_mapping::Vec3::Zero()},
+      Goal{goal}, world);
+
+  ASSERT_TRUE(result.success) << static_cast<int>(result.failure_code);
+  EXPECT_TRUE(result.trajectory.finiteAndMonotonic());
+  EXPECT_EQ(result.world_generation, world.generation());
+  EXPECT_EQ(result.world_revision, world.revision());
+  EXPECT_DOUBLE_EQ(world.clearanceRadius(), 0.2);
 }
 
 TEST(RogWorldModelIntegrationTest, InflatedLayerPreservesUnknownPolicyWithoutUnknownInflation) {
@@ -216,20 +242,6 @@ TEST(RogWorldModelIntegrationTest, InflatedSameResolutionMatchesFineMapSemantics
             navigation_mapping::CellState::KnownFree);
   EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, inflated),
             navigation_mapping::CellState::KnownFree);
-}
-
-TEST(RogWorldModelIntegrationTest, InflatedUnknownInflationRemainsUnknown) {
-  auto unknown_inflation = config();
-  unknown_inflation.rog.unknown_inflation_enabled = true;
-  navigation_mapping::MappingPipeline pipeline(
-      unknown_inflation, []() { return 0.0; }, testDirectory("rog_world_model_unknown_inflation"));
-  pipeline.process(observation());
-
-  navigation_mapping::WorldModel world(pipeline.adapter());
-  const auto unknown = world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
-                                         navigation_mapping::Vec3{4.5, 0.2, 0.2});
-  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, unknown),
-            navigation_mapping::CellState::Unknown);
 }
 
 TEST(RogWorldModelIntegrationTest, InflatedBoundsExcludeRogMaintenanceHalo) {

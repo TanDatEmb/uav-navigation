@@ -14,7 +14,7 @@ class QosProfiles {
   [[nodiscard]] static rclcpp::QoS mapOutput();
   // P1 mapping observation (see docs/architecture/navigation_layers.md):
   // freshness over backlog, so this is deliberately depth-1 and volatile.
-  // BestEffort is the initial candidate; switch to reliable() if
+  // BestEffort is the default; use reliable() if
   // target-machine testing shows unacceptable transport loss.
   [[nodiscard]] static rclcpp::QoS mappingObservation();
 };

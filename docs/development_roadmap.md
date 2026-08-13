@@ -384,11 +384,11 @@ Replay the existing AIST pipeline and measure:
 
 ### Planning compatibility smoke test
 
-The current product-owned A* is a library/reference consumer used to validate
-the WorldModel boundary and start-to-goal search semantics. It is not a
-separate ROS runtime subsystem and must not become a per-voxel ROS planner
-interface. P2 may use or replace its internal path-search pieces as part of
-the minimum SUPER planning closure.
+The product-owned `Planner` is a synchronous library boundary over
+`WorldModel`. Its minimum path is A* seed path, conservative corridor
+validation, and a time-parameterized quintic trajectory with sampled dynamic
+limit validation. It is not a separate ROS runtime subsystem and never
+consumes visualization PointCloud2 topics.
 
 ## Performance target
 
@@ -490,7 +490,11 @@ Acceptance belongs to `uav-navigation`, regardless of internal reference algorit
 
 A validated ROG-Map and current vehicle state can produce a valid time-parameterized trajectory through one project-owned planning interface.
 
-Internal SUPER planning details are still allowed to remain reference code at this phase.
+The repository currently contains only the ROG-Map/SUPER vendor subset, not
+SUPER's CIRI or trajectory-optimization sources. The minimum project-owned
+closure therefore uses the existing A* implementation, a conservative
+WorldModel corridor check, and quintic time parameterization. SUPER's ROS
+wrapper, FSM, map wrapper, and controller remain excluded.
 
 ---
 

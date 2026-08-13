@@ -49,6 +49,7 @@ struct SearchResult {
   bool success{false};
   SearchFailureCode failure{SearchFailureCode::None};
   std::uint64_t world_generation{0};
+  std::uint64_t world_revision{0};
   std::vector<navigation_mapping::GridIndex3> path;
   SearchStatistics statistics;
 };
@@ -109,6 +110,9 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     }
   }
   result.world_generation = model.generation();
+  if constexpr (requires { model.revision(); }) {
+    result.world_revision = model.revision();
+  }
   const auto start = model.worldToGrid(request.layer, request.start_world);
   const auto goal = model.worldToGrid(request.layer, request.goal_world);
   const auto bounds = model.bounds(request.layer);
