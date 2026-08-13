@@ -16,6 +16,26 @@ import runner
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_mapping_config_uses_canonical_product_contract(self) -> None:
+        mapping = runner.load_config("mapping.yaml")["navigation_mapping_node"]["ros__parameters"]["mapping"]
+        self.assertEqual(mapping["input"]["min_range_m"], 0.5)
+        self.assertEqual(mapping["input"]["max_range_m"], 0.0)
+        self.assertEqual(mapping["map"]["local_size_m"], [30.0, 30.0, 12.0])
+        self.assertEqual(mapping["raycast"]["min_range_m"], 0.3)
+        self.assertEqual(mapping["input_qos"]["reliability"], "best_effort")
+        self.assertNotIn("rog", mapping)
+        self.assertNotIn("qos", mapping)
+        rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
+        for topic in (
+            "/navigation_mapping/visualization/occupied",
+            "/navigation_mapping/visualization/inflated_occupied",
+            "/navigation_mapping/visualization/unknown",
+            "/navigation_mapping/visualization/frontier",
+        ):
+            self.assertIn(topic, rviz)
+        for obsolete in ("/rog_map/occ", "/rog_map/inf_occ", "/rog_map/unk", "/rog_map/frontier"):
+            self.assertNotIn(obsolete, rviz)
+
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
@@ -377,6 +397,37 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(result["absolute_guard_trigger_count"], 1)
         self.assertEqual(result["absolute_guard_recovery_failure_count"], 0)
         self.assertEqual(result["maximum_maintenance_us"], 21606.0)
+
+    def test_mapping_and_planning_timing_reports_have_required_percentiles(self) -> None:
+        samples = [
+            {
+                "stream": "diagnostics",
+                "payload": {
+                    "statuses": [
+                        {
+                            "name": "navigation_mapping/world_model",
+                            "values": {
+                                "ros_pointcloud_decode_us": value,
+                                "mapping_filter_us": value + 1,
+                                "planning_total_us": value + 2,
+                            },
+                        }
+                    ]
+                },
+            }
+            for value in (10, 20, 30)
+        ]
+        mapping = report._diagnostic_timing_summary(
+            samples,
+            "navigation_mapping/world_model",
+            ("ros_pointcloud_decode_us", "mapping_filter_us"),
+        )
+        self.assertEqual(mapping["ros_pointcloud_decode_us"]["sample_count"], 3)
+        self.assertEqual(mapping["ros_pointcloud_decode_us"]["p50"], 20.0)
+        for key in ("mean", "p50", "p95", "p99", "max"):
+            self.assertIn(key, mapping["mapping_filter_us"])
+        planning = report._planning_timing_summary(samples)
+        self.assertEqual(planning["planning_total_us"]["sample_count"], 0)
 
 
 if __name__ == "__main__":
