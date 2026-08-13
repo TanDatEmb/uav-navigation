@@ -156,7 +156,7 @@ namespace rog_map {
             return true;
         }
 
-        bool RayCaster::step(Eigen::Vector3d &ray_pt) {
+        bool RayCaster::stepIndex(Vec3i &voxel) {
 #ifdef ORIGIN_AT_CORNER
 #ifdef ORIGIN_AT_CENTER
             throw std::runtime_error(" -- [RayCaster]: ORIGIN_AT_CORNER and ORIGIN_AT_CENTER cannot be both true!");
@@ -178,10 +178,9 @@ namespace rog_map {
 //                std::cout << "t_to_bound
 //                : " << t_to_bound_x_ << ", " << t_to_bound_y_ << ", " << t_to_bound_z_
 //                          << std::endl;
-            // shape the output
-            indexToPos(cur_ray_pt_id_x_, ray_pt.x());
-            indexToPos(cur_ray_pt_id_y_, ray_pt.y());
-            indexToPos(cur_ray_pt_id_z_, ray_pt.z());
+            voxel.x() = cur_ray_pt_id_x_;
+            voxel.y() = cur_ray_pt_id_y_;
+            voxel.z() = cur_ray_pt_id_z_;
             if (cur_ray_pt_id_x_ == end_x_i_ && cur_ray_pt_id_y_ == end_y_i_ && cur_ray_pt_id_z_ == end_z_i_) {
                 return false;
             }
@@ -210,6 +209,15 @@ namespace rog_map {
                 }
             }
             return true;
+        }
+
+        bool RayCaster::step(Eigen::Vector3d &ray_pt) {
+            Vec3i voxel;
+            const bool has_step = stepIndex(voxel);
+            indexToPos(voxel.x(), ray_pt.x());
+            indexToPos(voxel.y(), ray_pt.y());
+            indexToPos(voxel.z(), ray_pt.z());
+            return has_step;
         }
 
     }

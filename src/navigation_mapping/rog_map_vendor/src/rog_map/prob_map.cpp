@@ -851,18 +851,16 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         for (const auto& p : raycasting_cloud) {
             Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
             raycast_data_.raycaster.setInput(raycast_start, p);
-            Vec3f ray_pt;
+            Vec3i ray_pt_id_g;
             std::uint64_t ray_steps = 0;
-            while (raycast_data_.raycaster.step(ray_pt)) {
+            while (raycast_data_.raycaster.stepIndex(ray_pt_id_g)) {
                 ++ray_steps;
                 ++last_diagnostics_.voxel_traversal_count_total;
-                Vec3i cur_ray_id_g;
-                posToGlobalIndex(ray_pt, cur_ray_id_g);
-                if (!insideLocalMap(cur_ray_id_g)) {
+                if (!insideLocalMap(ray_pt_id_g)) {
                     ++last_diagnostics_.ray_outside_local_map_step;
                     break;
                 }
-                insertUpdateCandidate(cur_ray_id_g, false);
+                insertUpdateCandidate(ray_pt_id_g, false);
             }
             last_diagnostics_.voxel_traversal_count_max =
                 std::max(last_diagnostics_.voxel_traversal_count_max, ray_steps);

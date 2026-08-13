@@ -70,6 +70,12 @@ namespace rog_map {
 
             bool setInput(const Eigen::Vector3d &start, const Eigen::Vector3d &end);
 
+            // Voxel-native traversal for map hot paths. This returns the same
+            // sequence as step(Eigen::Vector3d&) without materializing a
+            // voxel-center metric point and converting it back to an index.
+            bool stepIndex(Vec3i &voxel);
+
+            // Legacy metric-point API retained for upstream compatibility.
             bool step(Eigen::Vector3d &ray_pt);
 
         private:
@@ -88,5 +94,4 @@ namespace rog_map {
         };
     }
 }
-
 

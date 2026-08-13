@@ -98,6 +98,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_rog_map_vendor
     test/test_rog_map_smoke.cpp
     test/test_rog_map_lifecycle.cpp
+    test/test_raycaster_equivalence.cpp
   )
   target_link_libraries(test_rog_map_vendor rog_map_vendor)
   target_compile_definitions(test_rog_map_vendor PRIVATE

@@ -216,6 +216,27 @@ facade. It prevents a coarse inflated cell from being inferred from one
 probability voxel at its center; no mapping update or threshold semantics
 were changed.
 
+### 10. Integer ray traversal API (`src/rog_map_core/raycaster.cpp`, `include/rog_map/rog_map_core/raycaster.h`, `src/rog_map/prob_map.cpp`)
+
+**Upstream behavior.** `RayCaster::step(Eigen::Vector3d&)` advances the DDA in
+integer voxel state, converts the current index to a metric voxel center, and
+the probability-map raycast path converts that metric center back to a global
+voxel index.
+
+**Local modification.** Added the narrow `RayCaster::stepIndex(Vec3i&)` API.
+It emits the existing integer state directly; the legacy metric `step()` API
+remains available and delegates to the same traversal logic. The production
+probability-map free-ray loop now uses `stepIndex()` and no longer performs the
+index-to-center-to-index round trip.
+
+**Reason.** Remove avoidable metric Eigen conversion work from the ROG ray
+traversal inner loop while limiting the vendor patch to an API addition.
+
+**Semantic effect.** None intended: tie-breaking, traversal state, termination,
+and voxel order are unchanged. The index API is covered by an exact ordered
+sequence comparison against the legacy API over axis, diagonal, signed,
+boundary, same-voxel, and deterministic random rays.
+
 ### Deterministic-origin patch
 
 `SlidingMap::initSlidingMap` now initializes the local origin before the first
