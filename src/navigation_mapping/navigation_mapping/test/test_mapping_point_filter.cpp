@@ -91,18 +91,26 @@ TEST(MappingPointFilterTest, DropsNonFinitePoints) {
 TEST(MappingPointFilterTest, RangeGuardRemovesPointsOutsideBounds) {
   MappingPointFilterConfig config;
   config.voxel_size_m = 0.0;  // disable downsample to make counting exact
-  config.minimum_range_m = 1.0;
+  config.minimum_range_m = 0.5;
   config.maximum_range_m = 5.0;
   MappingPointFilter filter(config);
 
   std::vector<Point3f> points = {
-      Point3f(0.5, 0.0, 0.0),  // too close
-      Point3f(2.0, 0.0, 0.0),  // in range
+      Point3f(0.0, 0.0, 0.0),  // too close
+      Point3f(0.10, 0.0, 0.0),  // too close
+      Point3f(0.49, 0.0, 0.0),  // too close
+      Point3f(0.50, 0.0, 0.0),  // exactly on the strict lower boundary
+      Point3f(0.5001, 0.0, 0.0),  // in range
+      Point3f(1.0, 0.0, 0.0),  // in range
       Point3f(10.0, 0.0, 0.0),  // too far
   };
-  const auto filtered = filter.filter(points);
-  ASSERT_EQ(filtered.size(), 1U);
-  EXPECT_NEAR(filtered.front().x(), 2.0, 1e-9);
+  MappingPointFilterStats stats;
+  const auto filtered = filter.filter(points, &stats);
+  ASSERT_EQ(filtered.size(), 3U);
+  EXPECT_NEAR(filtered[0].x(), 0.50, 1e-9);
+  EXPECT_NEAR(filtered[1].x(), 0.5001, 1e-6);
+  EXPECT_NEAR(filtered[2].x(), 1.0, 1e-9);
+  EXPECT_EQ(stats.range_filtered_point_count, 4U);
 }
 
 TEST(MappingPointFilterTest, RangeGuardDisabledWhenBoundsAreZero) {

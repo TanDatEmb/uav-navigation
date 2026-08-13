@@ -27,6 +27,13 @@ MappingPipelineConfig smallConfig() {
   return config;
 }
 
+MappingPipelineConfig selfReturnConfig() {
+  auto config = smallConfig();
+  config.point_filter.voxel_size_m = 0.0;
+  config.point_filter.minimum_range_m = 0.5;
+  return config;
+}
+
 ObservationInput makeObservation(std::uint64_t generation, double obstacle_x) {
   ObservationInput input;
   input.header_frame_id = "lio_odom";
@@ -78,6 +85,27 @@ TEST(MappingPipelineGenerationResetTest, SameGenerationDoesNotResetMap) {
     pipeline.process(makeObservation(1, 3.0));
   }
   EXPECT_EQ(pipeline.adapter().resetCount(), reset_count_after_first);
+}
+
+TEST(MappingPipelineGenerationResetTest, RejectsSelfReturnBeforeRogAndKeepsObstacle) {
+  MappingPipeline pipeline(selfReturnConfig(), []() { return 0.0; }, testTmpDir());
+  ObservationInput input = makeObservation(1, 2.0);
+  input.points_lidar_m = {Point3f(0.3, 0.0, 0.0), Point3f(2.0, 0.0, 0.0)};
+
+  for (int i = 0; i < 8; ++i) {
+    input.header_stamp.sec = i + 1;
+    input.points_stamp = input.header_stamp;
+    pipeline.process(input);
+  }
+
+  EXPECT_EQ(pipeline.diagnostics().mapping_filter_input_point_count, 16U);
+  EXPECT_EQ(pipeline.diagnostics().range_filtered_point_count, 8U);
+  EXPECT_EQ(pipeline.diagnostics().mapping_filter_output_point_count, 8U);
+  EXPECT_EQ(pipeline.diagnostics().rog_endpoint_count, 8U);
+  EXPECT_EQ(pipeline.diagnostics().rog_ray_attempt_count, 8U);
+  EXPECT_EQ(pipeline.diagnostics().rog_skip_below_raycast_min_range, 0U);
+  EXPECT_TRUE(pipeline.adapter().map().isOccupied(rog_map::Vec3f(2.0, 0.0, 0.0)));
+  EXPECT_FALSE(pipeline.adapter().map().isOccupied(rog_map::Vec3f(0.3, 0.0, 0.0)));
 }
 
 }  // namespace

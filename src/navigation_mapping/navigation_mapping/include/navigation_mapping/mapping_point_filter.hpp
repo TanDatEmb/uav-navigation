@@ -29,7 +29,10 @@ struct Point3f {
 };
 
 struct MappingPointFilterConfig {
-  // 0 or negative disables the guard.
+  // Navigation endpoint acceptance guard, measured from the LiDAR origin.
+  // Points with range < minimum_range_m are rejected before mapping
+  // voxelization and therefore cannot reach ROG as endpoints or rays. A
+  // value of 0 or negative disables the guard.
   double minimum_range_m{0.0};
   double maximum_range_m{0.0};
   double voxel_size_m{0.20};

@@ -64,6 +64,9 @@ std::vector<Eigen::Vector3d> MappingPointFilter::filter(
                                        static_cast<double>(point.z));
     if (range_guard_enabled) {
       const double range_m = point_double.norm();
+      // Keep this strict: the product boundary is range < minimum_range_m.
+      // mapping.rog.ray_range_min_m is a separate ROG traversal parameter;
+      // rejected points stop here and are never clipped into a ray.
       if ((config_.minimum_range_m > 0.0 && range_m < config_.minimum_range_m) ||
           (config_.maximum_range_m > 0.0 && range_m > config_.maximum_range_m)) {
         ++local_stats.range_filtered_point_count;

@@ -485,6 +485,7 @@ void NavigationMappingNode::publishDiagnostics() {
                std::to_string(diagnostics.transform_nonfinite_point_count)),
       keyValue("invalid_cloud_count", std::to_string(invalid_cloud_count_)),
       keyValue("input_point_count", std::to_string(diagnostics.input_point_count)),
+      keyValue("range_filtered_point_count", std::to_string(diagnostics.range_filtered_point_count)),
       keyValue("filtered_point_count", std::to_string(diagnostics.filtered_point_count)),
       keyValue("mapping_point_count", std::to_string(diagnostics.mapping_point_count)),
       keyValue("last_input_stamp_ns", std::to_string(diagnostics.last_input_stamp_ns)),

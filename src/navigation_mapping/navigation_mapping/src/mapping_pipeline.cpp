@@ -70,6 +70,7 @@ void MappingPipeline::process(const ObservationInput& input) {
   diagnostics_.nonfinite_point_count += filter_stats.nonfinite_point_count;
   diagnostics_.post_filter_nonfinite_point_count +=
       filter_stats.post_filter_nonfinite_point_count;
+  diagnostics_.range_filtered_point_count += filter_stats.range_filtered_point_count;
   diagnostics_.mapping_filter_input_point_count += filter_stats.input_point_count;
   diagnostics_.mapping_filter_output_point_count += filter_stats.output_point_count;
   diagnostics_.filtered_point_count += filtered_points_lidar_m.size();

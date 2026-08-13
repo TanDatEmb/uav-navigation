@@ -19,7 +19,11 @@ navigation_mapping_node:
 
       input:
         voxel_size_m: 0.20
-        minimum_range_m: 0.0
+        # Navigation-only sensor endpoint acceptance: suppress returns from
+        # the vehicle/body shell before mapping voxelization and ROG raycast.
+        # This is intentionally distinct from mapping.rog.ray_range_min_m,
+        # which controls ROG ray traversal/bootstrap free-space semantics.
+        minimum_range_m: 0.5
         maximum_range_m: 0.0
 
       rog:

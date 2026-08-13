@@ -26,6 +26,7 @@ struct MappingDiagnostics {
   std::uint64_t invalid_cloud_count{0};
 
   std::uint64_t input_point_count{0};
+  std::uint64_t range_filtered_point_count{0};
   std::uint64_t filtered_point_count{0};
   std::uint64_t mapping_point_count{0};
 
