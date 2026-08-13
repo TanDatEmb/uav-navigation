@@ -17,6 +17,7 @@ MappingPipeline::MappingPipeline(MappingPipelineConfig config,
       point_filter_(config_.point_filter),
       adapter_(std::move(wall_clock_seconds), std::move(generated_config_directory)) {
   RogMapAdapter::validateProductConfig(config_.rog);
+  config_.collision.validate();
 }
 
 void MappingPipeline::process(const ObservationInput& input) {
@@ -54,11 +55,13 @@ void MappingPipeline::process(const ObservationInput& input) {
     return;
   }
   if (decision == GenerationDecision::kResetAndAdoptNewGeneration) {
-    adapter_.reset(config_.rog, input.public_frame_generation);
+    adapter_.reset(config_.rog, input.public_frame_generation,
+                   config_.collision.clearanceRadiusOrNaN());
     generation_tracker_.adopt(input.public_frame_generation);
     diagnostics_.generation_reset_count = generation_tracker_.resetCount();
   }
   diagnostics_.generation = generation_tracker_.currentGeneration();
+  diagnostics_.revision = adapter_.revision();
 
   diagnostics_.input_point_count += input.points_lidar_m.size();
 
@@ -107,6 +110,7 @@ void MappingPipeline::process(const ObservationInput& input) {
 
   const auto update_started = std::chrono::steady_clock::now();
   adapter_.updateMap(cloud_odom_m, sensor_pose);
+  diagnostics_.revision = adapter_.revision();
   diagnostics_.rog_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                    std::chrono::steady_clock::now() - update_started)
                                    .count();

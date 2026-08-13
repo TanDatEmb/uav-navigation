@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <limits>
 #include <string>
 
 #include <rog_map/rog_map.h>
 
+#include "navigation_mapping/collision_clearance.hpp"
 #include "navigation_mapping/rigid_pose.hpp"
 
 namespace navigation_mapping {
@@ -59,7 +61,8 @@ class RogMapAdapter {
   // Destroys any existing map instance and constructs+initializes a fresh
   // one. Exercises the P1 lifecycle patch in rog_map_vendor (see
   // rog_map_vendor/UPSTREAM.md); safe to call repeatedly in the same process.
-  void reset(const RogMapProductConfig& config, std::uint64_t generation);
+  void reset(const RogMapProductConfig& config, std::uint64_t generation,
+             double clearance_radius_m = std::numeric_limits<double>::quiet_NaN());
 
   [[nodiscard]] bool isInitialized() const noexcept { return static_cast<bool>(map_); }
 
@@ -73,6 +76,8 @@ class RogMapAdapter {
   [[nodiscard]] std::uint64_t deterministicDigest() const;
   [[nodiscard]] std::size_t resetCount() const noexcept { return reset_count_; }
   [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+  [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+  [[nodiscard]] double clearanceRadius() const noexcept { return clearance_radius_m_; }
 
  private:
   std::function<double()> wall_clock_seconds_;
@@ -80,6 +85,8 @@ class RogMapAdapter {
   std::unique_ptr<ConcreteRogMap> map_;
   std::size_t reset_count_{0};
   std::uint64_t generation_{0};
+  std::uint64_t revision_{0};
+  double clearance_radius_m_{std::numeric_limits<double>::quiet_NaN()};
 };
 
 }  // namespace navigation_mapping

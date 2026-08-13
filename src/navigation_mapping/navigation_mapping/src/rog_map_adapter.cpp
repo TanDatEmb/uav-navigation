@@ -15,12 +15,12 @@ constexpr int kNormalInflationStep = 1;
 
 // Translate the product configuration into the vendor schema without exposing
 // vendor-specific policy as public navigation parameters.
-std::string toUpstreamYaml(const RogMapProductConfig& config) {
+std::string toUpstreamYaml(const RogMapProductConfig& config, int inflation_step) {
   std::ostringstream out;
   out << "rog_map:\n"
       << "  resolution: " << config.resolution_m << "\n"
       << "  inflation_resolution: " << config.inflation_resolution_m << "\n"
-      << "  inflation_step: " << kNormalInflationStep << "\n"
+      << "  inflation_step: " << inflation_step << "\n"
       << "  unk_inflation_en: false\n"
       << "  unk_inflation_step: 1\n"
       << "  intensity_thresh: -1\n"
@@ -110,8 +110,13 @@ void RogMapAdapter::validateProductConfig(const RogMapProductConfig& config) {
   }
 }
 
-void RogMapAdapter::reset(const RogMapProductConfig& config, std::uint64_t generation) {
+void RogMapAdapter::reset(const RogMapProductConfig& config, std::uint64_t generation,
+                          double clearance_radius_m) {
   validateProductConfig(config);
+  const int inflation_step = std::isfinite(clearance_radius_m)
+                                 ? minimumRogInflationStep(clearance_radius_m,
+                                                            config.inflation_resolution_m)
+                                 : kNormalInflationStep;
   const std::string config_path = generated_config_directory_ + "/rog_map_generated.yaml";
   {
     std::ofstream file(config_path, std::ios::out | std::ios::trunc);
@@ -119,7 +124,7 @@ void RogMapAdapter::reset(const RogMapProductConfig& config, std::uint64_t gener
       throw std::runtime_error("RogMapAdapter: failed to write generated config to " +
                                config_path);
     }
-    file << toUpstreamYaml(config);
+    file << toUpstreamYaml(config, inflation_step);
   }
 
   // Construct and initialize the replacement before publishing it. This keeps
@@ -130,6 +135,7 @@ void RogMapAdapter::reset(const RogMapProductConfig& config, std::uint64_t gener
   new_map->loadConfigAndInit(config_path);
   map_ = std::move(new_map);
   generation_ = generation;
+  clearance_radius_m_ = clearance_radius_m;
   ++reset_count_;
 }
 
@@ -140,6 +146,7 @@ void RogMapAdapter::updateMap(const rog_map::PointCloud& cloud_odom_m,
   }
   const rog_map::Pose pose(sensor_pose.translation_odom_m, sensor_pose.rotation_odom_lidar);
   map_->updateMap(cloud_odom_m, pose);
+  ++revision_;
 }
 
 rog_map::ROGMap& RogMapAdapter::map() {

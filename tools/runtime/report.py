@@ -979,6 +979,7 @@ def _navigation_mapping_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "received_observation_count",
         "accepted_observation_count",
         "generation",
+        "revision",
         "generation_reset_count",
         "old_generation_drop_count",
         "invalid_stamp_count",

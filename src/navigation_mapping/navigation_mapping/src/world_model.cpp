@@ -52,6 +52,10 @@ std::uint64_t WorldModel::generation() const noexcept {
   return adapter_.generation();
 }
 
+std::uint64_t WorldModel::revision() const noexcept { return adapter_.revision(); }
+
+double WorldModel::clearanceRadius() const noexcept { return adapter_.clearanceRadius(); }
+
 bool WorldModel::isReady() const noexcept { return adapter_.isInitialized(); }
 
 CellState WorldModel::cellState(WorldLayer layer, const GridIndex3& index) const {

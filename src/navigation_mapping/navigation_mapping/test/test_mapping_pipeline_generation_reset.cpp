@@ -1,7 +1,5 @@
-// P1 mandatory correctness test F (docs/architecture/navigation_layers.md,
-// section 7): generation N populates the map; generation N+1 must reset the
-// map and adopt the new generation; a subsequent generation-N observation
-// must be rejected as stale.
+// Generation N populates the map; generation N+1 must reset the map and adopt
+// the new generation; a subsequent generation-N observation must be rejected.
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -85,6 +83,18 @@ TEST(MappingPipelineGenerationResetTest, SameGenerationDoesNotResetMap) {
     pipeline.process(makeObservation(1, 3.0));
   }
   EXPECT_EQ(pipeline.adapter().resetCount(), reset_count_after_first);
+}
+
+TEST(MappingPipelineGenerationResetTest, RevisionIncrementsOnlyAfterCommittedUpdates) {
+  MappingPipeline pipeline(smallConfig(), []() { return 0.0; }, testTmpDir());
+  EXPECT_EQ(pipeline.adapter().revision(), 0U);
+  pipeline.process(makeObservation(1, 3.0));
+  EXPECT_EQ(pipeline.adapter().revision(), 1U);
+  pipeline.process(makeObservation(1, 3.0));
+  EXPECT_EQ(pipeline.adapter().revision(), 2U);
+  pipeline.process(makeObservation(2, 3.0));
+  EXPECT_EQ(pipeline.adapter().revision(), 3U);
+  EXPECT_EQ(pipeline.diagnostics().revision, 3U);
 }
 
 TEST(MappingPipelineGenerationResetTest, RejectsSelfReturnBeforeRogAndKeepsObstacle) {

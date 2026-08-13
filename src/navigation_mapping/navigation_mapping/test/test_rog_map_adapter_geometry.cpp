@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 
+#include "navigation_mapping/collision_clearance.hpp"
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -233,6 +234,26 @@ TEST(RogMapAdapterGeometryTest, OccupiedInflationUsesCanonicalOneCellPolicy) {
       rog_map::Vec3f(2.0 + resolution_m, 0.0, 0.0)));
   EXPECT_FALSE(adapter.map().isOccupiedInflate(
       rog_map::Vec3f(2.0 + 2 * resolution_m, 0.0, 0.0)));
+}
+
+TEST(RogMapAdapterGeometryTest, ClearanceDerivesAndExercisesMinimumVendorStep) {
+  const double clearance_m = 0.3;
+  const double resolution_m = 0.2;
+  EXPECT_EQ(minimumRogInflationStep(clearance_m, resolution_m), 2);
+  EXPECT_DOUBLE_EQ(guaranteedRogInflationRadius(2, resolution_m), 0.4);
+
+  auto adapter = makeAdapter("inflation_from_clearance");
+  auto config = smallConfig();
+  adapter.reset(config, 1, clearance_m);
+  const T_odom_lidar sensor_pose{};
+  for (int i = 0; i < 10; ++i) {
+    adapter.updateMap(singlePointCloud(Eigen::Vector3d(2.0, 0.0, 0.0)), sensor_pose);
+  }
+  EXPECT_TRUE(adapter.map().isOccupiedInflate(
+      rog_map::Vec3f(2.0 + 2.0 * resolution_m, 0.0, 0.0)));
+  EXPECT_FALSE(adapter.map().isOccupiedInflate(
+      rog_map::Vec3f(2.0 + 3.0 * resolution_m, 0.0, 0.0)));
+  EXPECT_DOUBLE_EQ(adapter.clearanceRadius(), clearance_m);
 }
 
 }  // namespace

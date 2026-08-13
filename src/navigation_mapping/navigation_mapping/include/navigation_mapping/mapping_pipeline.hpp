@@ -10,6 +10,7 @@
 #include <geometry_msgs/msg/pose.hpp>
 
 #include "navigation_mapping/generation_tracker.hpp"
+#include "navigation_mapping/collision_clearance.hpp"
 #include "navigation_mapping/mapping_diagnostics.hpp"
 #include "navigation_mapping/mapping_point_filter.hpp"
 #include "navigation_mapping/observation_validator.hpp"
@@ -21,6 +22,7 @@ struct MappingPipelineConfig {
   ObservationContract contract{};
   MappingPointFilterConfig point_filter{};
   RogMapProductConfig rog{};
+  CollisionClearanceConfig collision{};
 };
 
 struct ObservationInput {

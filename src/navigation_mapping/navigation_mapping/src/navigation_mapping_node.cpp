@@ -93,6 +93,10 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   }
   pipeline_config.rog.ray_range_min_m = declare_parameter("mapping.raycast.min_range_m", 0.3);
   pipeline_config.rog.ray_range_max_m = declare_parameter("mapping.raycast.max_range_m", 15.0);
+  pipeline_config.collision.vehicle_radius_m = declare_parameter(
+      "navigation.collision.vehicle_radius_m", std::numeric_limits<double>::quiet_NaN());
+  pipeline_config.collision.safety_margin_m = declare_parameter(
+      "navigation.collision.safety_margin_m", std::numeric_limits<double>::quiet_NaN());
 
   visualization_enabled_ = declare_parameter("mapping.visualization.enabled", false);
   publish_unknown_ = declare_parameter("mapping.visualization.publish_unknown", false);
@@ -116,8 +120,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   visualization_max_points_ = visualization_max_points > 0
                                   ? static_cast<std::size_t>(visualization_max_points)
                                   : 150000U;
-  visualization_frame_id_ = declare_parameter(
-      "mapping.visualization.frame_id", pipeline_config.contract.odom_frame_id);
+  visualization_frame_id_ = pipeline_config.contract.odom_frame_id;
   const double visualization_rate_hz = declare_parameter(
       "mapping.visualization.publish_rate_hz", 2.0);
   const std::string qos_reliability =
@@ -461,6 +464,7 @@ void NavigationMappingNode::publishDiagnostics() {
       keyValue("received_observation_count", std::to_string(diagnostics.received_observation_count)),
       keyValue("accepted_observation_count", std::to_string(diagnostics.accepted_observation_count)),
       keyValue("generation", std::to_string(diagnostics.generation)),
+      keyValue("revision", std::to_string(diagnostics.revision)),
       keyValue("generation_reset_count", std::to_string(diagnostics.generation_reset_count)),
       keyValue("old_generation_drop_count", std::to_string(diagnostics.old_generation_drop_count)),
       keyValue("invalid_stamp_count", std::to_string(diagnostics.invalid_stamp_count)),

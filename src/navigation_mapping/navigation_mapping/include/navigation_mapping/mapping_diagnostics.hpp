@@ -13,6 +13,7 @@ struct MappingDiagnostics {
   std::uint64_t accepted_observation_count{0};
 
   std::uint64_t generation{0};
+  std::uint64_t revision{0};
   std::uint64_t generation_reset_count{0};
   std::uint64_t old_generation_drop_count{0};
 

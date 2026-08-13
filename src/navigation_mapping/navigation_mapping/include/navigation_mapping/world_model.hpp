@@ -57,6 +57,8 @@ class WorldModel final {
   [[nodiscard]] double resolution(WorldLayer layer) const;
   [[nodiscard]] GridBounds bounds(WorldLayer layer) const;
   [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] std::uint64_t revision() const noexcept;
+  [[nodiscard]] double clearanceRadius() const noexcept;
 
  private:
   const RogMapAdapter& adapter_;
