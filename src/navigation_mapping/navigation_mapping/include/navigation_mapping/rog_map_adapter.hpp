@@ -18,6 +18,7 @@ namespace navigation_mapping {
 // (no runtime reconfiguration), per P1 scope.
 struct RogMapProductConfig {
   double resolution_m{0.20};
+  double inflation_resolution_m{0.20};
   std::array<double, 3> local_map_size_m{30.0, 30.0, 12.0};
   bool raycasting_enabled{true};
   bool sliding_enabled{true};
@@ -78,12 +79,15 @@ class RogMapAdapter {
   [[nodiscard]] const rog_map::ProbMap::RaycastDiagnostics& lastDiagnostics() const;
   [[nodiscard]] std::uint64_t deterministicDigest() const;
   [[nodiscard]] std::size_t resetCount() const noexcept { return reset_count_; }
+  void setGeneration(std::uint64_t generation) noexcept { generation_ = generation; }
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
 
  private:
   std::function<double()> wall_clock_seconds_;
   std::string generated_config_directory_;
   std::unique_ptr<ConcreteRogMap> map_;
   std::size_t reset_count_{0};
+  std::uint64_t generation_{0};
 };
 
 }  // namespace navigation_mapping

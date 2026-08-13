@@ -66,6 +66,8 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
       declare_parameter("mapping.input.maximum_range_m", 0.0);
 
   pipeline_config.rog.resolution_m = declare_parameter("mapping.rog.resolution_m", 0.20);
+  pipeline_config.rog.inflation_resolution_m =
+      declare_parameter("mapping.rog.inflation_resolution_m", 0.20);
   const auto local_map_size = declare_parameter<std::vector<double>>(
       "mapping.rog.local_map_size_m", std::vector<double>{30.0, 30.0, 12.0});
   if (local_map_size.size() == 3) {

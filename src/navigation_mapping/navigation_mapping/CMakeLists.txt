@@ -23,6 +23,7 @@ set(NAVIGATION_MAPPING_CORE_SOURCES
   src/observation_validator.cpp
   src/mapping_point_filter.cpp
   src/rog_map_adapter.cpp
+  src/world_model.cpp
   src/mapping_pipeline.cpp
 )
 

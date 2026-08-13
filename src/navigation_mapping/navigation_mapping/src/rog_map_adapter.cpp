@@ -20,7 +20,7 @@ std::string toUpstreamYaml(const RogMapProductConfig& config) {
   std::ostringstream out;
   out << "rog_map:\n"
       << "  resolution: " << config.resolution_m << "\n"
-      << "  inflation_resolution: " << config.resolution_m << "\n"
+      << "  inflation_resolution: " << config.inflation_resolution_m << "\n"
       << "  inflation_step: " << effective_inflation_step << "\n"
       << "  unk_inflation_en: " << yamlBool(config.unknown_inflation_enabled) << "\n"
       << "  unk_inflation_step: " << std::max(1, config.inflation_step) << "\n"

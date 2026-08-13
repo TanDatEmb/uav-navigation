@@ -53,6 +53,7 @@ void MappingPipeline::process(const ObservationInput& input) {
   if (decision == GenerationDecision::kResetAndAdoptNewGeneration) {
     adapter_.reset(config_.rog);
     generation_tracker_.adopt(input.public_frame_generation);
+    adapter_.setGeneration(input.public_frame_generation);
     diagnostics_.generation_reset_count = generation_tracker_.resetCount();
   }
   diagnostics_.generation = generation_tracker_.currentGeneration();

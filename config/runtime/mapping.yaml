@@ -24,6 +24,7 @@ navigation_mapping_node:
 
       rog:
         resolution_m: 0.2
+        inflation_resolution_m: 0.2
         local_map_size_m: [30.0, 30.0, 12.0]
         raycasting_enabled: true
         sliding_enabled: true
