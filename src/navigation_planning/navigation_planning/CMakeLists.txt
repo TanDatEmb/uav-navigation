@@ -7,7 +7,6 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
-find_package(Boost REQUIRED COMPONENTS system filesystem iostreams serialization)
 find_package(Eigen3 REQUIRED)
 find_package(navigation_mapping REQUIRED)
 

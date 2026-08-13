@@ -13,7 +13,7 @@ LiDAR + IMU -> FastLioPipeline -> corrected/propagated odometry
                          navigation_mapping (separate process)
                                      |
                                      v
-                    ROG-Map navigation world model (occupancy/free/unknown)
+                    ROG-Map -> WorldModel -> A* reference baseline
 ```
 
 ## RegistrationMap vs Navigation World Model
@@ -105,6 +105,11 @@ fast_lio_ros
 `fast_lio_core`/`fast_lio_ros` have no dependency on `rog_map_vendor` or
 `navigation_mapping`. `navigation_mapping` has no dependency on
 `fast_lio_core`.
+
+The current `navigation_planning` package is a library boundary over the
+in-process `WorldModel` facade. It is not a separate ROS voxel-query process;
+the planner must not recreate the map through per-cell services or a duplicate
+DDS occupancy representation.
 
 The original estimator-only package dependency direction is
 `ikfom_vendor/ikd_tree_vendor -> fast_lio_core -> fast_lio_ros -> navigation_bringup`,

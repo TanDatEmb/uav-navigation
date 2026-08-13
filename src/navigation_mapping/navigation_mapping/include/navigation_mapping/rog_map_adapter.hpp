@@ -63,10 +63,12 @@ class RogMapAdapter {
   explicit RogMapAdapter(std::function<double()> wall_clock_seconds,
                          std::string generated_config_directory);
 
+  static void validateProductConfig(const RogMapProductConfig& config);
+
   // Destroys any existing map instance and constructs+initializes a fresh
   // one. Exercises the P1 lifecycle patch in rog_map_vendor (see
   // rog_map_vendor/UPSTREAM.md); safe to call repeatedly in the same process.
-  void reset(const RogMapProductConfig& config);
+  void reset(const RogMapProductConfig& config, std::uint64_t generation);
 
   [[nodiscard]] bool isInitialized() const noexcept { return static_cast<bool>(map_); }
 
@@ -79,7 +81,6 @@ class RogMapAdapter {
   [[nodiscard]] const rog_map::ProbMap::RaycastDiagnostics& lastDiagnostics() const;
   [[nodiscard]] std::uint64_t deterministicDigest() const;
   [[nodiscard]] std::size_t resetCount() const noexcept { return reset_count_; }
-  void setGeneration(std::uint64_t generation) noexcept { generation_ = generation; }
   [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
 
  private:

@@ -15,7 +15,9 @@ MappingPipeline::MappingPipeline(MappingPipelineConfig config,
     : config_(config),
       validator_(config_.contract),
       point_filter_(config_.point_filter),
-      adapter_(std::move(wall_clock_seconds), std::move(generated_config_directory)) {}
+      adapter_(std::move(wall_clock_seconds), std::move(generated_config_directory)) {
+  RogMapAdapter::validateProductConfig(config_.rog);
+}
 
 void MappingPipeline::process(const ObservationInput& input) {
   const auto callback_started = std::chrono::steady_clock::now();
@@ -51,9 +53,8 @@ void MappingPipeline::process(const ObservationInput& input) {
     return;
   }
   if (decision == GenerationDecision::kResetAndAdoptNewGeneration) {
-    adapter_.reset(config_.rog);
+    adapter_.reset(config_.rog, input.public_frame_generation);
     generation_tracker_.adopt(input.public_frame_generation);
-    adapter_.setGeneration(input.public_frame_generation);
     diagnostics_.generation_reset_count = generation_tracker_.resetCount();
   }
   diagnostics_.generation = generation_tracker_.currentGeneration();

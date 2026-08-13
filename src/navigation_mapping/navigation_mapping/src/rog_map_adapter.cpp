@@ -1,6 +1,7 @@
 #include "navigation_mapping/rog_map_adapter.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -82,13 +83,41 @@ RogMapAdapter::RogMapAdapter(std::function<double()> wall_clock_seconds,
     : wall_clock_seconds_(std::move(wall_clock_seconds)),
       generated_config_directory_(std::move(generated_config_directory)) {}
 
-void RogMapAdapter::reset(const RogMapProductConfig& config) {
-  // Destroying the previous instance (if any) before constructing a new one
-  // exercises the P1 lifecycle patch: rog_map_vendor's per-instance init
-  // guard (see rog_map_vendor/UPSTREAM.md) is required for this to succeed
-  // more than once in the same process.
-  map_.reset();
+void RogMapAdapter::validateProductConfig(const RogMapProductConfig& config) {
+  if (!std::isfinite(config.resolution_m) || config.resolution_m <= 0.0) {
+    throw std::invalid_argument("RogMapAdapter: resolution_m must be finite and positive");
+  }
+  if (!std::isfinite(config.inflation_resolution_m) ||
+      config.inflation_resolution_m < config.resolution_m) {
+    throw std::invalid_argument(
+        "RogMapAdapter: inflation_resolution_m must be finite and >= resolution_m");
+  }
+  const double ratio = config.inflation_resolution_m / config.resolution_m;
+  const double integer_ratio = std::round(ratio);
+  if (integer_ratio < 1.0 ||
+      std::abs(ratio - integer_ratio) > 1e-9 * std::max(1.0, std::abs(ratio))) {
+    throw std::invalid_argument(
+        "RogMapAdapter: inflation_resolution_m must be an integer multiple of resolution_m");
+  }
+  for (const double size : config.local_map_size_m) {
+    if (!std::isfinite(size) || size <= 0.0) {
+      throw std::invalid_argument(
+          "RogMapAdapter: local_map_size_m values must be finite and positive");
+    }
+  }
+  if (config.inflation_step <= 0 || config.point_filt_num <= 0) {
+    throw std::invalid_argument(
+        "RogMapAdapter: inflation_step and point_filt_num must be positive");
+  }
+  if (!std::isfinite(config.ray_range_min_m) || !std::isfinite(config.ray_range_max_m) ||
+      config.ray_range_min_m < 0.0 || config.ray_range_max_m <= config.ray_range_min_m) {
+    throw std::invalid_argument(
+        "RogMapAdapter: ray range must be finite with 0 <= min < max");
+  }
+}
 
+void RogMapAdapter::reset(const RogMapProductConfig& config, std::uint64_t generation) {
+  validateProductConfig(config);
   const std::string config_path = generated_config_directory_ + "/rog_map_generated.yaml";
   {
     std::ofstream file(config_path, std::ios::out | std::ios::trunc);
@@ -99,9 +128,14 @@ void RogMapAdapter::reset(const RogMapProductConfig& config) {
     file << toUpstreamYaml(config);
   }
 
+  // Construct and initialize the replacement before publishing it. This keeps
+  // the previous map/generation intact if configuration or initialization
+  // fails, while still exercising the vendored per-instance lifecycle patch
+  // when the replacement is committed.
   auto new_map = std::make_unique<ConcreteRogMap>(wall_clock_seconds_);
   new_map->loadConfigAndInit(config_path);
   map_ = std::move(new_map);
+  generation_ = generation;
   ++reset_count_;
 }
 

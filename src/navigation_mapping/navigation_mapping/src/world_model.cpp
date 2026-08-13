@@ -25,8 +25,15 @@ CellState fromRogGridType(super_utils::GridType type) {
   }
 }
 
-rog_map::Vec3i layerHalfSize(const rog_map::Config& config, WorldLayer layer) {
-  return layer == WorldLayer::Probability ? config.half_map_size_i : config.inf_half_map_size_i;
+GridBounds probabilityBounds(const rog_map::ROGMap& map) {
+  const auto& config = map.getMapConfig();
+  rog_map::Vec3i center;
+  map.probMapPosToGlobalIndex(map.getLocalMapOrigin(), center);
+  const auto half_size = config.half_map_size_i;
+  return GridBounds{GridIndex3{center.x() - half_size.x(), center.y() - half_size.y(),
+                              center.z() - half_size.z()},
+                    GridIndex3{center.x() + half_size.x(), center.y() + half_size.y(),
+                               center.z() + half_size.z()}};
 }
 
 }  // namespace
@@ -45,16 +52,32 @@ std::uint64_t WorldModel::generation() const noexcept {
   return adapter_.generation();
 }
 
+bool WorldModel::isReady() const noexcept { return adapter_.isInitialized(); }
+
 CellState WorldModel::cellState(WorldLayer layer, const GridIndex3& index) const {
-  const auto& map = adapter_.map();
-  if (!bounds(layer).contains(index)) {
+  if (!isReady()) {
     return CellState::Unknown;
   }
+  const auto& map = adapter_.map();
   if (layer == WorldLayer::Probability) {
     auto rog_index = toRogIndex(index);
     return fromRogGridType(map.getGridType(rog_index));
   }
-  return fromRogGridType(map.getInfGridType(toRogPosition(gridToWorld(layer, index))));
+  const auto position = toRogPosition(gridToWorld(layer, index));
+  const auto inflated_type = map.getInfGridType(position);
+  if (inflated_type == super_utils::OCCUPIED) {
+    return CellState::Occupied;
+  }
+  if (inflated_type == super_utils::UNKNOWN || inflated_type == super_utils::OUT_OF_MAP) {
+    return CellState::Unknown;
+  }
+
+  // ROG's InfMap reports every non-occupied cell as KNOWN_FREE when unknown
+  // inflation is disabled. Recover the underlying probability semantics so
+  // WorldLayer::Inflated still honors the product UnknownPolicy contract.
+  rog_map::Vec3i probability_index;
+  map.probMapPosToGlobalIndex(position, probability_index);
+  return fromRogGridType(map.getGridType(probability_index));
 }
 
 GridIndex3 WorldModel::worldToGrid(WorldLayer layer, const Vec3& position) const {
@@ -88,13 +111,23 @@ double WorldModel::resolution(WorldLayer layer) const {
 
 GridBounds WorldModel::bounds(WorldLayer layer) const {
   const auto& map = adapter_.map();
-  const auto config = map.getMapConfig();
-  const auto origin = map.getLocalMapOrigin();
-  const auto center = worldToGrid(layer, Vec3(origin.x(), origin.y(), origin.z()));
-  const auto half_size = layerHalfSize(config, layer);
-  return GridBounds{
-      GridIndex3{center.x - half_size.x(), center.y - half_size.y(), center.z - half_size.z()},
-      GridIndex3{center.x + half_size.x(), center.y + half_size.y(), center.z + half_size.z()}};
+  const auto probability_bounds = probabilityBounds(map);
+  if (layer == WorldLayer::Probability) {
+    return probability_bounds;
+  }
+
+  // InfMap allocates a larger maintenance halo around the probability map.
+  // Project only the valid probability-cell centers into the inflated grid;
+  // the halo must never become a planner search domain.
+  rog_map::Vec3f min_position;
+  rog_map::Vec3f max_position;
+  map.probMapGlobalIndexToPos(toRogIndex(probability_bounds.min), min_position);
+  map.probMapGlobalIndexToPos(toRogIndex(probability_bounds.max), max_position);
+  rog_map::Vec3i min_index;
+  rog_map::Vec3i max_index;
+  map.infMapPosToGlobalIndex(min_position, min_index);
+  map.infMapPosToGlobalIndex(max_position, max_index);
+  return GridBounds{fromRogIndex(min_index), fromRogIndex(max_index)};
 }
 
 }  // namespace navigation_mapping

@@ -51,7 +51,7 @@ namespace rog_map {
 
         ~ROGMap() override = default;
 
-        rog_map::Config getMapConfig() const {
+        const rog_map::Config& getMapConfig() const noexcept {
             return cfg_;
         }
 

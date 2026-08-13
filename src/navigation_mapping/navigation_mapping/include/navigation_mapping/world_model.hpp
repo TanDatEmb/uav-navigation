@@ -45,6 +45,7 @@ class WorldModel final {
  public:
   explicit WorldModel(const RogMapAdapter& adapter);
 
+  [[nodiscard]] bool isReady() const noexcept;
   [[nodiscard]] CellState cellState(WorldLayer layer, const GridIndex3& index) const;
   [[nodiscard]] GridIndex3 worldToGrid(WorldLayer layer, const Vec3& position) const;
   [[nodiscard]] Vec3 gridToWorld(WorldLayer layer, const GridIndex3& index) const;

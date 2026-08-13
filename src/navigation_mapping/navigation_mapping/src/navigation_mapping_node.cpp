@@ -36,13 +36,27 @@ builtin_interfaces::msg::Time rosTimeFromNanoseconds(std::int64_t nanoseconds) {
 }
 
 bool cloudHasXyzFloatFields(const sensor_msgs::msg::PointCloud2& cloud) {
+  const std::uint64_t minimum_row_bytes =
+      static_cast<std::uint64_t>(cloud.point_step) * cloud.width;
+  if (cloud.point_step == 0 || cloud.row_step < minimum_row_bytes) {
+    return false;
+  }
+  const std::uint64_t required_bytes = static_cast<std::uint64_t>(cloud.row_step) * cloud.height;
+  if (required_bytes > cloud.data.size()) {
+    return false;
+  }
   bool has_x = false;
   bool has_y = false;
   bool has_z = false;
   for (const auto& field : cloud.fields) {
-    if (field.name == "x" && field.datatype == sensor_msgs::msg::PointField::FLOAT32) has_x = true;
-    if (field.name == "y" && field.datatype == sensor_msgs::msg::PointField::FLOAT32) has_y = true;
-    if (field.name == "z" && field.datatype == sensor_msgs::msg::PointField::FLOAT32) has_z = true;
+    const bool valid_xyz_field = field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+                                 field.count >= 1 &&
+                                 static_cast<std::uint64_t>(field.offset) + sizeof(float) <=
+                                     cloud.point_step;
+    if (!valid_xyz_field) continue;
+    if (field.name == "x") has_x = true;
+    if (field.name == "y") has_y = true;
+    if (field.name == "z") has_z = true;
   }
   return has_x && has_y && has_z;
 }
@@ -234,6 +248,7 @@ void NavigationMappingNode::onObservation(
   }
   if (!cloudHasXyzFloatFields(message->points)) {
     ++invalid_cloud_count_;
+    ++diagnostics.invalid_cloud_count;
     ++diagnostics.mapping_observation_rejection_count;
     return;
   }
@@ -250,11 +265,23 @@ void NavigationMappingNode::onObservation(
   const std::size_t point_count =
       static_cast<std::size_t>(message->points.width) * message->points.height;
   input.points_lidar_m.reserve(point_count);
-  sensor_msgs::PointCloud2ConstIterator<float> x(message->points, "x");
-  sensor_msgs::PointCloud2ConstIterator<float> y(message->points, "y");
-  sensor_msgs::PointCloud2ConstIterator<float> z(message->points, "z");
-  for (; x != x.end(); ++x, ++y, ++z) {
-    input.points_lidar_m.emplace_back(*x, *y, *z);
+  try {
+    sensor_msgs::PointCloud2ConstIterator<float> x(message->points, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> y(message->points, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> z(message->points, "z");
+    for (; x != x.end(); ++x, ++y, ++z) {
+      input.points_lidar_m.emplace_back(*x, *y, *z);
+    }
+  } catch (const std::exception& error) {
+    ++invalid_cloud_count_;
+    ++diagnostics.invalid_cloud_count;
+    ++diagnostics.processing_exception_count;
+    ++diagnostics.mapping_observation_rejection_count;
+    diagnostics.ros_pointcloud_decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - decode_started).count();
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                          "Malformed mapping PointCloud2; keeping node alive: %s", error.what());
+    return;
   }
   diagnostics.ros_pointcloud_decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - decode_started).count();

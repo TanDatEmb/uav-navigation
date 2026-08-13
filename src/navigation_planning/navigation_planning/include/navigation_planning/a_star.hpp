@@ -20,6 +20,7 @@ enum class UnknownPolicy {
 
 enum class SearchFailureCode {
   None,
+  WorldModelUnavailable,
   StartOutsideBounds,
   GoalOutsideBounds,
   StartOccupied,
@@ -47,6 +48,7 @@ struct SearchStatistics {
 struct SearchResult {
   bool success{false};
   SearchFailureCode failure{SearchFailureCode::None};
+  std::uint64_t world_generation{0};
   std::vector<navigation_mapping::GridIndex3> path;
   SearchStatistics statistics;
 };
@@ -100,6 +102,13 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     return result;
   };
 
+  if constexpr (requires { model.isReady(); }) {
+    if (!model.isReady()) {
+      result.failure = SearchFailureCode::WorldModelUnavailable;
+      return finish();
+    }
+  }
+  result.world_generation = model.generation();
   const auto start = model.worldToGrid(request.layer, request.start_world);
   const auto goal = model.worldToGrid(request.layer, request.goal_world);
   const auto bounds = model.bounds(request.layer);
@@ -117,9 +126,26 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     return state == navigation_mapping::CellState::KnownFree ||
            request.unknown_policy == UnknownPolicy::TreatUnknownAsTraversable;
   };
+
+  struct Record {
+    double g{std::numeric_limits<double>::infinity()};
+    navigation_mapping::GridIndex3 parent{};
+    navigation_mapping::CellState state{navigation_mapping::CellState::Unknown};
+    bool state_queried{false};
+    bool has_parent{false};
+    bool closed{false};
+  };
+  std::unordered_map<navigation_mapping::GridIndex3, Record, GridIndexHash> records;
+  records.reserve(1024);
   const auto queryState = [&](const navigation_mapping::GridIndex3& index) {
+    auto [record_it, inserted] = records.try_emplace(index);
+    if (!inserted && record_it->second.state_queried) {
+      return record_it->second.state;
+    }
     ++result.statistics.cell_state_queries;
-    return model.cellState(request.layer, index);
+    record_it->second.state = model.cellState(request.layer, index);
+    record_it->second.state_queried = true;
+    return record_it->second.state;
   };
   const auto start_state = queryState(start);
   if (!traversable(start_state)) {
@@ -142,12 +168,6 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     return finish();
   }
 
-  struct Record {
-    double g{std::numeric_limits<double>::infinity()};
-    navigation_mapping::GridIndex3 parent{};
-    bool has_parent{false};
-    bool closed{false};
-  };
   struct OpenEntry {
     navigation_mapping::GridIndex3 index;
     double g{0.0};
@@ -163,11 +183,43 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
   };
 
   std::priority_queue<OpenEntry, std::vector<OpenEntry>, OpenCompare> open;
-  std::unordered_map<navigation_mapping::GridIndex3, Record, GridIndexHash> records;
-  records.reserve(1024);
+  const double resolution = model.resolution(request.layer);
   const auto heuristic = [&](const navigation_mapping::GridIndex3& index) {
-    return (model.gridToWorld(request.layer, index) -
-            model.gridToWorld(request.layer, goal)).norm();
+    const int dx = index.x - goal.x;
+    const int dy = index.y - goal.y;
+    const int dz = index.z - goal.z;
+    return resolution * std::sqrt(static_cast<double>(dx * dx + dy * dy + dz * dz));
+  };
+  const auto transitionCost = [&](const navigation_mapping::GridIndex3& offset) {
+    return resolution * std::sqrt(static_cast<double>(offset.x * offset.x +
+                                                       offset.y * offset.y +
+                                                       offset.z * offset.z));
+  };
+  const auto transitionIsValid = [&](const navigation_mapping::GridIndex3& current,
+                                     const navigation_mapping::GridIndex3& offset) {
+    const int changed_axes = (offset.x != 0) + (offset.y != 0) + (offset.z != 0);
+    if (changed_axes <= 1) return true;
+
+    // A diagonal transition crosses every non-empty proper subset of its
+    // changed axes. Requiring those support cells to be traversable prevents
+    // 2-D corner cutting and its 3-D face/edge equivalents.
+    const int subset_count = (1 << changed_axes) - 1;
+    std::array<int, 3> axes{};
+    int axis_count = 0;
+    if (offset.x != 0) axes[axis_count++] = 0;
+    if (offset.y != 0) axes[axis_count++] = 1;
+    if (offset.z != 0) axes[axis_count++] = 2;
+    for (int subset = 1; subset < subset_count; ++subset) {
+      navigation_mapping::GridIndex3 support = current;
+      for (int bit = 0; bit < changed_axes; ++bit) {
+        if ((subset & (1 << bit)) == 0) continue;
+        if (axes[bit] == 0) support.x += offset.x;
+        if (axes[bit] == 1) support.y += offset.y;
+        if (axes[bit] == 2) support.z += offset.z;
+      }
+      if (!bounds.contains(support) || !traversable(queryState(support))) return false;
+    }
+    return true;
   };
   std::uint64_t sequence = 0;
   records[start].g = 0.0;
@@ -196,24 +248,25 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
       result.success = true;
       result.statistics.path_node_count = result.path.size();
       for (std::size_t i = 1; i < result.path.size(); ++i) {
-        result.statistics.path_length_m +=
-            (model.gridToWorld(request.layer, result.path[i]) -
-             model.gridToWorld(request.layer, result.path[i - 1]))
-                .norm();
+        const auto& previous = result.path[i - 1];
+        const auto& current_node = result.path[i];
+        result.statistics.path_length_m += transitionCost(
+            navigation_mapping::GridIndex3{current_node.x - previous.x,
+                                           current_node.y - previous.y,
+                                           current_node.z - previous.z});
       }
       return finish();
     }
 
-    const auto current_world = model.gridToWorld(request.layer, current.index);
+    const double current_g = current_record->second.g;
     for (const auto& offset : neighborOffsets()) {
       const auto neighbor = add(current.index, offset);
       if (!bounds.contains(neighbor)) continue;
       const auto state = queryState(neighbor);
       if (!traversable(state)) continue;
+      if (!transitionIsValid(current.index, offset)) continue;
       ++result.statistics.generated_nodes;
-      const double step_cost =
-          (model.gridToWorld(request.layer, neighbor) - current_world).norm();
-      const double candidate_g = current_record->second.g + step_cost;
+      const double candidate_g = current_g + transitionCost(offset);
       auto [record_it, inserted] = records.try_emplace(neighbor);
       if (record_it->second.closed || (!inserted && candidate_g >= record_it->second.g)) {
         continue;

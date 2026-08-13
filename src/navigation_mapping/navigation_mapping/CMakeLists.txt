@@ -37,7 +37,6 @@ target_include_directories(navigation_mapping_core SYSTEM PUBLIC ${PCL_INCLUDE_D
 target_link_libraries(navigation_mapping_core PUBLIC
   Eigen3::Eigen
   rog_map_vendor::rog_map_vendor
-  ${PCL_LIBRARIES}
 )
 ament_target_dependencies(navigation_mapping_core PUBLIC
   builtin_interfaces

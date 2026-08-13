@@ -197,6 +197,14 @@ comparison, but does not enable or invoke those outputs.
   path does not exist at runtime, the stream fails silently and cannot crash
   the mapper process.
 
+### 8. Exposed the ROG config by const reference (`include/rog_map/rog_map.h`)
+
+`ROGMap::getMapConfig()` now returns `const rog_map::Config&` instead of a
+full `Config` copy. `Config` owns large precomputed neighbor lattices, so a
+value-returning accessor made every product bounds query copy those vectors.
+The product `WorldModel` also avoids calling bounds from its per-cell query
+path.
+
 ### Deterministic-origin patch
 
 `SlidingMap::initSlidingMap` now initializes the local origin before the first

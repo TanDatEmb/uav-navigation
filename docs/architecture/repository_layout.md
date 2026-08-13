@@ -10,6 +10,8 @@ src/navigation_estimator/
 src/navigation_mapping/
   rog_map_vendor/      pinned ROG-Map navigation world-model dependency
   navigation_mapping/  product-owned mapper node (separate ROS 2 process)
+src/navigation_planning/
+  navigation_planning/  product-owned WorldModel consumer and A* baseline
 src/external/
   px4_msgs/            pinned PX4 message package
   livox_ros_driver2/   pinned Livox driver and message package
@@ -25,9 +27,11 @@ tools/runtime/           runner, monitor, report, process ownership, scenario
 docs/                    architecture, runtime validation, and ADRs
 ```
 
-FAST-LIO and `navigation_mapping` run as independent ROS 2 processes; see
-`docs/architecture/navigation_layers.md` for the RegistrationMap vs
-navigation-world-model distinction and the P1 dependency direction. Planner,
-safety, and mission packages remain intentionally absent. Configuration
+FAST-LIO and `navigation_mapping` run as independent ROS 2 processes. The
+current `navigation_planning` package is a library consumed in the same
+navigation execution context as `navigation_mapping`, not a separate ROS
+voxel-query process. See `docs/architecture/navigation_layers.md` for the
+RegistrationMap vs navigation-world-model distinction and dependency
+direction. Safety and mission packages remain intentionally absent. Configuration
 names, frame names, and static transforms have one documented source of
 truth; do not introduce duplicate workflow, observer, or report helpers.

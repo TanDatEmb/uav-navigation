@@ -24,5 +24,8 @@ See `docs/architecture/navigation_layers.md` for the full contract and
 and local patches (notably a lifecycle fix required for repeated map reset on
 public-frame-generation discontinuities).
 
-Out of scope for P1: SUPER planner, CIRI, MINCO, frontier exploration, ESDF,
-PX4 planning integration, and mission logic.
+P2 now contains a minimal product-owned `WorldModel` query facade and a
+deterministic A* reference consumer in `navigation_planning`. It remains a
+same-process library boundary over ROG-Map; no ROS per-voxel query service or
+duplicated planner map is introduced. CIRI, MINCO, PX4 planning integration,
+and mission logic remain out of scope.

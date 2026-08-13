@@ -31,7 +31,7 @@ navigation_mapping_node:
         occupied_inflation_enabled: true
         unknown_inflation_enabled: false
         esdf_enabled: false
-        frontier_enabled: true
+        frontier_enabled: false
         inflation_step: 1
         point_filt_num: 1
         ray_range_min_m: 0.3
@@ -44,9 +44,9 @@ navigation_mapping_node:
         reliability: best_effort
 
       visualization:
-        enabled: true
-        publish_unknown: true
-        publish_frontier: true
+        enabled: false
+        publish_unknown: false
+        publish_frontier: false
         publish_rate_hz: 10.0
         range_m: [15.0, 15.0, 6.0]
         max_points: 150000

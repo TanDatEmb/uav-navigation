@@ -46,7 +46,7 @@ rog_map::PointCloud singlePointCloud(const Eigen::Vector3d& point_odom) {
 
 RogMapAdapter makeAdapter(const std::string& tmp_name) {
   RogMapAdapter adapter([]() { return 0.0; }, testTmpDir(tmp_name));
-  adapter.reset(smallConfig());
+  adapter.reset(smallConfig(), 1);
   return adapter;
 }
 
@@ -143,7 +143,7 @@ TEST(RogMapAdapterGeometryTest, MapRemainsUsableAcrossManySlidesBeyondLocalExten
 TEST(RogMapAdapterGeometryTest, AdapterCanResetRepeatedlyInSameProcess) {
   auto adapter = makeAdapter("lifecycle");
   for (int generation = 0; generation < 5; ++generation) {
-    EXPECT_NO_THROW(adapter.reset(smallConfig()));
+    EXPECT_NO_THROW(adapter.reset(smallConfig(), static_cast<std::uint64_t>(generation + 2)));
     const T_odom_lidar sensor_pose{};
     EXPECT_NO_THROW(
         adapter.updateMap(singlePointCloud(Eigen::Vector3d(1.0, 0.0, 0.0)), sensor_pose));
@@ -155,14 +155,14 @@ TEST(RogMapAdapterGeometryTest, FirstFrameBootstrapIsPerMapGeneration) {
   auto adapter = makeAdapter("first_frame_generation");
   auto config = smallConfig();
   config.ray_range_min_m = 0.2;
-  adapter.reset(config);
+  adapter.reset(config, 2);
   const T_odom_lidar first_pose{Eigen::Vector3d(0.0, 0.0, 0.0),
                                 Eigen::Quaterniond::Identity()};
   adapter.updateMap(singlePointCloud(Eigen::Vector3d(2.0, 0.0, 0.0)), first_pose);
   ASSERT_TRUE(adapter.map().isKnownFree(rog_map::Vec3f(0.0F, 0.0F, 0.0F)))
       << "log_odds=" << adapter.map().getMapValue(rog_map::Vec3f(0.0F, 0.0F, 0.0F));
 
-  adapter.reset(config);
+  adapter.reset(config, 3);
   const T_odom_lidar second_pose{Eigen::Vector3d(3.0, 1.0, 0.0),
                                  Eigen::Quaterniond::Identity()};
   adapter.updateMap(singlePointCloud(Eigen::Vector3d(5.0, 1.0, 0.0)), second_pose);

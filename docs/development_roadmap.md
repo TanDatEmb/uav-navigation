@@ -250,18 +250,21 @@ Do not import the entire SUPER repository as runtime architecture.
 ## Integration architecture
 
 Do not use the upstream automatic ROS callback path as the product integration contract.
+The product mapping boundary is the atomic `LidarMappingObservation` on
+`/lio/mapping_observation`; `navigation_mapping` owns PointCloud2 decoding and
+ROG-Map updates.
 
 Use the core/manual API:
 
 ```text
-/lio/registered_points
+/lio/mapping_observation
         |
         v
 navigation_mapping_node
         |
         | validate timestamp/frame
-        | resolve exact LiDAR origin
-        | PointCloud2 -> ROG/PCL cloud
+        | decode the embedded PointCloud2 points
+        | apply the observation sensor pose
         v
 ROGMap::updateMap(cloud, pose)
 ```
@@ -270,19 +273,23 @@ Set the upstream automatic ROS callback path off and let `uav-navigation` own ti
 
 ## Input contract
 
-Primary scan input:
+Primary mapping input:
 
 ```text
-/lio/registered_points
-frame: lio_odom
+/lio/mapping_observation
+header.frame_id: lio_odom
+points.header.frame_id: livox_frame
 ```
 
-Ray origin:
+The observation carries the exact ray origin and generation:
 
 ```text
-lio_odom -> livox_frame
-at exactly cloud.header.stamp
+sensor_pose: ^lio_odom T_livox at header.stamp
+public_frame_generation: active LioPublicFrameGeneration
 ```
+
+`/lio/registered_points` remains estimator-owned registration output and is
+not a navigation-world-model input.
 
 Do not use latest odometry as the ray origin. Do not use `base_link` as a substitute for the LiDAR origin.
 

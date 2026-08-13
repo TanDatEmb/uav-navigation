@@ -16,6 +16,7 @@ find_package(PCL REQUIRED COMPONENTS common)
 # load_pcd_en feature, so link libpcl_io directly instead of requesting the
 # "io" PCL component.
 find_library(PCL_IO_LIBRARY NAMES pcl_io REQUIRED)
+find_library(PCL_COMMON_LIBRARY NAMES pcl_common REQUIRED)
 # uav-navigation local modification (see UPSTREAM.md): link the system
 # libyaml-cpp-dev/libfmt-dev packages instead of vendoring fmt's ~13 headers
 # and relying on catkin/ament yaml-cpp wrapper packages. Both ship first-class
@@ -54,7 +55,7 @@ target_include_directories(rog_map_vendor SYSTEM PUBLIC
 )
 target_link_libraries(rog_map_vendor PUBLIC
   Eigen3::Eigen
-  ${PCL_LIBRARIES}
+  ${PCL_COMMON_LIBRARY}
   ${PCL_IO_LIBRARY}
   yaml-cpp::yaml-cpp
   fmt::fmt

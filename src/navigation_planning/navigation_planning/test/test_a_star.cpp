@@ -150,6 +150,74 @@ TEST(AStarTest, InflatedLayerCanBlockAnOpenProbabilityGap) {
   EXPECT_EQ(result.failure, SearchFailureCode::NoPath);
 }
 
+TEST(AStarTest, CannotCutDiagonalBetweenTouchingOccupiedCells) {
+  TestGridModel model(2, 2, 1);
+  model.fill(navigation_mapping::WorldLayer::Probability,
+             navigation_mapping::CellState::KnownFree);
+  model.set(navigation_mapping::WorldLayer::Probability, {1, 0, 0},
+            navigation_mapping::CellState::Occupied);
+  model.set(navigation_mapping::WorldLayer::Probability, {0, 1, 0},
+            navigation_mapping::CellState::Occupied);
+  const auto result = AStar{}.searchForTest(
+      model, request(model, navigation_mapping::WorldLayer::Probability,
+                     UnknownPolicy::TreatUnknownAsBlocked, {0, 0, 0}, {1, 1, 0}));
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.failure, SearchFailureCode::NoPath);
+}
+
+TEST(AStarTest, CannotCutThreeDimensionalCorner) {
+  TestGridModel model(2, 2, 2);
+  model.fill(navigation_mapping::WorldLayer::Probability,
+             navigation_mapping::CellState::KnownFree);
+  for (const auto& index : {navigation_mapping::GridIndex3{1, 0, 0},
+                            navigation_mapping::GridIndex3{0, 1, 0},
+                            navigation_mapping::GridIndex3{0, 0, 1},
+                            navigation_mapping::GridIndex3{1, 1, 0},
+                            navigation_mapping::GridIndex3{1, 0, 1},
+                            navigation_mapping::GridIndex3{0, 1, 1}}) {
+    model.set(navigation_mapping::WorldLayer::Probability, index,
+              navigation_mapping::CellState::Occupied);
+  }
+  const auto result = AStar{}.searchForTest(
+      model, request(model, navigation_mapping::WorldLayer::Probability,
+                     UnknownPolicy::TreatUnknownAsBlocked, {0, 0, 0}, {1, 1, 1}));
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.failure, SearchFailureCode::NoPath);
+}
+
+TEST(AStarTest, ThreeDimensionalDetourChangesAltitude) {
+  TestGridModel model(5, 3, 3);
+  model.fill(navigation_mapping::WorldLayer::Probability,
+             navigation_mapping::CellState::KnownFree);
+  for (int y = 0; y < 3; ++y) {
+    model.set(navigation_mapping::WorldLayer::Probability, {2, y, 1},
+              navigation_mapping::CellState::Occupied);
+  }
+  const auto result = AStar{}.searchForTest(
+      model, request(model, navigation_mapping::WorldLayer::Probability,
+                     UnknownPolicy::TreatUnknownAsBlocked, {0, 1, 1}, {4, 1, 1}));
+  ASSERT_TRUE(result.success);
+  EXPECT_TRUE(std::any_of(result.path.begin(), result.path.end(),
+                          [](const auto& index) { return index.z != 1; }));
+}
+
+TEST(AStarTest, LargeSearchDoesNotDependOnUnorderedMapIteratorStability) {
+  TestGridModel model(80, 80, 1);
+  model.fill(navigation_mapping::WorldLayer::Probability,
+             navigation_mapping::CellState::KnownFree);
+  for (int y = 0; y < 80; ++y) {
+    if (y != 79) {
+      model.set(navigation_mapping::WorldLayer::Probability, {40, y, 0},
+                navigation_mapping::CellState::Occupied);
+    }
+  }
+  const auto result = AStar{}.searchForTest(
+      model, request(model, navigation_mapping::WorldLayer::Probability,
+                     UnknownPolicy::TreatUnknownAsBlocked, {0, 40, 0}, {79, 40, 0}));
+  ASSERT_TRUE(result.success);
+  EXPECT_GT(result.statistics.cell_state_queries, 1024U);
+}
+
 TEST(AStarTest, OutsideBoundsFailsDeterministically) {
   TestGridModel model(3, 1, 1);
   model.fill(navigation_mapping::WorldLayer::Probability, navigation_mapping::CellState::KnownFree);
