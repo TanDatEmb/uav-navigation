@@ -459,6 +459,10 @@ GridType ProbMap::getInfGridType(const Vec3f& pos) const {
     return inf_map_->getGridType(pos);
 }
 
+GridType ProbMap::getInfBaseGridType(const Vec3i& id_g) const {
+    return inf_map_->getBaseGridType(id_g);
+}
+
 double ProbMap::getMapValue(const Vec3f& pos) const {
     if (!insideLocalMap(pos)) {
         return 0;

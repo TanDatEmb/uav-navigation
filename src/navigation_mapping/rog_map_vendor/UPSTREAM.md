@@ -205,6 +205,17 @@ value-returning accessor made every product bounds query copy those vectors.
 The product `WorldModel` also avoids calling bounds from its per-cell query
 path.
 
+### 9. Exposed coarse inflated-cell knowledge (`include/rog_map/inf_map.h`, `include/rog_map/prob_map.h`, `src/rog_map/inf_map.cpp`, `src/rog_map/prob_map.cpp`)
+
+`WorldModel::Inflated` needs both ROG's inflated occupancy/unknown counters
+and the underlying `CounterMap` aggregate for the represented coarse cell.
+The narrow `InfMap::getBaseGridType()` query reuses the existing protected
+`CounterMap::getGridType()` logic without duplicating its thresholds. The
+`ProbMap` forwarding accessor keeps this vendor detail out of the product
+facade. It prevents a coarse inflated cell from being inferred from one
+probability voxel at its center; no mapping update or threshold semantics
+were changed.
+
 ### Deterministic-origin patch
 
 `SlidingMap::initSlidingMap` now initializes the local origin before the first

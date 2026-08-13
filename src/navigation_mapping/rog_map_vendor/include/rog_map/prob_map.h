@@ -111,6 +111,8 @@ namespace rog_map {
 
         GridType getInfGridType(const Vec3f &pos) const;
 
+        GridType getInfBaseGridType(const Vec3i &id_g) const;
+
         double getMapValue(const Vec3f &pos) const;
 
         void boxSearch(const Vec3f &_box_min, const Vec3f &_box_max,

@@ -21,6 +21,11 @@ enum class CellState {
   Occupied,
 };
 
+// Probability reports the fine ROG occupancy state. Inflated first applies
+// inflated occupied/unknown counters, then reports the underlying CounterMap
+// aggregate for the represented coarse cell; it never samples one probability
+// voxel at the coarse-cell center. Outside either valid map domain is Unknown.
+
 struct GridIndex3 {
   int x{0};
   int y{0};

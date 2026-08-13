@@ -72,12 +72,10 @@ CellState WorldModel::cellState(WorldLayer layer, const GridIndex3& index) const
     return CellState::Unknown;
   }
 
-  // ROG's InfMap reports every non-occupied cell as KNOWN_FREE when unknown
-  // inflation is disabled. Recover the underlying probability semantics so
-  // WorldLayer::Inflated still honors the product UnknownPolicy contract.
-  rog_map::Vec3i probability_index;
-  map.probMapPosToGlobalIndex(position, probability_index);
-  return fromRogGridType(map.getGridType(probability_index));
+  // ROG's inflation grid reports every non-occupied cell as KNOWN_FREE when
+  // unknown inflation is disabled. Query the CounterMap aggregate directly;
+  // sampling the inflated cell center would misclassify coarse cells.
+  return fromRogGridType(map.getInfBaseGridType(toRogIndex(index)));
 }
 
 GridIndex3 WorldModel::worldToGrid(WorldLayer layer, const Vec3& position) const {

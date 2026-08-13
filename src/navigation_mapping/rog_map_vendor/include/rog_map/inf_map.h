@@ -63,6 +63,11 @@ namespace rog_map {
 
         GridType getGridType(const Vec3i &id_g) const ;
 
+        // Query the CounterMap aggregate represented by one inflated cell.
+        // This is distinct from getGridType(), which reports inflated
+        // occupancy/unknown counters.
+        GridType getBaseGridType(const Vec3i &id_g) const;
+
     private:
         struct InfMapData {
             std::vector<int16_t> occ_inflate_cnt;
@@ -88,4 +93,3 @@ namespace rog_map {
         void resetOneCell(const int &hash_id) override;
     };
 }
-

@@ -33,6 +33,30 @@ navigation_mapping::ObservationInput observation() {
   return input;
 }
 
+navigation_mapping::ObservationInput rayObservation(const navigation_mapping::Vec3& sensor,
+                                                     const navigation_mapping::Vec3& endpoint,
+                                                     std::int32_t stamp = 1) {
+  navigation_mapping::ObservationInput input;
+  input.header_frame_id = "lio_odom";
+  input.points_frame_id = "livox_frame";
+  input.header_stamp.sec = stamp;
+  input.points_stamp = input.header_stamp;
+  input.sensor_pose.position.x = sensor.x();
+  input.sensor_pose.position.y = sensor.y();
+  input.sensor_pose.position.z = sensor.z();
+  input.sensor_pose.orientation.w = 1.0;
+  input.points_lidar_m = {navigation_mapping::Point3f{
+      endpoint.x() - sensor.x(), endpoint.y() - sensor.y(), endpoint.z() - sensor.z()}};
+  input.public_frame_generation = 1;
+  return input;
+}
+
+std::string testDirectory(const char* name) {
+  const std::string directory = std::string(NAVIGATION_PLANNING_TEST_TMP_DIR) + "/" + name;
+  std::filesystem::create_directories(directory);
+  return directory;
+}
+
 TEST(RogWorldModelIntegrationTest, MappingObservationFeedsAStarThroughWorldModel) {
   const std::string directory =
       std::string(NAVIGATION_PLANNING_TEST_TMP_DIR) + "/rog_world_model";
@@ -93,6 +117,119 @@ TEST(RogWorldModelIntegrationTest, InflatedLayerPreservesUnknownPolicyWithoutUnk
                            world.gridToWorld(navigation_mapping::WorldLayer::Inflated, unknown),
                            world.gridToWorld(navigation_mapping::WorldLayer::Inflated, unknown)});
   EXPECT_TRUE(traversable.success);
+}
+
+TEST(RogWorldModelIntegrationTest, InflatedMixedCoarseCellUsesCounterMapUnknownState) {
+  navigation_mapping::MappingPipeline pipeline(
+      config(), []() { return 0.0; }, testDirectory("rog_world_model_mixed_unknown"));
+  for (int i = 0; i < 2; ++i) {
+    pipeline.process(rayObservation(navigation_mapping::Vec3{0.0, 0.2, 0.2},
+                                    navigation_mapping::Vec3{3.0, 0.2, 0.2}, i + 1));
+  }
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const auto inflated = world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
+                                          navigation_mapping::Vec3{0.2, 0.2, 0.2});
+  const auto center_probability = world.worldToGrid(
+      navigation_mapping::WorldLayer::Probability,
+      world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated));
+
+  // The ray makes the center fine voxel known free, but only two of the
+  // eight fine voxels represented by this 0.40 m CounterMap cell known free.
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Probability, center_probability),
+            navigation_mapping::CellState::KnownFree);
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, inflated),
+            navigation_mapping::CellState::Unknown);
+
+  const auto blocked = AStar{}.search(
+      world, SearchRequest{navigation_mapping::WorldLayer::Inflated,
+                           UnknownPolicy::TreatUnknownAsBlocked,
+                           world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated),
+                           world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated)});
+  EXPECT_FALSE(blocked.success);
+  EXPECT_EQ(blocked.failure, SearchFailureCode::NoPath);
+
+  const auto traversable = AStar{}.search(
+      world, SearchRequest{navigation_mapping::WorldLayer::Inflated,
+                           UnknownPolicy::TreatUnknownAsTraversable,
+                           world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated),
+                           world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated)});
+  EXPECT_TRUE(traversable.success);
+}
+
+TEST(RogWorldModelIntegrationTest, InflatedCoarseCellUsesKnownFreeCounterMapAggregate) {
+  navigation_mapping::MappingPipeline pipeline(
+      config(), []() { return 0.0; }, testDirectory("rog_world_model_mixed_free"));
+  for (int i = 0; i < 2; ++i) {
+    pipeline.process(rayObservation(navigation_mapping::Vec3{0.0, 0.1, 0.1},
+                                    navigation_mapping::Vec3{3.0, 0.1, 0.1}, 1 + i * 3));
+    pipeline.process(rayObservation(navigation_mapping::Vec3{0.0, 0.3, 0.1},
+                                    navigation_mapping::Vec3{3.0, 0.3, 0.1}, 2 + i * 3));
+    pipeline.process(rayObservation(navigation_mapping::Vec3{0.0, 0.1, 0.3},
+                                    navigation_mapping::Vec3{3.0, 0.1, 0.3}, 3 + i * 3));
+  }
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const auto inflated = world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
+                                          navigation_mapping::Vec3{0.2, 0.2, 0.2});
+  const auto center_probability = world.worldToGrid(
+      navigation_mapping::WorldLayer::Probability,
+      world.gridToWorld(navigation_mapping::WorldLayer::Inflated, inflated));
+
+  // Three rays make six of the eight fine voxels known free. The center fine
+  // voxel remains unknown, so center sampling would return the wrong state.
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Probability, center_probability),
+            navigation_mapping::CellState::Unknown);
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, inflated),
+            navigation_mapping::CellState::KnownFree);
+}
+
+TEST(RogWorldModelIntegrationTest, InflatedOccupiedCounterOverridesUnderlyingAggregate) {
+  navigation_mapping::MappingPipeline pipeline(
+      config(), []() { return 0.0; }, testDirectory("rog_world_model_occupied_inflation"));
+  for (int i = 0; i < 2; ++i) {
+    pipeline.process(rayObservation(navigation_mapping::Vec3{-1.0, 0.2, 0.2},
+                                    navigation_mapping::Vec3{0.6, 0.2, 0.2}, i + 1));
+  }
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const auto inflated = world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
+                                          navigation_mapping::Vec3{0.2, 0.2, 0.2});
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, inflated),
+            navigation_mapping::CellState::Occupied);
+}
+
+TEST(RogWorldModelIntegrationTest, InflatedSameResolutionMatchesFineMapSemantics) {
+  auto same_resolution = config();
+  same_resolution.rog.inflation_resolution_m = 0.2;
+  navigation_mapping::MappingPipeline pipeline(
+      same_resolution, []() { return 0.0; }, testDirectory("rog_world_model_same_resolution"));
+  for (int i = 0; i < 2; ++i) {
+    pipeline.process(observation());
+  }
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const navigation_mapping::Vec3 position{1.0, 0.0, 0.0};
+  const auto probability = world.worldToGrid(navigation_mapping::WorldLayer::Probability, position);
+  const auto inflated = world.worldToGrid(navigation_mapping::WorldLayer::Inflated, position);
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Probability, probability),
+            navigation_mapping::CellState::KnownFree);
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, inflated),
+            navigation_mapping::CellState::KnownFree);
+}
+
+TEST(RogWorldModelIntegrationTest, InflatedUnknownInflationRemainsUnknown) {
+  auto unknown_inflation = config();
+  unknown_inflation.rog.unknown_inflation_enabled = true;
+  navigation_mapping::MappingPipeline pipeline(
+      unknown_inflation, []() { return 0.0; }, testDirectory("rog_world_model_unknown_inflation"));
+  pipeline.process(observation());
+
+  navigation_mapping::WorldModel world(pipeline.adapter());
+  const auto unknown = world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
+                                         navigation_mapping::Vec3{4.5, 0.2, 0.2});
+  EXPECT_EQ(world.cellState(navigation_mapping::WorldLayer::Inflated, unknown),
+            navigation_mapping::CellState::Unknown);
 }
 
 TEST(RogWorldModelIntegrationTest, InflatedBoundsExcludeRogMaintenanceHalo) {

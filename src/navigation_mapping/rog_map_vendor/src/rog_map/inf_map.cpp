@@ -296,6 +296,15 @@ namespace rog_map {
         }
     }
 
+    GridType InfMap::getBaseGridType(const Vec3i& id_g) const {
+        if (!insideLocalMap(id_g)) {
+            return OUT_OF_MAP;
+        }
+        Vec3i id_l;
+        globalIndexToLocalIndex(id_g, id_l);
+        return CounterMap::getGridType(getLocalIndexHash(id_l));
+    }
+
     GridType InfMap::getGridType(const Vec3f& pos) const {
         Vec3i id_g, id_l;
         // 1. check virtual ceil and ground
