@@ -31,10 +31,13 @@ struct VoxelAccumulator {
   std::size_t count{0};
 };
 
-VoxelKey voxelKeyOf(const Eigen::Vector3d& point, double voxel_size_m) {
-  return VoxelKey{static_cast<std::int64_t>(std::floor(point.x() / voxel_size_m)),
-                  static_cast<std::int64_t>(std::floor(point.y() / voxel_size_m)),
-                  static_cast<std::int64_t>(std::floor(point.z() / voxel_size_m))};
+VoxelKey voxelKeyOf(const Point3f& point, double voxel_size_m) {
+  const double x = static_cast<double>(point.x);
+  const double y = static_cast<double>(point.y);
+  const double z = static_cast<double>(point.z);
+  return VoxelKey{static_cast<std::int64_t>(std::floor(x / voxel_size_m)),
+                  static_cast<std::int64_t>(std::floor(y / voxel_size_m)),
+                  static_cast<std::int64_t>(std::floor(z / voxel_size_m))};
 }
 
 }  // namespace
@@ -43,44 +46,55 @@ MappingPointFilter::MappingPointFilter(MappingPointFilterConfig config)
     : config_(config) {}
 
 std::vector<Eigen::Vector3d> MappingPointFilter::filter(
-    const std::vector<Eigen::Vector3d>& points_lidar_m, MappingPointFilterStats* stats) const {
+    const std::vector<Point3f>& points_lidar_m, MappingPointFilterStats* stats) const {
   MappingPointFilterStats local_stats;
   local_stats.input_point_count = points_lidar_m.size();
 
-  std::vector<Eigen::Vector3d> range_filtered;
-  range_filtered.reserve(points_lidar_m.size());
+  std::vector<Eigen::Vector3d> output;
+  output.reserve(points_lidar_m.size());
   const bool range_guard_enabled =
       config_.minimum_range_m > 0.0 || config_.maximum_range_m > 0.0;
-  for (const Eigen::Vector3d& point : points_lidar_m) {
+  const auto acceptedPoint = [&](const Point3f& point) {
     if (!point.allFinite()) {
       ++local_stats.nonfinite_point_count;
-      continue;
+      return false;
     }
+    const Eigen::Vector3d point_double(static_cast<double>(point.x),
+                                       static_cast<double>(point.y),
+                                       static_cast<double>(point.z));
     if (range_guard_enabled) {
-      const double range_m = point.norm();
+      const double range_m = point_double.norm();
       if ((config_.minimum_range_m > 0.0 && range_m < config_.minimum_range_m) ||
           (config_.maximum_range_m > 0.0 && range_m > config_.maximum_range_m)) {
-        continue;
+        ++local_stats.range_filtered_point_count;
+        return false;
       }
     }
-    range_filtered.push_back(point);
-  }
-  local_stats.range_filtered_point_count =
-      local_stats.input_point_count - local_stats.nonfinite_point_count - range_filtered.size();
+    return true;
+  };
 
-  std::vector<Eigen::Vector3d> output;
   if (config_.voxel_size_m <= 0.0) {
-    output = std::move(range_filtered);
+    for (const Point3f& point : points_lidar_m) {
+      if (!acceptedPoint(point)) continue;
+      const Eigen::Vector3d point_double(static_cast<double>(point.x),
+                                         static_cast<double>(point.y),
+                                         static_cast<double>(point.z));
+      output.push_back(point_double);
+    }
   } else {
     // Centroid-per-voxel downsample, matching the estimator's own voxel
     // filter semantics (see fast_lio_core VoxelFilter) at a coarser,
     // mapping-specific resolution. Deliberately not shared code: this is the
     // mapping-side voxelization, not the estimator's.
     std::unordered_map<VoxelKey, VoxelAccumulator, VoxelKeyHash> accumulator;
-    accumulator.reserve(range_filtered.size());
-    for (const Eigen::Vector3d& point : range_filtered) {
+    accumulator.reserve(points_lidar_m.size());
+    for (const Point3f& point : points_lidar_m) {
+      if (!acceptedPoint(point)) continue;
+      const Eigen::Vector3d point_double(static_cast<double>(point.x),
+                                         static_cast<double>(point.y),
+                                         static_cast<double>(point.z));
       auto& entry = accumulator[voxelKeyOf(point, config_.voxel_size_m)];
-      entry.sum += point;
+      entry.sum += point_double;
       ++entry.count;
     }
     output.reserve(accumulator.size());

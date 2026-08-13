@@ -252,8 +252,7 @@ void NavigationMappingNode::onObservation(
   sensor_msgs::PointCloud2ConstIterator<float> y(message->points, "y");
   sensor_msgs::PointCloud2ConstIterator<float> z(message->points, "z");
   for (; x != x.end(); ++x, ++y, ++z) {
-    input.points_lidar_m.emplace_back(static_cast<double>(*x), static_cast<double>(*y),
-                                      static_cast<double>(*z));
+    input.points_lidar_m.emplace_back(*x, *y, *z);
   }
   diagnostics.ros_pointcloud_decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - decode_started).count();

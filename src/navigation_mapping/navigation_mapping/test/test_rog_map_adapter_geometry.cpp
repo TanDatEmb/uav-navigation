@@ -208,6 +208,7 @@ TEST(RogMapAdapterGeometryTest, IdenticalAcceptedInputsHaveIdenticalDigest) {
   const auto& second_diagnostics = second.lastDiagnostics();
   EXPECT_EQ(first.deterministicDigest(), second.deterministicDigest())
       << first.deterministicDigest() << " vs " << second.deterministicDigest();
+  EXPECT_EQ(first.deterministicDigest(), 9391570908457870517ULL);
   EXPECT_EQ(first_diagnostics.hit_candidate_count, second_diagnostics.hit_candidate_count);
   EXPECT_EQ(first_diagnostics.miss_candidate_count, second_diagnostics.miss_candidate_count);
   EXPECT_EQ(first_diagnostics.unique_hit_voxel_count,

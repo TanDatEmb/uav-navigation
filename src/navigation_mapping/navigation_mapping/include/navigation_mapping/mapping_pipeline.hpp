@@ -32,7 +32,7 @@ struct ObservationInput {
   // Already extracted XYZ points, in the sensor (lidar) frame. Extraction
   // from sensor_msgs::msg::PointCloud2 is a ROS-boundary concern and lives in
   // NavigationMappingNode, not here (mirrors fast_lio_core/fast_lio_ros split).
-  std::vector<Eigen::Vector3d> points_lidar_m;
+  std::vector<Point3f> points_lidar_m;
   std::uint64_t public_frame_generation{0};
 };
 

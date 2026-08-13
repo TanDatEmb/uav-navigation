@@ -1,11 +1,32 @@
 #pragma once
 
 #include <cstddef>
+#include <cmath>
 #include <vector>
 
 #include <Eigen/Core>
 
 namespace navigation_mapping {
+
+// Compact ROS-boundary representation for decoded PointCloud2 XYZ values.
+// The mapping filter deliberately widens components to double for range,
+// voxel-key, and centroid arithmetic so the existing map semantics remain
+// unchanged.
+struct Point3f {
+  float x{0.0F};
+  float y{0.0F};
+  float z{0.0F};
+
+  Point3f() = default;
+  Point3f(double x_value, double y_value, double z_value)
+      : x(static_cast<float>(x_value)),
+        y(static_cast<float>(y_value)),
+        z(static_cast<float>(z_value)) {}
+
+  [[nodiscard]] bool allFinite() const noexcept {
+    return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
+  }
+};
 
 struct MappingPointFilterConfig {
   // 0 or negative disables the guard.
@@ -30,7 +51,7 @@ class MappingPointFilter {
   explicit MappingPointFilter(MappingPointFilterConfig config = {});
 
   [[nodiscard]] std::vector<Eigen::Vector3d> filter(
-      const std::vector<Eigen::Vector3d>& points_lidar_m,
+      const std::vector<Point3f>& points_lidar_m,
       MappingPointFilterStats* stats = nullptr) const;
 
  private:

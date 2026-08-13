@@ -35,7 +35,7 @@ ObservationInput makeObservation(std::uint64_t generation, double obstacle_x) {
   input.header_stamp.nanosec = 0;
   input.points_stamp = input.header_stamp;
   input.sensor_pose.orientation.w = 1.0;
-  input.points_lidar_m = {Eigen::Vector3d(obstacle_x, 0.0, 0.0)};
+  input.points_lidar_m = {Point3f(obstacle_x, 0.0, 0.0)};
   input.public_frame_generation = generation;
   return input;
 }
