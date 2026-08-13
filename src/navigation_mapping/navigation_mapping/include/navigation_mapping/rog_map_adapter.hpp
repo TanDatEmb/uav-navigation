@@ -76,6 +76,8 @@ class RogMapAdapter {
   [[nodiscard]] std::uint64_t deterministicDigest() const;
   [[nodiscard]] std::size_t resetCount() const noexcept { return reset_count_; }
   [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+  // Monotonic accepted-update provenance. Equal occupancy after an update is
+  // still a new revision; callers must not treat it as a content digest.
   [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
   [[nodiscard]] double clearanceRadius() const noexcept { return clearance_radius_m_; }
 

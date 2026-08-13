@@ -1,10 +1,11 @@
-#include "navigation_mapping/navigation_mapping_node.hpp"
+#include "navigation_runtime/navigation_runtime_node.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -12,7 +13,10 @@
 #include <rclcpp/qos.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
-namespace navigation_mapping {
+#include "navigation_mapping/world_model.hpp"
+#include "navigation_planning/planner.hpp"
+
+namespace navigation_runtime {
 namespace {
 
 diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
@@ -20,6 +24,31 @@ diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
   result.key = std::move(key);
   result.value = std::move(value);
   return result;
+}
+
+std::int64_t timeNanoseconds(const builtin_interfaces::msg::Time& stamp) {
+  return static_cast<std::int64_t>(stamp.sec) * 1'000'000'000LL +
+         static_cast<std::int64_t>(stamp.nanosec);
+}
+
+const char* failureName(navigation_planning::PlanFailureCode code) {
+  using navigation_planning::PlanFailureCode;
+  switch (code) {
+    case PlanFailureCode::None: return "none";
+    case PlanFailureCode::WorldModelUnavailable: return "world_model_unavailable";
+    case PlanFailureCode::ClearanceUnavailable: return "clearance_unavailable";
+    case PlanFailureCode::InvalidState: return "invalid_state";
+    case PlanFailureCode::StartOutsideBounds: return "start_outside_bounds";
+    case PlanFailureCode::GoalOutsideBounds: return "goal_outside_bounds";
+    case PlanFailureCode::StartOccupied: return "start_occupied";
+    case PlanFailureCode::GoalOccupied: return "goal_occupied";
+    case PlanFailureCode::NoPath: return "no_path";
+    case PlanFailureCode::CorridorInfeasible: return "corridor_infeasible";
+    case PlanFailureCode::DynamicLimitsInfeasible: return "dynamic_limits_infeasible";
+    case PlanFailureCode::TrajectoryInvalid: return "trajectory_invalid";
+    case PlanFailureCode::WorldChanged: return "world_changed";
+  }
+  return "unknown";
 }
 
 builtin_interfaces::msg::Time rosTimeFromNanoseconds(std::int64_t nanoseconds) {
@@ -63,11 +92,24 @@ bool cloudHasXyzFloatFields(const sensor_msgs::msg::PointCloud2& cloud) {
 
 }  // namespace
 
-NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("navigation_mapping_node", options) {
+NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
+    : rclcpp::Node("navigation_runtime", options),
+      planner_([this]() {
+        navigation_planning::PlannerConfig config;
+        config.limits.max_velocity_mps = declare_parameter("navigation.planner.max_velocity_mps", 2.0);
+        config.limits.max_acceleration_mps2 =
+            declare_parameter("navigation.planner.max_acceleration_mps2", 3.0);
+        config.trajectory_sample_dt_s =
+            declare_parameter("navigation.planner.trajectory_sample_dt_s", 0.05);
+        config.corridor_sample_spacing_m =
+            declare_parameter("navigation.planner.corridor_sample_spacing_m", 0.0);
+        config.maximum_time_scaling_iterations = static_cast<int>(declare_parameter<std::int64_t>(
+            "navigation.planner.maximum_time_scaling_iterations", 8));
+        return config;
+      }()) {
   const bool mapping_enabled = declare_parameter("mapping.enabled", true);
 
-  MappingPipelineConfig pipeline_config;
+  navigation_mapping::MappingPipelineConfig pipeline_config;
   pipeline_config.contract.odom_frame_id = declare_parameter("mapping.frames.odom", std::string("lio_odom"));
   pipeline_config.contract.lidar_frame_id =
       declare_parameter("mapping.frames.lidar", std::string("livox_frame"));
@@ -125,18 +167,27 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
       "mapping.visualization.publish_rate_hz", 2.0);
   const std::string qos_reliability =
       declare_parameter("mapping.input_qos.reliability", std::string("best_effort"));
+  state_topic_ = declare_parameter("navigation.state.topic", std::string("/lio/odometry_propagated"));
+  state_max_age_s_ = declare_parameter("navigation.state.max_age_s", 0.5);
+  planning_frame_id_ = pipeline_config.contract.odom_frame_id;
 
   const std::string generated_config_directory =
       declare_parameter("mapping.generated_config_directory",
                         std::string("/tmp/navigation_mapping"));
   std::filesystem::create_directories(generated_config_directory);
 
-  pipeline_ = std::make_unique<MappingPipeline>(
+  pipeline_ = std::make_unique<navigation_mapping::MappingPipeline>(
       pipeline_config, [this]() { return get_clock()->now().seconds(); },
       generated_config_directory);
 
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "navigation_mapping/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  planning_diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "navigation_planning/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  trajectory_publisher_ = create_publisher<navigation_interfaces::msg::PlannedTrajectory>(
+      "navigation/trajectory", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  planned_path_publisher_ = create_publisher<nav_msgs::msg::Path>(
+      "navigation/visualization/planned_path", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
 
   // Diagnostics are a periodic snapshot, not part of the observation hot
   // path. Create this in the same group as map mutation so the plain
@@ -149,7 +200,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
 
   if (!mapping_enabled) {
     RCLCPP_INFO(get_logger(),
-                "mapping.enabled is false; navigation_mapping_node running idle "
+                "mapping.enabled is false; navigation_runtime running idle "
                 "(no subscription, no map mutation)");
     return;
   }
@@ -174,6 +225,15 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
           [this](const navigation_interfaces::msg::LidarMappingObservation::ConstSharedPtr&
                      message) { onObservation(message); },
           subscription_options);
+
+  odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+      state_topic_, rclcpp::QoS{rclcpp::KeepLast{10}}.reliable(),
+      [this](const nav_msgs::msg::Odometry::ConstSharedPtr message) { onOdometry(message); },
+      subscription_options);
+  goal_subscription_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+      "navigation/goal", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable(),
+      [this](const geometry_msgs::msg::PoseStamped::ConstSharedPtr message) { onGoal(message); },
+      subscription_options);
 
   if (visualization_enabled_) {
     const auto qos = rclcpp::SensorDataQoS().keep_last(1);
@@ -204,7 +264,7 @@ NavigationMappingNode::NavigationMappingNode(const rclcpp::NodeOptions& options)
   }
 }
 
-void NavigationMappingNode::onObservation(
+void NavigationRuntimeNode::onObservation(
     const navigation_interfaces::msg::LidarMappingObservation::ConstSharedPtr& message) {
   const auto callback_started = std::chrono::steady_clock::now();
   const auto callback_wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -244,7 +304,7 @@ void NavigationMappingNode::onObservation(
     return;
   }
 
-  ObservationInput input;
+  navigation_mapping::ObservationInput input;
   input.header_frame_id = message->header.frame_id;
   input.header_stamp = message->header.stamp;
   input.points_frame_id = message->points.header.frame_id;
@@ -296,7 +356,155 @@ void NavigationMappingNode::onObservation(
       std::chrono::steady_clock::now() - callback_started).count();
 }
 
-sensor_msgs::msg::PointCloud2 NavigationMappingNode::makePointCloud(
+void NavigationRuntimeNode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
+  const auto& position = message->pose.pose.position;
+  const auto& velocity = message->twist.twist.linear;
+  if (message->header.frame_id != planning_frame_id_ || timeNanoseconds(message->header.stamp) <= 0 ||
+      !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+      !std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "Rejecting navigation state with invalid frame, epoch, or values");
+    return;
+  }
+  latest_odometry_ = *message;
+}
+
+void NavigationRuntimeNode::onGoal(
+    const geometry_msgs::msg::PoseStamped::ConstSharedPtr& message) {
+  navigation_planning::PlanResult result;
+  const auto header = message->header;
+  if (header.frame_id != planning_frame_id_ || timeNanoseconds(header.stamp) <= 0 ||
+      !std::isfinite(message->pose.position.x) || !std::isfinite(message->pose.position.y) ||
+      !std::isfinite(message->pose.position.z)) {
+    result.failure_code = navigation_planning::PlanFailureCode::InvalidState;
+  } else if (!latest_odometry_.has_value()) {
+    result.failure_code = navigation_planning::PlanFailureCode::InvalidState;
+  } else {
+    const auto& odometry = *latest_odometry_;
+    const auto age_ns = get_clock()->now().nanoseconds() - timeNanoseconds(odometry.header.stamp);
+    const auto& position = odometry.pose.pose.position;
+    const auto& velocity = odometry.twist.twist.linear;
+    if (age_ns < 0 || !std::isfinite(state_max_age_s_) || state_max_age_s_ <= 0.0 ||
+        age_ns > static_cast<std::int64_t>(state_max_age_s_ * 1e9)) {
+      result.failure_code = navigation_planning::PlanFailureCode::InvalidState;
+    } else {
+      navigation_planning::VehicleState state;
+      state.position = navigation_mapping::Vec3{position.x, position.y, position.z};
+      state.velocity = navigation_mapping::Vec3{velocity.x, velocity.y, velocity.z};
+      // Odometry has no authoritative linear acceleration field; zero is the
+      // only safe value accepted by the current planner state contract.
+      state.acceleration = navigation_mapping::Vec3::Zero();
+      navigation_planning::Goal goal;
+      goal.position = navigation_mapping::Vec3{message->pose.position.x,
+                                               message->pose.position.y,
+                                               message->pose.position.z};
+      navigation_mapping::WorldModel world(pipeline_->adapter());
+      result = planner_.plan(state, goal, world);
+    }
+  }
+
+  ++plan_count_;
+  if (result.success) {
+    ++plan_success_count_;
+  } else {
+    ++plan_failure_count_;
+  }
+  last_failure_code_ = result.failure_code;
+  trajectory_publisher_->publish(makeTrajectoryMessage(result, header));
+  if (result.success) {
+    planned_path_publisher_->publish(makePathMessage(result, header));
+  }
+  publishPlanningDiagnostics(result);
+}
+
+navigation_interfaces::msg::PlannedTrajectory NavigationRuntimeNode::makeTrajectoryMessage(
+    const navigation_planning::PlanResult& result, const std_msgs::msg::Header& header) const {
+  navigation_interfaces::msg::PlannedTrajectory message;
+  message.header = header;
+  message.success = result.success;
+  message.failure_code = static_cast<std::uint8_t>(result.failure_code);
+  message.world_generation = result.world_generation;
+  message.world_revision = result.world_revision;
+  message.duration_s = result.trajectory.duration_s;
+  for (const auto& point : result.trajectory.points) {
+    message.time_from_start.push_back(point.time_from_start_s);
+    geometry_msgs::msg::Point position;
+    position.x = point.position.x();
+    position.y = point.position.y();
+    position.z = point.position.z();
+    message.position.push_back(position);
+    geometry_msgs::msg::Vector3 velocity;
+    velocity.x = point.velocity.x();
+    velocity.y = point.velocity.y();
+    velocity.z = point.velocity.z();
+    message.velocity.push_back(velocity);
+    geometry_msgs::msg::Vector3 acceleration;
+    acceleration.x = point.acceleration.x();
+    acceleration.y = point.acceleration.y();
+    acceleration.z = point.acceleration.z();
+    message.acceleration.push_back(acceleration);
+  }
+  return message;
+}
+
+nav_msgs::msg::Path NavigationRuntimeNode::makePathMessage(
+    const navigation_planning::PlanResult& result, const std_msgs::msg::Header& header) const {
+  nav_msgs::msg::Path path;
+  path.header = header;
+  path.poses.reserve(result.trajectory.points.size());
+  for (const auto& point : result.trajectory.points) {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header = header;
+    pose.header.stamp = header.stamp;
+    pose.pose.position.x = point.position.x();
+    pose.pose.position.y = point.position.y();
+    pose.pose.position.z = point.position.z();
+    pose.pose.orientation.w = 1.0;
+    path.poses.push_back(pose);
+  }
+  return path;
+}
+
+void NavigationRuntimeNode::publishPlanningDiagnostics(
+    const navigation_planning::PlanResult& result) {
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = get_clock()->now();
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_planning/planner";
+  status.hardware_id = "navigation_runtime";
+  status.level = result.success ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                                : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  status.message = result.success ? "trajectory generated" : failureName(result.failure_code);
+  const auto& statistics = result.statistics;
+  status.values = {
+      keyValue("plan_count", std::to_string(plan_count_)),
+      keyValue("success_count", std::to_string(plan_success_count_)),
+      keyValue("failure_count", std::to_string(plan_failure_count_)),
+      keyValue("last_failure_code", failureName(last_failure_code_)),
+      keyValue("world_generation", std::to_string(result.world_generation)),
+      keyValue("world_revision", std::to_string(result.world_revision)),
+      keyValue("planning_path_search_us", std::to_string(statistics.search.search_time_us)),
+      keyValue("planning_corridor_us", std::to_string(statistics.corridor.corridor_time_us)),
+      keyValue("planning_trajectory_optimization_us",
+               std::to_string(statistics.trajectory_optimization.optimization_time_us)),
+      keyValue("planning_total_us", std::to_string(statistics.total_planning_time_us)),
+      keyValue("expanded_search_nodes", std::to_string(statistics.search.expanded_nodes)),
+      keyValue("corridor_checked_samples",
+               std::to_string(statistics.corridor.checked_sample_count)),
+      keyValue("trajectory_samples",
+               std::to_string(statistics.trajectory_optimization.sampled_point_count)),
+      keyValue("trajectory_duration_s",
+               std::to_string(statistics.trajectory_optimization.duration_s)),
+      keyValue("maximum_velocity_mps",
+               std::to_string(statistics.trajectory_optimization.maximum_velocity_mps)),
+      keyValue("maximum_acceleration_mps2",
+               std::to_string(statistics.trajectory_optimization.maximum_acceleration_mps2)),
+  };
+  array.status.push_back(status);
+  planning_diagnostics_publisher_->publish(array);
+}
+
+sensor_msgs::msg::PointCloud2 NavigationRuntimeNode::makePointCloud(
     const rog_map::vec_E<rog_map::Vec3f>& points,
     const builtin_interfaces::msg::Time& stamp) const {
   sensor_msgs::msg::PointCloud2 cloud;
@@ -331,7 +539,7 @@ sensor_msgs::msg::PointCloud2 NavigationMappingNode::makePointCloud(
   return cloud;
 }
 
-void NavigationMappingNode::publishMapVisualization() {
+void NavigationRuntimeNode::publishMapVisualization() {
   if (!visualization_enabled_ || !pipeline_->adapter().isInitialized()) {
     return;
   }
@@ -448,7 +656,7 @@ void NavigationMappingNode::publishMapVisualization() {
   }
 }
 
-void NavigationMappingNode::publishDiagnostics() {
+void NavigationRuntimeNode::publishDiagnostics() {
   const auto& diagnostics = pipeline_->diagnostics();
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = get_clock()->now();
@@ -562,4 +770,4 @@ void NavigationMappingNode::publishDiagnostics() {
   diagnostics_publisher_->publish(array);
 }
 
-}  // namespace navigation_mapping
+}  // namespace navigation_runtime

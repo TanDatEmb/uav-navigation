@@ -56,6 +56,9 @@ class WorldModel final {
   [[nodiscard]] Vec3 gridToWorld(WorldLayer layer, const GridIndex3& index) const;
   [[nodiscard]] double resolution(WorldLayer layer) const;
   [[nodiscard]] GridBounds bounds(WorldLayer layer) const;
+  // Generation changes only when the public estimator frame generation
+  // resets the map. Revision increments once for every accepted map update;
+  // it is provenance, not an occupancy-content digest.
   [[nodiscard]] std::uint64_t generation() const noexcept;
   [[nodiscard]] std::uint64_t revision() const noexcept;
   [[nodiscard]] double clearanceRadius() const noexcept;

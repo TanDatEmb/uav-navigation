@@ -8,12 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
-find_package(diagnostic_msgs REQUIRED)
-find_package(navigation_interfaces REQUIRED)
 find_package(rog_map_vendor REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
 
@@ -44,36 +40,16 @@ ament_target_dependencies(navigation_mapping_core PUBLIC
 )
 target_compile_options(navigation_mapping_core PRIVATE -Wall -Wextra)
 
-add_library(navigation_mapping_node_lib
-  src/navigation_mapping_node.cpp
-)
-target_compile_features(navigation_mapping_node_lib PUBLIC cxx_std_20)
-target_link_libraries(navigation_mapping_node_lib PUBLIC navigation_mapping_core)
-ament_target_dependencies(navigation_mapping_node_lib PUBLIC
-  rclcpp
-  sensor_msgs
-  diagnostic_msgs
-  navigation_interfaces
-)
-target_compile_options(navigation_mapping_node_lib PRIVATE -Wall -Wextra)
-
-add_executable(navigation_mapping_node src/main.cpp)
-target_link_libraries(navigation_mapping_node navigation_mapping_node_lib)
-
 install(
   DIRECTORY include/
   DESTINATION include
 )
 install(
-  TARGETS navigation_mapping_core navigation_mapping_node_lib
+  TARGETS navigation_mapping_core
   EXPORT navigation_mappingTargets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
-)
-install(
-  TARGETS navigation_mapping_node
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 install(
   EXPORT navigation_mappingTargets
@@ -83,8 +59,7 @@ install(
 )
 ament_export_targets(navigation_mappingTargets HAS_LIBRARY_TARGET)
 # PCL intentionally not re-exported; see rog_map_vendor/CMakeLists.txt for why.
-ament_export_dependencies(Eigen3 rog_map_vendor builtin_interfaces geometry_msgs
-  rclcpp sensor_msgs diagnostic_msgs navigation_interfaces)
+ament_export_dependencies(Eigen3 rog_map_vendor builtin_interfaces geometry_msgs)
 ament_export_include_directories(include)
 
 if(BUILD_TESTING)

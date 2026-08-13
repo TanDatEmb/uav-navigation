@@ -3,10 +3,8 @@
   <name>navigation_mapping</name>
   <version>0.1.0</version>
   <description>
-    Product-owned navigation world-model mapper (P1). Subscribes to the
-    LidarMappingObservation contract from FAST-LIO and updates the vendored
-    ROG-Map local occupancy map. See docs/architecture/navigation_layers.md
-    for the RegistrationMap vs navigation world-model distinction.
+    Product-owned synchronous navigation world-model core. The ROS runtime
+    composition boundary lives in navigation_runtime.
   </description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
@@ -14,12 +12,8 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>eigen</depend>
-  <depend>rclcpp</depend>
-  <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>builtin_interfaces</depend>
-  <depend>diagnostic_msgs</depend>
-  <depend>navigation_interfaces</depend>
   <depend>rog_map_vendor</depend>
   <depend>libpcl-all-dev</depend>
 

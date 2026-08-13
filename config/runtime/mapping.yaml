@@ -1,4 +1,4 @@
-# navigation_mapping_node runtime parameters.
+# navigation_runtime runtime parameters.
 #
 # This is the navigation world-model configuration surface, distinct from
 # fast_lio's own internal "mapping.*" parameters in dataset.yaml/sim.yaml
@@ -6,7 +6,7 @@
 # docs/architecture/navigation_layers.md, ADR-008).
 #
 # Vendor policy is kept internal to navigation_mapping.
-navigation_mapping_node:
+navigation_runtime:
   ros__parameters:
     mapping:
       enabled: true
@@ -43,3 +43,14 @@ navigation_mapping_node:
         publish_rate_hz: 10.0
         range_m: [15.0, 15.0, 6.0]
         max_points: 150000
+
+    navigation:
+      state:
+        topic: /lio/odometry_propagated
+        max_age_s: 0.5
+      planner:
+        max_velocity_mps: 2.0
+        max_acceleration_mps2: 3.0
+        trajectory_sample_dt_s: 0.05
+        corridor_sample_spacing_m: 0.0
+        maximum_time_scaling_iterations: 8

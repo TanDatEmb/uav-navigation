@@ -227,14 +227,16 @@ def _mapping_params(
     *,
     interactive: bool = False,
     frontier_debug: bool = False,
+    simulation: bool = False,
 ) -> Path:
     """Copy the product-owned navigation_mapping parameter block."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or "navigation_mapping_node" not in value:
-        raise ValueError(f"runtime config is missing navigation_mapping_node: {source}")
-    parameters = value["navigation_mapping_node"]
+    if not isinstance(value, dict) or "navigation_runtime" not in value:
+        raise ValueError(f"runtime config is missing navigation_runtime: {source}")
+    parameters = value["navigation_runtime"]
     ros_parameters = parameters.setdefault("ros__parameters", {})
     mapping = ros_parameters.setdefault("mapping", {})
+    navigation = ros_parameters.setdefault("navigation", {})
     input_parameters = mapping.setdefault("input", {})
     map_parameters = mapping.setdefault("map", {})
     visualization_parameters = mapping.setdefault("visualization", {})
@@ -251,9 +253,12 @@ def _mapping_params(
     visualization_parameters["enabled"] = interactive
     visualization_parameters["publish_unknown"] = interactive
     visualization_parameters["publish_frontier"] = frontier_debug
+    if simulation:
+        simulation_parameters = load_config("sim.yaml").get("navigation", {})
+        navigation["collision"] = simulation_parameters.get("collision", {})
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
-        yaml.safe_dump({"navigation_mapping_node": parameters}, sort_keys=False),
+        yaml.safe_dump({"navigation_runtime": parameters}, sort_keys=False),
         encoding="utf-8",
     )
     _write_runtime(
@@ -423,7 +428,7 @@ def run_dataset(
         session.start(
             "mapping",
             _ros_shell([
-                "ros2", "launch", "navigation_bringup", "navigation_mapping.launch.py",
+                "ros2", "launch", "navigation_bringup", "navigation_runtime.launch.py",
                 f"config_file:={mapping_config}", "use_sim_time:=false",
             ], enable_rviz=enable_rviz),
             cwd=ROOT,
@@ -548,7 +553,7 @@ def run_sim(headless: bool) -> int:
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
         mapping_config = _mapping_params(
-            session, RUNTIME_CONFIG / "mapping.yaml", interactive=not headless
+        session, RUNTIME_CONFIG / "mapping.yaml", interactive=not headless, simulation=True
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -587,7 +592,7 @@ def run_sim(headless: bool) -> int:
             "--params-file", str(ros_config), "-p", "use_sim_time:=true",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("mapping", _ros_shell([
-            "ros2", "launch", "navigation_bringup", "navigation_mapping.launch.py",
+            "ros2", "launch", "navigation_bringup", "navigation_runtime.launch.py",
             f"config_file:={mapping_config}", "use_sim_time:=true",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("lio", _ros_shell([

@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # P1 architectural requirement: navigation_mapping runs as a separate ROS 2
+    # Navigation runtime runs as a separate ROS 2
     # process from fast_lio_node. It must never be included inside
     # fast_lio.launch.py's process/container; compose the two launch files
     # from a parent launch description instead.
@@ -13,13 +13,13 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "config_file",
-                description="Path to the navigation_mapping_node parameter YAML.",
+                description="Path to the navigation_runtime parameter YAML.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             Node(
-                package="navigation_mapping",
-                executable="navigation_mapping_node",
-                name="navigation_mapping_node",
+                package="navigation_runtime",
+                executable="navigation_runtime_node",
+                name="navigation_runtime",
                 output="screen",
                 parameters=[
                     LaunchConfiguration("config_file"),

@@ -298,9 +298,17 @@ class AStar final {
   // Deterministic grid-model hook used by unit tests; production consumers
   // call search(WorldModel, ...), so no runtime polymorphism is required.
   template <typename Model>
+  [[nodiscard]] SearchResult searchModel(const Model& model,
+                                         const SearchRequest& request) const {
+    return detail::searchModel(model, request);
+  }
+
+  // Compatibility wrapper for existing geometry tests. Production code uses
+  // the implementation-neutral searchModel hook above.
+  template <typename Model>
   [[nodiscard]] SearchResult searchForTest(const Model& model,
                                            const SearchRequest& request) const {
-    return detail::searchModel(model, request);
+    return searchModel(model, request);
   }
 };
 

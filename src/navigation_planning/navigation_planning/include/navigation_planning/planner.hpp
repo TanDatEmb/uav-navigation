@@ -257,7 +257,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
   request.unknown_policy = UnknownPolicy::TreatUnknownAsBlocked;
   request.start_world = state.position;
   request.goal_world = goal.position;
-  const auto search = AStar{}.searchForTest(world, request);
+  const auto search = AStar{}.searchModel(world, request);
   result.statistics.search = search.statistics;
   result.world_generation = search.world_generation;
   result.world_revision = search.world_revision;

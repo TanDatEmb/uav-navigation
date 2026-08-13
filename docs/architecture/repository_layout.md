@@ -9,7 +9,9 @@ src/navigation_estimator/
   fast_lio_tools/     offline use of the same pipeline
 src/navigation_mapping/
   rog_map_vendor/      pinned ROG-Map navigation world-model dependency
-  navigation_mapping/  product-owned mapper node (separate ROS 2 process)
+  navigation_mapping/  product-owned synchronous world-model core
+src/navigation_runtime/
+  navigation_runtime/  single ROS composition boundary for mapping and planning
 src/navigation_planning/
   navigation_planning/  product-owned WorldModel consumer and A* baseline
 src/external/
@@ -21,16 +23,16 @@ src/px4_interface/     PX4 ingress and external-odometry bridge
 src/navigation_bringup/ launch and visualization composition
 src/uav_description/     sensor-frame source of truth
 src/uav_simulation/      Gazebo Harmonic simulation assets
-config/runtime/          common, dataset, simulation, offboard, and (P1)
-                         mapping.yaml navigation_mapping_node contracts
+config/runtime/          common, dataset, simulation, offboard, and mapping.yaml
+                         navigation_runtime contracts
 tools/runtime/           runner, monitor, report, process ownership, scenario
 docs/                    architecture, runtime validation, and ADRs
 ```
 
-FAST-LIO and `navigation_mapping` run as independent ROS 2 processes. The
-current `navigation_planning` package is a library consumed in the same
-navigation execution context as `navigation_mapping`, not a separate ROS
-voxel-query process. See `docs/architecture/navigation_layers.md` for the
+FAST-LIO and `navigation_runtime` run as independent ROS 2 processes. The
+runtime owns one `MappingPipeline`/`WorldModel` instance and calls the
+`navigation_planning` library directly, not through a separate ROS voxel-query
+process. See `docs/architecture/navigation_layers.md` for the
 RegistrationMap vs navigation-world-model distinction and dependency
 direction. Safety and mission packages remain intentionally absent. Configuration
 names, frame names, and static transforms have one documented source of
