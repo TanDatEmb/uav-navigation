@@ -59,9 +59,6 @@ fast_lio:
         absolute_map_point_guard: 250000
     output:
       publish_registered_points: false
-      # P1: gated LidarMappingObservation for navigation_mapping (see
-      # docs/architecture/navigation_layers.md). Disabled by default;
-      # dataset scenarios exercising the mapper enable this explicitly.
       mapping_observation:
         enabled: true
     propagated_odometry:
@@ -69,8 +66,6 @@ fast_lio:
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      # At 10 Hz, 250 ms permits one delayed correction without allowing a
-      # sustained estimator stall to masquerade as healthy propagation.
       maximum_correction_age_ns: 250000000
     runtime:
       imu_queue_capacity: 4096

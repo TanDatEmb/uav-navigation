@@ -154,6 +154,16 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertIn("export PX4_PARAM_SIM_GZ_EN_BARO=1", launcher)
 
+    def test_simulation_profiles_separate_headless_and_interactive_manual_control(self) -> None:
+        self.assertEqual(
+            runner._px4_manual_control_mode(True),
+            runner.PX4_HEADLESS_COM_RC_IN_MODE,
+        )
+        self.assertEqual(
+            runner._px4_manual_control_mode(False),
+            runner.PX4_INTERACTIVE_COM_RC_IN_MODE,
+        )
+
     def test_replay_and_simulation_preserve_propagation_recovery_headroom(self) -> None:
         for config_name in ("sim.yaml", "dataset.yaml"):
             propagated = runner.load_config(config_name)["fast_lio"]["ros__parameters"]["propagated_odometry"]

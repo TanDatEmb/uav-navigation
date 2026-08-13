@@ -1,9 +1,9 @@
-# ADR-010: ROG-Map as an independent navigation world model (P1)
+# ADR-010: ROG-Map as an independent navigation world model
 
 **Status:** accepted.
 
-P1 introduces `navigation_mapping` (product code) and `rog_map_vendor`
-(pinned upstream ROG-Map, `hku-mars/SUPER` commit
+This decision establishes `navigation_mapping` (product code) and
+`rog_map_vendor` (pinned upstream ROG-Map, `hku-mars/SUPER` commit
 `2ad3419c127a617c6d7df6925e81a14175a9c096`) as an independent local
 navigation world model. It consumes `navigation_interfaces/msg/LidarMappingObservation`,
 a mapping-grade (deskewed, common-filtered, not estimator-voxelized)
@@ -24,8 +24,9 @@ See `docs/architecture/navigation_layers.md` for the full contract and
 and local patches (notably a lifecycle fix required for repeated map reset on
 public-frame-generation discontinuities).
 
-P2 now contains a minimal product-owned `WorldModel` query facade and a
-deterministic A* reference consumer in `navigation_planning`, composed by
+The current implementation also contains a minimal product-owned `WorldModel`
+query facade and a deterministic A* reference consumer in
+`navigation_planning`, composed by
 `navigation_runtime` with the mapping pipeline. It remains a same-process
 library boundary over ROG-Map; no ROS per-voxel query service or duplicated
 planner map is introduced. CIRI, MINCO, PX4 planning integration, and mission

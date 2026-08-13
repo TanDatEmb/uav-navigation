@@ -1,13 +1,13 @@
 # Navigation layers
 
-The product boundary is the estimator, its PX4 integration, and (P1) an
-independent navigation world model:
+The product boundary is the estimator, its PX4 integration, and an independent
+navigation world model:
 
 ```text
 LiDAR + IMU -> FastLioPipeline -> corrected/propagated odometry
                               -> registration map (internal)
                               -> PX4 health-gated external odometry (simulation)
-                              -> gated LidarMappingObservation (P1)
+                              -> gated LidarMappingObservation
                                      |
                                      v
                          navigation_mapping (separate process)
@@ -33,7 +33,7 @@ a world-model input.
 ### Navigation World Model (owned by `navigation_mapping`)
 
 Purpose: occupancy, free/unknown reasoning, obstacle inflation, local sliding
-map, and (later phases) planner queries. Implemented in P1 by a vendored
+map, and planner queries. Implemented with a vendored
 ROG-Map instance (`rog_map_vendor`, pinned to `hku-mars/SUPER` commit
 `2ad3419c127a617c6d7df6925e81a14175a9c096`; see
 `src/navigation_mapping/rog_map_vendor/UPSTREAM.md`). It consumes a
@@ -41,7 +41,7 @@ ROG-Map instance (`rog_map_vendor`, pinned to `hku-mars/SUPER` commit
 estimator-voxelized — published only from FAST-LIO's valid corrected tracking
 state.
 
-## The `LidarMappingObservation` contract (P1)
+## The `LidarMappingObservation` contract
 
 `navigation_interfaces/msg/LidarMappingObservation` is the atomic geometric
 observation FAST-LIO publishes for the navigation world model. It is a
@@ -71,7 +71,7 @@ derived from propagated state or from TF. Publication
 usability contract as corrected odometry (`kTracking` + corrected +
 navigation-valid) plus a valid `LioPublicFrameGeneration` snapshot.
 
-## Generation handling (P1)
+## Generation handling
 
 `navigation_mapping` does not invent a second frame-generation mechanism; it
 only interprets the existing `LioPublicFrameGeneration` value carried on each

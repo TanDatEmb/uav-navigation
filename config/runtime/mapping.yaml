@@ -1,11 +1,3 @@
-# navigation_runtime runtime parameters.
-#
-# This is the navigation world-model configuration surface, distinct from
-# fast_lio's own internal "mapping.*" parameters in dataset.yaml/sim.yaml
-# (those configure FAST-LIO's RegistrationMap, not this world model — see
-# docs/architecture/navigation_layers.md, ADR-008).
-#
-# Vendor policy is kept internal to navigation_mapping.
 navigation_runtime:
   ros__parameters:
     mapping:
@@ -17,10 +9,6 @@ navigation_runtime:
 
       input:
         voxel_size_m: 0.20
-        # Navigation-only sensor endpoint acceptance: suppress returns from
-        # the vehicle/body shell before mapping voxelization and ROG raycast.
-        # This is intentionally distinct from mapping.raycast.min_range_m,
-        # which controls ROG ray traversal/bootstrap free-space semantics.
         min_range_m: 0.50
         max_range_m: 0.0
 

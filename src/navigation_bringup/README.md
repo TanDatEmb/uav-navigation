@@ -12,9 +12,9 @@ It does not contain estimator or PX4 business logic.
 `navigation_runtime.launch.py` launches the `navigation_runtime` composition
 boundary, which owns the navigation world-model
 node as its own separate process. It is deliberately not included from
-`fast_lio.launch.py`: P1 requires FAST-LIO and the navigation world model to
-run as independent ROS 2 processes so a mapper crash or overload can never
-affect the estimator (see docs/architecture/navigation_layers.md). Compose
+`fast_lio.launch.py`: FAST-LIO and the navigation world model run as
+independent ROS 2 processes so a mapper crash or overload can never affect the
+estimator (see docs/architecture/navigation_layers.md). Compose
 both launch files from a parent launch description when both are needed.
 
 Interactive workflows use the project-owned RViz profile in `rviz/`. The

@@ -11,6 +11,7 @@ external overlay is required.
 - PX4 release: `v1.17.0`
 - pinned commit: `86d8239e962f6939e05c3737784f60c02fa884db`
 - consumer: `src/px4_interface/px4_odometry_bridge`
+- license: BSD 3-Clause (`src/external/px4_msgs/LICENSE`)
 
 Initialize the submodule after cloning:
 
@@ -35,4 +36,9 @@ The complete pinned upstream package is stored at
 `src/external/livox_ros_driver2`. Its ROS package name remains
 `livox_ros_driver2`, so estimator and bag contracts do not change. Upstream
 provenance and the local offline-build patch are documented in that package's
-`UPSTREAM.md` and `PATCHES.md`.
+`UPSTREAM.md` and `PATCHES.md`. The copied driver source is MIT-licensed; see
+`src/external/livox_ros_driver2/LICENSE`. The bundled RapidJSON notices are in
+`src/external/livox_ros_driver2/3rdparty/rapidjson/license.txt`.
+
+The consolidated workspace inventory is in
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).

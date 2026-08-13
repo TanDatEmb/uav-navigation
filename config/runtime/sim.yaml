@@ -19,18 +19,12 @@ fast_lio:
       max_imu_gap_ns: 20000000
       reject_timestamp_regression: true
     initial_prior:
-      # LIO starts from its stationary IMU initializer.  Do not subscribe to
-      # PX4 or Gazebo odometry: /sim/ground_truth/odometry is evaluation-only
-      # and PX4 is a consumer of LIO external vision, not an LIO input.
       source: zero
       context: ground_startup
       source_frame: lio_odom
       source_frame_transform: same_frame
       components: { position: true, velocity: true, attitude: yaw_only }
     tracking:
-      # Keep the simulator on the same strict recovery boundary as dataset and
-      # production profiles; performance regressions must not be hidden by a
-      # relaxed IMU outage threshold.
       maximum_recoverable_imu_gap_ns: 50000000
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
@@ -57,9 +51,6 @@ fast_lio:
       dynamic_filter: { enabled: false }
     output:
       publish_registered_points: false
-      # P1: gated LidarMappingObservation for navigation_mapping (see
-      # docs/architecture/navigation_layers.md). Disabled by default;
-      # scenarios exercising the mapper enable this explicitly.
       mapping_observation:
         enabled: true
     propagated_odometry:
@@ -67,8 +58,6 @@ fast_lio:
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_ns: 1000000000
-      # Match the dataset safety boundary. Host/Gazebo stalls are validation
-      # failures and must not be hidden by continued dead-reckoning output.
       maximum_correction_age_ns: 250000000
     runtime:
       imu_queue_capacity: 4096
@@ -99,10 +88,6 @@ simulation:
     world: px4_lio_smoke
     model: x500_mid360
 
-# Validation-only clearance derived from the external PX4 x500 collision boxes:
-# rotor centers are at +/-0.174 m and each rotor collision box is 0.27923 m
-# long, giving a conservative horizontal envelope of 0.314 m before margin.
-# This is not a real-flight vehicle profile.
 navigation:
   collision:
     vehicle_radius_m: 0.32

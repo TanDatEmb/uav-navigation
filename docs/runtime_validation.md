@@ -36,8 +36,18 @@ frontier-debug switch for that session.
 FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
 `config/runtime/offboard.yaml`. The scenario verifies OFFBOARD entry, arm,
 takeoff, translation/yaw segments, landing, and disarm. `sim` starts the same
-stack with the Gazebo GUI and RViz, but no controller; stopping it produces
-`OBSERVATION_COMPLETE`, never a flight `PASS`.
+stack with the Gazebo GUI and RViz, but no automatic flight controller;
+stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
+
+The manual-control policy is deliberately different between these workflows:
+
+| Workflow | `COM_RC_IN_MODE` | Manual input |
+|---|---:|---|
+| `sim-check` | `4` | disabled; deterministic OFFBOARD only |
+| `sim` | `1` | MAVLink joystick from QGC virtual joystick or a physical joystick |
+
+The direct PX4 launcher defaults to mode `4`. For a manually controlled direct
+session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
 
 ## Configuration
 
@@ -45,6 +55,7 @@ stack with the Gazebo GUI and RViz, but no controller; stopping it produces
 |---|---|---|
 | `config/runtime/common.yaml` | monitor/report | stream rates, freshness thresholds, and workflow timeouts |
 | `config/runtime/dataset.yaml` | dataset runner | real AIST timing, frames, extrinsic, input QoS |
+| `config/runtime/mapping.yaml` | navigation runtime | world-model, visualization, collision, and planner parameters |
 | `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
 | `config/runtime/offboard.yaml` | headless simulation | one deterministic flight trajectory |
 
@@ -137,6 +148,11 @@ workflow if reintroduced.
 `make stop` signals only process groups recorded for the latest session. It
 does not use global name-based termination and does not affect unrelated ROS,
 Gazebo, or PX4 processes.
+
+`make clean` removes generated build/install/log trees, profiling variants,
+runtime artifacts, pytest/Python caches, the mapper's generated vendor log,
+the colcon symlink manifest, and VS Code browse indexes. It preserves the
+Python virtual environment and project editor settings.
 
 ## Feature inventory
 

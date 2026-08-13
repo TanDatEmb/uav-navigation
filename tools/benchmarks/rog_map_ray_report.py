@@ -268,7 +268,7 @@ def main() -> int:
         "",
         "The implementation now exposes `RogMapAdapter::deterministicDigest()` for sparse synthetic/checkpoint use. Runtime checkpoint scheduling and cross-rate digest capture are not yet wired into the ROS runner, so AIST RATE 1 vs RATE 2 digest equality is `NOT_MEASURED` here.",
         "",
-        "## P0 source-cloud proof",
+        "## Source-cloud proof",
         "",
         "`RosMappingObservationPublisher` serializes `ProcessResult::mapping_candidate_points_lidar_m`. `PointCloudPreprocessor` copies the range/finite-filtered scan into that field before applying `voxel_filter_` to the estimator scan. Therefore `/lio/mapping_observation.points` is the common-filtered, pre-estimator-voxelization cloud, not the `preprocessing.scan_voxel_size_m` registration cloud. The configured 0.9 m estimator voxel is not on this mapping observation path.",
         "",

@@ -50,6 +50,21 @@ GUI_ENV_REMOVE = {
     "GTK_PATH",
     "GIO_MODULE_DIR",
 }
+PX4_HEADLESS_COM_RC_IN_MODE = "4"
+PX4_INTERACTIVE_COM_RC_IN_MODE = "1"
+
+GENERATED_CLEAN_PATHS = (
+    ROOT / ".artifacts",
+    ROOT / ".pytest_cache",
+    ROOT / "build",
+    ROOT / "build-gprof",
+    ROOT / "install",
+    ROOT / "install-gprof",
+    ROOT / "log",
+    ROOT / "log-gprof",
+    ROOT / "src/navigation_mapping/rog_map_vendor/log",
+    ROOT / "symlink_install_manifest.txt",
+)
 
 
 def _filtered_xdg_data_dirs(value: str | None) -> str | None:
@@ -287,6 +302,10 @@ def _mapping_ready(snapshot: dict[str, Any]) -> bool:
         except (TypeError, ValueError):
             return False
     return False
+
+
+def _px4_manual_control_mode(headless: bool) -> str:
+    return PX4_HEADLESS_COM_RC_IN_MODE if headless else PX4_INTERACTIVE_COM_RC_IN_MODE
 
 
 def _lidar_to_imu_launch_arguments(config: dict[str, Any]) -> tuple[str, str]:
@@ -571,6 +590,7 @@ def run_sim(headless: bool) -> int:
                 "GZ_GUI": "0" if headless else "1",
                 "SESSION_DIR": str(session.directory),
                 "GZ_COMMAND": gz_command or "",
+                "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(headless),
             }),
             env_remove=GUI_ENV_REMOVE,
         )
@@ -748,12 +768,35 @@ def stop() -> int:
 
 
 def clean() -> int:
-    root = ARTIFACT_ROOT.resolve()
-    if root == Path("/") or root != ROOT / ".artifacts/runtime":
-        raise ValueError(f"refusing unsafe clean root: {root}")
-    if root.exists():
-        import shutil
-        shutil.rmtree(root)
+    import shutil
+
+    removed: list[Path] = []
+    for path in GENERATED_CLEAN_PATHS:
+        resolved = path.resolve()
+        if resolved == Path("/") or resolved == ROOT.resolve():
+            raise ValueError(f"refusing unsafe clean path: {resolved}")
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+            removed.append(path)
+        elif path.is_file() or path.is_symlink():
+            path.unlink()
+            removed.append(path)
+
+    for cache_root in (ROOT / "src", ROOT / "tools"):
+        if not cache_root.is_dir():
+            continue
+        for path in cache_root.rglob("__pycache__"):
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+                removed.append(path)
+
+    for path in (ROOT / ".vscode").glob("browse.vc.db*"):
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+            removed.append(path)
+
+    for path in removed:
+        print(f"removed {path.relative_to(ROOT)}")
     return 0
 
 

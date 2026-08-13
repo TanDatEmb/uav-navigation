@@ -1,4 +1,3 @@
-# Runtime contract shared by dataset-check, sim-check and sim.
 runtime:
   monitor_queue_depth: 100
   thresholds:
@@ -17,8 +16,6 @@ runtime:
     px4_odometry: {expected_hz: 30.0, stale_after_s: 1.00}
     vehicle_status: {expected_hz: 10.0, stale_after_s: 1.00}
     local_position: {expected_hz: 30.0, stale_after_s: 1.00}
-    # PX4 publishes this diagnostic uORB topic at roughly 1 Hz. It is
-    # observation-only, not a per-sample external-vision fusion proof.
     estimator_status_flags: {expected_hz: 1.0, stale_after_s: 2.50}
   timeouts:
     startup_s: 90
