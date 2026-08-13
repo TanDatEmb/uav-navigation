@@ -970,23 +970,25 @@ def _timing_distribution(values: list[float]) -> dict[str, Any]:
 
 
 def _diagnostic_timing_summary(
-    samples: list[dict[str, Any]], status_name: str, fields: tuple[str, ...]
+    samples: list[dict[str, Any]], status_name: str, fields: tuple[str, ...],
+    stream_names: tuple[str, ...] = ("diagnostics", "planning_diagnostics"),
 ) -> dict[str, dict[str, Any]]:
     values_by_field = {field: [] for field in fields}
-    for item in _series(samples, "diagnostics"):
-        statuses = item.get("payload", {}).get("statuses", [])
-        if not isinstance(statuses, list):
-            continue
-        for status in statuses:
-            if not isinstance(status, dict) or status.get("name") != status_name:
+    for stream_name in stream_names:
+        for item in _series(samples, stream_name):
+            statuses = item.get("payload", {}).get("statuses", [])
+            if not isinstance(statuses, list):
                 continue
-            status_values = status.get("values", {})
-            if not isinstance(status_values, dict):
-                continue
-            for field in fields:
-                value = _number(status_values.get(field), -1.0)
-                if value >= 0.0 and math.isfinite(value):
-                    values_by_field[field].append(value)
+            for status in statuses:
+                if not isinstance(status, dict) or status.get("name") != status_name:
+                    continue
+                status_values = status.get("values", {})
+                if not isinstance(status_values, dict):
+                    continue
+                for field in fields:
+                    value = _number(status_values.get(field), -1.0)
+                    if value >= 0.0 and math.isfinite(value):
+                        values_by_field[field].append(value)
     return {field: _timing_distribution(values) for field, values in values_by_field.items()}
 
 
@@ -1000,6 +1002,7 @@ def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[st
             "planning_trajectory_optimization_us",
             "planning_total_us",
         ),
+        stream_names=("planning_diagnostics", "diagnostics"),
     )
 
 
@@ -1075,12 +1078,15 @@ def _navigation_mapping_summary(
             "rog_total_update_us",
             "mapping_callback_total_us",
         ),
+        stream_names=("mapping_diagnostics", "diagnostics"),
     )
     result["output_topics"] = [
         "/navigation_mapping/visualization/occupied",
         "/navigation_mapping/visualization/inflated_occupied",
         "/navigation_mapping/visualization/unknown",
         "/navigation_mapping/visualization/frontier",
+        "/navigation/visualization/planned_path",
+        "/navigation/trajectory",
     ]
     return result
 
@@ -1264,7 +1270,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "navigation_mapping", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
+    for section in ("lio", "navigation_mapping", "planning", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

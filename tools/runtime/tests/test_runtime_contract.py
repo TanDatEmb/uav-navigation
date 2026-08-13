@@ -17,7 +17,7 @@ import runner
 
 class RuntimeContractTest(unittest.TestCase):
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
-        mapping = runner.load_config("mapping.yaml")["navigation_mapping_node"]["ros__parameters"]["mapping"]
+        mapping = runner.load_config("mapping.yaml")["navigation_runtime"]["ros__parameters"]["mapping"]
         self.assertEqual(mapping["input"]["min_range_m"], 0.5)
         self.assertEqual(mapping["input"]["max_range_m"], 0.0)
         self.assertEqual(mapping["map"]["local_size_m"], [30.0, 30.0, 12.0])
@@ -31,6 +31,7 @@ class RuntimeContractTest(unittest.TestCase):
             "/navigation_mapping/visualization/inflated_occupied",
             "/navigation_mapping/visualization/unknown",
             "/navigation_mapping/visualization/frontier",
+            "/navigation/visualization/planned_path",
         ):
             self.assertIn(topic, rviz)
         for obsolete in ("/rog_map/occ", "/rog_map/inf_occ", "/rog_map/unk", "/rog_map/frontier"):
@@ -43,7 +44,7 @@ class RuntimeContractTest(unittest.TestCase):
                 session, ROOT / "config/runtime/mapping.yaml", interactive=True
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
-                "navigation_mapping_node"
+                "navigation_runtime"
             ]["ros__parameters"]["mapping"]
             self.assertTrue(parameters["visualization"]["enabled"])
             self.assertTrue(parameters["visualization"]["publish_unknown"])
@@ -57,7 +58,7 @@ class RuntimeContractTest(unittest.TestCase):
                 frontier_debug=True,
             )
             debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))[
-                "navigation_mapping_node"
+                "navigation_runtime"
             ]["ros__parameters"]["mapping"]
             self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
             self.assertTrue(debug_parameters["visualization"]["publish_frontier"])

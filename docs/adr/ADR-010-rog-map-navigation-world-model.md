@@ -11,7 +11,7 @@ observation published by `fast_lio_ros` only from FAST-LIO's valid corrected
 tracking state, gated by the existing corrected-odometry usability contract
 and `LioPublicFrameGeneration`.
 
-FAST-LIO and `navigation_mapping` run as separate ROS 2 processes. FAST-LIO
+FAST-LIO and `navigation_runtime` run as separate ROS 2 processes. FAST-LIO
 has no dependency on `rog_map_vendor` or `navigation_mapping`; the dependency
 direction is `navigation_mapping (+ rog_map_vendor) -> navigation_interfaces
 -> fast_lio_ros`. `RegistrationMap` (ADR-008) remains FAST-LIO's own
@@ -25,7 +25,8 @@ and local patches (notably a lifecycle fix required for repeated map reset on
 public-frame-generation discontinuities).
 
 P2 now contains a minimal product-owned `WorldModel` query facade and a
-deterministic A* reference consumer in `navigation_planning`. It remains a
-same-process library boundary over ROG-Map; no ROS per-voxel query service or
-duplicated planner map is introduced. CIRI, MINCO, PX4 planning integration,
-and mission logic remain out of scope.
+deterministic A* reference consumer in `navigation_planning`, composed by
+`navigation_runtime` with the mapping pipeline. It remains a same-process
+library boundary over ROG-Map; no ROS per-voxel query service or duplicated
+planner map is introduced. CIRI, MINCO, PX4 planning integration, and mission
+logic remain out of scope.

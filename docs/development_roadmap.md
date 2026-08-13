@@ -260,7 +260,7 @@ Use the core/manual API:
 /lio/mapping_observation
         |
         v
-navigation_mapping_node
+navigation_runtime
         |
         | validate timestamp/frame
         | decode the embedded PointCloud2 points

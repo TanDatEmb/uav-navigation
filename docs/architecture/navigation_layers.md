@@ -90,12 +90,13 @@ frame do not change the generation and therefore do not reset the map.
 
 ## Process and dependency direction
 
-FAST-LIO and `navigation_mapping` run as separate ROS 2 processes (see
-`src/navigation_bringup/launch/{fast_lio,navigation_mapping}.launch.py`). The
-dependency direction is one-way:
+FAST-LIO and `navigation_runtime` run as separate ROS 2 processes (see
+`src/navigation_bringup/launch/{fast_lio,navigation_runtime}.launch.py`). The
+runtime owns one mapping pipeline and calls the planner synchronously in the
+same serialized execution policy. The dependency direction is one-way:
 
 ```text
-navigation_mapping (+ rog_map_vendor)
+navigation_runtime -> navigation_mapping (+ rog_map_vendor)
         depends on
 navigation_interfaces (LidarMappingObservation contract)
         depends on (published by)
@@ -119,13 +120,18 @@ is not vehicle-clearance collision planning. `Inflated` plus `UnknownBlocked`
 is the conservative path/corridor policy. `WorldModel::clearanceRadius()` is
 the separate physical contract consumed by the project-owned `Planner`.
 
-The current repository has no authoritative vehicle collision geometry: the
-local x500 model only includes the external `x500` model and the local
-`base_link` description is frame-only. Therefore the normal runtime leaves
-`navigation.collision.vehicle_radius_m` and
-`navigation.collision.safety_margin_m` unset; planning fails closed until a
-model-owned source is added. Synthetic planner tests provide explicit values
-only to validate the contract and algorithmic closure.
+The real-flight runtime still has no authoritative vehicle collision geometry:
+the local x500 model only includes the external `x500` model and the local
+`base_link` description is frame-only. Therefore the normal mapping profile
+leaves `navigation.collision.vehicle_radius_m` and
+`navigation.collision.safety_margin_m` unset; planning fails closed. The
+simulation profile is explicitly validation-only and is derived from the
+external PX4 model source
+`Tools/simulation/gz/models/x500_base/model.sdf`: rotor centers are at
+`+/-0.174 m` and each rotor collision box is `0.27923 m` long, yielding a
+`0.32 m` conservative horizontal radius plus a `0.05 m` margin. This profile
+does not authorize a real aircraft envelope. Synthetic planner tests use
+separate explicit values only to validate contract and algorithmic closure.
 
 `UnknownTraversable` is a reference/exploration policy only; it is not
 flight-safe execution by itself. An unknown-space exploration trajectory would
