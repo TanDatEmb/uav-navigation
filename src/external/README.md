@@ -10,7 +10,7 @@ external overlay is required.
 
 - PX4 release: `v1.17.0`
 - pinned commit: `86d8239e962f6939e05c3737784f60c02fa884db`
-- consumer: `src/px4_interface/px4_odometry_bridge`
+- consumer: `src/px4/px4_odometry_bridge`
 - license: BSD 3-Clause (`src/external/px4_msgs/LICENSE`)
 
 Initialize the submodule after cloning:

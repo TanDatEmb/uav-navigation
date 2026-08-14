@@ -12,6 +12,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ROS_SYSTEM_PYTHON_PATH = Path("/usr/lib/python3/dist-packages")
 PARALLEL_WORKERS = os.environ.get("PARALLEL_WORKERS", "1")
 MAKE_JOBS = os.environ.get("MAKE_JOBS", "1")
 COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
@@ -77,6 +78,14 @@ def ros_environment(install: Path | None = None) -> dict[str, str]:
         if b"=" in item:
             key, value = item.split(b"=", 1)
             environment[key.decode()] = value.decode()
+    if ROS_SYSTEM_PYTHON_PATH.is_dir():
+        python_paths = [
+            item for item in environment.get("PYTHONPATH", "").split(os.pathsep) if item
+        ]
+        system_path = str(ROS_SYSTEM_PYTHON_PATH)
+        if system_path not in python_paths:
+            python_paths.append(system_path)
+        environment["PYTHONPATH"] = os.pathsep.join(python_paths)
     return environment
 
 

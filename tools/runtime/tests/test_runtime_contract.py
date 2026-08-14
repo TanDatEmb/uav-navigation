@@ -180,7 +180,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(status_flags["stale_after_s"], 2.5)
 
     def test_external_odometry_bridge_accepts_only_lio_not_simulator_truth(self) -> None:
-        source = (ROOT / "src/px4_interface/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp").read_text(
+        source = (ROOT / "src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp").read_text(
             encoding="utf-8"
         )
         self.assertIn('constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated"', source)
@@ -199,7 +199,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("EstimatorAidSource", source)
 
     def test_lio_diagnostics_expose_map_guard_and_propagation_latency(self) -> None:
-        source = (ROOT / "src/navigation_estimator/fast_lio_ros/src/ros_output_publisher.cpp").read_text(
+        source = (ROOT / "src/estimation/fast_lio_ros/src/ros_output_publisher.cpp").read_text(
             encoding="utf-8"
         )
         for key in (

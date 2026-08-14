@@ -36,7 +36,7 @@ Purpose: occupancy, free/unknown reasoning, obstacle inflation, local sliding
 map, and planner queries. Implemented with a vendored
 ROG-Map instance (`rog_map_vendor`, pinned to `hku-mars/SUPER` commit
 `2ad3419c127a617c6d7df6925e81a14175a9c096`; see
-`src/navigation_mapping/rog_map_vendor/UPSTREAM.md`). It consumes a
+`src/mapping/rog_map_vendor/UPSTREAM.md`). It consumes a
 *mapping-grade* observation — deskewed, common-filtered, but **not**
 estimator-voxelized — published only from FAST-LIO's valid corrected tracking
 state.

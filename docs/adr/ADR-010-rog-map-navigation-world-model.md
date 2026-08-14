@@ -20,7 +20,7 @@ input; `/lio/registered_points` (the estimator's coarse voxelized cloud) is
 explicitly excluded from the mapping observation contract.
 
 See `docs/architecture/navigation_layers.md` for the full contract and
-`src/navigation_mapping/rog_map_vendor/UPSTREAM.md` for upstream provenance
+`src/mapping/rog_map_vendor/UPSTREAM.md` for upstream provenance
 and local patches (notably a lifecycle fix required for repeated map reset on
 public-frame-generation discontinuities).
 

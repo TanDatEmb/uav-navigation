@@ -1,25 +1,25 @@
 # Repository layout
 
 ```text
-src/navigation_estimator/
+src/estimation/
   ikfom_vendor/       pinned dependency provenance
   ikd_tree_vendor/    pinned registration-map dependency
   fast_lio_core/      ROS-independent estimator
   fast_lio_ros/       ROS boundary and output publishing
   fast_lio_tools/     offline use of the same pipeline
-src/navigation_mapping/
+src/mapping/
   rog_map_vendor/      pinned ROG-Map navigation world-model dependency
   navigation_mapping/  product-owned synchronous world-model core
-src/navigation_runtime/
+src/runtime/
   navigation_runtime/  single ROS composition boundary for mapping and planning
-src/navigation_planning/
+src/planning/
   navigation_planning/  product-owned WorldModel consumer and A* baseline
 src/external/
   px4_msgs/            pinned PX4 message package
   livox_ros_driver2/   pinned Livox driver and message package
 src/navigation_interfaces/ generic navigation service/message contracts,
   including the LidarMappingObservation atomic mapping observation
-src/px4_interface/     PX4 ingress and external-odometry bridge
+src/px4/               PX4 ingress and external-odometry bridge
 src/navigation_bringup/ launch and visualization composition
 src/uav_description/     sensor-frame source of truth
 src/uav_simulation/      Gazebo Harmonic simulation assets

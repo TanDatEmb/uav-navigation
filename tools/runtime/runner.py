@@ -62,7 +62,7 @@ GENERATED_CLEAN_PATHS = (
     ROOT / "install-gprof",
     ROOT / "log",
     ROOT / "log-gprof",
-    ROOT / "src/navigation_mapping/rog_map_vendor/log",
+    ROOT / "src/mapping/rog_map_vendor/log",
     ROOT / "symlink_install_manifest.txt",
 )
 
