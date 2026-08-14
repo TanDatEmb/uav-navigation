@@ -30,6 +30,17 @@ Do not replace this checkout with a second `px4_msgs` package from an overlay;
 the parent repository intentionally pins the message definitions used by the
 PX4 bridge.
 
+## `px4_ros2_interface_lib`
+
+`px4_ros2_interface_lib` is tracked as a Git submodule at
+`src/external/px4_ros2_interface_lib`, using the `release/1.17` branch pinned
+to commit `4a3370f084ac6f1ef001a4afa2b007845ffd0837`. It provides the
+`px4_ros2_cpp` package used by `px4_navigation_external_mode`.
+
+The project-owned node must use `ModeBase`, `ModeExecutorBase`, and the
+library setpoint types. It must not replace the library with direct
+`px4_msgs`/Offboard publishing.
+
 ## `livox_ros_driver2`
 
 The complete pinned upstream package is stored at

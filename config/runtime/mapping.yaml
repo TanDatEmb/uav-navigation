@@ -29,7 +29,7 @@ navigation_runtime:
         publish_unknown: false
         publish_frontier: false
         publish_rate_hz: 10.0
-        range_m: [15.0, 15.0, 6.0]
+        range_m: [25.0, 25.0, 12.0]
         max_points: 150000
 
     navigation:

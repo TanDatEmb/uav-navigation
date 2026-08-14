@@ -44,7 +44,7 @@ fast_lio:
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
     initialization: { minimum_imu_samples: 200, require_stationary: false }
     preprocessing:
-      minimum_range_m: 0.1
+      minimum_range_m: 0.5
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.9
     registration:
@@ -58,7 +58,7 @@ fast_lio:
         crop_trigger_distance_m: 5.0
         absolute_map_point_guard: 250000
     output:
-      publish_registered_points: false
+      publish_registered_points: true
       mapping_observation:
         enabled: true
     propagated_odometry:

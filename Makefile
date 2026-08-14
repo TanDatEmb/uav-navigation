@@ -10,7 +10,7 @@ ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/se
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 FRONTIER_DEBUG_ARG = $(if $(filter 1 true yes,$(FRONTIER_DEBUG)),--frontier-debug,)
 
-.PHONY: help build test replay dataset-check sim-check sim status stop clean
+.PHONY: help build test replay dataset-check sim-check external-mode-check sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
@@ -19,6 +19,7 @@ help:
 	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset pipeline; PX4 not required"
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
+	@echo "  make external-mode-check                  headless PX4/Gazebo + PX4 External Mode acceptance"
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
@@ -44,6 +45,9 @@ dataset-check:
 
 sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim-check
+
+external-mode-check:
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check
 
 sim:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim

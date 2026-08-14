@@ -16,6 +16,7 @@ engineering inventory, not legal advice.
 | FAST-LIO | Algorithmic/reference provenance; no FAST-LIO source copied | GPL-2.0-only upstream | [IKFoM/FAST-LIO provenance](src/estimation/ikfom_vendor/UPSTREAM.md) |
 | Livox ROS Driver 2 | Complete pinned driver and message package copied into `src/external/livox_ros_driver2` | MIT | [UPSTREAM.md](src/external/livox_ros_driver2/UPSTREAM.md) and local [LICENSE](src/external/livox_ros_driver2/LICENSE) |
 | PX4 `px4_msgs` | Git submodule at `src/external/px4_msgs`, pinned to v1.17.0 | BSD 3-Clause | [submodule README](src/external/README.md) and `src/external/px4_msgs/LICENSE` |
+| PX4 ROS 2 Interface Library | Git submodule at `src/external/px4_ros2_interface_lib`, `release/1.17` | BSD 3-Clause | [submodule README](src/external/README.md) and `src/external/px4_ros2_interface_lib/LICENSE` |
 | Livox bundled RapidJSON | Third-party headers included inside the Livox package | MIT, with BSD/JSON notices for listed components | `src/external/livox_ros_driver2/3rdparty/rapidjson/license.txt` |
 | ROS 2 Jazzy / Gazebo Harmonic | Runtime platform dependencies; no source copied | per upstream packages | distribution package notices apply |
 | Eigen / PCL / yaml-cpp / fmt | Build dependencies; no source copied | per upstream packages | distribution package notices apply |

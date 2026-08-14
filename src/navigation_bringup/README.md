@@ -17,6 +17,12 @@ independent ROS 2 processes so a mapper crash or overload can never affect the
 estimator (see docs/architecture/navigation_layers.md). Compose
 both launch files from a parent launch description when both are needed.
 
+`px4_external_mode.launch.py` launches the PX4 v1.17 ROS 2 Control Interface
+node. The node registers `NavigationMode` and its `NavigationModeExecutor`,
+then consumes the product trajectory on `/navigation/trajectory`. Its config is
+`config/runtime/external_mode.yaml`. It is the PX4 control boundary; do not
+replace it with direct `OffboardControlMode` or `TrajectorySetpoint` publishers.
+
 Interactive workflows use the project-owned RViz profile in `rviz/`. The
 profile shows the LIO registered scan, bounded local map, TF tree, corrected
 LIO odometry, and the last successful navigation plan on

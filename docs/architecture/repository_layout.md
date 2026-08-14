@@ -16,14 +16,15 @@ src/planning/
   navigation_planning/  product-owned WorldModel consumer and A* baseline
 src/external/
   px4_msgs/            pinned PX4 message package
+  px4_ros2_interface_lib/ pinned PX4 v1.17 ROS 2 Control Interface library
   livox_ros_driver2/   pinned Livox driver and message package
 src/navigation_interfaces/ generic navigation service/message contracts,
   including the LidarMappingObservation atomic mapping observation
-src/px4/               PX4 ingress and external-odometry bridge
+src/px4/               PX4 ingress, external-odometry bridge, and External Mode adapter
 src/navigation_bringup/ launch and visualization composition
 src/uav_description/     sensor-frame source of truth
 src/uav_simulation/      Gazebo Harmonic simulation assets
-config/runtime/          common, dataset, simulation, offboard, and mapping.yaml
+config/runtime/          common, dataset, simulation, external-mode, offboard, and mapping.yaml
                          navigation_runtime contracts
 tools/runtime/           runner, monitor, report, process ownership, scenario
 docs/                    architecture, runtime validation, and ADRs

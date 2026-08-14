@@ -545,16 +545,21 @@ def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     raise TimeoutError(f"Gazebo clock did not appear: {topic}")
 
 
-def run_sim(headless: bool) -> int:
+def run_sim(headless: bool, control_interface: str = "offboard") -> int:
+    if control_interface not in {"offboard", "external_mode"}:
+        raise ValueError(f"unsupported control interface: {control_interface}")
     config = load_config("sim.yaml")
-    offboard_config = load_config("offboard.yaml")
+    scenario_config_name = "offboard.yaml" if control_interface == "offboard" else "external_mode_scenario.yaml"
+    scenario_config = load_config(scenario_config_name)
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
     gz_command = _detect_gz_command()
-    session = Session.create(ARTIFACT_ROOT, "sim-check" if headless else "sim")
-    session.write_state({"workflow": "sim", "headless": headless, "px4_dir": str(px4_dir)})
+    workflow = "external-mode" if control_interface == "external_mode" else "sim"
+    session_name = "external-mode-check" if headless and control_interface == "external_mode" else ("sim-check" if headless else "sim")
+    session = Session.create(ARTIFACT_ROOT, session_name)
+    session.write_state({"workflow": workflow, "headless": headless, "px4_dir": str(px4_dir)})
     _write_runtime(
         session,
-        workflow="sim",
+        workflow=workflow,
         headless=headless,
         rviz=not headless,
         px4_dir=str(px4_dir),
@@ -565,7 +570,7 @@ def run_sim(headless: bool) -> int:
     prereq = _sim_prerequisites(px4_dir, gz_command)
     if prereq:
         _write_runtime(session, failures=prereq)
-        result = _stop_and_report(session, "sim", RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir)
+        result = _stop_and_report(session, workflow, RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir)
         print(result["verdict"])
         print(session.directory)
         return 1
@@ -623,6 +628,11 @@ def run_sim(headless: bool) -> int:
             f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
             f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
         ], enable_rviz=not headless), cwd=ROOT)
+        if control_interface == "external_mode" and not headless:
+            session.start("external_mode", _ros_shell([
+                "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
+                f"config_file:={RUNTIME_CONFIG / 'external_mode.yaml'}", "use_sim_time:=true",
+            ], enable_rviz=not headless), cwd=ROOT)
         if not headless:
             _start_rviz(session, use_sim_time=True)
         _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
@@ -633,19 +643,30 @@ def run_sim(headless: bool) -> int:
                     "ROG-Map output and visualization")
         _write_runtime(session, startup_complete=True)
         if headless:
+            scenario_name = "offboard_scenario.py" if control_interface == "offboard" else "external_mode_scenario.py"
+            scenario_role = "offboard" if control_interface == "offboard" else "external_mode_scenario"
             scenario = session.start(
-                "offboard",
-                [sys.executable, str(ROOT / "tools/runtime/offboard_scenario.py"), "--output", str(session.directory / "scenario.json"), "--config", str(RUNTIME_CONFIG / "offboard.yaml")],
+                scenario_role,
+                [sys.executable, str(ROOT / "tools/runtime" / scenario_name), "--output", str(session.directory / "scenario.json"), "--config", str(RUNTIME_CONFIG / scenario_config_name)],
                 cwd=ROOT,
             )
-            scenario_code = _wait_process(scenario, float(offboard_config["scenario"]["wall_timeout_s"]) + 10.0, "offboard scenario")
+            if control_interface == "external_mode":
+                # Start the M1 fixture before registering the PX4 mode. The
+                # interface library performs its initial arming-check request
+                # during registration; having a valid trajectory already on
+                # the boundary makes that check deterministic.
+                session.start("external_mode", _ros_shell([
+                    "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
+                    f"config_file:={RUNTIME_CONFIG / 'external_mode.yaml'}", "use_sim_time:=true",
+                ], enable_rviz=not headless), cwd=ROOT)
+            scenario_code = _wait_process(scenario, float(scenario_config["scenario"]["wall_timeout_s"]) + 10.0, f"{control_interface} scenario")
             scenario_payload = {}
             try:
                 scenario_payload = json.loads((session.directory / "scenario.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 scenario_payload = {"failures": ["scenario did not create a report"]}
             if scenario_code != 0:
-                scenario_payload.setdefault("failures", []).append(f"offboard scenario exited with {scenario_code}")
+                scenario_payload.setdefault("failures", []).append(f"{control_interface} scenario exited with {scenario_code}")
             (session.directory / "scenario.json").write_text(json.dumps(scenario_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             time.sleep(float(config["runtime"]["timeouts"]["post_flight_monitor_s"]))
         else:
@@ -671,7 +692,7 @@ def run_sim(headless: bool) -> int:
     except Exception as error:
         _write_runtime(session, failures=[str(error)])
     finally:
-        result = _stop_and_report(session, "sim", RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir, observation_complete=not headless and not _load_runtime_failures(session))
+        result = _stop_and_report(session, workflow, RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir, observation_complete=not headless and not _load_runtime_failures(session))
     print(result["verdict"])
     print(session.directory)
     return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
@@ -820,6 +841,7 @@ def main() -> int:
         help="enable ROG frontier extraction/publication for RViz debugging",
     )
     sub.add_parser("sim-check")
+    sub.add_parser("external-mode-check")
     sub.add_parser("sim")
     sub.add_parser("status")
     sub.add_parser("stop")
@@ -836,6 +858,8 @@ def main() -> int:
         )
     if args.command == "sim-check":
         return run_sim(True)
+    if args.command == "external-mode-check":
+        return run_sim(True, control_interface="external_mode")
     if args.command == "sim":
         return run_sim(False)
     if args.command == "status":

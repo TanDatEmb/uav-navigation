@@ -1158,7 +1158,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     }
 
 
-def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None) -> dict[str, Any]:
+def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None, workflow: str = "sim") -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
     names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
     streams = {name: _rate_row(snapshot, name) for name in names}
@@ -1197,7 +1197,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     reasons.extend(failures)
     verdict = "PASS" if not reasons else "FAIL"
     return {
-        "workflow": "sim",
+        "workflow": workflow,
         "verdict": verdict,
         "reasons": reasons,
         "streams": streams,
@@ -1224,6 +1224,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
         "offboard": scenario,
+        "external_mode": scenario if workflow == "external-mode" else {},
         "provenance": provenance(workspace, px4_dir),
     }
 
@@ -1247,7 +1248,7 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
     if workflow == "dataset":
         report = _dataset_report(session, config, snapshot, workspace)
     else:
-        report = _sim_report(session, config, snapshot, workspace, px4_dir)
+        report = _sim_report(session, config, snapshot, workspace, px4_dir, workflow)
     if observation_complete:
         report["verdict"] = "OBSERVATION_COMPLETE" if not _process_failures(session) else "FAIL"
         report["reasons"] = _process_failures(session)
@@ -1270,7 +1271,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
-    for section in ("lio", "navigation_mapping", "planning", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "provenance"):
+    for section in ("lio", "navigation_mapping", "planning", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "external_mode", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"
@@ -1279,7 +1280,7 @@ def render(report: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", type=Path, required=True)
-    parser.add_argument("--workflow", choices=("dataset", "sim"), required=True)
+    parser.add_argument("--workflow", choices=("dataset", "sim", "external-mode"), required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--px4-dir", type=Path)

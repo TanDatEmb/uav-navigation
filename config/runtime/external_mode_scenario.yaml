@@ -1,0 +1,11 @@
+scenario:
+  # This is the M1 mode-contract check. It deliberately holds the vehicle at
+  # its current LIO pose; flight-path tracking belongs to the M4 acceptance.
+  wall_timeout_s: 120.0
+  activation_timeout_s: 30.0
+  post_activation_s: 8.0
+  disarm_timeout_s: 10.0
+  trajectory_publish_period_s: 0.20
+  command_retry_period_s: 1.0
+  trajectory_source: fixture
+  exit_nav_state: 4

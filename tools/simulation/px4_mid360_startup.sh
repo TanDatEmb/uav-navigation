@@ -9,6 +9,11 @@ set +e
 # every arm request even when the OFFBOARD signal and estimator are healthy.
 param set NAV_DLL_ACT "${PX4_NAV_DLL_ACT:-0}"
 
+# PX4 SITL v1.17 does not publish the board-only system_power topic in this
+# standalone profile. Keep the power circuit breaker scoped to simulation;
+# real hardware must use the authoritative board power checks.
+param set CBRK_SUPPLY_CHK "${PX4_PARAM_CBRK_SUPPLY_CHK:-894281}"
+
 # The launcher exports these before rcS, so its parameter override loop applies
 # them before Gazebo bridge and EKF2 start.  Print the effective values into
 # px4_gazebo.log for every run; they are an audit trail, not a new data source.

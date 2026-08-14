@@ -12,7 +12,7 @@ make replay DATASET=aist-mid360-drive RATE=1.0
 make replay DATASET=aist-mid360-drive RATE=1.0 FRONTIER_DEBUG=1
 make dataset-check DATASET=aist-mid360-drive RATE=1.0
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
-PX4_DIR=$HOME/Dev/Autopilot make sim
+PX4_DIR=$HOME/Dev/Autopilot make sim                                           
 make status
 make stop
 make clean
@@ -33,17 +33,20 @@ profile shown above; `mapping.visualization.publish_frontier` is the single
 frontier-debug switch for that session.
 
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
-FAST-LIO with `config/runtime/sim.yaml`, and the deterministic scenario from
-`config/runtime/offboard.yaml`. The scenario verifies OFFBOARD entry, arm,
-takeoff, translation/yaw segments, landing, and disarm. `sim` starts the same
-stack with the Gazebo GUI and RViz, but no automatic flight controller;
+FAST-LIO with `config/runtime/sim.yaml`, and the retained legacy scenario from
+`config/runtime/offboard.yaml`. This workflow is odometry smoke coverage, not
+the target navigation control interface. The M1 External Mode node is launched
+with `navigation_bringup/px4_external_mode.launch.py` and
+`config/runtime/external_mode.yaml`; it registers through `px4_ros2_cpp` and
+hands setpoints to PX4 internal controllers. `sim` starts the same stack with
+the Gazebo GUI and RViz, but no automatic flight controller;
 stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
 
 The manual-control policy is deliberately different between these workflows:
 
 | Workflow | `COM_RC_IN_MODE` | Manual input |
 |---|---:|---|
-| `sim-check` | `4` | disabled; deterministic OFFBOARD only |
+| `sim-check` | `4` | disabled; legacy smoke scenario only |
 | `sim` | `1` | MAVLink joystick from QGC virtual joystick or a physical joystick |
 
 The direct PX4 launcher defaults to mode `4`. For a manually controlled direct
@@ -57,6 +60,7 @@ session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
 | `config/runtime/dataset.yaml` | dataset runner | real AIST timing, frames, extrinsic, input QoS |
 | `config/runtime/mapping.yaml` | navigation runtime | world-model, visualization, collision, and planner parameters |
 | `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
+| `config/runtime/external_mode.yaml` | PX4 External Mode node | trajectory input frame and freshness contract |
 | `config/runtime/offboard.yaml` | headless simulation | one deterministic flight trajectory |
 
 The runner passes only explicit ROS node parameter trees (`fast_lio` and, for
@@ -131,8 +135,8 @@ through `.artifacts/runtime/latest`.
 
 The report verdict is one of `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN`, or
 `OBSERVATION_COMPLETE`. Dataset PASS requires valid/fresh sensor and LIO
-streams, TRACKING, no drops, and complete cleanup. Simulation PASS additionally
-requires the fixed offboard scenario, the real PX4 output/status streams, and
+streams, TRACKING, no drops, and complete cleanup. Simulation smoke PASS
+requires the selected scenario's real PX4 output/status streams and
 the LIO-to-PX4 frame/timestamp contract. No unsupported aid-source topic is
 used. PX4 status flags are observational telemetry, while accuracy is
 calculated against the separate simulator truth.
@@ -166,6 +170,6 @@ Python virtual environment and project editor settings.
 | PX4 ingress, time/frame conversion | sim-check, sim | keep |
 | external odometry safety gate | sim-check, sim | simplify to bridge-local health gate |
 | supervisor lifecycle/residual framework | none | delete |
-| offboard controller | sim-check only | keep as deterministic scenario |
+| offboard controller | sim-check only | retained legacy smoke scenario; not product control |
 | duplicate observers/reports/profiles | none | delete |
 | cleanup | all workflows | keep in process-group runner |

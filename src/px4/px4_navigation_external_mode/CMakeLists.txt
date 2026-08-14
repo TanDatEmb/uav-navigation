@@ -1,0 +1,61 @@
+cmake_minimum_required(VERSION 3.16)
+project(px4_navigation_external_mode LANGUAGES CXX)
+
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(ament_cmake REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(navigation_interfaces REQUIRED)
+find_package(px4_ros2_cpp REQUIRED)
+find_package(rclcpp REQUIRED)
+
+add_library(${PROJECT_NAME}_contract
+  src/trajectory_contract.cpp)
+target_include_directories(${PROJECT_NAME}_contract PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC geometry_msgs navigation_interfaces)
+target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(${PROJECT_NAME}_node
+  src/navigation_mode_node.cpp)
+target_include_directories(${PROJECT_NAME}_node PRIVATE include)
+target_link_libraries(${PROJECT_NAME}_node
+  ${PROJECT_NAME}_contract
+  Eigen3::Eigen
+  px4_ros2_cpp::px4_ros2_cpp
+  rclcpp::rclcpp)
+ament_target_dependencies(${PROJECT_NAME}_node navigation_interfaces rclcpp)
+target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
+
+install(DIRECTORY include/ DESTINATION include)
+install(TARGETS ${PROJECT_NAME}_contract
+  EXPORT ${PROJECT_NAME}Targets
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+install(TARGETS ${PROJECT_NAME}_node
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(EXPORT ${PROJECT_NAME}Targets
+  FILE ${PROJECT_NAME}Targets.cmake
+  NAMESPACE ${PROJECT_NAME}::
+  DESTINATION share/${PROJECT_NAME}/cmake)
+
+ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
+ament_export_dependencies(Eigen3 geometry_msgs navigation_interfaces px4_ros2_cpp rclcpp)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_trajectory_contract test/test_trajectory_contract.cpp)
+  target_link_libraries(test_trajectory_contract ${PROJECT_NAME}_contract)
+  ament_target_dependencies(test_trajectory_contract geometry_msgs navigation_interfaces)
+endif()
+
+ament_package()

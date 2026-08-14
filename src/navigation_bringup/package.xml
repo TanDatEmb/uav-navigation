@@ -9,6 +9,7 @@
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>px4_odometry_bridge</exec_depend>
+  <exec_depend>px4_navigation_external_mode</exec_depend>
   <exec_depend>fast_lio_ros</exec_depend>
   <exec_depend>navigation_mapping</exec_depend>
   <exec_depend>navigation_runtime</exec_depend>

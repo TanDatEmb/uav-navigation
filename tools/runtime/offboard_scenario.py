@@ -287,7 +287,6 @@ class OffboardScenario:
             summary["failures"].append("vehicle did not disarm")
         self.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         self.stream.close()
-        self.rclpy.shutdown()
 
 
 def run(output: Path, config_path: Path) -> int:
@@ -311,6 +310,7 @@ def run(output: Path, config_path: Path) -> int:
         if not scenario.finished:
             scenario.finish("INTERRUPTED")
         scenario.node.destroy_node()
+        rclpy.shutdown()
     summary = json.loads(output.read_text(encoding="utf-8"))
     return 0 if not summary.get("failures") else 1
 
