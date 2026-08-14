@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 import sys
 import tempfile
@@ -187,6 +188,89 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(source.count("create_subscription<nav_msgs::msg::Odometry>"), 1)
         self.assertIn("kLioPropagatedOdometryTopic", source)
         self.assertNotIn("/sim/ground_truth/odometry", source)
+
+    def test_external_mode_scenario_waits_for_registration_before_retrying_nav_state(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.config = {
+            "activation_timeout_s": 30.0,
+            "post_activation_s": 8.0,
+            "disarm_timeout_s": 10.0,
+            "exit_nav_state": 4,
+            "trajectory_publish_period_s": 0.2,
+            "command_retry_period_s": 1.0,
+            "trajectory_source": "none",
+        }
+        scenario.wall_start = time.monotonic() - 2.0
+        scenario.sim_start_ns = 1_000_000_000
+        scenario.sim_now_ns = 1_000_000_000 + 5_000_000_000
+        scenario.finished = False
+        scenario.failure = ""
+        scenario.trajectory_success_count = 1
+        scenario.mode_entered = False
+        scenario.external_mode_id = None
+        scenario.armed_seen = False
+        scenario.last_trajectory_ns = 0
+        scenario.last_command_ns = {}
+        scenario.VehicleCommand = type("VehicleCommand", (), {"VEHICLE_CMD_SET_NAV_STATE": 100001})
+        scenario.command_pub = object()
+        scenario._retry = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("retry while external mode id is unknown"))
+        scenario.finish = lambda *args, **kwargs: None
+
+        scenario._tick()
+        self.assertEqual(scenario.failure, "")
+
+    def test_external_mode_scenario_treats_executor_handover_as_exit(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class DummyVehicleStatus:
+            NAVIGATION_STATE_EXTERNAL1 = 23
+            NAVIGATION_STATE_AUTO_LOITER = 4
+            ARMING_STATE_ARMED = 2
+            ARMING_STATE_DISARMED = 1
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.external_mode_id = 23
+        scenario.mode_entered = True
+        scenario.mode_exit_observed = False
+        scenario.exit_requested = True
+        scenario.previous_nav_state = 23
+        scenario.events = []
+        scenario.VehicleStatus = DummyVehicleStatus
+        scenario.latest_status = {}
+        scenario.failsafe_seen = False
+        scenario.armed_seen = False
+        scenario.unexpected_rtl = False
+        scenario._record = lambda *args, **kwargs: None
+        scenario._status(type(
+            "Message",
+            (),
+            {
+                "nav_state": 23,
+                "arming_state": 2,
+                "can_set_nav_states_mask": 0,
+                "failsafe": False,
+                "pre_flight_checks_pass": True,
+                "executor_in_charge": 0,
+                "timestamp": 1,
+            },
+        )())
+        self.assertTrue(scenario.mode_exit_observed)
 
     def test_runtime_never_depends_on_nonexistent_ev_aid_source_topics(self) -> None:
         for path in (
