@@ -34,9 +34,10 @@ PX4 checkout is outside `$HOME/Dev/Autopilot`.
 Prepared datasets live outside the repository under `UAV_NAV_DATA_HOME` (or
 the platform data directory). Runtime sessions and reports are written to
 `.artifacts/runtime/`; they are local evidence and are not committed. `make
-clean` removes build/install/log trees, runtime artifacts, profiling outputs,
-Python caches, vendor runtime logs, and VS Code browse indexes. It preserves
-`.venv/` and project editor settings.
+clean` removes stale profiling/sanitizer `build-*`, `install-*`, and `log-*`
+variants, runtime artifacts, Python caches, vendor runtime logs, and VS Code
+browse indexes. It preserves the current canonical Release `build/` and
+`install/` trees, `.venv/`, and project editor settings.
 
 The workspace contains the estimator core, ROS adapters, PX4 bridge, PX4 v1.17
 ROS 2 Control Interface External Mode adapter, Gazebo assets, and the

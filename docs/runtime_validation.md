@@ -122,9 +122,16 @@ would otherwise publish the same simulator truth as internal visual odometry.
 
 The propagated output accepts a corrected-LIO age of at most 250 ms. At the
 10 Hz correction rate this permits one delayed correction, but a sustained
-estimator or host stall stops publication fail-closed. The retained one-second
-IMU history remains recovery-only; no simulator truth is ever substituted for
-a missing correction.
+estimator or host stall stops publication fail-closed. Its recovery history is
+validated with the invariant
+
+```text
+imu_history_duration > maximum_correction_age
+```
+
+so replay can retain a timestamp bracket for every accepted correction age.
+The retained one-second IMU history remains recovery-only; no simulator truth
+is ever substituted for a missing correction.
 
 ## Verdicts and artifacts
 
@@ -153,10 +160,11 @@ workflow if reintroduced.
 does not use global name-based termination and does not affect unrelated ROS,
 Gazebo, or PX4 processes.
 
-`make clean` removes generated build/install/log trees, profiling variants,
-runtime artifacts, pytest/Python caches, the mapper's generated vendor log,
-the colcon symlink manifest, and VS Code browse indexes. It preserves the
-Python virtual environment and project editor settings.
+`make clean` removes stale profiling/sanitizer `build-*`, `install-*`, and
+`log-*` variants, runtime artifacts, pytest/Python caches, the mapper's
+generated vendor log, the colcon symlink manifest, and VS Code browse indexes.
+It preserves the current canonical Release `build/` and `install/` trees, the
+Python virtual environment, and project editor settings.
 
 ## Feature inventory
 
