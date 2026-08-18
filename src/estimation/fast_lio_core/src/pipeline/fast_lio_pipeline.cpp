@@ -58,8 +58,6 @@ struct RecoveryCovarianceInflationResult {
 }
 
 EstimatorConfig normalizeConfig(EstimatorConfig config) {
-  config.residual_builder.estimate_extrinsic = config.extrinsic.estimate_online;
-  config.ikfom.estimate_extrinsic = config.extrinsic.estimate_online;
   return config;
 }
 
@@ -106,7 +104,6 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       bootstrap_map_(config_.registration_map),
       local_map_manager_(config_.local_map),
       insertion_policy_(config_.insertion_policy),
-      dynamic_map_evidence_(config_.dynamic_filter),
       initial_prior_applicator_(RigidTransform(baseFrame(), imuFrame(),
                                                Eigen::Quaterniond::Identity(),
                                                Eigen::Vector3d::Zero())) {
@@ -135,7 +132,6 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
   diagnostics_.status = status_;
   diagnostics_.previous_status = status_;
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
-  diagnostics_.map.dynamic_filter_enabled = config_.dynamic_filter.enabled;
   diagnostics_.initial_prior.source = config_.initial_prior.source;
   diagnostics_.initial_prior.context = config_.initial_prior.context;
   diagnostics_.initial_prior.attitude_mode = config_.initial_prior.mask.attitude;
@@ -578,7 +574,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   } else if (status_ == EstimatorStatus::kDegraded ||
              status_ == EstimatorStatus::kLost) {
     ++consecutive_recovery_successes_;
-    if (consecutive_recovery_successes_ >=
+    if (map_recovery_required_) {
+      if (status_ != EstimatorStatus::kLost) {
+        transitionTo(EstimatorStatus::kDegraded,
+                     "LOCAL_MAP_RECOVERY_REQUIRED");
+      }
+    } else if (consecutive_recovery_successes_ >=
         config_.tracking.recovery_confirmation_updates) {
       consecutive_uncorrected_lidar_updates_ = 0U;
       consecutive_recovery_successes_ = 0U;
@@ -628,6 +629,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   const IkdTreeStageTimingTotals map_timing_before =
       registration_map_.stageTimingTotals();
   diagnostics_.map.map_insertion_frozen = !insertion_allowed;
+  if (!insertion_allowed) {
+    map_recovery_required_ = true;
+  }
   if (insertion_allowed && insertion_policy_.permits(insertion_context)) {
     diagnostics_.map.map_update_performed = true;
     const auto map_update_started = std::chrono::steady_clock::now();
@@ -641,8 +645,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       bootstrap_map_.clear();
     }
     inserted += registration_map_.insert(result.registered_points_odom_m);
-    dynamic_map_evidence_.observeHits(result.registered_points_odom_m,
-                                      corrected_scan_count_ + 1U);
     diagnostics_.map.map_inserted_count = inserted;
     diagnostics_.map.map_size_after_insert = registration_map_.size();
     diagnostics_.map.map_size_before_maintenance = registration_map_.size();
@@ -664,10 +666,12 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
         local_map_update.absolute_guard_recovery_failed;
     diagnostics_.map.map_insertion_frozen =
         local_map_update.insertion_frozen;
-    if (local_map_update.absolute_guard_recovery_failed &&
-        status_ == EstimatorStatus::kTracking) {
-      transitionTo(EstimatorStatus::kDegraded,
-                   "LOCAL_MAP_ABSOLUTE_GUARD_EXCEEDED");
+    if (local_map_update.absolute_guard_recovery_failed) {
+      map_recovery_required_ = true;
+      if (status_ == EstimatorStatus::kTracking) {
+        transitionTo(EstimatorStatus::kDegraded,
+                     "LOCAL_MAP_ABSOLUTE_GUARD_EXCEEDED");
+      }
     }
     diagnostics_.map.map_count_before =
         local_map_update.map_count_before;
@@ -677,10 +681,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     diagnostics_.map.removed_point_count = local_map_update.removed_point_count;
     diagnostics_.map.local_map_center_odom_m = local_map_update.center_odom_m;
     diagnostics_.map.local_map_half_extent_m = local_map_update.half_extent_m;
-    diagnostics_.map.dynamic_evidence_voxel_count =
-        dynamic_map_evidence_.voxelCount();
-    diagnostics_.map.dynamic_candidate_count =
-        dynamic_map_evidence_.candidateCount(corrected_scan_count_ + 1U);
     diagnostics_.map.map_update_runtime_us =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                               map_update_started)
@@ -708,6 +708,9 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       correction.converged
           ? "LIDAR_CORRECTION_CONVERGED"
           : "LIDAR_CORRECTION_ACCEPTED_AT_ITERATION_LIMIT";
+  if (map_recovery_required_) {
+    diagnostics_.reason = "LOCAL_MAP_RECOVERY_REQUIRED";
+  }
   diagnostics_.timing.total_processing_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - total_started)
@@ -723,7 +726,6 @@ void FastLioPipeline::reset() {
   registration_map_.clear();
   bootstrap_map_.clear();
   local_map_manager_.reset();
-  dynamic_map_evidence_.clear();
   state_ = ManifoldState{};
   state_.set_rotation_imu_lidar(config_.extrinsic.rotation_imu_lidar);
   state_.set_position_imu_lidar_m(config_.extrinsic.translation_imu_lidar_m);
@@ -761,6 +763,7 @@ void FastLioPipeline::reset() {
   corrected_scan_count_ = 0U;
   consecutive_uncorrected_lidar_updates_ = 0U;
   consecutive_recovery_successes_ = 0U;
+  map_recovery_required_ = false;
   tracking_ever_confirmed_ = false;
   diagnostics_ = EstimatorDiagnostics{};
   diagnostics_.deskew.deskew_mode = config_.deskew.mode;
@@ -995,8 +998,8 @@ void FastLioPipeline::copyInitialPriorMailboxDiagnostics(
   output.initial_prior.invalid_value_count = prior_invalid_value_count_;
 }
 
-std::vector<Eigen::Vector3d> FastLioPipeline::registrationMapSnapshot() const {
-  return registration_map_.snapshot();
+std::size_t FastLioPipeline::registrationMapSize() const noexcept {
+  return registration_map_.size();
 }
 
 const std::optional<Timestamp>& FastLioPipeline::stateTime() const noexcept {
@@ -1425,16 +1428,10 @@ void FastLioPipeline::resetTransientDiagnostics() {
   diagnostics_.registration = RegistrationDiagnostics{};
 
   const std::size_t map_point_count = registration_map_.size();
-  const bool dynamic_filter_enabled = diagnostics_.map.dynamic_filter_enabled;
-  const std::size_t dynamic_evidence_voxel_count =
-      diagnostics_.map.dynamic_evidence_voxel_count;
   diagnostics_.map = MapDiagnostics{};
   diagnostics_.map.map_point_count = map_point_count;
   diagnostics_.map.valid_point_count_busy_count =
       registration_map_.validPointCountBusyCount();
-  diagnostics_.map.dynamic_filter_enabled = dynamic_filter_enabled;
-  diagnostics_.map.dynamic_evidence_voxel_count =
-      dynamic_evidence_voxel_count;
 
   diagnostics_.state.correction_translation_norm_m = 0.0;
   diagnostics_.state.correction_rotation_norm_rad = 0.0;

@@ -136,10 +136,8 @@ IkfomEstimator::IkfomEstimator(IkfomEstimatorConfig config,
       config_.minimum_accepted_residuals == 0U ||
       config_.maximum_integration_step_ns <= 0 ||
       !(config_.convergence_limit > 0.0) ||
-      !(config_.initial_covariance > 0.0) ||
-      config_.estimate_extrinsic) {
-    throw std::invalid_argument(
-        "IKFoM runtime configuration is invalid or requests online extrinsics");
+      !(config_.initial_covariance > 0.0)) {
+    throw std::invalid_argument("invalid IKFoM runtime configuration");
   }
   std::array<double, IkfomState::DOF> limits{};
   limits.fill(config_.convergence_limit);
@@ -329,12 +327,10 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.nearest_search_runtime_us = active_nearest_search_runtime_us_;
   result.plane_and_gate_runtime_us = active_plane_and_gate_runtime_us_;
   result.jacobian_build_runtime_us = active_jacobian_build_runtime_us_;
-  if (!config_.estimate_extrinsic) {
-    IkfomState fixed_state = filter_.get_x();
-    fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
-    fixed_state.offset_T_L_I = fixed_position_imu_lidar_m_;
-    filter_.change_x(fixed_state);
-  }
+  IkfomState fixed_state = filter_.get_x();
+  fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
+  fixed_state.offset_T_L_I = fixed_position_imu_lidar_m_;
+  filter_.change_x(fixed_state);
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
   result.residual_diagnostics = last_residual_diagnostics_;

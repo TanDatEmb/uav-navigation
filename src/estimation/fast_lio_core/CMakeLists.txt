@@ -25,7 +25,6 @@ set(CORE_SOURCES
   src/initialization/imu_initializer.cpp
   src/initialization/initial_state_prior.cpp
   src/initialization/initial_state_prior_applicator.cpp
-  src/mapping/dynamic_map_evidence.cpp
   src/mapping/ikd_tree_registration_map.cpp
   src/mapping/local_map_manager.cpp
   src/mapping/map_insertion_policy.cpp
@@ -73,7 +72,6 @@ if(BUILD_TESTING)
     test/test_base_link_covariance_projector.cpp
     test/test_base_link_state_converter.cpp
     test/test_duration.cpp
-    test/test_dynamic_map_evidence.cpp
     test/test_fast_lio_pipeline.cpp
     test/test_frame_conventions.cpp
     test/test_ikfom_compact_equivalence.cpp

@@ -18,7 +18,6 @@
 #include "fast_lio_core/initialization/initial_state_prior_applicator.hpp"
 #include "fast_lio_core/geometry/rigid_transform.hpp"
 #include "fast_lio_core/mapping/ikd_tree_registration_map.hpp"
-#include "fast_lio_core/mapping/dynamic_map_evidence.hpp"
 #include "fast_lio_core/navigation/angular_velocity_resolver.hpp"
 #include "fast_lio_core/pipeline/estimator_diagnostics.hpp"
 #include "fast_lio_core/pipeline/process_result.hpp"
@@ -59,7 +58,9 @@ class FastLioPipeline {
   [[nodiscard]] const ManifoldState& state() const noexcept;
   [[nodiscard]] const ManifoldState::Covariance& covariance() const noexcept;
   [[nodiscard]] EstimatorDiagnostics diagnostics() const;
-  [[nodiscard]] std::vector<Eigen::Vector3d> registrationMapSnapshot() const;
+  // Exposes only the map cardinality for health/tests; callers must not copy
+  // the internal registration structure into a world-model interface.
+  [[nodiscard]] std::size_t registrationMapSize() const noexcept;
   [[nodiscard]] const std::optional<Timestamp>& stateTime() const noexcept;
   [[nodiscard]] const std::optional<Timestamp>& synchronizationEpoch()
       const noexcept;
@@ -101,7 +102,6 @@ class FastLioPipeline {
   IkdTreeRegistrationMap bootstrap_map_;
   LocalMapManager local_map_manager_;
   MapInsertionPolicy insertion_policy_;
-  DynamicMapEvidence dynamic_map_evidence_;
 
   EstimatorStatus status_{EstimatorStatus::kWaitingForSensors};
   ManifoldState state_{};
@@ -137,6 +137,9 @@ class FastLioPipeline {
   std::size_t corrected_scan_count_{0};
   std::size_t consecutive_uncorrected_lidar_updates_{0};
   std::size_t consecutive_recovery_successes_{0};
+  // A local-map guard failure requires an explicit reset before tracking can
+  // be reported again. The map remains available for correction/querying.
+  bool map_recovery_required_{false};
   bool tracking_ever_confirmed_{false};
   std::uint64_t generation_{1};
 };

@@ -39,7 +39,6 @@ fast_lio:
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
     extrinsic:
-      estimate_online: false
       translation_imu_lidar: [-0.019391, -0.000278, 0.080926]
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
     initialization: { minimum_imu_samples: 200, require_stationary: false }
@@ -52,7 +51,6 @@ fast_lio:
       correspondence_parallel_threads: 3
     mapping:
       registration_map: { voxel_size_m: 0.3 }
-      dynamic_filter: { enabled: false }
       local_map:
         half_extent_m: [50.0, 50.0, 25.0]
         crop_trigger_distance_m: 5.0

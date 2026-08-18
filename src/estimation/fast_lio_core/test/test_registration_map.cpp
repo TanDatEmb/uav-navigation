@@ -59,11 +59,9 @@ TEST(RegistrationMapTest, FixedQueryMatchesBruteForceNearestPrefix) {
                                  coordinate(generator));
   }
   ASSERT_EQ(map.insert(inserted_points), inserted_points.size());
-  const std::vector<Eigen::Vector3d> represented_points = map.snapshot();
-
   const Eigen::Vector3d query(coordinate(generator), coordinate(generator),
                               coordinate(generator));
-  std::vector<Eigen::Vector3d> sorted = represented_points;
+  std::vector<Eigen::Vector3d> sorted = inserted_points;
   std::sort(sorted.begin(), sorted.end(), [&](const auto& left, const auto& right) {
     return (left - query).squaredNorm() < (right - query).squaredNorm();
   });
@@ -88,8 +86,12 @@ TEST(RegistrationMapTest, LocalCropDeletesOutsidePointsThroughUpstreamBoxes) {
   ASSERT_EQ(map.insert(points), points.size());
   EXPECT_EQ(map.cropLocal({0.0, 0.0, 0.0}, {2.0, 2.0, 2.0}), 6U);
   EXPECT_EQ(map.size(), 7U);
-  for (const Eigen::Vector3d& point : map.snapshot()) {
-    EXPECT_LE(point.cwiseAbs().maxCoeff(), 2.0);
+  for (const Eigen::Vector3d& point :
+       std::vector<Eigen::Vector3d>{{-2.1, 0.0, 0.0}, {2.1, 0.0, 0.0},
+                                    {0.0, -2.1, 0.0}, {0.0, 2.1, 0.0},
+                                    {0.0, 0.0, -2.1}, {0.0, 0.0, 2.1}}) {
+    NeighborSet neighbors;
+    EXPECT_FALSE(map.nearestSearch(point, 0.05, neighbors));
   }
 }
 
@@ -99,7 +101,6 @@ TEST(RegistrationMapTest, ClearAllowsFreshUpstreamBuild) {
   ASSERT_EQ(map.insert(first), 2U);
   map.clear();
   EXPECT_EQ(map.size(), 0U);
-  EXPECT_TRUE(map.snapshot().empty());
   const std::vector<Eigen::Vector3d> second{{5.0, 0.0, 0.0}};
   EXPECT_EQ(map.insert(second), 1U);
   EXPECT_EQ(map.size(), 1U);

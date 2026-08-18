@@ -62,7 +62,6 @@ TEST(ResidualBuilderTest, PointToPlaneJacobianMatchesFiniteDifferenceAndFixedExt
   ResidualBuilderConfig config;
   config.correspondence_search.maximum_neighbor_distance_m = 0.8;
   config.residual_gate.maximum_absolute_distance_m = 0.3;
-  config.estimate_extrinsic = false;
   ResidualBuilder builder(config);
   const std::vector<Eigen::Vector3d> scan{{0.35, -0.2, 0.1}};
   ManifoldState state;

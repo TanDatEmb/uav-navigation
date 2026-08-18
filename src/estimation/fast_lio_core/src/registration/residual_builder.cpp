@@ -187,14 +187,6 @@ ResidualBuildView ResidualBuilder::buildInto(
     jacobian.segment<3>(ManifoldState::kOrientationOffset) =
         candidate.normal_odom.transpose() *
         (-rotation_odom_imu * skewSymmetric(point_imu_m));
-    if (config_.estimate_extrinsic) {
-      jacobian.segment<3>(ManifoldState::kExtrinsicRotationOffset) =
-          candidate.normal_odom.transpose() *
-          (-rotation_odom_imu * rotation_imu_lidar *
-           skewSymmetric(point_lidar_m));
-      jacobian.segment<3>(ManifoldState::kExtrinsicPositionOffset) =
-          candidate.normal_odom.transpose() * rotation_odom_imu;
-    }
     workspace_.residual[static_cast<Eigen::Index>(last_row_count_)] =
         candidate.signed_distance_m;
     workspace_.variance[static_cast<Eigen::Index>(last_row_count_)] =

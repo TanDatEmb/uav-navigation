@@ -212,9 +212,6 @@ struct MapDiagnostics {
   Eigen::Vector3d local_map_half_extent_m{Eigen::Vector3d::Zero()};
   std::int64_t map_update_runtime_us{0};
   std::int64_t map_maintenance_us{0};
-  bool dynamic_filter_enabled{false};
-  std::size_t dynamic_evidence_voxel_count{0};
-  std::size_t dynamic_candidate_count{0};
 };
 
 struct StateDiagnostics {

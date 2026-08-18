@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 #include "fast_lio_core/mapping/registration_map.hpp"
 
@@ -61,7 +60,6 @@ class IkdTreeRegistrationMap final : public RegistrationMap {
   std::size_t cropLocal(
       const Eigen::Vector3d& center_odom_m,
       const Eigen::Vector3d& half_extent_m) override;
-  [[nodiscard]] std::vector<Eigen::Vector3d> snapshot() const override;
   [[nodiscard]] std::size_t size() const override;
   [[nodiscard]] std::size_t validPointCountBusyCount() const noexcept;
   [[nodiscard]] IkdTreeStageTimingTotals stageTimingTotals() const noexcept;

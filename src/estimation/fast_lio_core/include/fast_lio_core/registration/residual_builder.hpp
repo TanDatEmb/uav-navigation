@@ -23,7 +23,6 @@ struct ResidualBuilderConfig {
   PlaneEstimatorConfig plane_estimator{};
   ResidualGateConfig residual_gate{};
   double point_measurement_standard_deviation_m{0.03};
-  bool estimate_extrinsic{false};
   std::size_t parallel_thread_count{3};
 };
 

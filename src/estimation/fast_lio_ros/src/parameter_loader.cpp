@@ -50,7 +50,7 @@ InitialPriorFallback parsePriorFallback(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 33> kRequired{
+  static constexpr std::array<std::string_view, 32> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -75,7 +75,6 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "tracking.maximum_recoverable_imu_gap_ns",
       "tracking.recovery_confirmation_updates",
       "tracking.discontinuity_covariance_inflation",
-      "extrinsic.estimate_online",
       "extrinsic.translation_imu_lidar",
       "extrinsic.rotation_imu_lidar_xyzw",
       "initialization.minimum_imu_samples",
@@ -207,7 +206,6 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "tracking.discontinuity_covariance_inflation", 10.0);
   result.reject_timestamp_regression =
       node.declare_parameter("timing.reject_timestamp_regression", true);
-  result.estimate_extrinsic_online = node.declare_parameter("extrinsic.estimate_online", false);
   const auto translation = node.declare_parameter<std::vector<double>>(
       "extrinsic.translation_imu_lidar", {0.0, 0.0, 0.0});
   const auto rotation = node.declare_parameter<std::vector<double>>(
@@ -237,8 +235,6 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "mapping.local_map.crop_trigger_distance_m", 5.0);
   result.local_map_absolute_point_guard = node.declare_parameter<std::int64_t>(
       "mapping.local_map.absolute_map_point_guard", 250000);
-  result.dynamic_filter_enabled =
-      node.declare_parameter("mapping.dynamic_filter.enabled", false);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
   result.correspondence_parallel_threads =
@@ -247,10 +243,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.publish_registered_points =
       node.declare_parameter("output.publish_registered_points", false);
   // Named under output.mapping_observation.* (not mapping.*) to avoid any
-  // confusion with this node's own mapping.local_map.*/mapping.dynamic_filter.*
-  // parameters, which configure the FAST-LIO registration map, not the
-  // navigation world model (see docs/architecture/navigation_layers.md,
-  // ADR-008).
+  // This output is the boundary to the navigation world model; it does not
+  // expose FAST-LIO's internal registration map.
   result.mapping_observation_enabled =
       node.declare_parameter("output.mapping_observation.enabled", false);
   result.imu_queue_capacity =
@@ -350,7 +344,6 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.local_map_crop_trigger_distance_m;
   config.local_map.absolute_map_point_guard = static_cast<std::size_t>(
       parameters.local_map_absolute_point_guard);
-  config.dynamic_filter.enabled = parameters.dynamic_filter_enabled;
   config.initialization.minimum_imu_samples =
       static_cast<std::size_t>(parameters.minimum_imu_samples);
   config.initialization.require_stationary = parameters.require_stationary;
@@ -388,7 +381,6 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       static_cast<std::size_t>(parameters.maximum_registration_iterations);
   config.residual_builder.parallel_thread_count = static_cast<std::size_t>(
       parameters.correspondence_parallel_threads);
-  config.extrinsic.estimate_online = parameters.estimate_extrinsic_online;
   config.extrinsic.translation_imu_lidar_m = {
       parameters.translation_imu_lidar_m[0],
       parameters.translation_imu_lidar_m[1],
@@ -487,9 +479,6 @@ void ParameterLoader::validate(const RosParameters& p) {
       std::abs(quaternion_norm - 1.0) > 1e-6) {
     throw std::invalid_argument("extrinsic rotation quaternion is invalid");
   }
-  if (p.estimate_extrinsic_online) {
-    throw std::invalid_argument("runtime configurations require extrinsic.estimate_online=false");
-  }
   if (!(p.scan_voxel_size_m > 0.0) ||
       !std::isfinite(p.scan_voxel_size_m)) {
     throw std::invalid_argument(
@@ -539,6 +528,8 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.propagated_odometry_imu_ingress_capacity <= 0 ||
       p.propagated_odometry_imu_history_duration_ns <= 0 ||
       p.propagated_odometry_maximum_correction_age_ns <= 0 ||
+      // The history must outlive the maximum correction age so replay has a
+      // timestamp bracket instead of relying on an expired oldest sample.
       p.propagated_odometry_imu_history_duration_ns <=
           p.propagated_odometry_maximum_correction_age_ns) {
     throw std::invalid_argument(

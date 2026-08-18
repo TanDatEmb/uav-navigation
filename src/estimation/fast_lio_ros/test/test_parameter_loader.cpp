@@ -43,7 +43,6 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.lidar_timing_mode, "simultaneous_scan");
   EXPECT_EQ(parameters.input_clock_domain, "ros_time");
   EXPECT_EQ(parameters.livox_timestamp_policy, "require_header_match");
-  EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 8);
@@ -131,7 +130,6 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
   EXPECT_EQ(direct.ikfom.maximum_iterations, ros.ikfom.maximum_iterations);
   EXPECT_EQ(direct.residual_builder.parallel_thread_count,
             ros.residual_builder.parallel_thread_count);
-  EXPECT_EQ(direct.extrinsic.estimate_online, ros.extrinsic.estimate_online);
   EXPECT_LT((direct.extrinsic.translation_imu_lidar_m -
              ros.extrinsic.translation_imu_lidar_m)
                 .norm(),
@@ -186,19 +184,18 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_EQ(parameters.maximum_recoverable_imu_gap_ns, 50'000'000);
   EXPECT_EQ(parameters.recovery_confirmation_updates, 3);
   EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
-  EXPECT_FALSE(parameters.estimate_extrinsic_online);
   EXPECT_EQ(parameters.translation_imu_lidar_m,
             (std::array<double, 3>{-0.019391, -0.000278, 0.080926}));
   EXPECT_EQ(parameters.rotation_imu_lidar_xyzw,
             (std::array<double, 4>{0.0, 0.0, 0.0, 1.0}));
   EXPECT_EQ(parameters.minimum_imu_samples, 200);
   EXPECT_FALSE(parameters.require_stationary);
-  EXPECT_DOUBLE_EQ(parameters.minimum_range_m, 0.1);
+  EXPECT_DOUBLE_EQ(parameters.minimum_range_m, 0.5);
   EXPECT_DOUBLE_EQ(parameters.maximum_range_m, 40.0);
   EXPECT_DOUBLE_EQ(parameters.scan_voxel_size_m, 0.9);
   EXPECT_DOUBLE_EQ(parameters.registration_map_voxel_size_m, 0.3);
   EXPECT_EQ(parameters.maximum_registration_iterations, 4);
-  EXPECT_FALSE(parameters.publish_registered_points);
+  EXPECT_TRUE(parameters.publish_registered_points);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
   EXPECT_EQ(parameters.maximum_processing_lag_ms, 200);

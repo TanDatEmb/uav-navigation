@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <span>
 #include <string_view>
-#include <vector>
 
 namespace uav::nav::lio {
 
@@ -38,7 +37,6 @@ class RegistrationMap {
   // of represented points removed.
   virtual std::size_t cropLocal(const Eigen::Vector3d& center_odom_m,
                                 const Eigen::Vector3d& half_extent_m) = 0;
-  [[nodiscard]] virtual std::vector<Eigen::Vector3d> snapshot() const = 0;
   // Returns a non-blocking best-effort count. A backend rebuilding
   // asynchronously may return its most recent cached count.
   [[nodiscard]] virtual std::size_t size() const = 0;

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -53,20 +52,6 @@ Message deserialize(const std::shared_ptr<rosbag2_storage::SerializedBagMessage>
   return message;
 }
 
-void writePcd(const std::filesystem::path& path,
-              const std::vector<Eigen::Vector3d>& points) {
-  std::ofstream stream(path);
-  stream << "# .PCD v0.7\nVERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\n"
-            "TYPE F F F\nCOUNT 1 1 1\nWIDTH "
-         << points.size()
-         << "\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\nPOINTS " << points.size()
-         << "\nDATA ascii\n";
-  stream << std::setprecision(9);
-  for (const auto& point : points) {
-    stream << point.x() << ' ' << point.y() << ' ' << point.z() << '\n';
-  }
-}
-
 int run(const std::filesystem::path& bag_path,
         const std::filesystem::path& config_path,
         const std::filesystem::path& output_path,
@@ -112,9 +97,7 @@ int run(const std::filesystem::path& bag_path,
                  "map_size_after_maintenance,"
                  "local_map_center_x,local_map_center_y,local_map_center_z,"
                  "local_map_half_extent_x,local_map_half_extent_y,"
-                 "local_map_half_extent_z,"
-                 "dynamic_filter_enabled,dynamic_evidence_voxel_count,"
-                 "dynamic_candidate_count\n";
+                 "local_map_half_extent_z\n";
   trajectory << "time_ns,x,y,z,qx,qy,qz,qw\n";
   corrections << "time_ns,status,iterations,residual_rms,map_points\n";
   std::size_t record_index = 0;
@@ -224,10 +207,7 @@ int run(const std::filesystem::path& bag_path,
                   << diagnostic.map.local_map_center_odom_m.z() << ','
                   << diagnostic.map.local_map_half_extent_m.x() << ','
                   << diagnostic.map.local_map_half_extent_m.y() << ','
-                  << diagnostic.map.local_map_half_extent_m.z() << ','
-                  << (diagnostic.map.dynamic_filter_enabled ? 1 : 0) << ','
-                  << diagnostic.map.dynamic_evidence_voxel_count << ','
-                  << diagnostic.map.dynamic_candidate_count << '\n';
+                  << diagnostic.map.local_map_half_extent_m.z() << '\n';
       if (diagnostic.deskew.deskew_applied) {
         ++counters.deskew_applied_count;
       }
@@ -259,7 +239,6 @@ int run(const std::filesystem::path& bag_path,
   const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
                               std::chrono::steady_clock::now() - wall_start)
                               .count();
-  const auto map = pipeline.registrationMapSnapshot();
   const auto final_diagnostics = pipeline.diagnostics();
   const auto processing = final_diagnostics.processing;
   const auto normalization =
@@ -276,7 +255,6 @@ int run(const std::filesystem::path& bag_path,
           ? static_cast<double>(processing.correction_success_count) /
                 dataset_duration_seconds
           : 0.0;
-  writePcd(output_path / "local_map.pcd", map);
   const auto write_run_metadata =
       [&](const std::filesystem::path& path) {
     std::ofstream summary(path);
@@ -357,7 +335,8 @@ int run(const std::filesystem::path& bag_path,
           << dataset_duration_seconds << ",\n"
           << "  \"effective_corrected_output_rate_hz\": "
           << effective_corrected_output_rate_hz << ",\n"
-          << "  \"map_point_count\": " << map.size() << ",\n"
+          << "  \"map_point_count\": "
+          << final_diagnostics.map.map_point_count << ",\n"
           << "  \"map_size_before_insert\": "
           << final_diagnostics.map.map_size_before_insert << ",\n"
           << "  \"map_candidate_count\": "

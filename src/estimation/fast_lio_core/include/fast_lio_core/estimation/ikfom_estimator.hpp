@@ -25,7 +25,6 @@ struct IkfomEstimatorConfig {
   double gyro_bias_random_walk_standard_deviation{1e-4};
   double accel_bias_random_walk_standard_deviation{1e-4};
   double initial_covariance{1e-3};
-  bool estimate_extrinsic{false};
 };
 
 struct IkfomCorrectionResult {

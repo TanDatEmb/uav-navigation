@@ -12,8 +12,8 @@ Position, velocity and biases use IKFoM vector components, rotations use
 `MTK::SO3`, and gravity uses `MTK::S2`. IKFoM owns the 23-DoF error-state,
 covariance layout, boxplus/boxminus and Kalman machinery. `ManifoldState` is a
 plain output/interchange view and does not implement a second filter or
-manifold retraction. Extrinsics exist in the upstream state but default to fixed:
-`extrinsic.estimate_online: false`.
+manifold retraction. Extrinsics remain in the upstream-compatible state as
+static calibration; online extrinsic estimation is not a runtime feature.
 
 Initialization collects stationary IMU data, gates quality using sample count
 and variance, estimates gravity/biases, and reports its reason/status. Online

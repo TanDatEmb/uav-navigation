@@ -54,7 +54,6 @@ struct RosParameters {
   std::int64_t recovery_confirmation_updates{};
   double discontinuity_covariance_inflation{};
   bool reject_timestamp_regression{};
-  bool estimate_extrinsic_online{};
   std::array<double, 3> translation_imu_lidar_m{};
   std::array<double, 4> rotation_imu_lidar_xyzw{};
   std::int64_t minimum_imu_samples{};
@@ -66,7 +65,6 @@ struct RosParameters {
   std::array<double, 3> local_map_half_extent_m{};
   double local_map_crop_trigger_distance_m{};
   std::int64_t local_map_absolute_point_guard{};
-  bool dynamic_filter_enabled{};
   std::int64_t maximum_registration_iterations{};
   std::int64_t correspondence_parallel_threads{3};
   bool publish_registered_points{};

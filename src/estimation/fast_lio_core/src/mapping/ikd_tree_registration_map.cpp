@@ -46,12 +46,6 @@ Eigen::Vector3d toEigenPoint(const UpstreamPoint& point) {
                          static_cast<double>(point.z));
 }
 
-bool lexicographicPointLess(const Eigen::Vector3d& left,
-                            const Eigen::Vector3d& right) {
-  return std::tie(left.x(), left.y(), left.z()) <
-         std::tie(right.x(), right.y(), right.z());
-}
-
 bool upstreamPointLess(const UpstreamPoint& left,
                        const UpstreamPoint& right) {
   return std::tie(left.x, left.y, left.z) <
@@ -81,25 +75,6 @@ class IkdTreeRegistrationMap::Impl {
             static_cast<float>(config.balance_rebuild_ratio),
             static_cast<float>(config.voxel_size_m),
             config.enable_asynchronous_rebuild)) {}
-
-  [[nodiscard]] UpstreamPointVector snapshotUpstream() const {
-    UpstreamPointVector points;
-    if (!built || validPointCount() == 0U) {
-      return points;
-    }
-    const BoxPointType range = tree->tree_range();
-    BoxPointType inclusive_range = range;
-    for (std::size_t axis = 0; axis < 3U; ++axis) {
-      inclusive_range.vertex_min[axis] =
-          std::nextafter(range.vertex_min[axis],
-                         -std::numeric_limits<float>::infinity());
-      inclusive_range.vertex_max[axis] =
-          std::nextafter(range.vertex_max[axis],
-                         std::numeric_limits<float>::infinity());
-    }
-    tree->Box_Search(inclusive_range, points);
-    return points;
-  }
 
   [[nodiscard]] std::size_t validPointCount() const noexcept {
     const auto started = std::chrono::steady_clock::now();
@@ -309,19 +284,6 @@ std::size_t IkdTreeRegistrationMap::cropLocal(
   }
   const std::size_t size_after = impl_->validPointCount();
   return size_before > size_after ? size_before - size_after : 0U;
-}
-
-std::vector<Eigen::Vector3d>
-IkdTreeRegistrationMap::snapshot() const {
-  const UpstreamPointVector upstream_points =
-      impl_->snapshotUpstream();
-  std::vector<Eigen::Vector3d> points;
-  points.reserve(upstream_points.size());
-  for (const UpstreamPoint& point : upstream_points) {
-    points.push_back(toEigenPoint(point));
-  }
-  std::sort(points.begin(), points.end(), lexicographicPointLess);
-  return points;
 }
 
 std::size_t IkdTreeRegistrationMap::size() const {
