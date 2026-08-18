@@ -106,6 +106,7 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "stale_event_count": int(row.get("stale_event_count", 0)),
         "stale_event_times_ns": list(row.get("stale_event_times_ns", [])),
         "timestamp_regression_count": int(row.get("timestamp_regression_count", 0)),
+        "timestamp_epoch_discard_count": int(row.get("timestamp_epoch_discard_count", 0)),
         "timestamp_duplicate_count": int(row.get("timestamp_duplicate_count", 0)),
         "nonfinite_message_count": int(row.get("nonfinite_message_count", 0)),
         "invalid_quaternion_count": int(row.get("invalid_quaternion_count", 0)),
@@ -485,7 +486,12 @@ def _map_maintenance_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _series(samples: list[dict[str, Any]], stream: str) -> list[dict[str, Any]]:
-    return [item for item in samples if item.get("stream") == stream]
+    return [
+        item
+        for item in samples
+        if item.get("stream") == stream
+        and item.get("accepted_by_monitor", True)
+    ]
 
 
 def _diagnostic_states(samples: list[dict[str, Any]]) -> list[str]:
@@ -1268,9 +1274,9 @@ def _json(value: Any) -> str:
 def render(report: dict[str, Any]) -> str:
     lines = [f"# Runtime report: {report.get('workflow', 'unknown')}", "", f"- Verdict: **{report.get('verdict')}**", f"- Session: `{report.get('session', '')}`", ""]
     reasons = report.get("reasons", [])
-    lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions | Epoch discarded |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
-        lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} |")
+        lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} | {row.get('timestamp_epoch_discard_count', 0)} |")
     for section in ("lio", "navigation_mapping", "planning", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "external_mode", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]

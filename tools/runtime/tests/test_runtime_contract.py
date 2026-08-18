@@ -17,6 +17,37 @@ import runner
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_clean_path_list_excludes_build_and_install_trees(self) -> None:
+        for name in ("build", "install"):
+            self.assertNotIn(ROOT / name, runner.GENERATED_CLEAN_PATHS)
+        for name in ("build-debug", "build-gprof", "install-debug", "log-debug"):
+            self.assertIn(ROOT / name, runner.GENERATED_CLEAN_PATHS)
+
+    def test_clean_preserves_incremental_build_and_install_trees(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            root = Path(temporary)
+            build = root / "build"
+            install = root / "install"
+            stale_build = root / "build-debug"
+            artifacts = root / ".artifacts"
+            logs = root / "log"
+            for directory in (build, install, stale_build, artifacts, logs):
+                directory.mkdir()
+                (directory / "sentinel").write_text("keep", encoding="utf-8")
+
+            original_paths = runner.GENERATED_CLEAN_PATHS
+            runner.GENERATED_CLEAN_PATHS = (artifacts, logs, stale_build)
+            try:
+                self.assertEqual(runner.clean(), 0)
+            finally:
+                runner.GENERATED_CLEAN_PATHS = original_paths
+
+            self.assertTrue((build / "sentinel").is_file())
+            self.assertTrue((install / "sentinel").is_file())
+            self.assertFalse(stale_build.exists())
+            self.assertFalse(artifacts.exists())
+            self.assertFalse(logs.exists())
+
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
         mapping = runner.load_config("mapping.yaml")["navigation_runtime"]["ros__parameters"]["mapping"]
         self.assertEqual(mapping["input"]["min_range_m"], 0.5)
@@ -63,6 +94,20 @@ class RuntimeContractTest(unittest.TestCase):
             ]["ros__parameters"]["mapping"]
             self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
             self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
+
+    def test_simulation_mapping_profile_preserves_collision_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session, ROOT / "config/runtime/mapping.yaml", simulation=True
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                "navigation_runtime"
+            ]["ros__parameters"]
+            self.assertEqual(
+                parameters["navigation"]["collision"],
+                {"vehicle_radius_m": 0.32, "safety_margin_m": 0.05},
+            )
 
     def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
         self.assertEqual(
@@ -241,6 +286,7 @@ class RuntimeContractTest(unittest.TestCase):
         class DummyVehicleStatus:
             NAVIGATION_STATE_EXTERNAL1 = 23
             NAVIGATION_STATE_AUTO_LOITER = 4
+            NAVIGATION_STATE_AUTO_RTL = 20
             ARMING_STATE_ARMED = 2
             ARMING_STATE_DISARMED = 1
 
@@ -315,6 +361,38 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(snapshot["timestamp_regression_count"], 1)
         self.assertEqual(snapshot["stale_event_count"], 1)
         self.assertEqual(snapshot["frame_ids"], ["livox_imu_frame"])
+
+    def test_simulation_stream_discards_wall_epoch_without_regression(self) -> None:
+        stats = StreamStats(
+            "px4_odometry",
+            "/fmu/out/vehicle_odometry",
+            stale_after_s=0.1,
+            timestamp_upper_bound_ns=1_000_000_000_000_000,
+        )
+        stats.update(1_787_022_423_986_327_000, 1_000_000_000)
+        stats.update(4_000_000_000, 1_100_000_000)
+        stats.update(4_016_000_000, 1_116_000_000)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["received"], 2)
+        self.assertEqual(snapshot["timestamp_regression_count"], 0)
+        self.assertEqual(snapshot["timestamp_epoch_discard_count"], 1)
+
+    def test_report_ignores_monitor_discarded_samples_for_matching(self) -> None:
+        def sample(stream: str, stamp_ns: int, accepted: bool = True) -> dict[str, object]:
+            return {
+                "kind": "sample",
+                "stream": stream,
+                "timestamp_ns": stamp_ns,
+                "accepted_by_monitor": accepted,
+                "payload": {"timestamp_sample_us": stamp_ns // 1000},
+            }
+
+        samples = [
+            sample("external_odometry", 4_000_000_000),
+            sample("px4_odometry", 1_787_022_423_986_327_000, False),
+            sample("px4_odometry", 4_000_000_000),
+        ]
+        self.assertEqual(len(report._series(samples, "px4_odometry")), 1)
 
     def test_residual_report_declares_missing_pre_fusion_data(self) -> None:
         result = report._residuals([], 20.0)

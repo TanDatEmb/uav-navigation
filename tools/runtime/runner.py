@@ -53,17 +53,32 @@ GUI_ENV_REMOVE = {
 PX4_HEADLESS_COM_RC_IN_MODE = "4"
 PX4_INTERACTIVE_COM_RC_IN_MODE = "1"
 
+DISPOSABLE_BUILD_VARIANT_SUFFIXES = (
+    "gprof",
+    "profile",
+    "debug",
+    "asan",
+    "ubsan",
+    "tsan",
+)
+
+# build/ and install/ are the canonical Release outputs used by `make build`.
+# Keep them for incremental use; sanitizer/profiling variants are disposable
+# and are cleaned together with their logs.
 GENERATED_CLEAN_PATHS = (
     ROOT / ".artifacts",
     ROOT / ".pytest_cache",
-    ROOT / "build",
-    ROOT / "build-gprof",
-    ROOT / "install",
-    ROOT / "install-gprof",
     ROOT / "log",
-    ROOT / "log-gprof",
     ROOT / "src/mapping/rog_map_vendor/log",
     ROOT / "symlink_install_manifest.txt",
+) + tuple(
+    path
+    for suffix in DISPOSABLE_BUILD_VARIANT_SUFFIXES
+    for path in (
+        ROOT / f"build-{suffix}",
+        ROOT / f"install-{suffix}",
+        ROOT / f"log-{suffix}",
+    )
 )
 
 
@@ -269,7 +284,12 @@ def _mapping_params(
     visualization_parameters["publish_unknown"] = interactive
     visualization_parameters["publish_frontier"] = frontier_debug
     if simulation:
-        simulation_parameters = load_config("sim.yaml").get("navigation", {})
+        simulation_parameters = (
+            load_config("sim.yaml")
+            .get("navigation_runtime", {})
+            .get("ros__parameters", {})
+            .get("navigation", {})
+        )
         navigation["collision"] = simulation_parameters.get("collision", {})
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
@@ -789,6 +809,7 @@ def stop() -> int:
 
 
 def clean() -> int:
+    """Remove runtime-generated state while preserving build/install outputs."""
     import shutil
 
     removed: list[Path] = []

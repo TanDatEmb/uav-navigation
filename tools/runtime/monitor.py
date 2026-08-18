@@ -19,6 +19,18 @@ import time
 from typing import Any, Callable
 
 
+# Gazebo simulation time starts near zero. PX4 can briefly publish wall-clock
+# timestamps before its simulation clock is active; those samples must not
+# poison the sim health-rate/regression statistics.
+SIMULATION_TIMESTAMP_MAX_NS = 1_000_000_000_000_000
+PX4_SIMULATION_STREAMS = frozenset({
+    "px4_odometry",
+    "vehicle_status",
+    "local_position",
+    "estimator_status_flags",
+})
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -83,6 +95,7 @@ class StreamStats:
     topic: str
     expected_hz: float | None = None
     stale_after_s: float = 1.0
+    timestamp_upper_bound_ns: int | None = None
     received: int = 0
     first_stamp_ns: int = 0
     last_stamp_ns: int = 0
@@ -92,6 +105,7 @@ class StreamStats:
     window_rates_hz: list[float] = field(default_factory=list)
     timestamp_duplicates: int = 0
     timestamp_regressions: int = 0
+    timestamp_epoch_discard_count: int = 0
     stale_events: int = 0
     stale_event_times_ns: list[int] = field(default_factory=list)
     nonfinite_messages: int = 0
@@ -111,7 +125,14 @@ class StreamStats:
         nonfinite: int = 0,
         invalid_quaternion: bool = False,
         invalid_covariance: bool = False,
-    ) -> None:
+    ) -> bool:
+        if (
+            stamp_ns > 0
+            and self.timestamp_upper_bound_ns is not None
+            and stamp_ns > self.timestamp_upper_bound_ns
+        ):
+            self.timestamp_epoch_discard_count += 1
+            return False
         self.received += 1
         self.last_arrival_ns = arrival_ns
         self.arrival_times_s.append(arrival_ns / 1e9)
@@ -140,6 +161,7 @@ class StreamStats:
             if elapsed > 0:
                 self.window_rates_hz.append((len(self.arrival_times_s) - 1) / elapsed)
                 self.window_rates_hz = self.window_rates_hz[-512:]
+        return True
 
     def check_stale(self, now_ns: int) -> None:
         # A single first sample is not yet an active stream. Startup can
@@ -168,6 +190,7 @@ class StreamStats:
             "stale_event_times_ns": self.stale_event_times_ns,
             "timestamp_duplicate_count": self.timestamp_duplicates,
             "timestamp_regression_count": self.timestamp_regressions,
+            "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
             "nonfinite_message_count": self.nonfinite_messages,
             "invalid_quaternion_count": self.invalid_quaternions,
             "invalid_covariance_count": self.invalid_covariances,
@@ -314,6 +337,11 @@ class RuntimeMonitor:
                 spec.topic,
                 stream_config.get("expected_hz"),
                 float(stream_config.get("stale_after_s", thresholds.get("stale_after_s", 1.0))),
+                timestamp_upper_bound_ns=(
+                    SIMULATION_TIMESTAMP_MAX_NS
+                    if self.workflow == "sim" and spec.name in PX4_SIMULATION_STREAMS
+                    else None
+                ),
             )
             try:
                 self.node.create_subscription(
@@ -440,7 +468,7 @@ class RuntimeMonitor:
             covariance_values = payload.get("position_variance") or payload.get("covariance")
             invalid_covariance = bool(covariance_values) and _recursive_nonfinite(covariance_values) > 0
             stats = self.streams[spec.name]
-            stats.update(
+            accepted_by_monitor = stats.update(
                 stamp_ns,
                 arrival_ns,
                 frame_id=frame_id,
@@ -448,7 +476,8 @@ class RuntimeMonitor:
                 invalid_quaternion=invalid_q,
                 invalid_covariance=invalid_covariance,
             )
-            self.latest[spec.name] = payload
+            if accepted_by_monitor:
+                self.latest[spec.name] = payload
             if spec.name == "diagnostics":
                 self._update_diagnostic_state(payload)
             sample = {
@@ -457,6 +486,7 @@ class RuntimeMonitor:
                 "arrival_wall_ns": arrival_ns,
                 "timestamp_ns": stamp_ns,
                 "payload": payload,
+                "accepted_by_monitor": accepted_by_monitor,
             }
             self._sample_stream.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
 
