@@ -35,10 +35,37 @@ navigation_runtime:
     navigation:
       state:
         topic: /lio/odometry_propagated
-        max_age_s: 0.5
+        # Keep planner freshness aligned with the External Mode finite gate;
+        # measured SITL propagated-odometry gaps can approach 0.82 s under
+        # mapping load. Safety fallback still fails closed beyond this bound.
+        max_age_s: 1.0
+      replan_rate_hz: 5.0
+      replan_tracking_error_m: 0.5
       planner:
         max_velocity_mps: 2.0
         max_acceleration_mps2: 3.0
+        max_deceleration_mps2: 3.0
+        max_jerk_mps3: 6.0
         trajectory_sample_dt_s: 0.05
         corridor_sample_spacing_m: 0.0
         maximum_time_scaling_iterations: 8
+        allow_unknown_start: false
+        # Virtual KnownFree sphere around the trusted current vehicle pose.
+        # The simulation runner sets this to vehicle radius + safety margin;
+        # the real/default profile leaves it disabled at zero.
+        unknown_start_radius_m: 0.0
+        # Optimistic nominal planning is simulation-only and must be enabled
+        # by an explicit runner flag. Real/default profiles stay fail-closed.
+        allow_nominal_unknown: false
+        nominal_commitment_horizon_s: 1.0
+      local_subgoal:
+        enabled: true
+        boundary_margin_m: 1.0
+        max_distance_m: 5.0
+        # Hysteresis distance for the receding-horizon leg.  A new local goal
+        # is selected only after the current leg is nearly reached.
+        switch_distance_m: 0.8
+        # Minimum tangent speed fraction for intermediate local goals. A
+        # non-zero value keeps receding-horizon replanning continuous; set to
+        # zero only when an application explicitly wants stop-and-replan.
+        continuation_speed_fraction: 0.35

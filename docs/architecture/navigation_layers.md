@@ -130,15 +130,45 @@ external PX4 model source
 `Tools/simulation/gz/models/x500_base/model.sdf`: rotor centers are at
 `+/-0.174 m` and each rotor collision box is `0.27923 m` long, yielding a
 `0.32 m` conservative horizontal radius plus a `0.05 m` margin. This profile
-does not authorize a real aircraft envelope. Synthetic planner tests use
-separate explicit values only to validate contract and algorithmic closure.
+does not authorize a real aircraft envelope. The simulation runner also
+enables the narrowly scoped `allow_unknown_start` exception because the
+simulated LiDAR is mounted 0.28 m above `base_link`: a virtual `KnownFree`
+overlay follows the trusted current pose with radius `0.37 m`, equal to the
+simulation collision envelope. It converts only `Unknown` cells intersecting
+that footprint and never masks `Occupied` evidence. Every cell outside it still
+requires `KnownFree`; the real/default profile keeps this exception disabled.
+Synthetic planner tests use separate explicit values only to validate contract
+and algorithmic closure.
 
 `UnknownTraversable` is a reference/exploration policy only; it is not
-flight-safe execution by itself. An unknown-space exploration trajectory would
-require an independently safe known-free backup/stopping trajectory, which is
-not implemented yet. Future CIRI should consume raw occupied geometry and
-apply the same physical-clearance contract itself, rather than consuming
-already-inflated occupied points and double-inflating them.
+flight-safe execution by itself. The current External Mode path executes only
+the planner's `Inflated` + `UnknownBlocked` trajectory contract and fails
+closed on missing/invalid/stale trajectories. An unknown-space exploration
+trajectory would require an independently safe known-free backup/stopping
+trajectory. The current runtime now has the first bounded form of that
+fallback: when the nominal plan fails, it asks the planner for a braking
+trajectory whose every sampled cell is `Inflated` + `KnownFree` and whose final
+velocity and acceleration are zero. External Mode marks this as `SAFETY`; it
+does not advance the mission waypoint, and retries the same correlated goal.
+If that stop cannot be proven, the mode fails closed. This is a stop/retry
+contract, not permission to fly through unknown space. Nominal unknown-space
+planning remains disabled until a commitment horizon and an independently
+validated safe fallback are implemented. Future CIRI should consume raw
+occupied geometry and apply the same physical-clearance contract itself, rather
+than consuming already-inflated occupied points and double-inflating them.
+
+Runtime replanning is bounded by the active goal identity and WorldModel
+generation/revision. A timer tick with no change is skipped and counted; a new
+goal or map revision invalidates the cache and runs A* plus trajectory
+verification again. This prevents an unconditional planner loop from being
+mistaken for a safety mechanism while retaining fail-closed behavior on a
+changed map.
+
+Mission completion is a notification from External Mode to the supervisor. The
+mode executor reports success and stops owning mission progress; it does not
+issue LAND, RTL, disarm, or an assumed Loiter handover. The supervisor chooses a
+PX4 mode supported by the active estimator profile and owns the landing
+lifecycle.
 
 ROG's inflated `KnownFree` is the existing CounterMap threshold result. It
 means the coarse cell is not occupied and has fewer unknown fine subcells than

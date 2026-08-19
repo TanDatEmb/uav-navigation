@@ -7,6 +7,7 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_gtest REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -42,6 +43,14 @@ ament_target_dependencies(navigation_runtime_node PUBLIC
   sensor_msgs
 )
 target_compile_options(navigation_runtime_node PRIVATE -Wall -Wextra)
+
+ament_add_gtest(test_local_goal_selector test/test_local_goal_selector.cpp)
+target_include_directories(test_local_goal_selector PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+ament_target_dependencies(test_local_goal_selector navigation_mapping)
+target_compile_features(test_local_goal_selector PUBLIC cxx_std_20)
+target_compile_options(test_local_goal_selector PRIVATE -Wall -Wextra)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS navigation_runtime_node RUNTIME DESTINATION lib/${PROJECT_NAME})

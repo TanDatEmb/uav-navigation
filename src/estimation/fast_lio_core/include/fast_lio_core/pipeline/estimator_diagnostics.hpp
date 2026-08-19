@@ -182,7 +182,12 @@ struct RegistrationDiagnostics {
   std::size_t accepted_residual_count{0};
   std::size_t rejected_residual_count{0};
   std::size_t measurement_callback_count{0};
+  std::size_t observability_rejection_count{0};
   double residual_rms_m{0.0};
+  double translation_observability_min_eigenvalue{0.0};
+  double translation_observability_max_eigenvalue{0.0};
+  double translation_observability_ratio{0.0};
+  bool translation_observability_valid{false};
   std::size_t iteration_count{0};
   double final_increment_norm{0.0};
   bool converged{false};

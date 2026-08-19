@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="occlusion">
+    <physics type="ode"><max_step_size>0.004</max_step_size><real_time_factor>0.8</real_time_factor><real_time_update_rate>200</real_time_update_rate></physics>
+    <gravity>0 0 -9.8</gravity>
+    <scene><grid>true</grid><ambient>0.4 0.4 0.4 1</ambient><background>0.72 0.78 0.85 1</background><shadows>true</shadows></scene>
+    <model name="ground_plane"><static>true</static><link name="link"><collision name="collision"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry></collision><visual name="visual"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry><material><ambient>0.75 0.75 0.75 1</ambient><diffuse>0.75 0.75 0.75 1</diffuse></material></visual></link></model>
+    <model name="occluder"><static>true</static><pose>-2.0 2.5 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.35 5.0 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.35 5.0 5.0</size></box></geometry><material><ambient>0.20 0.35 0.65 1</ambient><diffuse>0.25 0.45 0.80 1</diffuse></material></visual></link></model>
+    <model name="hidden_obstacle"><static>true</static><pose>-4.3 2.5 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.9 1.2 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.9 1.2 5.0</size></box></geometry><material><ambient>0.70 0.20 0.15 1</ambient><diffuse>0.90 0.30 0.20 1</diffuse></material></visual></link></model>
+    <model name="side_wall"><static>true</static><pose>6 4 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.25 12 5</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.25 12 5</size></box></geometry><material><ambient>0.60 0.25 0.20 1</ambient><diffuse>0.75 0.30 0.22 1</diffuse></material></visual></link></model>
+    <model name="feature_mid_east"><static>true</static><pose>4.0 2.5 2.5 0 0 0.35</pose><link name="link"><collision name="collision"><geometry><box><size>0.8 0.6 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.8 0.6 5.0</size></box></geometry><material><ambient>0.25 0.55 0.30 1</ambient><diffuse>0.30 0.70 0.35 1</diffuse></material></visual></link></model>
+    <!-- Non-periodic feature scaffold: all features remain outside the
+         nominal flight tube while providing vertical/asymmetric normals for
+         Mid360 observability.  The degenerate variant intentionally omits
+         these models. -->
+    <model name="feature_low_west"><static>true</static><pose>-1.0 -5.0 0.75 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>1.2 0.8 1.5</size></box></geometry></collision><visual name="visual"><geometry><box><size>1.2 0.8 1.5</size></box></geometry></visual></link></model>
+    <model name="feature_tall_south"><static>true</static><pose>2.5 -7.5 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.7 0.7 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.7 0.7 5.0</size></box></geometry></visual></link></model>
+    <model name="feature_corner_east"><static>true</static><pose>8.5 8.0 1.6 0 0 0.35</pose><link name="link"><collision name="collision"><geometry><box><size>2.8 0.6 3.2</size></box></geometry></collision><visual name="visual"><geometry><box><size>2.8 0.6 3.2</size></box></geometry></visual></link></model>
+    <model name="feature_pole_north"><static>true</static><pose>12.0 -6.0 1.8 0 0 0</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>0.35</radius><length>3.6</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>0.35</radius><length>3.6</length></cylinder></geometry></visual></link></model>
+    <light name="sunUTC" type="directional"><pose>0 0 500 0 0 0</pose><cast_shadows>true</cast_shadows><intensity>1</intensity><direction>0.001 0.625 -0.78</direction></light>
+    <spherical_coordinates><surface_model>EARTH_WGS84</surface_model><world_frame_orientation>ENU</world_frame_orientation><latitude_deg>10.8231</latitude_deg><longitude_deg>106.6297</longitude_deg><elevation>10</elevation></spherical_coordinates>
+    <include><uri>model://x500_mid360</uri><name>x500_mid360</name><pose>0 0 0.2 0 0 0</pose></include>
+  </world>
+</sdf>

@@ -23,6 +23,11 @@ struct ResidualBuilderConfig {
   PlaneEstimatorConfig plane_estimator{};
   ResidualGateConfig residual_gate{};
   double point_measurement_standard_deviation_m{0.03};
+  // The normalized translation information matrix must constrain all three
+  // translational directions before a correction can be used for navigation.
+  // A value of zero is reserved for component-level tests that only exercise
+  // residual construction; production profiles must use a positive value.
+  double minimum_translation_observability_ratio{0.01};
   std::size_t parallel_thread_count{3};
 };
 
@@ -35,6 +40,10 @@ struct ResidualBuildDiagnostics {
   std::size_t accepted_residual_count{0};
   std::size_t rejected_residual_count{0};
   double residual_rms_m{0.0};
+  double translation_observability_min_eigenvalue{0.0};
+  double translation_observability_max_eigenvalue{0.0};
+  double translation_observability_ratio{0.0};
+  bool translation_observability_valid{false};
   std::int64_t nearest_search_runtime_us{0};
   std::int64_t plane_and_gate_runtime_us{0};
   std::int64_t jacobian_build_runtime_us{0};

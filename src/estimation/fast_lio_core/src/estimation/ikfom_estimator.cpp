@@ -344,7 +344,8 @@ IkfomCorrectionResult IkfomEstimator::correct(
   const bool measurement_usable =
       update.measurement_valid && !update.numerical_failure &&
       result.residual_diagnostics.accepted_residual_count >=
-          config_.minimum_accepted_residuals;
+          config_.minimum_accepted_residuals &&
+      result.residual_diagnostics.translation_observability_valid;
   result.converged = measurement_usable && update.converged;
   // FAST-LIO applies the finite terminal IKFoM iterate when the configured
   // iteration budget is exhausted. Convergence remains a diagnostic; it must
@@ -356,10 +357,15 @@ IkfomCorrectionResult IkfomEstimator::correct(
           ? (result.converged
                  ? "IKFOM_LIDAR_UPDATE_CONVERGED"
                  : "IKFOM_LIDAR_UPDATE_ACCEPTED_AT_ITERATION_LIMIT")
-          : (update.numerical_failure
+          : (!result.residual_diagnostics.translation_observability_valid
+                 ? "INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY"
+                 : (update.numerical_failure
                  ? "IKFOM_LIDAR_UPDATE_NUMERICAL_FAILURE"
                  : (result.finite ? "IKFOM_LIDAR_UPDATE_NOT_CONVERGED"
-                                  : "IKFOM_LIDAR_UPDATE_NON_FINITE"));
+                                  : "IKFOM_LIDAR_UPDATE_NON_FINITE")));
+  if (!result.residual_diagnostics.translation_observability_valid) {
+    ++result.observability_rejection_count;
+  }
   result.correction_translation_norm_m =
       (result.corrected_state.position_odom_imu_m() -
        result.predicted_state.position_odom_imu_m())

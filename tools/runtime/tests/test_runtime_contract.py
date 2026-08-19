@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -108,6 +109,159 @@ class RuntimeContractTest(unittest.TestCase):
                 parameters["navigation"]["collision"],
                 {"vehicle_radius_m": 0.32, "safety_margin_m": 0.05},
             )
+            self.assertTrue(parameters["navigation"]["planner"]["allow_unknown_start"])
+            self.assertFalse(parameters["navigation"]["planner"]["allow_nominal_unknown"])
+
+            dual_target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                dual_planning=True,
+            )
+            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))[
+                "navigation_runtime"
+            ]["ros__parameters"]
+            self.assertTrue(dual_parameters["navigation"]["planner"]["allow_nominal_unknown"])
+            self.assertEqual(
+                dual_parameters["navigation"]["planner"]["nominal_commitment_horizon_s"],
+                1.0,
+            )
+
+    def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            mission = ROOT / "config/runtime/missions/open.yaml"
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                dual_planning=True,
+                mission_file=mission,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
+            self.assertEqual(parameters["navigation"]["replan_rate_hz"], 5.0)
+            self.assertEqual(parameters["navigation"]["planner"]["max_velocity_mps"], 1.0)
+            self.assertEqual(parameters["navigation"]["planner"]["max_acceleration_mps2"], 2.0)
+            self.assertEqual(parameters["navigation"]["planner"]["max_deceleration_mps2"], 2.0)
+            self.assertEqual(parameters["navigation"]["planner"]["max_jerk_mps3"], 6.0)
+
+            external = runner._external_mode_params(
+                session, ROOT / "config/runtime/external_mode.yaml", mission
+            )
+            external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
+            tracker = external_parameters["navigation"]["velocity_tracker"]
+            self.assertEqual(tracker["max_velocity_mps"], 1.0)
+            self.assertEqual(tracker["max_acceleration_mps2"], 2.0)
+            self.assertEqual(tracker["max_deceleration_mps2"], 2.0)
+
+    def test_stress_profiles_have_explicit_mission_limits_and_worlds(self) -> None:
+        profiles = {
+            "corridor": 1.0,
+            "speed": 2.0,
+            "long_open": 1.5,
+            "long_open_slow": 0.8,
+            "long_featured": 1.5,
+            "no_path": 1.0,
+            "occlusion_featured": 1.0,
+            "occlusion_degenerate": 1.0,
+            "tunnel_irregular": 1.5,
+            "tunnel_smooth": 1.5,
+            "forest_clutter": 1.5,
+        }
+        for profile, expected_velocity in profiles.items():
+            registry_entry = runner._map_registry().get(profile, {})
+            world_name = {
+                "speed": "open",
+                "long_open_slow": "long_open",
+            }.get(profile, registry_entry.get("world", profile) if isinstance(registry_entry, dict) else profile)
+            world = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+            mission_name = registry_entry.get("mission", profile) if isinstance(registry_entry, dict) else profile
+            mission = ROOT / "config/runtime/missions" / f"{mission_name}.yaml"
+            self.assertTrue(world.is_file(), profile)
+            self.assertTrue(mission.is_file(), profile)
+            mission_value = yaml.safe_load(mission.read_text(encoding="utf-8"))
+            self.assertEqual(mission_value["mission"]["planning"]["unknown_policy"], "blocked")
+            planning = runner._mission_planning(mission)
+            self.assertEqual(planning["max_velocity_mps"], expected_velocity)
+            self.assertGreater(planning["max_acceleration_mps2"], 0.0)
+
+    def test_stress_profiles_have_ground_truth_collision_geometry(self) -> None:
+        for profile in (
+            "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
+        ):
+            obstacles = runner._collision_obstacles(profile)
+            self.assertTrue(obstacles, profile)
+            names = [obstacle["name"] for obstacle in obstacles]
+            self.assertEqual(len(names), len(set(names)))
+            for obstacle in obstacles:
+                self.assertIn(obstacle["type"], {"box", "cylinder"})
+                self.assertEqual(len(obstacle["center"]), 3)
+
+    def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
+        registry = runner._map_registry()
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path"):
+            descriptor = registry[profile]
+            self.assertIn("world", descriptor)
+            self.assertIn("mission", descriptor)
+            self.assertEqual(len(descriptor["collision_truth"]), len(set(descriptor["collision_truth"])))
+            self.assertTrue((ROOT / "src/uav_simulation/worlds" / f"{descriptor['world']}.sdf").is_file())
+            self.assertTrue((ROOT / "config/runtime/missions" / f"{descriptor['mission']}.yaml").is_file())
+        self.assertEqual(registry["no_path"]["expected_outcome"], "fail_closed")
+
+    def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
+        self.assertEqual(
+            runner._resolve_scene_profile("structured_obstacle", "positive", "nominal", None)[0],
+            "occlusion_featured",
+        )
+        self.assertEqual(
+            runner._resolve_scene_profile("structured_obstacle", "degenerate", "nominal", None)[0],
+            "occlusion_degenerate",
+        )
+        self.assertEqual(
+            runner._resolve_scene_profile("long_route", "positive", "slow", None)[0],
+            "long_open_slow",
+        )
+        self.assertEqual(
+            runner._resolve_scene_profile("planner_negative", "no_path", "nominal", None)[0],
+            "no_path",
+        )
+        legacy, metadata = runner._resolve_scene_profile(None, "positive", "nominal", "corridor")
+        self.assertEqual(legacy, "corridor")
+        self.assertEqual(metadata["scene"], "legacy")
+
+    def test_registry_seed_is_only_effective_for_stochastic_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            _, deterministic = runner._resolve_map_descriptor(session, "tunnel_smooth", 47)
+            _, stochastic = runner._resolve_map_descriptor(session, "forest_clutter", 47)
+            self.assertEqual(deterministic["seed"], 0)
+            self.assertEqual(stochastic["seed"], 47)
+            self.assertTrue((session.directory / "map_descriptor.json").is_file())
+            resolved = session.directory / "resolved_forest_clutter.sdf"
+            self.assertEqual(hashlib.sha256(resolved.read_bytes()).hexdigest(), stochastic["world_sha256"])
+
+    def test_profile_variants_share_mission_limits(self) -> None:
+        for left, right in (("occlusion_featured", "occlusion_degenerate"),
+                            ("tunnel_irregular", "tunnel_smooth")):
+            self.assertEqual(runner._map_registry()[left]["family"], runner._map_registry()[right]["family"])
+            left_planning = runner._mission_planning(
+                ROOT / "config/runtime/missions" / f"{runner._map_registry()[left]['mission']}.yaml")
+            right_planning = runner._mission_planning(
+                ROOT / "config/runtime/missions" / f"{runner._map_registry()[right]['mission']}.yaml")
+            self.assertEqual(left_planning, right_planning)
+
+    def test_no_path_mission_crosses_sealed_wall(self) -> None:
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/no_path.yaml").read_text(encoding="utf-8")
+        )["mission"]
+        wall = next(
+            obstacle for obstacle in runner._collision_obstacles("no_path")
+            if obstacle["name"] == "sealed_wall"
+        )
+        self.assertGreater(float(mission["waypoints"][0]["position"][0]), wall["center"][0])
+        self.assertLess(0.0, wall["center"][0])
 
     def test_runtime_forces_legacy_rviz_environment_off(self) -> None:
         self.assertEqual(
@@ -139,6 +293,14 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("-p", command)
         self.assertIn("use_sim_time:=true", command)
         self.assertNotIn("/livox/lidar:=/lidar/points", command)
+
+    def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
+        command = runner._external_mode_launch_command(
+            Path("/tmp/external_mode_params.yaml"),
+            Path("/tmp/mission.yaml"),
+        )
+        self.assertIn("use_sim_time:=true", command)
+        self.assertIn("mission_file:=/tmp/mission.yaml", command)
 
     def test_static_sensor_tf_is_derived_from_each_estimator_extrinsic(self) -> None:
         expected = {
@@ -273,6 +435,57 @@ class RuntimeContractTest(unittest.TestCase):
         scenario._tick()
         self.assertEqual(scenario.failure, "")
 
+    def test_external_mode_scenario_planner_source_publishes_bounded_goal(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_goal",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class Message:
+            def __init__(self) -> None:
+                self.header = type("Header", (), {"frame_id": "", "stamp": type("Stamp", (), {})()})()
+                self.mission_id = ""
+                self.waypoint_index = 0
+                self.request_id = 0
+                self.target = type("Point", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+                self.acceptance_radius_m = 0.0
+
+        class Publisher:
+            def __init__(self) -> None:
+                self.messages = []
+
+            def publish(self, message: object) -> None:
+                self.messages.append(message)
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.config = {"planning_frame": "lio_odom", "goal_offset_m": [1.0, -0.5, 0.25]}
+        scenario.latest_odom = {"x": 2.0, "y": 3.0, "z": 4.0}
+        scenario.sim_now_ns = 2_500_000_000
+        scenario.NavigationGoal = Message
+        scenario.goal_pub = Publisher()
+        scenario.goal_publish_count = 0
+        scenario.goal_request_id = 0
+        scenario.latest_goal = {}
+        scenario.last_goal_ns = -10**18
+        scenario._record = lambda *args, **kwargs: None
+        scenario.finish = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("valid planner goal must not finish the scenario")
+        )
+
+        scenario._publish_planner_goal()
+
+        self.assertEqual(scenario.goal_publish_count, 1)
+        self.assertEqual(len(scenario.goal_pub.messages), 1)
+        message = scenario.goal_pub.messages[0]
+        self.assertEqual(message.header.frame_id, "lio_odom")
+        self.assertEqual((message.target.x, message.target.y, message.target.z),
+                         (3.0, 2.5, 4.25))
+        self.assertEqual(message.request_id, 1)
+
     def test_external_mode_scenario_treats_executor_handover_as_exit(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario",
@@ -318,6 +531,50 @@ class RuntimeContractTest(unittest.TestCase):
         )())
         self.assertTrue(scenario.mode_exit_observed)
 
+    def test_external_mode_scenario_records_position_control_handover_without_commands(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_handover",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.execution = "mission"
+        scenario.sim_now_ns = 12_000_000_000
+        scenario.events = []
+        scenario._record = lambda *args, **kwargs: None
+
+        scenario._record_handover_request(
+            "unexpected_external_mode_exit", {"nav_state": 18})
+        scenario._record_handover_request("second_request")
+
+        self.assertEqual(len(scenario.events), 2)
+        self.assertEqual(scenario.events[0]["name"], "position_control_handover_requested")
+        self.assertEqual(scenario.events[0]["detail"], {"nav_state": 18})
+
+    def test_mission_arms_and_takes_off_before_external_mode_activation(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8")
+        mission_tick = source.index("if mission_mode:")
+        arm = source.index("if not self.armed_seen:", mission_tick)
+        takeoff = source.index("if not self.takeoff_requested:", arm)
+        activate = source.index('if not getattr(self, "mode_active", False)', takeoff)
+        self.assertLess(arm, takeoff)
+        self.assertLess(takeoff, activate)
+        self.assertIn("pre_activation_odometry_stable_s", source[arm:activate])
+
+    def test_manual_takeoff_path_sends_neither_arm_nor_takeoff(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8")
+        mission_tick = source.index("if mission_mode:")
+        arm = source.index("if not self.armed_seen:", mission_tick)
+        takeoff = source.index("if not self.takeoff_requested:", arm)
+        self.assertIn("if self.manual_takeoff:", source[arm:takeoff])
+        self.assertIn("if not self.manual_takeoff:", source[takeoff:takeoff + 300])
+
     def test_runtime_never_depends_on_nonexistent_ev_aid_source_topics(self) -> None:
         for path in (
             RUNTIME / "monitor.py",
@@ -327,6 +584,16 @@ class RuntimeContractTest(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("estimator_aid_src_ev", source)
             self.assertNotIn("EstimatorAidSource", source)
+
+    def test_navigation_replanning_is_correlated_to_goal_and_world_revision(self) -> None:
+        source = (
+            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("plan_skip_count_", source)
+        self.assertIn("last_planned_request_id_", source)
+        self.assertIn("last_planned_world_revision_", source)
+        self.assertIn("world.revision() == last_planned_world_revision_", source)
+        self.assertIn('keyValue("plan_skip_count"', source)
 
     def test_lio_diagnostics_expose_map_guard_and_propagation_latency(self) -> None:
         source = (ROOT / "src/estimation/fast_lio_ros/src/ros_output_publisher.cpp").read_text(
@@ -601,6 +868,60 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertIn(key, mapping["mapping_filter_us"])
         planning = report._planning_timing_summary(samples)
         self.assertEqual(planning["planning_total_us"]["sample_count"], 0)
+
+    def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
+        snapshot = {
+            "latest": {
+                "planning_diagnostics": {
+                    "statuses": [
+                        {
+                            "name": "navigation_planning/planner",
+                            "values": {
+                                "plan_count": "10",
+                                "plan_skip_count": "4",
+                                "success_count": "9",
+                                "failure_count": "1",
+                                "safety_fallback_count": "2",
+                                "safety_route_selected_count": "1",
+                                "safety_stop_selected_count": "1",
+                                "nominal_plan_count": "3",
+                                "nominal_selected_count": "1",
+                                "dual_verification_failure_count": "0",
+                                "verification_failure_count": "0",
+                                "local_subgoal_selected_count": "0",
+                                "local_subgoal_failure_count": "0",
+                                "trajectory_revalidation_count": "6",
+                                "trajectory_revalidation_failure_count": "1",
+                                "trajectory_reuse_count": "5",
+                                "full_replan_count": "2",
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        self.assertEqual(
+            report._planning_execution_summary(snapshot),
+            {
+                "plan_count": 10,
+                "plan_skip_count": 4,
+                "success_count": 9,
+                "failure_count": 1,
+                "safety_fallback_count": 2,
+                "safety_route_selected_count": 1,
+                "safety_stop_selected_count": 1,
+                "nominal_plan_count": 3,
+                "nominal_selected_count": 1,
+                "dual_verification_failure_count": 0,
+                "verification_failure_count": 0,
+                "local_subgoal_selected_count": 0,
+                "local_subgoal_failure_count": 0,
+                "trajectory_revalidation_count": 6,
+                "trajectory_revalidation_failure_count": 1,
+                "trajectory_reuse_count": 5,
+                "full_replan_count": 2,
+            },
+        )
 
 
 if __name__ == "__main__":

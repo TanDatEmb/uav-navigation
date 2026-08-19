@@ -66,6 +66,7 @@ struct RosParameters {
   double local_map_crop_trigger_distance_m{};
   std::int64_t local_map_absolute_point_guard{};
   std::int64_t maximum_registration_iterations{};
+  double minimum_translation_observability_ratio{0.01};
   std::int64_t correspondence_parallel_threads{3};
   bool publish_registered_points{};
   std::int64_t imu_queue_capacity{};

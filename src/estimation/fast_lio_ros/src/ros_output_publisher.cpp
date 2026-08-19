@@ -110,6 +110,16 @@ void RosOutputPublisher::publish(const ProcessResult& result) {
       result.diagnostics.map.valid_point_count_busy_count;
   health.measurement_callback_count =
       result.diagnostics.registration.measurement_callback_count;
+  health.observability_rejection_count =
+      result.diagnostics.registration.observability_rejection_count;
+  health.translation_observability_min_eigenvalue =
+      result.diagnostics.registration.translation_observability_min_eigenvalue;
+  health.translation_observability_max_eigenvalue =
+      result.diagnostics.registration.translation_observability_max_eigenvalue;
+  health.translation_observability_ratio =
+      result.diagnostics.registration.translation_observability_ratio;
+  health.translation_observability_valid =
+      result.diagnostics.registration.translation_observability_valid;
   health.measurement_model_us = result.diagnostics.timing.measurement_model_us;
   health.ikfom_solver_only_us = result.diagnostics.timing.ikfom_solver_only_us;
   health.map_size_after_insert = result.diagnostics.map.map_size_after_insert;
@@ -234,6 +244,16 @@ void RosOutputPublisher::publishDiagnostics(const EstimatorHealthSnapshot& healt
       keyValue("navigation_valid", health.navigation_valid ? "true" : "false"),
       keyValue("corrected_estimate_valid",
                health.corrected_estimate_valid ? "true" : "false"),
+      keyValue("translation_observability_valid",
+               health.translation_observability_valid ? "true" : "false"),
+      keyValue("translation_observability_min_eigenvalue",
+               std::to_string(health.translation_observability_min_eigenvalue)),
+      keyValue("translation_observability_max_eigenvalue",
+               std::to_string(health.translation_observability_max_eigenvalue)),
+      keyValue("translation_observability_ratio",
+               std::to_string(health.translation_observability_ratio)),
+      keyValue("observability_rejection_count",
+               std::to_string(health.observability_rejection_count)),
       keyValue("last_failure_code", toString(health.failure_class)),
       keyValue("last_failure_reason", status.message),
       keyValue("output_time_ns", std::to_string(health.output_time_ns)),

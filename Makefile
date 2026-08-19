@@ -7,10 +7,25 @@ PX4_DIR ?= $(HOME)/Dev/Autopilot
 # Keep legacy runtime environments from re-enabling the old RViz sidecar.
 NO_RVIZ_ENV = export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1;
 ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
+ROS_GUI_ENV = export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RVIZ=0; source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 FRONTIER_DEBUG_ARG = $(if $(filter 1 true yes,$(FRONTIER_DEBUG)),--frontier-debug,)
+DUAL_PLANNING ?= 0
+DUAL_PLANNING_ARG = $(if $(filter 1 true yes,$(DUAL_PLANNING)),--dual-planning,)
+MAP_PROFILE ?=
+MAP_SCENE ?= sanity_open
+TEST_CASE ?= positive
+MOTION_PRESET ?= nominal
+MAP_SEED ?= 0
+MANUAL_TAKEOFF ?= 0
+MAP_PROFILE_ARG = $(if $(strip $(MAP_PROFILE)),--map-profile $(MAP_PROFILE),)
+MAP_SCENE_ARG = $(if $(strip $(MAP_PROFILE)),,--map-scene $(MAP_SCENE))
+TEST_CASE_ARG = --test-case $(TEST_CASE)
+MOTION_PRESET_ARG = --motion-preset $(MOTION_PRESET)
+MAP_SEED_ARG = --map-seed $(MAP_SEED)
+MANUAL_TAKEOFF_ARG = $(if $(filter 1 true yes,$(MANUAL_TAKEOFF)),--manual-takeoff,)
 
-.PHONY: help build test replay dataset-check sim-check external-mode-check sim status stop clean
+.PHONY: help build test replay dataset-check sim-check external-mode-check external-mode-gui external-mode sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
@@ -20,6 +35,13 @@ help:
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset pipeline; PX4 not required"
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
 	@echo "  make external-mode-check                  headless PX4/Gazebo + PX4 External Mode acceptance"
+	@echo "  make external-mode-gui                   GUI PX4/Gazebo + RViz + External Mode mission"
+	@echo "  MANUAL_TAKEOFF=1 make external-mode-gui  wait for manual Takeoff/arm; harness sends no ARM/TAKEOFF"
+	@echo "  make external-mode                       alias for external-mode-gui"
+	@echo "  DUAL_PLANNING=1 make external-mode-check  simulation-only nominal/safety experiment"
+	@echo "  MAP_SCENE=sanity_open|structured_obstacle|long_route|tunnel|clutter|planner_negative"
+	@echo "  TEST_CASE=positive|degenerate|detour|no_path  MOTION_PRESET=nominal|slow|fast"
+	@echo "  MAP_PROFILE=<legacy alias> (optional; overrides MAP_SCENE)"
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
@@ -47,10 +69,15 @@ sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim-check
 
 external-mode-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG)
 
 sim:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim
+
+external-mode-gui:
+	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG)
+
+external-mode: external-mode-gui
 
 status:
 	@$(ROS_ENV) python3 tools/runtime/runner.py status

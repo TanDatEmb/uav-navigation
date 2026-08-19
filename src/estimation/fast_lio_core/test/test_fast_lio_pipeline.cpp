@@ -79,13 +79,13 @@ EstimatorConfig testConfig() {
   config.preprocessing.point_filter.maximum_range_m = 10.0;
   config.preprocessing.enable_voxel_filter = false;
   config.residual_builder.correspondence_search.maximum_neighbor_distance_m = 1.5;
+  config.residual_builder.minimum_translation_observability_ratio = 0.0;
   config.ikfom.maximum_iterations = 4;
   config.ikfom.minimum_accepted_residuals = 9;
   config.insertion_policy.minimum_point_count = 9;
   config.registration_map.voxel_size_m = 0.02;
   config.local_map.half_extent_m = {20.0, 20.0, 20.0};
   config.local_map.crop_trigger_distance_m = 1.0;
-  config.lifecycle.degraded_after_registration_failures = 1;
   config.lifecycle.lost_after_registration_failures = 3;
   return config;
 }

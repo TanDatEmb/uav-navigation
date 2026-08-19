@@ -30,6 +30,21 @@ TrajectoryValidation validateTrajectory(
   if (!trajectory.success) {
     return {TrajectoryInputFailure::NotSuccessful, "planner did not produce a trajectory"};
   }
+  if (trajectory.trajectory_role > navigation_interfaces::msg::PlannedTrajectory::ROLE_COMMITTED) {
+    return {TrajectoryInputFailure::InvalidRole, "trajectory role is not recognized"};
+  }
+  if (trajectory.safety_plan_kind >
+      navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_BRAKING_STOP) {
+    return {TrajectoryInputFailure::InvalidRole, "safety plan kind is not recognized"};
+  }
+  if (trajectory.trajectory_role == navigation_interfaces::msg::PlannedTrajectory::ROLE_SAFETY &&
+      trajectory.safety_plan_kind == navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_NONE) {
+    return {TrajectoryInputFailure::InvalidRole, "safety trajectory has no safety plan kind"};
+  }
+  if (trajectory.trajectory_role != navigation_interfaces::msg::PlannedTrajectory::ROLE_SAFETY &&
+      trajectory.safety_plan_kind != navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_NONE) {
+    return {TrajectoryInputFailure::InvalidRole, "non-safety trajectory has a safety plan kind"};
+  }
   if (trajectory.header.frame_id != expected_frame) {
     return {TrajectoryInputFailure::WrongFrame, "trajectory frame does not match PX4 adapter input"};
   }
@@ -59,6 +74,26 @@ TrajectoryValidation validateTrajectory(
   }
   if (trajectory.duration_s + 1e-9 < previous_time) {
     return {TrajectoryInputFailure::InvalidDuration, "trajectory duration ends before its samples"};
+  }
+  // A safety braking stop must end at rest. A safety route is a verified
+  // collision-free continuation candidate and may retain a non-zero terminal
+  // tangent so receding-horizon replanning does not introduce a stop at every
+  // local-map boundary.
+  if (trajectory.trajectory_role == navigation_interfaces::msg::PlannedTrajectory::ROLE_SAFETY &&
+      trajectory.safety_plan_kind ==
+          navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_BRAKING_STOP) {
+    constexpr double kSafetyTerminalTolerance = 1e-6;
+    const auto& terminal_velocity = trajectory.velocity.back();
+    const auto& terminal_acceleration = trajectory.acceleration.back();
+    const double terminal_velocity_norm = std::hypot(
+        std::hypot(terminal_velocity.x, terminal_velocity.y), terminal_velocity.z);
+    const double terminal_acceleration_norm = std::hypot(
+        std::hypot(terminal_acceleration.x, terminal_acceleration.y), terminal_acceleration.z);
+    if (terminal_velocity_norm > kSafetyTerminalTolerance ||
+        terminal_acceleration_norm > kSafetyTerminalTolerance) {
+      return {TrajectoryInputFailure::InvalidSafetyTerminalState,
+              "safety trajectory must end at zero velocity and acceleration"};
+    }
   }
   return {};
 }
@@ -101,6 +136,24 @@ TrajectorySample sampleTrajectory(
         point_value(trajectory.acceleration[left], axis), point_value(trajectory.acceleration[right], axis));
   }
   return sample;
+}
+
+bool trajectoryMatchesGoal(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    const std::string& mission_id, std::uint32_t waypoint_index,
+    std::uint64_t request_id) noexcept {
+  return trajectory.mission_id == mission_id && trajectory.waypoint_index == waypoint_index &&
+         trajectory.request_id == request_id;
+}
+
+bool trajectoryRevisionIsNotOlder(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    bool accepted_identity_valid, std::uint64_t accepted_generation,
+    std::uint64_t accepted_revision) noexcept {
+  if (!accepted_identity_valid) return true;
+  return trajectory.world_generation > accepted_generation ||
+         (trajectory.world_generation == accepted_generation &&
+          trajectory.world_revision >= accepted_revision);
 }
 
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {

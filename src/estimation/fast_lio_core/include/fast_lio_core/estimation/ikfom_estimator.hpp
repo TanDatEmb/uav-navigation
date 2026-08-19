@@ -51,6 +51,7 @@ struct IkfomCorrectionResult {
   std::int64_t ikfom_total_runtime_us{0};
   std::int64_t residual_build_runtime_us{0};
   std::int64_t ikfom_update_runtime_us{0};
+  std::size_t observability_rejection_count{0};
 };
 
 class IkfomEstimator {

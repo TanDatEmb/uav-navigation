@@ -7,7 +7,7 @@ import argparse
 import time
 
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from navigation_interfaces.msg import NavigationGoal
 from rclpy.node import Node
 
 
@@ -25,16 +25,19 @@ def main() -> int:
 
     rclpy.init()
     node = Node("navigation_goal_harness")
-    publisher = node.create_publisher(PoseStamped, "navigation/goal", 10)
-    message = PoseStamped()
+    publisher = node.create_publisher(NavigationGoal, "navigation/goal", 10)
+    message = NavigationGoal()
     message.header.frame_id = args.frame
-    message.pose.position.x = args.x
-    message.pose.position.y = args.y
-    message.pose.position.z = args.z
-    message.pose.orientation.w = 1.0
+    message.mission_id = "manual_goal"
+    message.waypoint_index = 0
+    message.acceptance_radius_m = 0.5
     try:
         for index in range(args.repeat):
+            message.request_id = index + 1
             message.header.stamp = node.get_clock().now().to_msg()
+            message.target.x = args.x
+            message.target.y = args.y
+            message.target.z = args.z
             publisher.publish(message)
             rclpy.spin_once(node, timeout_sec=0.1)
             if index + 1 < args.repeat:

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include <Eigen/Core>
@@ -17,6 +18,8 @@ enum class TrajectoryInputFailure {
   NonFinite,
   NonMonotonicTime,
   InvalidDuration,
+  InvalidRole,
+  InvalidSafetyTerminalState,
 };
 
 struct TrajectorySample {
@@ -38,6 +41,16 @@ struct TrajectoryValidation {
 
 [[nodiscard]] TrajectorySample sampleTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory& trajectory, double time_from_start_s);
+
+[[nodiscard]] bool trajectoryMatchesGoal(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    const std::string& mission_id, std::uint32_t waypoint_index,
+    std::uint64_t request_id) noexcept;
+
+[[nodiscard]] bool trajectoryRevisionIsNotOlder(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    bool accepted_identity_valid, std::uint64_t accepted_generation,
+    std::uint64_t accepted_revision) noexcept;
 
 // ROS navigation uses ENU/Z-up; PX4 local setpoints use NED/Z-down.
 [[nodiscard]] Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu);

@@ -111,9 +111,7 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       config_.extrinsic.rotation_imu_lidar.squaredNorm() < 1e-18 ||
       !config_.extrinsic.translation_imu_lidar_m.allFinite() ||
       config_.lifecycle.maximum_initial_map_registration_failures == 0U ||
-      config_.lifecycle.degraded_after_registration_failures == 0U ||
-      config_.lifecycle.lost_after_registration_failures <
-          config_.lifecycle.degraded_after_registration_failures ||
+      config_.lifecycle.lost_after_registration_failures == 0U ||
       config_.tracking.maximum_recoverable_imu_gap_ns <= 0 ||
       config_.tracking.recovery_confirmation_updates == 0U ||
       !std::isfinite(config_.tracking.discontinuity_covariance_inflation) ||
@@ -530,8 +528,18 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
       correction.residual_diagnostics.rejected_residual_count;
   diagnostics_.registration.measurement_callback_count =
       correction.measurement_callback_count;
+  diagnostics_.registration.observability_rejection_count =
+      correction.observability_rejection_count;
   diagnostics_.registration.residual_rms_m =
       correction.residual_diagnostics.residual_rms_m;
+  diagnostics_.registration.translation_observability_min_eigenvalue =
+      correction.residual_diagnostics.translation_observability_min_eigenvalue;
+  diagnostics_.registration.translation_observability_max_eigenvalue =
+      correction.residual_diagnostics.translation_observability_max_eigenvalue;
+  diagnostics_.registration.translation_observability_ratio =
+      correction.residual_diagnostics.translation_observability_ratio;
+  diagnostics_.registration.translation_observability_valid =
+      correction.residual_diagnostics.translation_observability_valid;
   diagnostics_.registration.iteration_count = correction.iteration_count;
   diagnostics_.registration.final_increment_norm =
       correction.final_increment_norm;

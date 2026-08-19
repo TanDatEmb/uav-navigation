@@ -44,6 +44,8 @@ TEST(ResidualBuilderTest, BuildsPointToPlaneJacobianAndGatesOutlier) {
   ASSERT_TRUE(result.measurement.valid());
   EXPECT_EQ(result.diagnostics.accepted_residual_count, scan.size());
   EXPECT_NEAR(result.diagnostics.residual_rms_m, 0.1, 1e-9);
+  EXPECT_FALSE(result.diagnostics.translation_observability_valid);
+  EXPECT_NEAR(result.diagnostics.translation_observability_ratio, 0.0, 1e-12);
   for (Eigen::Index row = 0; row < result.measurement.jacobian.rows(); ++row) {
     EXPECT_NEAR(std::abs(result.measurement.jacobian(row, ManifoldState::kPositionOffset + 2)), 1.0,
                 1e-9);
@@ -54,6 +56,24 @@ TEST(ResidualBuilderTest, BuildsPointToPlaneJacobianAndGatesOutlier) {
   const ResidualBuildResult rejected = builder.build(scan, outlier_state, map);
   EXPECT_EQ(rejected.measurement.residual_m.size(), 0);
   EXPECT_EQ(rejected.diagnostics.rejected_residual_count, scan.size());
+}
+
+TEST(ResidualBuilderTest, ZeroThresholdAllowsComponentPlaneConstruction) {
+  IkdTreeRegistrationMap map({0.02});
+  ASSERT_GT(map.insert(makePlanePoints()), 0U);
+  ResidualBuilderConfig config;
+  config.minimum_translation_observability_ratio = 0.0;
+  config.correspondence_search.maximum_neighbor_distance_m = 0.8;
+  ResidualBuilder builder(config);
+  ManifoldState state;
+  state.set_position_odom_imu_m({0.0, 0.0, 0.1});
+  const auto result = builder.build(
+      std::vector<Eigen::Vector3d>{{0.0, 0.0, 0.0}, {0.2, 0.0, 0.0},
+                                   {0.0, 0.2, 0.0}},
+      state, map);
+  ASSERT_EQ(result.diagnostics.accepted_residual_count, 3U);
+  EXPECT_TRUE(result.diagnostics.translation_observability_valid);
+  EXPECT_NEAR(result.diagnostics.translation_observability_min_eigenvalue, 0.0, 1e-12);
 }
 
 TEST(ResidualBuilderTest, PointToPlaneJacobianMatchesFiniteDifferenceAndFixedExtrinsicIsZero) {

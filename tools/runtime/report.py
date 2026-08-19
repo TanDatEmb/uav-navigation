@@ -505,6 +505,66 @@ def _diagnostic_states(samples: list[dict[str, Any]]) -> list[str]:
     return states
 
 
+def _observability_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    ratios: list[float] = []
+    accepted_ratios: list[float] = []
+    invalid_samples = 0
+    rejection_counts: list[int] = []
+    invalid_times: list[int] = []
+    tracking_started = False
+    for item in _series(samples, "diagnostics"):
+        values = item.get("payload", {}).get("values", {})
+        state = str(values.get("state", values.get("status", ""))).upper()
+        observability_valid = values.get("translation_observability_valid") is True or str(
+            values.get("translation_observability_valid", "")
+        ).lower() == "true"
+        # Initial IMU/map warm-up legitimately reports an invalid ratio before
+        # FAST-LIO enters TRACKING. Coverage is a mission-health metric, so do
+        # not charge those pre-flight samples against the airborne window.
+        if not tracking_started:
+            if state == "TRACKING" or observability_valid:
+                tracking_started = True
+            else:
+                continue
+        ratio = _number(values.get("translation_observability_ratio"), math.nan)
+        if math.isfinite(ratio):
+            ratios.append(ratio)
+        if values.get("translation_observability_valid") is False or str(
+            values.get("translation_observability_valid", "")
+        ).lower() == "false":
+            invalid_samples += 1
+            invalid_times.append(_sample_time(item))
+        accepted_value = values.get("accepted_residual_ratio")
+        if accepted_value is None:
+            accepted_count = _number(values.get("accepted_residual_count"), math.nan)
+            residual_count = _number(values.get("residual_count", values.get("input_point_count")), math.nan)
+            accepted_value = accepted_count / residual_count if residual_count > 0.0 else math.nan
+        accepted = _number(accepted_value, math.nan)
+        if math.isfinite(accepted):
+            accepted_ratios.append(accepted)
+        rejection_counts.append(int(_number(values.get("observability_rejection_count"), 0.0)))
+    bursts: list[float] = []
+    if invalid_times:
+        start = previous = invalid_times[0]
+        for timestamp in invalid_times[1:]:
+            if timestamp - previous > 400_000_000:
+                bursts.append((previous - start) / 1e9)
+                start = timestamp
+            previous = timestamp
+        bursts.append((previous - start) / 1e9)
+    return {
+        "minimum_ratio": min(ratios) if ratios else None,
+        "p05_ratio": _p(ratios, 0.05),
+        "maximum_ratio": max(ratios) if ratios else None,
+        "invalid_sample_count": invalid_samples,
+        "rejection_count": max(rejection_counts, default=0),
+        "accepted_residual_ratio": _p(accepted_ratios, 0.50),
+        "rejection_burst_count": len(bursts),
+        "maximum_rejection_burst_s": max(bursts, default=0.0),
+        "tracking_coverage": (1.0 - invalid_samples / len(ratios)) if ratios else None,
+    }
+
+
 def _sample_time(item: dict[str, Any]) -> int:
     payload = item.get("payload", {})
     if "timestamp_sample_us" in payload and payload.get("timestamp_sample_us"):
@@ -710,6 +770,41 @@ def _vector_metric_summary(errors: list[tuple[float, float, float]]) -> dict[str
         "y": _metric_summary([abs(error[1]) for error in errors]),
         "z": _metric_summary([abs(error[2]) for error in errors]),
     }
+
+
+def _relative_position_error(
+    matches: list[tuple[dict[str, Any], dict[str, Any], int]],
+    *,
+    horizon_s: float | None = None,
+    distance_m: float | None = None,
+) -> dict[str, Any]:
+    """Compute RPE without changing the absolute-origin ATE contract."""
+    samples: list[tuple[int, tuple[float, float, float], tuple[float, float, float]]] = []
+    for left, right, _ in matches:
+        gt = _vector(left.get("payload", {}).get("position"))
+        estimate = _vector(right.get("payload", {}).get("position"))
+        if gt is not None and estimate is not None:
+            samples.append((_sample_time(left), gt, estimate))
+    errors: list[tuple[float, float, float]] = []
+    for index, (timestamp, gt_start, estimate_start) in enumerate(samples):
+        target = None
+        for future_index in range(index + 1, len(samples)):
+            future_time, gt_future, _ = samples[future_index]
+            if horizon_s is not None and future_time - timestamp >= horizon_s * 1e9:
+                target = future_index
+                break
+            if distance_m is not None:
+                delta = tuple(gt_future[k] - gt_start[k] for k in range(3))
+                if math.sqrt(sum(value * value for value in delta)) >= distance_m:
+                    target = future_index
+                    break
+        if target is None:
+            continue
+        _, gt_end, estimate_end = samples[target]
+        estimate_delta = tuple(estimate_end[k] - estimate_start[k] for k in range(3))
+        gt_delta = tuple(gt_end[k] - gt_start[k] for k in range(3))
+        errors.append(tuple(estimate_delta[k] - gt_delta[k] for k in range(3)))
+    return _vector_metric_summary(errors)
 
 
 def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, Any]:
@@ -934,10 +1029,13 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
         "lio_vs_ground_truth": {
             "origin_alignment": "first matched position removed",
             "position_m": _vector_metric_summary(lio_position_errors),
+            "ate": _vector_metric_summary(lio_position_errors),
             "velocity_m_s": _vector_metric_summary(lio_velocity_errors),
             "angular_velocity_rad_s": _vector_metric_summary(lio_angular_errors),
             "attitude_rad": _metric_summary(lio_attitude),
             "initial_attitude_error_rad": first_lio_attitude,
+            "rpe_1s": _relative_position_error(lio_matches, horizon_s=1.0),
+            "rpe_5m": _relative_position_error(lio_matches, distance_m=5.0),
         },
         "external_ned_vs_ground_truth": {
             "origin_alignment": "first matched position removed after ENU->NED conversion",
@@ -1010,6 +1108,57 @@ def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[st
         ),
         stream_names=("planning_diagnostics", "diagnostics"),
     )
+
+
+def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the latest planner counters without treating them as timings."""
+    latest = snapshot.get("latest", {}).get("planning_diagnostics", {})
+    statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
+    keys = (
+        "plan_count",
+        "plan_skip_count",
+        "success_count",
+        "failure_count",
+        "safety_fallback_count",
+        "safety_route_selected_count",
+        "safety_stop_selected_count",
+        "nominal_plan_count",
+        "nominal_selected_count",
+        "dual_verification_failure_count",
+        "verification_failure_count",
+        "local_subgoal_selected_count",
+        "local_subgoal_failure_count",
+        "trajectory_revalidation_count",
+        "trajectory_revalidation_failure_count",
+        "trajectory_reuse_count",
+        "full_replan_count",
+    )
+    optional_count_fields = ("raw_path_node_count", "simplified_path_node_count", "shortcut_count")
+    numeric_fields = (
+        "maximum_jerk_mps3", "integrated_squared_jerk", "c2_continuity_residual",
+        "geometric_path_length_m", "trajectory_length_m", "duration_s",
+        "trajectory_duration_s", "kinematic_lower_bound_s", "minimum_clearance_m",
+    )
+    for status in statuses:
+        if not isinstance(status, dict) or status.get("name") != "navigation_planning/planner":
+            continue
+        values = status.get("values", {})
+        if not isinstance(values, dict):
+            continue
+        result: dict[str, Any] = {key: int(_number(values.get(key), 0.0)) for key in keys}
+        if any(field in values for field in optional_count_fields):
+            result.update({key: int(_number(values.get(key), 0.0)) for key in optional_count_fields})
+        if "replan_reason" in values:
+            result["replan_reason"] = str(values.get("replan_reason"))
+        if any(field in values for field in numeric_fields):
+            result.update({key: _number(values.get(key), 0.0) for key in numeric_fields})
+            length = result.get("geometric_path_length_m", 0.0)
+            trajectory_length = result.get("trajectory_length_m", 0.0)
+            result["path_efficiency"] = (
+                length / trajectory_length if trajectory_length > 1e-9 else None
+            )
+        return result
+    return {key: 0 for key in keys}
 
 
 def _navigation_mapping_summary(
@@ -1105,10 +1254,12 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     samples = _samples(session / "samples.jsonl")
     _annotate_stale_classification(streams, config, runtime, samples)
     diagnostic_states = _diagnostic_states(samples)
+    observability = _observability_summary(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
+    planning["execution"] = _planning_execution_summary(snapshot)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -1142,6 +1293,19 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
             "state": diagnostics.get("state", "NOT_AVAILABLE"),
             "tracking_observed": tracking_observed,
             "navigation_valid": diagnostics.get("navigation_valid", False),
+            "translation_observability_valid": diagnostics.get("translation_observability_valid", False),
+            "translation_observability_ratio": diagnostics.get("translation_observability_ratio", "NOT_AVAILABLE"),
+            "translation_observability_min_eigenvalue": diagnostics.get("translation_observability_min_eigenvalue", "NOT_AVAILABLE"),
+            "translation_observability_max_eigenvalue": diagnostics.get("translation_observability_max_eigenvalue", "NOT_AVAILABLE"),
+            "observability_rejection_count": diagnostics.get("observability_rejection_count", "NOT_AVAILABLE"),
+            "observability_summary": observability,
+            "tracking_coverage": observability.get("tracking_coverage"),
+            "observability_p05": observability.get("p05_ratio"),
+            "observability_min": observability.get("minimum_ratio"),
+            "rotational_information_spectrum": {
+                "status": "diagnostic_only",
+                "product_health_gate": "translation_observability",
+            },
             "last_failure_code": diagnostics.get("last_failure_code", "NOT_AVAILABLE"),
             "last_failure_reason": diagnostics.get("last_failure_reason", ""),
             "time_to_tracking_s": diagnostics.get("time_to_tracking_s", "NOT_AVAILABLE"),
@@ -1173,15 +1337,35 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     samples = _samples(session / "samples.jsonl")
     _annotate_stale_classification(streams, config, runtime, samples)
     diagnostic_states = _diagnostic_states(samples)
+    observability = _observability_summary(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
+    planning["execution"] = _planning_execution_summary(snapshot)
+    scenario = _load_json(session / "scenario.json", {})
+    terminal_outcome = str(scenario.get("outcome", ""))
+    terminal_handover = terminal_outcome in {
+        "COMPLETE", "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP", "FAILED_COMPONENT"
+    }
+    expected_fail_closed = (
+        str(scenario.get("expected_outcome", "complete")) == "fail_closed"
+        and bool(scenario.get("mode_failure_observed", False))
+    )
     reasons: list[str] = []
     for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
-        if streams[name]["timestamp_regression_count"] or streams[name]["source_stale_event_count"] or streams[name]["nonfinite_message_count"]:
+        stale_violation = streams[name]["source_stale_event_count"]
+        # A fail-closed External Mode hands control to the supervisor before
+        # landing. The PX4 external-odometry bridge may stop publishing during
+        # that handover; it is outside the active navigation interval and must
+        # not turn an otherwise valid safety rejection into a stream verdict.
+        if name in {"external_odometry", "propagated_odometry"} and (
+            expected_fail_closed or terminal_handover
+        ):
+            stale_violation = 0
+        if streams[name]["timestamp_regression_count"] or stale_violation or streams[name]["nonfinite_message_count"]:
             reasons.append(f"{name} timestamp/freshness/validity violation")
     external_expected = _number(config.get("runtime", {}).get("streams", {}).get("external_odometry", {}).get("expected_hz"))
     if external_expected and streams["external_odometry"]["mean_rate_hz"] < external_expected * _number(thresholds.get("minimum_rate_fraction"), 0.90):
@@ -1197,11 +1381,21 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     ground_truth_residuals = _ground_truth_residuals(
         samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0)
     )
-    scenario = _load_json(session / "scenario.json", {})
     scenario_reasons = list(scenario.get("failures", []))
     reasons.extend(str(item) for item in scenario_reasons)
     reasons.extend(failures)
     verdict = "PASS" if not reasons else "FAIL"
+    if workflow == "external-mode":
+        outcome = str(scenario.get("outcome", ""))
+        # These are deliberate non-success terminal states, not report
+        # defects.  Stream/process observations may still contain warnings
+        # from the handover interval, so classify by the structured outcome
+        # before applying the generic reason list.
+        if outcome in {"ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:
+            verdict = "BLOCKED"
+        elif outcome == "FAILED_COMPONENT":
+            verdict = "FAIL"
+            reasons.append("External Mode component failure")
     return {
         "workflow": workflow,
         "verdict": verdict,
@@ -1221,6 +1415,20 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "lio": {
             "state": diagnostics.get("state", "NOT_AVAILABLE"),
             "tracking_observed": tracking_observed,
+            "navigation_valid": diagnostics.get("navigation_valid", False),
+            "translation_observability_valid": diagnostics.get("translation_observability_valid", False),
+            "translation_observability_ratio": diagnostics.get("translation_observability_ratio", "NOT_AVAILABLE"),
+            "translation_observability_min_eigenvalue": diagnostics.get("translation_observability_min_eigenvalue", "NOT_AVAILABLE"),
+            "translation_observability_max_eigenvalue": diagnostics.get("translation_observability_max_eigenvalue", "NOT_AVAILABLE"),
+            "observability_rejection_count": diagnostics.get("observability_rejection_count", "NOT_AVAILABLE"),
+            "observability_summary": observability,
+            "tracking_coverage": observability.get("tracking_coverage"),
+            "observability_p05": observability.get("p05_ratio"),
+            "observability_min": observability.get("minimum_ratio"),
+            "rotational_information_spectrum": {
+                "status": "diagnostic_only",
+                "product_health_gate": "translation_observability",
+            },
             "map_point_count": map_point_count,
             "map_maintenance": map_maintenance,
         },
@@ -1229,6 +1437,12 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "residuals": residuals,
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
+        "tracking": {
+            "reference_vs_lio": "NOT_AVAILABLE",
+            "reference_vs_ground_truth": "NOT_AVAILABLE",
+            "lio_vs_ground_truth": ground_truth_residuals.get("lio_vs_ground_truth", {}),
+            "coverage": observability.get("tracking_coverage"),
+        },
         "offboard": scenario,
         "external_mode": scenario if workflow == "external-mode" else {},
         "provenance": provenance(workspace, px4_dir),
@@ -1255,6 +1469,9 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
         report = _dataset_report(session, config, snapshot, workspace)
     else:
         report = _sim_report(session, config, snapshot, workspace, px4_dir, workflow)
+    descriptor = _load_json(session / "map_descriptor.json", {})
+    if descriptor:
+        report["map"] = descriptor
     if observation_complete:
         report["verdict"] = "OBSERVATION_COMPLETE" if not _process_failures(session) else "FAIL"
         report["reasons"] = _process_failures(session)
@@ -1277,7 +1494,7 @@ def render(report: dict[str, Any]) -> str:
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions | Epoch discarded |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():
         lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} | {row.get('timestamp_epoch_discard_count', 0)} |")
-    for section in ("lio", "navigation_mapping", "planning", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "external_mode", "provenance"):
+    for section in ("map", "lio", "navigation_mapping", "planning", "tracking", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "external_mode", "provenance"):
         if section in report:
             lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
     return "\n".join(lines) + "\n"

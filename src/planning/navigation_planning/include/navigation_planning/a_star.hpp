@@ -33,12 +33,21 @@ struct SearchRequest {
   UnknownPolicy unknown_policy{UnknownPolicy::TreatUnknownAsBlocked};
   navigation_mapping::Vec3 start_world{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 goal_world{navigation_mapping::Vec3::Zero()};
+  // A trusted current vehicle pose can be inside the LiDAR sensor shadow. This
+  // exception applies only to the trusted vehicle footprint around the start;
+  // all cells beyond it still obey unknown_policy. A zero radius preserves the
+  // legacy exact-start-cell behavior. Production profiles keep it disabled
+  // unless they have a separately justified current-pose contract.
+  bool allow_unknown_start{false};
+  double unknown_start_radius_m{0.0};
 };
 
 struct SearchStatistics {
   std::uint64_t expanded_nodes{0};
   std::uint64_t generated_nodes{0};
   std::uint64_t cell_state_queries{0};
+  navigation_mapping::CellState start_cell_state{navigation_mapping::CellState::Unknown};
+  navigation_mapping::CellState goal_cell_state{navigation_mapping::CellState::Unknown};
   std::uint64_t peak_open_set_size{0};
   std::uint64_t path_node_count{0};
   double path_length_m{0.0};
@@ -130,6 +139,34 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     return state == navigation_mapping::CellState::KnownFree ||
            request.unknown_policy == UnknownPolicy::TreatUnknownAsTraversable;
   };
+  const double resolution = model.resolution(request.layer);
+  const double cell_half_diagonal =
+      std::isfinite(resolution) && resolution > 0.0
+          ? 0.5 * std::sqrt(3.0) * resolution
+          : 0.0;
+  const auto trustedUnknownStart = [&](const navigation_mapping::GridIndex3& index,
+                                       const navigation_mapping::CellState state) {
+    if (!request.allow_unknown_start || state != navigation_mapping::CellState::Unknown) {
+      return false;
+    }
+    if (sameIndex(index, start)) return true;
+    if (!std::isfinite(request.unknown_start_radius_m) ||
+        request.unknown_start_radius_m <= 0.0) {
+      return false;
+    }
+    // A voxel is part of the trusted footprint when its volume intersects the
+    // vehicle sphere. Occupied evidence always wins because this helper is
+    // reached only for Unknown cells.
+    const auto center = model.gridToWorld(request.layer, index);
+    return (center - request.start_world).norm() <=
+           request.unknown_start_radius_m + cell_half_diagonal + 1e-9;
+  };
+  const auto effectiveCellState = [&](const navigation_mapping::GridIndex3& index,
+                                      const navigation_mapping::CellState raw_state) {
+    return trustedUnknownStart(index, raw_state)
+               ? navigation_mapping::CellState::KnownFree
+               : raw_state;
+  };
 
   struct Record {
     double g{std::numeric_limits<double>::infinity()};
@@ -147,11 +184,13 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
       return record_it->second.state;
     }
     ++result.statistics.cell_state_queries;
-    record_it->second.state = model.cellState(request.layer, index);
+    record_it->second.state = effectiveCellState(
+        index, model.cellState(request.layer, index));
     record_it->second.state_queried = true;
     return record_it->second.state;
   };
   const auto start_state = queryState(start);
+  result.statistics.start_cell_state = start_state;
   if (!traversable(start_state)) {
     result.failure = start_state == navigation_mapping::CellState::Occupied
                          ? SearchFailureCode::StartOccupied
@@ -165,6 +204,7 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
     return finish();
   }
   const auto goal_state = queryState(goal);
+  result.statistics.goal_cell_state = goal_state;
   if (!traversable(goal_state)) {
     result.failure = goal_state == navigation_mapping::CellState::Occupied
                          ? SearchFailureCode::GoalOccupied
@@ -187,7 +227,6 @@ SearchResult searchModel(const Model& model, const SearchRequest& request) {
   };
 
   std::priority_queue<OpenEntry, std::vector<OpenEntry>, OpenCompare> open;
-  const double resolution = model.resolution(request.layer);
   const auto heuristic = [&](const navigation_mapping::GridIndex3& index) {
     const int dx = index.x - goal.x;
     const int dy = index.y - goal.y;

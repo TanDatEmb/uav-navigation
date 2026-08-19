@@ -5,6 +5,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <Eigen/Eigenvalues>
+
 namespace uav::nav::lio {
 namespace {
 
@@ -43,6 +45,9 @@ ResidualBuilder::ResidualBuilder(ResidualBuilderConfig config)
       !std::isfinite(config_.correspondence_search.maximum_neighbor_distance_m) ||
       !(config_.point_measurement_standard_deviation_m > 0.0) ||
       !std::isfinite(config_.point_measurement_standard_deviation_m) ||
+      config_.minimum_translation_observability_ratio < 0.0 ||
+      config_.minimum_translation_observability_ratio > 1.0 ||
+      !std::isfinite(config_.minimum_translation_observability_ratio) ||
       config_.parallel_thread_count == 0U ||
       config_.parallel_thread_count > 32U) {
     throw std::invalid_argument("invalid residual builder configuration");
@@ -157,6 +162,8 @@ ResidualBuildView ResidualBuilder::buildInto(
   const double sensor_variance =
       config_.point_measurement_standard_deviation_m *
       config_.point_measurement_standard_deviation_m;
+  Eigen::Matrix3d translation_information = Eigen::Matrix3d::Zero();
+  double total_translation_weight = 0.0;
   for (std::size_t index = 0U; index < points_lidar_m.size(); ++index) {
     const ResidualWorkspace::Candidate& candidate =
         workspace_.candidates[index];
@@ -192,6 +199,13 @@ ResidualBuildView ResidualBuilder::buildInto(
     workspace_.variance[static_cast<Eigen::Index>(last_row_count_)] =
         (sensor_variance + candidate.plane_variance_m2) /
         std::max(candidate.robust_weight, 1e-6);
+    const double variance = sensor_variance + candidate.plane_variance_m2;
+    const double weight = candidate.robust_weight / variance;
+    if (std::isfinite(weight) && weight > 0.0) {
+      translation_information.noalias() +=
+          weight * candidate.normal_odom * candidate.normal_odom.transpose();
+      total_translation_weight += weight;
+    }
     ++last_row_count_;
   }
 
@@ -203,7 +217,33 @@ ResidualBuildView ResidualBuilder::buildInto(
         std::sqrt(workspace_.residual
                       .head(static_cast<Eigen::Index>(last_row_count_))
                       .squaredNorm() /
-                  static_cast<double>(last_row_count_));
+                      static_cast<double>(last_row_count_));
+
+    // Point-to-plane translation information is the outer product of the
+    // accepted plane normal. Normalize by the total weight so the metric is
+    // dimensionless and independent of scan size/noise scale. This catches a
+    // long wall + floor map: the tangent direction has near-zero information
+    // even when residual count and RMS look healthy.
+    if (total_translation_weight > 0.0 &&
+        std::isfinite(total_translation_weight)) {
+      translation_information /= total_translation_weight;
+      const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(
+          translation_information, Eigen::EigenvaluesOnly);
+      if (solver.info() == Eigen::Success && solver.eigenvalues().allFinite()) {
+        const auto eigenvalues = solver.eigenvalues().cwiseMax(0.0);
+        diagnostics.translation_observability_min_eigenvalue = eigenvalues.minCoeff();
+        diagnostics.translation_observability_max_eigenvalue = eigenvalues.maxCoeff();
+        if (diagnostics.translation_observability_max_eigenvalue > 0.0) {
+          diagnostics.translation_observability_ratio =
+              diagnostics.translation_observability_min_eigenvalue /
+              diagnostics.translation_observability_max_eigenvalue;
+          diagnostics.translation_observability_valid =
+              std::isfinite(diagnostics.translation_observability_ratio) &&
+              diagnostics.translation_observability_ratio >=
+                  config_.minimum_translation_observability_ratio;
+        }
+      }
+    }
   }
   diagnostics.jacobian_build_runtime_us =
       std::chrono::duration_cast<std::chrono::microseconds>(

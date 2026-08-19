@@ -1,0 +1,40 @@
+mission:
+  version: 1
+  id: external_mode_pillar_route
+  frame: lio_odom
+  waypoints:
+    # Observe free space from a point before the pillar so the real-flight
+    # unknown-space policy remains fail-closed for the later goal.
+    - id: map_observation
+      position: [-3.0, 4.5, 3.0]
+      acceptance_radius_m: 0.6
+      hold_s: 0.5
+    - id: map_observation_near_pillar
+      position: [-4.0, 4.0, 3.0]
+      acceptance_radius_m: 0.6
+      hold_s: 0.5
+    - id: return_to_origin
+      position: [0.0, 0.0, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.5
+    # The direct origin-to-goal segment crosses the existing smoke pillar at
+    # approximately (-4.5, 2.5); A* must detour through known free cells.
+    - id: pillar_detour
+      position: [-5.5, 3.0, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.5
+    - id: mission_finish
+      position: [-5.5, 5.0, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.5
+  planning:
+    replan_rate_hz: 5.0
+    max_velocity_mps: 1.0
+    max_acceleration_mps2: 2.0
+    max_deceleration_mps2: 2.0
+    max_jerk_mps3: 6.0
+    unknown_policy: blocked
+  control:
+    output: auto
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

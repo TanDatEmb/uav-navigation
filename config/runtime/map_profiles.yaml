@@ -1,0 +1,106 @@
+# Benchmark registry.  The runner resolves this descriptor into every
+# session artifact so geometry, mission, truth and expected outcome cannot
+# silently diverge.  SDF remains hand-authored for smoke; stress worlds are
+# deterministic assets referenced here and may be regenerated later.
+profiles:
+  occlusion_featured:
+    family: occlusion
+    world: occlusion
+    mission: occlusion
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [occluder, hidden_obstacle, side_wall, feature_mid_east, feature_low_west, feature_tall_south, feature_corner_east, feature_pole_north]
+  occlusion_degenerate:
+    family: occlusion
+    world: occlusion_degenerate
+    mission: occlusion_degenerate
+    expected_outcome: fail_closed
+    stochastic: false
+    seed: 0
+    collision_truth: [occluder, hidden_obstacle, side_wall]
+  tunnel_irregular:
+    family: tunnel
+    world: tunnel_irregular
+    mission: tunnel_irregular
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [wall_north, wall_south, ceiling, alcove_a, beam_b, corner_c, end_wall]
+  tunnel_smooth:
+    family: tunnel
+    world: tunnel_smooth
+    mission: tunnel_smooth
+    expected_outcome: fail_closed
+    stochastic: false
+    seed: 0
+    collision_truth: [tunnel_wall_north, tunnel_wall_south, tunnel_ceiling, tunnel_end]
+  forest_clutter:
+    world: forest_clutter
+    mission: forest_clutter
+    expected_outcome: mission_complete
+    stochastic: true
+    seed: 11
+    collision_truth: [tree_01, tree_02, tree_03, tree_04, tree_05, tree_06, tree_07]
+  long_featured:
+    family: long_route
+    world: long_featured
+    mission: long_featured
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_featured_pillar_01, long_featured_pillar_02, long_featured_pillar_03, long_featured_pillar_04, long_featured_pillar_05, long_featured_pillar_06, long_featured_tree_01, long_featured_tree_02, long_featured_tree_03, long_featured_tree_04, long_featured_tree_05, long_featured_tree_06, long_featured_texture_01, long_featured_texture_02, long_featured_texture_03, long_featured_texture_04, long_featured_texture_05, long_featured_texture_06, long_featured_corner_a, long_featured_pole_b, long_featured_beam_c, long_featured_low_d]
+  long_open:
+    family: long_route
+    world: long_open
+    mission: long_featured
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_open_wall_north, long_open_wall_south, long_open_wall_end]
+  long_open_slow:
+    family: long_route
+    world: long_open
+    mission: long_open_slow
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_open_wall_north, long_open_wall_south, long_open_wall_end]
+  no_path:
+    family: planner_negative
+    world: no_path
+    mission: no_path
+    expected_outcome: fail_closed
+    stochastic: false
+    seed: 0
+    collision_truth: [near_feature_west, near_feature_east, sealed_wall]
+
+# Public benchmark surface.  Keep the geometry variants above as the registry
+# source of truth, but expose only a small number of canonical scenes to CI and
+# Make.  A scene selects a family; testcase and motion preset select the
+# relevant variant without multiplying profile names.
+scenes:
+  sanity_open:
+    variants:
+      positive: open
+      fast: speed
+  structured_obstacle:
+    variants:
+      positive: occlusion_featured
+      degenerate: occlusion_degenerate
+      detour: pillar
+  long_route:
+    variants:
+      nominal: long_featured
+      fast: long_open
+      slow: long_open_slow
+  tunnel:
+    variants:
+      positive: tunnel_irregular
+      degenerate: tunnel_smooth
+  clutter:
+    variants:
+      positive: forest_clutter
+  planner_negative:
+    variants:
+      no_path: no_path

@@ -40,6 +40,7 @@ fast_lio:
       scan_voxel_size_m: 0.2
     registration:
       maximum_iterations: 4
+      minimum_translation_observability_ratio: 0.01
       correspondence_parallel_threads: 3
     mapping:
       registration_map: { voxel_size_m: 0.3 }

@@ -50,7 +50,7 @@ InitialPriorFallback parsePriorFallback(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 32> kRequired{
+  static constexpr std::array<std::string_view, 33> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -83,6 +83,7 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "preprocessing.maximum_range_m",
       "preprocessing.scan_voxel_size_m",
       "mapping.registration_map.voxel_size_m",
+      "registration.minimum_translation_observability_ratio",
   };
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
@@ -237,6 +238,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "mapping.local_map.absolute_map_point_guard", 250000);
   result.maximum_registration_iterations =
       node.declare_parameter<std::int64_t>("registration.maximum_iterations", 4);
+  result.minimum_translation_observability_ratio = node.declare_parameter<double>(
+      "registration.minimum_translation_observability_ratio", 0.01);
   result.correspondence_parallel_threads =
       node.declare_parameter<std::int64_t>(
           "registration.correspondence_parallel_threads", 3);
@@ -379,6 +382,8 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
       parameters.initial_prior_fixed_angular_velocity_rad_s[2]};
   config.ikfom.maximum_iterations =
       static_cast<std::size_t>(parameters.maximum_registration_iterations);
+  config.residual_builder.minimum_translation_observability_ratio =
+      parameters.minimum_translation_observability_ratio;
   config.residual_builder.parallel_thread_count = static_cast<std::size_t>(
       parameters.correspondence_parallel_threads);
   config.extrinsic.translation_imu_lidar_m = {
@@ -493,6 +498,9 @@ void ParameterLoader::validate(const RosParameters& p) {
       p.maximum_recoverable_imu_gap_ns <= 0 ||
       p.recovery_confirmation_updates <= 0 || p.minimum_imu_samples <= 0 ||
       p.maximum_registration_iterations <= 0 ||
+      p.minimum_translation_observability_ratio < 0.0 ||
+      p.minimum_translation_observability_ratio > 1.0 ||
+      !std::isfinite(p.minimum_translation_observability_ratio) ||
       p.correspondence_parallel_threads <= 0 ||
       p.correspondence_parallel_threads > 32 || p.minimum_range_m < 0.0 ||
       p.maximum_range_m <= p.minimum_range_m ||

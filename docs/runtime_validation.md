@@ -12,7 +12,11 @@ make replay DATASET=aist-mid360-drive RATE=1.0
 make replay DATASET=aist-mid360-drive RATE=1.0 FRONTIER_DEBUG=1
 make dataset-check DATASET=aist-mid360-drive RATE=1.0
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
-PX4_DIR=$HOME/Dev/Autopilot make sim                                           
+PX4_DIR=$HOME/Dev/Autopilot make external-mode-check
+PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+# alias:
+PX4_DIR=$HOME/Dev/Autopilot make external-mode
+PX4_DIR=$HOME/Dev/Autopilot make sim
 make status
 make stop
 make clean
@@ -35,18 +39,110 @@ frontier-debug switch for that session.
 `sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
 FAST-LIO with `config/runtime/sim.yaml`, and the retained legacy scenario from
 `config/runtime/offboard.yaml`. This workflow is odometry smoke coverage, not
-the target navigation control interface. The M1 External Mode node is launched
-with `navigation_bringup/px4_external_mode.launch.py` and
+the target navigation control interface.
+
+`external-mode-check` starts the same SITL/LIO/mapping stack, publishes a
+bounded goal to `/navigation/goal`, requires a successful trajectory from
+`navigation_runtime`, then validates the PX4-native External Mode handover and
+the resulting `/fmu/in/trajectory_setpoint` stream. It uses
+`config/runtime/external_mode_scenario.yaml` and the simulation-only collision
+envelope. The default goal targets the LiDAR-observed free sensor cell, and the
+scenario replans while External Mode is active so the adapter never consumes a
+stale one-shot trajectory. The M1 External Mode node is launched with
+`navigation_bringup/px4_external_mode.launch.py` and
 `config/runtime/external_mode.yaml`; it registers through `px4_ros2_cpp` and
-hands setpoints to PX4 internal controllers. `sim` starts the same stack with
+hands setpoints to PX4 internal controllers. For mission execution, the mode
+publishes `/navigation/mission_complete` and hands control to PX4 POSCTL. Neither
+the External Mode node nor the mission harness issues LAND, RTL, or disarm. The
+external-vision-only profile intentionally has no global position, so POSCTL is
+the generic handover target; completion remains a supervisor boundary. `sim`
+starts the same stack with
 the Gazebo GUI and RViz, but no automatic flight controller;
 stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
+
+## GUI External Mode
+
+`make external-mode-gui` is the GUI version of the automated mission workflow.
+It starts the same PX4 SITL, Gazebo GUI, RViz, FAST-LIO, mapping, and PX4
+External Mode node, then runs the same automated scenario as
+`make external-mode-check`. The shorter `make external-mode` command is an
+alias. Select a built-in map and its matching static mission with
+the canonical scene knobs:
+
+With `MANUAL_TAKEOFF=1`, the harness sends neither ARM nor TAKEOFF. Select
+Takeoff and arm manually in PX4/QGC; after the vehicle is airborne, stable,
+and LIO odometry is fresh, the harness activates External Mode and continues
+the configured mission automatically.
+
+```bash
+make build
+PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MAP_SCENE=structured_obstacle TEST_CASE=detour PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=nominal MAP_SEED=0 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MANUAL_TAKEOFF=1 MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=nominal MAP_SEED=0 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MAP_SCENE=tunnel TEST_CASE=degenerate PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MAP_SCENE=clutter MAP_SEED=11 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+```
+
+The runner passes the selected mission file to the External Mode node. The
+default `sanity_open` scene and each variant resolve to a matching mission
+through `config/runtime/map_profiles.yaml`; legacy `MAP_PROFILE` names remain
+accepted for compatibility. Mission YAML is loaded once at node startup and
+is immutable during the flight.
+
+The GUI runner automatically performs this sequence after the processes are
+ready:
+
+```text
+arm in PX4 ground-safe mode
+  -> takeoff and settle
+  -> require 1 s of fresh propagated LIO odometry
+  -> activate External Mode once
+  -> execute the selected mission
+  -> brake safety stops and hand over to PX4 POSCTL
+```
+
+The report distinguishes `COMPLETE`, `PAUSED_SAFETY_STOP`,
+`ABORTED_OPERATOR`, `FAILED_COMPONENT`, and PX4 `failsafe_seen`. A safety stop
+is a verified brake followed by POSCTL, not a mode failure and not a landing
+request. The pre-takeoff throw-away External Mode activation was removed so a
+rejected disarmed activation cannot contaminate the airborne mission cycle.
+The harness retries ARM only every 5 s and records PX4's authoritative ACK.
+It does not gate the retry on `VehicleStatus.pre_flight_checks_pass`, because
+that aggregate bit can remain false until the successful arm in this
+external-vision configuration; the slow cadence avoids a command flood while
+EKF heading/health converges.
+
+The harness owns only arm/takeoff for this simulation workflow. The product
+External Mode node executes navigation and requests the POSCTL handover; no
+component sends LAND or disarm.
+
+Useful inspection commands from another terminal:
+
+```bash
+make status
+ros2 topic echo /lio/diagnostics
+ros2 topic echo /navigation/trajectory
+ros2 topic echo /navigation_mapping/visualization/occupied
+ros2 topic echo /fmu/in/trajectory_setpoint
+```
+
+Stop the entire workspace-owned GUI session with:
+
+```bash
+make stop
+```
+
+Use `make external-mode-check MAP_PROFILE=<profile>` for the same automated
+acceptance verdict without GUI rendering. The headless workflow remains
+unchanged; the GUI workflow only adds Gazebo/RViz visibility.
 
 The manual-control policy is deliberately different between these workflows:
 
 | Workflow | `COM_RC_IN_MODE` | Manual input |
 |---|---:|---|
 | `sim-check` | `4` | disabled; legacy smoke scenario only |
+| `external-mode-check` | `4` | automated planner-backed External Mode scenario |
 | `sim` | `1` | MAVLink joystick from QGC virtual joystick or a physical joystick |
 
 The direct PX4 launcher defaults to mode `4`. For a manually controlled direct
@@ -60,8 +156,9 @@ session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
 | `config/runtime/dataset.yaml` | dataset runner | real AIST timing, frames, extrinsic, input QoS |
 | `config/runtime/mapping.yaml` | navigation runtime | world-model, visualization, collision, and planner parameters |
 | `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
-| `config/runtime/external_mode.yaml` | PX4 External Mode node | trajectory input frame and freshness contract |
-| `config/runtime/offboard.yaml` | headless simulation | one deterministic flight trajectory |
+| `config/runtime/external_mode.yaml` | PX4 External Mode node | trajectory, mission-complete, and freshness contract |
+| `config/runtime/offboard.yaml` | headless simulation | one deterministic legacy offboard trajectory |
+| `config/runtime/external_mode_scenario.yaml` | external-mode-check | planner-backed bounded goal and handover timing |
 
 The runner passes only explicit ROS node parameter trees (`fast_lio` and, for
 simulation, the two PX4 bridge nodes). Workflow metadata stays in the session,
@@ -147,6 +244,123 @@ requires the selected scenario's real PX4 output/status streams and
 the LIO-to-PX4 frame/timestamp contract. No unsupported aid-source topic is
 used. PX4 status flags are observational telemetry, while accuracy is
 calculated against the separate simulator truth.
+
+## External mission planning status
+
+The validated mission lifecycle is:
+
+```text
+takeoff/airborne supervisor
+  -> activate External Mode
+  -> static mission YAML -> correlated goals -> PVA/PV/V setpoints
+  -> mission_complete event
+  -> PX4 POSCTL handover (mission checkpoint retained for reactivation)
+```
+
+The mission event is a notification boundary, not a flight action. This is
+required because the external-vision-only simulation profile disables GPS and
+PX4 therefore rejects generic Loiter handover when its global-position health
+requirement is not met.
+
+The current planning execution contract is deliberately conservative:
+
+```text
+nominal A* plan (Inflated + KnownFree)
+  -> commit as the active trajectory
+nominal plan failure
+  -> known-free safety route, role=SAFETY
+  -> if no route, known-free braking stop, role=SAFETY
+  -> retry the same correlated goal only after a braking stop
+  -> fail External Mode if no safe candidate or retry succeeds
+```
+
+`SAFETY` route may count as waypoint progress because it is a known-free route;
+`SAFETY` braking stop never counts as waypoint progress and is required to end
+at zero velocity and acceleration. The runtime executes a nominal path through
+unknown cells only when the explicit simulation-only `DUAL_PLANNING=1` gate is
+enabled. The default and real profiles remain known-free-only.
+
+The simulation `allow_unknown_start` exception creates a virtual `KnownFree`
+overlay over the current vehicle footprint to handle the LiDAR body shadow.
+Its radius is exactly the simulation collision envelope (`0.32 + 0.05 = 0.37
+m`). It converts only `Unknown`; `Occupied` evidence always wins, cells outside
+the footprint remain fail-closed, and the overlay is never written into the
+persistent ROG-Map.
+
+The replan timer remains bounded at 5 Hz. A committed trajectory is reused on
+unchanged revisions and revalidated against the remaining corridor when the
+WorldModel revision changes. A verified braking stop is latched for the active
+request and can only be replaced after verifier rejection, never by restarting
+nominal execution. Full replanning is reserved for a changed goal, tracking
+error beyond `navigation.replan_tracking_error_m`, or an invalidated corridor.
+The planning report exposes `trajectory_revalidation_count`,
+`trajectory_revalidation_failure_count`, `trajectory_reuse_count`, and
+`full_replan_count` alongside the existing planner counters.
+
+## Mission stress profiles
+
+The External Mode runner keeps one scenario harness and varies only the world
+and static mission file:
+
+| Profile | Purpose | Expected result |
+|---|---|---|
+| `open` | baseline textured geometry | mission complete |
+| `pillar` | obstacle detour and ground-truth clearance | mission complete |
+| `corridor` | narrow known-free corridor | mission complete without limit violation |
+| `speed` | higher velocity/acceleration envelope | mission complete; setpoint cap respected |
+| `long_open` | long-distance sliding map with asymmetric acceleration/deceleration | diagnostic baseline; current run loses LIO before mission completion |
+| `long_open_slow` | same sparse map at reduced speed/acceleration | LIO stays TRACKING; current run still fails at waypoint 1 during safety retry |
+| `long_featured` | 53 m route at z=2.8–3.0 m with six low pillars, roadside trees, six non-periodic texture panels and asymmetric scaffold | LIO feature coverage/clearance diagnostic; GUI run must pass all five waypoints |
+| `occlusion` | revealed obstacle and dual-planning telemetry | experimental; no flight-policy promotion |
+| `no_path` | sealed wall with unreachable first waypoint | brake, `PAUSED_SAFETY_STOP`, POSCTL, GUI remains alive |
+
+The long-map A/B pair is intentionally diagnostic. “Texture” means LiDAR
+geometric structure (edges, corners, depth variation), not SDF visual colour.
+`long_open_slow` changes only the motion envelope; `long_featured` changes
+the static geometry and its ground-truth collision model. The featured route
+keeps the setpoints in the 2–3 m band and places discrete, non-periodic
+vertical surfaces 4--7 m to either side, so the MID-360 sees returns without
+creating a continuous wall. Its final waypoint is x=53 m on the far side of
+the obstacle field. A featured map that keeps LIO TRACKING while the sparse
+fast map loses it is evidence that geometric observability matters. The LIO
+failure reason, filtered-point metrics, stream gaps and full waypoint order
+must be recorded with every GUI run.
+
+`no_path` is not a successful mission. The acceptance contract is planner
+failure plus structured `PAUSED/SAFETY_STOP` status, verified braking, and
+POSCTL handover. LAND/disarm and generic `ModeCompleted(result=100)` are not
+part of this path. A mission timeout or continued nominal setpoint publication
+is a test failure.
+
+Every stress profile also subscribes to simulator ground-truth odometry. The
+harness expands each SDF obstacle by the configured UAV collision radius and
+records `minimum_collision_clearance_m`, `collision_count`, and
+`collision_event_count` in `scenario.json`. The configured minimum clearance
+margin is 0.10 m after subtracting the vehicle collision radius; a breach of
+that margin or a collision fails the scenario, independent of LIO state, so an
+estimator failure cannot hide a physical collision. The latest long-distance
+runs remain known failing gates: the sparse fast baseline reaches `LOST`, the
+slow sparse run stops at waypoint 1 after safety fallback retries, and the
+featured run stops before waypoint 3 despite LIO remaining `TRACKING`. They
+must not be reported as successful mission benchmarks.
+
+## Localization root-cause evidence
+
+FAST-LIO reports a normalized translational information matrix derived from
+accepted point-to-plane normals. A correction is usable only when
+`lambda_min / lambda_max` is finite and meets
+`registration.minimum_translation_observability_ratio` (0.01 in the
+canonical profiles). An invalid correction is rolled back, excluded from the
+registration map, and propagated as an unhealthy navigation state; External
+Mode then publishes a stationary velocity setpoint during handover and does
+not issue flight actions.
+
+The `no_path` profile is accepted only after its sealed wall is observed in
+both raw LiDAR and occupied-voxel evidence. The simulation watchdog aligns
+ground truth only inside the test harness and terminates on a sustained
+position residual above 0.5 m or velocity residual above 1.0 m/s. This keeps a
+planner result from being treated as safe when the localization frame has
+already diverged.
 
 ## RViz products
 

@@ -13,6 +13,7 @@ find_package(navigation_mapping REQUIRED)
 add_library(navigation_planning
   src/a_star.cpp
   src/planner.cpp
+  src/trajectory_verifier.cpp
 )
 target_compile_features(navigation_planning PUBLIC cxx_std_20)
 target_include_directories(navigation_planning PUBLIC

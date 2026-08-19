@@ -72,6 +72,11 @@ class RosOutputPublisher {
     std::size_t map_point_count{0};
     std::size_t valid_point_count_busy_count{0};
     std::size_t measurement_callback_count{0};
+    std::size_t observability_rejection_count{0};
+    double translation_observability_min_eigenvalue{0.0};
+    double translation_observability_max_eigenvalue{0.0};
+    double translation_observability_ratio{0.0};
+    bool translation_observability_valid{false};
     std::int64_t measurement_model_us{0};
     std::int64_t ikfom_solver_only_us{0};
     std::size_t map_size_after_insert{0};

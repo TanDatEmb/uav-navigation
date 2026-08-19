@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -15,6 +16,7 @@ from shutil import which
 import sys
 import time
 from typing import Any, Callable
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -52,6 +54,13 @@ GUI_ENV_REMOVE = {
 }
 PX4_HEADLESS_COM_RC_IN_MODE = "4"
 PX4_INTERACTIVE_COM_RC_IN_MODE = "1"
+
+CANONICAL_SCENES = (
+    "sanity_open", "structured_obstacle", "long_route", "tunnel", "clutter",
+    "planner_negative",
+)
+TEST_CASES = ("positive", "degenerate", "detour", "no_path")
+MOTION_PRESETS = ("nominal", "slow", "fast")
 
 DISPOSABLE_BUILD_VARIANT_SUFFIXES = (
     "gprof",
@@ -251,6 +260,330 @@ def _ros_params(session: Session, source: Path) -> Path:
     return target
 
 
+def _mission_planning(source: Path | None) -> dict[str, Any]:
+    if source is None:
+        return {}
+    value = yaml.safe_load(source.read_text(encoding="utf-8"))
+    mission = value.get("mission", {}) if isinstance(value, dict) else {}
+    planning = mission.get("planning", {}) if isinstance(mission, dict) else {}
+    if not isinstance(planning, dict):
+        raise ValueError("mission.planning must be a mapping")
+    if planning.get("unknown_policy", "blocked") != "blocked":
+        raise ValueError("mission planning unknown_policy must be 'blocked'")
+    result = {}
+    for key in ("replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
+                "max_deceleration_mps2", "max_jerk_mps3"):
+        if key in planning:
+            number = float(planning[key])
+            if not math.isfinite(number) or number <= 0.0:
+                raise ValueError(f"mission planning {key} must be finite and positive")
+            result[key] = number
+    if "max_acceleration_mps2" in result and "max_deceleration_mps2" not in result:
+        result["max_deceleration_mps2"] = result["max_acceleration_mps2"]
+    return result
+
+
+def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
+    """Ground-truth-only collision geometry for simulator acceptance checks."""
+    box = lambda name, center, half_extents: {
+        "name": name, "type": "box", "center": center, "half_extents": half_extents,
+    }
+    cylinder = lambda name, center, radius_m, half_height_m: {
+        "name": name, "type": "cylinder", "center": center,
+        "radius_m": radius_m, "half_height_m": half_height_m,
+    }
+    world_name = {
+        "smoke": "px4_lio_smoke", "speed": "open", "long_open_slow": "long_open",
+        "occlusion": "occlusion", "occlusion_featured": "occlusion",
+    }.get(map_profile, map_profile)
+    world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+    if world_path.is_file():
+        parsed: list[dict[str, Any]] = []
+        try:
+            root = ET.parse(world_path).getroot()
+            for model in root.findall(".//model"):
+                name = model.get("name", "")
+                pose = (model.findtext("pose") or "0 0 0").split()
+                center = [float(value) for value in pose[:3]]
+                collision = model.find("./link/collision/geometry")
+                if collision is None or len(center) != 3:
+                    continue
+                box_node = collision.find("box/size")
+                cylinder_node = collision.find("cylinder")
+                if box_node is not None:
+                    size = [float(value) for value in box_node.text.split()]
+                    if len(size) == 3:
+                        parsed.append({"name": name, "type": "box", "center": center,
+                                       "half_extents": [value / 2.0 for value in size]})
+                elif cylinder_node is not None:
+                    radius = float(cylinder_node.findtext("radius", "0"))
+                    length = float(cylinder_node.findtext("length", "0"))
+                    parsed.append({"name": name, "type": "cylinder", "center": center,
+                                   "radius_m": radius, "half_height_m": length / 2.0})
+        except (ET.ParseError, OSError, ValueError):
+            parsed = []
+        if parsed:
+            return parsed
+    if map_profile in {"open", "speed", "long_open", "long_open_slow"}:
+        if map_profile in {"long_open", "long_open_slow"}:
+            return [
+                box("long_open_wall_east", [55.0, 0.0, 2.5], [0.125, 8.0, 2.5]),
+                box("long_open_wall_north", [25.0, 3.0, 2.5], [30.0, 0.125, 2.5]),
+                box("long_open_wall_south", [25.0, -3.0, 2.5], [30.0, 0.125, 2.5]),
+            ]
+        return [
+            box("open_wall_east", [55.0 if map_profile == "long_open" else 10.0, 0.0, 2.5],
+                [0.125, 10.0 if map_profile != "long_open" else 8.0, 2.5]),
+            box("open_wall_north", [0.0, 10.0 if map_profile != "long_open" else 8.0, 2.5],
+                [10.0 if map_profile != "long_open" else 55.0, 0.125, 2.5]),
+        ]
+    if map_profile == "long_featured":
+        return [
+            cylinder("long_featured_pillar_01", [9.0, -2.80, 1.0], 0.65, 1.0),
+            cylinder("long_featured_pillar_02", [17.5, 2.60, 1.10], 0.75, 1.10),
+            cylinder("long_featured_pillar_03", [26.0, -2.60, 1.20], 0.70, 1.20),
+            cylinder("long_featured_pillar_04", [34.5, 2.80, 0.90], 0.85, 0.90),
+            cylinder("long_featured_pillar_05", [42.5, -2.80, 1.10], 0.70, 1.10),
+            cylinder("long_featured_pillar_06", [50.0, 2.60, 1.00], 0.75, 1.00),
+            cylinder("long_featured_tree_01", [6.0, -4.0, 1.90], 0.35, 1.90),
+            cylinder("long_featured_tree_02", [14.0, 4.0, 1.90], 0.45, 1.90),
+            cylinder("long_featured_tree_03", [23.0, -4.5, 1.90], 0.30, 1.90),
+            cylinder("long_featured_tree_04", [32.0, 4.5, 1.90], 0.50, 1.90),
+            cylinder("long_featured_tree_05", [41.0, -4.0, 1.90], 0.40, 1.90),
+            cylinder("long_featured_tree_06", [50.0, 4.0, 1.90], 0.55, 1.90),
+            box("long_featured_texture_01", [3.5, 5.0, 1.50], [0.6, 0.25, 1.50]),
+            box("long_featured_texture_02", [11.0, -5.2, 1.70], [0.3, 0.6, 1.70]),
+            box("long_featured_texture_03", [20.0, 5.5, 1.25], [0.9, 0.225, 1.25]),
+            box("long_featured_texture_04", [29.0, -5.0, 1.80], [0.25, 0.75, 1.80]),
+            box("long_featured_texture_05", [39.0, 5.2, 1.45], [0.7, 0.3, 1.45]),
+            box("long_featured_texture_06", [47.0, -5.5, 1.65], [0.35, 0.8, 1.65]),
+        ]
+    if map_profile == "pillar":
+        return [
+            cylinder("pillar_obstacle", [-4.5, 2.5, 2.5], 0.55, 2.5),
+            box("wall_east", [7.0, 1.0, 2.5], [0.125, 9.0, 2.5]),
+            box("wall_north", [-1.0, 9.0, 2.0], [6.0, 0.125, 2.0]),
+        ]
+    if map_profile in {"occlusion", "occlusion_featured"}:
+        return [
+            box("occluder", [-2.0, 2.5, 2.5], [0.175, 2.5, 2.5]),
+            box("hidden_obstacle", [-4.3, 2.5, 2.5], [0.45, 0.6, 2.5]),
+            box("side_wall", [6.0, 4.0, 2.5], [0.125, 6.0, 2.5]),
+            box("feature_mid_east", [4.0, 2.5, 2.5], [0.4, 0.3, 2.5]),
+            box("feature_low_west", [-1.0, -5.0, 0.75], [0.6, 0.4, 0.75]),
+            box("feature_tall_south", [2.5, -7.5, 2.5], [0.35, 0.35, 2.5]),
+            box("feature_corner_east", [8.5, 8.0, 1.6], [1.4, 0.3, 1.6]),
+            cylinder("feature_pole_north", [12.0, -6.0, 1.8], 0.35, 1.8),
+        ]
+    if map_profile == "occlusion_degenerate":
+        return [
+            box("occluder", [-2.0, 2.5, 2.5], [0.175, 2.5, 2.5]),
+            box("hidden_obstacle", [-4.3, 2.5, 2.5], [0.45, 0.6, 2.5]),
+            box("side_wall", [6.0, 4.0, 2.5], [0.125, 6.0, 2.5]),
+        ]
+    if map_profile in {"tunnel_smooth", "tunnel_irregular"}:
+        obstacles = [
+            box("tunnel_wall_north" if map_profile == "tunnel_smooth" else "wall_north", [20.0, 4.0, 3.0], [21.0, 0.15, 3.0]),
+            box("tunnel_wall_south" if map_profile == "tunnel_smooth" else "wall_south", [20.0, -4.0, 3.0], [21.0, 0.15, 3.0]),
+            box("tunnel_ceiling" if map_profile == "tunnel_smooth" else "ceiling", [20.0, 0.0, 6.2], [21.0, 4.15, 0.15]),
+            box("tunnel_end" if map_profile == "tunnel_smooth" else "end_wall", [41.0, 0.0, 3.0], [0.15, 4.15, 3.0]),
+        ]
+        if map_profile == "tunnel_irregular":
+            obstacles.extend([
+                box("alcove_a", [9.0, 3.1, 1.7], [1.7, 1.25, 1.7]),
+                box("beam_b", [17.0, -1.3, 4.7], [2.25, 0.175, 0.225]),
+                box("corner_c", [28.0, 2.7, 1.4], [0.6, 1.0, 1.4]),
+            ])
+        return obstacles
+    if map_profile == "forest_clutter":
+        return [
+            cylinder("tree_01", [5.0, 4.0, 2.0], 0.45, 2.0),
+            cylinder("tree_02", [8.0, -3.0, 2.8], 0.30, 2.8),
+            cylinder("tree_03", [13.0, 5.0, 1.5], 0.70, 1.5),
+            cylinder("tree_04", [18.0, -5.0, 2.2], 0.35, 2.2),
+            cylinder("tree_05", [24.0, 4.5, 1.7], 0.50, 1.7),
+            cylinder("tree_06", [29.0, -4.0, 2.5], 0.40, 2.5),
+            cylinder("tree_07", [35.0, 5.5, 2.0], 0.60, 2.0),
+        ]
+    if map_profile == "corridor":
+        return [
+            box("corridor_wall_south", [2.5, 2.7, 2.5], [4.5, 0.15, 2.5]),
+            box("corridor_wall_north", [2.5, 6.3, 2.5], [4.5, 0.15, 2.5]),
+            box("corridor_end_wall", [7.0, 4.5, 2.5], [0.15, 3.5, 2.5]),
+        ]
+    if map_profile == "no_path":
+        return [
+            box("near_feature_west", [-3.0, -2.0, 2.0], [0.4, 0.4, 2.0]),
+            box("near_feature_east", [-5.0, 3.0, 1.5], [0.3, 0.3, 1.5]),
+            box("sealed_wall", [1.0, 0.0, 6.0], [0.2, 20.0, 6.0]),
+        ]
+    return []
+
+
+def _map_registry() -> dict[str, Any]:
+    registry = yaml.safe_load((RUNTIME_CONFIG / "map_profiles.yaml").read_text(encoding="utf-8"))
+    if not isinstance(registry, dict) or not isinstance(registry.get("profiles"), dict):
+        raise ValueError("map_profiles.yaml must contain a profiles mapping")
+    profiles = registry["profiles"]
+    for name, profile in profiles.items():
+        if not isinstance(profile, dict):
+            raise ValueError(f"map registry profile must be a mapping: {name}")
+        for field in ("world", "mission", "expected_outcome", "collision_truth"):
+            if field not in profile:
+                raise ValueError(f"map registry profile {name} is missing {field}")
+        world = ROOT / "src/uav_simulation/worlds" / f"{profile['world']}.sdf"
+        mission = RUNTIME_CONFIG / "missions" / f"{profile['mission']}.yaml"
+        if not world.is_file() or not mission.is_file():
+            raise ValueError(f"map registry profile {name} references missing assets")
+        if len(profile["collision_truth"]) != len(set(profile["collision_truth"])):
+            raise ValueError(f"map registry profile {name} has duplicate collision truth names")
+        available_names = {item["name"] for item in _collision_obstacles(str(name))}
+        missing_truth = set(profile["collision_truth"]) - available_names
+        if missing_truth:
+            raise ValueError(f"map registry profile {name} has missing collision truth: {sorted(missing_truth)}")
+    return profiles
+
+
+def _scene_registry() -> dict[str, Any]:
+    """Return the compact public scene registry used by Make/CI.
+
+    The legacy ``profiles`` mapping remains authoritative for assets and
+    collision truth.  Scenes are only a stable user-facing grouping layer, so
+    adding a new geometry variant does not add another public Make profile.
+    """
+    registry = yaml.safe_load((RUNTIME_CONFIG / "map_profiles.yaml").read_text(encoding="utf-8"))
+    scenes = registry.get("scenes", {}) if isinstance(registry, dict) else {}
+    if not isinstance(scenes, dict) or not scenes:
+        raise ValueError("map_profiles.yaml must contain a non-empty scenes mapping")
+    profiles = _map_registry()
+    known_legacy = set(profiles) | {
+        "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured",
+        "corridor", "pillar", "no_path", "occlusion",
+    }
+    for scene, descriptor in scenes.items():
+        if not isinstance(descriptor, dict) or not isinstance(descriptor.get("variants"), dict):
+            raise ValueError(f"map scene must define variants: {scene}")
+        for testcase, profile in descriptor["variants"].items():
+            if not isinstance(profile, str) or profile not in known_legacy:
+                raise ValueError(f"map scene {scene}/{testcase} references unknown profile {profile}")
+    return scenes
+
+
+def _resolve_scene_profile(
+    map_scene: str | None,
+    test_case: str,
+    motion_preset: str,
+    map_profile: str | None,
+) -> tuple[str, dict[str, str]]:
+    """Resolve canonical scene knobs to one legacy asset profile.
+
+    ``MAP_PROFILE`` remains an escape hatch for old scripts.  When a scene is
+    supplied, testcase is preferred and motion preset is used as a fallback
+    only when that variant exists (for example long_route/slow).
+    """
+    if map_profile:
+        return map_profile, {
+            "scene": map_scene or "legacy",
+            "test_case": test_case,
+            "motion_preset": motion_preset,
+        }
+    if not map_scene or map_scene == "smoke":
+        return "smoke", {"scene": "smoke", "test_case": test_case, "motion_preset": motion_preset}
+    scenes = _scene_registry()
+    if map_scene not in scenes:
+        raise ValueError(f"unknown canonical map scene: {map_scene}")
+    variants = scenes[map_scene]["variants"]
+    profile_name = variants.get(test_case)
+    if profile_name is None:
+        profile_name = variants.get(motion_preset)
+    if profile_name is None and test_case == "positive":
+        profile_name = variants.get("nominal") or variants.get("positive")
+    if profile_name is None:
+        available = ", ".join(sorted(variants))
+        raise ValueError(f"scene {map_scene} has no variant for testcase={test_case}, motion={motion_preset}; available: {available}")
+    return str(profile_name), {
+        "scene": map_scene,
+        "test_case": test_case,
+        "motion_preset": motion_preset,
+    }
+
+
+def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -> tuple[str, dict[str, Any]]:
+    canonical = "occlusion_featured" if map_profile == "occlusion" else map_profile
+    profile = _map_registry().get(canonical)
+    if profile is None:
+        world_name = "px4_lio_smoke" if map_profile == "smoke" else map_profile
+        world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+        descriptor = {
+            "profile": map_profile, "seed": 0, "stochastic": False,
+            "world": world_name, "expected_outcome": "mission_complete",
+            "world_sha256": hashlib.sha256(world_path.read_bytes()).hexdigest(),
+        }
+        (session.directory / "resolved_map.sdf").write_bytes(world_path.read_bytes())
+        (session.directory / "map_descriptor.json").write_text(
+            json.dumps(descriptor, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return world_name, descriptor
+    if not isinstance(profile, dict):
+        raise ValueError(f"registry entry must be a mapping: {canonical}")
+    world_name = str(profile["world"])
+    world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+    world_bytes = world_path.read_bytes()
+    seed = int(map_seed if profile.get("stochastic", False) else profile.get("seed", 0))
+    resolved_bytes = world_bytes
+    if profile.get("stochastic", False):
+        # The current forest asset is a deterministic seed-11 baseline.  Keep
+        # the resolved artifact seed-addressable now; the generator can later
+        # replace the static tree poses without changing the runner contract.
+        resolved_bytes = b"<!-- map-seed: " + str(seed).encode("ascii") + b" -->\n" + world_bytes
+    descriptor = {
+        "profile": canonical,
+        "requested_profile": map_profile,
+        "seed": seed,
+        "stochastic": bool(profile.get("stochastic", False)),
+        "world": world_name,
+        "mission": str(profile.get("mission", canonical)),
+        "expected_outcome": str(profile.get("expected_outcome", "mission_complete")),
+        "collision_truth": list(profile.get("collision_truth", [])),
+        "world_sha256": hashlib.sha256(resolved_bytes).hexdigest(),
+    }
+    resolved_world = session.directory / f"resolved_{world_name}.sdf"
+    resolved_world.write_bytes(resolved_bytes)
+    (session.directory / "map_descriptor.json").write_text(
+        json.dumps(descriptor, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return world_name, descriptor
+
+
+def _external_mode_params(session: Session, source: Path, mission_file: Path | None) -> Path:
+    value = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
+        raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
+    parameters = value["px4_navigation_external_mode"].setdefault("ros__parameters", {})
+    navigation = parameters.setdefault("navigation", {})
+    tracker = navigation.setdefault("velocity_tracker", {})
+    planning = _mission_planning(mission_file)
+    if "max_velocity_mps" in planning:
+        tracker["max_velocity_mps"] = planning["max_velocity_mps"]
+    if "max_acceleration_mps2" in planning:
+        tracker["max_acceleration_mps2"] = planning["max_acceleration_mps2"]
+    if "max_deceleration_mps2" in planning:
+        tracker["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
+    target = session.directory / "external_mode_params.yaml"
+    target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
+    return target
+
+
+def _external_mode_launch_command(config_file: Path, mission_file: Path | None) -> list[str]:
+    command = [
+        "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
+        f"config_file:={config_file}", "use_sim_time:=true",
+    ]
+    if mission_file is not None:
+        command.append(f"mission_file:={mission_file}")
+    return command
+
+
 def _mapping_params(
     session: Session,
     source: Path,
@@ -258,6 +591,9 @@ def _mapping_params(
     interactive: bool = False,
     frontier_debug: bool = False,
     simulation: bool = False,
+    dual_planning: bool = False,
+    mission_file: Path | None = None,
+    obstacle_evidence: bool = False,
 ) -> Path:
     """Copy the product-owned navigation_mapping parameter block."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -280,9 +616,11 @@ def _mapping_params(
     # product-side visualization is part of this invocation. Frontier
     # extraction remains an explicit future/debug capability and is not
     # coupled to opening RViz.
-    visualization_parameters["enabled"] = interactive
-    visualization_parameters["publish_unknown"] = interactive
+    visualization_parameters["enabled"] = interactive or obstacle_evidence
+    visualization_parameters["publish_unknown"] = interactive and not obstacle_evidence
     visualization_parameters["publish_frontier"] = frontier_debug
+    if obstacle_evidence:
+        visualization_parameters["publish_rate_hz"] = 2.0
     if simulation:
         simulation_parameters = (
             load_config("sim.yaml")
@@ -291,6 +629,42 @@ def _mapping_params(
             .get("navigation", {})
         )
         navigation["collision"] = simulation_parameters.get("collision", {})
+        if obstacle_evidence:
+            # The sealed-wall rejection is a safety test, so keep a slightly
+            # larger planner-side buffer than the nominal corridor profile.
+            # This prevents the vehicle from using the final inflated cell as
+            # a stopping point before the no-path decision is reported.
+            navigation["collision"]["safety_margin_m"] = 0.15
+        # PX4/Gazebo's LiDAR is mounted above the vehicle origin. The current
+        # base pose can therefore remain in the sensor shadow. Overlay the
+        # vehicle's physically occupied footprint as KnownFree, without ever
+        # overriding Occupied evidence. Keep this exception simulation-only;
+        # real-flight profiles remain fail-closed until they provide an
+        # authoritative current-pose occupancy contract.
+        planner_parameters = navigation.setdefault("planner", {})
+        planner_parameters["allow_unknown_start"] = True
+        collision_parameters = navigation.get("collision", {})
+        planner_parameters["unknown_start_radius_m"] = (
+            float(collision_parameters.get("vehicle_radius_m", 0.32)) +
+            float(collision_parameters.get("safety_margin_m", 0.05))
+        )
+        # This is an explicit simulation experiment. The real/default profile
+        # remains known-free only; no environment variable silently enables it.
+        planner_parameters["allow_nominal_unknown"] = dual_planning
+        planner_parameters.setdefault("nominal_commitment_horizon_s", 1.0)
+    planning = _mission_planning(mission_file)
+    if planning:
+        planner_parameters = navigation.setdefault("planner", {})
+        if "replan_rate_hz" in planning:
+            navigation["replan_rate_hz"] = planning["replan_rate_hz"]
+        if "max_velocity_mps" in planning:
+            planner_parameters["max_velocity_mps"] = planning["max_velocity_mps"]
+        if "max_acceleration_mps2" in planning:
+            planner_parameters["max_acceleration_mps2"] = planning["max_acceleration_mps2"]
+        if "max_deceleration_mps2" in planning:
+            planner_parameters["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
+        if "max_jerk_mps3" in planning:
+            planner_parameters["max_jerk_mps3"] = planning["max_jerk_mps3"]
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_runtime": parameters}, sort_keys=False),
@@ -301,6 +675,7 @@ def _mapping_params(
         mapping_rog_resolution_m=map_parameters.get("resolution_m"),
         mapping_input_voxel_m=input_parameters.get("voxel_size_m"),
         mapping_interactive=interactive,
+        dual_planning=dual_planning,
     )
     return target
 
@@ -565,27 +940,165 @@ def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     raise TimeoutError(f"Gazebo clock did not appear: {topic}")
 
 
-def run_sim(headless: bool, control_interface: str = "offboard") -> int:
+def run_sim(
+    headless: bool,
+    control_interface: str = "offboard",
+    *,
+    dual_planning: bool = False,
+    map_profile: str | None = None,
+    map_scene: str | None = None,
+    test_case: str = "positive",
+    motion_preset: str = "nominal",
+    map_seed: int = 0,
+    auto_scenario: bool = False,
+    manual_takeoff: bool = False,
+) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    map_profile, scene_descriptor = _resolve_scene_profile(
+        map_scene, test_case, motion_preset, map_profile
+    )
+    world_name = "px4_lio_smoke" if map_profile == "smoke" else {
+        "speed": "open",
+        "long_open": "long_open",
+        "long_open_slow": "long_open",
+        "long_featured": "long_featured",
+        "occlusion_featured": "occlusion",
+        "occlusion_degenerate": "occlusion_degenerate",
+    }.get(map_profile, map_profile)
+    world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+    if not world_path.is_file():
+        raise ValueError(f"map profile world does not exist: {world_path}")
     config = load_config("sim.yaml")
     scenario_config_name = "offboard.yaml" if control_interface == "offboard" else "external_mode_scenario.yaml"
     scenario_config = load_config(scenario_config_name)
+    scenario_config.setdefault("scenario", {})["map_profile"] = map_profile
+    scenario_config["scenario"].update({
+        "map_scene": scene_descriptor["scene"],
+        "test_case": scene_descriptor["test_case"],
+        "motion_preset": scene_descriptor["motion_preset"],
+        "manual_takeoff": bool(manual_takeoff),
+        "interactive_handover": bool(not headless and auto_scenario),
+    })
+    if manual_takeoff:
+        if headless or control_interface != "external_mode" or not auto_scenario:
+            raise ValueError("manual takeoff is supported only by the automatic GUI External Mode workflow")
+        scenario_config["scenario"]["activation_timeout_s"] = max(
+            float(scenario_config["scenario"].get("activation_timeout_s", 30.0)), 180.0)
+        scenario_config["scenario"]["takeoff_timeout_s"] = max(
+            float(scenario_config["scenario"].get("takeoff_timeout_s", 45.0)), 180.0)
+    mission_file: Path | None = None
+    if control_interface == "external_mode" and str(scenario_config["scenario"].get("execution", "single_goal")) == "mission":
+        registry_entry = _map_registry().get("occlusion_featured" if map_profile == "occlusion" else map_profile, {})
+        mission_name = registry_entry.get("mission", map_profile) if isinstance(registry_entry, dict) else map_profile
+        profile_mission = RUNTIME_CONFIG / "missions" / f"{mission_name}.yaml"
+        mission_file = profile_mission if map_profile != "smoke" and profile_mission.is_file() else Path(str(scenario_config["scenario"]["mission_file"]))
+        if not mission_file.is_absolute():
+            mission_file = (ROOT / mission_file).resolve()
+        if not mission_file.is_file():
+            raise RuntimeError(f"mission file does not exist: {mission_file}")
+        scenario = scenario_config["scenario"]
+        scenario["mission_file"] = str(mission_file)
+        scenario["vehicle_collision_radius_m"] = 0.35
+        scenario["collision_obstacles"] = _collision_obstacles(map_profile)
+        scenario["map_seed"] = int(map_seed)
+        scenario["require_map_observability"] = map_profile == "no_path"
+        scenario["pillar_waypoint_index"] = {
+            "open": -1,
+            "speed": -1,
+            "long_open": -1,
+            "long_open_slow": -1,
+            "long_featured": -1,
+            "corridor": -1,
+            "pillar": 3,
+            "occlusion": 2,
+            "no_path": -1,
+        }.get(map_profile, 3)
+        planning = _mission_planning(mission_file)
+        if "max_velocity_mps" in planning:
+            scenario["expected_max_velocity_mps"] = planning["max_velocity_mps"]
+        if map_profile in {"no_path", "occlusion_degenerate", "tunnel_smooth"}:
+            scenario["expected_outcome"] = "fail_closed"
+            scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
+        elif map_profile == "corridor":
+            scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
+        elif map_profile in {"long_open", "long_open_slow", "long_featured"}:
+            scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
+        elif map_profile in {"tunnel_irregular", "tunnel_smooth", "forest_clutter"}:
+            scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 240.0)
+        if map_profile in {"occlusion", "occlusion_featured"}:
+            scenario["pillar_center_enu"] = [-4.3, 2.5, 3.0]
+            scenario["pillar_clearance_m"] = 1.0
+            scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
+            # This profile evaluates revealed-obstacle behavior and ground
+            # truth clearance. Its occluder changes the local frame evidence,
+            # so the generic planned-path center-distance assertion is not a
+            # valid acceptance metric for this profile.
+            scenario["planned_clearance_check"] = False
     px4_dir = Path(os.environ.get("PX4_DIR", str(Path.home() / "Dev/Autopilot"))).expanduser().resolve()
     gz_command = _detect_gz_command()
     workflow = "external-mode" if control_interface == "external_mode" else "sim"
-    session_name = "external-mode-check" if headless and control_interface == "external_mode" else ("sim-check" if headless else "sim")
+    session_name = (
+        "external-mode-check"
+        if headless and control_interface == "external_mode"
+        else "sim-check"
+        if headless
+        else "external-mode-gui"
+        if control_interface == "external_mode"
+        else "sim"
+    )
     session = Session.create(ARTIFACT_ROOT, session_name)
-    session.write_state({"workflow": workflow, "headless": headless, "px4_dir": str(px4_dir)})
+    world_name, map_descriptor = _resolve_map_descriptor(session, map_profile, map_seed)
+    map_descriptor.update({
+        "scene": scene_descriptor["scene"],
+        "test_case": scene_descriptor["test_case"],
+        "motion_preset": scene_descriptor["motion_preset"],
+    })
+    (session.directory / "map_descriptor.json").write_text(
+        json.dumps(map_descriptor, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
+    if not world_path.is_file():
+        raise ValueError(f"map profile world does not exist: {world_path}")
+    session.write_state({
+        "workflow": workflow,
+        "headless": headless,
+        "auto_scenario": auto_scenario,
+        "manual_takeoff": manual_takeoff,
+        "px4_dir": str(px4_dir),
+        "dual_planning": dual_planning,
+        "map_profile": map_profile,
+        "map_scene": scene_descriptor["scene"],
+        "test_case": scene_descriptor["test_case"],
+        "motion_preset": scene_descriptor["motion_preset"],
+        "map_seed": map_descriptor.get("seed", 0),
+        "map_descriptor": str(session.directory / "map_descriptor.json"),
+    })
+    scenario_config_path = session.directory / "scenario_config.yaml"
+    scenario_config.setdefault("scenario", {})["map_descriptor"] = str(
+        session.directory / "map_descriptor.json"
+    )
+    registry_outcome = str(map_descriptor.get("expected_outcome", ""))
+    if registry_outcome:
+        scenario_config["scenario"]["expected_outcome"] = (
+            "complete" if registry_outcome == "mission_complete" else registry_outcome
+        )
+    scenario_config_path.write_text(yaml.safe_dump(scenario_config, sort_keys=False), encoding="utf-8")
     _write_runtime(
         session,
         workflow=workflow,
         headless=headless,
+        auto_scenario=auto_scenario,
         rviz=not headless,
         px4_dir=str(px4_dir),
         gz_command=gz_command,
         failures=[],
         startup_complete=False,
+        dual_planning=dual_planning,
+        map_profile=map_profile,
+        map_scene=scene_descriptor["scene"],
+        test_case=scene_descriptor["test_case"],
+        motion_preset=scene_descriptor["motion_preset"],
     )
     prereq = _sim_prerequisites(px4_dir, gz_command)
     if prereq:
@@ -597,7 +1110,13 @@ def run_sim(headless: bool, control_interface: str = "offboard") -> int:
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
         mapping_config = _mapping_params(
-        session, RUNTIME_CONFIG / "mapping.yaml", interactive=not headless, simulation=True
+            session,
+            RUNTIME_CONFIG / "mapping.yaml",
+            interactive=not headless,
+            simulation=True,
+            dual_planning=dual_planning,
+            mission_file=mission_file,
+            obstacle_evidence=control_interface == "external_mode" and map_profile == "no_path",
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -615,19 +1134,30 @@ def run_sim(headless: bool, control_interface: str = "offboard") -> int:
                 "GZ_GUI": "0" if headless else "1",
                 "SESSION_DIR": str(session.directory),
                 "GZ_COMMAND": gz_command or "",
-                "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(headless),
+                "PX4_GZ_WORLD": world_name,
+                # Automated scenarios use the same PX4 input policy in GUI
+                # and headless runs; `make sim` remains the manual mode.
+                "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(
+                    headless or (auto_scenario and not manual_takeoff)),
             }),
             env_remove=GUI_ENV_REMOVE,
         )
         simulation = config.get("simulation", {})
         if isinstance(simulation, dict) and "ros__parameters" in simulation:
             simulation = simulation["ros__parameters"]
-        world = str(simulation["world"])
+        world = world_name
         if not gz_command:
             raise RuntimeError("Gazebo simulator command is unavailable")
         _wait_gazebo(world, float(config["runtime"]["timeouts"]["startup_s"]), gz_command)
         session.start("xrce_agent", ["MicroXRCEAgent", "udp4", "-p", "8888"], cwd=ROOT)
-        bridge_config = ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml"
+        bridge_source = ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml"
+        bridge_config = session.directory / "px4_mid360_bridge.yaml"
+        bridge_config.write_text(
+            bridge_source.read_text(encoding="utf-8").replace(
+                "/world/px4_lio_smoke/clock", f"/world/{world}/clock"
+            ),
+            encoding="utf-8",
+        )
         session.start("bridge", _ros_shell([
             "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
             "-r", "__node:=px4_mid360_bridge", "-p", f"config_file:={bridge_config}", "-p", "use_sim_time:=true",
@@ -648,11 +1178,18 @@ def run_sim(headless: bool, control_interface: str = "offboard") -> int:
             f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
             f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
         ], enable_rviz=not headless), cwd=ROOT)
-        if control_interface == "external_mode" and not headless:
-            session.start("external_mode", _ros_shell([
-                "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
-                f"config_file:={RUNTIME_CONFIG / 'external_mode.yaml'}", "use_sim_time:=true",
-            ], enable_rviz=not headless), cwd=ROOT)
+        if control_interface == "external_mode" and not headless and not auto_scenario:
+            session.start(
+                "external_mode",
+                _ros_shell(
+                    _external_mode_launch_command(
+                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file),
+                        mission_file,
+                    ),
+                    enable_rviz=True,
+                ),
+                cwd=ROOT,
+            )
         if not headless:
             _start_rviz(session, use_sim_time=True)
         _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
@@ -662,37 +1199,61 @@ def run_sim(headless: bool, control_interface: str = "offboard") -> int:
                     float(config["runtime"]["timeouts"]["external_odometry_s"]),
                     "ROG-Map output and visualization")
         _write_runtime(session, startup_complete=True)
-        if headless:
+        if headless or auto_scenario:
+            if auto_scenario:
+                mission_kind = (
+                    "Manual Takeoff/arm then automatic External Mode mission: "
+                    if manual_takeoff else "Automatic External Mode mission: "
+                )
+                print(
+                    mission_kind +
+                    f"scene={scene_descriptor['scene']} case={scene_descriptor['test_case']} "
+                    f"motion={scene_descriptor['motion_preset']} profile={map_profile}; "
+                    "Gazebo GUI and RViz remain enabled."
+                )
             scenario_name = "offboard_scenario.py" if control_interface == "offboard" else "external_mode_scenario.py"
             scenario_role = "offboard" if control_interface == "offboard" else "external_mode_scenario"
             scenario = session.start(
                 scenario_role,
-                [sys.executable, str(ROOT / "tools/runtime" / scenario_name), "--output", str(session.directory / "scenario.json"), "--config", str(RUNTIME_CONFIG / scenario_config_name)],
+                [sys.executable, str(ROOT / "tools/runtime" / scenario_name), "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path)],
                 cwd=ROOT,
             )
             if control_interface == "external_mode":
-                # Start the M1 fixture before registering the PX4 mode. The
-                # interface library performs its initial arming-check request
-                # during registration; having a valid trajectory already on
-                # the boundary makes that check deterministic.
+                external_mode_args = _external_mode_launch_command(
+                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file),
+                    mission_file,
+                )
                 session.start("external_mode", _ros_shell([
-                    "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
-                    f"config_file:={RUNTIME_CONFIG / 'external_mode.yaml'}", "use_sim_time:=true",
+                    *external_mode_args,
                 ], enable_rviz=not headless), cwd=ROOT)
-            scenario_code = _wait_process(scenario, float(scenario_config["scenario"]["wall_timeout_s"]) + 10.0, f"{control_interface} scenario")
+            scenario_wait_timeout = (
+                math.inf
+                if bool(scenario_config["scenario"].get("interactive_handover", False))
+                else float(scenario_config["scenario"]["wall_timeout_s"]) + 10.0
+            )
+            scenario_code = _wait_process(scenario, scenario_wait_timeout, f"{control_interface} scenario")
             scenario_payload = {}
             try:
                 scenario_payload = json.loads((session.directory / "scenario.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 scenario_payload = {"failures": ["scenario did not create a report"]}
-            if scenario_code != 0:
+            scenario_outcome = str(scenario_payload.get("outcome", ""))
+            expected_pause = scenario_code == 2 and scenario_outcome in {
+                "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"
+            }
+            if scenario_code != 0 and not expected_pause:
                 scenario_payload.setdefault("failures", []).append(f"{control_interface} scenario exited with {scenario_code}")
             (session.directory / "scenario.json").write_text(json.dumps(scenario_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             time.sleep(float(config["runtime"]["timeouts"]["post_flight_monitor_s"]))
         else:
             print(f"Session: {session.directory}")
             print("Topics: /lidar/imu /lidar/points /lio/odometry_corrected /lio/odometry_propagated /lio/diagnostics /fmu/in/vehicle_visual_odometry")
-            print("Manual flight: arm, enter OFFBOARD only with your own controller, and use make status; stop with make stop.")
+            if control_interface == "external_mode":
+                print("Manual flight: use QGC/your supervisor to arm and take off, wait until airborne and stable, then select External Mode.")
+                print("External Mode reads the selected mission YAML and only publishes navigation setpoints; it does not take off, land, RTL, or disarm.")
+            else:
+                print("Manual flight: arm, enter OFFBOARD only with your own controller, and use make status; stop with make stop.")
+            print("Use make status for the session state and make stop to terminate the GUI session.")
             while not session.state().get("stopped"):
                 monitor_returncode = monitor.poll()
                 if monitor_returncode is not None:
@@ -712,9 +1273,19 @@ def run_sim(headless: bool, control_interface: str = "offboard") -> int:
     except Exception as error:
         _write_runtime(session, failures=[str(error)])
     finally:
-        result = _stop_and_report(session, workflow, RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir, observation_complete=not headless and not _load_runtime_failures(session))
+        result = _stop_and_report(
+            session,
+            workflow,
+            RUNTIME_CONFIG / "sim.yaml",
+            px4_dir=px4_dir,
+            observation_complete=not headless and not auto_scenario and not _load_runtime_failures(session),
+        )
     print(result["verdict"])
     print(session.directory)
+    if workflow == "external-mode":
+        outcome = str(result.get("external_mode", {}).get("outcome", ""))
+        if outcome in {"ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:
+            return 2
     return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
 
 
@@ -788,13 +1359,18 @@ def stop() -> int:
     workflow = str(session.state().get("workflow", "sim"))
     config_path = RUNTIME_CONFIG / ("dataset.yaml" if workflow == "dataset" else "sim.yaml")
     px4_dir = Path(session.state().get("px4_dir", "")) if session.state().get("px4_dir") else None
+    interactive_workflow = (
+        workflow in {"sim", "external-mode"}
+        and not session.state().get("headless", False)
+        and not session.state().get("auto_scenario", False)
+    )
     result = report.build(
         session.directory,
         workflow,
         config_path,
         ROOT,
         px4_dir,
-        observation_complete=workflow == "sim" and not session.state().get("headless", False),
+        observation_complete=interactive_workflow,
     )
     if cleanup_failures:
         print("FAIL")
@@ -862,13 +1438,84 @@ def main() -> int:
         help="enable ROG frontier extraction/publication for RViz debugging",
     )
     sub.add_parser("sim-check")
-    sub.add_parser("external-mode-check")
+    external_mode = sub.add_parser("external-mode-check")
+    external_mode.add_argument(
+        "--dual-planning",
+        action="store_true",
+        help="simulation-only nominal/safety experiment; default remains known-free",
+    )
+    external_mode.add_argument(
+        "--map-profile",
+        choices=(
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
+        ),
+        default=None,
+        help="legacy Gazebo map profile; prefer --map-scene/--test-case",
+    )
+    external_mode.add_argument(
+        "--map-scene", choices=CANONICAL_SCENES, default=None,
+        help="compact canonical scene family used by the external-mode scenario",
+    )
+    external_mode.add_argument(
+        "--test-case", choices=TEST_CASES, default="positive",
+        help="scene variant (positive, degenerate, detour or no_path)",
+    )
+    external_mode.add_argument(
+        "--motion-preset", choices=MOTION_PRESETS, default="nominal",
+        help="motion variant used when the scene provides one",
+    )
+    external_mode.add_argument(
+        "--map-seed", type=int, default=0,
+        help="deterministic seed for stochastic map profiles (for example forest_clutter)",
+    )
     sub.add_parser("sim")
+    external_mode_gui = sub.add_parser(
+        "external-mode-gui",
+        aliases=("external-mode",),
+        help="interactive Gazebo/RViz session with the External Mode mission node",
+    )
+    external_mode_gui.add_argument(
+        "--dual-planning",
+        action="store_true",
+        help="simulation-only nominal/safety experiment; default remains known-free",
+    )
+    external_mode_gui.add_argument(
+        "--map-profile",
+        choices=(
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
+        ),
+        default=None,
+        help="legacy Gazebo map profile; prefer --map-scene/--test-case",
+    )
+    external_mode_gui.add_argument(
+        "--map-scene", choices=CANONICAL_SCENES, default=None,
+        help="compact canonical scene family and static mission YAML",
+    )
+    external_mode_gui.add_argument(
+        "--test-case", choices=TEST_CASES, default="positive",
+        help="scene variant (positive, degenerate, detour or no_path)",
+    )
+    external_mode_gui.add_argument(
+        "--motion-preset", choices=MOTION_PRESETS, default="nominal",
+        help="motion variant used when the scene provides one",
+    )
+    external_mode_gui.add_argument(
+        "--map-seed", type=int, default=0,
+        help="deterministic seed for stochastic map profiles (for example forest_clutter)",
+    )
+    external_mode_gui.add_argument(
+        "--manual-takeoff", action="store_true",
+        help="do not send ARM/TAKEOFF; wait for the operator before activating External Mode",
+    )
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
     args = parser.parse_args()
-    enable_rviz = args.command == "sim" or (args.command == "dataset-check" and args.rviz)
+    enable_rviz = args.command in {"sim", "external-mode-gui", "external-mode"} or (args.command == "dataset-check" and args.rviz)
     os.environ.update(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV)
     if args.command == "dataset-check":
         return run_dataset(
@@ -880,9 +1527,31 @@ def main() -> int:
     if args.command == "sim-check":
         return run_sim(True)
     if args.command == "external-mode-check":
-        return run_sim(True, control_interface="external_mode")
+        return run_sim(
+            True,
+            control_interface="external_mode",
+            dual_planning=args.dual_planning,
+            map_profile=args.map_profile,
+            map_scene=args.map_scene,
+            test_case=args.test_case,
+            motion_preset=args.motion_preset,
+            map_seed=args.map_seed,
+        )
     if args.command == "sim":
         return run_sim(False)
+    if args.command in {"external-mode-gui", "external-mode"}:
+        return run_sim(
+            False,
+            control_interface="external_mode",
+            dual_planning=args.dual_planning,
+            map_profile=args.map_profile,
+            map_scene=args.map_scene,
+            test_case=args.test_case,
+            motion_preset=args.motion_preset,
+            map_seed=args.map_seed,
+            auto_scenario=True,
+            manual_takeoff=args.manual_takeoff,
+        )
     if args.command == "status":
         return status()
     if args.command == "stop":

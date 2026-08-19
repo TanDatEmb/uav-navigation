@@ -1,0 +1,34 @@
+mission:
+  version: 1
+  id: external_mode_speed_route
+  frame: lio_odom
+  waypoints:
+    - id: speed_start
+      position: [-3.0, 4.5, 3.0]
+      acceptance_radius_m: 0.8
+      hold_s: 0.2
+    - id: speed_east
+      position: [4.0, 4.5, 3.0]
+      acceptance_radius_m: 0.8
+      hold_s: 0.2
+    - id: speed_north
+      position: [4.0, 7.0, 3.0]
+      acceptance_radius_m: 0.8
+      hold_s: 0.2
+    - id: speed_west
+      position: [-3.0, 7.0, 3.0]
+      acceptance_radius_m: 0.8
+      hold_s: 0.2
+    - id: speed_finish
+      position: [-3.0, 4.5, 3.0]
+      acceptance_radius_m: 0.8
+      hold_s: 0.2
+  planning:
+    replan_rate_hz: 5.0
+    max_velocity_mps: 2.0
+    max_acceleration_mps2: 3.0
+    max_deceleration_mps2: 2.0
+    max_jerk_mps3: 6.0
+    unknown_policy: blocked
+  control:
+    output: auto

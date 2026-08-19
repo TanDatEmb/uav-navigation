@@ -116,12 +116,47 @@ TEST(IkfomEstimatorTest, RejectedUpdateRestoresPredictionTransactionally) {
             1e-12);
 }
 
+TEST(IkfomEstimatorTest, RejectsPlanarCorrectionForInsufficientTranslationObservability) {
+  IkfomEstimatorConfig config;
+  config.minimum_accepted_residuals = 5;
+  ResidualBuilderConfig residual_config;
+  residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
+  IkfomEstimator estimator(config, residual_config);
+  ManifoldState initial;
+  initial.set_position_odom_imu_m({0.0, 0.0, 0.05});
+  estimator.initialize(initial);
+  const auto state_before = estimator.stateView();
+  const auto covariance_before = estimator.covariance();
+
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> plane;
+  for (int x = -4; x <= 4; ++x) {
+    for (int y = -4; y <= 4; ++y) plane.emplace_back(0.2 * x, 0.2 * y, 0.0);
+  }
+  ASSERT_GT(map.insert(plane), 0U);
+  const std::vector<Eigen::Vector3d> scan{
+      {-0.5, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, -0.5, 0.0},
+      {-0.5, 0.0, 0.0},  {0.0, 0.0, 0.0},  {0.5, 0.0, 0.0},
+      {-0.5, 0.5, 0.0},  {0.0, 0.5, 0.0},  {0.5, 0.5, 0.0},
+  };
+
+  const auto correction = estimator.correct(scan, map);
+
+  EXPECT_FALSE(correction.successful);
+  EXPECT_EQ(correction.reason, "INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY");
+  EXPECT_EQ(correction.observability_rejection_count, 1U);
+  expectStateAndCovarianceEqual(state_before, covariance_before, estimator);
+}
+
 TEST(IkfomEstimatorTest, ReportsConvergenceFromFinalUpstreamIncrement) {
   IkfomEstimatorConfig config;
   config.maximum_iterations = 5;
   config.minimum_accepted_residuals = 5;
   config.convergence_limit = 1e-4;
   ResidualBuilderConfig residual_config;
+  residual_config.minimum_translation_observability_ratio = 0.0;
   residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
   IkfomEstimator estimator(config, residual_config);
   ManifoldState initial;
@@ -160,6 +195,7 @@ TEST(IkfomEstimatorTest, AcceptsFiniteTerminalIterateAtIterationLimit) {
   config.minimum_accepted_residuals = 5;
   config.convergence_limit = 1e-12;
   ResidualBuilderConfig residual_config;
+  residual_config.minimum_translation_observability_ratio = 0.0;
   residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
   IkfomEstimator estimator(config, residual_config);
   ManifoldState initial;
