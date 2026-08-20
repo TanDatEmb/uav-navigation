@@ -185,6 +185,35 @@ navigation_planning::TimeParameterizedTrajectory remainingTrajectory(
   return remaining;
 }
 
+navigation_interfaces::msg::TrajectorySegment makeTrajectorySegment(
+    const navigation_planning::TimeParameterizedTrajectory& trajectory) {
+  navigation_interfaces::msg::TrajectorySegment segment;
+  segment.duration_s = trajectory.duration_s;
+  segment.time_from_start.reserve(trajectory.points.size());
+  segment.position.reserve(trajectory.points.size());
+  segment.velocity.reserve(trajectory.points.size());
+  segment.acceleration.reserve(trajectory.points.size());
+  for (const auto& point : trajectory.points) {
+    segment.time_from_start.push_back(point.time_from_start_s);
+    geometry_msgs::msg::Point position;
+    position.x = point.position.x();
+    position.y = point.position.y();
+    position.z = point.position.z();
+    segment.position.push_back(position);
+    geometry_msgs::msg::Vector3 velocity;
+    velocity.x = point.velocity.x();
+    velocity.y = point.velocity.y();
+    velocity.z = point.velocity.z();
+    segment.velocity.push_back(velocity);
+    geometry_msgs::msg::Vector3 acceleration;
+    acceleration.x = point.acceleration.x();
+    acceleration.y = point.acceleration.y();
+    acceleration.z = point.acceleration.z();
+    segment.acceleration.push_back(acceleration);
+  }
+  return segment;
+}
+
 navigation_planning::PlanFailureCode mapVerificationFailure(
     navigation_planning::VerificationFailureCode failure) {
   using navigation_planning::PlanFailureCode;
@@ -471,6 +500,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
   trajectory_bundle_publisher_ =
       create_publisher<navigation_interfaces::msg::PlannedTrajectoryBundle>(
           "navigation/trajectory_bundle", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  trajectory_bundle_v2_publisher_ =
+      create_publisher<navigation_interfaces::msg::TrajectoryBundle>(
+          "navigation/trajectory_bundle_v2", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  planner_trace_publisher_ =
+      create_publisher<navigation_interfaces::msg::PlannerCycleTrace>(
+          "navigation/planner_trace", rclcpp::QoS{rclcpp::KeepLast{50}}.reliable());
   planned_path_publisher_ = create_publisher<nav_msgs::msg::Path>(
       "navigation/visualization/planned_path", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
   navigation_marker_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -861,6 +896,9 @@ void NavigationRuntimeNode::planActiveGoal() {
         const auto valid_from = rosTimeFromNanoseconds(now_stamp.nanoseconds());
         trajectory_publisher_->publish(makeTrajectoryMessage(selected_hold, goal_message));
         trajectory_bundle_publisher_->publish(makeTrajectoryBundleMessage(
+            selected_hold, selected_hold, safety_hold, goal_message, valid_from,
+            next_bundle_id_, last_bundle_id_));
+        trajectory_bundle_v2_publisher_->publish(makeTrajectoryBundleV2Message(
             selected_hold, selected_hold, safety_hold, goal_message, valid_from,
             next_bundle_id_, last_bundle_id_));
         last_bundle_id_ = next_bundle_id_++;
@@ -1642,6 +1680,11 @@ void NavigationRuntimeNode::planActiveGoal() {
   trajectory_bundle_publisher_->publish(makeTrajectoryBundleMessage(
       result, nominal_candidate, safety_candidate, goal_message, valid_from, next_bundle_id_,
       last_bundle_id_));
+  if (safety_candidate.success) {
+    trajectory_bundle_v2_publisher_->publish(makeTrajectoryBundleV2Message(
+        result, nominal_candidate, safety_candidate, goal_message, valid_from,
+        next_bundle_id_, last_bundle_id_));
+  }
   last_bundle_id_ = next_bundle_id_++;
   if (result.success) {
     // Publish the full nominal trajectory as a planning artifact whenever it
@@ -1803,6 +1846,46 @@ NavigationRuntimeNode::makeTrajectoryBundleMessage(
   message.safety = makeTrajectoryCandidateMessage(
       safety, goal, valid_from, bundle_id * 2U + 1U, parent_bundle_id * 2U + 1U);
   if (!message.nominal_available) message.nominal.success = false;
+  return message;
+}
+
+navigation_interfaces::msg::TrajectoryBundle
+NavigationRuntimeNode::makeTrajectoryBundleV2Message(
+    const navigation_planning::PlanResult& selected,
+    const navigation_planning::PlanResult& nominal,
+    const navigation_planning::PlanResult& safety,
+    const navigation_interfaces::msg::NavigationGoal& goal,
+    const builtin_interfaces::msg::Time& valid_from,
+    std::uint64_t bundle_id,
+    std::uint64_t parent_bundle_id) const {
+  navigation_interfaces::msg::TrajectoryBundle message;
+  message.header = goal.header;
+  message.header.stamp = get_clock()->now();
+  message.valid_from = valid_from;
+  // The migration publisher currently sends complete candidate suffixes. The
+  // next splice-aware planner will populate common_prefix and move branch_time
+  // after the preserved prefix; leaving it empty here is explicit rather than
+  // fabricating continuity from two independently optimized candidates.
+  message.branch_time = valid_from;
+  message.decision_deadline = valid_from;
+  message.bundle_id = bundle_id;
+  message.parent_bundle_id = parent_bundle_id;
+  message.mission_id = goal.mission_id;
+  message.waypoint_index = goal.waypoint_index;
+  message.request_id = goal.request_id;
+  message.world_generation = selected.world_generation;
+  message.world_revision = selected.world_revision;
+  message.route_id = bundle_id;
+  message.nominal_valid = nominal.success && safety.success;
+  if (nominal.success) message.nominal_suffix = makeTrajectorySegment(nominal.trajectory);
+  if (safety.success) message.safety_suffix = makeTrajectorySegment(safety.trajectory);
+  message.safety_kind = safety.safety_kind == navigation_planning::SafetyPlanKind::BrakingStop
+                            ? navigation_interfaces::msg::TrajectoryBundle::SAFETY_STOP
+                            : navigation_interfaces::msg::TrajectoryBundle::SAFETY_ROUTE;
+  message.selected_branch = selected.role == navigation_planning::PlanRole::Safety
+                                ? navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY
+                                : navigation_interfaces::msg::TrajectoryBundle::BRANCH_NOMINAL;
+  message.requested_branch = message.selected_branch;
   return message;
 }
 
@@ -2097,6 +2180,50 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
   };
   array.status.push_back(status);
   planning_diagnostics_publisher_->publish(array);
+
+  navigation_interfaces::msg::PlannerCycleTrace trace;
+  trace.header.stamp = get_clock()->now();
+  trace.header.frame_id = planning_frame_id_;
+  trace.cycle_id = plan_count_;
+  trace.bundle_id = result.success ? last_bundle_id_ : 0U;
+  trace.request_id = last_planned_request_id_;
+  trace.world_generation = result.world_generation;
+  trace.world_revision = result.world_revision;
+  // Route geometry is not exposed by the legacy A* result yet. Keep these
+  // fields zero until RouteManager supplies a real route id/arc projection;
+  // the report marks the resulting trace as partial instead of inventing it.
+  trace.route_id = 0U;
+  trace.route_candidate_count = 0U;
+  trace.corridor_region_count = static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(statistics.corridor.segment_count,
+                              std::numeric_limits<std::uint32_t>::max()));
+  trace.horizon_start_arc_m = 0.0;
+  trace.horizon_end_arc_m = 0.0;
+  trace.horizon_endpoint.x = end_point.position.x();
+  trace.horizon_endpoint.y = end_point.position.y();
+  trace.horizon_endpoint.z = end_point.position.z();
+  trace.planning_latency_ms = static_cast<double>(statistics.total_planning_time_us) / 1000.0;
+  trace.optimizer_latency_ms = static_cast<double>(
+      statistics.trajectory_optimization.optimization_time_us) / 1000.0;
+  trace.splice_position_residual_m = last_splice_position_residual_m_;
+  trace.splice_velocity_residual_mps = last_splice_velocity_residual_mps_;
+  trace.splice_acceleration_residual_mps2 = last_splice_acceleration_residual_mps2_;
+  trace.maximum_velocity_mps = statistics.trajectory_optimization.maximum_velocity_mps;
+  trace.maximum_acceleration_mps2 = statistics.trajectory_optimization.maximum_acceleration_mps2;
+  trace.maximum_jerk_mps3 = statistics.trajectory_optimization.maximum_jerk_mps3;
+  trace.time_cost = statistics.trajectory_optimization.duration_s;
+  trace.snap_cost = statistics.trajectory_optimization.integrated_squared_snap;
+  trace.clearance_cost = statistics.corridor.minimum_clearance_radius_m;
+  trace.unknown_cost = 0.0;
+  trace.previous_trajectory_cost = 0.0;
+  trace.selected_branch = result.role == navigation_planning::PlanRole::Safety
+                              ? navigation_interfaces::msg::PlannerCycleTrace::BRANCH_SAFETY
+                              : navigation_interfaces::msg::PlannerCycleTrace::BRANCH_NOMINAL;
+  trace.status = result.success
+                     ? navigation_interfaces::msg::PlannerCycleTrace::STATUS_SUCCESS
+                     : navigation_interfaces::msg::PlannerCycleTrace::STATUS_FAILED;
+  trace.failure_code = failureName(result.failure_code);
+  planner_trace_publisher_->publish(trace);
 }
 
 sensor_msgs::msg::PointCloud2 NavigationRuntimeNode::makePointCloud(

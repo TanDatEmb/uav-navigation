@@ -14,6 +14,8 @@
 #include <navigation_interfaces/msg/navigation_goal.hpp>
 #include <navigation_interfaces/msg/planned_trajectory.hpp>
 #include <navigation_interfaces/msg/planned_trajectory_bundle.hpp>
+#include <navigation_interfaces/msg/trajectory_bundle.hpp>
+#include <navigation_interfaces/msg/planner_cycle_trace.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/empty.hpp>
@@ -59,6 +61,14 @@ class NavigationRuntimeNode : public rclcpp::Node {
       const builtin_interfaces::msg::Time& valid_from,
       std::uint64_t bundle_id,
       std::uint64_t parent_bundle_id) const;
+  navigation_interfaces::msg::TrajectoryBundle makeTrajectoryBundleV2Message(
+      const navigation_planning::PlanResult& selected,
+      const navigation_planning::PlanResult& nominal,
+      const navigation_planning::PlanResult& safety,
+      const navigation_interfaces::msg::NavigationGoal& goal,
+      const builtin_interfaces::msg::Time& valid_from,
+      std::uint64_t bundle_id,
+      std::uint64_t parent_bundle_id) const;
   nav_msgs::msg::Path makePathMessage(const navigation_planning::PlanResult& result,
                                       const std_msgs::msg::Header& header) const;
   void publishMapVisualization();
@@ -78,6 +88,10 @@ class NavigationRuntimeNode : public rclcpp::Node {
   rclcpp::Publisher<navigation_interfaces::msg::PlannedTrajectory>::SharedPtr trajectory_publisher_;
   rclcpp::Publisher<navigation_interfaces::msg::PlannedTrajectoryBundle>::SharedPtr
       trajectory_bundle_publisher_;
+  rclcpp::Publisher<navigation_interfaces::msg::TrajectoryBundle>::SharedPtr
+      trajectory_bundle_v2_publisher_;
+  rclcpp::Publisher<navigation_interfaces::msg::PlannerCycleTrace>::SharedPtr
+      planner_trace_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr navigation_marker_publisher_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
