@@ -12,6 +12,7 @@ find_package(navigation_mapping REQUIRED)
 
 add_library(navigation_planning
   src/a_star.cpp
+  src/horizon_policy.cpp
   src/planner.cpp
   src/trajectory_verifier.cpp
 )
@@ -45,7 +46,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_navigation_planning
     test/test_a_star.cpp
     test/test_bspline_trajectory.cpp
+    test/test_horizon_policy.cpp
+    test/test_piecewise_polynomial_trajectory.cpp
     test/test_planner.cpp
+    test/test_route_manager.cpp
     test/test_rog_world_model_integration.cpp
   )
   target_link_libraries(test_navigation_planning navigation_planning)
