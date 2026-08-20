@@ -47,7 +47,7 @@ bool TimeParameterizedTrajectory::finiteAndMonotonic() const noexcept {
     if (!std::isfinite(point.time_from_start_s) ||
         (previous_time >= 0.0 && point.time_from_start_s <= previous_time) ||
         !point.position.allFinite() || !point.velocity.allFinite() ||
-        !point.acceleration.allFinite()) {
+        !point.acceleration.allFinite() || !point.jerk.allFinite() || !point.snap.allFinite()) {
       return false;
     }
     previous_time = point.time_from_start_s;

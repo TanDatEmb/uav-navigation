@@ -12,6 +12,7 @@
 
 #include "navigation_mapping/world_model.hpp"
 #include "navigation_planning/a_star.hpp"
+#include "navigation_planning/bspline_trajectory.hpp"
 
 namespace navigation_planning {
 
@@ -43,6 +44,11 @@ struct DynamicLimits {
   double max_jerk_mps3{6.0};
 };
 
+enum class TrajectoryGeneratorKind {
+  Bspline,
+  QuinticLegacy,
+};
+
 // The verifier enforces the mission limit as a hard boundary. New tangent
 // values are generated inside a small design margin so ordinary replans do not
 // spend their numerical tolerance at the boundary. The initial tangent is
@@ -54,9 +60,23 @@ inline double designVelocityLimit(const DynamicLimits& limits) noexcept {
 
 struct PlannerConfig {
   DynamicLimits limits{};
+  TrajectoryGeneratorKind trajectory_generator{TrajectoryGeneratorKind::Bspline};
   double trajectory_sample_dt_s{0.05};
   double corridor_sample_spacing_m{0.0};
-  int maximum_time_scaling_iterations{8};
+  // Keep enough retries for dynamic-limit recovery without making every
+  // rolling replan spend most of its budget in rejected candidates.
+  int maximum_time_scaling_iterations{5};
+  int bspline_smoothing_iterations{12};
+  double bspline_smoothing_step{0.04};
+  double bspline_snap_weight{1.0};
+  double bspline_path_length_weight{0.10};
+  double bspline_reference_weight{0.35};
+  // The initial B-spline duration is a design target, not a post-hoc stretch.
+  double bspline_time_scale{1.10};
+  double bspline_time_margin_s{0.25};
+  // The final verifier remains independent; this is the cheaper optimizer
+  // sampling rate used during repeated rolling-horizon candidates.
+  double bspline_optimization_sample_dt_s{0.04};
   bool allow_unknown_start{false};
   // Radius of a virtual KnownFree overlay matching the trusted current vehicle
   // footprint. It converts only Unknown cells whose volumes intersect this
@@ -106,6 +126,8 @@ struct TrajectoryPoint {
   navigation_mapping::Vec3 position{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 velocity{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 acceleration{navigation_mapping::Vec3::Zero()};
+  navigation_mapping::Vec3 jerk{navigation_mapping::Vec3::Zero()};
+  navigation_mapping::Vec3 snap{navigation_mapping::Vec3::Zero()};
 };
 
 struct TimeParameterizedTrajectory {
@@ -132,6 +154,8 @@ struct TrajectoryOptimizationStatistics {
   double maximum_deceleration_mps2{0.0};
   double maximum_jerk_mps3{0.0};
   double integrated_squared_jerk{0.0};
+  double integrated_squared_snap{0.0};
+  double objective_cost{0.0};
   double c2_continuity_residual{0.0};
   double geometric_path_length_m{0.0};
   double trajectory_length_m{0.0};
@@ -477,6 +501,9 @@ inline TrajectoryPoint evaluate(const QuinticSegment& segment, double time_s,
                        6.0 * t * segment.coefficients[3] +
                        12.0 * t2 * segment.coefficients[4] +
                        20.0 * t3 * segment.coefficients[5];
+  point.jerk = 6.0 * segment.coefficients[3] + 24.0 * t * segment.coefficients[4] +
+               60.0 * t2 * segment.coefficients[5];
+  point.snap = 24.0 * segment.coefficients[4] + 120.0 * t * segment.coefficients[5];
   return point;
 }
 
@@ -642,7 +669,11 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
        (!std::isfinite(config.unknown_start_radius_m) ||
         config.unknown_start_radius_m < 0.0)) ||
       !std::isfinite(config.trajectory_sample_dt_s) ||
-      config.trajectory_sample_dt_s <= 0.0 || config.maximum_time_scaling_iterations < 0) {
+      config.trajectory_sample_dt_s <= 0.0 || config.maximum_time_scaling_iterations < 0 ||
+      !std::isfinite(config.bspline_time_scale) || config.bspline_time_scale <= 0.0 ||
+      !std::isfinite(config.bspline_time_margin_s) || config.bspline_time_margin_s < 0.0 ||
+      !std::isfinite(config.bspline_optimization_sample_dt_s) ||
+      config.bspline_optimization_sample_dt_s <= 0.0) {
     result.failure_code = PlanFailureCode::InvalidState;
     return finish();
   }
@@ -790,6 +821,167 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
           .count();
   if (result.statistics.corridor.blocked_sample_count != 0) {
     result.failure_code = PlanFailureCode::CorridorInfeasible;
+    return finish();
+  }
+
+  if (config.trajectory_generator == TrajectoryGeneratorKind::Bspline) {
+    const auto optimization_started = std::chrono::steady_clock::now();
+    const double path_length = result.statistics.trajectory_optimization.geometric_path_length_m;
+    const double target_duration = std::max(
+        0.6, config.bspline_time_scale * path_length / velocity_limit +
+                 config.bspline_time_margin_s);
+    const double approximate_span_count = std::max(
+        2.0, std::ceil(path_length / 0.8));
+    const double base_knot_dt = std::max(0.12, target_duration / approximate_span_count);
+    const auto terminal_velocity = goal.terminal ? navigation_mapping::Vec3::Zero()
+                                                 : goal.terminal_velocity;
+    const auto terminal_acceleration = navigation_mapping::Vec3::Zero();
+    bool generated = false;
+    BsplineGenerationResult best_generation;
+    bool best_collision_free = false;
+
+    // First try the smooth projected fit. If it bows into a voxel corner, keep
+    // the same B-spline representation but refit without the smoothing pass;
+    // the dense collision verifier below remains the final authority.
+    for (int smoothing_pass = 0; smoothing_pass < 2 && !generated; ++smoothing_pass) {
+      for (int iteration = 0; iteration <= config.maximum_time_scaling_iterations;
+           ++iteration) {
+        BsplineGenerationConfig bspline_config;
+        bspline_config.degree = 5;
+        // A shorter initial duration is intentional for speed, so use a
+        // slightly stronger retry expansion to recover dynamic feasibility in
+        // one or two additional candidates instead of carrying a slow base
+        // duration through every rolling replan.
+        bspline_config.knot_dt_s = base_knot_dt * std::pow(1.35, iteration);
+        bspline_config.sample_dt_s = config.bspline_optimization_sample_dt_s;
+        bspline_config.smoothing_iterations = smoothing_pass == 0
+                                                  ? config.bspline_smoothing_iterations
+                                                  : 0;
+        bspline_config.smoothing_step = config.bspline_smoothing_step;
+        bspline_config.snap_weight = config.bspline_snap_weight;
+        bspline_config.path_length_weight = config.bspline_path_length_weight;
+        bspline_config.reference_weight = config.bspline_reference_weight;
+        bspline_config.max_velocity_mps = velocity_limit;
+        bspline_config.max_acceleration_mps2 = config.limits.max_acceleration_mps2;
+        bspline_config.max_deceleration_mps2 = config.limits.max_deceleration_mps2;
+        bspline_config.max_jerk_mps3 = config.limits.max_jerk_mps3;
+        const auto generation = generateBsplineTrajectory(
+            waypoints, state.velocity, state.acceleration, terminal_velocity,
+            terminal_acceleration, bspline_config);
+        if (!generation.success) {
+          best_generation = generation;
+          continue;
+        }
+        bool collision_free = true;
+        // Uniform B-splines stay inside the convex hull of their active
+        // control points. Check the control-point support first, then sample
+        // the curve densely; this is the cheap corridor certificate that
+        // prevents an optimizer update from creating an unverified bow.
+        for (const auto& control_point : generation.trajectory.control_points) {
+          if (!traversable(control_point)) {
+            collision_free = false;
+            break;
+          }
+        }
+        const double duration = generation.trajectory.duration();
+        const double collision_sample_dt = std::max(
+            0.02, std::min(config.trajectory_sample_dt_s,
+                           config.bspline_optimization_sample_dt_s));
+        const int samples = std::max(
+            2, static_cast<int>(std::ceil(duration / collision_sample_dt)));
+        for (int sample = 0; collision_free && sample <= samples; ++sample) {
+          const double time = duration * static_cast<double>(sample) /
+                              static_cast<double>(samples);
+          if (!traversable(generation.trajectory.evaluatePosition(time))) {
+            collision_free = false;
+            break;
+          }
+        }
+        best_generation = generation;
+        best_collision_free = collision_free;
+        if (collision_free) {
+          generated = true;
+          break;
+        }
+      }
+    }
+
+    result.statistics.trajectory_optimization.optimization_time_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - optimization_started)
+            .count();
+    result.statistics.trajectory_optimization.segment_count =
+        best_generation.trajectory.spanCount();
+    result.statistics.trajectory_optimization.iterations =
+        static_cast<std::uint64_t>(config.maximum_time_scaling_iterations + 1);
+    result.statistics.trajectory_optimization.sampled_point_count =
+        best_generation.sampled_point_count;
+    result.statistics.trajectory_optimization.maximum_velocity_mps =
+        best_generation.maximum_velocity_mps;
+    result.statistics.trajectory_optimization.maximum_acceleration_mps2 =
+        best_generation.maximum_acceleration_mps2;
+    result.statistics.trajectory_optimization.maximum_deceleration_mps2 =
+        best_generation.maximum_deceleration_mps2;
+    result.statistics.trajectory_optimization.maximum_jerk_mps3 =
+        best_generation.maximum_jerk_mps3;
+    result.statistics.trajectory_optimization.integrated_squared_jerk =
+        best_generation.integrated_squared_jerk;
+    result.statistics.trajectory_optimization.integrated_squared_snap =
+        best_generation.integrated_squared_snap;
+    result.statistics.trajectory_optimization.objective_cost = best_generation.objective_cost;
+    result.statistics.trajectory_optimization.trajectory_length_m =
+        best_generation.geometric_length_m;
+    result.statistics.trajectory_optimization.c2_continuity_residual = 0.0;
+    result.statistics.trajectory_optimization.collision_free = generated && best_collision_free;
+    result.statistics.trajectory_optimization.dynamic_limits_satisfied = best_generation.success;
+    result.statistics.trajectory_optimization.duration_s = best_generation.trajectory.duration();
+    if (!generated || !best_generation.trajectory.valid()) {
+      result.failure_code = best_collision_free ? PlanFailureCode::DynamicLimitsInfeasible
+                                                : PlanFailureCode::CorridorInfeasible;
+      return finish();
+    }
+
+    const double duration = best_generation.trajectory.duration();
+    // The published P/V/A/J/S trajectory remains dense enough for the
+    // controller, while avoiding a needless 20 ms expansion of every long
+    // rolling horizon. Collision verification above is independent.
+    const double sample_dt = config.trajectory_sample_dt_s;
+    const int samples = std::max(1, static_cast<int>(std::ceil(duration / sample_dt)));
+    result.trajectory.points.reserve(static_cast<std::size_t>(samples + 1));
+    for (int sample = 0; sample <= samples; ++sample) {
+      const double time = duration * static_cast<double>(sample) /
+                          static_cast<double>(samples);
+      const auto value = best_generation.trajectory.evaluate(time);
+      result.trajectory.points.push_back(
+          TrajectoryPoint{time, value.position, value.velocity, value.acceleration, value.jerk,
+                          value.snap});
+    }
+    result.trajectory.duration_s = duration;
+    if (!result.trajectory.points.empty()) {
+      result.trajectory.points.front().position = state.position;
+      result.trajectory.points.front().velocity = state.velocity;
+      result.trajectory.points.front().acceleration = state.acceleration;
+      result.trajectory.points.back().position = goal.position;
+      result.trajectory.points.back().velocity = terminal_velocity;
+      result.trajectory.points.back().acceleration = terminal_acceleration;
+    }
+    result.statistics.trajectory_optimization.duration_s = duration;
+    if (!result.trajectory.finiteAndMonotonic()) {
+      result.failure_code = PlanFailureCode::TrajectoryInvalid;
+      result.trajectory.points.clear();
+      return finish();
+    }
+    bool world_changed = world.generation() != result.world_generation;
+    if constexpr (requires { world.revision(); }) {
+      world_changed = world_changed || world.revision() != result.world_revision;
+    }
+    if (world_changed) {
+      result.failure_code = PlanFailureCode::WorldChanged;
+      result.trajectory.points.clear();
+      return finish();
+    }
+    result.success = true;
+    result.failure_code = PlanFailureCode::None;
     return finish();
   }
 

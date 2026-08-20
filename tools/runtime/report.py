@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_left
+import html
 import json
 import math
 from pathlib import Path
@@ -1516,13 +1517,26 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
     (session / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (session / "REPORT.md").write_text(render(report), encoding="utf-8")
     # Keep the machine-readable report as the contract, and add a standalone
-    # visualization artifact for SITL mission analysis.  HTML generation is
-    # diagnostic-only: a plotting failure must not change the runtime verdict.
+    # visualization artifact for SITL mission analysis. Every completed
+    # session gets REPORT.html, including sessions with incomplete telemetry;
+    # a minimal fallback keeps the artifact contract intact if a diagnostic
+    # chart encounters malformed data.
     try:
         import html_report
-        html_report.generate(session)
+        html_path = html_report.generate(session)
+        if not Path(html_path).is_file():
+            raise RuntimeError("html_report did not create REPORT.html")
     except Exception as error:  # pragma: no cover - defensive artifact path
         (session / "REPORT_HTML_ERROR.txt").write_text(str(error) + "\n", encoding="utf-8")
+        fallback = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<title>UAV navigation report</title></head><body>"
+            f"<h1>UAV navigation report</h1><p>Verdict: {html.escape(str(report.get('verdict')))}</p>"
+            f"<p>HTML diagnostics failed: <code>{html.escape(str(error))}</code></p>"
+            f"<p>Session: <code>{html.escape(str(session.resolve()))}</code></p>"
+            "</body></html>"
+        )
+        (session / "REPORT.html").write_text(fallback, encoding="utf-8")
     return report
 
 
@@ -1531,7 +1545,7 @@ def _json(value: Any) -> str:
 
 
 def render(report: dict[str, Any]) -> str:
-    lines = [f"# Runtime report: {report.get('workflow', 'unknown')}", "", f"- Verdict: **{report.get('verdict')}**", f"- Session: `{report.get('session', '')}`", ""]
+    lines = [f"# Runtime report: {report.get('workflow', 'unknown')}", "", f"- Verdict: **{report.get('verdict')}**", f"- Session: `{report.get('session', '')}`", "- HTML: [REPORT.html](REPORT.html)", ""]
     reasons = report.get("reasons", [])
     lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions | Epoch discarded |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, row in report.get("streams", {}).items():

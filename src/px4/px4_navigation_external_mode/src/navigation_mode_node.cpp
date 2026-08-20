@@ -31,12 +31,12 @@ std::string diagnosticValue(
   return {};
 }
 
-NavigationMode::OutputMode resolveOutputMode(const std::string& output) {
+NavigationMode::OutputMode resolveOutputMode(const std::string& output,
+                                             bool prefer_velocity_output) {
   if (output == "velocity") return NavigationMode::OutputMode::Velocity;
   if (output == "position_velocity") return NavigationMode::OutputMode::PositionVelocity;
-  // PX4's TrajectorySetpoint supports all three fields. `auto` therefore
-  // resolves to the strongest contract available on this target.
-  return NavigationMode::OutputMode::PositionVelocityAcceleration;
+  return prefer_velocity_output ? NavigationMode::OutputMode::Velocity
+                                : NavigationMode::OutputMode::PositionVelocityAcceleration;
 }
 
 const char* outputModeName(NavigationMode::OutputMode mode) {
@@ -57,7 +57,9 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
     : ModeBase(node, Settings{kModeName}),
       trajectory_setpoint_(std::make_shared<px4_ros2::TrajectorySetpointType>(*this)),
       trajectory_topic_(node.declare_parameter<std::string>(
-          "navigation.trajectory_topic", "/navigation/trajectory")),
+          "navigation.trajectory_topic", "")),
+      trajectory_bundle_topic_(node.declare_parameter<std::string>(
+          "navigation.trajectory_bundle_topic", "/navigation/trajectory_bundle")),
       goal_topic_(node.declare_parameter<std::string>(
           "navigation.goal_topic", "/navigation/goal")),
       planning_frame_(node.declare_parameter<std::string>(
@@ -70,6 +72,10 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_wait_timeout_s", 2.0)),
       trajectory_preview_s_(node.declare_parameter<double>(
           "navigation.velocity_tracker.trajectory_preview_s", 0.15)),
+      velocity_only_fallback_position_error_m_(node.declare_parameter<double>(
+          "navigation.velocity_tracker.velocity_only_fallback_position_error_m", 1.5)),
+      prefer_velocity_output_(node.declare_parameter(
+          "navigation.prefer_velocity_output", true)),
       lio_health_grace_s_(node.declare_parameter<double>(
           "navigation.lio_health_grace_s", 1.0)),
       velocity_tracker_([&node]() {
@@ -82,23 +88,38 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
             "navigation.velocity_tracker.max_acceleration_mps2", 3.0);
         config.max_deceleration_mps2 = node.declare_parameter<double>(
             "navigation.velocity_tracker.max_deceleration_mps2", 3.0);
+        config.max_jerk_mps3 = node.declare_parameter<double>(
+            "navigation.velocity_tracker.max_jerk_mps3", 6.0);
         config.max_position_error_m = node.declare_parameter<double>(
             "navigation.velocity_tracker.max_position_error_m", 2.0);
         return config;
       }()) {
-  if (trajectory_topic_.empty() || planning_frame_.empty() || !std::isfinite(stale_after_s_) ||
+  if (trajectory_bundle_topic_.empty() || planning_frame_.empty() || !std::isfinite(stale_after_s_) ||
       stale_after_s_ <= 0.0 || !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
       !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0 ||
-      !std::isfinite(trajectory_preview_s_) || trajectory_preview_s_ < 0.0) {
+      !std::isfinite(trajectory_preview_s_) || trajectory_preview_s_ < 0.0 ||
+      !std::isfinite(velocity_only_fallback_position_error_m_) ||
+      velocity_only_fallback_position_error_m_ <= 0.0) {
     throw std::invalid_argument("invalid PX4 navigation external mode parameters");
   }
-  trajectory_subscription_ = node.create_subscription<
-      navigation_interfaces::msg::PlannedTrajectory>(
-      trajectory_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
-      [this](const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
-        onTrajectory(message);
+  trajectory_bundle_subscription_ = node.create_subscription<
+      navigation_interfaces::msg::PlannedTrajectoryBundle>(
+      trajectory_bundle_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
+      [this](const navigation_interfaces::msg::PlannedTrajectoryBundle::ConstSharedPtr& message) {
+        onTrajectoryBundle(message);
       });
+  // Compatibility path for older runtime nodes. It is opt-in so the adapter
+  // cannot accidentally consume the nominal-only legacy stream when the
+  // atomic bundle contract is available.
+  if (!trajectory_topic_.empty()) {
+    trajectory_subscription_ = node.create_subscription<
+        navigation_interfaces::msg::PlannedTrajectory>(
+        trajectory_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
+        [this](const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
+          onTrajectory(message);
+        });
+  }
   const auto state_topic = node.declare_parameter<std::string>(
       "navigation.state_topic", "/lio/odometry_propagated");
   if (state_topic.empty()) {
@@ -130,7 +151,7 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       throw std::invalid_argument("navigation.goal_topic must not be empty for a mission");
     }
     mission_ = loadMission(mission_file, planning_frame_);
-    output_mode_ = resolveOutputMode(mission_->control.output);
+    output_mode_ = resolveOutputMode(mission_->control.output, prefer_velocity_output_);
     RCLCPP_INFO(node.get_logger(), "External Mode output '%s' resolved to '%s'",
                 mission_->control.output.c_str(), outputModeName(output_mode_));
     mission_controller_ = std::make_unique<MissionController>(*mission_);
@@ -180,7 +201,10 @@ void NavigationMode::onActivate() {
     activation_time_ = node().get_clock()->now();
     last_setpoint_time_ = activation_time_;
     velocity_tracker_.reset();
+    velocity_only_fallback_active_ = false;
     pending_trajectory_.reset();
+    pending_safety_backup_trajectory_.reset();
+    safety_backup_trajectory_.reset();
     if (trajectory_.has_value()) {
       trajectory_start_time_ = activation_time_;
     }
@@ -236,6 +260,8 @@ void NavigationMode::onDeactivate() {
     failure_reported_ = true;
     trajectory_.reset();
     pending_trajectory_.reset();
+    pending_safety_backup_trajectory_.reset();
+    safety_backup_trajectory_.reset();
     velocity_tracker_.reset();
     accepted_world_identity_valid_ = false;
     accepted_world_generation_ = 0U;
@@ -296,6 +322,64 @@ void NavigationMode::checkArmingAndRunConditions(
   }
 }
 
+void NavigationMode::onTrajectoryBundle(
+    const navigation_interfaces::msg::PlannedTrajectoryBundle::ConstSharedPtr& message) {
+  const auto validation = validateTrajectoryBundle(*message, planning_frame_);
+  if (!validation.valid()) {
+    RCLCPP_WARN(node().get_logger(), "Rejecting navigation trajectory bundle: %s",
+                validation.message.c_str());
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      if (!mode_active_) return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      ++trajectory_rejected_count_;
+      trajectory_.reset();
+      pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
+      velocity_tracker_.reset();
+    }
+    failNavigation("navigation trajectory bundle invalid or missing safety backup");
+    return;
+  }
+  if (mission_controller_ &&
+      (message->mission_id != mission_->id ||
+       message->waypoint_index !=
+           static_cast<std::uint32_t>(mission_controller_->activeWaypointIndex()) ||
+       message->request_id != mission_controller_->activeRequestId())) {
+    RCLCPP_DEBUG(node().get_logger(), "Ignoring trajectory bundle for an older mission request");
+    return;
+  }
+  const bool select_safety =
+      message->selected_candidate ==
+      navigation_interfaces::msg::PlannedTrajectoryBundle::SELECTED_SAFETY;
+  const auto selected = select_safety ? message->safety : message->nominal;
+  auto selected_message = std::make_shared<navigation_interfaces::msg::PlannedTrajectory>(
+      candidateToPlannedTrajectory(selected));
+  const auto safety_backup = message->safety_available
+                                 ? std::optional<navigation_interfaces::msg::PlannedTrajectory>{
+                                       candidateToPlannedTrajectory(message->safety)}
+                                 : std::nullopt;
+  onTrajectory(selected_message);
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    const auto accepted = [&](const auto& candidate) {
+      return candidate.has_value() && candidate->trajectory_id == selected.trajectory_id;
+    };
+    if (!accepted(trajectory_) && !accepted(pending_trajectory_)) {
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
+    } else if (rclcpp::Time(message->valid_from).nanoseconds() >
+               node().get_clock()->now().nanoseconds()) {
+      pending_safety_backup_trajectory_ = safety_backup;
+    } else {
+      safety_backup_trajectory_ = safety_backup;
+    }
+  }
+}
+
 void NavigationMode::onTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
   {
@@ -337,6 +421,8 @@ void NavigationMode::onTrajectory(
       ++trajectory_rejected_count_;
       trajectory_.reset();
       pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
       velocity_tracker_.reset();
       accepted_world_identity_valid_ = false;
       accepted_world_generation_ = message->world_generation;
@@ -360,6 +446,8 @@ void NavigationMode::onTrajectory(
       ++trajectory_rejected_count_;
       trajectory_.reset();
       pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
       velocity_tracker_.reset();
     }
     if (mission_controller_) {
@@ -383,6 +471,8 @@ void NavigationMode::onTrajectory(
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     trajectory_ = *message;
     pending_trajectory_.reset();
+    pending_safety_backup_trajectory_.reset();
+    safety_backup_trajectory_.reset();
     ++trajectory_accepted_count_;
     // Every replacement trajectory is generated from the latest state. Its
     // own header timestamp is the only phase source; inheriting elapsed phase
@@ -463,6 +553,8 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       trajectory_.reset();
       pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
       velocity_tracker_.reset();
       accepted_world_identity_valid_ = false;
       accepted_world_generation_ = 0U;
@@ -502,6 +594,8 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       completion_position_ = mission_->waypoints.at(event.waypoint_index).position_enu;
       trajectory_.reset();
       pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
       velocity_tracker_.reset();
     }
     RCLCPP_INFO(node().get_logger(), "Mission '%s' completed; notifying the supervisor",
@@ -605,6 +699,8 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::int64_t odometry_gap_us;
   std::int64_t setpoint_gap_us;
   double state_age_s;
+  Eigen::Vector3d velocity_command_enu;
+  std::uint64_t forward_guard_count;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (last_metrics_log_ns_ > 0 && now_ns - last_metrics_log_ns_ < 1'000'000'000LL) {
@@ -620,12 +716,15 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
     odometry_gap_us = maximum_odometry_callback_gap_us_;
     setpoint_gap_us = maximum_setpoint_callback_gap_us_;
     state_age_s = last_state_age_s_;
+    velocity_command_enu = last_velocity_command_enu_;
+    forward_guard_count = last_forward_guard_count_;
   }
   RCLCPP_INFO(node().get_logger(),
               "external_mode_metrics odom_callbacks=%lu odom_max_gap_us=%ld "
               "trajectory_received=%lu trajectory_accepted=%lu trajectory_rejected=%lu "
               "setpoint_updates=%lu setpoint_max_gap_us=%ld last_state_age_s=%.6f "
-              "stale_state_failures=%lu",
+              "stale_state_failures=%lu velocity_command_enu=(%.3f,%.3f,%.3f) "
+              "forward_guard_count=%lu",
               static_cast<unsigned long>(odometry_callbacks),
               static_cast<long>(odometry_gap_us),
               static_cast<unsigned long>(trajectories_received),
@@ -633,7 +732,9 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(trajectories_rejected),
               static_cast<unsigned long>(setpoint_updates),
               static_cast<long>(setpoint_gap_us), state_age_s,
-              static_cast<unsigned long>(stale_state_failures));
+              static_cast<unsigned long>(stale_state_failures), velocity_command_enu.x(),
+              velocity_command_enu.y(), velocity_command_enu.z(),
+              static_cast<unsigned long>(forward_guard_count));
 }
 
 void NavigationMode::failNavigation(const char* reason) {
@@ -644,6 +745,8 @@ void NavigationMode::failNavigation(const char* reason) {
     handover_requested_ = true;
     trajectory_.reset();
     pending_trajectory_.reset();
+    pending_safety_backup_trajectory_.reset();
+    safety_backup_trajectory_.reset();
     velocity_tracker_.reset();
     accepted_world_identity_valid_ = false;
     accepted_world_generation_ = 0U;
@@ -677,6 +780,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       trajectory_start_time_ = rclcpp::Time(pending_trajectory_->valid_from);
       promoted_trajectory = pending_trajectory_;
       pending_trajectory_.reset();
+      safety_backup_trajectory_ = pending_safety_backup_trajectory_;
+      pending_safety_backup_trajectory_.reset();
       ++trajectory_accepted_count_;
       accepted_world_identity_valid_ = true;
       accepted_world_generation_ = trajectory_->world_generation;
@@ -693,9 +798,12 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                                        promoted_trajectory->safety_plan_kind,
                                        now.seconds(), promoted_trajectory->duration_s);
   }
+  const auto velocityOnlyActive = [this]() {
+    return output_mode_ == OutputMode::Velocity && !velocity_only_fallback_active_;
+  };
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
-    if (output_mode_ == OutputMode::Velocity || !position_enu.has_value()) {
+    if (velocityOnlyActive() || !position_enu.has_value()) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
       setpoint.withPosition(enuToNed(*position_enu)).withVelocity(Eigen::Vector3f::Zero());
@@ -873,6 +981,17 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   auto current_sample = sampleTrajectory(*trajectory, elapsed_s);
   const Eigen::Vector3d position_enu{odometry->pose.pose.position.x, odometry->pose.pose.position.y,
                                      odometry->pose.pose.position.z};
+  if (output_mode_ == OutputMode::Velocity &&
+      (current_sample.position_enu - position_enu).norm() >
+          velocity_only_fallback_position_error_m_) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (!velocity_only_fallback_active_) {
+      RCLCPP_WARN(node().get_logger(),
+                  "velocity-only tracking error exceeded %.3f m; switching to P/V/A",
+                  velocity_only_fallback_position_error_m_);
+    }
+    velocity_only_fallback_active_ = true;
+  }
   const double dt_s = std::max(1e-3, (now - previous_setpoint_time).seconds());
   Eigen::Vector3f position_ned;
   Eigen::Vector3f velocity_ned;
@@ -880,18 +999,23 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     position_ned = enuToNed(current_sample.position_enu);
-    if (output_mode_ == OutputMode::Velocity) {
+    if (velocityOnlyActive()) {
       const auto preview_sample = sampleTrajectory(*trajectory, elapsed_s + trajectory_preview_s_);
-      velocity_ned = enuToNed(
-          velocity_tracker_.update(current_sample, preview_sample, position_enu, dt_s));
+      const auto command_enu =
+          velocity_tracker_.update(current_sample, preview_sample, position_enu, dt_s);
+      last_velocity_command_enu_ = command_enu;
+      last_forward_guard_count_ = velocity_tracker_.forwardGuardCount();
+      velocity_ned = enuToNed(command_enu);
     } else {
+      last_velocity_command_enu_ = current_sample.velocity_enu;
+      last_forward_guard_count_ = velocity_tracker_.forwardGuardCount();
       velocity_ned = enuToNed(current_sample.velocity_enu);
     }
     acceleration_ned = enuToNed(current_sample.acceleration_enu);
     last_setpoint_time_ = now;
   }
   px4_ros2::TrajectorySetpoint setpoint;
-  if (output_mode_ == OutputMode::Velocity) {
+  if (velocityOnlyActive()) {
     setpoint.withVelocity(velocity_ned);
   } else {
     setpoint.withPosition(position_ned).withVelocity(velocity_ned);

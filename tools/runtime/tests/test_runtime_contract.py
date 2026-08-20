@@ -124,7 +124,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(dual_parameters["navigation"]["planner"]["allow_nominal_unknown"])
             self.assertEqual(
                 dual_parameters["navigation"]["planner"]["nominal_commitment_horizon_s"],
-                1.0,
+                1.5,
             )
 
     def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
@@ -161,7 +161,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_open": 1.5,
             "long_open_slow": 0.8,
             "long_featured": 1.5,
-            "long_three_pillars": 1.1,
+            "long_three_pillars": 1.4,
             "no_path": 1.0,
             "occlusion_featured": 1.0,
             "occlusion_degenerate": 1.0,
@@ -232,9 +232,12 @@ class RuntimeContractTest(unittest.TestCase):
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
             navigation = parameters["navigation"]
-            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 4.0)
-            self.assertEqual(navigation["local_subgoal"]["switch_distance_m"], 0.6)
+            mapping = parameters["mapping"]
+            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 15.0)
+            self.assertEqual(navigation["local_subgoal"]["switch_distance_m"], 0.8)
             self.assertEqual(navigation["collision"]["safety_margin_m"], 0.25)
+            self.assertEqual(mapping["raycast"]["max_range_m"], 40.0)
+            self.assertEqual(mapping["map"]["local_size_m"], [70.0, 40.0, 12.0])
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(

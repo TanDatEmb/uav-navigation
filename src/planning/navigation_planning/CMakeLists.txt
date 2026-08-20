@@ -44,6 +44,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_navigation_planning
     test/test_a_star.cpp
+    test/test_bspline_trajectory.cpp
     test/test_planner.cpp
     test/test_rog_world_model_integration.cpp
   )

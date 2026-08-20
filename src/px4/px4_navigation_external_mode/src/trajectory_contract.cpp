@@ -22,6 +22,31 @@ Eigen::Vector3d vectorToEigen(const geometry_msgs::msg::Vector3& vector) {
   return {vector.x, vector.y, vector.z};
 }
 
+navigation_interfaces::msg::PlannedTrajectory candidateAsLegacy(
+    const navigation_interfaces::msg::TrajectoryCandidate& candidate) {
+  navigation_interfaces::msg::PlannedTrajectory trajectory;
+  trajectory.header = candidate.header;
+  trajectory.valid_from = candidate.valid_from;
+  trajectory.trajectory_id = candidate.trajectory_id;
+  trajectory.parent_trajectory_id = candidate.parent_trajectory_id;
+  trajectory.commitment_horizon_s = candidate.commitment_horizon_s;
+  trajectory.mission_id = candidate.mission_id;
+  trajectory.waypoint_index = candidate.waypoint_index;
+  trajectory.request_id = candidate.request_id;
+  trajectory.success = candidate.success;
+  trajectory.failure_code = candidate.failure_code;
+  trajectory.trajectory_role = candidate.trajectory_role;
+  trajectory.safety_plan_kind = candidate.safety_plan_kind;
+  trajectory.world_generation = candidate.world_generation;
+  trajectory.world_revision = candidate.world_revision;
+  trajectory.duration_s = candidate.duration_s;
+  trajectory.time_from_start = candidate.time_from_start;
+  trajectory.position = candidate.position;
+  trajectory.velocity = candidate.velocity;
+  trajectory.acceleration = candidate.acceleration;
+  return trajectory;
+}
+
 }  // namespace
 
 TrajectoryValidation validateTrajectory(
@@ -110,6 +135,88 @@ TrajectoryValidation validateTrajectory(
   return {};
 }
 
+TrajectoryValidation validateTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& trajectory,
+    const std::string& expected_frame) {
+  return validateTrajectory(candidateAsLegacy(trajectory), expected_frame);
+}
+
+navigation_interfaces::msg::PlannedTrajectory candidateToPlannedTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& candidate) {
+  return candidateAsLegacy(candidate);
+}
+
+TrajectoryBundleValidation validateTrajectoryBundle(
+    const navigation_interfaces::msg::PlannedTrajectoryBundle& bundle,
+    const std::string& expected_frame) {
+  if (bundle.bundle_id == 0U) {
+    return {TrajectoryInputFailure::InvalidTrajectoryId, "trajectory bundle id is zero"};
+  }
+  const std::int64_t valid_from_ns =
+      static_cast<std::int64_t>(bundle.valid_from.sec) * 1'000'000'000LL +
+      static_cast<std::int64_t>(bundle.valid_from.nanosec);
+  if (valid_from_ns < 0) {
+    return {TrajectoryInputFailure::InvalidValidFrom, "trajectory bundle valid_from is invalid"};
+  }
+  if (bundle.selected_candidate >
+      navigation_interfaces::msg::PlannedTrajectoryBundle::SELECTED_SAFETY) {
+    return {TrajectoryInputFailure::InvalidRole, "selected trajectory candidate is unknown"};
+  }
+  if (bundle.nominal_available && !bundle.safety_available) {
+    return {TrajectoryInputFailure::InvalidRole,
+            "nominal candidate cannot be available without a safety backup"};
+  }
+  if (bundle.nominal_available) {
+    const auto nominal = validateTrajectory(bundle.nominal, expected_frame);
+    if (!nominal.valid() ||
+        bundle.nominal.trajectory_role !=
+            navigation_interfaces::msg::TrajectoryCandidate::ROLE_NOMINAL) {
+      return {nominal.failure == TrajectoryInputFailure::None ? TrajectoryInputFailure::InvalidRole
+                                                               : nominal.failure,
+              nominal.message.empty() ? "nominal candidate is invalid" : nominal.message};
+    }
+  }
+  if (bundle.safety_available) {
+    const auto safety = validateTrajectory(bundle.safety, expected_frame);
+    if (!safety.valid() ||
+        bundle.safety.trajectory_role !=
+            navigation_interfaces::msg::TrajectoryCandidate::ROLE_SAFETY) {
+      return {safety.failure == TrajectoryInputFailure::None ? TrajectoryInputFailure::InvalidRole
+                                                               : safety.failure,
+              safety.message.empty() ? "safety candidate is invalid" : safety.message};
+    }
+    if (!bundle.safety.known_free_only) {
+      return {TrajectoryInputFailure::InvalidRole,
+              "safety candidate is not marked KnownFree-only"};
+    }
+  }
+  if (bundle.selected_candidate ==
+          navigation_interfaces::msg::PlannedTrajectoryBundle::SELECTED_NOMINAL &&
+      !bundle.nominal_available) {
+    return {TrajectoryInputFailure::NotSuccessful,
+            "bundle selects nominal candidate but nominal is unavailable"};
+  }
+  if (bundle.selected_candidate ==
+          navigation_interfaces::msg::PlannedTrajectoryBundle::SELECTED_SAFETY &&
+      !bundle.safety_available) {
+    return {TrajectoryInputFailure::NotSuccessful,
+            "bundle selects safety candidate but safety is unavailable"};
+  }
+  const auto matchesBundle = [&](const auto& candidate) {
+    return candidate.mission_id == bundle.mission_id &&
+           candidate.waypoint_index == bundle.waypoint_index &&
+           candidate.request_id == bundle.request_id &&
+           candidate.world_generation == bundle.world_generation &&
+           candidate.world_revision == bundle.world_revision;
+  };
+  if ((bundle.nominal_available && !matchesBundle(bundle.nominal)) ||
+      (bundle.safety_available && !matchesBundle(bundle.safety))) {
+    return {TrajectoryInputFailure::InvalidRole,
+            "candidate provenance does not match bundle provenance"};
+  }
+  return {};
+}
+
 TrajectorySample sampleTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory& trajectory, double time_from_start_s) {
   const std::size_t last = trajectory.time_from_start.size() - 1U;
@@ -148,6 +255,12 @@ TrajectorySample sampleTrajectory(
         point_value(trajectory.acceleration[left], axis), point_value(trajectory.acceleration[right], axis));
   }
   return sample;
+}
+
+TrajectorySample sampleTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& trajectory,
+    double time_from_start_s) {
+  return sampleTrajectory(candidateAsLegacy(trajectory), time_from_start_s);
 }
 
 bool trajectoryMatchesGoal(

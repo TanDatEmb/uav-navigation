@@ -15,6 +15,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavigationModeStatus.msg"
   "msg/LidarMappingObservation.msg"
   "msg/PlannedTrajectory.msg"
+  "msg/TrajectoryCandidate.msg"
+  "msg/PlannedTrajectoryBundle.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
 install(DIRECTORY include/ DESTINATION include)

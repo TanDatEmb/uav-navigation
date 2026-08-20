@@ -648,10 +648,16 @@ def _mapping_params(
     visualization_parameters = mapping.setdefault("visualization", {})
     resolution_override = os.environ.get("MAPPING_RESOLUTION_M")
     input_voxel_override = os.environ.get("MAPPING_INPUT_VOXEL_M")
+    local_subgoal_override = os.environ.get("LOCAL_SUBGOAL_ENABLED")
     if resolution_override is not None:
         map_parameters["resolution_m"] = float(resolution_override)
     if input_voxel_override is not None:
         input_parameters["voxel_size_m"] = float(input_voxel_override)
+    if local_subgoal_override is not None:
+        local_goal_parameters = navigation.setdefault("local_subgoal", {})
+        local_goal_parameters["enabled"] = local_subgoal_override.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
     # Keep one authoritative mapping YAML. Runtime workflows select whether
     # product-side visualization is part of this invocation. Frontier
     # extraction remains an explicit future/debug capability and is not
@@ -710,20 +716,33 @@ def _mapping_params(
                 "continuation_speed_fraction"
             ] = planning["continuation_speed_fraction"]
     # The long three-pillar mission deliberately exercises a route that is
-    # longer than the visible map.  A shorter local target keeps the turn
-    # handover inside the freshly observed corridor instead of committing a
-    # five-metre target whose terminal voxel can become stale during the next
-    # map revision.  This is a profile-level tuning knob, not a global
-    # relaxation of the unknown-space policy.
+    # longer than the vehicle's current pose.  Do not reduce it to the old
+    # four-metre endpoint: that setting made the benchmark look like a chain
+    # of completed subgoals even though the map could already support a much
+    # longer rolling trajectory.
     if mission_file is not None and mission_file.name == "long_three_pillars.yaml":
         local_goal = navigation.setdefault("local_subgoal", {})
-        # Keep the receding-horizon target inside the observed corridor while
-        # avoiding a stop/replan at every 3 m voxel boundary.  Four metres is
-        # below the nominal 5 m default and remains shorter than the measured
-        # known-free horizon in this map.
-        local_goal["max_distance_m"] = min(float(local_goal.get("max_distance_m", 5.0)), 4.0)
-        local_goal["switch_distance_m"] = min(float(local_goal.get("switch_distance_m", 0.8)), 0.6)
+        # The selector is only a bounded fallback while the mission endpoint
+        # is outside the observed map. Keep the configured 15 m horizon; it
+        # is refreshed continuously and is not a completion-gated subgoal.
+        local_goal["max_distance_m"] = max(float(local_goal.get("max_distance_m", 15.0)), 15.0)
+        local_goal["switch_distance_m"] = max(float(local_goal.get("switch_distance_m", 0.8)), 0.8)
         if simulation:
+            # Gazebo's Mid-360 advertises a 40 m range. The old benchmark
+            # profile still used a 15 m ROG raycast and a 30 m total local
+            # volume, so the planner could not consume the map that the
+            # sensor had already observed. Expand only this SITL stress
+            # profile; real/default deployments retain their conservative
+            # memory and unknown-space settings.
+            mapping["raycast"]["max_range_m"] = max(
+                float(mapping.get("raycast", {}).get("max_range_m", 15.0)), 40.0)
+            # 70 m in X is enough for the 40 m sensor reach plus the sliding
+            # origin margin, while 40x12 m in Y/Z covers this corridor. The
+            # previous 80x60x20 volume inflated the sparse ROG maintenance
+            # cost enough to starve the 5 Hz trajectory publisher.
+            mapping["map"]["local_size_m"] = [70.0, 40.0, 12.0]
+            visualization_parameters["range_m"] = [35.0, 20.0, 6.0]
+            navigation.setdefault("safety", {})["visibility_horizon_m"] = 40.0
             # The route columns are intentionally large (1.05 m radius). A
             # sparse first scan can under-inflate their edge by one voxel;
             # reserve an extra 0.20 m planner margin so a receding target does

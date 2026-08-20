@@ -179,8 +179,187 @@ def _samples(session: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
 
 def _trajectory_records(session: Path) -> list[dict[str, Any]]:
     scenario = _load(session / "scenario.json", {})
-    records = scenario.get("trajectory_records", []) if isinstance(scenario, dict) else []
+    records = []
+    if isinstance(scenario, dict):
+        history = scenario.get("trajectory_history", [])
+        records = history if isinstance(history, list) and history else scenario.get(
+            "trajectory_records", []
+        )
     return [item for item in records if isinstance(item, dict) and item.get("position_points")]
+
+
+def _planning_continuity(planning: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize rolling-horizon behavior from one diagnostic sample per tick."""
+    terminal_hold_samples = sum(
+        str(item.get("replan_reason", "")) == "reuse_terminal_hold" for item in planning
+    )
+    # Terminal STOP refreshes are deliberately repeated to keep PX4's hold
+    # setpoint alive; they are not local-subgoal endpoint reuse and must not
+    # dominate rolling-horizon continuity metrics.
+    rolling_planning = [
+        item for item in planning
+        if str(item.get("replan_reason", "")) != "reuse_terminal_hold"
+    ]
+    endpoints: list[tuple[float, float, float]] = []
+    progress: list[float] = []
+    forward_projection: list[float] = []
+    roles: dict[str, int] = {}
+    safety_kinds: dict[str, int] = {}
+    endpoint_change_count = 0
+    endpoint_repeat_count = 0
+    maximum_repeat_run = 0
+    current_repeat_run = 0
+    tangent_reversal_count = 0
+    previous_endpoint: tuple[float, float, float] | None = None
+    previous_tangent: tuple[float, float, float] | None = None
+    endpoint_tolerance_m = 0.25
+
+    for item in rolling_planning:
+        endpoint = _point((
+            item.get("effective_goal_x"), item.get("effective_goal_y"),
+            item.get("effective_goal_z"),
+        ))
+        if endpoint is not None:
+            endpoints.append(endpoint)
+            if previous_endpoint is None:
+                current_repeat_run = 1
+            elif _distance(endpoint, previous_endpoint) <= endpoint_tolerance_m:
+                endpoint_repeat_count += 1
+                current_repeat_run += 1
+            else:
+                endpoint_change_count += 1
+                current_repeat_run = 1
+            maximum_repeat_run = max(maximum_repeat_run, current_repeat_run)
+            previous_endpoint = endpoint
+        value = _finite_number(item.get("horizon_progress_m"))
+        if value is not None:
+            progress.append(value)
+        value = _finite_number(item.get("horizon_forward_projection_m"))
+        if value is not None:
+            forward_projection.append(value)
+        role = str(item.get("plan_role", "unknown"))
+        roles[role] = roles.get(role, 0) + 1
+        safety_kind = str(item.get("safety_plan_kind", "unknown"))
+        safety_kinds[safety_kind] = safety_kinds.get(safety_kind, 0) + 1
+        tangent = _point((
+            item.get("horizon_tangent_x"), item.get("horizon_tangent_y"),
+            item.get("horizon_tangent_z"),
+        ))
+        if tangent is not None and previous_tangent is not None:
+            dot = sum(tangent[index] * previous_tangent[index] for index in range(3))
+            if dot < -0.25:
+                tangent_reversal_count += 1
+        if tangent is not None:
+            previous_tangent = tangent
+
+    return {
+        "sample_count": len(planning),
+        "rolling_sample_count": len(rolling_planning),
+        "terminal_hold_sample_count": terminal_hold_samples,
+        "endpoint_sample_count": len(endpoints),
+        "unique_endpoint_count": len({
+            tuple(round(value / endpoint_tolerance_m) for value in endpoint)
+            for endpoint in endpoints
+        }),
+        "endpoint_change_count": endpoint_change_count,
+        "endpoint_repeat_count": endpoint_repeat_count,
+        "maximum_endpoint_repeat_run": maximum_repeat_run,
+        "backward_projection_count": sum(value < -0.05 for value in forward_projection),
+        "tangent_reversal_count": tangent_reversal_count,
+        "progress_m": _summary(progress),
+        "forward_projection_m": _summary(forward_projection),
+        "plan_role_counts": roles,
+        "safety_plan_kind_counts": safety_kinds,
+        "safety_stop_ratio": (
+            sum(count for key, count in safety_kinds.items()
+                if key.lower() in {"braking_stop", "2"}) / len(planning)
+            if rolling_planning else 0.0
+        ),
+    }
+
+
+def _trajectory_smoothness(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, list[tuple[float, float]]]]:
+    """Measure continuity of the trajectory artifacts sent to the controller.
+
+    Ground-truth smoothness is useful but can hide a planner handover jump when
+    PX4 filters it. These metrics compare adjacent committed trajectory records
+    and also sample the velocity profiles contained in each record.
+    """
+    plan_speeds: list[float] = []
+    plan_accelerations: list[float] = []
+    boundary_velocity_jumps: list[float] = []
+    boundary_position_jumps: list[float] = []
+    boundary_heading_steps_deg: list[float] = []
+    speed_series: list[tuple[float, float]] = []
+    velocity_jump_series: list[tuple[float, float]] = []
+    heading_step_series: list[tuple[float, float]] = []
+    cursor_s = 0.0
+    previous_end_position: tuple[float, float, float] | None = None
+    previous_end_velocity: tuple[float, float, float] | None = None
+
+    for record in records:
+        positions = [_point(item) for item in record.get("position_points", [])]
+        velocities = [_point(item) for item in record.get("velocity_points", [])]
+        positions = [item for item in positions if item is not None]
+        velocities = [item for item in velocities if item is not None]
+        if not positions:
+            continue
+        duration = _finite_number(record.get("duration_s")) or 0.0
+        point_count = max(len(velocities), len(positions), 1)
+        dt = duration / max(1, point_count - 1)
+
+        first_position = positions[0]
+        if previous_end_position is not None:
+            jump = _distance(first_position, previous_end_position)
+            boundary_position_jumps.append(jump)
+        if velocities:
+            first_velocity = velocities[0]
+            if previous_end_velocity is not None:
+                velocity_jump = _distance(first_velocity, previous_end_velocity)
+                boundary_velocity_jumps.append(velocity_jump)
+                velocity_jump_series.append((cursor_s, velocity_jump))
+                previous_norm = math.sqrt(sum(value * value for value in previous_end_velocity))
+                current_norm = math.sqrt(sum(value * value for value in first_velocity))
+                if previous_norm > 0.05 and current_norm > 0.05:
+                    dot = sum(previous_end_velocity[i] * first_velocity[i] for i in range(3))
+                    angle = math.degrees(math.acos(max(-1.0, min(1.0, dot / (previous_norm * current_norm)))))
+                    boundary_heading_steps_deg.append(angle)
+                    heading_step_series.append((cursor_s, angle))
+
+        for index, velocity in enumerate(velocities):
+            speed = math.sqrt(sum(value * value for value in velocity))
+            if not math.isfinite(speed):
+                continue
+            plan_speeds.append(speed)
+            speed_series.append((cursor_s + index * dt, speed))
+            if index > 0 and dt > 1e-9:
+                previous_velocity = velocities[index - 1]
+                acceleration = _distance(velocity, previous_velocity) / dt
+                if math.isfinite(acceleration):
+                    plan_accelerations.append(acceleration)
+
+        previous_end_position = positions[-1]
+        if velocities:
+            previous_end_velocity = velocities[-1]
+        cursor_s += max(0.0, duration)
+
+    metrics = {
+        "trajectory_record_count": len(records),
+        "trajectory_sample_count": len(plan_speeds),
+        "trajectory_duration_s": cursor_s,
+        "plan_speed_mps": _summary(plan_speeds),
+        "plan_velocity_acceleration_mps2": _summary(plan_accelerations),
+        "boundary_velocity_jump_mps": _summary(boundary_velocity_jumps),
+        "boundary_position_jump_m": _summary(boundary_position_jumps),
+        "boundary_heading_step_deg": _summary(boundary_heading_steps_deg),
+    }
+    return metrics, {
+        "speed": speed_series,
+        "velocity_jump": velocity_jump_series,
+        "heading_step": heading_step_series,
+    }
 
 
 def _analyze(session: Path) -> dict[str, Any]:
@@ -191,6 +370,9 @@ def _analyze(session: Path) -> dict[str, Any]:
     waypoints = [item for item in waypoints if item is not None]
     ground_truth, planning = _samples(session)
     obstacles = _obstacles(session, descriptor)
+    trajectory_records = _trajectory_records(session)
+    smoothness, plan_series = _trajectory_smoothness(trajectory_records)
+    planning_continuity = _planning_continuity(planning)
 
     tracking_errors: list[float] = []
     speeds: list[float] = []
@@ -258,6 +440,7 @@ def _analyze(session: Path) -> dict[str, Any]:
             "speed_acceleration_mps2": _summary(acceleration),
             "heading_rate_rad_s": _summary(heading_rates),
         },
+        "smoothness": smoothness,
         "planning": {
             "diagnostic_sample_count": len(planning),
             "first_plan_total_us": first_plan.get("planning_total_us"),
@@ -269,6 +452,7 @@ def _analyze(session: Path) -> dict[str, Any]:
             "minimum_clearance_m": _summary(min_clearance),
             "full_replan_count": max((_finite_number(item.get("full_replan_count")) or 0.0 for item in planning), default=0.0),
             "local_subgoal_selected_count": max((_finite_number(item.get("local_subgoal_selected_count")) or 0.0 for item in planning), default=0.0),
+            "continuity": planning_continuity,
         },
         "safety": {
             "outcome": scenario.get("outcome"),
@@ -294,7 +478,8 @@ def _analyze(session: Path) -> dict[str, Any]:
         "waypoints": waypoints,
         "ground_truth": ground_truth,
         "planning": planning,
-        "trajectory_records": _trajectory_records(session),
+        "trajectory_records": trajectory_records,
+        "plan_series": plan_series,
         "descriptor": descriptor,
     }
 
@@ -350,7 +535,14 @@ def _map_svg(data: dict[str, Any]) -> str:
         x, y = transform(waypoint)
         parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#ffd166" stroke="#fff3c4"/><text x="{x+7:.1f}" y="{y-7:.1f}" fill="#fff3c4" font-size="11">WP{index}</text>')
     parts.append(_polyline(actual, transform, "#4cc9f0", 3))
-    for record in data["trajectory_records"]:
+    records = data["trajectory_records"]
+    # Keep the raw history complete in scenario.json/benchmark_metrics while
+    # sampling the SVG overlay so a long SITL run remains inspectable in a
+    # browser instead of becoming a megabyte-scale path graphic.
+    record_step = max(1, len(records) // 64)
+    for index, record in enumerate(records):
+        if index % record_step != 0 and index != len(records) - 1:
+            continue
         points = [_point(item) for item in record.get("position_points", [])]
         points = [item for item in points if item is not None]
         parts.append(_polyline(points, transform, "#9be564", 1, "5 4"))
@@ -392,6 +584,11 @@ def generate(session: Path) -> Path:
             error_series.append((item["t"], min(_segment_distance_2d(item["position"], data["waypoints"][index], data["waypoints"][index + 1]) for index in range(len(data["waypoints"]) - 1))))
     planning_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("geometric_path_length_m"))) is not None]
     horizon_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("known_free_horizon_m"))) is not None]
+    horizon_progress_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_progress_m"))) is not None]
+    forward_projection_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_forward_projection_m"))) is not None]
+    plan_speed_series = data["plan_series"]["speed"]
+    plan_velocity_jump_series = data["plan_series"]["velocity_jump"]
+    plan_heading_step_series = data["plan_series"]["heading_step"]
     metrics = data["metrics"]
     def cell(value: Any, digits: int = 3) -> str:
         return html.escape(_number(value, digits))
@@ -401,12 +598,20 @@ def generate(session: Path) -> Path:
         f"<tr><th>Longest leg / known horizon</th><td>{cell(metrics['mission'].get('longest_leg_m'))} m / {cell(metrics['planning']['known_free_horizon_m'].get('maximum'))} m</td></tr>",
         f"<tr><th>Cross-track RMSE / p95</th><td>{cell(metrics['tracking']['cross_track_error_m'].get('rmse'))} m / {cell(metrics['tracking']['cross_track_error_m'].get('p95'))} m</td></tr>",
         f"<tr><th>Speed mean / p95</th><td>{cell(metrics['tracking']['speed_mps'].get('mean'))} / {cell(metrics['tracking']['speed_mps'].get('p95'))} m/s</td></tr>",
+        f"<tr><th>Plan speed mean / p95</th><td>{cell(metrics['smoothness']['plan_speed_mps'].get('mean'))} / {cell(metrics['smoothness']['plan_speed_mps'].get('p95'))} m/s</td></tr>",
+        f"<tr><th>Plan boundary velocity jump p95</th><td>{cell(metrics['smoothness']['boundary_velocity_jump_mps'].get('p95'))} m/s</td></tr>",
+        f"<tr><th>Plan boundary position jump p95</th><td>{cell(metrics['smoothness']['boundary_position_jump_m'].get('p95'))} m</td></tr>",
+        f"<tr><th>Plan boundary heading step p95</th><td>{cell(metrics['smoothness']['boundary_heading_step_deg'].get('p95'))}°</td></tr>",
         f"<tr><th>PX4 setpoint max / LIO residual p95</th><td>{cell(metrics['control']['setpoint_speed_mps'].get('maximum'))} m/s / {cell(metrics['localization'].get('p95_position_residual_m'))} m</td></tr>",
         f"<tr><th>Planning total p95</th><td>{cell(metrics['planning']['planning_total_us'].get('p95'))} µs</td></tr>",
         f"<tr><th>Replans / local subgoals</th><td>{cell(metrics['planning'].get('full_replan_count'), 0)} / {cell(metrics['planning'].get('local_subgoal_selected_count'), 0)}</td></tr>",
+        f"<tr><th>Rolling endpoints / changes / repeats</th><td>{cell(metrics['planning']['continuity'].get('unique_endpoint_count'), 0)} / {cell(metrics['planning']['continuity'].get('endpoint_change_count'), 0)} / {cell(metrics['planning']['continuity'].get('endpoint_repeat_count'), 0)}</td></tr>",
+        f"<tr><th>Max endpoint repeat / backward projections</th><td>{cell(metrics['planning']['continuity'].get('maximum_endpoint_repeat_run'), 0)} / {cell(metrics['planning']['continuity'].get('backward_projection_count'), 0)}</td></tr>",
+        f"<tr><th>Safety-stop ratio / tangent reversals</th><td>{cell(100.0 * metrics['planning']['continuity'].get('safety_stop_ratio', 0.0), 1)}% / {cell(metrics['planning']['continuity'].get('tangent_reversal_count'), 0)}</td></tr>",
+        f"<tr><th>Rolling samples / terminal hold refreshes</th><td>{cell(metrics['planning']['continuity'].get('rolling_sample_count'), 0)} / {cell(metrics['planning']['continuity'].get('terminal_hold_sample_count'), 0)}</td></tr>",
         f"<tr><th>Collision / min clearance</th><td>{cell(metrics['safety'].get('collision_count'), 0)} / {cell(metrics['safety'].get('minimum_collision_clearance_m'))} m ({html.escape(str(metrics['safety'].get('minimum_collision_obstacle_name') or 'n/a'))})</td></tr>",
     ])
-    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section><section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
+    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section><section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
     output = session / "REPORT.html"
     output.write_text(html_text, encoding="utf-8")
     return output

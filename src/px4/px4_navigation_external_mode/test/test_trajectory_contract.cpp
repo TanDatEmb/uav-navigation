@@ -22,6 +22,24 @@ navigation_interfaces::msg::PlannedTrajectory validTrajectory() {
   return message;
 }
 
+navigation_interfaces::msg::TrajectoryCandidate candidateFrom(
+    const navigation_interfaces::msg::PlannedTrajectory& source, std::uint8_t role,
+    std::uint8_t safety_kind) {
+  navigation_interfaces::msg::TrajectoryCandidate candidate;
+  candidate.header = source.header;
+  candidate.trajectory_id = source.trajectory_id;
+  candidate.success = source.success;
+  candidate.duration_s = source.duration_s;
+  candidate.time_from_start = source.time_from_start;
+  candidate.position = source.position;
+  candidate.velocity = source.velocity;
+  candidate.acceleration = source.acceleration;
+  candidate.trajectory_role = role;
+  candidate.safety_plan_kind = safety_kind;
+  candidate.known_free_only = role == navigation_interfaces::msg::TrajectoryCandidate::ROLE_SAFETY;
+  return candidate;
+}
+
 }  // namespace
 
 TEST(TrajectoryContract, ValidatesAndSamplesInEnu) {
@@ -103,6 +121,41 @@ TEST(TrajectoryContract, SafetyRouteMayCarryContinuationVelocity) {
   message.trajectory_role = navigation_interfaces::msg::PlannedTrajectory::ROLE_SAFETY;
   message.safety_plan_kind = navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_ROUTE;
   EXPECT_TRUE(px4_navigation_external_mode::validateTrajectory(message, "lio_odom").valid());
+}
+
+TEST(TrajectoryContract, BundleRequiresKnownFreeSafetyBackupForNominal) {
+  const auto source = validTrajectory();
+  navigation_interfaces::msg::PlannedTrajectoryBundle bundle;
+  bundle.bundle_id = 1U;
+  bundle.header.frame_id = "lio_odom";
+  bundle.mission_id = "route";
+  bundle.nominal_available = true;
+  bundle.safety_available = true;
+  bundle.selected_candidate =
+      navigation_interfaces::msg::PlannedTrajectoryBundle::SELECTED_NOMINAL;
+  bundle.nominal = candidateFrom(
+      source, navigation_interfaces::msg::TrajectoryCandidate::ROLE_NOMINAL,
+      navigation_interfaces::msg::TrajectoryCandidate::SAFETY_KIND_NONE);
+  bundle.safety = candidateFrom(
+      source, navigation_interfaces::msg::TrajectoryCandidate::ROLE_SAFETY,
+      navigation_interfaces::msg::TrajectoryCandidate::SAFETY_KIND_ROUTE);
+  bundle.nominal.mission_id = bundle.safety.mission_id = bundle.mission_id;
+  EXPECT_TRUE(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").valid());
+
+  bundle.safety_available = false;
+  EXPECT_FALSE(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").valid());
+}
+
+TEST(TrajectoryContract, BundleConvertsSelectedCandidateWithoutLosingPva) {
+  const auto source = validTrajectory();
+  const auto candidate = candidateFrom(
+      source, navigation_interfaces::msg::TrajectoryCandidate::ROLE_SAFETY,
+      navigation_interfaces::msg::TrajectoryCandidate::SAFETY_KIND_ROUTE);
+  const auto converted = px4_navigation_external_mode::candidateToPlannedTrajectory(candidate);
+  EXPECT_EQ(converted.trajectory_id, source.trajectory_id);
+  EXPECT_EQ(converted.position.size(), source.position.size());
+  EXPECT_DOUBLE_EQ(converted.position.back().x, source.position.back().x);
+  EXPECT_DOUBLE_EQ(converted.velocity.back().x, source.velocity.back().x);
 }
 
 TEST(TrajectoryContract, AcceptsOnlyCurrentGoalCorrelation) {
@@ -199,4 +252,48 @@ TEST(VelocityTracker, PreviewUsesVelocityOnlyAndCurrentPositionFeedback) {
   // A large preview position must not be interpreted as a ten-metre position
   // error; the command remains bounded by the configured velocity envelope.
   EXPECT_LE(command.norm(), 2.0 + 1e-9);
+}
+
+TEST(VelocityTracker, ForwardGuardPreventsReverseCommandOnStraightCorridor) {
+  px4_navigation_external_mode::VelocityTrackerConfig config;
+  config.position_gain = 1.0;
+  config.max_position_error_m = 10.0;
+  px4_navigation_external_mode::VelocityTracker tracker(config);
+  px4_navigation_external_mode::TrajectorySample current;
+  current.velocity_enu = Eigen::Vector3d{1.0, 0.0, 0.0};
+  px4_navigation_external_mode::TrajectorySample preview = current;
+  const auto command = tracker.update(current, preview, Eigen::Vector3d{2.0, 0.0, 0.0}, 0.1);
+  EXPECT_GE(command.dot(Eigen::Vector3d::UnitX()), 0.0);
+  EXPECT_GT(tracker.forwardGuardCount(), 0U);
+}
+
+TEST(VelocityTracker, ForwardGuardDoesNotBlockAChangingCornerTangent) {
+  px4_navigation_external_mode::VelocityTrackerConfig config;
+  config.position_gain = 1.0;
+  config.max_position_error_m = 10.0;
+  px4_navigation_external_mode::VelocityTracker tracker(config);
+  px4_navigation_external_mode::TrajectorySample current;
+  current.velocity_enu = Eigen::Vector3d{1.0, 0.0, 0.0};
+  px4_navigation_external_mode::TrajectorySample preview = current;
+  preview.velocity_enu = Eigen::Vector3d{0.0, 1.0, 0.0};
+  const auto command = tracker.update(current, preview, Eigen::Vector3d{0.0, -1.0, 0.0}, 0.1);
+  EXPECT_GT(command.y(), 0.0);
+  EXPECT_EQ(tracker.forwardGuardCount(), 0U);
+}
+
+TEST(VelocityTracker, FiniteJerkLimitConstrainsAccelerationState) {
+  px4_navigation_external_mode::VelocityTrackerConfig config;
+  config.max_velocity_mps = 10.0;
+  config.max_acceleration_mps2 = 10.0;
+  config.max_deceleration_mps2 = 10.0;
+  config.max_jerk_mps3 = 2.0;
+  config.max_position_error_m = 10.0;
+  px4_navigation_external_mode::VelocityTracker tracker(config);
+  px4_navigation_external_mode::TrajectorySample reference;
+  reference.velocity_enu.x() = 5.0;
+
+  const auto first = tracker.update(reference, Eigen::Vector3d::Zero(), 0.1);
+  const auto second = tracker.update(reference, Eigen::Vector3d::Zero(), 0.1);
+  EXPECT_NEAR(first.x(), 0.02, 1e-9);
+  EXPECT_NEAR(second.x(), 0.06, 1e-9);
 }

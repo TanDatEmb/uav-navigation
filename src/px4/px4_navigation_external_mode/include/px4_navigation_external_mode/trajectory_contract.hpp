@@ -5,7 +5,9 @@
 #include <string>
 
 #include <Eigen/Core>
+#include <navigation_interfaces/msg/planned_trajectory_bundle.hpp>
 #include <navigation_interfaces/msg/planned_trajectory.hpp>
+#include <navigation_interfaces/msg/trajectory_candidate.hpp>
 
 namespace px4_navigation_external_mode {
 
@@ -41,8 +43,30 @@ struct TrajectoryValidation {
     const navigation_interfaces::msg::PlannedTrajectory& trajectory,
     const std::string& expected_frame);
 
+[[nodiscard]] TrajectoryValidation validateTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& trajectory,
+    const std::string& expected_frame);
+
+[[nodiscard]] navigation_interfaces::msg::PlannedTrajectory candidateToPlannedTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& candidate);
+
+struct TrajectoryBundleValidation {
+  TrajectoryInputFailure failure{TrajectoryInputFailure::None};
+  std::string message;
+
+  [[nodiscard]] bool valid() const noexcept { return failure == TrajectoryInputFailure::None; }
+};
+
+[[nodiscard]] TrajectoryBundleValidation validateTrajectoryBundle(
+    const navigation_interfaces::msg::PlannedTrajectoryBundle& bundle,
+    const std::string& expected_frame);
+
 [[nodiscard]] TrajectorySample sampleTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory& trajectory, double time_from_start_s);
+
+[[nodiscard]] TrajectorySample sampleTrajectory(
+    const navigation_interfaces::msg::TrajectoryCandidate& trajectory,
+    double time_from_start_s);
 
 [[nodiscard]] bool trajectoryMatchesGoal(
     const navigation_interfaces::msg::PlannedTrajectory& trajectory,

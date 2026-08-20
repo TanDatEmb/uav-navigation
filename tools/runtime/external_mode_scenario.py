@@ -155,6 +155,11 @@ class ExternalModeScenario:
         self.trajectory_success_count = 0
         self.latest_trajectory: dict[str, Any] = {}
         self.trajectory_records: list[dict[str, Any]] = []
+        # Keep every successful rolling-horizon bundle.  trajectory_records is
+        # intentionally retained as the compact, latest-per-waypoint view used
+        # by the legacy acceptance checks; the history is the authoritative
+        # artifact for splice/continuity analysis.
+        self.trajectory_history: list[dict[str, Any]] = []
         self.trajectory_role_counts: dict[str, int] = {}
         self.safety_kind_counts: dict[str, int] = {}
         self.trajectory_failure_count = 0
@@ -567,6 +572,9 @@ class ExternalModeScenario:
             "trajectory_role": int(message.trajectory_role),
             "safety_plan_kind": int(message.safety_plan_kind),
         }
+        self.trajectory_history.append(dict(self.latest_trajectory))
+        if len(self.trajectory_history) > 4096:
+            del self.trajectory_history[:len(self.trajectory_history) - 4096]
         if int(message.trajectory_role) == 1 and self.pending_nominal_failure_ns is not None:
             self.safety_transition_count += 1
             self.fallback_latencies_ms.append(
@@ -1243,6 +1251,7 @@ class ExternalModeScenario:
             },
             "latest_trajectory": self.latest_trajectory,
             "trajectory_records": self.trajectory_records,
+            "trajectory_history": self.trajectory_history,
             "goal_publish_count": self.goal_publish_count,
             "goal_received_count": self.goal_received_count,
             "goal_indices": self.goal_indices,

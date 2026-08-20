@@ -7,7 +7,8 @@ mission:
       position: [0.0, 0.0, 3.0]
       acceptance_radius_m: 0.9
       behavior: pass_through
-    # Deliberately longer than the planner's 10 m known-free horizon.
+    # Deliberately longer than the current pose; the SITL profile exposes a
+    # 40 m mapping/planning window so this must not become a local waypoint.
     - id: far_goal
       position: [48.0, 0.0, 3.0]
       acceptance_radius_m: 0.9
@@ -28,19 +29,18 @@ mission:
       hold_s: 0.4
   planning:
     replan_rate_hz: 5.0
-    # Start the cluttered long-leg benchmark at a bounded 1.1 m/s.  This is
-    # fast enough to expose continuous replanning while leaving PX4 enough
-    # control authority to splice an orthogonal turn without velocity spikes.
-    max_velocity_mps: 1.1
-    max_acceleration_mps2: 1.1
-    max_deceleration_mps2: 1.1
-    max_jerk_mps3: 6.0
+    # Use the available SITL control authority so the benchmark evaluates
+    # continuity at flight speed rather than at a deliberately slow crawl.
+    max_velocity_mps: 1.4
+    max_acceleration_mps2: 1.5
+    max_deceleration_mps2: 1.5
+    max_jerk_mps3: 8.0
     # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
     # observed obstacle detour so the estimator/controller does not chase a
     # sharp local tangent at the next waypoint.
     # Preserve momentum when handing a short visibility-limited trajectory to
     # the next one.  A low value makes every local path brake at its endpoint.
-    continuation_speed_fraction: 0.70
+    continuation_speed_fraction: 0.80
     unknown_policy: blocked
   control:
     output: auto

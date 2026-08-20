@@ -47,8 +47,20 @@ navigation_runtime:
         max_deceleration_mps2: 3.0
         max_jerk_mps3: 6.0
         trajectory_sample_dt_s: 0.05
+        trajectory_generator: bspline
+        bspline:
+          smoothing_iterations: 12
+          smoothing_step: 0.04
+          snap_weight: 1.0
+          path_length_weight: 0.10
+          reference_weight: 0.35
+          # Faster initial timing for rolling replans. Hard limits are still
+          # enforced by the planner/verifier and may stretch this candidate.
+          time_scale: 1.10
+          time_margin_s: 0.25
+          optimization_sample_dt_s: 0.04
         corridor_sample_spacing_m: 0.0
-        maximum_time_scaling_iterations: 8
+        maximum_time_scaling_iterations: 5
         allow_unknown_start: false
         # Virtual KnownFree sphere around the trusted current vehicle pose.
         # The simulation runner sets this to vehicle radius + safety margin;
@@ -56,8 +68,8 @@ navigation_runtime:
         unknown_start_radius_m: 0.0
         # Optimistic nominal planning is simulation-only and must be enabled
         # by an explicit runner flag. Real/default profiles stay fail-closed.
-        allow_nominal_unknown: false
-        nominal_commitment_horizon_s: 1.0
+        allow_nominal_unknown: true
+        nominal_commitment_horizon_s: 1.5
         # Atomic hand-over lead time. PX4 keeps the previous trajectory active
         # until this future timestamp, so replanning does not restart at t=0.
         switch_delay_s: 0.12
@@ -67,12 +79,18 @@ navigation_runtime:
         latency_s: 0.08
         stop_margin_m: 0.25
         visibility_horizon_m: 15.0
+      # Compatibility parameters for the bounded A* horizon selector. The
+      # selector no longer emits a completion event; the B-spline suffix is
+      # continuously replanned and only mission acceptance completes a goal.
       local_subgoal:
         enabled: true
         boundary_margin_m: 1.0
-        max_distance_m: 5.0
-        # Hysteresis distance for the receding-horizon leg.  A new local goal
-        # is selected only after the current leg is nearly reached.
+        # Match the configured LiDAR/raycast visibility.  This is a search
+        # bound only; a mission waypoint inside the observed window is still
+        # selected directly, and the selector is rerun every planning tick.
+        max_distance_m: 15.0
+        # Kept as a compatibility parameter; local endpoints are no longer
+        # completion-gated or hysteresis-latched by the runtime.
         switch_distance_m: 0.8
         # Minimum tangent speed fraction for intermediate local goals. A
         # non-zero value keeps receding-horizon replanning continuous; set to
