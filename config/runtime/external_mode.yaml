@@ -19,7 +19,7 @@ px4_navigation_external_mode:
       lio_health_grace_s: 1.0
       velocity_tracker:
         position_gain: 1.0
-        max_velocity_mps: 2.0
+        max_velocity_mps: 3.0
         max_acceleration_mps2: 3.0
         max_deceleration_mps2: 3.0
         max_position_error_m: 2.0

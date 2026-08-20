@@ -45,6 +45,7 @@ help:
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
+	@echo "  Runtime guard                              one workspace-owned simulation; concurrent starts are rejected"
 	@echo "  make clean                                 keep build/install; remove stale variants, logs and caches"
 	@echo "Artifacts: .artifacts/runtime/<workflow>-*/REPORT.md and report.json"
 	@echo "PASS requires samples, freshness, validity, cleanup, and workflow-specific acceptance."

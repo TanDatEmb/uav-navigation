@@ -61,6 +61,238 @@ def _load_json(path: Path, default: Any) -> Any:
         return default
 
 
+def _load_yaml_dict(path: Path) -> dict[str, Any]:
+    """Load a YAML mapping without making report generation fail closed on a bad artifact."""
+    try:
+        import yaml
+
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (ImportError, OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _point3(value: Any) -> tuple[float, float, float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) < 3:
+        return None
+    try:
+        point = tuple(float(value[index]) for index in range(3))
+    except (TypeError, ValueError):
+        return None
+    return point if all(math.isfinite(item) for item in point) else None
+
+
+def _segment_distance_2d(
+    point: tuple[float, float, float],
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+) -> float:
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-12:
+        return math.hypot(point[0] - start[0], point[1] - start[1])
+    projection = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length_sq
+    projection = max(0.0, min(1.0, projection))
+    return math.hypot(
+        point[0] - (start[0] + projection * dx),
+        point[1] - (start[1] + projection * dy),
+    )
+
+
+def _acceptance_threshold(config: dict[str, Any], scenario_config: dict[str, Any]) -> float:
+    """Resolve the report-only cross-track quality threshold.
+
+    The session scenario is allowed to override the top-level report config so
+    a benchmark can carry its acceptance contract in its own artifact. The
+    default is deliberately conservative: a report cannot silently pass a
+    mission with metre-scale tracking error.
+    """
+    candidates = (
+        config.get("acceptance"),
+        scenario_config.get("acceptance"),
+        config.get("runtime", {}).get("acceptance"),
+        config.get("runtime", {}).get("thresholds"),
+        scenario_config.get("scenario", {}).get("acceptance"),
+    )
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or "max_cross_track_p95_m" not in candidate:
+            continue
+        value = _number(candidate.get("max_cross_track_p95_m"), math.nan)
+        if math.isfinite(value) and value >= 0.0:
+            return value
+    return 0.5
+
+
+def _mission_waypoints_for_acceptance(
+    session: Path,
+    scenario_config: dict[str, Any],
+    workspace: Path,
+) -> list[tuple[float, float, float]]:
+    scenario = scenario_config.get("scenario", {})
+    if not isinstance(scenario, dict):
+        return []
+    mission_file = scenario.get("mission_file")
+    if not mission_file:
+        return []
+    mission_path = Path(str(mission_file))
+    if not mission_path.is_absolute():
+        mission_path = (workspace / mission_path).resolve()
+    mission = _load_yaml_dict(mission_path)
+    raw_waypoints = mission.get("mission", {}).get("waypoints", [])
+    if not isinstance(raw_waypoints, list):
+        return []
+    return [
+        point
+        for item in raw_waypoints
+        if isinstance(item, dict)
+        for point in [_point3(item.get("position"))]
+        if point is not None
+    ]
+
+
+def _mission_cross_track_p95(
+    session: Path,
+    waypoints: list[tuple[float, float, float]],
+) -> tuple[float | None, int]:
+    if len(waypoints) < 2:
+        return None, 0
+    distances: list[float] = []
+    for item in _samples(session / "samples.jsonl"):
+        if item.get("stream") != "ground_truth_odometry":
+            continue
+        position = _point3(item.get("payload", {}).get("position"))
+        if position is None:
+            continue
+        distances.append(min(
+            _segment_distance_2d(position, waypoints[index], waypoints[index + 1])
+            for index in range(len(waypoints) - 1)
+        ))
+    return _p(distances, 0.95), len(distances)
+
+
+def _mission_acceptance(
+    session: Path,
+    config: dict[str, Any],
+    scenario: dict[str, Any],
+    workspace: Path,
+) -> dict[str, Any]:
+    """Validate mission completion independently from the scenario process.
+
+    ``scenario.json`` is an observation produced by the runner and may contain
+    an optimistic terminal outcome. This gate is intentionally report-owned so
+    a missing completion event, incomplete waypoint coverage, or bad tracking
+    cannot become a quality PASS merely because the process exited cleanly.
+    Fail-closed scenarios are excluded because not completing the mission is
+    their expected result.
+    """
+    session_config = _load_yaml_dict(session / "scenario_config.yaml")
+    scenario_parameters = session_config.get("scenario", {})
+    if not isinstance(scenario_parameters, dict):
+        scenario_parameters = {}
+    if not scenario_parameters:
+        fallback = config.get("scenario", {})
+        scenario_parameters = fallback if isinstance(fallback, dict) else {}
+
+    expected_outcome = str(
+        scenario.get("expected_outcome", scenario_parameters.get("expected_outcome", "complete"))
+    )
+    execution = str(scenario_parameters.get("execution", ""))
+    waypoint_count = int(_number(
+        scenario_parameters.get("mission_waypoint_count", scenario.get("mission_waypoint_count", 0)),
+        0.0,
+    ))
+    enabled = execution == "mission" or waypoint_count > 0 or "mission_complete_observed" in scenario
+    result: dict[str, Any] = {
+        "enabled": enabled,
+        "expected_outcome": expected_outcome,
+        "mission_waypoint_count": waypoint_count,
+        "mission_complete_observed": scenario.get("mission_complete_observed"),
+        # Goal publications are useful planner diagnostics only. They are not
+        # evidence that the vehicle entered a waypoint acceptance radius.
+        "goal_indices": list(scenario.get("goal_indices", [])),
+        "waypoint_acceptance_indices": [],
+        "waypoint_acceptance_complete": None,
+        "cross_track_error_p95_m": None,
+        "cross_track_sample_count": 0,
+        "max_cross_track_p95_m": _acceptance_threshold(config, session_config),
+        "reasons": [],
+    }
+    if not enabled or expected_outcome == "fail_closed":
+        return result
+
+    reasons = result["reasons"]
+    if str(scenario.get("outcome", "")) == "COMPLETE" and not bool(
+        scenario.get("mission_complete_observed", False)
+    ):
+        reasons.append("mission COMPLETE without mission_complete_observed")
+    elif not bool(scenario.get("mission_complete_observed", False)):
+        reasons.append("mission completion event was not observed")
+
+    raw_goal_indices = scenario.get("goal_indices", [])
+    goal_indices: list[int] = []
+    if isinstance(raw_goal_indices, list):
+        for value in raw_goal_indices:
+            try:
+                goal_indices.append(int(value))
+            except (TypeError, ValueError):
+                continue
+    expected_indices = list(range(max(0, waypoint_count)))
+    allow_initial_skip = bool(scenario_parameters.get("allow_initial_pass_through_skip", False))
+    result["goal_indices"] = goal_indices
+    if waypoint_count <= 0:
+        reasons.append("mission_waypoint_count is not configured")
+
+    raw_acceptance_events = scenario.get("waypoint_acceptance_events")
+    accepted_indices: list[int] = []
+    if isinstance(raw_acceptance_events, list):
+        for event in raw_acceptance_events:
+            if isinstance(event, dict):
+                if event.get("waypoint_accepted") is False:
+                    continue
+                value = event.get("accepted_waypoint_index")
+            else:
+                # Keep the parser tolerant of a compact artifact representation
+                # while retaining acceptance events as the sole authority.
+                value = event
+            try:
+                accepted_indices.append(int(value))
+            except (TypeError, ValueError):
+                continue
+    result["waypoint_acceptance_indices"] = accepted_indices
+    valid_acceptance_indices = accepted_indices == expected_indices or (
+        allow_initial_skip and bool(expected_indices) and accepted_indices == expected_indices[1:]
+    )
+    result["waypoint_acceptance_complete"] = (
+        valid_acceptance_indices if waypoint_count > 0 else False
+    )
+    if not isinstance(raw_acceptance_events, list):
+        reasons.append("waypoint acceptance evidence is unavailable")
+    elif waypoint_count <= 0:
+        pass
+    elif not valid_acceptance_indices:
+        reasons.append(
+            "waypoint acceptance coverage incomplete: "
+            f"expected {expected_indices}, got {accepted_indices}"
+        )
+
+    waypoints = _mission_waypoints_for_acceptance(session, session_config, workspace)
+    cross_track_p95, sample_count = _mission_cross_track_p95(session, waypoints)
+    result["cross_track_error_p95_m"] = cross_track_p95
+    result["cross_track_sample_count"] = sample_count
+    if cross_track_p95 is None:
+        reasons.append("tracking cross-track p95 is unavailable")
+    elif cross_track_p95 > result["max_cross_track_p95_m"]:
+        reasons.append(
+            "tracking cross-track p95 exceeded "
+            f"{result['max_cross_track_p95_m']:.3f} m "
+            f"(observed {cross_track_p95:.3f} m)"
+        )
+    if str(scenario.get("outcome", "")) != "COMPLETE":
+        reasons.append(f"mission did not reach COMPLETE outcome: {scenario.get('outcome', 'UNKNOWN')}")
+    return result
+
+
 def _samples(path: Path) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     if not path.is_file():
@@ -1430,6 +1662,8 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     scenario_reasons = list(scenario.get("failures", []))
     reasons.extend(str(item) for item in scenario_reasons)
     reasons.extend(failures)
+    acceptance = _mission_acceptance(session, config, scenario, workspace)
+    reasons.extend(str(item) for item in acceptance["reasons"])
     verdict = "PASS" if not reasons else "FAIL"
     if workflow == "external-mode":
         outcome = str(scenario.get("outcome", ""))
@@ -1483,6 +1717,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "residuals": residuals,
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
+        "acceptance": acceptance,
         "tracking": {
             "reference_vs_lio": "NOT_AVAILABLE",
             "reference_vs_ground_truth": "NOT_AVAILABLE",

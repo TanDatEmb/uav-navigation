@@ -157,6 +157,7 @@ class ExternalModeScenario:
         self.operator_aborted = False
         self.mode_status_state: int | None = None
         self.mode_status_reason: int | None = None
+        self.waypoint_acceptance_events: list[dict[str, Any]] = []
         self.trajectory_received = 0
         self.trajectory_success_count = 0
         self.latest_trajectory: dict[str, Any] = {}
@@ -675,7 +676,7 @@ class ExternalModeScenario:
     def _mode_status(self, message: Any) -> None:
         self.mode_status_state = int(message.state)
         self.mode_status_reason = int(message.reason)
-        self._record("navigation_mode_status", {
+        record = {
             "state": self.mode_status_state,
             "state_name": _MODE_STATUS_NAMES.get(self.mode_status_state, "UNKNOWN"),
             "reason": self.mode_status_reason,
@@ -683,7 +684,15 @@ class ExternalModeScenario:
             "mission_id": str(message.mission_id),
             "waypoint_index": int(message.waypoint_index),
             "request_id": int(message.request_id),
-        })
+            "waypoint_accepted": bool(message.waypoint_accepted),
+            "accepted_waypoint_index": int(message.accepted_waypoint_index),
+            "acceptance_position_error_m": float(message.acceptance_position_error_m),
+            "acceptance_speed_mps": float(message.acceptance_speed_mps),
+        }
+        if record["waypoint_accepted"]:
+            self.waypoint_acceptance_events.append(record)
+            self._record("waypoint_accepted", record)
+        self._record("navigation_mode_status", record)
 
     def _mode_completed(self, message: Any) -> None:
         if self.external_mode_id is None or int(message.nav_state) != self.external_mode_id:
@@ -1259,6 +1268,28 @@ class ExternalModeScenario:
             failures.append("unexpected RTL observed during External Mode acceptance")
         if self.localization_divergence_failure:
             failures.append("LOCALIZATION_DIVERGENCE watchdog terminated the mission")
+        if expected_outcome == "complete" and self.execution == "mission":
+            expected_count = int(self.config.get("mission_waypoint_count", 0))
+            expected_indices = list(range(max(0, expected_count)))
+            accepted_indices = [
+                int(item["accepted_waypoint_index"])
+                for item in self.waypoint_acceptance_events
+                if bool(item.get("waypoint_accepted", False))
+            ]
+            allow_initial_skip = bool(self.config.get("allow_initial_pass_through_skip", False))
+            valid_acceptance = accepted_indices == expected_indices or (
+                allow_initial_skip and bool(expected_indices) and
+                accepted_indices == expected_indices[1:]
+            )
+            if not self.mission_complete_observed:
+                failures.append("mission completion event was not observed")
+            if expected_count <= 0:
+                failures.append("mission_waypoint_count is not configured")
+            elif not valid_acceptance:
+                failures.append(
+                    "waypoint acceptance coverage incomplete: "
+                    f"expected {expected_indices}, got {accepted_indices}"
+                )
         if expected_outcome != "fail_closed":
             residual_p95 = _percentile(self.lio_position_residual_samples, 0.95)
             if residual_p95 is not None and residual_p95 > 0.35:
@@ -1326,6 +1357,7 @@ class ExternalModeScenario:
             "goal_publish_count": self.goal_publish_count,
             "goal_received_count": self.goal_received_count,
             "goal_indices": self.goal_indices,
+            "waypoint_acceptance_events": self.waypoint_acceptance_events,
             "latest_goal": self.latest_goal,
             "setpoint_count": self.setpoint_count,
             "finite_setpoint_count": self.finite_setpoint_count,

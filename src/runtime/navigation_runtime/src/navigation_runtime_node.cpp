@@ -557,6 +557,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
           "navigation/planner_trace", rclcpp::QoS{rclcpp::KeepLast{50}}.reliable());
   planned_path_publisher_ = create_publisher<nav_msgs::msg::Path>(
       "navigation/visualization/planned_path", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
+  planned_path_nominal_publisher_ = create_publisher<nav_msgs::msg::Path>(
+      "navigation/planned_path_nominal", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
+  planned_path_safety_publisher_ = create_publisher<nav_msgs::msg::Path>(
+      "navigation/planned_path_safety", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
+  planned_path_selected_publisher_ = create_publisher<nav_msgs::msg::Path>(
+      "navigation/planned_path_selected", rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
   navigation_marker_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       "navigation/visualization/markers",
       rclcpp::QoS{rclcpp::KeepLast{1}}.reliable().transient_local());
@@ -940,7 +946,10 @@ void NavigationRuntimeNode::planActiveGoal() {
         selected_hold.trajectory = hold_trajectory;
         auto safety_hold = selected_hold;
         safety_hold.role = navigation_planning::PlanRole::Safety;
-        safety_hold.safety_kind = navigation_planning::SafetyPlanKind::Route;
+        // This artifact is a stationary terminal hold, not a collision-aware
+        // route. Keep the safety kind truthful so the bundle/PX4 adapter and
+        // HTML report do not label a zero-motion hold as a detour route.
+        safety_hold.safety_kind = navigation_planning::SafetyPlanKind::BrakingStop;
         const auto now_stamp = get_clock()->now();
         const auto valid_from = rosTimeFromNanoseconds(now_stamp.nanoseconds());
         trajectory_publisher_->publish(makeTrajectoryMessage(selected_hold, goal_message));
@@ -958,6 +967,8 @@ void NavigationRuntimeNode::planActiveGoal() {
         last_planned_safety_kind_ = selected_hold.safety_kind;
         last_planned_world_generation_ = world.generation();
         last_planned_world_revision_ = world.revision();
+        publishPlanningPaths(
+            selected_hold, selected_hold, safety_hold, goal_message.header, std::nullopt);
         publishNavigationVisualization(selected_hold, goal_message);
         publishPlanningDiagnostics(selected_hold);
       } else {
@@ -1022,7 +1033,12 @@ void NavigationRuntimeNode::planActiveGoal() {
     if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
         elapsed_s >= last_planned_trajectory_->duration_s &&
         state.velocity.norm() <= 0.15 + 1e-6) {
-      held_stop_safe = true;
+      // A non-terminal braking stop is a recovery state, not a reason to
+      // regenerate the same zero-motion trajectory at 5 Hz.  Keep it held
+      // while the world is unchanged; a new map revision is the explicit
+      // trigger that can reveal a recoverable detour. Terminal stops remain
+      // held regardless of map revisions until MissionController advances.
+      held_stop_safe = last_goal_terminal_ || world_unchanged;
     } else if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
                elapsed_s < last_planned_trajectory_->duration_s && world_unchanged) {
       held_stop_safe = true;
@@ -1192,14 +1208,30 @@ void NavigationRuntimeNode::planActiveGoal() {
       // mission waypoint may be orthogonal to the current leg; using that ray
       // as the selector direction is what previously produced repeated
       // anchors and an endpoint tangent that pulled the vehicle backwards.
-      const auto planning_tangent = [&]() {
-        if (state.velocity.allFinite() && state.velocity.norm() > 0.1) {
-          return state.velocity.normalized();
+      const auto planning_tangent = [&]() -> navigation_mapping::Vec3 {
+        const auto mission_delta = requested_goal - state.position;
+        const double mission_distance = mission_delta.norm();
+        // A new mission request is a deliberate leg transition.  The measured
+        // velocity still belongs to the previous leg (for example northbound
+        // at [48, 5] while the next target is westbound at [41, 5]); using it
+        // as the safety horizon direction sends the fallback past the new
+        // waypoint and can create an unbounded reverse detour.  Keep measured
+        // velocity for rolling replans of the same request, but seed a new
+        // request from its actual goal direction.
+        if (!goal_unchanged && std::isfinite(mission_distance) && mission_distance > 1e-6) {
+          return (mission_delta / mission_distance).eval();
         }
-        const auto fallback = requested_goal - state.position;
-        return fallback.norm() > 1e-6 ? fallback.normalized()
-                                     : navigation_mapping::Vec3::Zero();
+        if (state.velocity.allFinite() && state.velocity.norm() > 0.1) {
+          return state.velocity.normalized().eval();
+        }
+        if (std::isfinite(mission_distance) && mission_distance > 1e-6) {
+          return (mission_delta / mission_distance).eval();
+        }
+        return navigation_mapping::Vec3::Zero();
       }();
+      navigation_mapping::Vec3 planning_projection_tangent =
+          navigation_mapping::Vec3::UnitX();
+      if (planning_tangent.norm() > 1e-6) planning_projection_tangent = planning_tangent;
       const double map_forward_distance = forwardMapDistance(
           world, state.position, planning_tangent, planning_horizon_boundary_margin_m_);
       navigation_planning::HorizonPolicyConfig horizon_config;
@@ -1224,6 +1256,76 @@ void NavigationRuntimeNode::planActiveGoal() {
                                           ? planning_horizon.forward_distance_m
                                           : 0.0;
       last_planning_horizon_distance_m_ = horizon_distance;
+      // The selector's cheap endpoint test is not a reachability proof.  A
+      // point can be KnownFree while the straight corridor from the current
+      // splice pose crosses an Unknown pocket or a newly occupied voxel.  Use
+      // a conservative observed-corridor prefilter before allowing that point
+      // to become the rolling target; A* and the trajectory verifier remain
+      // authoritative for the complete route/spline.
+      const double selector_resolution = world.resolution(
+          navigation_mapping::WorldLayer::Inflated);
+      const double selector_step = std::isfinite(selector_resolution) && selector_resolution > 0.0
+                                       ? std::max(0.10, 0.5 * selector_resolution)
+                                       : 0.10;
+      const auto selector_start_index = world.worldToGrid(
+          navigation_mapping::WorldLayer::Inflated, state.position);
+      const auto selector_bounds = world.bounds(navigation_mapping::WorldLayer::Inflated);
+      const double selector_start_radius =
+          planner_config_.allow_unknown_start &&
+                  std::isfinite(planner_config_.unknown_start_radius_m) &&
+                  planner_config_.unknown_start_radius_m >= 0.0 &&
+                  std::isfinite(selector_resolution) && selector_resolution > 0.0
+              ? planner_config_.unknown_start_radius_m +
+                    0.5 * selector_resolution * std::sqrt(3.0)
+              : 0.0;
+      const auto observed_corridor = [&](const navigation_mapping::Vec3& candidate) {
+        if (!candidate.allFinite()) return false;
+        const auto delta = candidate - state.position;
+        const double distance = delta.norm();
+        if (!std::isfinite(distance)) return false;
+        const int samples = std::max(1, static_cast<int>(std::ceil(distance / selector_step)));
+        for (int sample = 1; sample <= samples; ++sample) {
+          const double alpha = static_cast<double>(sample) / samples;
+          const auto point = state.position + alpha * delta;
+          const auto index = world.worldToGrid(
+              navigation_mapping::WorldLayer::Inflated, point);
+          if (!selector_bounds.contains(index)) return false;
+          const bool trusted_start = planner_config_.allow_unknown_start &&
+                                     (index == selector_start_index ||
+                                      (point - state.position).norm() <=
+                                          selector_start_radius + 1e-9);
+          if (!trusted_start && world.cellState(
+                  navigation_mapping::WorldLayer::Inflated, index) !=
+                  navigation_mapping::CellState::KnownFree) {
+            return false;
+          }
+        }
+        return true;
+      };
+      // A safety/recovery trajectory may temporarily rotate the measured
+      // velocity away from the mission leg.  Do not let that measured
+      // velocity redefine the rolling horizon and turn a transient braking
+      // failure into a valid route behind the active waypoint.  A small
+      // backward allowance is useful for a lateral obstacle escape, but a
+      // multi-metre reverse route is a mission-progress violation and must
+      // fail closed into the braking-stop path instead.
+      const auto mission_progress_guard = [&](const navigation_mapping::Vec3& candidate) {
+        if (!observed_corridor(candidate)) return false;
+        const auto mission_delta = requested_goal - state.position;
+        const double mission_distance = mission_delta.norm();
+        if (!std::isfinite(mission_distance) || mission_distance <= 1e-6) return true;
+        const auto mission_unit = mission_delta / mission_distance;
+        const double backward_allowance_m = std::max(0.5, 2.0 * selector_resolution);
+        const auto tangent_unit = planning_tangent.norm() > 1e-6
+                                      ? planning_tangent.normalized()
+                                      : mission_unit;
+        const bool tangent_points_away_from_goal =
+            tangent_unit.dot(mission_unit) < -0.15;
+        const double minimum_mission_progress = tangent_points_away_from_goal
+                                                    ? std::max(0.25, 2.0 * selector_resolution)
+                                                    : -backward_allowance_m;
+        return (candidate - state.position).dot(mission_unit) >= minimum_mission_progress;
+      };
       // Keep the previous horizon anchor only as a soft continuity prior. It
       // is revalidated by the selector on this very planning tick and is
       // discarded as soon as it is behind the predicted splice state, no
@@ -1246,16 +1348,21 @@ void NavigationRuntimeNode::planActiveGoal() {
       // makes the planner fail closed at the vehicle's current pose. A
       // PlanningHorizon is therefore always selected and refreshed here; it
       // is never exposed as a mission waypoint to MissionController.
-      auto local_goal = selectPlanningHorizon(world, state.position, requested_goal,
-                                               local_goal_boundary_margin_m_,
-                                               horizon_distance,
-                                               previous_horizon_goal, planning_tangent);
-      // The selector and A* read the rolling map through separate calls.  A
+      // The rolling horizon is a planner execution boundary, not a mission
+      // waypoint.  Always bound A*/trajectory generation to the current
+      // sliding map, even when LOCAL_SUBGOAL_ENABLED=0 is supplied by a legacy
+      // launch script.  The mission controller still evaluates acceptance
+      // against requested_goal, so this cannot cause a local anchor to be
+      // reported as a completed mission waypoint.
+      LocalGoalSelection local_goal = selectPlanningHorizon(
+          world, state.position, requested_goal, local_goal_boundary_margin_m_, horizon_distance,
+          previous_horizon_goal, planning_tangent, mission_progress_guard);
+      // The selector and A* read the rolling map through separate calls. A
       // lidar update can invalidate a just-selected direct waypoint between
-      // those calls (the diagnostics then show Direct followed by an
-      // UNKNOWN goal cell).  Re-check that boundary and immediately fall
-      // back to the bounded receding-horizon target; otherwise a harmless
-      // map revision becomes a braking stop at every orthogonal waypoint.
+      // those calls (the diagnostics then show Direct followed by an UNKNOWN
+      // goal cell). Re-check that boundary and immediately fall back to the
+      // bounded receding-horizon target; otherwise a harmless map revision
+      // becomes a braking stop at every orthogonal waypoint.
       if (local_goal.status == LocalGoalSelectionStatus::Direct) {
         const auto direct_index = world.worldToGrid(
             navigation_mapping::WorldLayer::Inflated, requested_goal);
@@ -1285,9 +1392,9 @@ void NavigationRuntimeNode::planActiveGoal() {
         }
         if (!direct_horizon_known_free) {
           local_goal = selectPlanningHorizon(world, state.position, requested_goal,
-                                             local_goal_boundary_margin_m_,
-                                             horizon_distance,
-                                             previous_horizon_goal, planning_tangent);
+                                             local_goal_boundary_margin_m_, horizon_distance,
+                                             previous_horizon_goal, planning_tangent,
+                                             mission_progress_guard);
         }
       }
       if (local_goal.usesSubGoal()) {
@@ -1331,8 +1438,7 @@ void NavigationRuntimeNode::planActiveGoal() {
       last_planning_state_velocity_ = state.velocity;
       last_horizon_forward_projection_m_ = local_goal.forward_projection_m;
       last_horizon_progress_m_ = (local_goal.goal - state.position).dot(
-          planning_tangent.norm() > 1e-6 ? planning_tangent
-                                         : navigation_mapping::Vec3::UnitX());
+          planning_projection_tangent);
       last_horizon_ray_occupied_ = local_goal.occupied_on_forward_ray;
       if (local_goal.success()) {
         const bool same_endpoint = previous_was_subgoal &&
@@ -1458,6 +1564,13 @@ void NavigationRuntimeNode::planActiveGoal() {
               next_leg_direction.norm() > 1e-6) {
             return next_leg_direction;
           }
+          if (!goal_unchanged && direction_to_goal.norm() > 1e-6) {
+            // The request changed at a pass-through corner.  Turn toward the
+            // current waypoint immediately; retaining the old velocity here
+            // would make the endpoint velocity and safety horizon follow the
+            // previous leg after the mission controller has already advanced.
+            return direction_to_goal;
+          }
           // Until a pass-through waypoint is actually inside its acceptance
           // radius, retain the incoming tangent.  Applying the next-leg
           // direction several metres early was the source of the observed
@@ -1467,8 +1580,13 @@ void NavigationRuntimeNode::planActiveGoal() {
           }
           return direction_to_goal;
         }();
+        const bool local_goal_requires_reversal =
+            state.velocity.allFinite() && state.velocity.norm() > 0.1 &&
+            direction_to_goal.allFinite() && direction_to_goal.norm() > 1e-6 &&
+            direction_to_goal.normalized().dot(state.velocity.normalized()) < -0.25;
         if (state.velocity.allFinite() && state.velocity.norm() > 0.1 &&
-            direction.norm() > 1e-6 && !near_pass_through_corner) {
+            direction.norm() > 1e-6 && !near_pass_through_corner &&
+            !local_goal_requires_reversal) {
           const auto incoming = state.velocity.normalized();
           if (direction.normalized().dot(incoming) < -0.25) {
             ++horizon_backward_rejection_count_;
@@ -1515,6 +1633,50 @@ void NavigationRuntimeNode::planActiveGoal() {
       }
       last_goal_terminal_ = goal.terminal;
       last_terminal_velocity_ = goal.terminal_velocity;
+      // Nominal planning may intentionally terminate in a freshly observed
+      // Unknown cell.  The safety candidate must not share that endpoint:
+      // A* correctly rejects Unknown for safety, which previously converted
+      // every rolling cycle into a braking stop when the selector and map
+      // update raced.  Keep nominal on the requested rolling endpoint, but
+      // derive a separately verified KnownFree endpoint for the backup.
+      navigation_planning::Goal safety_goal = goal;
+      const auto isKnownFreePlanningCell = [&](const navigation_mapping::Vec3& point) {
+        if (!point.allFinite()) return false;
+        const auto safety_bounds = world.bounds(navigation_mapping::WorldLayer::Inflated);
+        const auto safety_index = world.worldToGrid(
+            navigation_mapping::WorldLayer::Inflated, point);
+        return safety_bounds.contains(safety_index) &&
+               world.cellState(navigation_mapping::WorldLayer::Inflated, safety_index) ==
+                   navigation_mapping::CellState::KnownFree;
+      };
+      if (planner_config_.allow_nominal_unknown &&
+          !isKnownFreePlanningCell(safety_goal.position)) {
+        const double map_resolution = world.resolution(navigation_mapping::WorldLayer::Inflated);
+        const double retry_step = std::isfinite(map_resolution) && map_resolution > 0.0
+                                      ? std::max(0.4, 2.0 * map_resolution)
+                                      : 0.4;
+        const double initial_distance = std::isfinite(last_planning_horizon_distance_m_) &&
+                                                last_planning_horizon_distance_m_ > 0.0
+                                            ? last_planning_horizon_distance_m_
+                                            : planning_horizon_max_distance_m_;
+        for (int retry = 0; retry < 8; ++retry) {
+          const double retry_distance = std::max(
+              retry_step, initial_distance - static_cast<double>(retry) * retry_step);
+          const auto safety_horizon = selectPlanningHorizon(
+              world, state.position, requested_goal, local_goal_boundary_margin_m_,
+              retry_distance, std::nullopt, planning_tangent, mission_progress_guard);
+          if (!safety_horizon.success() ||
+              !isKnownFreePlanningCell(safety_horizon.goal)) {
+            continue;
+          }
+          safety_goal.position = safety_horizon.goal;
+          safety_goal.terminal = false;
+          safety_goal.terminal_velocity = navigation_mapping::Vec3::Zero();
+          break;
+        }
+      }
+      last_safety_goal_position_ = safety_goal.position;
+      last_safety_goal_known_free_ = isKnownFreePlanningCell(safety_goal.position);
       const auto validate = [&](navigation_planning::PlanResult candidate) {
         if (!candidate.success) return candidate;
         const auto verification = trajectory_verifier_.verify(
@@ -1575,8 +1737,46 @@ void NavigationRuntimeNode::planActiveGoal() {
         }
         nominal_candidate = nominal_result;
         ++safety_route_plan_count_;
-        auto safety_result = planner_.planSafetyRoute(state, goal, world);
+        auto safety_result = planner_.planSafetyRoute(state, safety_goal, world);
+        last_safety_route_failure_code_ = safety_result.failure_code;
         safety_result = validate(safety_result);
+        if (!safety_result.success) {
+          last_safety_route_failure_code_ = safety_result.failure_code;
+          // A KnownFree endpoint is not sufficient for a safety route: the
+          // lateral detour selected for nominal planning may still be
+          // separated from the vehicle by Unknown cells.  Before falling
+          // back to a one-point brake, search the already observed forward
+          // prefix and use the farthest KnownFree endpoint that A* can
+          // actually connect to.  This preserves fail-closed behaviour while
+          // preventing an avoidable braking-stop loop in front of a newly
+          // revealed obstacle.
+          const double prefix_step = std::isfinite(map_resolution) && map_resolution > 0.0
+                                         ? std::max(0.5, 3.0 * map_resolution)
+                                         : 0.6;
+          const double prefix_limit = std::min(
+              std::max(prefix_step, last_known_free_horizon_m_ - safety_stop_margin_m_),
+              std::max(prefix_step, last_planning_horizon_distance_m_));
+          for (int retry = 0; retry < 8 && !safety_result.success; ++retry) {
+            const double prefix_distance = prefix_limit -
+                                           static_cast<double>(retry) * prefix_step;
+            if (!std::isfinite(prefix_distance) || prefix_distance <= 0.5) break;
+            const auto prefix_position = state.position + prefix_distance * planning_tangent;
+            if (!isKnownFreePlanningCell(prefix_position)) continue;
+            auto prefix_goal = safety_goal;
+            prefix_goal.position = prefix_position;
+            prefix_goal.terminal = true;
+            prefix_goal.terminal_velocity = navigation_mapping::Vec3::Zero();
+            auto prefix_result = planner_.planSafetyRoute(state, prefix_goal, world);
+            last_safety_route_failure_code_ = prefix_result.failure_code;
+            prefix_result = validate(prefix_result);
+            if (prefix_result.success) {
+              safety_goal = prefix_goal;
+              last_safety_goal_position_ = safety_goal.position;
+              last_safety_goal_known_free_ = true;
+              safety_result = std::move(prefix_result);
+            }
+          }
+        }
         if (safety_result.success) ++safety_route_verified_count_;
         if (!safety_result.success) {
           auto safety_state = state;
@@ -1584,6 +1784,43 @@ void NavigationRuntimeNode::planActiveGoal() {
           safety_result = validate(planner_.planSafetyStop(safety_state, world));
         }
         safety_candidate = safety_result;
+        const auto recordCandidateTelemetry = [&](const navigation_planning::PlanResult& candidate,
+                                                  bool nominal) {
+          const auto& optimization = candidate.statistics.trajectory_optimization;
+          if (nominal) {
+            last_nominal_raw_path_node_count_ = optimization.raw_path_node_count;
+            last_nominal_corridor_checked_count_ =
+                candidate.statistics.corridor.checked_sample_count;
+            last_nominal_corridor_blocked_count_ =
+                candidate.statistics.corridor.blocked_sample_count;
+            last_nominal_collision_free_ = optimization.collision_free;
+            last_nominal_dynamic_limits_satisfied_ = optimization.dynamic_limits_satisfied;
+            last_nominal_duration_s_ = optimization.duration_s;
+            last_nominal_max_velocity_mps_ = optimization.maximum_velocity_mps;
+            last_nominal_max_acceleration_mps2_ = optimization.maximum_acceleration_mps2;
+            last_nominal_max_deceleration_mps2_ = optimization.maximum_deceleration_mps2;
+            last_nominal_max_jerk_mps3_ = optimization.maximum_jerk_mps3;
+            last_nominal_geometric_path_length_m_ =
+                optimization.geometric_path_length_m;
+            last_nominal_trajectory_length_m_ = optimization.trajectory_length_m;
+            last_nominal_objective_cost_ = optimization.objective_cost;
+            last_nominal_collision_check_failure_count_ =
+                optimization.collision_check_failure_count;
+            last_nominal_first_collision_position_ =
+                optimization.first_collision_position;
+          } else {
+            last_safety_raw_path_node_count_ = optimization.raw_path_node_count;
+            last_safety_corridor_checked_count_ =
+                candidate.statistics.corridor.checked_sample_count;
+            last_safety_corridor_blocked_count_ =
+                candidate.statistics.corridor.blocked_sample_count;
+            last_safety_collision_free_ = optimization.collision_free;
+            last_safety_dynamic_limits_satisfied_ = optimization.dynamic_limits_satisfied;
+            last_safety_duration_s_ = optimization.duration_s;
+          }
+        };
+        recordCandidateTelemetry(nominal_result, true);
+        recordCandidateTelemetry(safety_result, false);
         last_nominal_failure_code_ = nominal_result.failure_code;
         last_safety_failure_code_ = safety_result.failure_code;
         if (nominal_result.success && safety_result.success) {
@@ -1645,13 +1882,38 @@ void NavigationRuntimeNode::planActiveGoal() {
       if (!result.success) {
         result.world_generation = world.generation();
         result.world_revision = world.revision();
-        // A failed bundle must never advertise a stale candidate as a backup.
-        nominal_candidate.success = false;
-        safety_candidate.success = false;
-        nominal_candidate.trajectory.points.clear();
-        nominal_candidate.trajectory.duration_s = 0.0;
-        safety_candidate.trajectory.points.clear();
-        safety_candidate.trajectory.duration_s = 0.0;
+        // A failed dual-verification decision may still have a valid safety
+        // candidate. Promote it instead of serializing a Safety selection with
+        // safety_available=false. If both route candidates failed, create and
+        // verify an explicit braking stop as the only legal fail-closed
+        // publication. The PX4 adapter must receive either a valid safety
+        // trajectory or no bundle at all; a contradictory legacy bundle makes
+        // the adapter reject the handover on every planning tick.
+        if (safety_candidate.success) {
+          result = safety_candidate;
+          result.role = navigation_planning::PlanRole::Safety;
+        } else {
+          auto safety_state = state;
+          safety_state.acceleration = navigation_mapping::Vec3::Zero();
+          auto stop_candidate = planner_.planSafetyStop(safety_state, world);
+          stop_candidate = validate(stop_candidate);
+          if (stop_candidate.success) {
+            safety_candidate = stop_candidate;
+            result = stop_candidate;
+            result.role = navigation_planning::PlanRole::Safety;
+          } else {
+            // A failed bundle must never advertise a stale candidate as a
+            // backup. The invalid single-trajectory publication below is
+            // retained for watchdog/diagnostic consumers, but no legacy or V2
+            // bundle is emitted without a valid safety branch.
+            nominal_candidate.success = false;
+            safety_candidate.success = false;
+            nominal_candidate.trajectory.points.clear();
+            nominal_candidate.trajectory.duration_s = 0.0;
+            safety_candidate.trajectory.points.clear();
+            safety_candidate.trajectory.duration_s = 0.0;
+          }
+        }
       }
 
       if (result.success && result.safety_kind == navigation_planning::SafetyPlanKind::Route) {
@@ -1703,13 +1965,12 @@ void NavigationRuntimeNode::planActiveGoal() {
         last_planned_trajectory_ = result.trajectory;
         last_planned_role_ = result.role;
         last_planned_safety_kind_ = result.safety_kind;
-        // A stop for a terminal waypoint is a committed terminal action. A
-        // stop for a rolling local subgoal/pass-through is only a transient
-        // safety fallback: map updates may reveal the lateral detour on the
-        // next tick, so keep replanning enabled instead of latching the UAV
-        // at the first unknown/blocked voxel.
+        // A braking stop is a committed recovery action for this goal. For a
+        // pass-through waypoint it is released only by a newer map revision;
+        // this prevents an endless stop/replan loop while preserving a path
+        // to recovery when mapping reveals a new corridor.
         braking_stop_latched_ =
-            last_goal_terminal_ && result.role == navigation_planning::PlanRole::Safety &&
+            result.role == navigation_planning::PlanRole::Safety &&
             result.safety_kind == navigation_planning::SafetyPlanKind::BrakingStop;
       } else {
         plan_valid_from_delay_s_ = 0.0;
@@ -1739,47 +2000,34 @@ void NavigationRuntimeNode::planActiveGoal() {
                                             !had_valid_plan_before_cycle &&
                                             !safety_candidate.success;
   if (defer_initial_invalid_bundle) {
-    nav_msgs::msg::Path empty_path;
-    empty_path.header.frame_id = planning_frame_id_;
-    empty_path.header.stamp = get_clock()->now();
-    planned_path_publisher_->publish(empty_path);
+    publishPlanningPaths(result, nominal_candidate, safety_candidate, goal_message.header,
+                         full_nominal_visualization_trajectory);
     publishNavigationVisualization(result, goal_message);
     publishPlanningDiagnostics(result);
     return;
   }
   trajectory_publisher_->publish(makeTrajectoryMessage(result, goal_message));
-  const auto now_stamp = get_clock()->now();
-  const auto valid_from = rosTimeFromNanoseconds(
-      now_stamp.nanoseconds() + static_cast<std::int64_t>(plan_valid_from_delay_s_ * 1e9));
-  trajectory_bundle_publisher_->publish(makeTrajectoryBundleMessage(
-      result, nominal_candidate, safety_candidate, goal_message, valid_from, next_bundle_id_,
-      last_bundle_id_));
-  if (safety_candidate.success) {
-    trajectory_bundle_v2_publisher_->publish(makeTrajectoryBundleV2Message(
-        result, nominal_candidate, safety_candidate, goal_message, valid_from,
-        next_bundle_id_, last_bundle_id_));
-  }
-  last_bundle_id_ = next_bundle_id_++;
   if (result.success) {
-    // Publish the full nominal trajectory as a planning artifact whenever it
-    // exists.  PX4 still receives the selected committed prefix through
-    // `result` and the atomic bundle; visualization must expose the complete
-    // corridor so a 40 m map is not mistaken for a 1 s planner horizon.
-    if (full_nominal_visualization_trajectory.has_value() &&
-        result.role != navigation_planning::PlanRole::Safety) {
-      auto visualization_result = result;
-      visualization_result.trajectory = *full_nominal_visualization_trajectory;
-      planned_path_publisher_->publish(
-          makePathMessage(visualization_result, goal_message.header));
-    } else {
-      planned_path_publisher_->publish(makePathMessage(result, goal_message.header));
+    const auto now_stamp = get_clock()->now();
+    const auto valid_from = rosTimeFromNanoseconds(
+        now_stamp.nanoseconds() + static_cast<std::int64_t>(plan_valid_from_delay_s_ * 1e9));
+    trajectory_bundle_publisher_->publish(makeTrajectoryBundleMessage(
+        result, nominal_candidate, safety_candidate, goal_message, valid_from, next_bundle_id_,
+        last_bundle_id_));
+    if (safety_candidate.success) {
+      trajectory_bundle_v2_publisher_->publish(makeTrajectoryBundleV2Message(
+          result, nominal_candidate, safety_candidate, goal_message, valid_from,
+          next_bundle_id_, last_bundle_id_));
     }
+    last_bundle_id_ = next_bundle_id_++;
   } else {
-    nav_msgs::msg::Path empty_path;
-    empty_path.header.frame_id = planning_frame_id_;
-    empty_path.header.stamp = get_clock()->now();
-    planned_path_publisher_->publish(empty_path);
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "No verified trajectory candidate for mission=%s waypoint=%u; suppressing invalid bundle",
+        goal_message.mission_id.c_str(), goal_message.waypoint_index);
   }
+  publishPlanningPaths(result, nominal_candidate, safety_candidate, goal_message.header,
+                       full_nominal_visualization_trajectory);
   publishNavigationVisualization(result, goal_message);
   publishPlanningDiagnostics(result);
 }
@@ -1982,6 +2230,52 @@ nav_msgs::msg::Path NavigationRuntimeNode::makePathMessage(
   return path;
 }
 
+void NavigationRuntimeNode::publishPlanningPaths(
+    const navigation_planning::PlanResult& selected,
+    const navigation_planning::PlanResult& nominal,
+    const navigation_planning::PlanResult& safety,
+    const std_msgs::msg::Header& header,
+    const std::optional<navigation_planning::TimeParameterizedTrajectory>&
+        full_nominal_trajectory) {
+  const auto makeEmptyPath = [&]() {
+    nav_msgs::msg::Path path;
+    path.header = header;
+    path.header.frame_id = planning_frame_id_;
+    path.header.stamp = get_clock()->now();
+    return path;
+  };
+  const auto makeCandidatePath = [&](const navigation_planning::PlanResult& candidate,
+                                     const std::optional<
+                                         navigation_planning::TimeParameterizedTrajectory>&
+                                         full_trajectory) {
+    if (!candidate.success) return makeEmptyPath();
+    if (full_trajectory.has_value()) {
+      auto full_candidate = candidate;
+      full_candidate.trajectory = *full_trajectory;
+      return makePathMessage(full_candidate, header);
+    }
+    return makePathMessage(candidate, header);
+  };
+
+  // The nominal candidate is the only trajectory currently retained in both
+  // full and PX4 commitment-prefix forms. Safety and selected use their full
+  // runtime trajectory when valid; invalid candidates are deliberately
+  // represented by an empty Path instead of stale visualization data.
+  const auto nominal_path = makeCandidatePath(nominal, full_nominal_trajectory);
+  const auto safety_path = makeCandidatePath(safety, std::nullopt);
+  const auto selected_full_trajectory =
+      selected.role == navigation_planning::PlanRole::Safety
+          ? std::optional<navigation_planning::TimeParameterizedTrajectory>{}
+          : full_nominal_trajectory;
+  const auto selected_path = makeCandidatePath(selected, selected_full_trajectory);
+
+  planned_path_nominal_publisher_->publish(nominal_path);
+  planned_path_safety_publisher_->publish(safety_path);
+  planned_path_selected_publisher_->publish(selected_path);
+  // Keep the migration topic and its existing selected/full-nominal behavior.
+  planned_path_publisher_->publish(selected_path);
+}
+
 void NavigationRuntimeNode::publishNavigationVisualization(
     const navigation_planning::PlanResult& result,
     const navigation_interfaces::msg::NavigationGoal& goal) {
@@ -2024,32 +2318,11 @@ void NavigationRuntimeNode::publishNavigationVisualization(
              1.0F, "next_mission_goal");
   }
 
-  visualization_msgs::msg::Marker trajectory_marker;
-  trajectory_marker.header.frame_id = planning_frame_id_;
-  trajectory_marker.header.stamp = stamp;
-  trajectory_marker.ns = "active_plan";
-  trajectory_marker.id = 3;
-  trajectory_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-  trajectory_marker.action = visualization_msgs::msg::Marker::ADD;
-  trajectory_marker.scale.x = 0.08;
-  trajectory_marker.color.r = result.role == navigation_planning::PlanRole::Safety ? 1.0F : 0.1F;
-  trajectory_marker.color.g = result.role == navigation_planning::PlanRole::Safety ? 0.2F : 1.0F;
-  trajectory_marker.color.b = 0.1F;
-  trajectory_marker.color.a = result.success ? 0.95F : 0.0F;
-  for (const auto& point : result.trajectory.points) {
-    geometry_msgs::msg::Point marker_point;
-    marker_point.x = point.position.x();
-    marker_point.y = point.position.y();
-    marker_point.z = point.position.z();
-    trajectory_marker.points.push_back(marker_point);
-  }
-  array.markers.push_back(trajectory_marker);
-
   visualization_msgs::msg::Marker status;
   status.header.frame_id = planning_frame_id_;
   status.header.stamp = stamp;
   status.ns = "planner_status";
-  status.id = 4;
+  status.id = 3;
   status.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
   status.action = visualization_msgs::msg::Marker::ADD;
   status.pose.position.x = goal.target.x;
@@ -2190,6 +2463,54 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
       keyValue("last_failure_code", failureName(last_failure_code_)),
       keyValue("last_nominal_failure_code", failureName(last_nominal_failure_code_)),
       keyValue("last_safety_failure_code", failureName(last_safety_failure_code_)),
+      keyValue("last_safety_route_failure_code",
+               failureName(last_safety_route_failure_code_)),
+      keyValue("safety_goal_x", std::to_string(last_safety_goal_position_.x())),
+      keyValue("safety_goal_y", std::to_string(last_safety_goal_position_.y())),
+      keyValue("safety_goal_z", std::to_string(last_safety_goal_position_.z())),
+      keyValue("safety_goal_known_free", last_safety_goal_known_free_ ? "true" : "false"),
+      keyValue("nominal_raw_path_node_count",
+               std::to_string(last_nominal_raw_path_node_count_)),
+      keyValue("nominal_corridor_checked_count",
+               std::to_string(last_nominal_corridor_checked_count_)),
+      keyValue("nominal_corridor_blocked_count",
+               std::to_string(last_nominal_corridor_blocked_count_)),
+      keyValue("nominal_collision_free", last_nominal_collision_free_ ? "true" : "false"),
+      keyValue("nominal_dynamic_limits_satisfied",
+               last_nominal_dynamic_limits_satisfied_ ? "true" : "false"),
+      keyValue("nominal_duration_s", std::to_string(last_nominal_duration_s_)),
+      keyValue("nominal_max_velocity_mps",
+               std::to_string(last_nominal_max_velocity_mps_)),
+      keyValue("nominal_max_acceleration_mps2",
+               std::to_string(last_nominal_max_acceleration_mps2_)),
+      keyValue("nominal_max_deceleration_mps2",
+               std::to_string(last_nominal_max_deceleration_mps2_)),
+      keyValue("nominal_max_jerk_mps3",
+               std::to_string(last_nominal_max_jerk_mps3_)),
+      keyValue("nominal_geometric_path_length_m",
+               std::to_string(last_nominal_geometric_path_length_m_)),
+      keyValue("nominal_trajectory_length_m",
+               std::to_string(last_nominal_trajectory_length_m_)),
+      keyValue("nominal_objective_cost",
+               std::to_string(last_nominal_objective_cost_)),
+      keyValue("nominal_collision_check_failure_count",
+               std::to_string(last_nominal_collision_check_failure_count_)),
+      keyValue("nominal_first_collision_x",
+               std::to_string(last_nominal_first_collision_position_.x())),
+      keyValue("nominal_first_collision_y",
+               std::to_string(last_nominal_first_collision_position_.y())),
+      keyValue("nominal_first_collision_z",
+               std::to_string(last_nominal_first_collision_position_.z())),
+      keyValue("safety_raw_path_node_count",
+               std::to_string(last_safety_raw_path_node_count_)),
+      keyValue("safety_corridor_checked_count",
+               std::to_string(last_safety_corridor_checked_count_)),
+      keyValue("safety_corridor_blocked_count",
+               std::to_string(last_safety_corridor_blocked_count_)),
+      keyValue("safety_collision_free", last_safety_collision_free_ ? "true" : "false"),
+      keyValue("safety_dynamic_limits_satisfied",
+               last_safety_dynamic_limits_satisfied_ ? "true" : "false"),
+      keyValue("safety_duration_s", std::to_string(last_safety_duration_s_)),
       keyValue("last_nominal_verification_failure",
                verificationFailureName(last_nominal_verification_failure_)),
       keyValue("last_safety_verification_failure",

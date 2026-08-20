@@ -24,6 +24,25 @@ class RuntimeContractTest(unittest.TestCase):
         for name in ("build-debug", "build-gprof", "install-debug", "log-debug"):
             self.assertIn(ROOT / name, runner.GENERATED_CLEAN_PATHS)
 
+    def test_runtime_lock_rejects_a_second_owner(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            lock_path = Path(temporary) / ".runtime.lock"
+            first = runner.RuntimeLock(lock_path)
+            with first:
+                second = runner.RuntimeLock(lock_path)
+                with self.assertRaises(runner.RuntimeBusyError) as context:
+                    second.__enter__()
+                self.assertIn("already owns", str(context.exception))
+                self.assertIsNone(second._file)
+
+    def test_runtime_lock_releases_after_context_exit(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            lock_path = Path(temporary) / ".runtime.lock"
+            with runner.RuntimeLock(lock_path):
+                pass
+            with runner.RuntimeLock(lock_path):
+                pass
+
     def test_clean_preserves_incremental_build_and_install_trees(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             root = Path(temporary)
@@ -124,7 +143,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(dual_parameters["navigation"]["planner"]["allow_nominal_unknown"])
             self.assertEqual(
                 dual_parameters["navigation"]["planner"]["nominal_commitment_horizon_s"],
-                1.5,
+                3.0,
             )
 
     def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
@@ -161,7 +180,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_open": 1.5,
             "long_open_slow": 0.8,
             "long_featured": 1.5,
-            "long_three_pillars": 1.4,
+            "long_three_pillars": 3.0,
             "no_path": 1.0,
             "occlusion_featured": 1.0,
             "occlusion_degenerate": 1.0,
@@ -233,7 +252,7 @@ class RuntimeContractTest(unittest.TestCase):
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
             navigation = parameters["navigation"]
             mapping = parameters["mapping"]
-            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 15.0)
+            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 30.0)
             self.assertEqual(navigation["planning_horizon"]["minimum_distance_m"], 10.0)
             self.assertEqual(navigation["planning_horizon"]["maximum_distance_m"], 30.0)
             self.assertEqual(navigation["planning_horizon"]["preview_time_s"], 5.0)
@@ -241,6 +260,18 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(navigation["collision"]["safety_margin_m"], 0.25)
             self.assertEqual(mapping["raycast"]["max_range_m"], 40.0)
             self.assertEqual(mapping["map"]["local_size_m"], [70.0, 40.0, 12.0])
+
+    def test_long_three_pillars_acceptance_allows_obstacle_detour(self) -> None:
+        self.assertEqual(
+            runner._map_registry()["long_three_pillars"]["route_segment_waypoints"],
+            [0, 1],
+        )
+        # The profile-specific route deviation limit is applied when the
+        # scenario artifact is generated; open-space profiles retain 0.5 m.
+        self.assertEqual(
+            runner._acceptance_threshold_for_profile("long_three_pillars"),
+            3.0,
+        )
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(

@@ -314,10 +314,17 @@ inline BsplineGenerationResult generateBsplineTrajectory(
   result.trajectory.degree = degree;
   result.trajectory.knot_dt_s = config.knot_dt_s;
   result.trajectory.control_points.resize(control_count);
-  const double control_span_count = static_cast<double>(control_count - degree);
+  // The control polygon must cover the complete reference polyline.  Using
+  // span_count here compresses the interpolation to the first spans and
+  // places every trailing control point at the endpoint.  For degree five
+  // that creates a long artificial dwell/turn near the goal, which makes the
+  // rolling trajectory fail acceleration, jerk, and collision checks even on
+  // a straight free corridor.  Parameterise by the actual control-point
+  // count; span_count is only the duration/knot count.
+  const double control_point_count = static_cast<double>(control_count);
   for (std::size_t index = 0; index < control_count; ++index) {
-    const double alpha = control_span_count > 1.0
-                             ? static_cast<double>(index) / (control_span_count - 1.0)
+    const double alpha = control_point_count > 1.0
+                             ? static_cast<double>(index) / (control_point_count - 1.0)
                              : 0.0;
     result.trajectory.control_points[index] =
         detail::interpolatePolyline(waypoints, alpha * length);

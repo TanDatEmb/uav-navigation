@@ -309,9 +309,13 @@ TEST(PlannerTest, SafetyStopUsesConfiguredDeceleration) {
   const auto result = Planner(config).planSafetyStopForTest(state, world);
 
   ASSERT_TRUE(result.success);
-  EXPECT_NEAR(result.trajectory.duration_s, 2.0, 1e-9);
+  const double expected_peak_acceleration = 0.995;
+  const double expected_ramp_duration =
+      expected_peak_acceleration / (0.995 * config.limits.max_jerk_mps3);
+  EXPECT_NEAR(result.trajectory.duration_s,
+              2.0 / expected_peak_acceleration + expected_ramp_duration, 1e-9);
   EXPECT_NEAR(result.trajectory.points.back().velocity.norm(), 0.0, 1e-12);
-  EXPECT_DOUBLE_EQ(result.statistics.trajectory_optimization.maximum_acceleration_mps2, 1.0);
+  EXPECT_DOUBLE_EQ(result.statistics.trajectory_optimization.maximum_acceleration_mps2, 0.995);
 }
 
 TEST(PlannerTest, SafetyStopTreatsSmallSettlingVelocityAsStationary) {

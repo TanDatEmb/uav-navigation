@@ -191,7 +191,8 @@ void NavigationMode::setPositionControlHandover(std::function<void()> callback) 
   position_control_handover_ = std::move(callback);
 }
 
-void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason) {
+void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
+                                   const MissionControllerEvent* event) {
   if (!status_publisher_ || !mission_ || !mission_controller_) return;
   navigation_interfaces::msg::NavigationModeStatus status;
   status.header.stamp = node().get_clock()->now();
@@ -201,6 +202,13 @@ void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason) {
   status.request_id = mission_controller_->activeRequestId();
   status.state = state;
   status.reason = reason;
+  if (event != nullptr && event->waypoint_accepted) {
+    status.waypoint_accepted = true;
+    status.accepted_waypoint_index =
+        static_cast<std::uint32_t>(event->accepted_waypoint_index);
+    status.acceptance_position_error_m = event->acceptance_position_error_m;
+    status.acceptance_speed_mps = event->acceptance_speed_mps;
+  }
   status_publisher_->publish(status);
   last_status_state_ = state;
 }
@@ -638,6 +646,8 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       goal.next_target.z = next_waypoint->position_enu.z();
     }
     goal_publisher_->publish(goal);
+    publishStatus(navigation_interfaces::msg::NavigationModeStatus::ACTIVE,
+                  navigation_interfaces::msg::NavigationModeStatus::NONE, &event);
     RCLCPP_DEBUG(node().get_logger(), "Published mission waypoint %zu (%s)",
                  event.waypoint_index, waypoint.id.c_str());
     return;
@@ -663,7 +673,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       mission_complete_published_ = true;
     }
     publishStatus(navigation_interfaces::msg::NavigationModeStatus::COMPLETE,
-                  navigation_interfaces::msg::NavigationModeStatus::NONE);
+                  navigation_interfaces::msg::NavigationModeStatus::NONE, &event);
     completed(px4_ros2::Result::Success);
     return;
   }

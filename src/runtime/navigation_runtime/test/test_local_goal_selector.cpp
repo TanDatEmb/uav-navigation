@@ -131,6 +131,36 @@ TEST(LocalGoalSelectorTest, RollingHorizonCarriesForwardDirectionAroundObstacle)
   EXPECT_GT(result.tangent.dot(navigation_mapping::Vec3::UnitX()), 0.0);
 }
 
+TEST(LocalGoalSelectorTest, ReorientsWhenActiveWaypointIsBehindIncomingTangent) {
+  const BoxWorld world;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{-20.0, 0.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX());
+  ASSERT_TRUE(result.success());
+  EXPECT_TRUE(result.usesSubGoal());
+  EXPECT_LT(result.goal.x(), -1.5);
+  EXPECT_LT(result.tangent.dot(navigation_mapping::Vec3::UnitX()), -0.8);
+}
+
+TEST(LocalGoalSelectorTest, TurnsTowardNearOrthogonalWaypointBeforeItIsPassed) {
+  const BoxWorld world;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{2.0, -2.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX(), [](const navigation_mapping::Vec3& candidate) {
+        // Force the selector to exercise its bounded near-goal search rather
+        // than accepting the mission endpoint directly.
+        return candidate.x() <= 1.5;
+      });
+  ASSERT_TRUE(result.success());
+  EXPECT_TRUE(result.usesSubGoal());
+  const auto mission_direction = navigation_mapping::Vec3{2.0, -2.0, 0.0}.normalized();
+  EXPECT_GT(result.tangent.dot(mission_direction), 0.9);
+  EXPECT_LT(result.goal.y(), -0.5);
+  EXPECT_LE(result.goal.x(), 1.5 + 1e-9);
+}
+
 TEST(LocalGoalSelectorTest, DoesNotAcceptUnknownMissionGoal) {
   BoxWorld world;
   world.unknown = true;
@@ -161,6 +191,21 @@ TEST(LocalGoalSelectorTest, SelectsLateralDetourWhenRayIsOccupied) {
                             world.worldToGrid(navigation_mapping::WorldLayer::Inflated,
                                               result.goal)),
             navigation_mapping::CellState::KnownFree);
+}
+
+TEST(LocalGoalSelectorTest, RejectsKnownFreeEndpointWithoutObservedCorridor) {
+  BoxWorld world;
+  world.occupied = true;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{20.0, 0.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX(),
+      [](const navigation_mapping::Vec3& candidate) {
+        return std::abs(candidate.y()) > 0.5;
+      });
+  ASSERT_TRUE(result.success());
+  EXPECT_TRUE(result.usesSubGoal());
+  EXPECT_GT(std::abs(result.goal.y()), 0.5);
 }
 
 TEST(LocalGoalSelectorTest, FailsClosedWithoutKnownFreeLocalGoal) {

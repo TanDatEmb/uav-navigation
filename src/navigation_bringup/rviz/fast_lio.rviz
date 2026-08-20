@@ -122,7 +122,7 @@ Visualization Manager:
       Head Length: 0.3
       Line Style: Lines
       Line Width: 0.08
-      Name: Navigation / Planned Trajectory
+      Name: Navigation / Selected Commitment (green)
       Offset:
         X: 0
         Y: 0
@@ -136,11 +136,52 @@ Visualization Manager:
         Value: /navigation/visualization/planned_path
       Use Timestamp: false
 
+    - Class: rviz_default_plugins/Path
+      Color: 40; 140; 255
+      Enabled: true
+      Head Diameter: 0.20
+      Head Length: 0.20
+      Line Style: Lines
+      Line Width: 0.04
+      Name: Navigation / Nominal Full Candidate (blue)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Style: None
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /navigation/planned_path_nominal
+      Use Timestamp: false
+
+    - Class: rviz_default_plugins/Path
+      Color: 255; 170; 40
+      Enabled: true
+      Head Diameter: 0.20
+      Head Length: 0.20
+      Line Style: Lines
+      Line Width: 0.05
+      Name: Navigation / Safety Verified Fallback (amber)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Style: None
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /navigation/planned_path_safety
+      Use Timestamp: false
+
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Navigation / Goals and Planner State
+      Name: Navigation / Goals and Planner State (paths below)
       Namespaces:
-        active_plan: true
         effective_local_goal: true
         mission_goal: true
         next_mission_goal: true

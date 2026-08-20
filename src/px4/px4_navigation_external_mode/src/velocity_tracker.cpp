@@ -70,7 +70,18 @@ Eigen::Vector3d VelocityTracker::update(const TrajectorySample& current_referenc
     if (current_direction.dot(preview_direction) > 0.5) {
       const double longitudinal_command = command.dot(current_direction);
       if (longitudinal_command < 0.0) {
+        // Only the position-feedback term is stale when a rolling replan
+        // starts slightly behind the vehicle.  Removing the whole
+        // longitudinal command makes the tracker lose its forward
+        // feed-forward velocity; the acceleration/jerk limiter then decays
+        // the command toward zero and the vehicle crawls at every replan.
+        // Keep the preview tangent's forward component and discard only the
+        // contradictory feedback component.  Braking trajectories have a
+        // zero preview component and therefore retain their normal stop.
+        const double preview_longitudinal =
+            std::max(0.0, preview_reference.velocity_enu.dot(current_direction));
         command -= longitudinal_command * current_direction;
+        command += preview_longitudinal * current_direction;
         ++forward_guard_count_;
       }
     }

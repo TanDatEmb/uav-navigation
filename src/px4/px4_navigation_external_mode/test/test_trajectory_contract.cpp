@@ -340,6 +340,26 @@ TEST(VelocityTracker, ForwardGuardPreventsReverseCommandOnStraightCorridor) {
   EXPECT_GT(tracker.forwardGuardCount(), 0U);
 }
 
+TEST(VelocityTracker, ForwardGuardPreservesPreviewFeedForward) {
+  px4_navigation_external_mode::VelocityTrackerConfig config;
+  config.position_gain = 1.0;
+  config.max_acceleration_mps2 = 2.0;
+  config.max_position_error_m = 10.0;
+  px4_navigation_external_mode::VelocityTracker tracker(config);
+  px4_navigation_external_mode::TrajectorySample current;
+  current.velocity_enu = Eigen::Vector3d{1.0, 0.0, 0.0};
+  px4_navigation_external_mode::TrajectorySample preview = current;
+
+  // The vehicle is ahead of the newly spliced reference.  Position feedback
+  // alone would request reverse motion, but the tracker must keep the
+  // trajectory's forward feed-forward component instead of collapsing to a
+  // lateral/zero command.
+  const auto command = tracker.update(current, preview, Eigen::Vector3d{2.0, 0.0, 0.0}, 0.1);
+  EXPECT_GT(command.x(), 0.0);
+  EXPECT_NEAR(command.x(), 0.2, 1e-9);
+  EXPECT_GT(tracker.forwardGuardCount(), 0U);
+}
+
 TEST(VelocityTracker, ForwardGuardDoesNotBlockAChangingCornerTangent) {
   px4_navigation_external_mode::VelocityTrackerConfig config;
   config.position_gain = 1.0;

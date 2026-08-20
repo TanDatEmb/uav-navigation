@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -74,7 +75,10 @@ template <typename Model>
                                                       preferred_goal = std::nullopt,
                                                   const std::optional<navigation_mapping::Vec3>&
                                                       forward_direction = std::nullopt,
-                                                  bool reuse_preferred = true) {
+                                                  bool reuse_preferred = true,
+                                                  const std::function<bool(
+                                                      const navigation_mapping::Vec3&)>&
+                                                      candidate_validator = {}) {
   LocalGoalSelection result;
   if (!start.allFinite() || !requested.allFinite() || !std::isfinite(boundary_margin_m) ||
       boundary_margin_m < 0.0 || !std::isfinite(max_distance_m) || max_distance_m <= 0.0) {
@@ -133,6 +137,9 @@ template <typename Model>
     // selector.
     return known_free(point);
   };
+  const auto candidate_is_valid = [&](const navigation_mapping::Vec3& point) {
+    return !candidate_validator || candidate_validator(point);
+  };
 
   const auto mission_direction = requested - start;
   const double mission_direction_norm = mission_direction.norm();
@@ -141,13 +148,34 @@ template <typename Model>
     return result;
   }
 
-  const auto direction = [&]() -> navigation_mapping::Vec3 {
+  const auto incoming_direction = [&]() -> navigation_mapping::Vec3 {
     if (forward_direction.has_value() && forward_direction->allFinite() &&
         forward_direction->norm() > 1e-6) {
       return *forward_direction;
     }
     return mission_direction;
   }();
+  const auto incoming_unit_direction = incoming_direction.normalized();
+  const double incoming_goal_projection = mission_direction.dot(incoming_unit_direction);
+  // A rolling tangent is useful while the mission waypoint is genuinely far
+  // outside the local window.  Once the waypoint is within one configured
+  // horizon, however, continuing to project along the old tangent can carry
+  // the vehicle past a lateral/orthogonal waypoint before that waypoint has
+  // become KnownFree.  The same re-orientation is mandatory when the current
+  // tangent points away from the active waypoint: retaining it makes the
+  // selector accept a small forward step on every cycle and walk the vehicle
+  // farther away from a goal that is behind an obstacle detour. A* still
+  // chooses the safe side of an obstacle.
+  const bool waypoint_is_near = mission_direction_norm <= max_distance_m + resolution;
+  const bool incoming_misses_near_waypoint =
+      !std::isfinite(incoming_goal_projection) ||
+      incoming_goal_projection < 0.75 * mission_direction_norm;
+  const bool incoming_points_away_from_waypoint =
+      std::isfinite(incoming_goal_projection) && incoming_goal_projection < -0.5 * resolution;
+  const auto direction = ((waypoint_is_near && incoming_misses_near_waypoint) ||
+                          incoming_points_away_from_waypoint)
+                             ? mission_direction
+                             : incoming_direction;
   const double direction_norm = direction.norm();
   if (!std::isfinite(direction_norm) || direction_norm <= 1e-9) {
     result.status = LocalGoalSelectionStatus::NoUsableSubGoal;
@@ -165,6 +193,7 @@ template <typename Model>
   const auto unit_direction = direction / direction_norm;
   const double requested_forward_projection = (requested - start).dot(unit_direction);
   if (inside_inset(requested) && horizon_known_free(requested) &&
+      candidate_is_valid(requested) &&
       requested_forward_projection >= -0.5 * resolution) {
     result.status = LocalGoalSelectionStatus::Direct;
     result.goal = requested;
@@ -189,7 +218,7 @@ template <typename Model>
   // completion loop.  The old API keeps the compatibility behaviour for
   // existing callers/tests; selectPlanningHorizon() disables that reuse.
   if (reuse_preferred && preferred_goal.has_value() && preferred_goal->allFinite() &&
-      horizon_known_free(*preferred_goal)) {
+      horizon_known_free(*preferred_goal) && candidate_is_valid(*preferred_goal)) {
     const double preferred_projection = (*preferred_goal - start).dot(unit_direction);
     if (preferred_projection > 0.5 * resolution &&
         preferred_projection <= search_distance + resolution) {
@@ -263,7 +292,7 @@ template <typename Model>
                                                       first_occupied_index.z + dz};
           if (!bounds.contains(index)) continue;
           const auto candidate = world.gridToWorld(layer, index);
-          if (!horizon_known_free(candidate)) continue;
+          if (!horizon_known_free(candidate) || !candidate_is_valid(candidate)) continue;
           const auto delta = candidate - start;
           const double distance = delta.norm();
           if (!std::isfinite(distance) || distance <= 0.5 * resolution ||
@@ -319,7 +348,7 @@ template <typename Model>
     for (int step = longitudinal_steps; step >= 1; --step) {
       const double distance = std::min(search_distance, step * resolution);
       const auto ray_point = start + distance * unit_direction;
-      if (!known_free(ray_point)) continue;
+      if (!known_free(ray_point) || !candidate_is_valid(ray_point)) continue;
       const auto ray_index = world.worldToGrid(layer, ray_point);
       if (!bounds.contains(ray_index)) continue;
       result.status = LocalGoalSelectionStatus::LocalSubGoal;
@@ -353,7 +382,7 @@ template <typename Model>
                                                       ray_index.z + dz};
           if (!bounds.contains(index)) continue;
           const auto candidate = world.gridToWorld(layer, index);
-          if (!horizon_known_free(candidate)) continue;
+          if (!horizon_known_free(candidate) || !candidate_is_valid(candidate)) continue;
           const double projection = (candidate - start).dot(unit_direction);
           const double lateral_error = (candidate - (start + projection * unit_direction)).squaredNorm();
           if (projection <= 0.5 * resolution || projection > search_distance + resolution) {
@@ -407,9 +436,10 @@ template <typename Model>
     const navigation_mapping::Vec3& requested, double boundary_margin_m,
     double max_distance_m = 5.0,
     const std::optional<navigation_mapping::Vec3>& preferred_endpoint = std::nullopt,
-    const std::optional<navigation_mapping::Vec3>& forward_direction = std::nullopt) {
+    const std::optional<navigation_mapping::Vec3>& forward_direction = std::nullopt,
+    const std::function<bool(const navigation_mapping::Vec3&)>& candidate_validator = {}) {
   return selectLocalGoal(world, start, requested, boundary_margin_m, max_distance_m,
-                         preferred_endpoint, forward_direction, false);
+                         preferred_endpoint, forward_direction, false, candidate_validator);
 }
 
 }  // namespace navigation_runtime

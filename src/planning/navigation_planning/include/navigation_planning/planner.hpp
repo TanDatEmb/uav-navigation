@@ -65,7 +65,11 @@ struct PlannerConfig {
   double corridor_sample_spacing_m{0.0};
   // Keep enough retries for dynamic-limit recovery without making every
   // rolling replan spend most of its budget in rejected candidates.
-  int maximum_time_scaling_iterations{5};
+  // B-spline derivatives scale as dt^-n.  Short rolling corridors with a
+  // measured splice velocity can need more than five geometric retries before
+  // both acceleration and jerk fit the envelope; failing at that arbitrary
+  // cap produces a false corridor failure and an unnecessary braking stop.
+  int maximum_time_scaling_iterations{8};
   int bspline_smoothing_iterations{12};
   double bspline_smoothing_step{0.04};
   double bspline_snap_weight{1.0};
@@ -162,6 +166,8 @@ struct TrajectoryOptimizationStatistics {
   std::uint64_t raw_path_node_count{0};
   std::uint64_t simplified_path_node_count{0};
   std::uint64_t shortcut_count{0};
+  std::uint64_t collision_check_failure_count{0};
+  navigation_mapping::Vec3 first_collision_position{navigation_mapping::Vec3::Zero()};
   bool collision_free{false};
   bool dynamic_limits_satisfied{false};
   double duration_s{0.0};
@@ -285,12 +291,86 @@ PlanResult planSafetyStopModel(const PlannerConfig& config, const VehicleState& 
   const double speed = measured_speed > stationary_speed_epsilon_mps
                            ? measured_speed
                            : 0.0;
-  const double acceleration = config.limits.max_deceleration_mps2;
-  const double duration = speed > 1e-9 ? speed / acceleration : 0.0;
+  // Keep the stop inside the same numerical design margin as generated
+  // trajectories.  Using the exact configured limit here makes the sampled
+  // braking envelope sit on the verifier boundary; tiny derivative/rounding
+  // differences then reject the only fail-closed recovery path as
+  // dynamic_limits_exceeded.
+  const double acceleration_limit = 0.995 * config.limits.max_deceleration_mps2;
+  const double jerk_limit = 0.995 * config.limits.max_jerk_mps3;
+  // Use a jerk-limited S-curve instead of switching from zero acceleration to
+  // full braking and then back to zero at the final sample. The latter looks
+  // physically reasonable in a sparse trajectory, but the verifier samples
+  // between emitted points and correctly sees an acceleration step as a
+  // 30 m/s^3 jerk when max_jerk is 8 m/s^3.
+  const double peak_acceleration = speed > 1e-9
+                                        ? std::min(acceleration_limit,
+                                                   std::sqrt(speed * jerk_limit))
+                                        : 0.0;
+  const double ramp_duration = peak_acceleration > 1e-9
+                                   ? peak_acceleration / jerk_limit
+                                   : 0.0;
+  const double plateau_duration = peak_acceleration > 1e-9
+                                      ? std::max(0.0, speed / peak_acceleration - ramp_duration)
+                                      : 0.0;
+  const double duration = 2.0 * ramp_duration + plateau_duration;
+  const auto decelerationAt = [&](double time) {
+    if (peak_acceleration <= 1e-9 || time <= 0.0) return 0.0;
+    if (time < ramp_duration) return jerk_limit * time;
+    if (time < ramp_duration + plateau_duration) return peak_acceleration;
+    if (time < duration) {
+      return std::max(0.0, peak_acceleration -
+                               jerk_limit * (time - ramp_duration - plateau_duration));
+    }
+    return 0.0;
+  };
+  const auto speedAt = [&](double time) {
+    if (speed <= 1e-9 || time <= 0.0) return speed;
+    const double clamped_time = std::min(time, duration);
+    if (clamped_time < ramp_duration) {
+      return std::max(0.0, speed - 0.5 * jerk_limit * clamped_time * clamped_time);
+    }
+    const double speed_after_ramp = speed - 0.5 * peak_acceleration * ramp_duration;
+    if (clamped_time < ramp_duration + plateau_duration) {
+      const double local_time = clamped_time - ramp_duration;
+      return std::max(0.0, speed_after_ramp - peak_acceleration * local_time);
+    }
+    const double speed_after_plateau =
+        speed_after_ramp - peak_acceleration * plateau_duration;
+    const double local_time = std::min(
+        ramp_duration, std::max(0.0, clamped_time - ramp_duration - plateau_duration));
+    return std::max(0.0, speed_after_plateau - peak_acceleration * local_time +
+                             0.5 * jerk_limit * local_time * local_time);
+  };
+  const auto distanceAt = [&](double time) {
+    if (speed <= 1e-9 || time <= 0.0) return 0.0;
+    const double clamped_time = std::min(time, duration);
+    const double ramp_distance = speed * ramp_duration -
+                                 jerk_limit * ramp_duration * ramp_duration * ramp_duration / 6.0;
+    if (clamped_time < ramp_duration) {
+      return speed * clamped_time -
+             jerk_limit * clamped_time * clamped_time * clamped_time / 6.0;
+    }
+    const double speed_after_ramp = speed - 0.5 * peak_acceleration * ramp_duration;
+    const double plateau_distance = speed_after_ramp * plateau_duration -
+                                    0.5 * peak_acceleration * plateau_duration * plateau_duration;
+    if (clamped_time < ramp_duration + plateau_duration) {
+      const double local_time = clamped_time - ramp_duration;
+      return ramp_distance + speed_after_ramp * local_time -
+             0.5 * peak_acceleration * local_time * local_time;
+    }
+    const double speed_after_plateau =
+        speed_after_ramp - peak_acceleration * plateau_duration;
+    const double local_time = std::min(
+        ramp_duration, std::max(0.0, clamped_time - ramp_duration - plateau_duration));
+    return ramp_distance + plateau_distance + speed_after_plateau * local_time -
+           0.5 * peak_acceleration * local_time * local_time +
+           jerk_limit * local_time * local_time * local_time / 6.0;
+  };
   const double spatial_step = std::isfinite(resolution) && resolution > 0.0
                                   ? 0.5 * resolution
                                   : std::numeric_limits<double>::infinity();
-  const double stopping_distance = 0.5 * speed * duration;
+  const double stopping_distance = distanceAt(duration);
   const int time_samples = std::max(
       1, static_cast<int>(std::ceil(duration / config.trajectory_sample_dt_s)));
   const int spatial_samples = std::isfinite(spatial_step)
@@ -298,10 +378,8 @@ PlanResult planSafetyStopModel(const PlannerConfig& config, const VehicleState& 
                                                      std::ceil(stopping_distance / spatial_step)))
                                   : 1;
   const int sample_count = std::max(time_samples, spatial_samples);
-  navigation_mapping::Vec3 braking_acceleration = navigation_mapping::Vec3::Zero();
-  if (speed > 1e-9) {
-    braking_acceleration = -acceleration * state.velocity.normalized();
-  }
+  const auto motion_direction = speed > 1e-9 ? state.velocity.normalized()
+                                             : navigation_mapping::Vec3::Zero();
 
   result.statistics.corridor.segment_count = duration > 0.0 ? 1U : 0U;
   result.statistics.corridor.minimum_clearance_radius_m = world.clearanceRadius();
@@ -310,13 +388,16 @@ PlanResult planSafetyStopModel(const PlannerConfig& config, const VehicleState& 
   for (int sample = 0; sample <= last_sample; ++sample) {
     const double time = duration * static_cast<double>(sample) /
                         static_cast<double>(sample_count);
-    const auto position = state.position + state.velocity * time +
-                          0.5 * braking_acceleration * time * time;
-    const auto velocity = state.velocity + braking_acceleration * time;
+    const auto position = state.position + motion_direction * distanceAt(time);
+    const auto velocity = motion_direction * speedAt(time);
+    const auto acceleration = -motion_direction * decelerationAt(time);
     navigation_mapping::Vec3 clamped_velocity = velocity;
     if (sample == last_sample) {
       clamped_velocity = navigation_mapping::Vec3::Zero();
     }
+    const navigation_mapping::Vec3 emitted_acceleration =
+        sample == last_sample ? navigation_mapping::Vec3::Zero()
+                              : acceleration.eval();
     ++result.statistics.corridor.checked_sample_count;
     if (!isKnownFree(position)) {
       ++result.statistics.corridor.blocked_sample_count;
@@ -325,15 +406,18 @@ PlanResult planSafetyStopModel(const PlannerConfig& config, const VehicleState& 
       return finish();
     }
     result.trajectory.points.push_back(
-        TrajectoryPoint{time, position, clamped_velocity, braking_acceleration});
+        TrajectoryPoint{time, position, clamped_velocity, emitted_acceleration});
   }
-  result.trajectory.points.back().acceleration = navigation_mapping::Vec3::Zero();
   result.trajectory.duration_s = duration;
   result.statistics.trajectory_optimization.sampled_point_count =
       result.trajectory.points.size();
   result.statistics.trajectory_optimization.maximum_velocity_mps = speed;
-  result.statistics.trajectory_optimization.maximum_acceleration_mps2 = acceleration;
-  result.statistics.trajectory_optimization.maximum_deceleration_mps2 = acceleration;
+  result.statistics.trajectory_optimization.maximum_acceleration_mps2 = peak_acceleration;
+  result.statistics.trajectory_optimization.maximum_deceleration_mps2 = peak_acceleration;
+  result.statistics.trajectory_optimization.maximum_jerk_mps3 = jerk_limit;
+  result.statistics.trajectory_optimization.trajectory_length_m = stopping_distance;
+  result.statistics.trajectory_optimization.collision_free = true;
+  result.statistics.trajectory_optimization.dynamic_limits_satisfied = true;
   result.statistics.trajectory_optimization.duration_s = duration;
   bool world_changed = false;
   if constexpr (requires { world.generation(); }) {
@@ -880,6 +964,10 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
         for (const auto& control_point : generation.trajectory.control_points) {
           if (!traversable(control_point)) {
             collision_free = false;
+            ++result.statistics.trajectory_optimization.collision_check_failure_count;
+            if (result.statistics.trajectory_optimization.collision_check_failure_count == 1U) {
+              result.statistics.trajectory_optimization.first_collision_position = control_point;
+            }
             break;
           }
         }
@@ -894,6 +982,11 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
                               static_cast<double>(samples);
           if (!traversable(generation.trajectory.evaluatePosition(time))) {
             collision_free = false;
+            ++result.statistics.trajectory_optimization.collision_check_failure_count;
+            if (result.statistics.trajectory_optimization.collision_check_failure_count == 1U) {
+              result.statistics.trajectory_optimization.first_collision_position =
+                  generation.trajectory.evaluatePosition(time);
+            }
             break;
           }
         }

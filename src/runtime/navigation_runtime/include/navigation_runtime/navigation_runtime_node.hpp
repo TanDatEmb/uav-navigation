@@ -72,6 +72,13 @@ class NavigationRuntimeNode : public rclcpp::Node {
       std::uint64_t parent_bundle_id) const;
   nav_msgs::msg::Path makePathMessage(const navigation_planning::PlanResult& result,
                                       const std_msgs::msg::Header& header) const;
+  void publishPlanningPaths(
+      const navigation_planning::PlanResult& selected,
+      const navigation_planning::PlanResult& nominal,
+      const navigation_planning::PlanResult& safety,
+      const std_msgs::msg::Header& header,
+      const std::optional<navigation_planning::TimeParameterizedTrajectory>&
+          full_nominal_trajectory);
   void publishMapVisualization();
   void publishNavigationVisualization(
       const navigation_planning::PlanResult& result,
@@ -94,6 +101,9 @@ class NavigationRuntimeNode : public rclcpp::Node {
   rclcpp::Publisher<navigation_interfaces::msg::PlannerCycleTrace>::SharedPtr
       planner_trace_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_nominal_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_safety_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_selected_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr navigation_marker_publisher_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::NavigationGoal>::SharedPtr goal_subscription_;
@@ -188,6 +198,32 @@ class NavigationRuntimeNode : public rclcpp::Node {
       navigation_planning::PlanFailureCode::None};
   navigation_planning::PlanFailureCode last_safety_failure_code_{
       navigation_planning::PlanFailureCode::None};
+  std::uint64_t last_nominal_raw_path_node_count_{0};
+  std::uint64_t last_nominal_corridor_checked_count_{0};
+  std::uint64_t last_nominal_corridor_blocked_count_{0};
+  bool last_nominal_collision_free_{false};
+  bool last_nominal_dynamic_limits_satisfied_{false};
+  double last_nominal_duration_s_{0.0};
+  double last_nominal_max_velocity_mps_{0.0};
+  double last_nominal_max_acceleration_mps2_{0.0};
+  double last_nominal_max_deceleration_mps2_{0.0};
+  double last_nominal_max_jerk_mps3_{0.0};
+  double last_nominal_geometric_path_length_m_{0.0};
+  double last_nominal_trajectory_length_m_{0.0};
+  double last_nominal_objective_cost_{0.0};
+  std::uint64_t last_nominal_collision_check_failure_count_{0};
+  navigation_mapping::Vec3 last_nominal_first_collision_position_{
+      navigation_mapping::Vec3::Zero()};
+  navigation_planning::PlanFailureCode last_safety_route_failure_code_{
+      navigation_planning::PlanFailureCode::None};
+  navigation_mapping::Vec3 last_safety_goal_position_{navigation_mapping::Vec3::Zero()};
+  bool last_safety_goal_known_free_{false};
+  std::uint64_t last_safety_raw_path_node_count_{0};
+  std::uint64_t last_safety_corridor_checked_count_{0};
+  std::uint64_t last_safety_corridor_blocked_count_{0};
+  bool last_safety_collision_free_{false};
+  bool last_safety_dynamic_limits_satisfied_{false};
+  double last_safety_duration_s_{0.0};
   navigation_planning::VerificationFailureCode last_nominal_verification_failure_{
       navigation_planning::VerificationFailureCode::None};
   navigation_planning::VerificationFailureCode last_safety_verification_failure_{

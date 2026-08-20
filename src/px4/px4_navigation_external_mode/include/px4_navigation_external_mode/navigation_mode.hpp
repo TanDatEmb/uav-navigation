@@ -59,7 +59,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void handleMissionEvent(const MissionControllerEvent& event, double now_s);
   void failNavigation(const char* reason);
   void logRuntimeMetrics(const rclcpp::Time& now);
-  void publishStatus(std::uint8_t state, std::uint8_t reason);
+  void publishStatus(std::uint8_t state, std::uint8_t reason,
+                     const MissionControllerEvent* event = nullptr);
 
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
   rclcpp::Subscription<navigation_interfaces::msg::PlannedTrajectoryBundle>::SharedPtr

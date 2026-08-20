@@ -63,4 +63,24 @@ TEST(BsplineTrajectory, InternalKnotsHaveHighOrderContinuity) {
   }
 }
 
+TEST(BsplineTrajectory, ControlPolygonDoesNotDwellAtEndpoint) {
+  BsplineGenerationConfig config;
+  config.knot_dt_s = 0.5;
+  config.sample_dt_s = 0.01;
+  config.smoothing_iterations = 0;
+  config.max_velocity_mps = 100.0;
+  config.max_acceleration_mps2 = 100.0;
+  config.max_deceleration_mps2 = 100.0;
+  config.max_jerk_mps3 = 1000.0;
+  const auto result = navigation_planning::generateBsplineTrajectory(
+      {Vec3{0.0, 0.0, 0.0}, Vec3{4.0, 0.0, 0.0}, Vec3{8.0, 0.0, 0.0}},
+      Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), config);
+
+  ASSERT_TRUE(result.success);
+  ASSERT_GT(result.trajectory.spanCount(), 2U);
+  const auto last_control_point_before_endpoint =
+      result.trajectory.control_points[result.trajectory.spanCount() - 1U];
+  EXPECT_GT((last_control_point_before_endpoint - Vec3{8.0, 0.0, 0.0}).norm(), 0.5);
+}
+
 }  // namespace

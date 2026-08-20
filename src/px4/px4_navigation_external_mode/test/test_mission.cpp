@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -42,6 +43,23 @@ mission:
     output: velocity
     acceptance_confirmation_s: 0.0
 )yaml";
+
+void expectWaypointAccepted(const px4_navigation_external_mode::MissionControllerEvent& event,
+                            std::size_t waypoint_index) {
+  EXPECT_TRUE(event.waypoint_accepted);
+  EXPECT_EQ(event.accepted_waypoint_index, waypoint_index);
+  EXPECT_TRUE(std::isfinite(event.acceptance_position_error_m));
+  EXPECT_TRUE(std::isfinite(event.acceptance_speed_mps));
+  EXPECT_GE(event.acceptance_position_error_m, 0.0);
+  EXPECT_GE(event.acceptance_speed_mps, 0.0);
+}
+
+void expectNoWaypointAccepted(
+    const px4_navigation_external_mode::MissionControllerEvent& event) {
+  EXPECT_FALSE(event.waypoint_accepted);
+  EXPECT_TRUE(std::isfinite(event.acceptance_position_error_m));
+  EXPECT_TRUE(std::isfinite(event.acceptance_speed_mps));
+}
 
 }  // namespace
 
@@ -130,6 +148,7 @@ TEST(MissionController, PublishesWaypointsAndCompletesWithoutFlightActions) {
   event = controller.update(0.2, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
                             Eigen::Vector3d::Zero());
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 0U);
   EXPECT_EQ(event.waypoint_index, 1U);
   EXPECT_EQ(event.request_id, 2U);
   EXPECT_EQ(controller.activeRequestId(), 2U);
@@ -141,6 +160,7 @@ TEST(MissionController, PublishesWaypointsAndCompletesWithoutFlightActions) {
   event = controller.update(0.4, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
                             Eigen::Vector3d::Zero());
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(event, 1U);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Complete);
 }
 
@@ -196,13 +216,14 @@ mission:
                                        Eigen::Vector3d{1.0, 0.0, 0.0});
   EXPECT_EQ(event.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 0U);
   EXPECT_EQ(event.waypoint_index, 1U);
   EXPECT_EQ(controller.state(),
             px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
   EXPECT_EQ(controller.nextWaypoint(), std::nullopt);
 }
 
-TEST(MissionController, PassThroughLookaheadAdvancesBeforeAcceptanceWhenApproaching) {
+TEST(MissionController, PassThroughLookaheadDoesNotBypassAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -226,12 +247,195 @@ mission:
                                  Eigen::Vector3d::Zero());
   ASSERT_EQ(event.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 0U);
   controller.onTrajectory(true, 0.1);
   event = controller.update(0.2, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
                                        Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(event);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  event = controller.update(0.3, Eigen::Vector3d{0.7, 0.0, 3.0}, true,
+                             Eigen::Vector3d{1.0, 0.0, 0.0});
   EXPECT_EQ(event.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 1U);
   EXPECT_EQ(event.waypoint_index, 2U);
+}
+
+TEST(MissionController, PassThroughRequiresMeasuredPositionInsideAcceptanceRadius) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_acceptance_gate
+  frame: lio_odom
+  waypoints:
+    - id: middle
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+
+  const auto outside = controller.update(0.1, Eigen::Vector3d{1.5, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(outside.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(outside);
+  EXPECT_EQ(controller.activeWaypointIndex(), 0U);
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+
+  const auto accepted = controller.update(0.2, Eigen::Vector3d{1.2, 0.0, 3.0}, true,
+                                          Eigen::Vector3d::Zero());
+  EXPECT_EQ(accepted.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(accepted, 0U);
+  EXPECT_EQ(accepted.waypoint_index, 1U);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+}
+
+TEST(MissionController, TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: terminal_acceptance_gate
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+  control:
+    acceptance_confirmation_s: 0.0
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+
+  const auto outside = controller.update(1.0, Eigen::Vector3d{20.0, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(outside.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(outside);
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+
+  const auto inside = controller.update(1.1, Eigen::Vector3d{2.2, 0.0, 3.0}, true,
+                                        Eigen::Vector3d::Zero());
+  EXPECT_EQ(inside.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  EXPECT_EQ(controller.update(1.15, Eigen::Vector3d{2.2, 0.0, 3.0}, true,
+                              Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  const auto complete = controller.update(1.25, Eigen::Vector3d{2.2, 0.0, 3.0}, true,
+                                          Eigen::Vector3d::Zero());
+  EXPECT_EQ(complete.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(complete, 0U);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Complete);
+}
+
+TEST(MissionController, TerminalStopRequiresLowMeasuredSpeed) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: terminal_speed_gate
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+  control:
+    acceptance_speed_mps: 0.2
+    acceptance_confirmation_s: 0.0
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+
+  const auto fast = controller.update(0.1, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                      Eigen::Vector3d{0.5, 0.0, 0.0});
+  EXPECT_EQ(fast.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(fast);
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+
+  const auto stopped = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(stopped.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(stopped);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  const auto complete = controller.update(0.31, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                          Eigen::Vector3d::Zero());
+  EXPECT_EQ(complete.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(complete, 0U);
+}
+
+TEST(MissionController, LostVehicleCannotCompleteMission) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: lost_vehicle_no_complete
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+
+  for (double now_s : {1.0, 2.0, 5.0}) {
+    const auto event = controller.update(now_s, Eigen::Vector3d{100.0, -80.0, 20.0}, true,
+                                         Eigen::Vector3d::Zero());
+    EXPECT_EQ(event.type,
+              px4_navigation_external_mode::MissionControllerEvent::Type::None);
+    expectNoWaypointAccepted(event);
+    EXPECT_NE(controller.state(), px4_navigation_external_mode::MissionControllerState::Complete);
+  }
+  EXPECT_EQ(controller.activeWaypointIndex(), 0U);
 }
 
 TEST(MissionController, RetriesFailedRequestWithoutRegressingCorrelation) {

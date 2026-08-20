@@ -177,12 +177,20 @@ MissionControllerEvent MissionController::update(
       // rather than handing the whole mission to POSCTL.  Stop waypoints keep
       // the fail-closed handover behavior below.
       if (pass_through && inside_acceptance) {
+        const double acceptance_error =
+            (*position - braking_waypoint.position_enu).norm();
+        const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
-          return {MissionControllerEvent::Type::Complete, active_waypoint_index_ - 1U,
-                  request_id_};
+          MissionControllerEvent event{MissionControllerEvent::Type::Complete,
+                                       active_waypoint_index_ - 1U, request_id_};
+          event.waypoint_accepted = true;
+          event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+          event.acceptance_position_error_m = acceptance_error;
+          event.acceptance_speed_mps = acceptance_speed;
+          return event;
         }
         state_ = MissionControllerState::ExecutingWaypoint;
         trajectory_ready_ = false;
@@ -192,7 +200,13 @@ MissionControllerEvent MissionController::update(
         braking_start_time_s_.reset();
         braking_end_time_s_.reset();
         stopped_start_time_s_.reset();
-        return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
+        MissionControllerEvent event{MissionControllerEvent::Type::PublishGoal,
+                                     active_waypoint_index_, request_id_};
+        event.waypoint_accepted = true;
+        event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+        event.acceptance_position_error_m = acceptance_error;
+        event.acceptance_speed_mps = acceptance_speed;
+        return event;
       }
       // For an intermediate pass-through waypoint this is a temporary
       // observation/safety stop, not a terminal fault. Keep External Mode in
@@ -224,43 +238,10 @@ MissionControllerEvent MissionController::update(
     return position.has_value() && position->allFinite() &&
            (*position - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m;
   };
-  const auto passThroughAcceptance = [&]() {
-    if (insideAcceptance()) return true;
-    // Activate the next leg before the nominal acceptance sphere only when
-    // there is a next waypoint and the measured velocity is actually carrying
-    // the vehicle toward the active waypoint.  The lookahead is bounded by a
-    // mission-level parameter, so it cannot silently change stop-waypoint
-    // semantics or accept a receding waypoint while flying away from it.
-    if (waypoint.behavior != MissionWaypoint::Behavior::PassThrough ||
-        mission_.control.pass_through_lookahead_m <= waypoint.acceptance_radius_m ||
-        active_waypoint_index_ + 1U >= mission_.waypoints.size() || !position.has_value() ||
-        !velocity.has_value() || !position->allFinite() || !velocity->allFinite()) {
-      return false;
-    }
-    // A long incoming leg is intentionally allowed to converge to its far
-    // waypoint.  Early activation is reserved for short orthogonal legs,
-    // where the vehicle has insufficient room to reverse a committed tangent
-    // after the knot.  This keeps the long mission leg deterministic while
-    // still shaping the local corner that motivated the lookahead.
-    if (active_waypoint_index_ == 0U ||
-        (waypoint.position_enu -
-         mission_.waypoints[active_waypoint_index_ - 1U].position_enu).norm() > 12.0) {
-      return false;
-    }
-    const auto to_waypoint = waypoint.position_enu - *position;
-    const double distance = to_waypoint.norm();
-    const double speed = velocity->norm();
-    if (!std::isfinite(distance) || !std::isfinite(speed) || speed <= kSafetyStopSpeedMps ||
-        distance > mission_.control.pass_through_lookahead_m) {
-      return false;
-    }
-    // Do not require the instantaneous velocity to point directly at the knot:
-    // an obstacle detour can legitimately carry the vehicle sideways or even
-    // slightly away from the waypoint while still making forward progress on
-    // the committed corridor.  The short-leg bound above and the planner's
-    // collision verification remain the safety gates for this early handoff.
-    return true;
-  };
+  // A pass-through waypoint is still a mission waypoint, not a planner
+  // horizon marker.  Never advance it from lookahead or velocity alone: the
+  // measured position must enter its configured acceptance radius.
+  const auto passThroughAcceptance = [&]() { return insideAcceptance(); };
   const auto slowEnough = [&]() {
     // Waypoint completion is only valid with a measured, finite velocity
     // sample. Missing velocity must not turn a fly-through into an arrival.
@@ -282,19 +263,32 @@ MissionControllerEvent MissionController::update(
     if ((trajectory_ready_ || immediate_pass_through) && inside &&
         (pass_through || slowEnough())) {
       if (pass_through) {
+        const double acceptance_error = (*position - waypoint.position_enu).norm();
+        const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
-          return {MissionControllerEvent::Type::Complete, active_waypoint_index_ - 1U,
-                  request_id_};
+          MissionControllerEvent event{MissionControllerEvent::Type::Complete,
+                                       active_waypoint_index_ - 1U, request_id_};
+          event.waypoint_accepted = true;
+          event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+          event.acceptance_position_error_m = acceptance_error;
+          event.acceptance_speed_mps = acceptance_speed;
+          return event;
         }
         state_ = MissionControllerState::ExecutingWaypoint;
         trajectory_ready_ = false;
         arrival_start_time_s_.reset();
         next_goal_time_s_ = std::numeric_limits<double>::infinity();
         ++request_id_;
-        return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
+        MissionControllerEvent event{MissionControllerEvent::Type::PublishGoal,
+                                     active_waypoint_index_, request_id_};
+        event.waypoint_accepted = true;
+        event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+        event.acceptance_position_error_m = acceptance_error;
+        event.acceptance_speed_mps = acceptance_speed;
+        return event;
       }
       if (!arrival_start_time_s_.has_value()) arrival_start_time_s_ = now_s;
       if (now_s - *arrival_start_time_s_ >= mission_.control.acceptance_confirmation_s) {
@@ -324,19 +318,32 @@ MissionControllerEvent MissionController::update(
       return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
     }
     if (now_s - hold_start_time_s_ >= waypoint.hold_s) {
+      const double acceptance_error = (*position - waypoint.position_enu).norm();
+      const double acceptance_speed = velocity->norm();
       ++active_waypoint_index_;
       if (active_waypoint_index_ >= mission_.waypoints.size()) {
         state_ = MissionControllerState::Complete;
         checkpoint_valid_ = false;
-        return {MissionControllerEvent::Type::Complete, active_waypoint_index_ - 1U,
-                request_id_};
+        MissionControllerEvent event{MissionControllerEvent::Type::Complete,
+                                     active_waypoint_index_ - 1U, request_id_};
+        event.waypoint_accepted = true;
+        event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+        event.acceptance_position_error_m = acceptance_error;
+        event.acceptance_speed_mps = acceptance_speed;
+        return event;
       }
       state_ = MissionControllerState::ExecutingWaypoint;
       trajectory_ready_ = false;
       arrival_start_time_s_.reset();
       next_goal_time_s_ = std::numeric_limits<double>::infinity();
       ++request_id_;
-      return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
+      MissionControllerEvent event{MissionControllerEvent::Type::PublishGoal,
+                                   active_waypoint_index_, request_id_};
+      event.waypoint_accepted = true;
+      event.accepted_waypoint_index = active_waypoint_index_ - 1U;
+      event.acceptance_position_error_m = acceptance_error;
+      event.acceptance_speed_mps = acceptance_speed;
+      return event;
     }
   }
   return {};

@@ -53,6 +53,92 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _acceptance_summary(
+    session: Path,
+    scenario: dict[str, Any],
+    waypoint_count: int,
+    cross_track_p95: float | None,
+) -> dict[str, Any]:
+    """Expose mission acceptance evidence without treating goal publication as acceptance."""
+    report = _load(session / "report.json", {})
+    report_acceptance = report.get("acceptance", {}) if isinstance(report, dict) else {}
+    if not isinstance(report_acceptance, dict):
+        report_acceptance = {}
+
+    events = scenario.get("waypoint_acceptance_events")
+    events_available = isinstance(events, list)
+    event_indices: list[int] = []
+    if events_available:
+        for event in events:
+            value = event.get("accepted_waypoint_index") if isinstance(event, dict) else event
+            if isinstance(event, dict) and event.get("waypoint_accepted") is False:
+                continue
+            try:
+                event_indices.append(int(value))
+            except (TypeError, ValueError):
+                continue
+
+    reported_indices = report_acceptance.get("waypoint_acceptance_indices")
+    if isinstance(reported_indices, list):
+        accepted_indices = list(reported_indices)
+    elif events_available:
+        accepted_indices = event_indices
+    else:
+        accepted_indices = None
+
+    allow_initial_skip = False
+    try:
+        import yaml
+        scenario_config = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
+        scenario_parameters = scenario_config.get("scenario", {}) if isinstance(scenario_config, dict) else {}
+        allow_initial_skip = bool(
+            scenario_parameters.get("allow_initial_pass_through_skip", False)
+        ) if isinstance(scenario_parameters, dict) else False
+    except (ImportError, OSError, ValueError):
+        pass
+
+    expected_indices = list(range(max(0, waypoint_count)))
+    expected_acceptance = expected_indices[1:] if allow_initial_skip and expected_indices else expected_indices
+    acceptance_complete = report_acceptance.get("waypoint_acceptance_complete")
+    if not isinstance(acceptance_complete, bool):
+        acceptance_complete = accepted_indices == expected_acceptance if accepted_indices is not None else False
+
+    threshold = _finite_number(report_acceptance.get("max_cross_track_p95_m"))
+    if threshold is None:
+        threshold = 0.5
+    reasons = report_acceptance.get("reasons")
+    if not isinstance(reasons, list):
+        reasons = []
+        if not bool(scenario.get("mission_complete_observed", False)):
+            reasons.append("mission completion event was not observed")
+        if accepted_indices is None:
+            reasons.append("waypoint acceptance evidence is unavailable")
+        elif not acceptance_complete:
+            reasons.append(
+                f"waypoint acceptance coverage incomplete: expected {expected_acceptance}, got {accepted_indices}"
+            )
+        if cross_track_p95 is None:
+            reasons.append("tracking cross-track p95 is unavailable")
+        elif cross_track_p95 > threshold:
+            reasons.append(
+                f"tracking cross-track p95 exceeded {threshold:.3f} m "
+                f"(observed {cross_track_p95:.3f} m)"
+            )
+
+    return {
+        "mission_complete_observed": scenario.get("mission_complete_observed"),
+        "goal_indices": scenario.get("goal_indices", []),
+        "waypoint_acceptance_events": events if events_available else None,
+        "waypoint_acceptance_indices": accepted_indices,
+        "waypoint_acceptance_complete": acceptance_complete,
+        "expected_waypoint_indices": expected_indices,
+        "initial_pass_through_skip_allowed": allow_initial_skip,
+        "cross_track_p95_m": cross_track_p95,
+        "max_cross_track_p95_m": threshold,
+        "reasons": [str(reason) for reason in reasons],
+    }
+
+
 def _point(value: Any) -> tuple[float, float, float] | None:
     if not isinstance(value, (list, tuple)) or len(value) < 3:
         return None
@@ -181,7 +267,34 @@ def _samples(session: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
 
 def _trajectory_records(session: Path) -> list[dict[str, Any]]:
     scenario = _load(session / "scenario.json", {})
-    records = []
+    # scenario.json keeps the latest history but intentionally does not retain
+    # the publication timestamp of each overlapping rolling trajectory.  Read
+    # the event log first so smoothness can be evaluated on the execution
+    # timeline.  Concatenating the profiles end-to-end is invalid: a 3-second
+    # plan is commonly replaced after ~0.16 s and the profiles overlap.
+    records: list[dict[str, Any]] = []
+    event_log = session / "scenario.jsonl"
+    try:
+        with event_log.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("kind") != "trajectory":
+                    continue
+                payload = event.get("payload")
+                if not isinstance(payload, dict) or not payload.get("position_points"):
+                    continue
+                record = dict(payload)
+                timestamp_ns = _finite_number(event.get("sim_time_ns"))
+                if timestamp_ns is not None:
+                    record["_publish_time_s"] = timestamp_ns / 1e9
+                records.append(record)
+    except OSError:
+        pass
+    if records:
+        return records
     if isinstance(scenario, dict):
         history = scenario.get("trajectory_history", [])
         records = history if isinstance(history, list) and history else scenario.get(
@@ -283,23 +396,44 @@ def _planning_continuity(planning: list[dict[str, Any]]) -> dict[str, Any]:
 def _trajectory_smoothness(
     records: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, list[tuple[float, float]]]]:
-    """Measure continuity of the trajectory artifacts sent to the controller.
+    """Measure continuity of overlapping trajectory artifacts on execution time.
 
     Ground-truth smoothness is useful but can hide a planner handover jump when
-    PX4 filters it. These metrics compare adjacent committed trajectory records
-    and also sample the velocity profiles contained in each record.
+    PX4 filters it.  Each rolling trajectory is published before the previous
+    one expires, so profiles must not be concatenated.  Handover metrics compare
+    the old trajectory evaluated at the next publication timestamp with the new
+    trajectory's first point; this is the signal PX4 can actually see.
     """
     plan_speeds: list[float] = []
     plan_accelerations: list[float] = []
     boundary_velocity_jumps: list[float] = []
     boundary_position_jumps: list[float] = []
     boundary_heading_steps_deg: list[float] = []
-    speed_series: list[tuple[float, float]] = []
+    planned_start_speed_series: list[tuple[float, float]] = []
     velocity_jump_series: list[tuple[float, float]] = []
     heading_step_series: list[tuple[float, float]] = []
-    cursor_s = 0.0
-    previous_end_position: tuple[float, float, float] | None = None
-    previous_end_velocity: tuple[float, float, float] | None = None
+    previous_record: dict[str, Any] | None = None
+    previous_publish_time_s: float | None = None
+    time_anchored = bool(records) and all(
+        _finite_number(record.get("_publish_time_s")) is not None for record in records
+    )
+    handover_expired_count = 0
+
+    def interpolate(
+        points: list[tuple[float, float, float]], offset_s: float, duration_s: float
+    ) -> tuple[float, float, float] | None:
+        if not points:
+            return None
+        if len(points) == 1 or duration_s <= 1e-9:
+            return points[0]
+        normalized = max(0.0, min(1.0, offset_s / duration_s)) * (len(points) - 1)
+        index = min(len(points) - 2, max(0, int(math.floor(normalized))))
+        fraction = normalized - index
+        return tuple(
+            points[index][axis] * (1.0 - fraction) +
+            points[index + 1][axis] * fraction
+            for axis in range(3)
+        )
 
     for record in records:
         positions = [_point(item) for item in record.get("position_points", [])]
@@ -312,53 +446,83 @@ def _trajectory_smoothness(
         point_count = max(len(velocities), len(positions), 1)
         dt = duration / max(1, point_count - 1)
 
+        publish_time_s = _finite_number(record.get("_publish_time_s"))
         first_position = positions[0]
-        if previous_end_position is not None:
-            jump = _distance(first_position, previous_end_position)
-            boundary_position_jumps.append(jump)
-        if velocities:
-            first_velocity = velocities[0]
-            if previous_end_velocity is not None:
-                velocity_jump = _distance(first_velocity, previous_end_velocity)
-                boundary_velocity_jumps.append(velocity_jump)
-                velocity_jump_series.append((cursor_s, velocity_jump))
-                previous_norm = math.sqrt(sum(value * value for value in previous_end_velocity))
-                current_norm = math.sqrt(sum(value * value for value in first_velocity))
-                if previous_norm > 0.05 and current_norm > 0.05:
-                    dot = sum(previous_end_velocity[i] * first_velocity[i] for i in range(3))
-                    angle = math.degrees(math.acos(max(-1.0, min(1.0, dot / (previous_norm * current_norm)))))
-                    boundary_heading_steps_deg.append(angle)
-                    heading_step_series.append((cursor_s, angle))
+        first_velocity = velocities[0] if velocities else None
+        if publish_time_s is not None and first_velocity is not None:
+            planned_start_speed_series.append((publish_time_s, _distance(first_velocity, (0.0, 0.0, 0.0))))
+
+        if (
+            previous_record is not None and
+            publish_time_s is not None and
+            previous_publish_time_s is not None
+        ):
+            elapsed_s = publish_time_s - previous_publish_time_s
+            previous_duration = _finite_number(previous_record.get("duration_s")) or 0.0
+            previous_positions = [
+                item for item in (_point(value) for value in previous_record.get("position_points", []))
+                if item is not None
+            ]
+            previous_velocities = [
+                item for item in (_point(value) for value in previous_record.get("velocity_points", []))
+                if item is not None
+            ]
+            if elapsed_s >= previous_duration - 1e-9:
+                # An expired trajectory is a watchdog/replacement event, not a
+                # smooth handover sample. Keep it visible as a separate count.
+                handover_expired_count += 1
+            elif elapsed_s >= -1e-9 and previous_positions:
+                old_position = interpolate(previous_positions, elapsed_s, previous_duration)
+                if old_position is not None:
+                    boundary_position_jumps.append(_distance(first_position, old_position))
+                if previous_velocities and first_velocity is not None:
+                    old_velocity = interpolate(previous_velocities, elapsed_s, previous_duration)
+                    if old_velocity is not None:
+                        velocity_jump = _distance(first_velocity, old_velocity)
+                        boundary_velocity_jumps.append(velocity_jump)
+                        velocity_jump_series.append((publish_time_s, velocity_jump))
+                        previous_norm = _distance(old_velocity, (0.0, 0.0, 0.0))
+                        current_norm = _distance(first_velocity, (0.0, 0.0, 0.0))
+                        if previous_norm > 0.05 and current_norm > 0.05:
+                            dot = sum(old_velocity[i] * first_velocity[i] for i in range(3))
+                            angle = math.degrees(math.acos(max(
+                                -1.0, min(1.0, dot / (previous_norm * current_norm)))))
+                            boundary_heading_steps_deg.append(angle)
+                            heading_step_series.append((publish_time_s, angle))
 
         for index, velocity in enumerate(velocities):
             speed = math.sqrt(sum(value * value for value in velocity))
             if not math.isfinite(speed):
                 continue
             plan_speeds.append(speed)
-            speed_series.append((cursor_s + index * dt, speed))
             if index > 0 and dt > 1e-9:
                 previous_velocity = velocities[index - 1]
                 acceleration = _distance(velocity, previous_velocity) / dt
                 if math.isfinite(acceleration):
                     plan_accelerations.append(acceleration)
 
-        previous_end_position = positions[-1]
-        if velocities:
-            previous_end_velocity = velocities[-1]
-        cursor_s += max(0.0, duration)
+        previous_record = record
+        previous_publish_time_s = publish_time_s
 
     metrics = {
         "trajectory_record_count": len(records),
         "trajectory_sample_count": len(plan_speeds),
-        "trajectory_duration_s": cursor_s,
+        "trajectory_duration_s": (
+            max((_finite_number(record.get("duration_s")) or 0.0 for record in records), default=0.0)
+            if time_anchored else sum(_finite_number(record.get("duration_s")) or 0.0 for record in records)
+        ),
+        "timeline_time_anchored": time_anchored,
+        "handover_sample_count": len(boundary_velocity_jumps),
+        "handover_expired_count": handover_expired_count,
         "plan_speed_mps": _summary(plan_speeds),
+        "planned_start_speed_mps": _summary([value for _, value in planned_start_speed_series]),
         "plan_velocity_acceleration_mps2": _summary(plan_accelerations),
         "boundary_velocity_jump_mps": _summary(boundary_velocity_jumps),
         "boundary_position_jump_m": _summary(boundary_position_jumps),
         "boundary_heading_step_deg": _summary(boundary_heading_steps_deg),
     }
     return metrics, {
-        "speed": speed_series,
+        "speed": planned_start_speed_series,
         "velocity_jump": velocity_jump_series,
         "heading_step": heading_step_series,
     }
@@ -483,6 +647,12 @@ def _analyze(session: Path) -> dict[str, Any]:
         "route_obstacles": list(descriptor.get("route_obstacles", [])),
         "route_segment_waypoints": list(descriptor.get("route_segment_waypoints", [])),
     }
+    metrics["acceptance"] = _acceptance_summary(
+        session,
+        scenario,
+        len(waypoints),
+        metrics["tracking"]["cross_track_error_m"].get("p95"),
+    )
     return {
         "metrics": metrics,
         "waypoints": waypoints,
@@ -601,19 +771,43 @@ def generate(session: Path) -> Path:
     plan_velocity_jump_series = data["plan_series"]["velocity_jump"]
     plan_heading_step_series = data["plan_series"]["heading_step"]
     metrics = data["metrics"]
+    acceptance = metrics.get("acceptance", {})
     def cell(value: Any, digits: int = 3) -> str:
         return html.escape(_number(value, digits))
+    def json_cell(value: Any) -> str:
+        if value is None:
+            return "n/a"
+        return html.escape(json.dumps(value, sort_keys=True))
+    acceptance_events = acceptance.get("waypoint_acceptance_events")
+    acceptance_events_detail = (
+        f"<details><summary>{len(acceptance_events)} event(s)</summary>"
+        f"<pre>{html.escape(json.dumps(acceptance_events, indent=2, sort_keys=True))}</pre></details>"
+        if isinstance(acceptance_events, list)
+        else "unavailable"
+    )
+    acceptance_reasons = acceptance.get("reasons", [])
+    acceptance_reasons_text = (
+        "none" if not acceptance_reasons else html.escape("; ".join(str(item) for item in acceptance_reasons))
+    )
     table = "".join([
         f"<tr><th>Outcome</th><td>{html.escape(str(metrics['safety'].get('outcome')))}</td></tr>",
+        f"<tr><th>Mission completion observed</th><td>{html.escape(str(acceptance.get('mission_complete_observed')))}</td></tr>",
+        f"<tr><th>Waypoint acceptance indices</th><td>{json_cell(acceptance.get('waypoint_acceptance_indices'))} / expected {json_cell(acceptance.get('expected_waypoint_indices'))}</td></tr>",
+        f"<tr><th>Waypoint acceptance events</th><td>{acceptance_events_detail}</td></tr>",
+        f"<tr><th>Goal indices (diagnostic only)</th><td>{json_cell(acceptance.get('goal_indices'))}</td></tr>",
+        f"<tr><th>Waypoint acceptance complete</th><td>{html.escape(str(acceptance.get('waypoint_acceptance_complete')))}</td></tr>",
+        f"<tr><th>Cross-track p95 / acceptance limit</th><td>{cell(acceptance.get('cross_track_p95_m'))} m / {cell(acceptance.get('max_cross_track_p95_m'))} m</td></tr>",
+        f"<tr><th>Acceptance gate reasons</th><td>{acceptance_reasons_text}</td></tr>",
         f"<tr><th>Mission sim / wall time</th><td>{cell(metrics['mission'].get('duration_sim_s'))} s / {cell(metrics['mission'].get('wall_elapsed_s'))} s</td></tr>",
         f"<tr><th>Longest leg / known horizon</th><td>{cell(metrics['mission'].get('longest_leg_m'))} m / {cell(metrics['planning']['known_free_horizon_m'].get('maximum'))} m</td></tr>",
         f"<tr><th>Rolling planning horizon p50 / max</th><td>{cell(metrics['planning']['planning_horizon_distance_m'].get('p50'))} m / {cell(metrics['planning']['planning_horizon_distance_m'].get('maximum'))} m</td></tr>",
         f"<tr><th>Cross-track RMSE / p95</th><td>{cell(metrics['tracking']['cross_track_error_m'].get('rmse'))} m / {cell(metrics['tracking']['cross_track_error_m'].get('p95'))} m</td></tr>",
         f"<tr><th>Speed mean / p95</th><td>{cell(metrics['tracking']['speed_mps'].get('mean'))} / {cell(metrics['tracking']['speed_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Plan speed mean / p95</th><td>{cell(metrics['smoothness']['plan_speed_mps'].get('mean'))} / {cell(metrics['smoothness']['plan_speed_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Plan boundary velocity jump p95</th><td>{cell(metrics['smoothness']['boundary_velocity_jump_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Plan boundary position jump p95</th><td>{cell(metrics['smoothness']['boundary_position_jump_m'].get('p95'))} m</td></tr>",
-        f"<tr><th>Plan boundary heading step p95</th><td>{cell(metrics['smoothness']['boundary_heading_step_deg'].get('p95'))}°</td></tr>",
+        f"<tr><th>Plan profile speed mean / p95</th><td>{cell(metrics['smoothness']['plan_speed_mps'].get('mean'))} / {cell(metrics['smoothness']['plan_speed_mps'].get('p95'))} m/s</td></tr>",
+        f"<tr><th>Time-aligned handover velocity jump p95</th><td>{cell(metrics['smoothness']['boundary_velocity_jump_mps'].get('p95'))} m/s</td></tr>",
+        f"<tr><th>Time-aligned handover position jump p95</th><td>{cell(metrics['smoothness']['boundary_position_jump_m'].get('p95'))} m</td></tr>",
+        f"<tr><th>Time-aligned handover heading step p95</th><td>{cell(metrics['smoothness']['boundary_heading_step_deg'].get('p95'))}°</td></tr>",
+        f"<tr><th>Handover samples / expired plans</th><td>{cell(metrics['smoothness'].get('handover_sample_count'), 0)} / {cell(metrics['smoothness'].get('handover_expired_count'), 0)}</td></tr>",
         f"<tr><th>PX4 setpoint max / LIO residual p95</th><td>{cell(metrics['control']['setpoint_speed_mps'].get('maximum'))} m/s / {cell(metrics['localization'].get('p95_position_residual_m'))} m</td></tr>",
         f"<tr><th>Planning total p95</th><td>{cell(metrics['planning']['planning_total_us'].get('p95'))} µs</td></tr>",
         f"<tr><th>Replans / local subgoals</th><td>{cell(metrics['planning'].get('full_replan_count'), 0)} / {cell(metrics['planning'].get('local_subgoal_selected_count'), 0)}</td></tr>",
@@ -649,7 +843,7 @@ def generate(session: Path) -> Path:
         f"{trace_rows}</table>"
         f"<details><summary>Raw rolling trace JSON</summary><pre>{html.escape(json.dumps(trace_records, indent=2, sort_keys=True))}</pre></details></section>"
     )
-    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('planning horizon', planning_horizon_path, '#facc15'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
+    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2><p>Green is the planned start speed at each trajectory publication. Orange is the time-aligned velocity difference between the previous active plan and the newly published plan. Rolling profiles overlap in time and are not concatenated.</p>{_chart_svg([('planned start speed', plan_speed_series, '#9be564'), ('time-aligned handover jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('time-aligned heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('planning horizon', planning_horizon_path, '#facc15'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
     output = session / "REPORT.html"
     output.write_text(html_text, encoding="utf-8")
     return output

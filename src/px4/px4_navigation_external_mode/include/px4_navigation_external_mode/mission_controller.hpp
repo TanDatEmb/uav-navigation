@@ -27,6 +27,10 @@ struct MissionControllerEvent {
   Type type{Type::None};
   std::size_t waypoint_index{0U};
   std::uint64_t request_id{0U};
+  bool waypoint_accepted{false};
+  std::size_t accepted_waypoint_index{0U};
+  double acceptance_position_error_m{0.0};
+  double acceptance_speed_mps{0.0};
 };
 
 class MissionController final {

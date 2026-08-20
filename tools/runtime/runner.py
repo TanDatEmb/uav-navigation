@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import hashlib
 import json
 import math
@@ -11,6 +13,7 @@ import os
 from pathlib import Path
 import shlex
 import signal
+import socket
 import subprocess
 from shutil import which
 import sys
@@ -27,6 +30,7 @@ import report
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
 ARTIFACT_ROOT = ROOT / ".artifacts/runtime"
+RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".runtime-sim.lock"
 RVIZ_CONFIG = ROOT / "src/navigation_bringup/rviz/fast_lio.rviz"
 NO_RVIZ_ENV = {
     "ENABLE_RVIZ": "0",
@@ -66,9 +70,141 @@ MOTION_PRESETS = ("nominal", "slow", "fast")
 # default XRCE port.  A physical vehicle (or another developer's SITL) on the
 # same LAN must not be able to discover /fmu topics or external-mode
 # registration requests from this test.  Both values remain overridable for
-# deliberate multi-session experiments.
+# deliberate externally-managed isolation; the normal runner still allows one
+# workspace-owned simulation at a time.
 DEFAULT_ROS_DOMAIN_ID = 42
 DEFAULT_XRCE_PORT = 8892
+
+
+class RuntimeBusyError(RuntimeError):
+    """Raised when a second workspace runtime would collide with a live one."""
+
+
+def _active_runtime_sessions() -> list[str]:
+    """Return live workspace-owned sessions, including orphaned children.
+
+    The lock protects normal concurrent runners.  The artifact registry is a
+    second line of defence for the failure mode where a runner is SIGKILLed
+    but its separately-created child process groups survive.
+    """
+    if not ARTIFACT_ROOT.is_dir():
+        return []
+    active: list[str] = []
+    for path in sorted(ARTIFACT_ROOT.iterdir(), reverse=True):
+        if not path.is_dir() or path.is_symlink() or not (path / "processes.json").is_file():
+            continue
+        try:
+            session = Session.from_path(path)
+            live_roles = sorted({str(record.get("role", "unknown")) for record in session.live_records()})
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if live_roles:
+            active.append(f"{path.name} (roles: {', '.join(live_roles)})")
+    return active
+
+
+class RuntimeLock:
+    """Hold an advisory repository-wide lock for the full simulation run."""
+
+    def __init__(self, path: Path = RUNTIME_LOCK_PATH) -> None:
+        self.path = path.resolve()
+        self._file: Any | None = None
+
+    def _owner(self) -> str:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "owner metadata unavailable"
+        if not isinstance(payload, dict):
+            return "owner metadata unavailable"
+        pid = payload.get("pid", "unknown")
+        command = payload.get("command", "unknown command")
+        return f"pid={pid}, command={command}"
+
+    def __enter__(self) -> "RuntimeLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno not in {errno.EACCES, errno.EAGAIN}:
+                self._file.close()
+                self._file = None
+                raise
+            owner = self._owner()
+            self._file.close()
+            self._file = None
+            raise RuntimeBusyError(
+                f"another workspace runtime already owns {self.path} ({owner}); "
+                "run `make stop` and wait for cleanup before starting another simulation"
+            ) from error
+
+        active = _active_runtime_sessions()
+        if active:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            self._file.close()
+            self._file = None
+            raise RuntimeBusyError(
+                "workspace runtime process groups are still active: "
+                + "; ".join(active)
+                + "; run `make stop` before starting another simulation"
+            )
+
+        payload = {
+            "pid": os.getpid(),
+            "command": shlex.join(sys.argv),
+            "started_at": time.time(),
+            "lock_path": str(self.path),
+        }
+        self._file.seek(0)
+        self._file.truncate()
+        self._file.write(json.dumps(payload, sort_keys=True) + "\n")
+        self._file.flush()
+        os.fsync(self._file.fileno())
+        return self
+
+    def __exit__(self, _exception_type: Any, _exception: Any, _traceback: Any) -> None:
+        if self._file is None:
+            return
+        try:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._file.close()
+            self._file = None
+
+
+class _RunnerSignalGuard:
+    """Convert termination signals into the runner's cleanup path."""
+
+    def __init__(self) -> None:
+        self._previous: dict[int, Any] = {}
+
+    def _handle(self, signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt(f"received signal {signum}")
+
+    def __enter__(self) -> "_RunnerSignalGuard":
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            self._previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, self._handle)
+        return self
+
+    def __exit__(self, _exception_type: Any, _exception: Any, _traceback: Any) -> None:
+        for signum, handler in self._previous.items():
+            signal.signal(signum, handler)
+
+
+def _assert_xrce_port_available(port: int) -> None:
+    """Fail before spawning Gazebo if the dedicated XRCE UDP port is busy."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError as error:
+        raise RuntimeBusyError(
+            f"MicroXRCEAgent UDP port {port} is already in use; "
+            "run `make stop`, or choose UAV_NAV_XRCE_PORT only for an explicitly isolated setup"
+        ) from error
+    finally:
+        probe.close()
 
 DISPOSABLE_BUILD_VARIANT_SUFFIXES = (
     "gprof",
@@ -431,7 +567,15 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
                 box("beam_b", [17.0, -1.3, 4.7], [2.25, 0.175, 0.225]),
                 box("corner_c", [28.0, 2.7, 1.4], [0.6, 1.0, 1.4]),
             ])
-        return obstacles
+    return obstacles
+
+
+def _acceptance_threshold_for_profile(map_profile: str) -> float:
+    """Return the mission-polyline deviation limit for a map profile."""
+    # Obstacle detours are validated separately by the collision envelope and
+    # minimum-clearance gates.  Keep the open-space default strict while
+    # allowing the deterministic long_three_pillars detour envelope.
+    return 3.0 if map_profile == "long_three_pillars" else 0.5
     if map_profile == "forest_clutter":
         return [
             cylinder("tree_01", [5.0, 4.0, 2.0], 0.45, 2.0),
@@ -697,7 +841,7 @@ def _mapping_params(
         # This is an explicit simulation experiment. The real/default profile
         # remains known-free only; no environment variable silently enables it.
         planner_parameters["allow_nominal_unknown"] = dual_planning
-        planner_parameters.setdefault("nominal_commitment_horizon_s", 1.0)
+        planner_parameters.setdefault("nominal_commitment_horizon_s", 3.0)
     planning = _mission_planning(mission_file)
     if planning:
         planner_parameters = navigation.setdefault("planner", {})
@@ -723,9 +867,9 @@ def _mapping_params(
     if mission_file is not None and mission_file.name == "long_three_pillars.yaml":
         local_goal = navigation.setdefault("local_subgoal", {})
         # The selector is only a bounded fallback while the mission endpoint
-        # is outside the observed map. Keep the configured 15 m horizon; it
+        # is outside the observed map. Keep a long, configurable horizon; it
         # is refreshed continuously and is not a completion-gated subgoal.
-        local_goal["max_distance_m"] = max(float(local_goal.get("max_distance_m", 15.0)), 15.0)
+        local_goal["max_distance_m"] = max(float(local_goal.get("max_distance_m", 30.0)), 30.0)
         local_goal["switch_distance_m"] = max(float(local_goal.get("switch_distance_m", 0.8)), 0.8)
         if simulation:
             # Gazebo's Mid-360 advertises a 40 m range. The old benchmark
@@ -1036,7 +1180,7 @@ def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     raise TimeoutError(f"Gazebo clock did not appear: {topic}")
 
 
-def run_sim(
+def _run_sim_unlocked(
     headless: bool,
     control_interface: str = "offboard",
     *,
@@ -1109,9 +1253,17 @@ def run_sim(
         # goals.
         try:
             mission_document = yaml.safe_load(mission_file.read_text(encoding="utf-8"))
+            mission_waypoints = (
+                mission_document.get("mission", {}).get("waypoints", [])
+                if isinstance(mission_document, dict) else []
+            )
+            if not isinstance(mission_waypoints, list) or not mission_waypoints:
+                raise ValueError("mission file has no waypoints")
+            # The acceptance harness must follow the selected mission artifact,
+            # not the scenario template's stale hard-coded waypoint count.
+            scenario["mission_waypoint_count"] = len(mission_waypoints)
             first_waypoint = (
-                mission_document.get("mission", {}).get("waypoints", [])[0]
-                if isinstance(mission_document, dict) else {}
+                mission_waypoints[0]
             )
             scenario["allow_initial_pass_through_skip"] = (
                 isinstance(first_waypoint, dict)
@@ -1145,6 +1297,15 @@ def run_sim(
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
+            # Cross-track distance is measured against the straight mission
+            # polyline.  The first pillar requires a deterministic lateral
+            # detour of about 2.72 m, so the generic 0.5 m open-space gate
+            # would reject a collision-free route as if it were estimator
+            # drift.  Collision envelope, minimum clearance, LIO residual,
+            # waypoint order, and mission completion remain independent gates.
+            scenario.setdefault("acceptance", {})["max_cross_track_p95_m"] = (
+                _acceptance_threshold_for_profile(map_profile)
+            )
         elif map_profile in {"tunnel_irregular", "tunnel_smooth", "forest_clutter"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 240.0)
         if map_profile in {"occlusion", "occlusion_featured"}:
@@ -1458,6 +1619,18 @@ def run_sim(
     return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
 
 
+def run_sim(*args: Any, **kwargs: Any) -> int:
+    """Run one simulation under an exclusive lock and cleanup signal guard."""
+    requested_port = kwargs.get("xrce_port")
+    with RuntimeLock():
+        isolated_port = _resolve_isolation_value(
+            requested_port, "UAV_NAV_XRCE_PORT", DEFAULT_XRCE_PORT, low=1024, high=65535
+        )
+        _assert_xrce_port_available(isolated_port)
+        with _RunnerSignalGuard():
+            return _run_sim_unlocked(*args, **kwargs)
+
+
 def _load_runtime_failures(session: Session) -> list[str]:
     try:
         value = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
@@ -1749,4 +1922,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeBusyError as error:
+        print(f"RUNTIME_BUSY: {error}", file=sys.stderr)
+        raise SystemExit(75) from error
