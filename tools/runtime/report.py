@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import json
 import math
 from pathlib import Path
@@ -786,19 +787,47 @@ def _relative_position_error(
         if gt is not None and estimate is not None:
             samples.append((_sample_time(left), gt, estimate))
     errors: list[tuple[float, float, float]] = []
+    timestamps = [sample[0] for sample in samples]
+    # The old implementation scanned every future sample for every start
+    # sample.  That is quadratic and made a long SITL report take minutes (or
+    # appear hung) even though the RPE lookup is fundamentally a monotonic
+    # time/path-index query.  Use binary search for fixed horizons and a
+    # cumulative travelled-distance index for the 5 m horizon.  The short
+    # local scan preserves the original first-Euclidean-crossing definition
+    # for normal flight; if a vehicle dithers for a very long time, the
+    # path-length target is a bounded, conservative fallback.
+    cumulative_distance = [0.0]
+    for index in range(1, len(samples)):
+        previous = samples[index - 1][1]
+        current = samples[index][1]
+        cumulative_distance.append(
+            cumulative_distance[-1] + math.sqrt(sum(
+                (current[axis] - previous[axis]) ** 2 for axis in range(3)
+            ))
+        )
     for index, (timestamp, gt_start, estimate_start) in enumerate(samples):
-        target = None
-        for future_index in range(index + 1, len(samples)):
-            future_time, gt_future, _ = samples[future_index]
-            if horizon_s is not None and future_time - timestamp >= horizon_s * 1e9:
-                target = future_index
-                break
-            if distance_m is not None:
-                delta = tuple(gt_future[k] - gt_start[k] for k in range(3))
-                if math.sqrt(sum(value * value for value in delta)) >= distance_m:
-                    target = future_index
-                    break
-        if target is None:
+        target: int | None = None
+        if horizon_s is not None and math.isfinite(horizon_s) and horizon_s > 0.0:
+            target = bisect_left(timestamps, timestamp + int(horizon_s * 1e9), index + 1)
+            if target >= len(samples):
+                target = None
+        elif distance_m is not None and math.isfinite(distance_m) and distance_m > 0.0:
+            path_target = bisect_left(
+                cumulative_distance, cumulative_distance[index] + distance_m, index + 1
+            )
+            if path_target < len(samples):
+                # Recover the exact first Euclidean crossing when it is close
+                # to the path-length crossing (the usual smooth-flight case).
+                scan_end = min(path_target, index + 512)
+                for future_index in range(index + 1, scan_end + 1):
+                    gt_future = samples[future_index][1]
+                    delta = tuple(gt_future[k] - gt_start[k] for k in range(3))
+                    if math.sqrt(sum(value * value for value in delta)) >= distance_m:
+                        target = future_index
+                        break
+                if target is None:
+                    target = path_target
+        if target is None or target <= index:
             continue
         _, gt_end, estimate_end = samples[target]
         estimate_delta = tuple(estimate_end[k] - estimate_start[k] for k in range(3))
@@ -1138,6 +1167,10 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "maximum_jerk_mps3", "integrated_squared_jerk", "c2_continuity_residual",
         "geometric_path_length_m", "trajectory_length_m", "duration_s",
         "trajectory_duration_s", "kinematic_lower_bound_s", "minimum_clearance_m",
+        "maximum_velocity_mps", "maximum_acceleration_mps2",
+        "maximum_deceleration_mps2", "adaptive_velocity_cap_mps",
+        "known_free_horizon_m", "splice_position_residual_m",
+        "splice_velocity_residual_mps", "splice_acceleration_residual_mps2",
     )
     for status in statuses:
         if not isinstance(status, dict) or status.get("name") != "navigation_planning/planner":
@@ -1241,6 +1274,7 @@ def _navigation_mapping_summary(
         "/navigation_mapping/visualization/unknown",
         "/navigation_mapping/visualization/frontier",
         "/navigation/visualization/planned_path",
+        "/navigation/visualization/markers",
         "/navigation/trajectory",
     ]
     return result
@@ -1481,6 +1515,14 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
     report["schema_version"] = 1
     (session / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (session / "REPORT.md").write_text(render(report), encoding="utf-8")
+    # Keep the machine-readable report as the contract, and add a standalone
+    # visualization artifact for SITL mission analysis.  HTML generation is
+    # diagnostic-only: a plotting failure must not change the runtime verdict.
+    try:
+        import html_report
+        html_report.generate(session)
+    except Exception as error:  # pragma: no cover - defensive artifact path
+        (session / "REPORT_HTML_ERROR.txt").write_text(str(error) + "\n", encoding="utf-8")
     return report
 
 

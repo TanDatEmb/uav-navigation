@@ -36,6 +36,7 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
+    continuation_speed_fraction: 0.2
     unknown_policy: blocked
   control:
     output: velocity
@@ -52,6 +53,28 @@ TEST(MissionLoader, LoadsCompatibleControlContract) {
   ASSERT_EQ(mission.waypoints.size(), 2U);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].position_enu.x(), 1.0);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].hold_s, 0.1);
+  EXPECT_DOUBLE_EQ(mission.planning.continuation_speed_fraction, 0.2);
+  EXPECT_DOUBLE_EQ(mission.control.pass_through_lookahead_m, 0.0);
+  EXPECT_EQ(mission.waypoints[0].behavior,
+            px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
+}
+
+TEST(MissionLoader, DefaultsIntermediateWaypointToPassThrough) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_route
+  frame: lio_odom
+  waypoints:
+    - {id: middle, position: [1.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [2.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  EXPECT_EQ(mission.waypoints[0].behavior,
+            px4_navigation_external_mode::MissionWaypoint::Behavior::PassThrough);
+  EXPECT_EQ(mission.waypoints[1].behavior,
+            px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
 }
 
 TEST(MissionLoader, RejectsActionsAndWrongFrame) {
@@ -150,6 +173,65 @@ TEST(MissionController, HighSpeedFlyThroughDoesNotCompleteWaypoint) {
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
   EXPECT_EQ(controller.state(),
             px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+}
+
+TEST(MissionController, PassThroughAdvancesWithoutStopping) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_route
+  frame: lio_odom
+  waypoints:
+    - {id: middle, position: [1.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [2.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  const auto event = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(event.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  EXPECT_EQ(event.waypoint_index, 1U);
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+  EXPECT_EQ(controller.nextWaypoint(), std::nullopt);
+}
+
+TEST(MissionController, PassThroughLookaheadAdvancesBeforeAcceptanceWhenApproaching) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: lookahead_route
+  frame: lio_odom
+  waypoints:
+    - {id: origin, position: [0.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: middle, position: [1.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [2.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+  control:
+    pass_through_lookahead_m: 1.5
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  auto event = controller.update(0.1, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+                                 Eigen::Vector3d::Zero());
+  ASSERT_EQ(event.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.1);
+  event = controller.update(0.2, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(event.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  EXPECT_EQ(event.waypoint_index, 2U);
 }
 
 TEST(MissionController, RetriesFailedRequestWithoutRegressingCorrelation) {

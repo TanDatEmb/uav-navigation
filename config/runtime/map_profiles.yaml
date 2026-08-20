@@ -66,6 +66,16 @@ profiles:
     stochastic: false
     seed: 0
     collision_truth: [long_open_wall_north, long_open_wall_south, long_open_wall_end]
+  long_three_pillars:
+    family: long_route
+    world: long_three_pillars
+    mission: long_three_pillars
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03, texture_tree_01, texture_tree_02, texture_tree_03, texture_tree_04, texture_tree_05, texture_tree_06, texture_panel_01, texture_panel_02, texture_panel_03, texture_panel_04, texture_panel_05, texture_panel_06, feature_corner_a, feature_corner_b, feature_beam, texture_overhead_01, texture_overhead_02, texture_overhead_03]
+    route_obstacles: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03]
+    route_segment_waypoints: [0, 1]
   no_path:
     family: planner_negative
     world: no_path
@@ -94,6 +104,7 @@ scenes:
       nominal: long_featured
       fast: long_open
       slow: long_open_slow
+      three_pillars: long_three_pillars
   tunnel:
     variants:
       positive: tunnel_irregular

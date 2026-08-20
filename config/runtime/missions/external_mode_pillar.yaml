@@ -8,24 +8,27 @@ mission:
     - id: map_observation
       position: [-3.0, 4.5, 3.0]
       acceptance_radius_m: 0.6
+      behavior: stop
       hold_s: 0.5
     - id: map_observation_near_pillar
       position: [-4.0, 4.0, 3.0]
       acceptance_radius_m: 0.6
+      behavior: stop
       hold_s: 0.5
     - id: return_to_origin
       position: [0.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     # The direct origin-to-goal segment crosses the existing smoke pillar at
     # approximately (-4.5, 2.5); A* must detour through known free cells.
     - id: pillar_detour
       position: [-5.5, 3.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     - id: mission_finish
       position: [-5.5, 5.0, 3.0]
       acceptance_radius_m: 0.7
+      behavior: stop
       hold_s: 0.5
   planning:
     replan_rate_hz: 5.0

@@ -67,6 +67,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::TimerBase::SharedPtr mission_timer_;
   std::mutex trajectory_mutex_;
   std::optional<navigation_interfaces::msg::PlannedTrajectory> trajectory_;
+  std::optional<navigation_interfaces::msg::PlannedTrajectory> pending_trajectory_;
   rclcpp::Time trajectory_start_time_;
   rclcpp::Time activation_time_;
   rclcpp::Time last_setpoint_time_;

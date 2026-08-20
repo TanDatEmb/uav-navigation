@@ -161,6 +161,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_open": 1.5,
             "long_open_slow": 0.8,
             "long_featured": 1.5,
+            "long_three_pillars": 1.1,
             "no_path": 1.0,
             "occlusion_featured": 1.0,
             "occlusion_degenerate": 1.0,
@@ -189,7 +190,7 @@ class RuntimeContractTest(unittest.TestCase):
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
-            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
             self.assertTrue(obstacles, profile)
@@ -201,7 +202,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "no_path"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -209,6 +210,31 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue((ROOT / "src/uav_simulation/worlds" / f"{descriptor['world']}.sdf").is_file())
             self.assertTrue((ROOT / "config/runtime/missions" / f"{descriptor['mission']}.yaml").is_file())
         self.assertEqual(registry["no_path"]["expected_outcome"], "fail_closed")
+
+    def test_long_three_pillars_has_explicit_route_obstacle_contract(self) -> None:
+        descriptor = runner._map_registry()["long_three_pillars"]
+        self.assertEqual(
+            descriptor["route_obstacles"],
+            ["long_three_pillar_01", "long_three_pillar_02", "long_three_pillar_03"],
+        )
+        self.assertEqual(descriptor["route_segment_waypoints"], [0, 1])
+        self.assertEqual(len(descriptor["collision_truth"]), 21)
+        self.assertTrue(set(descriptor["route_obstacles"]).issubset(descriptor["collision_truth"]))
+
+    def test_long_three_pillars_uses_bounded_receding_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=ROOT / "config/runtime/missions/long_three_pillars.yaml",
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
+            navigation = parameters["navigation"]
+            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 4.0)
+            self.assertEqual(navigation["local_subgoal"]["switch_distance_m"], 0.6)
+            self.assertEqual(navigation["collision"]["safety_margin_m"], 0.25)
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(

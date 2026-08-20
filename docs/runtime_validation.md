@@ -14,6 +14,9 @@ make dataset-check DATASET=aist-mid360-drive RATE=1.0
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
 PX4_DIR=$HOME/Dev/Autopilot make external-mode-check
 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+# optional: choose another isolated pair when running two local sessions
+UAV_NAV_ROS_DOMAIN_ID=43 UAV_NAV_XRCE_PORT=8893 \
+  PX4_DIR=$HOME/Dev/Autopilot make external-mode-check
 # alias:
 PX4_DIR=$HOME/Dev/Autopilot make external-mode
 PX4_DIR=$HOME/Dev/Autopilot make sim
@@ -59,6 +62,22 @@ the generic handover target; completion remains a supervisor boundary. `sim`
 starts the same stack with
 the Gazebo GUI and RViz, but no automatic flight controller;
 stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
+
+### SITL network isolation
+
+Every simulation session is isolated by default on ROS 2 domain `42` and a
+dedicated Micro XRCE-DDS UDP agent port `8892`. The runner propagates
+`ROS_DOMAIN_ID` to PX4's `UXRCE_DDS_DOM_ID` and to every ROS process, while
+`PX4_UXRCE_DDS_PORT` selects the matching local agent. This is the boundary
+that prevents another vehicle's absolute `/fmu/*` topics and External Mode
+registration (`M40`) requests from entering the test; a ROS namespace alone
+would not protect this stack because the PX4 contract uses absolute names.
+
+Override both values with `UAV_NAV_ROS_DOMAIN_ID` and `UAV_NAV_XRCE_PORT`, or
+pass `--ros-domain-id` and `--xrce-port` to `tools/runtime/runner.py`. The
+chosen values are recorded in each session's `runtime.json`, so a benchmark
+can be audited and reproduced. Do not reuse an XRCE port while another local
+PX4 SITL is running.
 
 ## GUI External Mode
 
@@ -147,6 +166,31 @@ The manual-control policy is deliberately different between these workflows:
 
 The direct PX4 launcher defaults to mode `4`. For a manually controlled direct
 session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
+
+### Long mission with three route columns
+
+The deterministic `long_three_pillars` profile is the stress benchmark for
+continuous receding-horizon navigation. It contains many non-route texture
+features, while exactly three cylinders (`long_three_pillar_01..03`) intersect
+the WP0→WP1 long leg. The mission is 48 m to a far waypoint (longer than the
+observed local horizon), followed by 5 m/7 m/5 m orthogonal pass-through turns.
+The runner selects a 4 m local target, keeps the planner fail-closed in
+Unknown space, and records every replanning/safety decision.
+
+```bash
+source /opt/ros/jazzy/setup.bash
+export UAV_NAV_ROS_DOMAIN_ID=77 UAV_NAV_XRCE_PORT=8897
+PX4_DIR=$HOME/Dev/Autopilot python3 tools/runtime/runner.py \
+  external-mode-check --map-profile long_three_pillars \
+  --ros-domain-id 77 --xrce-port 8897
+```
+
+The session directory printed by the runner contains `scenario.json`,
+`benchmark_metrics.json`, `samples.jsonl`, and the self-contained `REPORT.html`.
+The report distinguishes route columns from texture-only objects, plots the
+ground-truth flight path and committed local paths, and reports mission time,
+replan count, local horizon, cross-track error, speed, LIO residual, collision
+count, and minimum vehicle clearance.
 
 ## Configuration
 
@@ -296,6 +340,33 @@ error beyond `navigation.replan_tracking_error_m`, or an invalidated corridor.
 The planning report exposes `trajectory_revalidation_count`,
 `trajectory_revalidation_failure_count`, `trajectory_reuse_count`, and
 `full_replan_count` alongside the existing planner counters.
+
+Rolling replans use an explicit time contract rather than resetting the PX4
+adapter phase on every message. A successful `PlannedTrajectory` carries a
+monotonic `trajectory_id`, its `parent_trajectory_id`, and `valid_from`. When a
+map update arrives while a previous path is active, the runtime evaluates the
+old sampled trajectory at `t_switch = t_now + switch_delay_s`, uses that `(p,v,a)` as
+the new initial state, and asks PX4 to atomically promote the replacement only
+at `valid_from`. The adapter keeps the old trajectory until promotion. Runtime
+verification and PX4 consume the same sampled PVA contract; the planner's
+bounded polynomial remains the source of the smooth samples.
+
+Mission waypoints have an explicit `behavior`: `pass_through` for intermediate
+points and `stop` for terminal/inspection points. A pass-through goal carries
+the next waypoint in `NavigationGoal`; the planner uses it to seed a bounded
+terminal tangent and the mission controller advances as soon as the acceptance
+radius is crossed. Legacy `hold_s > 0` entries remain stop points for backward
+compatibility, while new missions should declare the behavior explicitly.
+
+The runtime also applies a one-dimensional visibility governor before planning:
+for a measured motion direction, let `d_free` be the known-free inflated
+horizon. The commanded speed cap is the largest `v` satisfying
+
+`v²/(2 a_decel) + v t_latency + d_margin <= d_free`.
+
+This does not replace A* or collision verification; it reduces speed early
+when sensing gives only a short stopping envelope. The cap and measured
+free-horizon are published in planner diagnostics for benchmark comparison.
 
 ## Mission stress profiles
 

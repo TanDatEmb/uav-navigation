@@ -6,22 +6,26 @@ mission:
     - id: corridor_approach
       position: [-3.5, 1.5, 3.0]
       acceptance_radius_m: 0.6
-      hold_s: 0.3
+      behavior: pass_through
     - id: corridor_door
       position: [-3.5, 4.5, 3.0]
       acceptance_radius_m: 0.6
-      hold_s: 0.3
+      behavior: pass_through
     - id: corridor_mid
       position: [0.0, 4.5, 3.0]
       acceptance_radius_m: 0.6
-      hold_s: 0.3
+      behavior: pass_through
     - id: corridor_end
       position: [4.0, 4.5, 3.0]
       acceptance_radius_m: 0.6
-      hold_s: 0.3
+      behavior: pass_through
     - id: corridor_finish
-      position: [0.0, 5.5, 3.0]
+      # Hold at the last safe corridor checkpoint.  The previous turn toward
+      # y=5.5/5.0 added an unnecessary long terminal leg close to the wall and
+      # made the benchmark conflate terminal braking with corridor traversal.
+      position: [4.0, 4.5, 3.0]
       acceptance_radius_m: 0.6
+      behavior: stop
       hold_s: 0.3
   planning:
     replan_rate_hz: 5.0

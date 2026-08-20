@@ -52,6 +52,7 @@ class MissionController final {
   [[nodiscard]] std::size_t activeWaypointIndex() const;
   [[nodiscard]] std::uint64_t activeRequestId() const;
   [[nodiscard]] MissionWaypoint activeWaypoint() const;
+  [[nodiscard]] std::optional<MissionWaypoint> nextWaypoint() const;
 
  private:
   static constexpr double kSafetyStopSpeedMps = 0.15;

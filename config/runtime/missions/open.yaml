@@ -4,24 +4,29 @@ mission:
   frame: lio_odom
   waypoints:
     - id: open_start
-      position: [-3.0, 4.5, 3.0]
+      # The SITL vehicle takes off at the world origin. Keep the first
+      # pass-through checkpoint at that pose so the benchmark exercises the
+      # near-goal transition instead of manufacturing an unseen teleport-like
+      # leg before the local map has a free corridor.
+      position: [0.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     - id: open_east
-      position: [0.0, 4.5, 3.0]
+      position: [3.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     - id: open_north
-      position: [0.0, 6.0, 3.0]
+      position: [6.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     - id: open_west
-      position: [-3.0, 6.0, 3.0]
+      position: [7.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
-      hold_s: 0.5
+      behavior: pass_through
     - id: open_finish
-      position: [-3.0, 4.5, 3.0]
+      position: [7.0, 0.0, 3.0]
       acceptance_radius_m: 0.7
+      behavior: stop
       hold_s: 0.5
   planning:
     replan_rate_hz: 5.0

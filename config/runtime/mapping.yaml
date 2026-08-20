@@ -58,6 +58,15 @@ navigation_runtime:
         # by an explicit runner flag. Real/default profiles stay fail-closed.
         allow_nominal_unknown: false
         nominal_commitment_horizon_s: 1.0
+        # Atomic hand-over lead time. PX4 keeps the previous trajectory active
+        # until this future timestamp, so replanning does not restart at t=0.
+        switch_delay_s: 0.12
+      safety:
+        # Online stopping-distance governor. The cap is reduced before the
+        # visible free corridor becomes too short for a fail-safe stop.
+        latency_s: 0.08
+        stop_margin_m: 0.25
+        visibility_horizon_m: 15.0
       local_subgoal:
         enabled: true
         boundary_margin_m: 1.0

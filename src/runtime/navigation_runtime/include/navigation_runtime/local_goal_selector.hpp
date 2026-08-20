@@ -202,8 +202,17 @@ template <typename Model>
               0.0, delta.squaredNorm() - projection * projection));
           if (lateral <= 0.5 * resolution) continue;
           const double goal_distance = (candidate - requested).norm();
+          // Preserve the mission altitude whenever the map offers a safe
+          // lateral detour.  A rolling voxel stencil can otherwise pick the
+          // first known-free cell below the requested flight level (typically
+          // one or two z cells above the ground).  That creates a slow,
+          // cumulative descent on long missions even though the mission
+          // waypoint is level.  Keep the lateral escape term dominant, but
+          // make vertical displacement an explicit cost and tie breaker.
+          const double vertical_error = std::abs(candidate.z() - requested.z());
           const double score = 1.5 * std::min(lateral, 2.5) -
-                               0.35 * goal_distance + 0.1 * projection;
+                               0.35 * goal_distance + 0.1 * projection -
+                               1.25 * vertical_error;
           if (!detour_found || score > best_score + 1e-9) {
             detour_found = true;
             best_score = score;
@@ -220,6 +229,13 @@ template <typename Model>
   }
 
   bool found = false;
+  // Prefer the requested flight level over a marginally farther voxel.  The
+  // rolling map is quantised in z; choosing purely by projection makes the
+  // target alternate between e.g. 2.7 and 3.1 m and produces a real vertical
+  // oscillation.  A few metres of projected progress are worth one metre of
+  // altitude error, while the selector remains bounded by max_distance_m.
+  constexpr double kAltitudeContinuityWeight = 4.0;
+  double best_score = -std::numeric_limits<double>::infinity();
   double best_projection = -std::numeric_limits<double>::infinity();
   double best_lateral_error = std::numeric_limits<double>::infinity();
   navigation_mapping::Vec3 best_goal = navigation_mapping::Vec3::Zero();
@@ -240,10 +256,15 @@ template <typename Model>
           if (projection <= 0.5 * resolution || projection > search_distance + resolution) {
             continue;
           }
-          if (!found || projection > best_projection + 1e-9 ||
-              (std::abs(projection - best_projection) <= 1e-9 &&
-               lateral_error < best_lateral_error)) {
+          const double vertical_error = std::abs(candidate.z() - requested.z());
+          const double score = projection - kAltitudeContinuityWeight * vertical_error;
+          if (!found || score > best_score + 1e-9 ||
+              (std::abs(score - best_score) <= 1e-9 &&
+               (projection > best_projection + 1e-9 ||
+                (std::abs(projection - best_projection) <= 1e-9 &&
+                 lateral_error < best_lateral_error)))) {
             found = true;
+            best_score = score;
             best_projection = projection;
             best_lateral_error = lateral_error;
             best_goal = candidate;
@@ -251,7 +272,6 @@ template <typename Model>
         }
       }
     }
-    if (found && best_projection >= distance - resolution) break;
   }
   if (!found) {
     result.status = LocalGoalSelectionStatus::NoUsableSubGoal;

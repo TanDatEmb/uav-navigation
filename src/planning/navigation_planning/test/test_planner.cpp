@@ -127,6 +127,20 @@ TEST(PlannerTest, RecedingHorizonGoalCarriesContinuationVelocity) {
   EXPECT_NEAR(result.trajectory.points.back().velocity.z(), 0.0, 1e-6);
 }
 
+TEST(PlannerTest, OnlineVelocityLimitCapsTrajectoryWithoutChangingGlobalConfig) {
+  TestWorldModel world(30, 5, 1);
+  world.fill(navigation_mapping::CellState::KnownFree);
+  auto goal = goalAt(world, {20, 2, 0});
+  goal.velocity_limit_mps = 0.65;
+
+  const auto result = Planner{}.planForTest(stateAt(world, {1, 2, 0}), goal, world);
+
+  ASSERT_TRUE(result.success);
+  EXPECT_LE(result.statistics.trajectory_optimization.maximum_velocity_mps,
+            goal.velocity_limit_mps + 1e-9);
+  EXPECT_LE(result.trajectory.points.back().velocity.norm(), 1e-9);
+}
+
 TEST(PlannerTest, SolidWallAndUnknownSpaceFailClosedWithoutTrajectory) {
   TestWorldModel wall(9, 5, 1);
   wall.fill(navigation_mapping::CellState::KnownFree);

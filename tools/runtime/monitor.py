@@ -390,15 +390,13 @@ class RuntimeMonitor:
             self.blocked_topics["/tf"] = "tf2_msgs unavailable"
         if self.workflow != "dataset":
             try:
-                from px4_msgs.msg import (
-                    EstimatorInnovations,
-                    EstimatorStatus,
-                    EstimatorStatusFlags,
-                    VehicleAttitude,
-                    VehicleLocalPosition,
-                    VehicleOdometry,
-                    VehicleStatus,
-                )
+                # Keep the core PX4 telemetry contract usable across PX4
+                # message revisions.  EstimatorStatusFlags and
+                # EstimatorInnovations are optional in older px4_msgs; one
+                # missing diagnostic message must not suppress odometry,
+                # local-position, status and attitude streams needed by the
+                # mission benchmark.
+                from px4_msgs.msg import EstimatorStatus, VehicleAttitude, VehicleLocalPosition, VehicleOdometry, VehicleStatus
                 specs.extend([
                     TopicSpec("external_odometry", "/fmu/in/vehicle_visual_odometry", VehicleOdometry, _px4_odom_payload),
                     TopicSpec("px4_odometry", "/fmu/out/vehicle_odometry", VehicleOdometry, _px4_odom_payload),
@@ -423,7 +421,13 @@ class RuntimeMonitor:
                         "reset_count_pos_ne": int(m.reset_count_pos_ne), "reset_count_vel_ne": int(m.reset_count_vel_ne),
                         "reset_count_quat": int(m.reset_count_quat),
                     }),
-                    TopicSpec("estimator_status_flags", "/fmu/out/estimator_status_flags", EstimatorStatusFlags, lambda m: {
+                ])
+                try:
+                    from px4_msgs.msg import EstimatorStatusFlags
+                except ImportError as error:
+                    self.blocked_topics["/fmu/out/estimator_status_flags"] = f"optional px4_msgs message unavailable: {error}"
+                else:
+                    specs.append(TopicSpec("estimator_status_flags", "/fmu/out/estimator_status_flags", EstimatorStatusFlags, lambda m: {
                         # PX4 calls these control-status flags.  They are useful
                         # telemetry but not proof that a particular EV sample
                         # fused, so the report labels them as observations only.
@@ -432,14 +436,18 @@ class RuntimeMonitor:
                         "cs_inertial_dead_reckoning": bool(m.cs_inertial_dead_reckoning),
                         "fs_bad_hdg": bool(m.fs_bad_hdg), "reject_hor_pos": bool(m.reject_hor_pos),
                         "reject_hor_vel": bool(m.reject_hor_vel), "reject_yaw": bool(m.reject_yaw),
-                    }),
-                    TopicSpec("estimator_innovations", "/fmu/out/estimator_innovations", EstimatorInnovations, lambda m: {
+                    }))
+                try:
+                    from px4_msgs.msg import EstimatorInnovations
+                except ImportError as error:
+                    self.blocked_topics["/fmu/out/estimator_innovations"] = f"optional px4_msgs message unavailable: {error}"
+                else:
+                    specs.append(TopicSpec("estimator_innovations", "/fmu/out/estimator_innovations", EstimatorInnovations, lambda m: {
                         "timestamp_us": int(m.timestamp), "timestamp_sample_us": int(m.timestamp_sample),
                         "gps_hpos": [_finite(v) for v in m.gps_hpos], "gps_vpos": _finite(m.gps_vpos),
                         "ev_hpos": [_finite(v) for v in m.ev_hpos], "ev_vpos": _finite(m.ev_vpos),
                         "ev_vel": [_finite(v) for v in m.ev_vel], "heading": _finite(m.heading),
-                    }),
-                ])
+                    }))
             except ImportError as error:
                 self.blocked_topics["/fmu/out/estimator_status_flags"] = f"px4_msgs unavailable: {error}"
         return specs

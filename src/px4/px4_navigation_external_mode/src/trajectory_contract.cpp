@@ -48,6 +48,18 @@ TrajectoryValidation validateTrajectory(
   if (trajectory.header.frame_id != expected_frame) {
     return {TrajectoryInputFailure::WrongFrame, "trajectory frame does not match PX4 adapter input"};
   }
+  const std::int64_t valid_from_ns =
+      static_cast<std::int64_t>(trajectory.valid_from.sec) * 1'000'000'000LL +
+      static_cast<std::int64_t>(trajectory.valid_from.nanosec);
+  if (valid_from_ns < 0 || !std::isfinite(trajectory.commitment_horizon_s) ||
+      trajectory.commitment_horizon_s < 0.0) {
+    return {TrajectoryInputFailure::InvalidValidFrom,
+            "trajectory valid_from or commitment horizon is invalid"};
+  }
+  if (trajectory.trajectory_id == 0U) {
+    return {TrajectoryInputFailure::InvalidTrajectoryId,
+            "successful trajectory must have a non-zero trajectory id"};
+  }
   const std::size_t count = trajectory.time_from_start.size();
   if (count == 0U) {
     return {TrajectoryInputFailure::Empty, "trajectory contains no samples"};
@@ -154,6 +166,15 @@ bool trajectoryRevisionIsNotOlder(
   return trajectory.world_generation > accepted_generation ||
          (trajectory.world_generation == accepted_generation &&
           trajectory.world_revision >= accepted_revision);
+}
+
+bool trajectoryValidFromIsNotOlder(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    std::int64_t now_ns) noexcept {
+  const std::int64_t valid_from_ns =
+      static_cast<std::int64_t>(trajectory.valid_from.sec) * 1'000'000'000LL +
+      static_cast<std::int64_t>(trajectory.valid_from.nanosec);
+  return valid_from_ns <= now_ns;
 }
 
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {

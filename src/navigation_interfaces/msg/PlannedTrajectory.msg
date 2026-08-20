@@ -2,6 +2,13 @@
 # WorldModel snapshot used by the synchronous Planner call.
 std_msgs/Header header
 
+# The trajectory is generated now but may only replace the active trajectory
+# at this future time. This preserves a committed prefix across replans.
+builtin_interfaces/Time valid_from
+uint64 trajectory_id
+uint64 parent_trajectory_id
+float64 commitment_horizon_s
+
 string mission_id
 uint32 waypoint_index
 uint64 request_id

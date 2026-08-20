@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -15,6 +17,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "navigation_mapping/mapping_pipeline.hpp"
 #include "navigation_planning/planner.hpp"
@@ -40,10 +43,13 @@ class NavigationRuntimeNode : public rclcpp::Node {
   void publishPlanningDiagnostics(const navigation_planning::PlanResult& result);
   navigation_interfaces::msg::PlannedTrajectory makeTrajectoryMessage(
       const navigation_planning::PlanResult& result,
-      const navigation_interfaces::msg::NavigationGoal& goal) const;
+      const navigation_interfaces::msg::NavigationGoal& goal);
   nav_msgs::msg::Path makePathMessage(const navigation_planning::PlanResult& result,
                                       const std_msgs::msg::Header& header) const;
   void publishMapVisualization();
+  void publishNavigationVisualization(
+      const navigation_planning::PlanResult& result,
+      const navigation_interfaces::msg::NavigationGoal& goal);
   sensor_msgs::msg::PointCloud2 makePointCloud(
       const rog_map::vec_E<rog_map::Vec3f>& points,
       const builtin_interfaces::msg::Time& stamp) const;
@@ -56,6 +62,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr planner_heartbeat_publisher_;
   rclcpp::Publisher<navigation_interfaces::msg::PlannedTrajectory>::SharedPtr trajectory_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr planned_path_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr navigation_marker_publisher_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::NavigationGoal>::SharedPtr goal_subscription_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupied_publisher_;
@@ -66,13 +73,22 @@ class NavigationRuntimeNode : public rclcpp::Node {
   rclcpp::TimerBase::SharedPtr visualization_timer_;
   rclcpp::TimerBase::SharedPtr planning_timer_;
   rclcpp::CallbackGroup::SharedPtr mapping_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr ingress_callback_group_;
+  mutable std::mutex input_mutex_;
   std::optional<nav_msgs::msg::Odometry> latest_odometry_;
+  std::optional<navigation_mapping::Vec3> latest_acceleration_;
+  std::optional<navigation_mapping::Vec3> previous_velocity_;
+  std::int64_t previous_odometry_stamp_ns_{0};
   std::optional<navigation_interfaces::msg::NavigationGoal> active_goal_;
   double state_max_age_s_{0.5};
   std::string state_topic_;
   std::string planning_frame_id_;
   double replan_rate_hz_{5.0};
   double replan_tracking_error_m_{0.5};
+  double switch_delay_s_{0.12};
+  double safety_latency_s_{0.08};
+  double safety_stop_margin_m_{0.25};
+  double safety_visibility_horizon_m_{15.0};
   double local_goal_boundary_margin_m_{1.0};
   double local_goal_max_distance_m_{5.0};
   double local_goal_switch_distance_m_{0.8};
@@ -105,7 +121,17 @@ class NavigationRuntimeNode : public rclcpp::Node {
   navigation_mapping::Vec3 last_terminal_velocity_{navigation_mapping::Vec3::Zero()};
   LocalGoalSelectionStatus last_local_goal_status_{LocalGoalSelectionStatus::InvalidState};
   navigation_mapping::Vec3 last_effective_goal_{navigation_mapping::Vec3::Zero()};
+  double last_adaptive_velocity_cap_mps_{0.0};
+  double last_known_free_horizon_m_{0.0};
+  double last_splice_position_residual_m_{0.0};
+  double last_splice_velocity_residual_mps_{0.0};
+  double last_splice_acceleration_residual_mps2_{0.0};
   std::optional<navigation_mapping::Vec3> committed_local_goal_;
+  // Keep the receding-horizon leg on one altitude.  A voxel selector may
+  // otherwise alternate between adjacent known-free z cells as the rolling
+  // map is updated, which turns harmless grid quantisation into a real
+  // altitude oscillation on a long mission.
+  std::optional<double> committed_local_altitude_m_;
   std::int64_t last_verification_time_us_{0};
   navigation_planning::PlanFailureCode last_failure_code_{navigation_planning::PlanFailureCode::None};
   navigation_planning::PlanFailureCode last_nominal_failure_code_{
@@ -129,8 +155,11 @@ class NavigationRuntimeNode : public rclcpp::Node {
   // accepted.  This survives transient failed publication/revalidation ticks
   // and prevents the planner from falling back to nominal execution after a
   // safety handover has already started.
-  bool braking_stop_latched_{false};
+  std::atomic_bool braking_stop_latched_{false};
   std::int64_t last_plan_time_ns_{0};
+  double plan_valid_from_delay_s_{0.0};
+  std::uint64_t next_trajectory_id_{1U};
+  std::uint64_t last_trajectory_id_{0U};
   double last_planned_duration_s_{0.0};
   std::optional<navigation_planning::TimeParameterizedTrajectory> last_planned_trajectory_;
   navigation_planning::PlanRole last_planned_role_{navigation_planning::PlanRole::Committed};

@@ -108,7 +108,9 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       // Propagated odometry is published reliably by FAST-LIO. This state is
       // a hard input to the velocity tracker, so do not downgrade it to
       // best-effort and allow a transient DDS drop to look like stale state.
-      state_topic, rclcpp::QoS{rclcpp::KeepLast{10}}.reliable(),
+      // The velocity tracker consumes the newest state. A one-sample queue
+      // avoids applying a burst of stale odometry after DDS/executor jitter.
+      state_topic, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
       [this](const nav_msgs::msg::Odometry::ConstSharedPtr& message) { onOdometry(message); });
   lio_diagnostics_subscription_ = node.create_subscription<
       diagnostic_msgs::msg::DiagnosticArray>(
@@ -178,6 +180,7 @@ void NavigationMode::onActivate() {
     activation_time_ = node().get_clock()->now();
     last_setpoint_time_ = activation_time_;
     velocity_tracker_.reset();
+    pending_trajectory_.reset();
     if (trajectory_.has_value()) {
       trajectory_start_time_ = activation_time_;
     }
@@ -232,6 +235,7 @@ void NavigationMode::onDeactivate() {
     // trajectory while the PX4 mode executor is already handing over.
     failure_reported_ = true;
     trajectory_.reset();
+    pending_trajectory_.reset();
     velocity_tracker_.reset();
     accepted_world_identity_valid_ = false;
     accepted_world_generation_ = 0U;
@@ -314,12 +318,25 @@ void NavigationMode::onTrajectory(
       RCLCPP_DEBUG(node().get_logger(), "Ignoring trajectory from an older map revision");
       return;
     }
+    if (message->success) {
+      const auto newest_id = std::max(
+          trajectory_.has_value() ? trajectory_->trajectory_id : 0U,
+          pending_trajectory_.has_value() ? pending_trajectory_->trajectory_id : 0U);
+      if (message->trajectory_id <= newest_id) {
+        RCLCPP_DEBUG(node().get_logger(),
+                     "Ignoring trajectory id=%lu because id=%lu is already active/pending",
+                     static_cast<unsigned long>(message->trajectory_id),
+                     static_cast<unsigned long>(newest_id));
+        return;
+      }
+    }
   }
   if (!message->success) {
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       ++trajectory_rejected_count_;
       trajectory_.reset();
+      pending_trajectory_.reset();
       velocity_tracker_.reset();
       accepted_world_identity_valid_ = false;
       accepted_world_generation_ = message->world_generation;
@@ -342,6 +359,7 @@ void NavigationMode::onTrajectory(
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       ++trajectory_rejected_count_;
       trajectory_.reset();
+      pending_trajectory_.reset();
       velocity_tracker_.reset();
     }
     if (mission_controller_) {
@@ -352,23 +370,37 @@ void NavigationMode::onTrajectory(
     return;
   }
 
+  const auto accepted_now = node().get_clock()->now();
+  const rclcpp::Time valid_from(message->valid_from);
+  if (valid_from.nanoseconds() > accepted_now.nanoseconds()) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    pending_trajectory_ = *message;
+    return;
+  }
+
   rclcpp::Time accepted_time;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    const auto accepted_now = node().get_clock()->now();
     trajectory_ = *message;
+    pending_trajectory_.reset();
     ++trajectory_accepted_count_;
     // Every replacement trajectory is generated from the latest state. Its
     // own header timestamp is the only phase source; inheriting elapsed phase
     // from a previous trajectory can put a braking stop metres ahead of the
     // vehicle and repeatedly restart the deceleration envelope.
     double phase_s = 0.0;
-    const rclcpp::Time message_start(message->header.stamp);
+    const rclcpp::Time message_start(message->valid_from);
     if (message_start.nanoseconds() > 0) {
-      phase_s = std::max(0.0, (accepted_now - message_start).seconds());
+      trajectory_start_time_ = message_start;
+      phase_s = 0.0;
+    } else {
+      const rclcpp::Time header_start(message->header.stamp);
+      if (header_start.nanoseconds() > 0) {
+        phase_s = std::max(0.0, (accepted_now - header_start).seconds());
+      }
+      phase_s = std::min(phase_s, std::max(0.0, message->duration_s - 0.05));
+      trajectory_start_time_ = accepted_now - rclcpp::Duration::from_seconds(phase_s);
     }
-    phase_s = std::min(phase_s, std::max(0.0, message->duration_s - 0.05));
-    trajectory_start_time_ = accepted_now - rclcpp::Duration::from_seconds(phase_s);
     accepted_time = accepted_now;
     failure_reported_ = false;
     if (message->success) {
@@ -430,6 +462,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       trajectory_.reset();
+      pending_trajectory_.reset();
       velocity_tracker_.reset();
       accepted_world_identity_valid_ = false;
       accepted_world_generation_ = 0U;
@@ -446,6 +479,16 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     goal.target.y = waypoint.position_enu.y();
     goal.target.z = waypoint.position_enu.z();
     goal.acceptance_radius_m = waypoint.acceptance_radius_m;
+    goal.behavior = waypoint.behavior == MissionWaypoint::Behavior::Stop
+                        ? navigation_interfaces::msg::NavigationGoal::BEHAVIOR_STOP
+                        : navigation_interfaces::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+    const auto next_waypoint = mission_controller_->nextWaypoint();
+    if (next_waypoint.has_value()) {
+      goal.has_next_target = true;
+      goal.next_target.x = next_waypoint->position_enu.x();
+      goal.next_target.y = next_waypoint->position_enu.y();
+      goal.next_target.z = next_waypoint->position_enu.z();
+    }
     goal_publisher_->publish(goal);
     RCLCPP_DEBUG(node().get_logger(), "Published mission waypoint %zu (%s)",
                  event.waypoint_index, waypoint.id.c_str());
@@ -458,6 +501,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       handover_requested_ = true;
       completion_position_ = mission_->waypoints.at(event.waypoint_index).position_enu;
       trajectory_.reset();
+      pending_trajectory_.reset();
       velocity_tracker_.reset();
     }
     RCLCPP_INFO(node().get_logger(), "Mission '%s' completed; notifying the supervisor",
@@ -599,6 +643,7 @@ void NavigationMode::failNavigation(const char* reason) {
     failure_reported_ = true;
     handover_requested_ = true;
     trajectory_.reset();
+    pending_trajectory_.reset();
     velocity_tracker_.reset();
     accepted_world_identity_valid_ = false;
     accepted_world_generation_ = 0U;
@@ -622,15 +667,32 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::optional<nav_msgs::msg::Odometry> odometry;
   rclcpp::Time start_time;
   rclcpp::Time previous_setpoint_time;
+  std::optional<navigation_interfaces::msg::PlannedTrajectory> promoted_trajectory;
+  const auto now = node().get_clock()->now();
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (pending_trajectory_.has_value() &&
+        rclcpp::Time(pending_trajectory_->valid_from).nanoseconds() <= now.nanoseconds()) {
+      trajectory_ = *pending_trajectory_;
+      trajectory_start_time_ = rclcpp::Time(pending_trajectory_->valid_from);
+      promoted_trajectory = pending_trajectory_;
+      pending_trajectory_.reset();
+      ++trajectory_accepted_count_;
+      accepted_world_identity_valid_ = true;
+      accepted_world_generation_ = trajectory_->world_generation;
+      accepted_world_revision_ = trajectory_->world_revision;
+    }
     trajectory = trajectory_;
     odometry = odometry_;
     start_time = trajectory_start_time_;
     previous_setpoint_time = last_setpoint_time_;
   }
 
-  const auto now = node().get_clock()->now();
+  if (promoted_trajectory.has_value() && mission_controller_) {
+    mission_controller_->onTrajectory(true, promoted_trajectory->trajectory_role,
+                                       promoted_trajectory->safety_plan_kind,
+                                       now.seconds(), promoted_trajectory->duration_s);
+  }
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
     if (output_mode_ == OutputMode::Velocity || !position_enu.has_value()) {
@@ -776,8 +838,32 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   }
 
   const double elapsed_s = std::max(0.0, (now - start_time).seconds());
+  const bool pass_through_braking = [&]() {
+    if (!mission_controller_ ||
+        mission_controller_->state() != MissionControllerState::Braking) {
+      return false;
+    }
+    return mission_controller_->activeWaypoint().behavior ==
+           MissionWaypoint::Behavior::PassThrough;
+  }();
+  bool planner_heartbeat_recent = false;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    planner_heartbeat_recent = last_planner_heartbeat_ns_ > 0 &&
+                               now.nanoseconds() >= last_planner_heartbeat_ns_ &&
+                               static_cast<double>(now.nanoseconds() -
+                                                   last_planner_heartbeat_ns_) /
+                                       1e9 <= trajectory_wait_timeout_s_;
+  }
   const double freshness_limit_s = trajectory->duration_s + stale_after_s_;
-  if (!std::isfinite(elapsed_s) || elapsed_s > freshness_limit_s) {
+  // A zero-duration braking stop is deliberately held while a pass-through
+  // waypoint waits for the next map revision. The planner heartbeat is the
+  // liveness proof in this bounded state; without this exception the PX4
+  // adapter hands over after ``duration + stale_after`` before the rolling
+  // planner can publish its replacement trajectory.
+  if (!std::isfinite(elapsed_s) ||
+      (elapsed_s > freshness_limit_s &&
+       !(pass_through_braking && planner_heartbeat_recent))) {
     failNavigation(kTrajectoryFailureReason);
     return;
   }

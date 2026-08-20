@@ -81,7 +81,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     for (std::size_t index = 0; index < waypoints.size(); ++index) {
       const YAML::Node waypoint_node = waypoints[index];
       requireMap(waypoint_node, "waypoints[]");
-      rejectUnknownKeys(waypoint_node, {"id", "position", "acceptance_radius_m", "hold_s"},
+      rejectUnknownKeys(waypoint_node,
+                        {"id", "position", "acceptance_radius_m", "hold_s", "behavior"},
                         "waypoints[]");
       MissionWaypoint waypoint;
       waypoint.id = waypoint_node["id"] ? waypoint_node["id"].as<std::string>() : "";
@@ -103,6 +104,25 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
       waypoint.hold_s = waypoint_node["hold_s"]
                             ? finiteScalar(waypoint_node["hold_s"], "waypoints[].hold_s", 0.0, true)
                             : 0.0;
+      // Preserve legacy missions that used a positive hold_s as an implicit
+      // stop, while making a waypoint without hold_s pass-through by default.
+      const std::string behavior = waypoint_node["behavior"]
+                                       ? waypoint_node["behavior"].as<std::string>()
+                                       : (waypoint.hold_s > 0.0 || index + 1U == waypoints.size()
+                                              ? "stop"
+                                              : "pass_through");
+      if (behavior == "pass_through") {
+        waypoint.behavior = MissionWaypoint::Behavior::PassThrough;
+        if (waypoint.hold_s > 0.0) {
+          throw std::invalid_argument(
+              "pass_through waypoint cannot specify a positive hold_s");
+        }
+      } else if (behavior == "stop") {
+        waypoint.behavior = MissionWaypoint::Behavior::Stop;
+      } else {
+        throw std::invalid_argument(
+            "waypoints[].behavior must be pass_through or stop");
+      }
       mission.waypoints.push_back(waypoint);
     }
 
@@ -111,6 +131,7 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
       rejectUnknownKeys(node["planning"], {"replan_rate_hz", "max_velocity_mps",
                                             "max_acceleration_mps2", "max_deceleration_mps2",
                                             "max_jerk_mps3",
+                                            "continuation_speed_fraction",
                                             "unknown_policy"},
                         "planning");
       const auto planning = node["planning"];
@@ -136,6 +157,15 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
         mission.planning.max_jerk_mps3 = finiteScalar(
             planning["max_jerk_mps3"], "planning.max_jerk_mps3", 0.0);
       }
+      if (planning["continuation_speed_fraction"]) {
+        mission.planning.continuation_speed_fraction = finiteScalar(
+            planning["continuation_speed_fraction"],
+            "planning.continuation_speed_fraction", 0.0, true);
+        if (mission.planning.continuation_speed_fraction > 1.0) {
+          throw std::invalid_argument(
+              "mission planning continuation_speed_fraction must be at most 1.0");
+        }
+      }
       if (planning["unknown_policy"]) {
         mission.planning.unknown_policy = planning["unknown_policy"].as<std::string>();
       }
@@ -147,7 +177,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     if (node["control"]) {
       requireMap(node["control"], "control");
       rejectUnknownKeys(node["control"], {"output", "acceptance_speed_mps",
-                                            "acceptance_confirmation_s"}, "control");
+                                            "acceptance_confirmation_s",
+                                            "pass_through_lookahead_m"}, "control");
       if (node["control"]["output"]) {
         mission.control.output = node["control"]["output"].as<std::string>();
       }
@@ -160,6 +191,11 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
         mission.control.acceptance_confirmation_s = finiteScalar(
             node["control"]["acceptance_confirmation_s"],
             "control.acceptance_confirmation_s", 0.0, true);
+      }
+      if (node["control"]["pass_through_lookahead_m"]) {
+        mission.control.pass_through_lookahead_m = finiteScalar(
+            node["control"]["pass_through_lookahead_m"],
+            "control.pass_through_lookahead_m", 0.0, true);
       }
     }
     if (mission.control.output != "auto" &&

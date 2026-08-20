@@ -20,6 +20,8 @@ enum class TrajectoryInputFailure {
   InvalidDuration,
   InvalidRole,
   InvalidSafetyTerminalState,
+  InvalidValidFrom,
+  InvalidTrajectoryId,
 };
 
 struct TrajectorySample {
@@ -51,6 +53,10 @@ struct TrajectoryValidation {
     const navigation_interfaces::msg::PlannedTrajectory& trajectory,
     bool accepted_identity_valid, std::uint64_t accepted_generation,
     std::uint64_t accepted_revision) noexcept;
+
+[[nodiscard]] bool trajectoryValidFromIsNotOlder(
+    const navigation_interfaces::msg::PlannedTrajectory& trajectory,
+    std::int64_t now_ns) noexcept;
 
 // ROS navigation uses ENU/Z-up; PX4 local setpoints use NED/Z-down.
 [[nodiscard]] Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu);

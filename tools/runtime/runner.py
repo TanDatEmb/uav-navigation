@@ -62,6 +62,14 @@ CANONICAL_SCENES = (
 TEST_CASES = ("positive", "degenerate", "detour", "no_path")
 MOTION_PRESETS = ("nominal", "slow", "fast")
 
+# Keep the complete SITL stack off the default DDS domain and off the PX4
+# default XRCE port.  A physical vehicle (or another developer's SITL) on the
+# same LAN must not be able to discover /fmu topics or external-mode
+# registration requests from this test.  Both values remain overridable for
+# deliberate multi-session experiments.
+DEFAULT_ROS_DOMAIN_ID = 42
+DEFAULT_XRCE_PORT = 8892
+
 DISPOSABLE_BUILD_VARIANT_SUFFIXES = (
     "gprof",
     "profile",
@@ -133,6 +141,16 @@ def load_config(name: str) -> dict[str, Any]:
 
 def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
     environment = _gui_environment(RVIZ_ENV if enable_rviz else NO_RVIZ_ENV, rviz=enable_rviz)
+    # Keep ROS/Gazebo logging inside the session artifact directory.  Apart
+    # from making each run self-contained, this avoids writing to ~/.ros or
+    # ~/.gz when the runner is executed in a read-only/containerized home.
+    for key in (
+        "ROS_DOMAIN_ID", "PX4_UXRCE_DDS_PORT", "PX4_UXRCE_DDS_NS",
+        "ROS_LOG_DIR", "RCUTILS_LOGGING_DIRECTORY", "GZ_LOG_DIR",
+    ):
+        value = os.environ.get(key)
+        if value:
+            environment[key] = value
     parts = [
         "export " + " ".join(f"{key}={value}" for key, value in environment.items()),
         "source /opt/ros/jazzy/setup.bash",
@@ -245,6 +263,24 @@ def _write_runtime(session: Session, **values: Any) -> None:
     path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, low: int, high: int) -> int:
+    """Resolve and validate a process-wide isolation setting.
+
+    The runner intentionally chooses a non-default ROS domain.  This is more
+    reliable than relying on a namespace because PX4's current ROS contract
+    uses absolute ``/fmu`` topic names.  A unique XRCE UDP port additionally
+    prevents two local SITL instances from sharing an agent.
+    """
+    raw = value if value is not None else os.environ.get(env_name, str(default))
+    try:
+        resolved = int(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{env_name} must be an integer") from error
+    if not low <= resolved <= high:
+        raise ValueError(f"{env_name} must be in [{low}, {high}], got {resolved}")
+    return resolved
+
+
 def _ros_params(session: Session, source: Path) -> Path:
     """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -272,7 +308,8 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
         raise ValueError("mission planning unknown_policy must be 'blocked'")
     result = {}
     for key in ("replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
-                "max_deceleration_mps2", "max_jerk_mps3"):
+                "max_deceleration_mps2", "max_jerk_mps3",
+                "continuation_speed_fraction"):
         if key in planning:
             number = float(planning[key])
             if not math.isfinite(number) or number <= 0.0:
@@ -547,6 +584,9 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
         "collision_truth": list(profile.get("collision_truth", [])),
         "world_sha256": hashlib.sha256(resolved_bytes).hexdigest(),
     }
+    for field in ("route_obstacles", "route_segment_waypoints"):
+        if field in profile:
+            descriptor[field] = profile[field]
     resolved_world = session.directory / f"resolved_{world_name}.sdf"
     resolved_world.write_bytes(resolved_bytes)
     (session.directory / "map_descriptor.json").write_text(
@@ -665,6 +705,40 @@ def _mapping_params(
             planner_parameters["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
         if "max_jerk_mps3" in planning:
             planner_parameters["max_jerk_mps3"] = planning["max_jerk_mps3"]
+        if "continuation_speed_fraction" in planning:
+            navigation.setdefault("local_subgoal", {})[
+                "continuation_speed_fraction"
+            ] = planning["continuation_speed_fraction"]
+    # The long three-pillar mission deliberately exercises a route that is
+    # longer than the visible map.  A shorter local target keeps the turn
+    # handover inside the freshly observed corridor instead of committing a
+    # five-metre target whose terminal voxel can become stale during the next
+    # map revision.  This is a profile-level tuning knob, not a global
+    # relaxation of the unknown-space policy.
+    if mission_file is not None and mission_file.name == "long_three_pillars.yaml":
+        local_goal = navigation.setdefault("local_subgoal", {})
+        # Keep the receding-horizon target inside the observed corridor while
+        # avoiding a stop/replan at every 3 m voxel boundary.  Four metres is
+        # below the nominal 5 m default and remains shorter than the measured
+        # known-free horizon in this map.
+        local_goal["max_distance_m"] = min(float(local_goal.get("max_distance_m", 5.0)), 4.0)
+        local_goal["switch_distance_m"] = min(float(local_goal.get("switch_distance_m", 0.8)), 0.6)
+        if simulation:
+            # The route columns are intentionally large (1.05 m radius). A
+            # sparse first scan can under-inflate their edge by one voxel;
+            # reserve an extra 0.20 m planner margin so a receding target does
+            # not land inside the physical cylinder before the next scan.
+            # Non-route texture objects are placed outside the detour corridor
+            # in this benchmark, so this margin remains feasible around all
+            # three route columns.
+            collision_parameters = navigation.setdefault("collision", {})
+            collision_parameters["safety_margin_m"] = max(
+                float(collision_parameters.get("safety_margin_m", 0.05)), 0.25)
+            planner_parameters = navigation.setdefault("planner", {})
+            planner_parameters["unknown_start_radius_m"] = (
+                float(collision_parameters.get("vehicle_radius_m", 0.32)) +
+                float(collision_parameters["safety_margin_m"])
+            )
     target = session.directory / "navigation_mapping_params.yaml"
     target.write_text(
         yaml.safe_dump({"navigation_runtime": parameters}, sort_keys=False),
@@ -836,7 +910,10 @@ def run_dataset(
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
             "monitor",
-            [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml")],
+            _ros_shell([
+                sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
+                "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml"),
+            ]),
             cwd=ROOT,
         )
         session.start(
@@ -950,6 +1027,8 @@ def run_sim(
     test_case: str = "positive",
     motion_preset: str = "nominal",
     map_seed: int = 0,
+    ros_domain_id: int | None = None,
+    xrce_port: int | None = None,
     auto_scenario: bool = False,
     manual_takeoff: bool = False,
 ) -> int:
@@ -1003,12 +1082,31 @@ def run_sim(
         scenario["collision_obstacles"] = _collision_obstacles(map_profile)
         scenario["map_seed"] = int(map_seed)
         scenario["require_map_observability"] = map_profile == "no_path"
+        # A pass-through checkpoint can be inside the acceptance ball at
+        # activation (the open SITL baseline starts at [0, 0, 3]).  The
+        # controller intentionally advances it without manufacturing a
+        # zero-length trajectory, so the harness must accept that explicit
+        # prefix skip while still requiring strict order for all published
+        # goals.
+        try:
+            mission_document = yaml.safe_load(mission_file.read_text(encoding="utf-8"))
+            first_waypoint = (
+                mission_document.get("mission", {}).get("waypoints", [])[0]
+                if isinstance(mission_document, dict) else {}
+            )
+            scenario["allow_initial_pass_through_skip"] = (
+                isinstance(first_waypoint, dict)
+                and str(first_waypoint.get("behavior", "stop")) == "pass_through"
+            )
+        except (OSError, TypeError, ValueError, IndexError):
+            scenario["allow_initial_pass_through_skip"] = False
         scenario["pillar_waypoint_index"] = {
             "open": -1,
             "speed": -1,
             "long_open": -1,
             "long_open_slow": -1,
             "long_featured": -1,
+            "long_three_pillars": -1,
             "corridor": -1,
             "pillar": 3,
             "occlusion": 2,
@@ -1022,8 +1120,12 @@ def run_sim(
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured"}:
+        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
+        if map_profile == "long_three_pillars":
+            # This profile has three route obstacles; use the multi-obstacle
+            # ground-truth metric instead of the legacy single-pillar check.
+            scenario["planned_clearance_check"] = False
         elif map_profile in {"tunnel_irregular", "tunnel_smooth", "forest_clutter"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 240.0)
         if map_profile in {"occlusion", "occlusion_featured"}:
@@ -1048,12 +1150,45 @@ def run_sim(
         else "sim"
     )
     session = Session.create(ARTIFACT_ROOT, session_name)
+    isolated_domain = _resolve_isolation_value(
+        ros_domain_id, "UAV_NAV_ROS_DOMAIN_ID", DEFAULT_ROS_DOMAIN_ID, low=0, high=232
+    )
+    isolated_xrce_port = _resolve_isolation_value(
+        xrce_port, "UAV_NAV_XRCE_PORT", DEFAULT_XRCE_PORT, low=1024, high=65535
+    )
+    # PX4's rcS consumes ROS_DOMAIN_ID and PX4_UXRCE_DDS_PORT when it starts
+    # uxrce_dds_client.  Set them before any child process is launched so the
+    # simulator, agent, bridges, monitor and scenario all share one domain.
+    os.environ["ROS_DOMAIN_ID"] = str(isolated_domain)
+    os.environ["PX4_UXRCE_DDS_PORT"] = str(isolated_xrce_port)
+    # Gazebo Transport is independent of ROS 2 DDS.  Give every benchmark a
+    # deterministic private partition as well, otherwise a second SITL (or a
+    # physical M40 companion using the default partition) can advertise the
+    # same /world topics and make Gazebo fail with a transport socket error.
+    os.environ["GZ_PARTITION"] = f"uav_navigation_{isolated_domain}_{isolated_xrce_port}"
+    # Do not inherit a namespace from a developer shell: the existing bridge
+    # and planner subscribe to absolute /fmu names.  Domain isolation is the
+    # safe boundary for this stack.
+    os.environ.pop("PX4_UXRCE_DDS_NS", None)
+    # ROS 2 and Gazebo otherwise default to per-user log directories.  The
+    # session owns a writable, reproducible location and Session.start
+    # inherits these variables for monitor, bridge, mapping and simulator
+    # processes alike.
+    os.environ["ROS_LOG_DIR"] = str(session.logs)
+    os.environ["RCUTILS_LOGGING_DIRECTORY"] = str(session.logs)
+    os.environ["GZ_LOG_DIR"] = str(session.logs)
     world_name, map_descriptor = _resolve_map_descriptor(session, map_profile, map_seed)
     map_descriptor.update({
         "scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
         "motion_preset": scene_descriptor["motion_preset"],
     })
+    scenario_config.setdefault("scenario", {})["route_obstacles"] = list(
+        map_descriptor.get("route_obstacles", [])
+    )
+    scenario_config["scenario"]["route_segment_waypoints"] = list(
+        map_descriptor.get("route_segment_waypoints", [])
+    )
     (session.directory / "map_descriptor.json").write_text(
         json.dumps(map_descriptor, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1073,6 +1208,11 @@ def run_sim(
         "motion_preset": scene_descriptor["motion_preset"],
         "map_seed": map_descriptor.get("seed", 0),
         "map_descriptor": str(session.directory / "map_descriptor.json"),
+        "ros_domain_id": isolated_domain,
+        "xrce_port": isolated_xrce_port,
+        "dds_isolation": (
+            "ROS_DOMAIN_ID + dedicated MicroXRCEAgent UDP port + private GZ_PARTITION"
+        ),
     })
     scenario_config_path = session.directory / "scenario_config.yaml"
     scenario_config.setdefault("scenario", {})["map_descriptor"] = str(
@@ -1099,6 +1239,8 @@ def run_sim(
         map_scene=scene_descriptor["scene"],
         test_case=scene_descriptor["test_case"],
         motion_preset=scene_descriptor["motion_preset"],
+        ros_domain_id=isolated_domain,
+        xrce_port=isolated_xrce_port,
     )
     prereq = _sim_prerequisites(px4_dir, gz_command)
     if prereq:
@@ -1121,7 +1263,10 @@ def run_sim(
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
             "monitor",
-            [sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory), "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml")],
+            _ros_shell([
+                sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
+                "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml"),
+            ]),
             cwd=ROOT,
         )
         session.start(
@@ -1149,7 +1294,9 @@ def run_sim(
         if not gz_command:
             raise RuntimeError("Gazebo simulator command is unavailable")
         _wait_gazebo(world, float(config["runtime"]["timeouts"]["startup_s"]), gz_command)
-        session.start("xrce_agent", ["MicroXRCEAgent", "udp4", "-p", "8888"], cwd=ROOT)
+        session.start(
+            "xrce_agent", ["MicroXRCEAgent", "udp4", "-p", str(isolated_xrce_port)], cwd=ROOT
+        )
         bridge_source = ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml"
         bridge_config = session.directory / "px4_mid360_bridge.yaml"
         bridge_config.write_text(
@@ -1215,7 +1362,10 @@ def run_sim(
             scenario_role = "offboard" if control_interface == "offboard" else "external_mode_scenario"
             scenario = session.start(
                 scenario_role,
-                [sys.executable, str(ROOT / "tools/runtime" / scenario_name), "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path)],
+                _ros_shell([
+                    sys.executable, str(ROOT / "tools/runtime" / scenario_name),
+                    "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path),
+                ]),
                 cwd=ROOT,
             )
             if control_interface == "external_mode":
@@ -1447,7 +1597,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -1470,6 +1620,14 @@ def main() -> int:
         "--map-seed", type=int, default=0,
         help="deterministic seed for stochastic map profiles (for example forest_clutter)",
     )
+    external_mode.add_argument(
+        "--ros-domain-id", type=int, default=None,
+        help=f"isolated ROS 2 DDS domain (default: $UAV_NAV_ROS_DOMAIN_ID or {DEFAULT_ROS_DOMAIN_ID})",
+    )
+    external_mode.add_argument(
+        "--xrce-port", type=int, default=None,
+        help=f"dedicated MicroXRCEAgent UDP port (default: $UAV_NAV_XRCE_PORT or {DEFAULT_XRCE_PORT})",
+    )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -1484,7 +1642,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -1506,6 +1664,14 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-seed", type=int, default=0,
         help="deterministic seed for stochastic map profiles (for example forest_clutter)",
+    )
+    external_mode_gui.add_argument(
+        "--ros-domain-id", type=int, default=None,
+        help=f"isolated ROS 2 DDS domain (default: $UAV_NAV_ROS_DOMAIN_ID or {DEFAULT_ROS_DOMAIN_ID})",
+    )
+    external_mode_gui.add_argument(
+        "--xrce-port", type=int, default=None,
+        help=f"dedicated MicroXRCEAgent UDP port (default: $UAV_NAV_XRCE_PORT or {DEFAULT_XRCE_PORT})",
     )
     external_mode_gui.add_argument(
         "--manual-takeoff", action="store_true",
@@ -1536,6 +1702,8 @@ def main() -> int:
             test_case=args.test_case,
             motion_preset=args.motion_preset,
             map_seed=args.map_seed,
+            ros_domain_id=args.ros_domain_id,
+            xrce_port=args.xrce_port,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -1549,6 +1717,8 @@ def main() -> int:
             test_case=args.test_case,
             motion_preset=args.motion_preset,
             map_seed=args.map_seed,
+            ros_domain_id=args.ros_domain_id,
+            xrce_port=args.xrce_port,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
         )

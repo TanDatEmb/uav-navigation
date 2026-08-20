@@ -10,6 +10,7 @@ namespace {
 navigation_interfaces::msg::PlannedTrajectory validTrajectory() {
   navigation_interfaces::msg::PlannedTrajectory message;
   message.header.frame_id = "lio_odom";
+  message.trajectory_id = 1U;
   message.success = true;
   message.duration_s = 2.0;
   message.time_from_start = {0.0, 2.0};
@@ -30,6 +31,12 @@ TEST(TrajectoryContract, ValidatesAndSamplesInEnu) {
   EXPECT_DOUBLE_EQ(sample.position_enu.x(), 1.0);
   EXPECT_DOUBLE_EQ(sample.velocity_enu.x(), 0.5);
   EXPECT_DOUBLE_EQ(sample.acceleration_enu.x(), 0.0);
+  const auto start = px4_navigation_external_mode::sampleTrajectory(message, 0.0);
+  const auto finish = px4_navigation_external_mode::sampleTrajectory(message, 2.0);
+  EXPECT_NEAR(start.position_enu.x(), 0.0, 1e-12);
+  EXPECT_NEAR(start.velocity_enu.x(), 0.0, 1e-12);
+  EXPECT_NEAR(finish.position_enu.x(), 2.0, 1e-12);
+  EXPECT_NEAR(finish.velocity_enu.x(), 1.0, 1e-12);
 }
 
 TEST(TrajectoryContract, ConvertsEnuToNedWithoutYawGuess) {
@@ -119,6 +126,19 @@ TEST(TrajectoryContract, RejectsOlderWorldRevisionButAcceptsCurrentOrNewer) {
   EXPECT_TRUE(px4_navigation_external_mode::trajectoryRevisionIsNotOlder(message, true, 4U, 9U));
   EXPECT_FALSE(px4_navigation_external_mode::trajectoryRevisionIsNotOlder(message, true, 4U, 11U));
   EXPECT_FALSE(px4_navigation_external_mode::trajectoryRevisionIsNotOlder(message, true, 5U, 0U));
+}
+
+TEST(TrajectoryContract, CarriesFutureSwitchMetadata) {
+  auto message = validTrajectory();
+  message.valid_from.sec = 10;
+  message.commitment_horizon_s = 0.12;
+  EXPECT_TRUE(px4_navigation_external_mode::validateTrajectory(message, "lio_odom").valid());
+  EXPECT_FALSE(px4_navigation_external_mode::trajectoryValidFromIsNotOlder(message, 9LL * 1000000000LL));
+  EXPECT_TRUE(px4_navigation_external_mode::trajectoryValidFromIsNotOlder(message, 10LL * 1000000000LL));
+
+  message.trajectory_id = 0U;
+  EXPECT_EQ(px4_navigation_external_mode::validateTrajectory(message, "lio_odom").failure,
+            px4_navigation_external_mode::TrajectoryInputFailure::InvalidTrajectoryId);
 }
 
 TEST(VelocityTracker, UsesPositionFeedbackAndLimitsAcceleration) {

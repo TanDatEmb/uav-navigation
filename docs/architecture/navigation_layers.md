@@ -164,6 +164,21 @@ verification again. This prevents an unconditional planner loop from being
 mistaken for a safety mechanism while retaining fail-closed behavior on a
 changed map.
 
+The rolling trajectory contract carries `trajectory_id`, `parent_trajectory_id`
+and `valid_from`. A replacement is generated from the old sampled trajectory
+at a future switch state `(p,v,a)` and PX4 keeps the old setpoint active until
+the replacement's `valid_from`. Runtime verification and PX4 consume the same
+sampled PVA contract; the planner's bounded polynomial remains the source of
+the smooth samples. Intermediate mission waypoints are declared
+`pass_through` and carry the next target so the planner can preserve a bounded
+tangent; terminal/inspection points use `stop`.
+
+Before each plan, a visibility governor computes the known-free inflated
+horizon `d_free` in the motion direction and caps speed using
+`v²/(2a_decel) + v t_latency + d_margin <= d_free`. This is a conservative
+speed envelope layered above A* and verification, not a replacement for
+collision checking.
+
 Mission completion is a notification from External Mode to the supervisor. The
 mode executor reports success and stops owning mission progress; it does not
 issue LAND, RTL, disarm, or an assumed Loiter handover. The supervisor chooses a

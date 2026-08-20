@@ -28,6 +28,9 @@ struct Goal {
   // vehicle does not stop at every local-map boundary before replanning.
   bool terminal{true};
   navigation_mapping::Vec3 terminal_velocity{navigation_mapping::Vec3::Zero()};
+  // Optional online cap derived from observed free horizon and latency. Zero
+  // means use the configured vehicle limit.
+  double velocity_limit_mps{0.0};
 };
 
 struct DynamicLimits {
@@ -549,6 +552,29 @@ std::vector<navigation_mapping::Vec3> simplifyPath(
     return true;
   };
 
+  // The supercover test above is deliberately conservative: it rejects a
+  // shortcut whenever an adjacent voxel could be touched at a grid corner.
+  // That is the right first choice for safety, but it can leave a staircase
+  // of 20--40 anchors around an inflated obstacle.  Time-parameterizing that
+  // staircase forces a short jerk-limited segment for every voxel and can be
+  // substantially slower than the actual geometric corridor.  Use a second,
+  // still conservative point-sampled test as an optimization fallback.  The
+  // resulting spline is checked again at 200 samples/segment and by the
+  // runtime verifier; if it bows into an occupied voxel the planner restores
+  // the raw A* corridor and fails closed.
+  const auto pointwiseLineOfSight = [&](const navigation_mapping::Vec3& start,
+                                        const navigation_mapping::Vec3& end) {
+    const double length = (end - start).norm();
+    const double point_spacing = std::max(0.05, 0.25 * world.resolution(
+        navigation_mapping::WorldLayer::Inflated));
+    const int samples = std::max(1, static_cast<int>(std::ceil(length / point_spacing)));
+    for (int sample = 0; sample <= samples; ++sample) {
+      const double alpha = static_cast<double>(sample) / static_cast<double>(samples);
+      if (!traversable(start + alpha * (end - start))) return false;
+    }
+    return true;
+  };
+
   std::vector<navigation_mapping::Vec3> simplified;
   simplified.reserve(corner_reduced.size());
   std::size_t anchor = 0;
@@ -556,7 +582,10 @@ std::vector<navigation_mapping::Vec3> simplifyPath(
   while (anchor + 1U < corner_reduced.size()) {
     std::size_t farthest = anchor + 1U;
     for (std::size_t candidate = anchor + 2U; candidate < corner_reduced.size(); ++candidate) {
-      if (lineOfSight(corner_reduced[anchor], corner_reduced[candidate])) farthest = candidate;
+      if (lineOfSight(corner_reduced[anchor], corner_reduced[candidate]) ||
+          pointwiseLineOfSight(corner_reduced[anchor], corner_reduced[candidate])) {
+        farthest = candidate;
+      }
     }
     if (farthest > anchor + 1U) ++shortcut_count;
     simplified.push_back(corner_reduced[farthest]);
@@ -617,7 +646,17 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
     result.failure_code = PlanFailureCode::InvalidState;
     return finish();
   }
-  if (state.velocity.norm() > config.limits.max_velocity_mps + 1e-9 ||
+  const double velocity_limit = goal.velocity_limit_mps > 0.0
+                                    ? std::min(config.limits.max_velocity_mps,
+                                               goal.velocity_limit_mps)
+                                    : config.limits.max_velocity_mps;
+  if (!std::isfinite(velocity_limit) || velocity_limit <= 0.0 ||
+      (goal.velocity_limit_mps != 0.0 &&
+       (!std::isfinite(goal.velocity_limit_mps) || goal.velocity_limit_mps < 0.0))) {
+    result.failure_code = PlanFailureCode::InvalidState;
+    return finish();
+  }
+  if (state.velocity.norm() > velocity_limit + 1e-9 ||
       state.acceleration.norm() > config.limits.max_acceleration_mps2 + 1e-9) {
     result.failure_code = PlanFailureCode::DynamicLimitsInfeasible;
     return finish();
@@ -760,7 +799,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
     base_durations.reserve(waypoints.size() - 1);
     for (std::size_t i = 1; i < waypoints.size(); ++i) {
       const double distance = (waypoints[i] - waypoints[i - 1]).norm();
-      const double velocity_time = 1.2 * distance / config.limits.max_velocity_mps;
+      const double velocity_time = 1.2 * distance / velocity_limit;
       const double acceleration_time =
           std::sqrt(6.0 * std::max(distance, 1e-6) / config.limits.max_acceleration_mps2);
       const double deceleration_time =
@@ -785,10 +824,10 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
       if (!waypoints.empty()) tangents.front() = state.velocity;
       for (std::size_t i = 1; i + 1U < waypoints.size(); ++i) {
         const double span = durations[i - 1U] + durations[i];
-        if (span > 1e-9) {
+      if (span > 1e-9) {
           tangents[i] = (waypoints[i + 1U] - waypoints[i - 1U]) / span;
           const double norm = tangents[i].norm();
-          const double design_limit = designVelocityLimit(config.limits);
+          const double design_limit = 0.995 * velocity_limit;
           if (norm > design_limit) {
             tangents[i] *= design_limit / norm;
           }
@@ -812,7 +851,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
       // retroactively. The collision/dynamic verifier still has final veto.
       tangents.back() = goal.terminal_velocity;
       const double terminal_norm = tangents.back().norm();
-      const double design_limit = designVelocityLimit(config.limits);
+      const double design_limit = 0.995 * velocity_limit;
       if (terminal_norm > design_limit && terminal_norm > 1e-9) {
         tangents.back() *= design_limit / terminal_norm;
       }
@@ -881,7 +920,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
     result.statistics.trajectory_optimization.trajectory_length_m = trajectory_length;
     result.statistics.trajectory_optimization.collision_free = collision_free;
     result.statistics.trajectory_optimization.dynamic_limits_satisfied =
-        finite && maximum_velocity <= config.limits.max_velocity_mps + 1e-9 &&
+        finite && maximum_velocity <= velocity_limit + 1e-9 &&
         maximum_acceleration <=
             std::max(config.limits.max_acceleration_mps2,
                      config.limits.max_deceleration_mps2) * 0.995 &&
@@ -902,7 +941,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
       durations.reserve(waypoints.size() > 1U ? waypoints.size() - 1U : 0U);
       for (std::size_t i = 1; i < waypoints.size(); ++i) {
         const double distance = (waypoints[i] - waypoints[i - 1U]).norm();
-        durations.push_back(std::max({0.2, 1.2 * distance / config.limits.max_velocity_mps,
+        durations.push_back(std::max({0.2, 1.2 * distance / velocity_limit,
                                       std::sqrt(6.0 * std::max(distance, 1e-6) /
                                                 config.limits.max_acceleration_mps2),
                                       std::sqrt(6.0 * std::max(distance, 1e-6) /
@@ -979,7 +1018,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
     } else {
       auto endpoint_velocity = goal.terminal_velocity;
       const double endpoint_norm = endpoint_velocity.norm();
-      const double design_limit = designVelocityLimit(config.limits);
+      const double design_limit = 0.995 * velocity_limit;
       if (endpoint_norm > design_limit && endpoint_norm > 1e-9) {
         endpoint_velocity *= design_limit / endpoint_norm;
       }
