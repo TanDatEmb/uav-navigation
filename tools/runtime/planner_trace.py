@@ -19,6 +19,13 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "horizon_end_arc_m": ("horizon_end_arc_m",),
     "horizon_arc_m": ("horizon_arc_m", "horizon_arc_length_m", "horizon_end_arc_m"),
     "horizon_endpoint": ("horizon_endpoint",),
+    "planning_state_position": ("planning_state_position",),
+    "planning_state_velocity": ("planning_state_velocity",),
+    "planning_horizon_distance_m": ("planning_horizon_distance_m",),
+    "horizon_forward_projection_m": ("horizon_forward_projection_m",),
+    "horizon_progress_m": ("horizon_progress_m",),
+    "known_free_horizon_m": ("known_free_horizon_m",),
+    "horizon_ray_occupied": ("horizon_ray_occupied",),
     "selected_branch": ("selected_branch", "selected_candidate"),
     "safety_activation": ("safety_activation", "safety_activated"),
     "solver_latency_us": (
@@ -97,6 +104,8 @@ def _branch(value: Any) -> str | int | None:
 def _point(value: Any) -> list[float] | None:
     if isinstance(value, dict):
         value = [value.get("x"), value.get("y"), value.get("z")]
+    elif all(hasattr(value, name) for name in ("x", "y", "z")):
+        value = [value.x, value.y, value.z]
     if not isinstance(value, (list, tuple)) or len(value) < 3:
         return None
     result = [_float(item) for item in value[:3]]
@@ -120,6 +129,13 @@ def normalize_planner_trace_record(
         "horizon_end_arc_m": _float(values["horizon_end_arc_m"]),
         "horizon_arc_m": _float(values["horizon_arc_m"]),
         "horizon_endpoint": _point(values["horizon_endpoint"]),
+        "planning_state_position": _point(values["planning_state_position"]),
+        "planning_state_velocity": _point(values["planning_state_velocity"]),
+        "planning_horizon_distance_m": _float(values["planning_horizon_distance_m"]),
+        "horizon_forward_projection_m": _float(values["horizon_forward_projection_m"]),
+        "horizon_progress_m": _float(values["horizon_progress_m"]),
+        "known_free_horizon_m": _float(values["known_free_horizon_m"]),
+        "horizon_ray_occupied": _bool(values["horizon_ray_occupied"]),
         "selected_branch": _branch(values["selected_branch"]),
         "safety_activation": _bool(values["safety_activation"]),
         "solver_latency_us": _float(values["solver_latency_us"]),

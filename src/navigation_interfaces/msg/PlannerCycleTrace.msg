@@ -13,6 +13,13 @@ float64 route_arc_progress_m
 float64 horizon_start_arc_m
 float64 horizon_end_arc_m
 geometry_msgs/Point horizon_endpoint
+geometry_msgs/Point planning_state_position
+geometry_msgs/Vector3 planning_state_velocity
+float64 planning_horizon_distance_m
+float64 horizon_forward_projection_m
+float64 horizon_progress_m
+float64 known_free_horizon_m
+bool horizon_ray_occupied
 
 float64 planning_latency_ms
 float64 optimizer_latency_ms

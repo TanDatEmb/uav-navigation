@@ -39,6 +39,9 @@ class BoxWorld {
     if (unknown && index == navigation_mapping::GridIndex3{7, 5, 5}) {
       return navigation_mapping::CellState::Unknown;
     }
+    if (thin_free && (index.y != 5 || index.z != 5)) {
+      return navigation_mapping::CellState::Unknown;
+    }
     return all_unknown ? navigation_mapping::CellState::Unknown
                        : navigation_mapping::CellState::KnownFree;
   }
@@ -47,6 +50,7 @@ class BoxWorld {
   bool occupied{false};
   bool unknown{false};
   bool all_unknown{false};
+  bool thin_free{false};
 };
 
 TEST(LocalGoalSelectorTest, KeepsGoalInsideCurrentWindowDirect) {
@@ -69,6 +73,21 @@ TEST(LocalGoalSelectorTest, ProjectsFarGoalToInsetWindow) {
   EXPECT_NEAR(result.goal.x(), 4.0, 1e-9);
   EXPECT_NEAR(result.goal.y(), 0.0, 1e-9);
   EXPECT_NEAR(result.goal.z(), 0.0, 1e-9);
+}
+
+TEST(LocalGoalSelectorTest, UsesThinKnownFreeRayForFullHorizon) {
+  BoxWorld world;
+  world.thin_free = true;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{20.0, 0.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX());
+  ASSERT_TRUE(result.success());
+  EXPECT_TRUE(result.usesSubGoal());
+  // The selector must keep moving along a thin observed ray; it must not
+  // fail merely because adjacent horizontal voxels are still Unknown.
+  EXPECT_GT(result.goal.x(), 1.5);
+  EXPECT_GT(result.forward_projection_m, 1.5);
 }
 
 TEST(LocalGoalSelectorTest, UsesKnownFreePreferredHorizonAsSoftContinuityPrior) {

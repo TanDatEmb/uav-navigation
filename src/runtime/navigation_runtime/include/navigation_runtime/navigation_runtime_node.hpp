@@ -168,6 +168,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double last_horizon_forward_projection_m_{0.0};
   double last_planning_horizon_distance_m_{0.0};
   double last_horizon_progress_m_{0.0};
+  bool last_horizon_ray_occupied_{false};
   double last_adaptive_velocity_cap_mps_{0.0};
   double last_known_free_horizon_m_{0.0};
   double last_splice_position_residual_m_{0.0};

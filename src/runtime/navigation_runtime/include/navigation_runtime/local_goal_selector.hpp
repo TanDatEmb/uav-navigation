@@ -26,6 +26,7 @@ struct LocalGoalSelection {
   // next-waypoint direction that points behind the vehicle.
   navigation_mapping::Vec3 tangent{navigation_mapping::Vec3::Zero()};
   double forward_projection_m{0.0};
+  bool occupied_on_forward_ray{false};
 
   [[nodiscard]] bool success() const noexcept {
     return status == LocalGoalSelectionStatus::Direct ||
@@ -122,25 +123,15 @@ template <typename Model>
     return world.cellState(layer, index) == navigation_mapping::CellState::KnownFree;
   };
   const auto horizon_known_free = [&](const navigation_mapping::Vec3& point) {
-    if (!known_free(point)) return false;
-    // A single KnownFree cell at the edge of a newly revealed scan is not a
-    // stable horizon endpoint.  Its first spline sample can land in the
-    // neighbouring Unknown cell, so the planner may reject exactly the point
-    // that the selector just returned. Require a small horizontal support
-    // stencil for local anchors; the mission waypoint itself keeps the less
-    // conservative direct check above.
-    const auto center = world.worldToGrid(layer, point);
-    for (int dx = -1; dx <= 1; ++dx) {
-      for (int dy = -1; dy <= 1; ++dy) {
-        const navigation_mapping::GridIndex3 neighbour{center.x + dx, center.y + dy,
-                                                        center.z};
-        if (!bounds.contains(neighbour) ||
-            world.cellState(layer, neighbour) != navigation_mapping::CellState::KnownFree) {
-          return false;
-        }
-      }
-    }
-    return true;
+    // Do not require a horizontal 3x3 KnownFree stencil here.  Livox/ROG
+    // raycasting commonly produces a thin, valid free ray while adjacent
+    // voxels remain Unknown.  Requiring that stencil made a 10 m planning
+    // horizon collapse to the first 1--2 m voxel even though the center ray
+    // was observable much farther ahead.  The endpoint is still checked by
+    // A* and by the dense trajectory verifier, which are the authoritative
+    // collision checks for the complete spline rather than this cheap target
+    // selector.
+    return known_free(point);
   };
 
   const auto mission_direction = requested - start;
@@ -167,10 +158,10 @@ template <typename Model>
   // window it is the only endpoint that may be treated as Direct, regardless
   // of its distance from the vehicle.  The old distance gate made a waypoint
   // that had just become visible look like another local goal and forced the
-  // runtime to walk through a chain of artificial endpoints.  Require the
-  // same local support stencil used for horizon anchors so a one-voxel scan
-  // island at the map edge cannot trigger a nominal trajectory that is
-  // invalidated on the next map update.
+  // runtime to walk through a chain of artificial endpoints.  Require only a
+  // KnownFree endpoint; the complete trajectory is still checked by A* and
+  // dense verification, so a sparse scan must not shrink the horizon merely
+  // because adjacent support voxels have not been observed yet.
   const auto unit_direction = direction / direction_norm;
   const double requested_forward_projection = (requested - start).dot(unit_direction);
   if (inside_inset(requested) && horizon_known_free(requested) &&
@@ -183,7 +174,16 @@ template <typename Model>
   }
 
   const auto mission_unit_direction = mission_direction / mission_direction_norm;
-  const double search_distance = std::min(max_distance_m, direction_norm);
+  // `forward_direction` is normally a normalized splice tangent.  Using its
+  // norm here silently reduced every rolling search to one metre.  Limit the
+  // horizon by the mission distance only when the mission waypoint is ahead
+  // on this tangent; for an orthogonal/behind waypoint the rolling horizon
+  // must still use the configured distance and keep flying forward.
+  const double forward_mission_distance =
+      std::max(0.0, mission_direction.dot(unit_direction));
+  const double search_distance = forward_mission_distance > 0.5 * resolution
+                                     ? std::min(max_distance_m, forward_mission_distance)
+                                     : max_distance_m;
   // A preferred endpoint is now a continuity cost only for rolling planning.
   // Returning it verbatim made every 5 Hz replan look like a subgoal
   // completion loop.  The old API keeps the compatibility behaviour for
@@ -236,6 +236,7 @@ template <typename Model>
     }
   }
   if (occupied_on_ray) {
+    result.occupied_on_forward_ray = true;
     // Search around the first observed obstacle, not only around the current
     // vehicle voxel.  A start-centred shell can return a point just in front
     // of a pillar; the vehicle then reaches that point and waits for another
@@ -303,6 +304,26 @@ template <typename Model>
     if (detour_found) {
       result.status = LocalGoalSelectionStatus::LocalSubGoal;
       result.goal = detour_goal;
+      const auto delta = result.goal - start;
+      result.tangent = delta.norm() > 1e-6 ? delta.normalized() : unit_direction;
+      result.forward_projection_m = delta.dot(unit_direction);
+      return result;
+    }
+  }
+
+  // In an open, thin ray the centerline is the best horizon anchor. Select
+  // the farthest observed ray cell explicitly before scanning the lateral
+  // stencil; this prevents a sparse voxel cloud from making the score-based
+  // search settle on a near cell even though the configured horizon is free.
+  if (!occupied_on_ray) {
+    for (int step = longitudinal_steps; step >= 1; --step) {
+      const double distance = std::min(search_distance, step * resolution);
+      const auto ray_point = start + distance * unit_direction;
+      if (!known_free(ray_point)) continue;
+      const auto ray_index = world.worldToGrid(layer, ray_point);
+      if (!bounds.contains(ray_index)) continue;
+      result.status = LocalGoalSelectionStatus::LocalSubGoal;
+      result.goal = world.gridToWorld(layer, ray_index);
       const auto delta = result.goal - start;
       result.tangent = delta.norm() > 1e-6 ? delta.normalized() : unit_direction;
       result.forward_projection_m = delta.dot(unit_direction);

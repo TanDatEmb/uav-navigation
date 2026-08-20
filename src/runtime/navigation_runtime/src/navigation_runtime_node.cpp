@@ -1333,6 +1333,7 @@ void NavigationRuntimeNode::planActiveGoal() {
       last_horizon_progress_m_ = (local_goal.goal - state.position).dot(
           planning_tangent.norm() > 1e-6 ? planning_tangent
                                          : navigation_mapping::Vec3::UnitX());
+      last_horizon_ray_occupied_ = local_goal.occupied_on_forward_ray;
       if (local_goal.success()) {
         const bool same_endpoint = previous_was_subgoal &&
                                     (local_goal.goal - previous_effective_goal).norm() <=
@@ -2162,6 +2163,7 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
       keyValue("planning_horizon_distance_m",
                std::to_string(last_planning_horizon_distance_m_)),
       keyValue("horizon_progress_m", std::to_string(last_horizon_progress_m_)),
+      keyValue("horizon_ray_occupied", last_horizon_ray_occupied_ ? "true" : "false"),
       keyValue("adaptive_velocity_cap_mps", std::to_string(last_adaptive_velocity_cap_mps_)),
       keyValue("known_free_horizon_m", std::to_string(last_known_free_horizon_m_)),
       keyValue("splice_position_residual_m", std::to_string(last_splice_position_residual_m_)),
@@ -2277,6 +2279,17 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
   trace.horizon_endpoint.x = end_point.position.x();
   trace.horizon_endpoint.y = end_point.position.y();
   trace.horizon_endpoint.z = end_point.position.z();
+  trace.planning_state_position.x = last_planning_state_position_.x();
+  trace.planning_state_position.y = last_planning_state_position_.y();
+  trace.planning_state_position.z = last_planning_state_position_.z();
+  trace.planning_state_velocity.x = last_planning_state_velocity_.x();
+  trace.planning_state_velocity.y = last_planning_state_velocity_.y();
+  trace.planning_state_velocity.z = last_planning_state_velocity_.z();
+  trace.planning_horizon_distance_m = last_planning_horizon_distance_m_;
+  trace.horizon_forward_projection_m = last_horizon_forward_projection_m_;
+  trace.horizon_progress_m = last_horizon_progress_m_;
+  trace.known_free_horizon_m = last_known_free_horizon_m_;
+  trace.horizon_ray_occupied = last_horizon_ray_occupied_;
   trace.planning_latency_ms = static_cast<double>(statistics.total_planning_time_us) / 1000.0;
   trace.optimizer_latency_ms = static_cast<double>(
       statistics.trajectory_optimization.optimization_time_us) / 1000.0;
