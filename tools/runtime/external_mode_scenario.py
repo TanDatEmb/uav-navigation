@@ -20,6 +20,8 @@ import signal
 import time
 from typing import Any
 
+from planner_trace import normalize_planner_trace_record
+
 
 def _time_ns(value: Any) -> int:
     return int(value.sec) * 1_000_000_000 + int(value.nanosec)
@@ -71,6 +73,10 @@ class ExternalModeScenario:
         from geometry_msgs.msg import Point, Vector3
         from nav_msgs.msg import Odometry
         from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus, PlannedTrajectory
+        try:
+            from navigation_interfaces.msg import PlannerCycleTrace
+        except ImportError:  # Compatibility with an install before the v2 contract.
+            PlannerCycleTrace = None
         from px4_msgs.msg import (
             ModeCompleted,
             TrajectorySetpoint,
@@ -160,6 +166,7 @@ class ExternalModeScenario:
         # by the legacy acceptance checks; the history is the authoritative
         # artifact for splice/continuity analysis.
         self.trajectory_history: list[dict[str, Any]] = []
+        self.planner_trace_records: list[dict[str, Any]] = []
         self.trajectory_role_counts: dict[str, int] = {}
         self.safety_kind_counts: dict[str, int] = {}
         self.trajectory_failure_count = 0
@@ -222,6 +229,13 @@ class ExternalModeScenario:
         self.node.create_subscription(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", self._setpoint, px4_qos)
         self.node.create_subscription(NavigationGoal, "/navigation/goal", self._goal, reliable_qos)
         self.node.create_subscription(PlannedTrajectory, "/navigation/trajectory", self._trajectory, reliable_qos)
+        if PlannerCycleTrace is not None:
+            self.node.create_subscription(
+                PlannerCycleTrace,
+                "/navigation/planner_trace",
+                self._planner_trace,
+                reliable_qos,
+            )
         self.node.create_subscription(Bool, "/navigation/mission_complete", self._mission_complete, reliable_qos)
         self.node.create_subscription(
             NavigationModeStatus, "/navigation/mode_status", self._mode_status, reliable_qos)
@@ -596,6 +610,55 @@ class ExternalModeScenario:
         elif len(self.trajectory_records) < 128:
             self.trajectory_records.append(dict(self.latest_trajectory))
         self._record("trajectory", self.latest_trajectory)
+
+    def _planner_trace(self, message: Any) -> None:
+        """Persist one explicit rolling-planner cycle without synthesizing IDs."""
+        endpoint = getattr(message, "horizon_endpoint", None)
+        raw = {
+            "planning_cycle_id": getattr(message, "cycle_id", None),
+            "bundle_id": getattr(message, "bundle_id", None),
+            "request_id": getattr(message, "request_id", None),
+            "world_generation": getattr(message, "world_generation", None),
+            "world_revision": getattr(message, "world_revision", None),
+            "route_id": getattr(message, "route_id", None),
+            "route_candidate_count": getattr(message, "route_candidate_count", None),
+            "corridor_region_count": getattr(message, "corridor_region_count", None),
+            "horizon_start_arc_m": getattr(message, "horizon_start_arc_m", None),
+            "horizon_end_arc_m": getattr(message, "horizon_end_arc_m", None),
+            "horizon_endpoint": endpoint,
+            "selected_branch": getattr(message, "selected_branch", None),
+            "status": getattr(message, "status", None),
+            "failure_code": getattr(message, "failure_code", None),
+            "planning_latency_ms": getattr(message, "planning_latency_ms", None),
+            "optimizer_latency_ms": getattr(message, "optimizer_latency_ms", None),
+            "maximum_velocity_mps": getattr(message, "maximum_velocity_mps", None),
+            "maximum_acceleration_mps2": getattr(message, "maximum_acceleration_mps2", None),
+            "maximum_jerk_mps3": getattr(message, "maximum_jerk_mps3", None),
+            "splice_position_residual_m": getattr(message, "splice_position_residual_m", None),
+            "splice_velocity_residual_mps": getattr(message, "splice_velocity_residual_mps", None),
+            "splice_acceleration_residual_mps2": getattr(message, "splice_acceleration_residual_mps2", None),
+        }
+        if endpoint is not None:
+            raw["horizon_endpoint"] = [
+                getattr(endpoint, "x", None),
+                getattr(endpoint, "y", None),
+                getattr(endpoint, "z", None),
+            ]
+        record = normalize_planner_trace_record(
+            raw,
+            source="ros:/navigation/planner_trace",
+            timestamp_s=(
+                _time_ns(message.header.stamp) / 1e9
+                if hasattr(message, "header") and hasattr(message.header, "stamp")
+                else None
+            ),
+        )
+        if record is None:
+            return
+        self.planner_trace_records.append(record)
+        if len(self.planner_trace_records) > 4096:
+            del self.planner_trace_records[:len(self.planner_trace_records) - 4096]
+        self._record("planner_trace", record)
 
     def _mission_complete(self, message: Any) -> None:
         if bool(message.data):
@@ -1252,6 +1315,7 @@ class ExternalModeScenario:
             "latest_trajectory": self.latest_trajectory,
             "trajectory_records": self.trajectory_records,
             "trajectory_history": self.trajectory_history,
+            "planner_trace_records": self.planner_trace_records,
             "goal_publish_count": self.goal_publish_count,
             "goal_received_count": self.goal_received_count,
             "goal_indices": self.goal_indices,

@@ -17,6 +17,8 @@ import statistics
 import xml.etree.ElementTree as ET
 from typing import Any
 
+from planner_trace import collect_planner_trace_records, planner_trace_summary
+
 
 def _load(path: Path, default: Any) -> Any:
     try:
@@ -373,6 +375,11 @@ def _analyze(session: Path) -> dict[str, Any]:
     trajectory_records = _trajectory_records(session)
     smoothness, plan_series = _trajectory_smoothness(trajectory_records)
     planning_continuity = _planning_continuity(planning)
+    planner_trace_records = collect_planner_trace_records(scenario)
+    planner_trace = {
+        **planner_trace_summary(planner_trace_records),
+        "records": planner_trace_records,
+    }
 
     tracking_errors: list[float] = []
     speeds: list[float] = []
@@ -453,6 +460,7 @@ def _analyze(session: Path) -> dict[str, Any]:
             "full_replan_count": max((_finite_number(item.get("full_replan_count")) or 0.0 for item in planning), default=0.0),
             "local_subgoal_selected_count": max((_finite_number(item.get("local_subgoal_selected_count")) or 0.0 for item in planning), default=0.0),
             "continuity": planning_continuity,
+            "rolling_bundle_trace": planner_trace,
         },
         "safety": {
             "outcome": scenario.get("outcome"),
@@ -611,7 +619,33 @@ def generate(session: Path) -> Path:
         f"<tr><th>Rolling samples / terminal hold refreshes</th><td>{cell(metrics['planning']['continuity'].get('rolling_sample_count'), 0)} / {cell(metrics['planning']['continuity'].get('terminal_hold_sample_count'), 0)}</td></tr>",
         f"<tr><th>Collision / min clearance</th><td>{cell(metrics['safety'].get('collision_count'), 0)} / {cell(metrics['safety'].get('minimum_collision_clearance_m'))} m ({html.escape(str(metrics['safety'].get('minimum_collision_obstacle_name') or 'n/a'))})</td></tr>",
     ])
-    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section><section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
+    trace = metrics["planning"].get("rolling_bundle_trace", {})
+    trace_records = trace.get("records", []) if isinstance(trace, dict) else []
+    trace_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(record.get('planning_cycle_id')))}</td>"
+        f"<td>{html.escape(str(record.get('bundle_id')))}</td>"
+        f"<td>{html.escape(str(record.get('route_id')))}</td>"
+        f"<td>{cell(record.get('horizon_start_arc_m'))} → {cell(record.get('horizon_end_arc_m', record.get('horizon_arc_m')))}</td>"
+        f"<td>{html.escape(str(record.get('selected_branch')))}</td>"
+        f"<td>{cell(record.get('splice_position_residual_m'))}</td>"
+        f"<td>{html.escape(str(record.get('failure_code') or ''))}</td>"
+        "</tr>"
+        for record in trace_records
+    )
+    if not trace_rows:
+        trace_rows = '<tr><td colspan="7">No explicit rolling-bundle trace was published; this session is partial.</td></tr>'
+    trace_section = (
+        "<section><h2>Rolling bundle trace</h2>"
+        f"<p>records: {html.escape(str(trace.get('record_count', 0)))} · "
+        f"complete: {html.escape(str(trace.get('complete_record_count', 0)))} · "
+        f"partial: {html.escape(str(trace.get('partial_record_count', 0)))}</p>"
+        '<table><tr><th>cycle</th><th>bundle</th><th>route</th><th>arc horizon (m)</th>'
+        '<th>branch</th><th>splice p (m)</th><th>failure</th></tr>'
+        f"{trace_rows}</table>"
+        f"<details><summary>Raw rolling trace JSON</summary><pre>{html.escape(json.dumps(trace_records, indent=2, sort_keys=True))}</pre></details></section>"
+    )
+    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
     output = session / "REPORT.html"
     output.write_text(html_text, encoding="utf-8")
     return output

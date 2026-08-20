@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from planner_trace import collect_planner_trace_records, planner_trace_summary
+
 
 VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"}
 
@@ -72,6 +74,13 @@ def _samples(path: Path) -> list[dict[str, Any]]:
             if item.get("kind") == "sample":
                 result.append(item)
     return result
+
+
+def _planner_trace_report(session: Path, samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return explicit rolling-bundle telemetry, preserving partial sessions."""
+    scenario = _load_json(session / "scenario.json", {})
+    records = collect_planner_trace_records(scenario, samples)
+    return {**planner_trace_summary(records), "records": records}
 
 
 def _diag_values(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1295,6 +1304,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
     planning["execution"] = _planning_execution_summary(snapshot)
+    planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     reasons: list[str] = []
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -1378,6 +1388,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
     planning["execution"] = _planning_execution_summary(snapshot)
+    planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     scenario = _load_json(session / "scenario.json", {})
     terminal_outcome = str(scenario.get("outcome", ""))
     terminal_handover = terminal_outcome in {
