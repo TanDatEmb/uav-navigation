@@ -1,0 +1,39 @@
+# Diagnostics for one planning cycle; not an execution/control contract.
+std_msgs/Header header
+uint64 cycle_id
+uint64 bundle_id
+uint64 request_id
+uint64 world_generation
+uint64 world_revision
+uint64 route_id
+
+uint32 route_candidate_count
+uint32 corridor_region_count
+float64 route_arc_progress_m
+float64 horizon_start_arc_m
+float64 horizon_end_arc_m
+geometry_msgs/Point horizon_endpoint
+
+float64 planning_latency_ms
+float64 optimizer_latency_ms
+float64 splice_position_residual_m
+float64 splice_velocity_residual_mps
+float64 splice_acceleration_residual_mps2
+float64 maximum_velocity_mps
+float64 maximum_acceleration_mps2
+float64 maximum_jerk_mps3
+
+float64 time_cost
+float64 snap_cost
+float64 clearance_cost
+float64 unknown_cost
+float64 previous_trajectory_cost
+
+uint8 BRANCH_NOMINAL=0
+uint8 BRANCH_SAFETY=1
+uint8 selected_branch
+uint8 STATUS_SUCCESS=0
+uint8 STATUS_FALLBACK=1
+uint8 STATUS_FAILED=2
+uint8 status
+string failure_code
