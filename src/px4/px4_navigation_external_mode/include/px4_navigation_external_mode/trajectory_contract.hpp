@@ -67,6 +67,9 @@ struct TrajectoryBundleValidation {
     const navigation_interfaces::msg::TrajectoryBundle& bundle,
     const std::string& expected_frame);
 
+[[nodiscard]] navigation_interfaces::msg::PlannedTrajectory branchToPlannedTrajectory(
+    const navigation_interfaces::msg::TrajectoryBundle& bundle, bool safety_branch);
+
 [[nodiscard]] TrajectorySample sampleTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory& trajectory, double time_from_start_s);
 

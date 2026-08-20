@@ -216,6 +216,21 @@ TEST(TrajectoryContract, BranchableBundleRejectsSpliceJumpAndInvalidStop) {
             px4_navigation_external_mode::TrajectoryInputFailure::InvalidSafetyTerminalState);
 }
 
+TEST(TrajectoryContract, ConvertsBranchableBundleWithContinuousTimeBase) {
+  const auto bundle = validBranchableBundle();
+  const auto nominal = px4_navigation_external_mode::branchToPlannedTrajectory(bundle, false);
+  ASSERT_EQ(nominal.time_from_start.size(), 3U);
+  EXPECT_TRUE(nominal.success);
+  EXPECT_EQ(nominal.trajectory_id, bundle.bundle_id);
+  EXPECT_EQ(nominal.trajectory_role,
+            navigation_interfaces::msg::PlannedTrajectory::ROLE_NOMINAL);
+  EXPECT_DOUBLE_EQ(nominal.time_from_start[0], 0.0);
+  EXPECT_DOUBLE_EQ(nominal.time_from_start[1], 1.0);
+  EXPECT_DOUBLE_EQ(nominal.time_from_start[2], 2.0);
+  EXPECT_DOUBLE_EQ(nominal.position.front().x, 0.0);
+  EXPECT_DOUBLE_EQ(nominal.position.back().x, 2.0);
+}
+
 TEST(TrajectoryContract, AcceptsOnlyCurrentGoalCorrelation) {
   auto message = validTrajectory();
   message.mission_id = "route";

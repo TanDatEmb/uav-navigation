@@ -60,6 +60,8 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_topic", "")),
       trajectory_bundle_topic_(node.declare_parameter<std::string>(
           "navigation.trajectory_bundle_topic", "/navigation/trajectory_bundle")),
+      trajectory_bundle_v2_topic_(node.declare_parameter<std::string>(
+          "navigation.trajectory_bundle_v2_topic", "/navigation/trajectory_bundle_v2")),
       goal_topic_(node.declare_parameter<std::string>(
           "navigation.goal_topic", "/navigation/goal")),
       planning_frame_(node.declare_parameter<std::string>(
@@ -109,6 +111,14 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       [this](const navigation_interfaces::msg::PlannedTrajectoryBundle::ConstSharedPtr& message) {
         onTrajectoryBundle(message);
       });
+  if (!trajectory_bundle_v2_topic_.empty()) {
+    trajectory_bundle_v2_subscription_ = node.create_subscription<
+        navigation_interfaces::msg::TrajectoryBundle>(
+        trajectory_bundle_v2_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
+        [this](const navigation_interfaces::msg::TrajectoryBundle::ConstSharedPtr& message) {
+          onTrajectoryBundleV2(message);
+        });
+  }
   // Compatibility path for older runtime nodes. It is opt-in so the adapter
   // cannot accidentally consume the nominal-only legacy stream when the
   // atomic bundle contract is available.
@@ -376,6 +386,52 @@ void NavigationMode::onTrajectoryBundle(
       pending_safety_backup_trajectory_ = safety_backup;
     } else {
       safety_backup_trajectory_ = safety_backup;
+    }
+  }
+}
+
+void NavigationMode::onTrajectoryBundleV2(
+    const navigation_interfaces::msg::TrajectoryBundle::ConstSharedPtr& message) {
+  const auto validation = validateTrajectoryBundle(*message, planning_frame_);
+  if (!validation.valid()) {
+    RCLCPP_WARN(node().get_logger(), "Rejecting v2 navigation trajectory bundle: %s",
+                validation.message.c_str());
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      if (!mode_active_) return;
+      ++trajectory_rejected_count_;
+    }
+    failNavigation("v2 navigation trajectory bundle invalid or missing safety backup");
+    return;
+  }
+  if (mission_controller_ &&
+      (message->mission_id != mission_->id ||
+       message->waypoint_index !=
+           static_cast<std::uint32_t>(mission_controller_->activeWaypointIndex()) ||
+       message->request_id != mission_controller_->activeRequestId())) {
+    RCLCPP_DEBUG(node().get_logger(), "Ignoring v2 trajectory bundle for an older mission request");
+    return;
+  }
+  const bool select_safety =
+      message->selected_branch == navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY;
+  auto selected = std::make_shared<navigation_interfaces::msg::PlannedTrajectory>(
+      branchToPlannedTrajectory(*message, select_safety));
+  auto safety = std::make_shared<navigation_interfaces::msg::PlannedTrajectory>(
+      branchToPlannedTrajectory(*message, true));
+  onTrajectory(selected);
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    const auto accepted = [&](const auto& candidate) {
+      return candidate.has_value() && candidate->trajectory_id == selected->trajectory_id;
+    };
+    if (!accepted(trajectory_) && !accepted(pending_trajectory_)) {
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
+    } else if (rclcpp::Time(message->valid_from).nanoseconds() >
+               node().get_clock()->now().nanoseconds()) {
+      pending_safety_backup_trajectory_ = *safety;
+    } else {
+      safety_backup_trajectory_ = *safety;
     }
   }
 }

@@ -296,6 +296,50 @@ TrajectoryBundleValidation validateTrajectoryBundle(
   return {};
 }
 
+navigation_interfaces::msg::PlannedTrajectory branchToPlannedTrajectory(
+    const navigation_interfaces::msg::TrajectoryBundle& bundle, bool safety_branch) {
+  navigation_interfaces::msg::PlannedTrajectory result;
+  result.header = bundle.header;
+  result.valid_from = bundle.valid_from;
+  result.trajectory_id = bundle.bundle_id;
+  result.parent_trajectory_id = bundle.parent_bundle_id;
+  result.commitment_horizon_s = std::max(
+      0.0, static_cast<double>(bundle.branch_time.sec - bundle.valid_from.sec) +
+                 static_cast<double>(bundle.branch_time.nanosec - bundle.valid_from.nanosec) /
+                     1e9);
+  result.mission_id = bundle.mission_id;
+  result.waypoint_index = bundle.waypoint_index;
+  result.request_id = bundle.request_id;
+  result.success = true;
+  result.trajectory_role = safety_branch
+                               ? navigation_interfaces::msg::PlannedTrajectory::ROLE_SAFETY
+                               : navigation_interfaces::msg::PlannedTrajectory::ROLE_NOMINAL;
+  result.safety_plan_kind = safety_branch
+                                ? (bundle.safety_kind ==
+                                           navigation_interfaces::msg::TrajectoryBundle::SAFETY_STOP
+                                       ? navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_BRAKING_STOP
+                                       : navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_ROUTE)
+                                : navigation_interfaces::msg::PlannedTrajectory::SAFETY_KIND_NONE;
+  result.world_generation = bundle.world_generation;
+  result.world_revision = bundle.world_revision;
+  const auto& suffix = safety_branch ? bundle.safety_suffix : bundle.nominal_suffix;
+  const auto append = [&](const navigation_interfaces::msg::TrajectorySegment& segment,
+                          bool skip_join_sample, double time_offset) {
+    const std::size_t start = skip_join_sample && !segment.time_from_start.empty() ? 1U : 0U;
+    for (std::size_t index = start; index < segment.time_from_start.size(); ++index) {
+      result.time_from_start.push_back(time_offset + segment.time_from_start[index]);
+      result.position.push_back(segment.position[index]);
+      result.velocity.push_back(segment.velocity[index]);
+      result.acceleration.push_back(segment.acceleration[index]);
+    }
+  };
+  const bool has_prefix = !bundle.common_prefix.time_from_start.empty();
+  append(bundle.common_prefix, false, 0.0);
+  append(suffix, has_prefix, bundle.common_prefix.duration_s);
+  result.duration_s = bundle.common_prefix.duration_s + suffix.duration_s;
+  return result;
+}
+
 TrajectoryBundleValidation validateTrajectoryBundle(
     const navigation_interfaces::msg::TrajectoryBundle& bundle,
     const std::string& expected_frame) {

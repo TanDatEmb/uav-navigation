@@ -11,6 +11,7 @@
 #include <navigation_interfaces/msg/navigation_mode_status.hpp>
 #include <navigation_interfaces/msg/planned_trajectory.hpp>
 #include <navigation_interfaces/msg/planned_trajectory_bundle.hpp>
+#include <navigation_interfaces/msg/trajectory_bundle.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <px4_ros2/components/mode.hpp>
@@ -48,6 +49,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message);
   void onTrajectoryBundle(
       const navigation_interfaces::msg::PlannedTrajectoryBundle::ConstSharedPtr& message);
+  void onTrajectoryBundleV2(
+      const navigation_interfaces::msg::TrajectoryBundle::ConstSharedPtr& message);
   void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
   void onLioDiagnostics(
       const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message);
@@ -61,6 +64,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
   rclcpp::Subscription<navigation_interfaces::msg::PlannedTrajectoryBundle>::SharedPtr
       trajectory_bundle_subscription_;
+  rclcpp::Subscription<navigation_interfaces::msg::TrajectoryBundle>::SharedPtr
+      trajectory_bundle_v2_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::PlannedTrajectory>::SharedPtr
       trajectory_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
@@ -82,6 +87,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Time last_setpoint_time_;
   std::string trajectory_topic_;
   std::string trajectory_bundle_topic_;
+  std::string trajectory_bundle_v2_topic_;
   std::string goal_topic_;
   std::string planning_frame_;
   double stale_after_s_{0.5};
