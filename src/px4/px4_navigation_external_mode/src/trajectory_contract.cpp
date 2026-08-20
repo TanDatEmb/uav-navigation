@@ -14,6 +14,85 @@ bool finiteVector(const geometry_msgs::msg::Vector3& vector) {
   return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z);
 }
 
+std::int64_t timeToNanoseconds(const builtin_interfaces::msg::Time& time) {
+  return static_cast<std::int64_t>(time.sec) * 1'000'000'000LL +
+         static_cast<std::int64_t>(time.nanosec);
+}
+
+TrajectoryBundleValidation validateSegment(
+    const navigation_interfaces::msg::TrajectorySegment& segment,
+    const char* name, bool allow_empty) {
+  const std::size_t count = segment.time_from_start.size();
+  if (count == 0U) {
+    if (allow_empty && segment.position.empty() && segment.velocity.empty() &&
+        segment.acceleration.empty() && segment.duration_s == 0.0) {
+      return {};
+    }
+    return {TrajectoryInputFailure::Empty, std::string(name) + " is empty"};
+  }
+  if (segment.position.size() != count || segment.velocity.size() != count ||
+      segment.acceleration.size() != count) {
+    return {TrajectoryInputFailure::SizeMismatch,
+            std::string(name) + " arrays have different lengths"};
+  }
+  if (!std::isfinite(segment.duration_s) || segment.duration_s <= 0.0) {
+    return {TrajectoryInputFailure::InvalidDuration,
+            std::string(name) + " duration is invalid"};
+  }
+  double previous_time = -1.0;
+  for (std::size_t index = 0U; index < count; ++index) {
+    const double time = segment.time_from_start[index];
+    if (!std::isfinite(time) || !finitePoint(segment.position[index]) ||
+        !finiteVector(segment.velocity[index]) ||
+        !finiteVector(segment.acceleration[index])) {
+      return {TrajectoryInputFailure::NonFinite,
+              std::string(name) + " contains a non-finite sample"};
+    }
+    if (time < 0.0 || time <= previous_time) {
+      return {TrajectoryInputFailure::NonMonotonicTime,
+              std::string(name) + " sample times are not increasing"};
+    }
+    previous_time = time;
+  }
+  if (segment.duration_s + 1e-9 < previous_time) {
+    return {TrajectoryInputFailure::InvalidDuration,
+            std::string(name) + " duration ends before its samples"};
+  }
+  return {};
+}
+
+TrajectoryBundleValidation validateSegmentJoin(
+    const navigation_interfaces::msg::TrajectorySegment& prefix,
+    const navigation_interfaces::msg::TrajectorySegment& suffix,
+    const char* name) {
+  if (prefix.time_from_start.empty() || suffix.time_from_start.empty()) return {};
+  const auto& prefix_position = prefix.position.back();
+  const auto& suffix_position = suffix.position.front();
+  const auto& prefix_velocity = prefix.velocity.back();
+  const auto& suffix_velocity = suffix.velocity.front();
+  const auto& prefix_acceleration = prefix.acceleration.back();
+  const auto& suffix_acceleration = suffix.acceleration.front();
+  const auto norm = [](double x, double y, double z) {
+    return std::hypot(std::hypot(x, y), z);
+  };
+  const double position_residual = norm(
+      suffix_position.x - prefix_position.x, suffix_position.y - prefix_position.y,
+      suffix_position.z - prefix_position.z);
+  const double velocity_residual = norm(
+      suffix_velocity.x - prefix_velocity.x, suffix_velocity.y - prefix_velocity.y,
+      suffix_velocity.z - prefix_velocity.z);
+  const double acceleration_residual = norm(
+      suffix_acceleration.x - prefix_acceleration.x,
+      suffix_acceleration.y - prefix_acceleration.y,
+      suffix_acceleration.z - prefix_acceleration.z);
+  if (position_residual > 0.05 || velocity_residual > 0.10 ||
+      acceleration_residual > 0.25) {
+    return {TrajectoryInputFailure::InvalidRole,
+            std::string(name) + " does not satisfy splice continuity"};
+  }
+  return {};
+}
+
 Eigen::Vector3d pointToEigen(const geometry_msgs::msg::Point& point) {
   return {point.x, point.y, point.z};
 }
@@ -213,6 +292,68 @@ TrajectoryBundleValidation validateTrajectoryBundle(
       (bundle.safety_available && !matchesBundle(bundle.safety))) {
     return {TrajectoryInputFailure::InvalidRole,
             "candidate provenance does not match bundle provenance"};
+  }
+  return {};
+}
+
+TrajectoryBundleValidation validateTrajectoryBundle(
+    const navigation_interfaces::msg::TrajectoryBundle& bundle,
+    const std::string& expected_frame) {
+  if (bundle.bundle_id == 0U) {
+    return {TrajectoryInputFailure::InvalidTrajectoryId, "trajectory bundle id is zero"};
+  }
+  if (bundle.header.frame_id != expected_frame) {
+    return {TrajectoryInputFailure::WrongFrame, "trajectory bundle frame is invalid"};
+  }
+  const auto valid_from_ns = timeToNanoseconds(bundle.valid_from);
+  const auto branch_time_ns = timeToNanoseconds(bundle.branch_time);
+  const auto decision_deadline_ns = timeToNanoseconds(bundle.decision_deadline);
+  if (valid_from_ns < 0 || branch_time_ns < 0 || decision_deadline_ns < 0 ||
+      branch_time_ns < valid_from_ns || decision_deadline_ns < branch_time_ns) {
+    return {TrajectoryInputFailure::InvalidValidFrom,
+            "trajectory bundle timing contract is invalid"};
+  }
+  if (bundle.requested_branch > navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY ||
+      bundle.selected_branch > navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY) {
+    return {TrajectoryInputFailure::InvalidRole, "trajectory bundle branch is unknown"};
+  }
+  const auto prefix = validateSegment(bundle.common_prefix, "common prefix", true);
+  if (!prefix.valid()) return prefix;
+  const auto safety = validateSegment(bundle.safety_suffix, "safety suffix", false);
+  if (!safety.valid()) return safety;
+  if (bundle.safety_kind > navigation_interfaces::msg::TrajectoryBundle::SAFETY_STOP) {
+    return {TrajectoryInputFailure::InvalidRole, "trajectory bundle safety kind is unknown"};
+  }
+  const auto safety_join = validateSegmentJoin(
+      bundle.common_prefix, bundle.safety_suffix, "safety suffix");
+  if (!safety_join.valid()) return safety_join;
+  if (bundle.nominal_valid) {
+    const auto nominal = validateSegment(bundle.nominal_suffix, "nominal suffix", false);
+    if (!nominal.valid()) return nominal;
+    const auto nominal_join = validateSegmentJoin(
+        bundle.common_prefix, bundle.nominal_suffix, "nominal suffix");
+    if (!nominal_join.valid()) return nominal_join;
+  }
+  if (bundle.selected_branch == navigation_interfaces::msg::TrajectoryBundle::BRANCH_NOMINAL &&
+      !bundle.nominal_valid) {
+    return {TrajectoryInputFailure::NotSuccessful,
+            "bundle selects nominal branch but nominal suffix is invalid"};
+  }
+  if (bundle.selected_branch == navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY &&
+      bundle.safety_suffix.time_from_start.empty()) {
+    return {TrajectoryInputFailure::NotSuccessful,
+            "bundle selects safety branch but safety suffix is unavailable"};
+  }
+  if (bundle.safety_kind == navigation_interfaces::msg::TrajectoryBundle::SAFETY_STOP) {
+    const auto& terminal_velocity = bundle.safety_suffix.velocity.back();
+    const auto& terminal_acceleration = bundle.safety_suffix.acceleration.back();
+    if (std::hypot(std::hypot(terminal_velocity.x, terminal_velocity.y), terminal_velocity.z) >
+            1e-6 ||
+        std::hypot(std::hypot(terminal_acceleration.x, terminal_acceleration.y),
+                   terminal_acceleration.z) > 1e-6) {
+      return {TrajectoryInputFailure::InvalidSafetyTerminalState,
+              "safety stop must end at zero velocity and acceleration"};
+    }
   }
   return {};
 }

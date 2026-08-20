@@ -8,6 +8,8 @@
 #include <navigation_interfaces/msg/planned_trajectory_bundle.hpp>
 #include <navigation_interfaces/msg/planned_trajectory.hpp>
 #include <navigation_interfaces/msg/trajectory_candidate.hpp>
+#include <navigation_interfaces/msg/trajectory_bundle.hpp>
+#include <navigation_interfaces/msg/trajectory_segment.hpp>
 
 namespace px4_navigation_external_mode {
 
@@ -59,6 +61,10 @@ struct TrajectoryBundleValidation {
 
 [[nodiscard]] TrajectoryBundleValidation validateTrajectoryBundle(
     const navigation_interfaces::msg::PlannedTrajectoryBundle& bundle,
+    const std::string& expected_frame);
+
+[[nodiscard]] TrajectoryBundleValidation validateTrajectoryBundle(
+    const navigation_interfaces::msg::TrajectoryBundle& bundle,
     const std::string& expected_frame);
 
 [[nodiscard]] TrajectorySample sampleTrajectory(

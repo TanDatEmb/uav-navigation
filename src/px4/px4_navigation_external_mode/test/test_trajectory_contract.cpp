@@ -40,6 +40,35 @@ navigation_interfaces::msg::TrajectoryCandidate candidateFrom(
   return candidate;
 }
 
+navigation_interfaces::msg::TrajectorySegment segment(double start_x) {
+  navigation_interfaces::msg::TrajectorySegment result;
+  result.duration_s = 1.0;
+  result.time_from_start = {0.0, 1.0};
+  result.position.resize(2);
+  result.velocity.resize(2);
+  result.acceleration.resize(2);
+  result.position[0].x = start_x;
+  result.position[1].x = start_x + 1.0;
+  result.velocity[0].x = 1.0;
+  result.velocity[1].x = 1.0;
+  return result;
+}
+
+navigation_interfaces::msg::TrajectoryBundle validBranchableBundle() {
+  navigation_interfaces::msg::TrajectoryBundle bundle;
+  bundle.header.frame_id = "lio_odom";
+  bundle.bundle_id = 9U;
+  bundle.mission_id = "route";
+  bundle.common_prefix = segment(0.0);
+  bundle.nominal_valid = true;
+  bundle.nominal_suffix = segment(1.0);
+  bundle.safety_suffix = segment(1.0);
+  bundle.safety_kind = navigation_interfaces::msg::TrajectoryBundle::SAFETY_ROUTE;
+  bundle.selected_branch = navigation_interfaces::msg::TrajectoryBundle::BRANCH_NOMINAL;
+  bundle.requested_branch = navigation_interfaces::msg::TrajectoryBundle::BRANCH_NOMINAL;
+  return bundle;
+}
+
 }  // namespace
 
 TEST(TrajectoryContract, ValidatesAndSamplesInEnu) {
@@ -156,6 +185,35 @@ TEST(TrajectoryContract, BundleConvertsSelectedCandidateWithoutLosingPva) {
   EXPECT_EQ(converted.position.size(), source.position.size());
   EXPECT_DOUBLE_EQ(converted.position.back().x, source.position.back().x);
   EXPECT_DOUBLE_EQ(converted.velocity.back().x, source.velocity.back().x);
+}
+
+TEST(TrajectoryContract, ValidatesBranchableBundleAndSplice) {
+  const auto bundle = validBranchableBundle();
+  EXPECT_TRUE(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").valid());
+}
+
+TEST(TrajectoryContract, BranchableBundleRequiresSafetySuffix) {
+  auto bundle = validBranchableBundle();
+  bundle.safety_suffix.time_from_start.clear();
+  bundle.safety_suffix.position.clear();
+  bundle.safety_suffix.velocity.clear();
+  bundle.safety_suffix.acceleration.clear();
+  EXPECT_EQ(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").failure,
+            px4_navigation_external_mode::TrajectoryInputFailure::Empty);
+}
+
+TEST(TrajectoryContract, BranchableBundleRejectsSpliceJumpAndInvalidStop) {
+  auto bundle = validBranchableBundle();
+  bundle.nominal_suffix.position.front().x += 0.2;
+  EXPECT_EQ(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").failure,
+            px4_navigation_external_mode::TrajectoryInputFailure::InvalidRole);
+
+  bundle = validBranchableBundle();
+  bundle.safety_kind = navigation_interfaces::msg::TrajectoryBundle::SAFETY_STOP;
+  bundle.safety_suffix.velocity.back().x = 1.0;
+  bundle.selected_branch = navigation_interfaces::msg::TrajectoryBundle::BRANCH_SAFETY;
+  EXPECT_EQ(px4_navigation_external_mode::validateTrajectoryBundle(bundle, "lio_odom").failure,
+            px4_navigation_external_mode::TrajectoryInputFailure::InvalidSafetyTerminalState);
 }
 
 TEST(TrajectoryContract, AcceptsOnlyCurrentGoalCorrelation) {

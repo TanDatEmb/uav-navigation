@@ -24,4 +24,5 @@ uint8 safety_kind
 
 uint8 BRANCH_NOMINAL=0
 uint8 BRANCH_SAFETY=1
+uint8 selected_branch
 uint8 requested_branch
