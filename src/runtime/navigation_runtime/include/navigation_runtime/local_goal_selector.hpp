@@ -223,7 +223,6 @@ template <typename Model>
   // planning cycle build a genuinely long corridor around a wall, including
   // the common case where the first safe motion is slightly backward.
   bool occupied_on_ray = false;
-  double first_occupied_distance = std::numeric_limits<double>::infinity();
   navigation_mapping::GridIndex3 first_occupied_index{};
   for (int step = 1; step <= longitudinal_steps; ++step) {
     const double distance = std::min(search_distance, step * resolution);
@@ -232,7 +231,6 @@ template <typename Model>
     if (!bounds.contains(index)) break;
     if (world.cellState(layer, index) == navigation_mapping::CellState::Occupied) {
       occupied_on_ray = true;
-      first_occupied_distance = distance;
       first_occupied_index = index;
       break;
     }
@@ -245,18 +243,12 @@ template <typename Model>
     // known-free point beside or beyond the obstacle whenever the current map
     // already exposes that side corridor.
     const int longitudinal_shell_cells = std::max(
-        1, static_cast<int>(std::ceil(std::min(search_distance,
-                                               first_occupied_distance + 3.0) /
-                                      resolution)));
-    // Do not jump to the far end of a long local window when the direct ray
-    // is blocked. The side corridor beyond the first obstacle may still be
-    // Unknown even though one endpoint voxel is KnownFree; A* would then
-    // reject the entire spline and the runtime would brake. Keep the rolling
-    // horizon continuous, but bound a detour endpoint to the first obstacle
-    // plus a small post-obstacle buffer. This is not a completion gate: the
-    // next map tick immediately extends/replaces the horizon.
-    const double detour_max_distance = std::min(
-        search_distance, first_occupied_distance + std::max(2.0, 2.0 * resolution));
+        1, static_cast<int>(std::ceil(search_distance / resolution)));
+    // Search the complete visible corridor around the first obstacle. The
+    // previous first-obstacle-plus-buffer cap created a short endpoint just
+    // before each pillar, so A* repeatedly planned a stop-and-replan hop even
+    // when the side corridor was already KnownFree farther ahead.
+    const double detour_max_distance = search_distance;
     const int lateral_shell_cells = std::max(
         lateral_cells, static_cast<int>(std::ceil(3.0 / resolution)));
     bool detour_found = false;
@@ -297,8 +289,8 @@ template <typename Model>
           const double vertical_error = std::abs(candidate.z() - requested.z());
           const double mission_progress = (candidate - start).dot(mission_unit_direction);
           const double score = 1.5 * std::min(lateral, 2.5) -
-                               0.35 * goal_distance + 0.35 * projection +
-                               0.10 * mission_progress -
+                               0.25 * goal_distance + 1.0 * projection +
+                               0.15 * mission_progress -
                                1.25 * vertical_error - 0.75 * continuity_distance;
           if (!detour_found || score > best_score + 1e-9) {
             detour_found = true;

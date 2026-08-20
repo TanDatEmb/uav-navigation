@@ -79,6 +79,14 @@ navigation_runtime:
         latency_s: 0.08
         stop_margin_m: 0.25
         visibility_horizon_m: 15.0
+      # Rolling trajectory lookahead. The planner chooses a forward horizon
+      # from speed/stopping distance and clips it to the current map boundary;
+      # it is not a local waypoint completion threshold.
+      planning_horizon:
+        minimum_distance_m: 10.0
+        maximum_distance_m: 30.0
+        preview_time_s: 5.0
+        boundary_margin_m: 2.0
       # Compatibility parameters for the bounded A* horizon selector. The
       # selector no longer emits a completion event; the B-spline suffix is
       # continuously replanned and only mission acceptance completes a goal.

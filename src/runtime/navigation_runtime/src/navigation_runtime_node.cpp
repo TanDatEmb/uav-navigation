@@ -276,6 +276,37 @@ bool cloudHasXyzFloatFields(const sensor_msgs::msg::PointCloud2& cloud) {
   return has_x && has_y && has_z;
 }
 
+template <typename Model>
+double forwardMapDistance(const Model& world,
+                          const navigation_mapping::Vec3& start,
+                          const navigation_mapping::Vec3& direction,
+                          double boundary_margin_m) {
+  if (!start.allFinite() || !direction.allFinite() || direction.norm() <= 1e-9 ||
+      !std::isfinite(boundary_margin_m) || boundary_margin_m < 0.0) {
+    return 0.0;
+  }
+  const auto bounds = world.bounds(navigation_mapping::WorldLayer::Inflated);
+  const auto lower_grid = world.gridToWorld(navigation_mapping::WorldLayer::Inflated, bounds.min);
+  const auto upper_grid = world.gridToWorld(navigation_mapping::WorldLayer::Inflated, bounds.max);
+  const auto lower = lower_grid.cwiseMin(upper_grid);
+  const auto upper = lower_grid.cwiseMax(upper_grid);
+  if (!lower.allFinite() || !upper.allFinite() ||
+      (upper.array() <= lower.array()).any()) {
+    return 0.0;
+  }
+  const auto unit = direction.normalized();
+  double distance = std::numeric_limits<double>::infinity();
+  for (int axis = 0; axis < 3; ++axis) {
+    if (unit[axis] > 1e-9) {
+      distance = std::min(distance, (upper[axis] - start[axis]) / unit[axis]);
+    } else if (unit[axis] < -1e-9) {
+      distance = std::min(distance, (lower[axis] - start[axis]) / unit[axis]);
+    }
+  }
+  if (!std::isfinite(distance)) return distance;
+  return std::max(0.0, distance - boundary_margin_m);
+}
+
 }  // namespace
 
 NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
@@ -423,6 +454,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
       "navigation.local_subgoal.switch_distance_m", 0.8);
   local_goal_continuation_speed_fraction_ = declare_parameter(
       "navigation.local_subgoal.continuation_speed_fraction", 0.35);
+  planning_horizon_min_distance_m_ = declare_parameter(
+      "navigation.planning_horizon.minimum_distance_m", 10.0);
+  planning_horizon_max_distance_m_ = declare_parameter(
+      "navigation.planning_horizon.maximum_distance_m", 30.0);
+  planning_horizon_preview_time_s_ = declare_parameter(
+      "navigation.planning_horizon.preview_time_s", 5.0);
+  planning_horizon_boundary_margin_m_ = declare_parameter(
+      "navigation.planning_horizon.boundary_margin_m", 2.0);
   if (!std::isfinite(replan_rate_hz_) || replan_rate_hz_ <= 0.0) {
     throw std::invalid_argument("navigation.replan_rate_hz must be positive and finite");
   }
@@ -456,6 +495,16 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
       local_goal_continuation_speed_fraction_ > 1.0) {
     throw std::invalid_argument(
         "navigation.local_subgoal.continuation_speed_fraction must be in [0, 1]");
+  }
+  if (!std::isfinite(planning_horizon_min_distance_m_) ||
+      planning_horizon_min_distance_m_ <= 0.0 ||
+      !std::isfinite(planning_horizon_max_distance_m_) ||
+      planning_horizon_max_distance_m_ < planning_horizon_min_distance_m_ ||
+      !std::isfinite(planning_horizon_preview_time_s_) ||
+      planning_horizon_preview_time_s_ < 0.0 ||
+      !std::isfinite(planning_horizon_boundary_margin_m_) ||
+      planning_horizon_boundary_margin_m_ < 0.0) {
+    throw std::invalid_argument("navigation.planning_horizon parameters are invalid");
   }
   if (!std::isfinite(planner_config_.nominal_commitment_horizon_s) ||
       planner_config_.nominal_commitment_horizon_s < 0.0) {
@@ -1151,6 +1200,30 @@ void NavigationRuntimeNode::planActiveGoal() {
         return fallback.norm() > 1e-6 ? fallback.normalized()
                                      : navigation_mapping::Vec3::Zero();
       }();
+      const double map_forward_distance = forwardMapDistance(
+          world, state.position, planning_tangent, planning_horizon_boundary_margin_m_);
+      navigation_planning::HorizonPolicyConfig horizon_config;
+      horizon_config.minimum_distance_m = planning_horizon_min_distance_m_;
+      horizon_config.maximum_distance_m = planning_horizon_max_distance_m_;
+      horizon_config.preview_time_s = planning_horizon_preview_time_s_;
+      horizon_config.map_boundary_margin_m = 0.0;
+      navigation_planning::HorizonRequest horizon_request;
+      horizon_request.route.projected_arc_length_m = 0.0;
+      const double bounded_map_forward_distance = std::isfinite(map_forward_distance)
+                                                      ? map_forward_distance
+                                                      : planning_horizon_max_distance_m_;
+      horizon_request.route.route_length_m = bounded_map_forward_distance;
+      horizon_request.route.usable_forward_distance_m = bounded_map_forward_distance;
+      horizon_request.speed_mps = state.velocity.norm();
+      horizon_request.max_deceleration_mps2 = planner_config_.limits.max_deceleration_mps2;
+      horizon_request.pipeline_latency_s = switch_delay_s_ + safety_latency_s_;
+      horizon_request.stop_margin_m = safety_stop_margin_m_;
+      const auto planning_horizon = navigation_planning::HorizonPolicy{horizon_config}.compute(
+          horizon_request);
+      const double horizon_distance = planning_horizon.success
+                                          ? planning_horizon.forward_distance_m
+                                          : 0.0;
+      last_planning_horizon_distance_m_ = horizon_distance;
       // Keep the previous horizon anchor only as a soft continuity prior. It
       // is revalidated by the selector on this very planning tick and is
       // discarded as soon as it is behind the predicted splice state, no
@@ -1175,7 +1248,7 @@ void NavigationRuntimeNode::planActiveGoal() {
       // is never exposed as a mission waypoint to MissionController.
       auto local_goal = selectPlanningHorizon(world, state.position, requested_goal,
                                                local_goal_boundary_margin_m_,
-                                               local_goal_max_distance_m_,
+                                               horizon_distance,
                                                previous_horizon_goal, planning_tangent);
       // The selector and A* read the rolling map through separate calls.  A
       // lidar update can invalidate a just-selected direct waypoint between
@@ -1213,7 +1286,7 @@ void NavigationRuntimeNode::planActiveGoal() {
         if (!direct_horizon_known_free) {
           local_goal = selectPlanningHorizon(world, state.position, requested_goal,
                                              local_goal_boundary_margin_m_,
-                                             local_goal_max_distance_m_,
+                                             horizon_distance,
                                              previous_horizon_goal, planning_tangent);
         }
       }
@@ -2086,6 +2159,8 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
       keyValue("planning_velocity_z", std::to_string(last_planning_state_velocity_.z())),
       keyValue("horizon_forward_projection_m",
                std::to_string(last_horizon_forward_projection_m_)),
+      keyValue("planning_horizon_distance_m",
+               std::to_string(last_planning_horizon_distance_m_)),
       keyValue("horizon_progress_m", std::to_string(last_horizon_progress_m_)),
       keyValue("adaptive_velocity_cap_mps", std::to_string(last_adaptive_velocity_cap_mps_)),
       keyValue("known_free_horizon_m", std::to_string(last_known_free_horizon_m_)),

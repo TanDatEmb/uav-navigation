@@ -425,6 +425,7 @@ def _analyze(session: Path) -> dict[str, Any]:
 
     first_plan = planning[0] if planning else {}
     horizon_values = [number for item in planning if (number := _finite_number(item.get("known_free_horizon_m"))) is not None]
+    planning_horizon_values = [number for item in planning if (number := _finite_number(item.get("planning_horizon_distance_m"))) is not None]
     path_lengths = [number for item in planning if (number := _finite_number(item.get("geometric_path_length_m"))) is not None]
     total_us = [number for item in planning if (number := _finite_number(item.get("planning_total_us"))) is not None]
     min_clearance = [number for item in planning if (number := _finite_number(item.get("minimum_clearance_m"))) is not None]
@@ -454,6 +455,7 @@ def _analyze(session: Path) -> dict[str, Any]:
             "first_plan_path_length_m": first_plan.get("geometric_path_length_m"),
             "first_plan_duration_s": first_plan.get("duration_s"),
             "known_free_horizon_m": _summary(horizon_values),
+            "planning_horizon_distance_m": _summary(planning_horizon_values),
             "geometric_path_length_m": _summary(path_lengths),
             "planning_total_us": _summary(total_us),
             "minimum_clearance_m": _summary(min_clearance),
@@ -592,6 +594,7 @@ def generate(session: Path) -> Path:
             error_series.append((item["t"], min(_segment_distance_2d(item["position"], data["waypoints"][index], data["waypoints"][index + 1]) for index in range(len(data["waypoints"]) - 1))))
     planning_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("geometric_path_length_m"))) is not None]
     horizon_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("known_free_horizon_m"))) is not None]
+    planning_horizon_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("planning_horizon_distance_m"))) is not None]
     horizon_progress_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_progress_m"))) is not None]
     forward_projection_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_forward_projection_m"))) is not None]
     plan_speed_series = data["plan_series"]["speed"]
@@ -604,6 +607,7 @@ def generate(session: Path) -> Path:
         f"<tr><th>Outcome</th><td>{html.escape(str(metrics['safety'].get('outcome')))}</td></tr>",
         f"<tr><th>Mission sim / wall time</th><td>{cell(metrics['mission'].get('duration_sim_s'))} s / {cell(metrics['mission'].get('wall_elapsed_s'))} s</td></tr>",
         f"<tr><th>Longest leg / known horizon</th><td>{cell(metrics['mission'].get('longest_leg_m'))} m / {cell(metrics['planning']['known_free_horizon_m'].get('maximum'))} m</td></tr>",
+        f"<tr><th>Rolling planning horizon p50 / max</th><td>{cell(metrics['planning']['planning_horizon_distance_m'].get('p50'))} m / {cell(metrics['planning']['planning_horizon_distance_m'].get('maximum'))} m</td></tr>",
         f"<tr><th>Cross-track RMSE / p95</th><td>{cell(metrics['tracking']['cross_track_error_m'].get('rmse'))} m / {cell(metrics['tracking']['cross_track_error_m'].get('p95'))} m</td></tr>",
         f"<tr><th>Speed mean / p95</th><td>{cell(metrics['tracking']['speed_mps'].get('mean'))} / {cell(metrics['tracking']['speed_mps'].get('p95'))} m/s</td></tr>",
         f"<tr><th>Plan speed mean / p95</th><td>{cell(metrics['smoothness']['plan_speed_mps'].get('mean'))} / {cell(metrics['smoothness']['plan_speed_mps'].get('p95'))} m/s</td></tr>",
@@ -645,7 +649,7 @@ def generate(session: Path) -> Path:
         f"{trace_rows}</table>"
         f"<details><summary>Raw rolling trace JSON</summary><pre>{html.escape(json.dumps(trace_records, indent=2, sort_keys=True))}</pre></details></section>"
     )
-    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
+    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2>{_chart_svg([('planned speed', plan_speed_series, '#9be564'), ('boundary velocity jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('boundary heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('planning horizon', planning_horizon_path, '#facc15'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
     output = session / "REPORT.html"
     output.write_text(html_text, encoding="utf-8")
     return output

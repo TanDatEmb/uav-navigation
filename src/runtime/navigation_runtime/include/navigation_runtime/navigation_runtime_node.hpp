@@ -24,6 +24,7 @@
 
 #include "navigation_mapping/mapping_pipeline.hpp"
 #include "navigation_planning/planner.hpp"
+#include "navigation_planning/horizon_policy.hpp"
 #include "navigation_planning/trajectory_verifier.hpp"
 #include "navigation_runtime/local_goal_selector.hpp"
 
@@ -126,6 +127,10 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double local_goal_max_distance_m_{15.0};
   double local_goal_switch_distance_m_{0.8};
   double local_goal_continuation_speed_fraction_{0.35};
+  double planning_horizon_min_distance_m_{10.0};
+  double planning_horizon_max_distance_m_{30.0};
+  double planning_horizon_preview_time_s_{5.0};
+  double planning_horizon_boundary_margin_m_{2.0};
   bool local_subgoal_enabled_{true};
   navigation_planning::PlannerConfig planner_config_{};
   navigation_planning::Planner planner_;
@@ -161,6 +166,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   navigation_mapping::Vec3 last_planning_state_position_{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 last_planning_state_velocity_{navigation_mapping::Vec3::Zero()};
   double last_horizon_forward_projection_m_{0.0};
+  double last_planning_horizon_distance_m_{0.0};
   double last_horizon_progress_m_{0.0};
   double last_adaptive_velocity_cap_mps_{0.0};
   double last_known_free_horizon_m_{0.0};

@@ -234,6 +234,9 @@ class RuntimeContractTest(unittest.TestCase):
             navigation = parameters["navigation"]
             mapping = parameters["mapping"]
             self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 15.0)
+            self.assertEqual(navigation["planning_horizon"]["minimum_distance_m"], 10.0)
+            self.assertEqual(navigation["planning_horizon"]["maximum_distance_m"], 30.0)
+            self.assertEqual(navigation["planning_horizon"]["preview_time_s"], 5.0)
             self.assertEqual(navigation["local_subgoal"]["switch_distance_m"], 0.8)
             self.assertEqual(navigation["collision"]["safety_margin_m"], 0.25)
             self.assertEqual(mapping["raycast"]["max_range_m"], 40.0)
