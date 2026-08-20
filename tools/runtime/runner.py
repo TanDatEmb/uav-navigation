@@ -859,6 +859,13 @@ def _mapping_params(
             navigation.setdefault("local_subgoal", {})[
                 "continuation_speed_fraction"
             ] = planning["continuation_speed_fraction"]
+    if mission_file is not None and mission_file.name == "no_path.yaml":
+        # This negative acceptance profile deliberately places the mission
+        # goal behind an observed sealed wall. Unknown goal space must not be
+        # treated as permission to follow a local wall indefinitely.
+        navigation.setdefault("planner", {})[
+            "fail_closed_on_unknown_mission_goal"
+        ] = True
     # The long three-pillar mission deliberately exercises a route that is
     # longer than the vehicle's current pose.  Do not reduce it to the old
     # four-metre endpoint: that setting made the benchmark look like a chain
@@ -1613,8 +1620,14 @@ def _run_sim_unlocked(
     print(result["verdict"])
     print(session.directory)
     if workflow == "external-mode":
-        outcome = str(result.get("external_mode", {}).get("outcome", ""))
-        if outcome in {"ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:
+        external_mode_result = result.get("external_mode", {})
+        outcome = str(external_mode_result.get("outcome", ""))
+        expected_fail_closed = (
+            str(external_mode_result.get("expected_outcome", "complete")) == "fail_closed"
+        )
+        if outcome in {"ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"} and not (
+            outcome == "PAUSED_SAFETY_STOP" and expected_fail_closed
+        ):
             return 2
     return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
 

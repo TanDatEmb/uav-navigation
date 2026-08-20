@@ -520,6 +520,26 @@ TEST(MissionController, BrakingReplacementRestartsItsOwnConfirmationWindow) {
             px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
 }
 
+TEST(MissionController, RepeatedZeroDurationSafetyRefreshPreservesConfirmation) {
+  const auto path = writeMission(kValidMission);
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 1U, 2U, 0.0, 0.0);
+  EXPECT_EQ(controller.update(0.1, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+
+  controller.onTrajectory(true, 1U, 2U, 0.2, 0.0);
+  EXPECT_EQ(controller.update(0.4, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.update(0.7, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
+}
+
 TEST(MissionController, BrakingReplacementFailureRequestsPositionControl) {
   const auto path = writeMission(kValidMission);
   const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");

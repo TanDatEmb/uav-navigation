@@ -88,10 +88,22 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
       trajectory_ready_ = true;
       checkpoint_valid_ = true;
     } else if (success && is_braking_stop) {
-      braking_start_time_s_ = now_s;
-      braking_end_time_s_ = now_s +
-                            (std::isfinite(duration_s) ? std::max(0.0, duration_s) : 0.0);
-      stopped_start_time_s_.reset();
+      const bool has_positive_duration = std::isfinite(duration_s) && duration_s > 0.0;
+      if (has_positive_duration) {
+        // A positive-duration replacement is a new braking phase. Restart its
+        // own confirmation window so an old stopped interval cannot trigger an
+        // early handover while the replacement trajectory is still active.
+        braking_start_time_s_ = now_s;
+        braking_end_time_s_ = now_s + duration_s;
+        stopped_start_time_s_.reset();
+      } else {
+        // The rolling planner may refresh a zero-duration braking stop on every
+        // map update. These are status refreshes, not new braking phases: keep
+        // both timers monotonic so a stationary vehicle can reach the safety
+        // confirmation and request POSCTL.
+        if (!braking_start_time_s_) braking_start_time_s_ = now_s;
+        if (!braking_end_time_s_) braking_end_time_s_ = now_s;
+      }
       arrival_start_time_s_.reset();
       trajectory_ready_ = false;
       checkpoint_valid_ = true;

@@ -142,6 +142,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double planning_horizon_preview_time_s_{5.0};
   double planning_horizon_boundary_margin_m_{2.0};
   bool local_subgoal_enabled_{true};
+  bool fail_closed_on_unknown_mission_goal_{false};
   navigation_planning::PlannerConfig planner_config_{};
   navigation_planning::Planner planner_;
   navigation_planning::TrajectoryVerifier trajectory_verifier_;

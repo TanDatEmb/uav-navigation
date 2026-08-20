@@ -446,6 +446,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
   safety_visibility_horizon_m_ = declare_parameter(
       "navigation.safety.visibility_horizon_m", 15.0);
   local_subgoal_enabled_ = declare_parameter("navigation.local_subgoal.enabled", true);
+  fail_closed_on_unknown_mission_goal_ = declare_parameter(
+      "navigation.planner.fail_closed_on_unknown_mission_goal", false);
   local_goal_boundary_margin_m_ = declare_parameter(
       "navigation.local_subgoal.boundary_margin_m", 1.0);
   local_goal_max_distance_m_ = declare_parameter(
@@ -1342,18 +1344,12 @@ void NavigationRuntimeNode::planActiveGoal() {
                   last_nominal_failure_code_ != navigation_planning::PlanFailureCode::WorldChanged
               ? std::optional<navigation_mapping::Vec3>{last_effective_goal_}
               : std::nullopt;
-      // The compatibility parameter may disable the old *completion event*,
-      // but it must not disable bounded horizon planning. Passing a far
-      // mission waypoint directly to A* while it is outside the sliding map
-      // makes the planner fail closed at the vehicle's current pose. A
-      // PlanningHorizon is therefore always selected and refreshed here; it
-      // is never exposed as a mission waypoint to MissionController.
-      // The rolling horizon is a planner execution boundary, not a mission
-      // waypoint.  Always bound A*/trajectory generation to the current
-      // sliding map, even when LOCAL_SUBGOAL_ENABLED=0 is supplied by a legacy
-      // launch script.  The mission controller still evaluates acceptance
-      // against requested_goal, so this cannot cause a local anchor to be
-      // reported as a completed mission waypoint.
+      // The mission waypoint may be outside the current sliding map. Keep the
+      // bounded rolling horizon as the execution endpoint in that case; the
+      // mission controller still evaluates acceptance against requested_goal.
+      // A separate global reachability probe below prevents this local endpoint
+      // from becoming an endless wall-following substitute when the actual
+      // waypoint is already blocked in the observed map.
       LocalGoalSelection local_goal = selectPlanningHorizon(
           world, state.position, requested_goal, local_goal_boundary_margin_m_, horizon_distance,
           previous_horizon_goal, planning_tangent, mission_progress_guard);
@@ -1631,6 +1627,38 @@ void NavigationRuntimeNode::planActiveGoal() {
           goal.terminal_velocity = navigation_mapping::Vec3::Zero();
         }
       }
+      // A bounded local endpoint is useful when the mission waypoint is
+      // outside the sliding map, but it must not become an unbounded
+      // wall-following substitute for a waypoint that is already inside the
+      // observed map. When the selector reports an occupied forward ray,
+      // probe the actual mission goal with the conservative known-free
+      // planner. A topological failure forces the normal safety-stop fallback;
+      // long routes remain eligible for rolling execution because an
+      // out-of-bounds mission goal is not probed until it enters the map.
+      bool mission_goal_unreachable = false;
+      if (local_goal.usesSubGoal() && local_goal.occupied_on_forward_ray) {
+        const auto mission_goal_index = world.worldToGrid(
+            navigation_mapping::WorldLayer::Inflated, requested_goal);
+        const auto mission_goal_bounds = world.bounds(navigation_mapping::WorldLayer::Inflated);
+        const bool mission_goal_known_free =
+            mission_goal_bounds.contains(mission_goal_index) &&
+            world.cellState(navigation_mapping::WorldLayer::Inflated, mission_goal_index) ==
+                navigation_mapping::CellState::KnownFree;
+        if (mission_goal_known_free ||
+            (fail_closed_on_unknown_mission_goal_ &&
+             mission_goal_bounds.contains(mission_goal_index))) {
+          auto mission_goal_probe = goal;
+          mission_goal_probe.position = requested_goal;
+          mission_goal_probe.terminal = true;
+          mission_goal_probe.terminal_velocity = navigation_mapping::Vec3::Zero();
+          const auto probe = planner_.plan(state, mission_goal_probe, world);
+          mission_goal_unreachable =
+              !probe.success &&
+              (probe.failure_code == navigation_planning::PlanFailureCode::NoPath ||
+               probe.failure_code == navigation_planning::PlanFailureCode::GoalOccupied ||
+               probe.failure_code == navigation_planning::PlanFailureCode::CorridorInfeasible);
+        }
+      }
       last_goal_terminal_ = goal.terminal;
       last_terminal_velocity_ = goal.terminal_velocity;
       // Nominal planning may intentionally terminate in a freshly observed
@@ -1708,10 +1736,15 @@ void NavigationRuntimeNode::planActiveGoal() {
         return candidate;
       };
 
-      if (!local_goal.success()) {
-        result.failure_code = local_goal.status == LocalGoalSelectionStatus::StartOutsideBounds
-                                  ? navigation_planning::PlanFailureCode::StartOutsideBounds
-                                  : navigation_planning::PlanFailureCode::GoalOutsideBounds;
+      if (!local_goal.success() || mission_goal_unreachable) {
+        if (mission_goal_unreachable) {
+          result.failure_code = navigation_planning::PlanFailureCode::NoPath;
+        } else {
+          result.failure_code =
+              local_goal.status == LocalGoalSelectionStatus::StartOutsideBounds
+                  ? navigation_planning::PlanFailureCode::StartOutsideBounds
+                  : navigation_planning::PlanFailureCode::GoalOutsideBounds;
+        }
       } else if (braking_stop_latched) {
         // Once a verified braking stop has been selected, map revisions and
         // rolling timer ticks may only replace it with another verified
@@ -2399,6 +2432,8 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
                std::to_string(dual_verification_failure_count_)),
       keyValue("verification_failure_count", std::to_string(verification_failure_count_)),
       keyValue("local_subgoal_enabled", local_subgoal_enabled_ ? "true" : "false"),
+      keyValue("fail_closed_on_unknown_mission_goal",
+               fail_closed_on_unknown_mission_goal_ ? "true" : "false"),
       keyValue("local_subgoal_selected_count", std::to_string(local_subgoal_selected_count_)),
       keyValue("local_subgoal_failure_count", std::to_string(local_subgoal_failure_count_)),
       keyValue("horizon_endpoint_change_count", std::to_string(horizon_endpoint_change_count_)),

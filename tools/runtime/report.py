@@ -1626,9 +1626,10 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     terminal_handover = terminal_outcome in {
         "COMPLETE", "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP", "FAILED_COMPONENT"
     }
-    expected_fail_closed = (
-        str(scenario.get("expected_outcome", "complete")) == "fail_closed"
-        and bool(scenario.get("mode_failure_observed", False))
+    expected_fail_closed = str(scenario.get("expected_outcome", "complete")) == "fail_closed"
+    fail_closed_handover = expected_fail_closed and (
+        bool(scenario.get("mode_failure_observed", False)) or
+        terminal_outcome == "PAUSED_SAFETY_STOP"
     )
     reasons: list[str] = []
     for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
@@ -1640,7 +1641,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         # that handover; it is outside the active navigation interval and must
         # not turn an otherwise valid safety rejection into a stream verdict.
         if name in {"external_odometry", "propagated_odometry"} and (
-            expected_fail_closed or terminal_handover
+            fail_closed_handover or terminal_handover
         ):
             stale_violation = 0
         if streams[name]["timestamp_regression_count"] or stale_violation or streams[name]["nonfinite_message_count"]:
@@ -1671,7 +1672,9 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         # defects.  Stream/process observations may still contain warnings
         # from the handover interval, so classify by the structured outcome
         # before applying the generic reason list.
-        if outcome in {"ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:
+        if outcome == "PAUSED_SAFETY_STOP":
+            verdict = "PASS" if expected_fail_closed else "BLOCKED"
+        elif outcome == "ABORTED_OPERATOR":
             verdict = "BLOCKED"
         elif outcome == "FAILED_COMPONENT":
             verdict = "FAIL"

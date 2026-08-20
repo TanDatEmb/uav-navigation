@@ -1396,8 +1396,18 @@ class ExternalModeScenario:
             if expected_outcome == "fail_closed":
                 if self.mission_complete_observed:
                     failures.append("fail-closed scenario unexpectedly completed mission")
-                if not self.mode_failure_observed:
-                    failures.append("fail-closed scenario did not observe ModeCompleted failure")
+                safety_pause_observed = (
+                    self.terminal_outcome == "PAUSED_SAFETY_STOP" or
+                    (
+                        self.mode_status_state == int(self.NavigationModeStatus.PAUSED) and
+                        self.mode_status_reason == int(self.NavigationModeStatus.SAFETY_STOP)
+                    )
+                )
+                if not (self.mode_failure_observed or safety_pause_observed):
+                    failures.append(
+                        "fail-closed scenario observed neither ModeCompleted failure "
+                        "nor terminal safety pause"
+                    )
                 if self.trajectory_failure_count <= 0 and int(self.safety_kind_counts.get("2", 0)) <= 0:
                     failures.append("fail-closed scenario observed no planner failure or safety stop")
             elif expected_count <= 0:
