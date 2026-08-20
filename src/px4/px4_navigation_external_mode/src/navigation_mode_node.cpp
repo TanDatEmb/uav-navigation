@@ -61,7 +61,7 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       trajectory_bundle_topic_(node.declare_parameter<std::string>(
           "navigation.trajectory_bundle_topic", "/navigation/trajectory_bundle")),
       trajectory_bundle_v2_topic_(node.declare_parameter<std::string>(
-          "navigation.trajectory_bundle_v2_topic", "/navigation/trajectory_bundle_v2")),
+          "navigation.trajectory_bundle_v2_topic", "")),
       goal_topic_(node.declare_parameter<std::string>(
           "navigation.goal_topic", "/navigation/goal")),
       planning_frame_(node.declare_parameter<std::string>(
