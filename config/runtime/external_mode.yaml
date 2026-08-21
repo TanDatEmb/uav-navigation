@@ -2,9 +2,13 @@ px4_navigation_external_mode:
   ros__parameters:
     navigation:
       # Atomic nominal/safety contract. The legacy trajectory topic remains
-      # available only when explicitly configured for migration tests.
+      # available only when explicitly configured for migration tests. The
+      # failure-only compatibility channel below is separate so an invalid
+      # replanning result can hand over to PX4 without accepting a nominal-only
+      # legacy success and losing the atomic safety backup.
       trajectory_bundle_topic: /navigation/trajectory_bundle
       trajectory_topic: ""
+      trajectory_failure_topic: /navigation/trajectory
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
       # A/B benchmark: send the verified trajectory position/velocity/

@@ -69,6 +69,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       trajectory_bundle_v2_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::PlannedTrajectory>::SharedPtr
       trajectory_subscription_;
+  rclcpp::Subscription<navigation_interfaces::msg::PlannedTrajectory>::SharedPtr
+      trajectory_failure_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       lio_diagnostics_subscription_;
@@ -87,6 +89,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Time activation_time_;
   rclcpp::Time last_setpoint_time_;
   std::string trajectory_topic_;
+  std::string trajectory_failure_topic_;
   std::string trajectory_bundle_topic_;
   std::string trajectory_bundle_v2_topic_;
   std::string goal_topic_;

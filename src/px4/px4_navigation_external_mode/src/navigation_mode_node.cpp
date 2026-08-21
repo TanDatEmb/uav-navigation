@@ -58,6 +58,8 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       trajectory_setpoint_(std::make_shared<px4_ros2::TrajectorySetpointType>(*this)),
       trajectory_topic_(node.declare_parameter<std::string>(
           "navigation.trajectory_topic", "")),
+      trajectory_failure_topic_(node.declare_parameter<std::string>(
+          "navigation.trajectory_failure_topic", "")),
       trajectory_bundle_topic_(node.declare_parameter<std::string>(
           "navigation.trajectory_bundle_topic", "/navigation/trajectory_bundle")),
       trajectory_bundle_v2_topic_(node.declare_parameter<std::string>(
@@ -128,6 +130,20 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
         trajectory_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
         [this](const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
           onTrajectory(message);
+        });
+  }
+  // The runtime also publishes an explicit legacy failure message when a
+  // previously valid plan has no verified replacement. Consume only failures
+  // here: valid trajectories must continue to arrive through the atomic
+  // nominal/safety bundle, otherwise a legacy success could replace it without
+  // its safety backup. This makes planner failure observable to External Mode
+  // without weakening the bundle contract.
+  if (!trajectory_failure_topic_.empty()) {
+    trajectory_failure_subscription_ = node.create_subscription<
+        navigation_interfaces::msg::PlannedTrajectory>(
+        trajectory_failure_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
+        [this](const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
+          if (!message->success) onTrajectory(message);
         });
   }
   const auto state_topic = node.declare_parameter<std::string>(
