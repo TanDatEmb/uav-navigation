@@ -858,9 +858,11 @@ void NavigationRuntimeNode::planActiveGoal() {
       goal_message.mission_id == last_planned_mission_id_ &&
       goal_message.waypoint_index == last_planned_waypoint_index_ &&
       goal_message.request_id == last_planned_request_id_;
-  const bool braking_stop_latched = goal_unchanged && braking_stop_latched_;
+  bool braking_stop_latched = goal_unchanged && braking_stop_latched_;
   if (!goal_unchanged) {
     committed_local_goal_.reset();
+    last_detour_obstacle_anchor_.reset();
+    last_detour_lateral_direction_.reset();
     // Preserve a level mission altitude across waypoint changes.  Reset only
     // for a genuine vertical mission transition; otherwise each new request
     // would reintroduce a fresh z-cell choice at the turn.
@@ -1032,33 +1034,39 @@ void NavigationRuntimeNode::planActiveGoal() {
     const double elapsed_s =
         static_cast<double>(get_clock()->now().nanoseconds() - last_plan_time_ns_) / 1e9;
     bool held_stop_safe = false;
+    bool release_stop_for_route_retry = false;
     if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
         elapsed_s >= last_planned_trajectory_->duration_s &&
         state.velocity.norm() <= 0.15 + 1e-6) {
       // A non-terminal braking stop is a recovery state, not a reason to
-      // regenerate the same zero-motion trajectory at 5 Hz.  Keep it held
-      // while the world is unchanged; a new map revision is the explicit
-      // trigger that can reveal a recoverable detour. Terminal stops remain
-      // held regardless of map revisions until MissionController advances.
-      held_stop_safe = last_goal_terminal_ || world_unchanged;
-    } else if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
-               elapsed_s < last_planned_trajectory_->duration_s && world_unchanged) {
-      held_stop_safe = true;
+      // regenerate the same zero-motion trajectory at every map revision.
+      // Once settled, retry the route only on a wall-clock cooldown.  The
+      // retry must release the latch so the normal route branch is reached;
+      // calling planSafetyStop() again here can never discover a detour.
+      constexpr double kSafetyRouteRetryIntervalS = 2.0;
+      const auto now_ns = get_clock()->now().nanoseconds();
+      const auto retry_anchor_ns = last_safety_retry_time_ns_ > 0
+                                       ? last_safety_retry_time_ns_
+                                       : last_plan_time_ns_;
+      const double retry_elapsed_s =
+          static_cast<double>(now_ns - retry_anchor_ns) / 1e9;
+      if (last_goal_terminal_ || !std::isfinite(retry_elapsed_s) ||
+          retry_elapsed_s < kSafetyRouteRetryIntervalS) {
+        held_stop_safe = true;
+      } else {
+        release_stop_for_route_retry = true;
+        braking_stop_latched_ = false;
+        ++safety_stop_retry_count_;
+        last_safety_retry_time_ns_ = now_ns;
+        last_replan_reason_ = "safety_stop_route_retry";
+      }
     } else if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
                elapsed_s < last_planned_trajectory_->duration_s &&
                last_planned_trajectory_->finiteAndMonotonic()) {
-      const auto expected = interpolateTrajectory(*last_planned_trajectory_, elapsed_s);
-      const double tracking_error = (state.position - expected.position).norm();
-      if (std::isfinite(tracking_error) && tracking_error < replan_tracking_error_m_) {
-        const auto remaining = remainingTrajectory(*last_planned_trajectory_, elapsed_s);
-        navigation_planning::VehicleState verification_state;
-        verification_state.position = remaining.points.front().position;
-        verification_state.velocity = remaining.points.front().velocity;
-        verification_state.acceleration = remaining.points.front().acceleration;
-        const auto verification = trajectory_verifier_.verify(
-            remaining, verification_state, navigation_planning::PlanRole::Safety, world);
-        held_stop_safe = verification.success;
-      }
+      // A braking trajectory is already the fail-closed command. Do not
+      // invalidate it just because a lidar revision arrived while the vehicle
+      // is still decelerating; that produced a map-revision/chattering loop.
+      held_stop_safe = true;
     }
     if (held_stop_safe) {
       ++plan_skip_count_;
@@ -1068,7 +1076,14 @@ void NavigationRuntimeNode::planActiveGoal() {
       last_replan_reason_ = "reuse_latched_braking_stop";
       return;
     }
-    last_replan_reason_ = "safety_stop_latched_invalidated";
+    if (release_stop_for_route_retry) {
+      // Continue into the ordinary rolling planner below.  `braking_stop_latched`
+      // is recomputed from this local value after this block, so a recovered
+      // map can produce a SafetyRoute instead of another braking stop.
+      braking_stop_latched = false;
+    } else {
+      last_replan_reason_ = "safety_stop_latched_invalidated";
+    }
   }
 
   // A committed trajectory is reusable across map revisions only after the
@@ -1369,6 +1384,22 @@ void NavigationRuntimeNode::planActiveGoal() {
               : std::nullopt;
       const bool previous_horizon_corridor_valid =
           previous_horizon_goal.has_value() && observed_corridor(*previous_horizon_goal);
+      const auto previous_detour_lateral_direction =
+          goal_unchanged ? last_detour_lateral_direction_ :
+                           std::optional<navigation_mapping::Vec3>{};
+      const auto previous_detour_obstacle_anchor =
+          goal_unchanged ? last_detour_obstacle_anchor_ :
+                           std::optional<navigation_mapping::Vec3>{};
+      // The local selector should search along the mission leg by default.
+      // A measured velocity tangent is retained only while a same-obstacle
+      // detour is active; otherwise a one-cycle lateral avoidance tangent can
+      // become the next cycle's global search direction and accumulate into
+      // wall-following drift.
+      const auto selector_forward_direction =
+          previous_detour_lateral_direction.has_value() &&
+                  previous_detour_obstacle_anchor.has_value()
+              ? planning_tangent
+              : mission_route_tangent;
       // A safety/recovery trajectory may temporarily rotate the measured
       // velocity away from the mission leg.  Do not let that measured
       // velocity redefine the rolling horizon and turn a transient braking
@@ -1446,8 +1477,8 @@ void NavigationRuntimeNode::planActiveGoal() {
       } else {
         local_goal = selectPlanningHorizon(
             world, state.position, requested_goal, local_goal_boundary_margin_m_, horizon_distance,
-            previous_horizon_goal, planning_tangent, mission_progress_guard,
-            std::nullopt);
+            previous_horizon_goal, selector_forward_direction, mission_progress_guard,
+            previous_detour_lateral_direction, previous_detour_obstacle_anchor);
       }
       // The selector and A* read the rolling map through separate calls. A
       // lidar update can invalidate a just-selected direct waypoint between
@@ -1464,32 +1495,60 @@ void NavigationRuntimeNode::planActiveGoal() {
                                              navigation_mapping::WorldLayer::Inflated,
                                              direct_index) ==
                                              navigation_mapping::CellState::KnownFree;
-        // Match the selector's support stencil. A single freshly projected
-        // KnownFree goal voxel is not enough to make the full spline endpoint
-        // observable; neighbouring Unknown cells would invalidate the next
-        // plan tick and create an apparent terminal-stop oscillation.
-        if (direct_horizon_known_free) {
-          for (int dx = -1; dx <= 1 && direct_horizon_known_free; ++dx) {
-            for (int dy = -1; dy <= 1; ++dy) {
-              const navigation_mapping::GridIndex3 neighbour{
-                  direct_index.x + dx, direct_index.y + dy, direct_index.z};
-              if (!direct_bounds.contains(neighbour) ||
-                  world.cellState(navigation_mapping::WorldLayer::Inflated, neighbour) !=
-                      navigation_mapping::CellState::KnownFree) {
-                direct_horizon_known_free = false;
-                break;
-              }
-            }
-          }
-        }
         if (!direct_horizon_known_free) {
           local_goal = selectPlanningHorizon(world, state.position, requested_goal,
                                              local_goal_boundary_margin_m_, horizon_distance,
-                                             previous_horizon_goal, planning_tangent,
-                                             mission_progress_guard, std::nullopt);
+                                             previous_horizon_goal, selector_forward_direction,
+                                             mission_progress_guard,
+                                             previous_detour_lateral_direction,
+                                             previous_detour_obstacle_anchor);
+        }
+      }
+      if (local_goal.usesSubGoal() && committed_local_altitude_m_.has_value() &&
+          std::isfinite(*committed_local_altitude_m_) &&
+          std::isfinite(selector_resolution) && selector_resolution > 0.0) {
+        const double altitude_tolerance = std::max(0.35, 2.0 * selector_resolution);
+        const double altitude_error =
+            std::abs(local_goal.goal.z() - *committed_local_altitude_m_);
+        if (std::isfinite(altitude_error) && altitude_error > altitude_tolerance) {
+          if (planner_config_.allow_nominal_unknown) {
+            // In dual-planning simulation, the nominal branch may carry a
+            // short Unknown prefix, but it must keep the mission altitude.
+            // Safety planning below derives a separate KnownFree endpoint.
+            local_goal.goal.z() = *committed_local_altitude_m_;
+            const auto corrected_delta = local_goal.goal - state.position;
+            if (corrected_delta.norm() > 1e-6) {
+              local_goal.tangent = corrected_delta.normalized();
+              local_goal.forward_projection_m =
+                  corrected_delta.dot(planning_projection_tangent);
+            }
+          } else {
+            // Real/default operation has no permission to use Unknown space
+            // as a level-flight shortcut. Do not silently descend to a
+            // ground-adjacent KnownFree cell; fail closed and wait for map
+            // evidence at the configured mission altitude.
+            local_goal.status = LocalGoalSelectionStatus::NoUsableSubGoal;
+          }
         }
       }
       if (mission_progress_rejected_this_cycle) ++mission_progress_rejection_count_;
+      if (local_goal.occupied_on_forward_ray && local_goal.detour_obstacle_anchor.has_value() &&
+          local_goal.detour_obstacle_anchor->allFinite()) {
+        const auto detour_delta = local_goal.goal - state.position;
+        const auto detour_lateral = detour_delta -
+                                    detour_delta.dot(planning_tangent) * planning_tangent;
+        if (detour_lateral.allFinite() && detour_lateral.norm() > 0.5 * selector_resolution) {
+          last_detour_obstacle_anchor_ = local_goal.detour_obstacle_anchor;
+          last_detour_lateral_direction_ = detour_lateral.normalized();
+        }
+      } else {
+        // A clear forward ray means the current detour tangent is no longer
+        // needed. Release it immediately so a side choice cannot remain a
+        // mission-wide heading prior. Endpoint continuity is still provided
+        // by previous_horizon_goal and the candidate continuity cost.
+        last_detour_obstacle_anchor_.reset();
+        last_detour_lateral_direction_.reset();
+      }
       if (local_goal.usesSubGoal()) {
         if (!committed_local_altitude_m_.has_value() ||
             !std::isfinite(*committed_local_altitude_m_)) {
@@ -1822,7 +1881,7 @@ void NavigationRuntimeNode::planActiveGoal() {
           const auto safety_horizon = selectPlanningHorizon(
               world, state.position, requested_goal, local_goal_boundary_margin_m_,
               retry_distance, std::nullopt, planning_tangent, mission_progress_guard,
-              std::nullopt);
+              std::nullopt, std::nullopt);
           if (!safety_horizon.success() ||
               !isKnownFreePlanningCell(safety_horizon.goal)) {
             continue;
@@ -1865,7 +1924,63 @@ void NavigationRuntimeNode::planActiveGoal() {
         candidate.failure_code = failure;
         return candidate;
       };
-
+      const auto stabilizeStationarySafetyStop =
+          [&](navigation_planning::PlanResult candidate) {
+            if (!candidate.success || candidate.role != navigation_planning::PlanRole::Safety ||
+                candidate.safety_kind != navigation_planning::SafetyPlanKind::BrakingStop ||
+                !std::isfinite(candidate.trajectory.duration_s) ||
+                candidate.trajectory.duration_s > 1e-6 ||
+                candidate.trajectory.points.empty()) {
+              return candidate;
+            }
+            // Planner-level safety-stop semantics intentionally use a single
+            // point when the measured speed is already below the settling
+            // deadband. That is correct for the pure planner API, but a
+            // pass-through runtime goal may see map revisions while this stop
+            // is latched. Republishing a zero-duration trajectory then makes
+            // PX4 expire the command every tick and creates a safety-stop
+            // chattering loop. Convert it into a verified one-second hold at
+            // the current state; the next planning tick can still replace it
+            // with a newly verified route when the map reveals one.
+            navigation_planning::TimeParameterizedTrajectory hold;
+            navigation_planning::TrajectoryPoint start;
+            start.position = state.position;
+            start.velocity = navigation_mapping::Vec3::Zero();
+            start.acceleration = navigation_mapping::Vec3::Zero();
+            start.time_from_start_s = 0.0;
+            auto end = start;
+            end.time_from_start_s = 1.0;
+            hold.points = {start, end};
+            hold.duration_s = 1.0;
+            navigation_planning::VehicleState hold_state;
+            hold_state.position = state.position;
+            hold_state.velocity = navigation_mapping::Vec3::Zero();
+            hold_state.acceleration = navigation_mapping::Vec3::Zero();
+            const auto verification = trajectory_verifier_.verify(
+                hold, hold_state, navigation_planning::PlanRole::Safety, world);
+            if (!verification.success) {
+              ++verification_failure_count_;
+              last_safety_verification_failure_ = verification.failure_code;
+              candidate.success = false;
+              candidate.trajectory.points.clear();
+              candidate.trajectory.duration_s = 0.0;
+              candidate.failure_code = mapVerificationFailure(verification.failure_code);
+              return candidate;
+            }
+            candidate.trajectory = hold;
+            candidate.statistics.corridor.segment_count = 1U;
+            candidate.statistics.corridor.checked_sample_count = 2U;
+            candidate.statistics.trajectory_optimization.sampled_point_count = 2U;
+            candidate.statistics.trajectory_optimization.maximum_velocity_mps = 0.0;
+            candidate.statistics.trajectory_optimization.maximum_acceleration_mps2 = 0.0;
+            candidate.statistics.trajectory_optimization.maximum_deceleration_mps2 = 0.0;
+            candidate.statistics.trajectory_optimization.maximum_jerk_mps3 = 0.0;
+            candidate.statistics.trajectory_optimization.trajectory_length_m = 0.0;
+            candidate.statistics.trajectory_optimization.duration_s = 1.0;
+            last_safety_verification_failure_ =
+                navigation_planning::VerificationFailureCode::None;
+            return candidate;
+          };
       if (!local_goal.success() || mission_goal_unreachable) {
         if (mission_goal_unreachable) {
           result.failure_code = navigation_planning::PlanFailureCode::NoPath;
@@ -1881,7 +1996,8 @@ void NavigationRuntimeNode::planActiveGoal() {
         // braking stop. Never restart nominal execution at the same waypoint.
         auto safety_state = state;
         safety_state.acceleration = navigation_mapping::Vec3::Zero();
-        result = validate(planner_.planSafetyStop(safety_state, world));
+        result = stabilizeStationarySafetyStop(
+            validate(planner_.planSafetyStop(safety_state, world)));
         safety_candidate = result;
         last_safety_failure_code_ = result.failure_code;
       } else {
@@ -1986,7 +2102,8 @@ void NavigationRuntimeNode::planActiveGoal() {
         if (!safety_result.success) {
           auto safety_state = state;
           safety_state.acceleration = navigation_mapping::Vec3::Zero();
-          safety_result = validate(planner_.planSafetyStop(safety_state, world));
+          safety_result = stabilizeStationarySafetyStop(
+              validate(planner_.planSafetyStop(safety_state, world)));
         }
         safety_candidate = safety_result;
         const auto recordCandidateTelemetry = [&](const navigation_planning::PlanResult& candidate,
@@ -2100,8 +2217,8 @@ void NavigationRuntimeNode::planActiveGoal() {
         } else {
           auto safety_state = state;
           safety_state.acceleration = navigation_mapping::Vec3::Zero();
-          auto stop_candidate = planner_.planSafetyStop(safety_state, world);
-          stop_candidate = validate(stop_candidate);
+          auto stop_candidate = stabilizeStationarySafetyStop(
+              validate(planner_.planSafetyStop(safety_state, world)));
           if (stop_candidate.success) {
             safety_candidate = stop_candidate;
             result = stop_candidate;
@@ -2183,6 +2300,12 @@ void NavigationRuntimeNode::planActiveGoal() {
         braking_stop_latched_ =
             result.role == navigation_planning::PlanRole::Safety &&
             result.safety_kind == navigation_planning::SafetyPlanKind::BrakingStop;
+        if (braking_stop_latched_) {
+          // A newly selected stop starts a fresh route-retry cooldown. Without
+          // resetting this anchor, a failed retry could immediately produce
+          // another route attempt on the next map tick.
+          last_safety_retry_time_ns_ = 0;
+        }
       } else {
         plan_valid_from_delay_s_ = 0.0;
         last_planned_trajectory_.reset();
@@ -2600,6 +2723,7 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
       keyValue("safety_route_verified_count", std::to_string(safety_route_verified_count_)),
       keyValue("safety_route_selected_count", std::to_string(safety_route_selected_count_)),
       keyValue("safety_stop_selected_count", std::to_string(safety_stop_selected_count_)),
+      keyValue("safety_stop_retry_count", std::to_string(safety_stop_retry_count_)),
       keyValue("nominal_plan_count", std::to_string(nominal_plan_count_)),
       keyValue("nominal_selected_count", std::to_string(nominal_selected_count_)),
       keyValue("trajectory_bundle_id", std::to_string(last_bundle_id_)),
@@ -2653,6 +2777,32 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
       keyValue("horizon_progress_m", std::to_string(last_horizon_progress_m_)),
       keyValue("mission_progress_m", std::to_string(last_mission_progress_m_)),
       keyValue("horizon_ray_occupied", last_horizon_ray_occupied_ ? "true" : "false"),
+      keyValue("detour_obstacle_anchor_active",
+               last_detour_obstacle_anchor_.has_value() ? "true" : "false"),
+      keyValue("detour_obstacle_anchor_x",
+               last_detour_obstacle_anchor_.has_value()
+                   ? std::to_string(last_detour_obstacle_anchor_->x())
+                   : "0.0"),
+      keyValue("detour_obstacle_anchor_y",
+               last_detour_obstacle_anchor_.has_value()
+                   ? std::to_string(last_detour_obstacle_anchor_->y())
+                   : "0.0"),
+      keyValue("detour_obstacle_anchor_z",
+               last_detour_obstacle_anchor_.has_value()
+                   ? std::to_string(last_detour_obstacle_anchor_->z())
+                   : "0.0"),
+      keyValue("detour_lateral_direction_x",
+               last_detour_lateral_direction_.has_value()
+                   ? std::to_string(last_detour_lateral_direction_->x())
+                   : "0.0"),
+      keyValue("detour_lateral_direction_y",
+               last_detour_lateral_direction_.has_value()
+                   ? std::to_string(last_detour_lateral_direction_->y())
+                   : "0.0"),
+      keyValue("detour_lateral_direction_z",
+               last_detour_lateral_direction_.has_value()
+                   ? std::to_string(last_detour_lateral_direction_->z())
+                   : "0.0"),
       keyValue("adaptive_velocity_cap_mps", std::to_string(last_adaptive_velocity_cap_mps_)),
       keyValue("known_free_horizon_m", std::to_string(last_known_free_horizon_m_)),
       keyValue("splice_position_residual_m", std::to_string(last_splice_position_residual_m_)),

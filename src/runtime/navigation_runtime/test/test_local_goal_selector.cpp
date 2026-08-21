@@ -193,6 +193,19 @@ TEST(LocalGoalSelectorTest, SelectsLateralDetourWhenRayIsOccupied) {
             navigation_mapping::CellState::KnownFree);
 }
 
+TEST(LocalGoalSelectorTest, ReportsObstacleAnchorForDetourContinuity) {
+  BoxWorld world;
+  world.occupied = true;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{20.0, 0.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX());
+  ASSERT_TRUE(result.success());
+  ASSERT_TRUE(result.occupied_on_forward_ray);
+  ASSERT_TRUE(result.detour_obstacle_anchor.has_value());
+  EXPECT_EQ(*result.detour_obstacle_anchor, (navigation_mapping::Vec3{2.0, 0.0, 0.0}));
+}
+
 TEST(LocalGoalSelectorTest, PrefersDetourSideThatLeadsIntoNextLeg) {
   BoxWorld world;
   world.occupied = true;

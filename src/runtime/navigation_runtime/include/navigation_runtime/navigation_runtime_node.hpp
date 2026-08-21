@@ -154,6 +154,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   std::uint64_t safety_route_verified_count_{0};
   std::uint64_t safety_route_selected_count_{0};
   std::uint64_t safety_stop_selected_count_{0};
+  std::uint64_t safety_stop_retry_count_{0};
   std::uint64_t nominal_plan_count_{0};
   std::uint64_t nominal_selected_count_{0};
   std::uint64_t dual_verification_failure_count_{0};
@@ -202,6 +203,11 @@ class NavigationRuntimeNode : public rclcpp::Node {
   navigation_mapping::Vec3 mission_leg_start_position_{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 mission_leg_unit_{navigation_mapping::Vec3::Zero()};
   double committed_mission_progress_m_{0.0};
+  // Side continuity is scoped to the currently observed first obstacle.  It
+  // must be cleared when that obstacle disappears or the mission waypoint
+  // changes; otherwise one pillar's detour biases the next pillar.
+  std::optional<navigation_mapping::Vec3> last_detour_obstacle_anchor_;
+  std::optional<navigation_mapping::Vec3> last_detour_lateral_direction_;
   std::int64_t last_verification_time_us_{0};
   navigation_planning::PlanFailureCode last_failure_code_{navigation_planning::PlanFailureCode::None};
   navigation_planning::PlanFailureCode last_nominal_failure_code_{
@@ -252,6 +258,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   // and prevents the planner from falling back to nominal execution after a
   // safety handover has already started.
   std::atomic_bool braking_stop_latched_{false};
+  std::int64_t last_safety_retry_time_ns_{0};
   std::int64_t last_plan_time_ns_{0};
   double plan_valid_from_delay_s_{0.0};
   std::uint64_t next_trajectory_id_{1U};

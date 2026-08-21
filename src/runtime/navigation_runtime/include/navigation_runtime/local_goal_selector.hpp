@@ -28,6 +28,10 @@ struct LocalGoalSelection {
   navigation_mapping::Vec3 tangent{navigation_mapping::Vec3::Zero()};
   double forward_projection_m{0.0};
   bool occupied_on_forward_ray{false};
+  // World position of the first occupied voxel that caused this detour.  The
+  // runtime uses it to keep a side preference only while the same obstacle is
+  // active; a global side preference would leak across independent pillars.
+  std::optional<navigation_mapping::Vec3> detour_obstacle_anchor;
 
   [[nodiscard]] bool success() const noexcept {
     return status == LocalGoalSelectionStatus::Direct ||
@@ -80,7 +84,10 @@ template <typename Model>
                                                       const navigation_mapping::Vec3&)>&
                                                       candidate_validator = {},
                                                   const std::optional<navigation_mapping::Vec3>&
-                                                      preferred_lateral_direction = std::nullopt) {
+                                                      preferred_lateral_direction = std::nullopt,
+                                                  const std::optional<navigation_mapping::Vec3>&
+                                                      preferred_detour_obstacle_anchor =
+                                                          std::nullopt) {
   LocalGoalSelection result;
   if (!start.allFinite() || !requested.allFinite() || !std::isfinite(boundary_margin_m) ||
       boundary_margin_m < 0.0 || !std::isfinite(max_distance_m) || max_distance_m <= 0.0) {
@@ -193,16 +200,6 @@ template <typename Model>
   // dense verification, so a sparse scan must not shrink the horizon merely
   // because adjacent support voxels have not been observed yet.
   const auto unit_direction = direction / direction_norm;
-  const auto lateral_preference = [&]() -> std::optional<navigation_mapping::Vec3> {
-    if (!preferred_lateral_direction.has_value() ||
-        !preferred_lateral_direction->allFinite()) {
-      return std::nullopt;
-    }
-    const auto lateral = *preferred_lateral_direction -
-                         preferred_lateral_direction->dot(unit_direction) * unit_direction;
-    if (!std::isfinite(lateral.norm()) || lateral.norm() <= 1e-6) return std::nullopt;
-    return lateral.normalized();
-  }();
   const double requested_forward_projection = (requested - start).dot(unit_direction);
   if (inside_inset(requested) && horizon_known_free(requested) &&
       candidate_is_valid(requested) &&
@@ -278,6 +275,29 @@ template <typename Model>
   }
   if (occupied_on_ray) {
     result.occupied_on_forward_ray = true;
+    result.detour_obstacle_anchor = world.gridToWorld(layer, first_occupied_index);
+    const auto lateral_preference = [&]() -> std::optional<navigation_mapping::Vec3> {
+      if (!preferred_lateral_direction.has_value() ||
+          !preferred_lateral_direction->allFinite()) {
+        return std::nullopt;
+      }
+      const auto lateral = *preferred_lateral_direction -
+                           preferred_lateral_direction->dot(unit_direction) * unit_direction;
+      if (!std::isfinite(lateral.norm()) || lateral.norm() <= 1e-6) return std::nullopt;
+      // A side preference is valid only for the same local obstacle.  Once
+      // the vehicle reaches another pillar, the previous side is no longer a
+      // continuity prior and must not bias the new detour.
+      if (preferred_detour_obstacle_anchor.has_value() &&
+          preferred_detour_obstacle_anchor->allFinite()) {
+        const double anchor_distance =
+            (result.detour_obstacle_anchor.value() - *preferred_detour_obstacle_anchor).norm();
+        const double continuity_radius = std::max(2.0, 6.0 * resolution);
+        if (!std::isfinite(anchor_distance) || anchor_distance > continuity_radius) {
+          return std::nullopt;
+        }
+      }
+      return lateral.normalized();
+    }();
     // Search around the first observed obstacle, not only around the current
     // vehicle voxel.  A start-centred shell can return a point just in front
     // of a pillar; the vehicle then reaches that point and waits for another
@@ -426,6 +446,12 @@ template <typename Model>
           // pass-through leg, the next-leg direction is a side tie breaker.
           // The mission-line penalty above prevents this prior from becoming
           // an unbounded lateral pull across repeated rolling replans.
+          // Lateral displacement is a detour cost, not a reward. The old
+          // positive lateral term systematically selected the farthest side
+          // shell and turned an initially safe pass into wall-following
+          // (including sub-goals around y=10 m for a y=0 mission waypoint).
+          // The obstacle/trajectory verifier still requires a non-zero side
+          // step; this score now chooses the shortest safe side step.
           const double score = lateral_preference.has_value()
                                    ? 1.0 * projection + 0.20 * mission_progress -
                                          0.35 * goal_distance - 0.80 * lateral +
@@ -434,13 +460,12 @@ template <typename Model>
                                          mission_route_deviation_penalty -
                                          2.0 * forward_clearance_penalty -
                                          2.0 * connector_obstacle_penalty
-                                   : 1.5 * std::min(lateral, 2.5) -
-                                         0.25 * goal_distance + 1.0 * projection +
-                                         0.15 * mission_progress -
+                                   : 1.0 * projection + 0.15 * mission_progress -
+                                         0.25 * goal_distance - 0.25 * lateral -
                                          1.25 * vertical_error - 0.75 * continuity_distance -
                                          mission_route_deviation_penalty -
-                                         2.0 * forward_clearance_penalty -
-                                         2.0 * connector_obstacle_penalty;
+                                         5.0 * forward_clearance_penalty -
+                                         6.0 * connector_obstacle_penalty;
           if (!detour_found || score > best_score + 1e-9) {
             detour_found = true;
             best_score = score;
@@ -557,10 +582,12 @@ template <typename Model>
     const std::optional<navigation_mapping::Vec3>& preferred_endpoint = std::nullopt,
     const std::optional<navigation_mapping::Vec3>& forward_direction = std::nullopt,
     const std::function<bool(const navigation_mapping::Vec3&)>& candidate_validator = {},
-    const std::optional<navigation_mapping::Vec3>& preferred_lateral_direction = std::nullopt) {
+    const std::optional<navigation_mapping::Vec3>& preferred_lateral_direction = std::nullopt,
+    const std::optional<navigation_mapping::Vec3>& preferred_detour_obstacle_anchor =
+        std::nullopt) {
   return selectLocalGoal(world, start, requested, boundary_margin_m, max_distance_m,
                          preferred_endpoint, forward_direction, false, candidate_validator,
-                         preferred_lateral_direction);
+                         preferred_lateral_direction, preferred_detour_obstacle_anchor);
 }
 
 }  // namespace navigation_runtime
