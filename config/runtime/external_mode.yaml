@@ -7,7 +7,11 @@ px4_navigation_external_mode:
       trajectory_topic: ""
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
-      prefer_velocity_output: true
+      # A/B benchmark: send the verified trajectory position/velocity/
+      # acceleration directly. The velocity-only tracker remains available
+      # for missions that explicitly request it, but its feedback/jerk state
+      # can hide planner handover behaviour behind a second controller.
+      prefer_velocity_output: false
       mission_complete_topic: /navigation/mission_complete
       trajectory_stale_after_s: 0.75
       # The SITL LIO/external-odometry stream has measured nominal gaps up to

@@ -1916,6 +1916,45 @@ void NavigationRuntimeNode::planActiveGoal() {
         }
         return candidate;
       };
+      const auto rejectNominalTrajectoryThatBacktracks =
+          [&](navigation_planning::PlanResult candidate) {
+            if (!candidate.success || candidate.role == navigation_planning::PlanRole::Safety ||
+                !mission_leg_initialized_ || mission_route_tangent.norm() <= 1e-6 ||
+                candidate.trajectory.points.size() < 2U) {
+              return candidate;
+            }
+            // The local selector constrains the endpoint, but the trajectory
+            // generator/A* path can still take a short reverse manoeuvre before
+            // reaching that endpoint. On a rolling mission this is not a
+            // harmless geometric detail: the next 5 Hz splice starts from the
+            // backward prefix, then the following plan points forward again,
+            // which produces the observed crawl/chattering loop. Nominal
+            // execution must preserve mission-leg progress over its committed
+            // prefix. A safety route remains allowed to retreat because it is
+            // fail-closed recovery and is not selected for nominal flight.
+            const auto tangent = mission_route_tangent.normalized();
+            const double first_progress =
+                (candidate.trajectory.points.front().position - mission_leg_start_position_)
+                    .dot(tangent);
+            const double backward_allowance = std::max(0.5, 2.0 * selector_resolution);
+            if (!std::isfinite(first_progress) || !std::isfinite(backward_allowance)) {
+              candidate.success = false;
+              candidate.failure_code = navigation_planning::PlanFailureCode::TrajectoryInvalid;
+              ++trajectory_progress_rejection_count_;
+              return candidate;
+            }
+            for (const auto& point : candidate.trajectory.points) {
+              const double progress = (point.position - mission_leg_start_position_).dot(tangent);
+              if (!std::isfinite(progress) || progress < first_progress - backward_allowance) {
+                candidate.success = false;
+                candidate.failure_code =
+                    navigation_planning::PlanFailureCode::TrajectoryInvalid;
+                ++trajectory_progress_rejection_count_;
+                return candidate;
+              }
+            }
+            return candidate;
+          };
       const auto rejectCandidate = [](navigation_planning::PlanResult candidate,
                                        navigation_planning::PlanFailureCode failure) {
         candidate.success = false;
@@ -2008,9 +2047,10 @@ void NavigationRuntimeNode::planActiveGoal() {
         // show which branch was selected instead of hiding safety planning
         // behind a planner failure.
         ++nominal_plan_count_;
-        const auto nominal_result = planner_config_.allow_nominal_unknown
-                                         ? planner_.planNominal(state, goal, world)
-                                         : planner_.plan(state, goal, world);
+        auto nominal_result = planner_config_.allow_nominal_unknown
+                                  ? planner_.planNominal(state, goal, world)
+                                  : planner_.plan(state, goal, world);
+        nominal_result = rejectNominalTrajectoryThatBacktracks(std::move(nominal_result));
         if (nominal_result.success) {
           full_nominal_visualization_trajectory = nominal_result.trajectory;
         }
@@ -2744,6 +2784,8 @@ void NavigationRuntimeNode::publishPlanningDiagnostics(
                std::to_string(horizon_backward_rejection_count_)),
       keyValue("mission_progress_rejection_count",
                std::to_string(mission_progress_rejection_count_)),
+      keyValue("trajectory_progress_rejection_count",
+               std::to_string(trajectory_progress_rejection_count_)),
       keyValue("trajectory_revalidation_count", std::to_string(trajectory_revalidation_count_)),
       keyValue("trajectory_revalidation_failure_count",
                std::to_string(trajectory_revalidation_failure_count_)),

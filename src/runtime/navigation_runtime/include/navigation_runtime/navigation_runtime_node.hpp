@@ -166,6 +166,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   std::uint64_t horizon_endpoint_repeat_count_{0};
   std::uint64_t horizon_backward_rejection_count_{0};
   std::uint64_t mission_progress_rejection_count_{0};
+  std::uint64_t trajectory_progress_rejection_count_{0};
   std::uint64_t trajectory_revalidation_count_{0};
   std::uint64_t trajectory_revalidation_failure_count_{0};
   std::uint64_t trajectory_reuse_count_{0};
