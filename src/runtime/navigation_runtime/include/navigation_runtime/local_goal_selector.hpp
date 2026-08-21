@@ -293,6 +293,78 @@ template <typename Model>
     const double detour_max_distance = search_distance;
     const int lateral_shell_cells = std::max(
         lateral_cells, static_cast<int>(std::ceil(3.0 / resolution)));
+    // A side-step is not evaluated only at its endpoint.  The endpoint can be
+    // KnownFree while the same side immediately ahead contains another
+    // obstacle (the long-three-pillars map has exactly this trap: the upper
+    // side of pillar 1 leads into texture_tree_02, and the lower side of
+    // pillar 3 leads into texture_tree_05).  Use a short, conservative
+    // look-ahead in the mission direction to prefer the side with more
+    // observed clearance. Unknown cells are only a small penalty: they must
+    // not turn this cheap selector into an unknown-space planner.
+    const auto forward_obstacle_penalty = [&](const navigation_mapping::Vec3& candidate) {
+      const double lookahead_m = std::min(8.0, std::max(2.0, search_distance));
+      const int lookahead_steps = std::max(1, static_cast<int>(std::ceil(lookahead_m / resolution)));
+      double penalty = 0.0;
+      for (int step = 1; step <= lookahead_steps; ++step) {
+        const double distance = std::min(lookahead_m, step * resolution);
+        const auto sample = candidate + distance * mission_unit_direction;
+        if (!inside_inset(sample)) {
+          penalty += 0.25;
+          continue;
+        }
+        const auto sample_index = world.worldToGrid(layer, sample);
+        if (!bounds.contains(sample_index)) {
+          penalty += 0.25;
+          continue;
+        }
+        const auto state = world.cellState(layer, sample_index);
+        if (state == navigation_mapping::CellState::Occupied) {
+          penalty += 1.0;
+        } else if (state == navigation_mapping::CellState::Unknown) {
+          penalty += 0.05;
+        }
+      }
+      return penalty;
+    };
+    const auto segment_obstacle_penalty = [&](const navigation_mapping::Vec3& candidate) {
+      // The candidate may be beyond the first pillar.  Score the connector
+      // as well as the endpoint: otherwise a point on the far side of the
+      // map can look attractive even though the straight handover corridor
+      // cuts through a second texture obstacle (the failure mode at pillar 3
+      // was exactly a lower-side endpoint whose connector crossed tree_05).
+      const auto delta = candidate - start;
+      const double distance = delta.norm();
+      if (!std::isfinite(distance) || distance <= 1e-6) return 0.0;
+      const int samples = std::max(1, static_cast<int>(std::ceil(distance /
+                                                                  std::max(0.4, 2.0 * resolution))));
+      double penalty = 0.0;
+      // Do not score the unavoidable crossing of the first pillar itself as
+      // evidence against the opposite side.  The selector is choosing which
+      // side to expose next; A* and trajectory verification own the actual
+      // detour around that first obstacle.  Keep the skip radius local so a
+      // later texture obstacle (the pillar-3/tree-05 failure) still affects
+      // the candidate score.
+      const double first_obstacle_skip_radius_m = std::max(1.2, 4.0 * resolution);
+      for (int step = 1; step <= samples; ++step) {
+        const double alpha = static_cast<double>(step) / samples;
+        const auto sample = start + alpha * delta;
+        if (!inside_inset(sample)) continue;
+        const auto sample_index = world.worldToGrid(layer, sample);
+        if (!bounds.contains(sample_index)) continue;
+        const auto sample_world = world.gridToWorld(layer, sample_index);
+        if ((sample_world - world.gridToWorld(layer, first_occupied_index)).norm() <=
+            first_obstacle_skip_radius_m) {
+          continue;
+        }
+        const auto state = world.cellState(layer, sample_index);
+        if (state == navigation_mapping::CellState::Occupied) {
+          penalty += 1.0;
+        } else if (state == navigation_mapping::CellState::Unknown) {
+          penalty += 0.05;
+        }
+      }
+      return penalty;
+    };
     bool detour_found = false;
     double best_score = -std::numeric_limits<double>::infinity();
     navigation_mapping::Vec3 detour_goal = navigation_mapping::Vec3::Zero();
@@ -317,6 +389,19 @@ template <typename Model>
               0.0, delta.squaredNorm() - projection * projection));
           if (lateral <= 0.5 * resolution) continue;
           const double goal_distance = (candidate - requested).norm();
+          // Score the candidate against the whole active mission leg as well
+          // as against the current splice.  Without this term, a repeated
+          // lateral preference is locally valid on every cycle but can walk
+          // the endpoint several metres away from the mission line (the
+          // previous strong next-leg hint drifted to y ~= 11 m).  The penalty
+          // is soft: a genuine obstacle detour may exceed it, but an equally
+          // safe candidate closer to the leg always wins.
+          const auto mission_offset = candidate - requested;
+          const double mission_projection = mission_offset.dot(mission_unit_direction);
+          const double mission_cross_track = std::sqrt(std::max(
+              0.0, mission_offset.squaredNorm() - mission_projection * mission_projection));
+          const double mission_route_deviation_penalty =
+              0.30 * mission_cross_track + 0.12 * mission_cross_track * mission_cross_track;
           const double continuity_distance =
               preferred_goal.has_value() && preferred_goal->allFinite()
                   ? (candidate - *preferred_goal).norm()
@@ -335,15 +420,27 @@ template <typename Model>
               lateral_preference.has_value() && lateral_vector.norm() > 1e-6
                   ? lateral_vector.normalized().dot(*lateral_preference)
                   : 0.0;
+          const double forward_clearance_penalty = forward_obstacle_penalty(candidate);
+          const double connector_obstacle_penalty = segment_obstacle_penalty(candidate);
+          // Once the runtime has entered the bounded final part of a
+          // pass-through leg, the next-leg direction is a side tie breaker.
+          // The mission-line penalty above prevents this prior from becoming
+          // an unbounded lateral pull across repeated rolling replans.
           const double score = lateral_preference.has_value()
                                    ? 1.0 * projection + 0.20 * mission_progress -
                                          0.35 * goal_distance - 0.80 * lateral +
-                                         0.75 * lateral_alignment -
-                                         1.25 * vertical_error - 0.75 * continuity_distance
+                                         1.00 * lateral_alignment -
+                                         1.25 * vertical_error - 0.75 * continuity_distance -
+                                         mission_route_deviation_penalty -
+                                         2.0 * forward_clearance_penalty -
+                                         2.0 * connector_obstacle_penalty
                                    : 1.5 * std::min(lateral, 2.5) -
                                          0.25 * goal_distance + 1.0 * projection +
                                          0.15 * mission_progress -
-                                         1.25 * vertical_error - 0.75 * continuity_distance;
+                                         1.25 * vertical_error - 0.75 * continuity_distance -
+                                         mission_route_deviation_penalty -
+                                         2.0 * forward_clearance_penalty -
+                                         2.0 * connector_obstacle_penalty;
           if (!detour_found || score > best_score + 1e-9) {
             detour_found = true;
             best_score = score;

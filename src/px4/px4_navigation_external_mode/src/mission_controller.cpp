@@ -260,6 +260,32 @@ MissionControllerEvent MissionController::update(
     return velocity.has_value() && velocity->allFinite() &&
            velocity->norm() <= mission_.control.acceptance_speed_mps;
   };
+  const auto passThroughCornerReady = [&]() {
+    // A pass-through waypoint may be accepted at flight speed on a straight
+    // leg, but an orthogonal handover must not publish the next request while
+    // the vehicle is still travelling along the incoming leg. Otherwise the
+    // runtime has to fall back to a braking stop using the old tangent and
+    // the vehicle can travel several metres beyond the next waypoint.
+    if (!velocity.has_value() || !velocity->allFinite()) return false;
+    if (active_waypoint_index_ == 0U ||
+        active_waypoint_index_ + 1U >= mission_.waypoints.size()) {
+      return true;
+    }
+    const auto& previous = mission_.waypoints[active_waypoint_index_ - 1U];
+    const auto& next = mission_.waypoints[active_waypoint_index_ + 1U];
+    const auto incoming = waypoint.position_enu - previous.position_enu;
+    const auto outgoing = next.position_enu - waypoint.position_enu;
+    if (!incoming.allFinite() || !outgoing.allFinite() || incoming.norm() <= 1e-6 ||
+        outgoing.norm() <= 1e-6) {
+      return true;
+    }
+    // Only gate a genuine corner. A value above 0.7 is approximately a
+    // turn below 45 degrees and should retain the normal fly-through rule.
+    if (incoming.normalized().dot(outgoing.normalized()) > 0.7) return true;
+    const double speed = velocity->norm();
+    if (!std::isfinite(speed) || speed <= mission_.control.acceptance_speed_mps) return true;
+    return velocity->normalized().dot(outgoing.normalized()) >= 0.25;
+  };
 
   if (state_ == MissionControllerState::ExecutingWaypoint) {
     const bool pass_through = waypoint.behavior == MissionWaypoint::Behavior::PassThrough;
@@ -272,8 +298,8 @@ MissionControllerEvent MissionController::update(
     // finite measured state; a stop waypoint still requires the normal
     // trajectory/low-speed confirmation below.
     const bool immediate_pass_through = pass_through && inside && slowEnough();
-    if ((trajectory_ready_ || immediate_pass_through) && inside &&
-        (pass_through || slowEnough())) {
+    const bool acceptance_ready = pass_through ? passThroughCornerReady() : slowEnough();
+    if ((trajectory_ready_ || immediate_pass_through) && inside && acceptance_ready) {
       if (pass_through) {
         const double acceptance_error = (*position - waypoint.position_enu).norm();
         const double acceptance_speed = velocity->norm();

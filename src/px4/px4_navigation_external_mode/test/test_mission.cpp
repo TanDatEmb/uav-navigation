@@ -307,6 +307,59 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
+TEST(MissionController, PassThroughCornerWaitsForOutgoingVelocityAlignment) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_corner_gate
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: corner
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [1.0, 1.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.1);
+  const auto origin = controller.update(0.2, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+                                        Eigen::Vector3d::Zero());
+  ASSERT_EQ(origin.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  ASSERT_TRUE(origin.waypoint_accepted);
+  controller.onTrajectory(true, 0.3);
+
+  const auto incoming_velocity = controller.update(
+      0.4, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(incoming_velocity.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_FALSE(incoming_velocity.waypoint_accepted);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  const auto outgoing_velocity = controller.update(
+      0.5, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d{0.0, 1.0, 0.0});
+  EXPECT_EQ(outgoing_velocity.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  EXPECT_TRUE(outgoing_velocity.waypoint_accepted);
+  EXPECT_EQ(outgoing_velocity.accepted_waypoint_index, 1U);
+}
+
 TEST(MissionController, TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:

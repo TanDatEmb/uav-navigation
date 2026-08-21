@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate a self-contained HTML benchmark report for an SITL session.
+"""Analyze a recorded SITL session and publish its Flight Review HTML view.
 
-The report deliberately uses only inline SVG and JSON so it remains useful on
-an isolated test machine.  It consumes the recorder's scenario.jsonl and
-samples.jsonl files; no ROS graph or running simulator is required.
+The metric extraction stays here for compatibility with the runtime report
+contract and tests.  The public ``generate`` entrypoint delegates rendering
+to ``flight_review_report.py`` so evaluation and debug trace presentation are
+kept separate.
 """
 
 from __future__ import annotations
@@ -664,189 +665,15 @@ def _analyze(session: Path) -> dict[str, Any]:
     }
 
 
-def _number(value: Any, digits: int = 3) -> str:
-    if value is None:
-        return "n/a"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return html.escape(str(value))
-    return f"{number:.{digits}f}"
-
-
-def _polyline(points: list[tuple[float, float, float]], transform: Any, color: str, width: int = 3, dash: str = "") -> str:
-    if len(points) < 2:
-        return ""
-    coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
-    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
-    return f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-width="{width}" stroke-linejoin="round" stroke-linecap="round"{dash_attr}/>'
-
-
-def _map_svg(data: dict[str, Any]) -> str:
-    actual = [item["position"] for item in data["ground_truth"]]
-    all_points = actual + data["waypoints"]
-    for obstacle in data["metrics"]["obstacles"]:
-        all_points.append(obstacle["center"])
-    if not all_points:
-        return "<p>No trajectory samples recorded.</p>"
-    min_x = min(point[0] for point in all_points) - 3.0
-    max_x = max(point[0] for point in all_points) + 3.0
-    min_y = min(point[1] for point in all_points) - 3.0
-    max_y = max(point[1] for point in all_points) + 3.0
-    width, height = 940.0, 460.0
-    scale = min(width / max(1.0, max_x - min_x), height / max(1.0, max_y - min_y))
-    def transform(point: tuple[float, float, float]) -> tuple[float, float]:
-        return (60.0 + (point[0] - min_x) * scale, height - 30.0 - (point[1] - min_y) * scale)
-    parts = [f'<svg viewBox="0 0 {width:.0f} {height:.0f}" role="img" aria-label="2D flight path">', '<rect width="100%" height="100%" fill="#101722"/>']
-    for obstacle in data["metrics"]["obstacles"]:
-        center = transform(obstacle["center"])
-        is_route_obstacle = obstacle["name"] in set(data["metrics"].get("route_obstacles", []))
-        obstacle_fill = "#e05252" if is_route_obstacle else "#64748b"
-        if obstacle["type"] == "cylinder":
-            radius = float(obstacle.get("radius_m", 0.0)) * scale
-            parts.append(f'<circle cx="{center[0]:.1f}" cy="{center[1]:.1f}" r="{radius:.1f}" fill="{obstacle_fill}" fill-opacity="0.75" stroke="#ffb4b4"/>')
-        else:
-            half = obstacle.get("half_extents", [0.0, 0.0, 0.0])
-            left = transform((obstacle["center"][0] - half[0], obstacle["center"][1] + half[1], 0.0))
-            right = transform((obstacle["center"][0] + half[0], obstacle["center"][1] - half[1], 0.0))
-            parts.append(f'<rect x="{left[0]:.1f}" y="{left[1]:.1f}" width="{right[0]-left[0]:.1f}" height="{right[1]-left[1]:.1f}" fill="{obstacle_fill}" fill-opacity="0.75"/>')
-        parts.append(f'<text x="{center[0]+6:.1f}" y="{center[1]-6:.1f}" fill="#ffd8d8" font-size="11">{html.escape(str(obstacle["name"]))}</text>')
-    for index, waypoint in enumerate(data["waypoints"]):
-        x, y = transform(waypoint)
-        parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#ffd166" stroke="#fff3c4"/><text x="{x+7:.1f}" y="{y-7:.1f}" fill="#fff3c4" font-size="11">WP{index}</text>')
-    parts.append(_polyline(actual, transform, "#4cc9f0", 3))
-    records = data["trajectory_records"]
-    # Keep the raw history complete in scenario.json/benchmark_metrics while
-    # sampling the SVG overlay so a long SITL run remains inspectable in a
-    # browser instead of becoming a megabyte-scale path graphic.
-    record_step = max(1, len(records) // 64)
-    for index, record in enumerate(records):
-        if index % record_step != 0 and index != len(records) - 1:
-            continue
-        points = [_point(item) for item in record.get("position_points", [])]
-        points = [item for item in points if item is not None]
-        parts.append(_polyline(points, transform, "#9be564", 1, "5 4"))
-    parts.append('<text x="18" y="24" fill="#dbeafe" font-size="14">blue: ground truth · green dashed: committed local plans · red: route columns · slate: texture/features · yellow: waypoints</text></svg>')
-    return "".join(parts)
-
-
-def _chart_svg(series: list[tuple[str, list[tuple[float, float]], str]], y_label: str, width: int = 940, height: int = 250) -> str:
-    points = [point for _, values, _ in series for point in values]
-    if not points:
-        return "<p>No chart samples recorded.</p>"
-    min_t, max_t = min(point[0] for point in points), max(point[0] for point in points)
-    max_y = max(1.0, max(point[1] for point in points))
-    def transform(point: tuple[float, float]) -> tuple[float, float]:
-        x = 55.0 + (point[0] - min_t) / max(1e-9, max_t - min_t) * (width - 80.0)
-        y = height - 30.0 - point[1] / max_y * (height - 60.0)
-        return x, y
-    parts = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(y_label)} chart"><rect width="100%" height="100%" fill="#101722"/><line x1="55" y1="20" x2="55" y2="{height-30}" stroke="#94a3b8"/><line x1="55" y1="{height-30}" x2="{width-25}" y2="{height-30}" stroke="#94a3b8"/><text x="8" y="28" fill="#dbeafe" font-size="12">{html.escape(y_label)}</text>']
-    for label, values, color in series:
-        if values:
-            coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in values)
-            parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-width="2" stroke-linejoin="round"/><text x="{width-180 + len(parts)*2}" y="22" fill="{color}" font-size="11">{html.escape(label)}</text>')
-    parts.append("</svg>")
-    return "".join(parts)
-
-
 def generate(session: Path) -> Path:
-    data = _analyze(session)
-    metrics_path = session / "benchmark_metrics.json"
-    metrics_path.write_text(json.dumps(data["metrics"], indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    ground_truth = data["ground_truth"]
-    speed_series: list[tuple[float, float]] = []
-    error_series: list[tuple[float, float]] = []
-    for item in ground_truth:
-        velocity = item.get("velocity")
-        if velocity:
-            speed_series.append((item["t"], math.sqrt(sum(value * value for value in velocity))))
-        if data["waypoints"]:
-            error_series.append((item["t"], min(_segment_distance_2d(item["position"], data["waypoints"][index], data["waypoints"][index + 1]) for index in range(len(data["waypoints"]) - 1))))
-    planning_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("geometric_path_length_m"))) is not None]
-    horizon_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("known_free_horizon_m"))) is not None]
-    planning_horizon_path = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("planning_horizon_distance_m"))) is not None]
-    horizon_progress_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_progress_m"))) is not None]
-    forward_projection_series = [(item["t"], number) for item in data["planning"] if (number := _finite_number(item.get("horizon_forward_projection_m"))) is not None]
-    plan_speed_series = data["plan_series"]["speed"]
-    plan_velocity_jump_series = data["plan_series"]["velocity_jump"]
-    plan_heading_step_series = data["plan_series"]["heading_step"]
-    metrics = data["metrics"]
-    acceptance = metrics.get("acceptance", {})
-    def cell(value: Any, digits: int = 3) -> str:
-        return html.escape(_number(value, digits))
-    def json_cell(value: Any) -> str:
-        if value is None:
-            return "n/a"
-        return html.escape(json.dumps(value, sort_keys=True))
-    acceptance_events = acceptance.get("waypoint_acceptance_events")
-    acceptance_events_detail = (
-        f"<details><summary>{len(acceptance_events)} event(s)</summary>"
-        f"<pre>{html.escape(json.dumps(acceptance_events, indent=2, sort_keys=True))}</pre></details>"
-        if isinstance(acceptance_events, list)
-        else "unavailable"
-    )
-    acceptance_reasons = acceptance.get("reasons", [])
-    acceptance_reasons_text = (
-        "none" if not acceptance_reasons else html.escape("; ".join(str(item) for item in acceptance_reasons))
-    )
-    table = "".join([
-        f"<tr><th>Outcome</th><td>{html.escape(str(metrics['safety'].get('outcome')))}</td></tr>",
-        f"<tr><th>Mission completion observed</th><td>{html.escape(str(acceptance.get('mission_complete_observed')))}</td></tr>",
-        f"<tr><th>Waypoint acceptance indices</th><td>{json_cell(acceptance.get('waypoint_acceptance_indices'))} / expected {json_cell(acceptance.get('expected_waypoint_indices'))}</td></tr>",
-        f"<tr><th>Waypoint acceptance events</th><td>{acceptance_events_detail}</td></tr>",
-        f"<tr><th>Goal indices (diagnostic only)</th><td>{json_cell(acceptance.get('goal_indices'))}</td></tr>",
-        f"<tr><th>Waypoint acceptance complete</th><td>{html.escape(str(acceptance.get('waypoint_acceptance_complete')))}</td></tr>",
-        f"<tr><th>Cross-track p95 / acceptance limit</th><td>{cell(acceptance.get('cross_track_p95_m'))} m / {cell(acceptance.get('max_cross_track_p95_m'))} m</td></tr>",
-        f"<tr><th>Acceptance gate reasons</th><td>{acceptance_reasons_text}</td></tr>",
-        f"<tr><th>Mission sim / wall time</th><td>{cell(metrics['mission'].get('duration_sim_s'))} s / {cell(metrics['mission'].get('wall_elapsed_s'))} s</td></tr>",
-        f"<tr><th>Longest leg / known horizon</th><td>{cell(metrics['mission'].get('longest_leg_m'))} m / {cell(metrics['planning']['known_free_horizon_m'].get('maximum'))} m</td></tr>",
-        f"<tr><th>Rolling planning horizon p50 / max</th><td>{cell(metrics['planning']['planning_horizon_distance_m'].get('p50'))} m / {cell(metrics['planning']['planning_horizon_distance_m'].get('maximum'))} m</td></tr>",
-        f"<tr><th>Cross-track RMSE / p95</th><td>{cell(metrics['tracking']['cross_track_error_m'].get('rmse'))} m / {cell(metrics['tracking']['cross_track_error_m'].get('p95'))} m</td></tr>",
-        f"<tr><th>Speed mean / p95</th><td>{cell(metrics['tracking']['speed_mps'].get('mean'))} / {cell(metrics['tracking']['speed_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Plan profile speed mean / p95</th><td>{cell(metrics['smoothness']['plan_speed_mps'].get('mean'))} / {cell(metrics['smoothness']['plan_speed_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Time-aligned handover velocity jump p95</th><td>{cell(metrics['smoothness']['boundary_velocity_jump_mps'].get('p95'))} m/s</td></tr>",
-        f"<tr><th>Time-aligned handover position jump p95</th><td>{cell(metrics['smoothness']['boundary_position_jump_m'].get('p95'))} m</td></tr>",
-        f"<tr><th>Time-aligned handover heading step p95</th><td>{cell(metrics['smoothness']['boundary_heading_step_deg'].get('p95'))}°</td></tr>",
-        f"<tr><th>Handover samples / expired plans</th><td>{cell(metrics['smoothness'].get('handover_sample_count'), 0)} / {cell(metrics['smoothness'].get('handover_expired_count'), 0)}</td></tr>",
-        f"<tr><th>PX4 setpoint max / LIO residual p95</th><td>{cell(metrics['control']['setpoint_speed_mps'].get('maximum'))} m/s / {cell(metrics['localization'].get('p95_position_residual_m'))} m</td></tr>",
-        f"<tr><th>Planning total p95</th><td>{cell(metrics['planning']['planning_total_us'].get('p95'))} µs</td></tr>",
-        f"<tr><th>Replans / local subgoals</th><td>{cell(metrics['planning'].get('full_replan_count'), 0)} / {cell(metrics['planning'].get('local_subgoal_selected_count'), 0)}</td></tr>",
-        f"<tr><th>Rolling endpoints / changes / repeats</th><td>{cell(metrics['planning']['continuity'].get('unique_endpoint_count'), 0)} / {cell(metrics['planning']['continuity'].get('endpoint_change_count'), 0)} / {cell(metrics['planning']['continuity'].get('endpoint_repeat_count'), 0)}</td></tr>",
-        f"<tr><th>Max endpoint repeat / backward projections</th><td>{cell(metrics['planning']['continuity'].get('maximum_endpoint_repeat_run'), 0)} / {cell(metrics['planning']['continuity'].get('backward_projection_count'), 0)}</td></tr>",
-        f"<tr><th>Safety-stop ratio / tangent reversals</th><td>{cell(100.0 * metrics['planning']['continuity'].get('safety_stop_ratio', 0.0), 1)}% / {cell(metrics['planning']['continuity'].get('tangent_reversal_count'), 0)}</td></tr>",
-        f"<tr><th>Rolling samples / terminal hold refreshes</th><td>{cell(metrics['planning']['continuity'].get('rolling_sample_count'), 0)} / {cell(metrics['planning']['continuity'].get('terminal_hold_sample_count'), 0)}</td></tr>",
-        f"<tr><th>Collision / min clearance</th><td>{cell(metrics['safety'].get('collision_count'), 0)} / {cell(metrics['safety'].get('minimum_collision_clearance_m'))} m ({html.escape(str(metrics['safety'].get('minimum_collision_obstacle_name') or 'n/a'))})</td></tr>",
-    ])
-    trace = metrics["planning"].get("rolling_bundle_trace", {})
-    trace_records = trace.get("records", []) if isinstance(trace, dict) else []
-    trace_rows = "".join(
-        "<tr>"
-        f"<td>{html.escape(str(record.get('planning_cycle_id')))}</td>"
-        f"<td>{html.escape(str(record.get('bundle_id')))}</td>"
-        f"<td>{html.escape(str(record.get('route_id')))}</td>"
-        f"<td>{cell(record.get('horizon_start_arc_m'))} → {cell(record.get('horizon_end_arc_m', record.get('horizon_arc_m')))}</td>"
-        f"<td>{html.escape(str(record.get('selected_branch')))}</td>"
-        f"<td>{cell(record.get('splice_position_residual_m'))}</td>"
-        f"<td>{html.escape(str(record.get('failure_code') or ''))}</td>"
-        "</tr>"
-        for record in trace_records
-    )
-    if not trace_rows:
-        trace_rows = '<tr><td colspan="7">No explicit rolling-bundle trace was published; this session is partial.</td></tr>'
-    trace_section = (
-        "<section><h2>Rolling bundle trace</h2>"
-        f"<p>records: {html.escape(str(trace.get('record_count', 0)))} · "
-        f"complete: {html.escape(str(trace.get('complete_record_count', 0)))} · "
-        f"partial: {html.escape(str(trace.get('partial_record_count', 0)))}</p>"
-        '<table><tr><th>cycle</th><th>bundle</th><th>route</th><th>arc horizon (m)</th>'
-        '<th>branch</th><th>splice p (m)</th><th>failure</th></tr>'
-        f"{trace_rows}</table>"
-        f"<details><summary>Raw rolling trace JSON</summary><pre>{html.escape(json.dumps(trace_records, indent=2, sort_keys=True))}</pre></details></section>"
-    )
-    html_text = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>UAV navigation benchmark</title><style>body{{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#0b1220;color:#e5e7eb}}section{{background:#111b2e;border:1px solid #263653;border-radius:10px;padding:1rem;margin:1rem 0}}h1,h2{{color:#dbeafe}}table{{border-collapse:collapse;width:100%}}th,td{{border-bottom:1px solid #263653;text-align:left;padding:.45rem}}th{{width:38%;color:#a5b4fc}}svg{{width:100%;height:auto;border-radius:6px}}.ok{{color:#86efac}}.warn{{color:#fbbf24}}</style></head><body><h1>UAV mission benchmark</h1><p>Session: <code>{html.escape(str(session))}</code></p><section><h2>Acceptance metrics</h2><table>{table}</table></section>{trace_section}<section><h2>2D flight path</h2>{_map_svg(data)}</section><section><h2>Speed</h2>{_chart_svg([('measured speed', speed_series, '#4cc9f0')], 'm/s')}</section><section><h2>Planner smoothness</h2><p>Green is the planned start speed at each trajectory publication. Orange is the time-aligned velocity difference between the previous active plan and the newly published plan. Rolling profiles overlap in time and are not concatenated.</p>{_chart_svg([('planned start speed', plan_speed_series, '#9be564'), ('time-aligned handover jump', plan_velocity_jump_series, '#f97316')], 'm/s')} {_chart_svg([('time-aligned heading step', plan_heading_step_series, '#c084fc')], 'degrees')}</section><section><h2>Cross-track error</h2>{_chart_svg([('cross-track error', error_series, '#fbbf24')], 'm')}</section><section><h2>Planner horizon and path</h2>{_chart_svg([('geometric path length', planning_path, '#9be564'), ('known-free horizon', horizon_path, '#f472b6'), ('planning horizon', planning_horizon_path, '#facc15'), ('horizon progress', horizon_progress_series, '#38bdf8'), ('forward projection', forward_projection_series, '#fb7185')], 'm')}</section><section><h2>Raw metrics</h2><pre>{html.escape(json.dumps(metrics, indent=2, sort_keys=True))}</pre></section></body></html>"""
-    output = session / "REPORT.html"
-    output.write_text(html_text, encoding="utf-8")
-    return output
+    """Write the summary-first Flight Review page as REPORT.html.
+
+    report.build calls this function after every runtime session is finalized,
+    including interrupted and fail-closed flights.
+    """
+    from flight_review_report import render
+
+    return render(session.resolve(), session.resolve() / "REPORT.html")
 
 
 def main() -> int:

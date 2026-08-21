@@ -924,12 +924,15 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
     BsplineGenerationResult best_generation;
     bool best_collision_free = false;
 
-    // First try the smooth projected fit. If it bows into a voxel corner, keep
-    // the same B-spline representation but refit without the smoothing pass;
-    // the dense collision verifier below remains the final authority.
-    for (int smoothing_pass = 0; smoothing_pass < 2 && !generated; ++smoothing_pass) {
-      for (int iteration = 0; iteration <= config.maximum_time_scaling_iterations;
-           ++iteration) {
+    // First try topology-only control density so long straight rolling
+    // prefixes do not inherit a time penalty from their metric length. If the
+    // resulting spline bows outside the observed corridor, retry the same
+    // fit with geometry density; this keeps the expensive dense representation
+    // local to obstacle/corner plans instead of making every plan slow.
+    for (int density_pass = 0; density_pass < 2 && !generated; ++density_pass) {
+      for (int smoothing_pass = 0; smoothing_pass < 2 && !generated; ++smoothing_pass) {
+        for (int iteration = 0; iteration <= config.maximum_time_scaling_iterations;
+             ++iteration) {
         BsplineGenerationConfig bspline_config;
         bspline_config.degree = 5;
         // A shorter initial duration is intentional for speed, so use a
@@ -937,6 +940,9 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
         // one or two additional candidates instead of carrying a slow base
         // duration through every rolling replan.
         bspline_config.knot_dt_s = base_knot_dt * std::pow(1.35, iteration);
+        bspline_config.control_point_spacing_m = density_pass == 0
+                                                     ? 0.0
+                                                     : std::max(0.8, 2.0 * resolution);
         bspline_config.sample_dt_s = config.bspline_optimization_sample_dt_s;
         bspline_config.smoothing_iterations = smoothing_pass == 0
                                                   ? config.bspline_smoothing_iterations
@@ -997,6 +1003,7 @@ PlanResult planModel(const PlannerConfig& config, const VehicleState& state,
           break;
         }
       }
+    }
     }
 
     result.statistics.trajectory_optimization.optimization_time_us =

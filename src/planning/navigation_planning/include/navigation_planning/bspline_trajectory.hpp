@@ -160,6 +160,10 @@ struct BsplineTrajectory {
 struct BsplineGenerationConfig {
   int degree{5};
   double knot_dt_s{0.2};
+  // <= 0 selects topology-only control density. A positive value is an
+  // explicit geometry fallback used when a compact spline cannot certify a
+  // tight obstacle corridor.
+  double control_point_spacing_m{0.0};
   double sample_dt_s{0.02};
   int smoothing_iterations{12};
   double smoothing_step{0.04};
@@ -205,6 +209,67 @@ inline navigation_mapping::Vec3 interpolatePolyline(
   return waypoints.back();
 }
 
+inline std::vector<navigation_mapping::Vec3> samplePolylinePreservingWaypoints(
+    const std::vector<navigation_mapping::Vec3>& waypoints, std::size_t control_count) {
+  if (waypoints.size() < 2U || control_count < 2U) return {};
+  const std::size_t segment_count = waypoints.size() - 1U;
+  if (control_count < segment_count + 1U) return {};
+
+  std::vector<double> segment_lengths(segment_count, 0.0);
+  std::vector<std::size_t> intervals(segment_count, 1U);
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    segment_lengths[segment] = (waypoints[segment + 1U] - waypoints[segment]).norm();
+  }
+
+  // Boundary-condition enforcement rewrites the first two and last two
+  // control points. Reserve three intervals at each end when there is an
+  // internal corner, otherwise that corner can be selected correctly and then
+  // silently erased by the endpoint derivative constraints.
+  const std::size_t total_intervals = control_count - 1U;
+  const bool has_internal_corner = segment_count >= 2U &&
+                                   total_intervals >= segment_count + 4U;
+  if (has_internal_corner) {
+    intervals.front() = 3U;
+    intervals.back() = 3U;
+  }
+
+  // Every reference segment gets at least one knot interval. The remaining
+  // degree-dependent controls are allocated to the currently longest
+  // interval, while the protected boundary allocation keeps the first/last
+  // corners available after endpoint conditions are imposed.
+  std::size_t allocated_intervals = 0U;
+  for (const auto count : intervals) allocated_intervals += count;
+  std::size_t remaining_intervals = total_intervals - allocated_intervals;
+  while (remaining_intervals > 0U) {
+    std::size_t selected = 0U;
+    double selected_spacing = -1.0;
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+      if (has_internal_corner && segment == segment_count - 1U) continue;
+      const double spacing = segment_lengths[segment] /
+                             static_cast<double>(intervals[segment]);
+      if (spacing > selected_spacing) {
+        selected_spacing = spacing;
+        selected = segment;
+      }
+    }
+    ++intervals[selected];
+    --remaining_intervals;
+  }
+
+  std::vector<navigation_mapping::Vec3> controls;
+  controls.reserve(control_count);
+  controls.push_back(waypoints.front());
+  for (std::size_t segment = 0; segment < segment_count; ++segment) {
+    const auto delta = waypoints[segment + 1U] - waypoints[segment];
+    for (std::size_t interval = 1; interval <= intervals[segment]; ++interval) {
+      controls.push_back(waypoints[segment] +
+                         (static_cast<double>(interval) /
+                          static_cast<double>(intervals[segment])) * delta);
+    }
+  }
+  return controls;
+}
+
 inline double polylineLength(const std::vector<navigation_mapping::Vec3>& waypoints) {
   double length = 0.0;
   for (std::size_t index = 1; index < waypoints.size(); ++index) {
@@ -215,6 +280,7 @@ inline double polylineLength(const std::vector<navigation_mapping::Vec3>& waypoi
 
 inline bool finiteLimits(const BsplineGenerationConfig& config) {
   return config.degree >= 1 && std::isfinite(config.knot_dt_s) && config.knot_dt_s > 0.0 &&
+         std::isfinite(config.control_point_spacing_m) && config.control_point_spacing_m >= 0.0 &&
          std::isfinite(config.sample_dt_s) && config.sample_dt_s > 0.0 &&
          config.smoothing_iterations >= 0 && std::isfinite(config.smoothing_step) &&
          config.smoothing_step >= 0.0 && std::isfinite(config.reference_weight) &&
@@ -309,26 +375,31 @@ inline BsplineGenerationResult generateBsplineTrajectory(
   const double length = detail::polylineLength(waypoints);
   if (!std::isfinite(length) || length <= 1e-9) return result;
   const int degree = std::max(1, config.degree);
-  const int interior_count = std::max(2, static_cast<int>(std::ceil(length / 0.8)));
+  // The knot count is a temporal/shape discretisation, not a collision
+  // sampling density. Tying it to metres forced a 10 m straight corridor
+  // into thirteen spans; the dynamic-limit scaler then stretched every span
+  // and reduced the executed cruise speed to roughly 1.5 m/s despite a 3 m/s
+  // contract. Preserve one span per reference segment (with a minimum of two
+  // for the degree-five boundary conditions); the planner/verifier still
+  // samples the complete spline densely for collision and dynamic limits.
+  const int reference_span_count = std::max(
+      1, static_cast<int>(waypoints.size()) - 1);
+  const int geometry_span_count = config.control_point_spacing_m > 0.0
+                                      ? static_cast<int>(std::ceil(
+                                            length / config.control_point_spacing_m))
+                                      : 0;
+  const int interior_count = std::max({2, reference_span_count, geometry_span_count});
   const std::size_t control_count = static_cast<std::size_t>(interior_count + degree);
   result.trajectory.degree = degree;
   result.trajectory.knot_dt_s = config.knot_dt_s;
   result.trajectory.control_points.resize(control_count);
-  // The control polygon must cover the complete reference polyline.  Using
-  // span_count here compresses the interpolation to the first spans and
-  // places every trailing control point at the endpoint.  For degree five
-  // that creates a long artificial dwell/turn near the goal, which makes the
-  // rolling trajectory fail acceleration, jerk, and collision checks even on
-  // a straight free corridor.  Parameterise by the actual control-point
-  // count; span_count is only the duration/knot count.
-  const double control_point_count = static_cast<double>(control_count);
-  for (std::size_t index = 0; index < control_count; ++index) {
-    const double alpha = control_point_count > 1.0
-                             ? static_cast<double>(index) / (control_point_count - 1.0)
-                             : 0.0;
-    result.trajectory.control_points[index] =
-        detail::interpolatePolyline(waypoints, alpha * length);
-  }
+  // The control polygon must cover the complete reference polyline.  A
+  // uniform arc-length sample can skip a short but safety-critical corner;
+  // preserve every reference waypoint and distribute only the surplus
+  // degree-dependent controls over the longest segments.
+  result.trajectory.control_points =
+      detail::samplePolylinePreservingWaypoints(waypoints, control_count);
+  if (result.trajectory.control_points.size() != control_count) return result;
   result.trajectory.control_points.front() = waypoints.front();
   result.trajectory.control_points.back() = waypoints.back();
 

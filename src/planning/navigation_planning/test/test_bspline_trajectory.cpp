@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 
 #include <gtest/gtest.h>
@@ -77,10 +78,54 @@ TEST(BsplineTrajectory, ControlPolygonDoesNotDwellAtEndpoint) {
       Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), config);
 
   ASSERT_TRUE(result.success);
-  ASSERT_GT(result.trajectory.spanCount(), 2U);
+  EXPECT_EQ(result.trajectory.spanCount(), 2U);
   const auto last_control_point_before_endpoint =
       result.trajectory.control_points[result.trajectory.spanCount() - 1U];
   EXPECT_GT((last_control_point_before_endpoint - Vec3{8.0, 0.0, 0.0}).norm(), 0.5);
+}
+
+TEST(BsplineTrajectory, UsesCompactTopologyForLongStraightReference) {
+  BsplineGenerationConfig config;
+  config.knot_dt_s = 2.6;
+  config.sample_dt_s = 0.01;
+  config.smoothing_iterations = 12;
+  config.max_velocity_mps = 3.0;
+  config.max_acceleration_mps2 = 2.0;
+  config.max_deceleration_mps2 = 2.0;
+  config.max_jerk_mps3 = 8.0;
+  const auto result = navigation_planning::generateBsplineTrajectory(
+      {Vec3{0.0, 0.0, 0.0}, Vec3{10.0, 0.0, 0.0}}, Vec3::Zero(), Vec3::Zero(),
+      Vec3{1.5, 0.0, 0.0}, Vec3::Zero(), config);
+
+  ASSERT_TRUE(result.success);
+  EXPECT_EQ(result.trajectory.spanCount(), 2U);
+  EXPECT_LT(result.trajectory.duration(), 6.0);
+  EXPECT_LE(result.maximum_velocity_mps, config.max_velocity_mps * 0.995 + 1e-9);
+  EXPECT_LE(result.maximum_acceleration_mps2,
+            config.max_acceleration_mps2 * 0.995 + 1e-9);
+  EXPECT_LE(result.maximum_jerk_mps3, config.max_jerk_mps3 * 0.995 + 1e-9);
+}
+
+TEST(BsplineTrajectory, PreservesShortReferenceCornerInControlPolygon) {
+  BsplineGenerationConfig config;
+  config.knot_dt_s = 1.0;
+  config.sample_dt_s = 0.01;
+  config.smoothing_iterations = 0;
+  config.max_velocity_mps = 100.0;
+  config.max_acceleration_mps2 = 100.0;
+  config.max_deceleration_mps2 = 100.0;
+  config.max_jerk_mps3 = 1000.0;
+  const auto result = navigation_planning::generateBsplineTrajectory(
+      {Vec3{0.0, 0.0, 0.0}, Vec3{4.0, 0.0, 0.0}, Vec3{4.0, 0.6, 0.0}}, Vec3::Zero(),
+      Vec3::Zero(), Vec3::Zero(), Vec3::Zero(), config);
+
+  ASSERT_TRUE(result.success);
+  ASSERT_EQ(result.trajectory.spanCount(), 2U);
+  ASSERT_EQ(result.trajectory.control_points.size(), 7U);
+  const auto corner = std::find_if(
+      result.trajectory.control_points.begin(), result.trajectory.control_points.end(),
+      [](const Vec3& point) { return (point - Vec3{4.0, 0.0, 0.0}).norm() <= 1e-9; });
+  EXPECT_NE(corner, result.trajectory.control_points.end());
 }
 
 }  // namespace

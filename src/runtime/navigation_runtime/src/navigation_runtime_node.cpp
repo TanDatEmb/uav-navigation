@@ -1237,13 +1237,6 @@ void NavigationRuntimeNode::planActiveGoal() {
         }
         return tangent;
       }();
-      // A next-leg side hint is intentionally not injected into the rolling
-      // selector yet.  It is useful only when a global route/topology owns
-      // the obstacle side; applying it to every pillar in a long mission can
-      // accumulate a large lateral offset or make the local corridor
-      // infeasible. The selector API keeps the hint for a future route-aware
-      // caller, while this runtime uses the proven local geometry score.
-      const std::optional<navigation_mapping::Vec3> preferred_lateral_direction = std::nullopt;
       if (mission_leg_initialized_ && mission_route_tangent.norm() > 1e-6) {
         const double observed_progress =
             (state.position - mission_leg_start_position_).dot(mission_route_tangent);
@@ -1307,12 +1300,16 @@ void NavigationRuntimeNode::planActiveGoal() {
                                           ? planning_horizon.forward_distance_m
                                           : 0.0;
       last_planning_horizon_distance_m_ = horizon_distance;
-      // The selector's cheap endpoint test is not a reachability proof.  A
+      // The selector's cheap endpoint test is not a reachability proof. A
       // point can be KnownFree while the straight corridor from the current
-      // splice pose crosses an Unknown pocket or a newly occupied voxel.  Use
-      // a conservative observed-corridor prefilter before allowing that point
-      // to become the rolling target; A* and the trajectory verifier remain
-      // authoritative for the complete route/spline.
+      // splice pose crosses an Unknown pocket or a newly occupied voxel. Do
+      // not reject that endpoint here solely because the cheap interpolated
+      // ray is Unknown: in dual-planning mode the nominal branch is explicitly
+      // allowed to commit a short unknown prefix, while A* and the dense
+      // trajectory verifier remain authoritative and the safety branch still
+      // fails closed. Rejecting the endpoint at this layer forced the local
+      // selector to choose whichever side happened to be observed first,
+      // producing the long upper detour seen in long_three_pillars.
       const double selector_resolution = world.resolution(
           navigation_mapping::WorldLayer::Inflated);
       const double selector_step = std::isfinite(selector_resolution) && selector_resolution > 0.0
@@ -1380,7 +1377,7 @@ void NavigationRuntimeNode::planActiveGoal() {
       // multi-metre reverse route is a mission-progress violation and must
       // fail closed into the braking-stop path instead.
       const auto mission_progress_guard = [&](const navigation_mapping::Vec3& candidate) {
-        if (!observed_corridor(candidate)) return false;
+        if (!candidate.allFinite()) return false;
         const auto mission_delta = requested_goal - state.position;
         const double mission_distance = mission_delta.norm();
         if (!std::isfinite(mission_distance) || mission_distance <= 1e-6) return true;
@@ -1450,7 +1447,7 @@ void NavigationRuntimeNode::planActiveGoal() {
         local_goal = selectPlanningHorizon(
             world, state.position, requested_goal, local_goal_boundary_margin_m_, horizon_distance,
             previous_horizon_goal, planning_tangent, mission_progress_guard,
-            preferred_lateral_direction);
+            std::nullopt);
       }
       // The selector and A* read the rolling map through separate calls. A
       // lidar update can invalidate a just-selected direct waypoint between
@@ -1489,7 +1486,7 @@ void NavigationRuntimeNode::planActiveGoal() {
           local_goal = selectPlanningHorizon(world, state.position, requested_goal,
                                              local_goal_boundary_margin_m_, horizon_distance,
                                              previous_horizon_goal, planning_tangent,
-                                             mission_progress_guard, preferred_lateral_direction);
+                                             mission_progress_guard, std::nullopt);
         }
       }
       if (mission_progress_rejected_this_cycle) ++mission_progress_rejection_count_;
@@ -1637,7 +1634,6 @@ void NavigationRuntimeNode::planActiveGoal() {
         // mission direction so the vehicle can turn before reaching the
         // waypoint without stopping there.
         const navigation_mapping::Vec3 direction_to_goal = goal.position - state.position;
-        const double distance_to_goal = direction_to_goal.norm();
         // Do not impose the next-leg tangent on a very short remaining
         // pass-through segment. Near a corner, that tangent can be almost
         // opposite to the current displacement (for example the final metre
@@ -1645,20 +1641,46 @@ void NavigationRuntimeNode::planActiveGoal() {
         // without leaving the verified corridor. Aim at the current waypoint
         // until it is accepted; the next mission event then supplies the next
         // leg tangent while preserving a non-zero continuation speed.
+        // Blend the next-leg tangent early enough for the measured velocity
+        // to rotate before a sharp pass-through corner. The acceptance radius
+        // alone is too late at flight speed: the vehicle can enter the radius
+        // while still moving almost entirely along the previous leg, then the
+        // next goal requires an infeasible reverse turn. This is only a
+        // trajectory-direction prior; MissionController still requires the
+        // measured position to enter the waypoint radius for acceptance.
+        const double measured_corner_speed = state.velocity.allFinite()
+                                                 ? state.velocity.norm()
+                                                 : 0.0;
+        const double corner_deceleration = std::max(
+            0.5, planner_config_.limits.max_deceleration_mps2);
+        const double corner_lookahead_m = std::clamp(
+            local_goal_switch_distance_m_ +
+                measured_corner_speed * (switch_delay_s_ + safety_latency_s_) +
+                measured_corner_speed * measured_corner_speed /
+                    (2.0 * corner_deceleration),
+            std::max(1.0, 1.5 * goal_message.acceptance_radius_m), 5.0);
+        // A local horizon endpoint is not the mission corner.  Use the
+        // distance to the requested waypoint so the next-leg tangent cannot
+        // be activated repeatedly at every rolling anchor along a long leg.
+        const double distance_to_mission_goal = (requested_goal - state.position).norm();
         const bool near_pass_through_corner =
-            mission_pass_through && std::isfinite(distance_to_goal) &&
-            distance_to_goal <= std::max(1.0, 1.5 * goal_message.acceptance_radius_m);
+            mission_pass_through && std::isfinite(distance_to_mission_goal) &&
+            distance_to_mission_goal <= corner_lookahead_m;
         const navigation_mapping::Vec3 next_leg_direction = navigation_mapping::Vec3{
             goal_message.next_target.x, goal_message.next_target.y,
-            goal_message.next_target.z} - goal.position;
+            goal_message.next_target.z} - requested_goal;
         navigation_mapping::Vec3 direction = [&]() {
+          if (mission_pass_through && near_pass_through_corner &&
+              next_leg_direction.norm() > 1e-6) {
+            // This is deliberately gated by the actual mission waypoint,
+            // not the local anchor. It gives the planner a bounded corner
+            // tangent before acceptance while preserving the local goal's
+            // geometry on the long incoming leg.
+            return next_leg_direction.normalized();
+          }
           if (local_goal.usesSubGoal() && local_goal.tangent.allFinite() &&
               local_goal.tangent.norm() > 1e-6) {
             return local_goal.tangent.normalized();
-          }
-          if (mission_pass_through && near_pass_through_corner &&
-              next_leg_direction.norm() > 1e-6) {
-            return next_leg_direction;
           }
           if (!goal_unchanged && direction_to_goal.norm() > 1e-6) {
             // The request changed at a pass-through corner.  Turn toward the
@@ -1800,7 +1822,7 @@ void NavigationRuntimeNode::planActiveGoal() {
           const auto safety_horizon = selectPlanningHorizon(
               world, state.position, requested_goal, local_goal_boundary_margin_m_,
               retry_distance, std::nullopt, planning_tangent, mission_progress_guard,
-              preferred_lateral_direction);
+              std::nullopt);
           if (!safety_horizon.success() ||
               !isKnownFreePlanningCell(safety_horizon.goal)) {
             continue;
@@ -1919,6 +1941,48 @@ void NavigationRuntimeNode::planActiveGoal() {
           }
         }
         if (safety_result.success) ++safety_route_verified_count_;
+        if (!safety_result.success && goal_unchanged && last_plan_success_ &&
+            last_planned_trajectory_.has_value() && last_plan_time_ns_ > 0 &&
+            current_state_fresh && latest_odometry.has_value()) {
+          // A map update can invalidate the newly selected safety endpoint
+          // while the already committed prefix remains a valid known-free
+          // handover. Reuse that prefix only after checking actual tracking
+          // error and verifying it as a Safety trajectory; never reuse the
+          // optimistic nominal suffix or bypass the fail-closed contract.
+          const double elapsed_s = static_cast<double>(
+              get_clock()->now().nanoseconds() - last_plan_time_ns_) / 1e9;
+          const auto expected = interpolateTrajectory(
+              *last_planned_trajectory_, std::max(0.0, elapsed_s));
+          const auto current = navigation_mapping::Vec3{
+              latest_odometry->pose.pose.position.x, latest_odometry->pose.pose.position.y,
+              latest_odometry->pose.pose.position.z};
+          const double tracking_error = (current - expected.position).norm();
+          if (std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
+              std::isfinite(tracking_error) && tracking_error < replan_tracking_error_m_) {
+            const auto remaining = remainingTrajectory(*last_planned_trajectory_, elapsed_s);
+            if (remaining.points.size() >= 2U && remaining.duration_s > 0.05) {
+              navigation_planning::VehicleState verification_state;
+              verification_state.position = remaining.points.front().position;
+              verification_state.velocity = remaining.points.front().velocity;
+              verification_state.acceleration = remaining.points.front().acceleration;
+              const auto verification = trajectory_verifier_.verify(
+                  remaining, verification_state, navigation_planning::PlanRole::Safety, world);
+              if (verification.success) {
+                navigation_planning::PlanResult preserved;
+                preserved.success = true;
+                preserved.role = navigation_planning::PlanRole::Safety;
+                preserved.safety_kind = navigation_planning::SafetyPlanKind::Route;
+                preserved.failure_code = navigation_planning::PlanFailureCode::None;
+                preserved.world_generation = world.generation();
+                preserved.world_revision = world.revision();
+                preserved.trajectory = remaining;
+                safety_result = std::move(preserved);
+                last_safety_verification_failure_ =
+                    navigation_planning::VerificationFailureCode::None;
+              }
+            }
+          }
+        }
         if (!safety_result.success) {
           auto safety_state = state;
           safety_state.acceleration = navigation_mapping::Vec3::Zero();
