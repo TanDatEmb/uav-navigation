@@ -90,11 +90,11 @@ navigation_runtime:
         maximum_distance_m: 30.0
         preview_time_s: 5.0
         boundary_margin_m: 2.0
-      # Compatibility parameters for the bounded A* horizon selector. The
-      # rolling horizon is always used by the planner; this flag may be
-      # overridden by legacy launch scripts without disabling it. The selector
-      # no longer emits a completion event; only mission acceptance completes
-      # a goal.
+      # Parameters for the bounded A* horizon selector. When enabled, the
+      # selector supplies a non-terminal rolling endpoint while the mission
+      # waypoint is outside the known map. When disabled, the runtime sends
+      # the mission waypoint directly and fails closed if it is not plannable;
+      # it never silently creates a local substitute.
       local_subgoal:
         enabled: true
         boundary_margin_m: 1.0

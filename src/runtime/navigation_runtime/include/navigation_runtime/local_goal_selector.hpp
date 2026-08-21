@@ -78,7 +78,9 @@ template <typename Model>
                                                   bool reuse_preferred = true,
                                                   const std::function<bool(
                                                       const navigation_mapping::Vec3&)>&
-                                                      candidate_validator = {}) {
+                                                      candidate_validator = {},
+                                                  const std::optional<navigation_mapping::Vec3>&
+                                                      preferred_lateral_direction = std::nullopt) {
   LocalGoalSelection result;
   if (!start.allFinite() || !requested.allFinite() || !std::isfinite(boundary_margin_m) ||
       boundary_margin_m < 0.0 || !std::isfinite(max_distance_m) || max_distance_m <= 0.0) {
@@ -191,6 +193,16 @@ template <typename Model>
   // dense verification, so a sparse scan must not shrink the horizon merely
   // because adjacent support voxels have not been observed yet.
   const auto unit_direction = direction / direction_norm;
+  const auto lateral_preference = [&]() -> std::optional<navigation_mapping::Vec3> {
+    if (!preferred_lateral_direction.has_value() ||
+        !preferred_lateral_direction->allFinite()) {
+      return std::nullopt;
+    }
+    const auto lateral = *preferred_lateral_direction -
+                         preferred_lateral_direction->dot(unit_direction) * unit_direction;
+    if (!std::isfinite(lateral.norm()) || lateral.norm() <= 1e-6) return std::nullopt;
+    return lateral.normalized();
+  }();
   const double requested_forward_projection = (requested - start).dot(unit_direction);
   if (inside_inset(requested) && horizon_known_free(requested) &&
       candidate_is_valid(requested) &&
@@ -318,10 +330,20 @@ template <typename Model>
           // make vertical displacement an explicit cost and tie breaker.
           const double vertical_error = std::abs(candidate.z() - requested.z());
           const double mission_progress = (candidate - start).dot(mission_unit_direction);
-          const double score = 1.5 * std::min(lateral, 2.5) -
-                               0.25 * goal_distance + 1.0 * projection +
-                               0.15 * mission_progress -
-                               1.25 * vertical_error - 0.75 * continuity_distance;
+          const auto lateral_vector = delta - projection * unit_direction;
+          const double lateral_alignment =
+              lateral_preference.has_value() && lateral_vector.norm() > 1e-6
+                  ? lateral_vector.normalized().dot(*lateral_preference)
+                  : 0.0;
+          const double score = lateral_preference.has_value()
+                                   ? 1.0 * projection + 0.20 * mission_progress -
+                                         0.35 * goal_distance - 0.80 * lateral +
+                                         0.75 * lateral_alignment -
+                                         1.25 * vertical_error - 0.75 * continuity_distance
+                                   : 1.5 * std::min(lateral, 2.5) -
+                                         0.25 * goal_distance + 1.0 * projection +
+                                         0.15 * mission_progress -
+                                         1.25 * vertical_error - 0.75 * continuity_distance;
           if (!detour_found || score > best_score + 1e-9) {
             detour_found = true;
             best_score = score;
@@ -437,9 +459,11 @@ template <typename Model>
     double max_distance_m = 5.0,
     const std::optional<navigation_mapping::Vec3>& preferred_endpoint = std::nullopt,
     const std::optional<navigation_mapping::Vec3>& forward_direction = std::nullopt,
-    const std::function<bool(const navigation_mapping::Vec3&)>& candidate_validator = {}) {
+    const std::function<bool(const navigation_mapping::Vec3&)>& candidate_validator = {},
+    const std::optional<navigation_mapping::Vec3>& preferred_lateral_direction = std::nullopt) {
   return selectLocalGoal(world, start, requested, boundary_margin_m, max_distance_m,
-                         preferred_endpoint, forward_direction, false, candidate_validator);
+                         preferred_endpoint, forward_direction, false, candidate_validator,
+                         preferred_lateral_direction);
 }
 
 }  // namespace navigation_runtime

@@ -164,6 +164,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   std::uint64_t horizon_endpoint_change_count_{0};
   std::uint64_t horizon_endpoint_repeat_count_{0};
   std::uint64_t horizon_backward_rejection_count_{0};
+  std::uint64_t mission_progress_rejection_count_{0};
   std::uint64_t trajectory_revalidation_count_{0};
   std::uint64_t trajectory_revalidation_failure_count_{0};
   std::uint64_t trajectory_reuse_count_{0};
@@ -179,6 +180,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double last_horizon_forward_projection_m_{0.0};
   double last_planning_horizon_distance_m_{0.0};
   double last_horizon_progress_m_{0.0};
+  double last_mission_progress_m_{0.0};
   bool last_horizon_ray_occupied_{false};
   double last_adaptive_velocity_cap_mps_{0.0};
   double last_known_free_horizon_m_{0.0};
@@ -193,6 +195,13 @@ class NavigationRuntimeNode : public rclcpp::Node {
   // map is updated, which turns harmless grid quantisation into a real
   // altitude oscillation on a long mission.
   std::optional<double> committed_local_altitude_m_;
+  // The active waypoint defines a fixed mission leg.  Rolling obstacle
+  // avoidance may move laterally, but it must not accumulate backward
+  // progress merely because the measured velocity changed direction.
+  bool mission_leg_initialized_{false};
+  navigation_mapping::Vec3 mission_leg_start_position_{navigation_mapping::Vec3::Zero()};
+  navigation_mapping::Vec3 mission_leg_unit_{navigation_mapping::Vec3::Zero()};
+  double committed_mission_progress_m_{0.0};
   std::int64_t last_verification_time_us_{0};
   navigation_planning::PlanFailureCode last_failure_code_{navigation_planning::PlanFailureCode::None};
   navigation_planning::PlanFailureCode last_nominal_failure_code_{

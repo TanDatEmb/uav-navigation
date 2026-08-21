@@ -32,18 +32,18 @@ mission:
     # Use the available SITL control authority so the benchmark evaluates
     # continuity at flight speed rather than at a deliberately slow crawl.
     max_velocity_mps: 3.0
-    max_acceleration_mps2: 1.5
-    max_deceleration_mps2: 1.5
+    max_acceleration_mps2: 2.0
+    max_deceleration_mps2: 2.0
     max_jerk_mps3: 8.0
-    # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
-    # observed obstacle detour so the estimator/controller does not chase a
-    # sharp local tangent at the next waypoint.
     # Do not force a 2.4 m/s endpoint on every 3--5 m rolling horizon.  That
     # endpoint condition makes the B-spline time scaler stretch the whole
     # local trajectory, so PX4 receives a long low-speed prefix and the UAV
     # crawls despite a 3 m/s configured limit.  Ramp the endpoint speed from
     # the measured velocity instead; the next replans raise it continuously.
-    continuation_speed_fraction: 0.35
+    # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
+    # observed obstacle detour so the estimator/controller does not chase a
+    # sharp local tangent at the next waypoint.
+    continuation_speed_fraction: 0.50
     unknown_policy: blocked
   control:
     output: auto

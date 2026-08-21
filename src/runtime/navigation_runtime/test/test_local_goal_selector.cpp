@@ -193,6 +193,20 @@ TEST(LocalGoalSelectorTest, SelectsLateralDetourWhenRayIsOccupied) {
             navigation_mapping::CellState::KnownFree);
 }
 
+TEST(LocalGoalSelectorTest, PrefersDetourSideThatLeadsIntoNextLeg) {
+  BoxWorld world;
+  world.occupied = true;
+  const auto result = selectPlanningHorizon(
+      world, navigation_mapping::Vec3{0.0, 0.0, 0.0},
+      navigation_mapping::Vec3{20.0, 0.0, 0.0}, 1.0, 5.0, std::nullopt,
+      navigation_mapping::Vec3::UnitX(), {}, navigation_mapping::Vec3::UnitY());
+  ASSERT_TRUE(result.success());
+  ASSERT_TRUE(result.usesSubGoal());
+  // Both sides of the obstacle are free. The lateral hint represents the
+  // next mission leg and must break the otherwise grid-order-dependent tie.
+  EXPECT_GT(result.goal.y(), 0.5);
+}
+
 TEST(LocalGoalSelectorTest, RejectsKnownFreeEndpointWithoutObservedCorridor) {
   BoxWorld world;
   world.occupied = true;
