@@ -1164,7 +1164,16 @@ class ExternalModeScenario:
                 self._finish_or_wait("COMPLETE")
                 return
             if self.mode_status_state == int(self.NavigationModeStatus.FAILED):
-                if int(self.latest_status.get("nav_state", -1)) == posctl:
+                # A terminal ModeCompleted failure is authoritative for the
+                # navigation component. PX4 can reject the requested POSCTL
+                # handover while its health gate is false; waiting forever
+                # for nav_state=POSCTL would keep the harness publishing a
+                # stationary External-Mode setpoint after the product has
+                # already failed closed. Keep the rejection visible in the
+                # report, but close the scenario deterministically.
+                if self.mode_failure_observed:
+                    self._finish_or_wait("FAILED_COMPONENT")
+                elif int(self.latest_status.get("nav_state", -1)) == posctl:
                     self._finish_or_wait("FAILED_COMPONENT")
                 return
             if self.mode_status_state == int(self.NavigationModeStatus.PAUSED):

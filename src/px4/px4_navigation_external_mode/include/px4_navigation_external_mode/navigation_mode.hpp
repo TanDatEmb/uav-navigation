@@ -55,6 +55,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void onLioDiagnostics(
       const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message);
   void onPlannerHeartbeat(const std_msgs::msg::Empty::ConstSharedPtr& message);
+  std::optional<std::string> trajectoryStartGuardFailure(
+      const navigation_interfaces::msg::PlannedTrajectory& message,
+      const rclcpp::Time& now);
   void updateMission();
   void handleMissionEvent(const MissionControllerEvent& event, double now_s);
   void failNavigation(const char* reason);
@@ -96,6 +99,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::string planning_frame_;
   double stale_after_s_{0.5};
   double state_stale_after_s_{0.5};
+  double trajectory_start_state_max_age_s_{0.25};
+  double trajectory_start_position_error_m_{0.35};
   double trajectory_wait_timeout_s_{2.0};
   double trajectory_preview_s_{0.15};
   double velocity_only_fallback_position_error_m_{1.5};
@@ -128,6 +133,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t trajectory_received_count_{0U};
   std::uint64_t trajectory_accepted_count_{0U};
   std::uint64_t trajectory_rejected_count_{0U};
+  std::uint64_t trajectory_start_guard_rejection_count_{0U};
   std::uint64_t setpoint_update_count_{0U};
   std::uint64_t stale_state_failure_count_{0U};
   std::int64_t last_odometry_receive_ns_{0};
@@ -152,6 +158,8 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
 
  private:
   void onOwnedModeCompleted(px4_ros2::Result result);
+  void onPositionControlHandoverCompleted(px4_ros2::Result result,
+                                          bool complete_navigation_failure);
 
   rclcpp::Node& node_;
 };

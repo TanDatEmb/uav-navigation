@@ -123,6 +123,12 @@ class NavigationRuntimeNode : public rclcpp::Node {
   std::int64_t previous_odometry_stamp_ns_{0};
   std::optional<navigation_interfaces::msg::NavigationGoal> active_goal_;
   double state_max_age_s_{0.5};
+  // A moving trajectory must use a much fresher state than map bookkeeping
+  // is allowed to use. This prevents a stale splice behind an obstacle.
+  double trajectory_state_max_age_s_{0.35};
+  // Immediate trajectories must start close to the measured odometry pose;
+  // delayed handovers are checked again by External Mode at promotion time.
+  double trajectory_start_position_error_m_{0.35};
   std::string state_topic_;
   std::string planning_frame_id_;
   double replan_rate_hz_{5.0};
@@ -130,6 +136,10 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double switch_delay_s_{0.12};
   double safety_latency_s_{0.08};
   double safety_stop_margin_m_{0.25};
+  // A moving braking stop can finish before the next map/planning callback.
+  // Keep a verified zero-velocity suffix alive while the map accumulates new
+  // evidence instead of letting PX4 expire the last setpoint.
+  double safety_stop_hold_duration_s_{5.0};
   double safety_visibility_horizon_m_{15.0};
   double local_goal_boundary_margin_m_{1.0};
   // Use the observable forward map depth as the default rolling horizon.  A
@@ -142,6 +152,11 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double planning_horizon_preview_time_s_{5.0};
   double planning_horizon_boundary_margin_m_{2.0};
   bool local_subgoal_enabled_{true};
+  // Dual planning may generate an optimistic nominal branch for comparison,
+  // but the vehicle must not execute Unknown-space nominal motion unless an
+  // explicit experiment enables it. The verified safety branch remains the
+  // control authority by default.
+  bool execute_nominal_unknown_{false};
   bool fail_closed_on_unknown_mission_goal_{false};
   navigation_planning::PlannerConfig planner_config_{};
   navigation_planning::Planner planner_;
@@ -171,6 +186,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   std::uint64_t trajectory_revalidation_failure_count_{0};
   std::uint64_t trajectory_reuse_count_{0};
   std::uint64_t full_replan_count_{0};
+  std::uint64_t trajectory_start_guard_rejection_count_{0};
   bool last_local_subgoal_selected_{false};
   bool last_goal_terminal_{true};
   navigation_mapping::Vec3 last_terminal_velocity_{navigation_mapping::Vec3::Zero()};
@@ -179,6 +195,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   navigation_mapping::Vec3 last_horizon_tangent_{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 last_planning_state_position_{navigation_mapping::Vec3::Zero()};
   navigation_mapping::Vec3 last_planning_state_velocity_{navigation_mapping::Vec3::Zero()};
+  double last_planning_state_age_s_{-1.0};
   double last_horizon_forward_projection_m_{0.0};
   double last_planning_horizon_distance_m_{0.0};
   double last_horizon_progress_m_{0.0};
@@ -191,6 +208,7 @@ class NavigationRuntimeNode : public rclcpp::Node {
   double last_splice_acceleration_residual_mps2_{0.0};
   double last_splice_jerk_residual_mps3_{0.0};
   double last_splice_snap_residual_mps4_{0.0};
+  double last_trajectory_start_position_residual_m_{0.0};
   std::optional<navigation_mapping::Vec3> committed_local_goal_;
   // Keep the receding-horizon leg on one altitude.  A voxel selector may
   // otherwise alternate between adjacent known-free z cells as the rolling

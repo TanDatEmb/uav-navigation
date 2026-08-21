@@ -69,6 +69,9 @@ navigation_runtime:
         # Optimistic nominal planning is simulation-only and must be enabled
         # by an explicit runner flag. Real/default profiles stay fail-closed.
         allow_nominal_unknown: true
+        # Keep the optimistic branch visible for comparison, but execute only
+        # the independently verified safety branch unless explicitly enabled.
+        execute_nominal_unknown: false
         # Publish a useful executable suffix.  A 1.5 s prefix was repeatedly
         # replaced by the 5 Hz planner before PX4 could build speed, which
         # turned a long trajectory into short crawl segments.
@@ -79,8 +82,21 @@ navigation_runtime:
       safety:
         # Online stopping-distance governor. The cap is reduced before the
         # visible free corridor becomes too short for a fail-safe stop.
+        # A moving trajectory must be planned from odometry no older than this
+        # bound; the general state.max_age_s is intentionally looser for map
+        # bookkeeping and diagnostics.
+        trajectory_state_max_age_s: 0.35
+        # The first point of an immediate trajectory must be close to the
+        # measured pose. A larger residual means the planner is trying to
+        # hand over a stale predicted state; recover with a measured-state
+        # braking stop instead of letting PX4 chase the old point.
+        trajectory_start_position_error_m: 0.35
         latency_s: 0.08
         stop_margin_m: 0.25
+        # Keep a stopped safety trajectory alive across a slow map/planner
+        # callback so PX4 does not expire the setpoint before new evidence is
+        # available.
+        stop_hold_duration_s: 5.0
         visibility_horizon_m: 30.0
       # Rolling trajectory lookahead. The planner chooses a forward horizon
       # from speed/stopping distance and clips it to the current map boundary;

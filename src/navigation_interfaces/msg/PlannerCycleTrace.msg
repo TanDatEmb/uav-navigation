@@ -15,6 +15,7 @@ float64 horizon_end_arc_m
 geometry_msgs/Point horizon_endpoint
 geometry_msgs/Point planning_state_position
 geometry_msgs/Vector3 planning_state_velocity
+float64 planning_state_age_s
 float64 planning_horizon_distance_m
 float64 horizon_forward_projection_m
 float64 horizon_progress_m

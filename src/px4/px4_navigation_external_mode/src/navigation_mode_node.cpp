@@ -72,6 +72,10 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_stale_after_s", 0.75)),
       state_stale_after_s_(node.declare_parameter<double>(
           "navigation.state_stale_after_s", 0.5)),
+      trajectory_start_state_max_age_s_(node.declare_parameter<double>(
+          "navigation.trajectory_start_state_max_age_s", 0.25)),
+      trajectory_start_position_error_m_(node.declare_parameter<double>(
+          "navigation.trajectory_start_position_error_m", 0.35)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.trajectory_wait_timeout_s", 2.0)),
       trajectory_preview_s_(node.declare_parameter<double>(
@@ -100,6 +104,10 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       }()) {
   if (trajectory_bundle_topic_.empty() || planning_frame_.empty() || !std::isfinite(stale_after_s_) ||
       stale_after_s_ <= 0.0 || !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
+      !std::isfinite(trajectory_start_state_max_age_s_) ||
+      trajectory_start_state_max_age_s_ <= 0.0 ||
+      !std::isfinite(trajectory_start_position_error_m_) ||
+      trajectory_start_position_error_m_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
       !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0 ||
       !std::isfinite(trajectory_preview_s_) || trajectory_preview_s_ < 0.0 ||
@@ -460,6 +468,40 @@ void NavigationMode::onTrajectoryBundleV2(
   }
 }
 
+std::optional<std::string> NavigationMode::trajectoryStartGuardFailure(
+    const navigation_interfaces::msg::PlannedTrajectory& message,
+    const rclcpp::Time& now) {
+  const rclcpp::Time valid_from(message.valid_from);
+  if (valid_from.nanoseconds() > now.nanoseconds() || message.position.empty()) {
+    return std::nullopt;
+  }
+
+  std::optional<nav_msgs::msg::Odometry> odometry;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    odometry = odometry_;
+  }
+  if (!odometry.has_value()) return std::string("trajectory start odometry unavailable");
+
+  constexpr double kMaximumFutureStateSkewS = 0.05;
+  const double state_age_s = (now - rclcpp::Time(odometry->header.stamp)).seconds();
+  if (!std::isfinite(state_age_s) || state_age_s < -kMaximumFutureStateSkewS ||
+      state_age_s > trajectory_start_state_max_age_s_) {
+    return std::string("trajectory start odometry stale");
+  }
+
+  const auto& current = odometry->pose.pose.position;
+  const auto& first = message.position.front();
+  const Eigen::Vector3d current_position{current.x, current.y, current.z};
+  const Eigen::Vector3d first_position{first.x, first.y, first.z};
+  const double residual = (first_position - current_position).norm();
+  if (!current_position.allFinite() || !first_position.allFinite() ||
+      !std::isfinite(residual) || residual > trajectory_start_position_error_m_) {
+    return std::string("trajectory start position discontinuity");
+  }
+  return std::nullopt;
+}
+
 void NavigationMode::onTrajectory(
     const navigation_interfaces::msg::PlannedTrajectory::ConstSharedPtr& message) {
   {
@@ -540,6 +582,25 @@ void NavigationMode::onTrajectory(
 
   const auto accepted_now = node().get_clock()->now();
   const rclcpp::Time valid_from(message->valid_from);
+  if (const auto guard_failure = trajectoryStartGuardFailure(*message, accepted_now);
+      guard_failure.has_value()) {
+    RCLCPP_ERROR(node().get_logger(),
+                 "Rejecting trajectory before handover: %s role=%u safety_kind=%u",
+                 guard_failure->c_str(), static_cast<unsigned>(message->trajectory_role),
+                 static_cast<unsigned>(message->safety_plan_kind));
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      ++trajectory_rejected_count_;
+      ++trajectory_start_guard_rejection_count_;
+      trajectory_.reset();
+      pending_trajectory_.reset();
+      pending_safety_backup_trajectory_.reset();
+      safety_backup_trajectory_.reset();
+      velocity_tracker_.reset();
+    }
+    failNavigation("trajectory start state stale or discontinuous");
+    return;
+  }
   if (valid_from.nanoseconds() > accepted_now.nanoseconds()) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     pending_trajectory_ = *message;
@@ -776,6 +837,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::uint64_t trajectories_received;
   std::uint64_t trajectories_accepted;
   std::uint64_t trajectories_rejected;
+  std::uint64_t trajectory_start_guard_rejections;
   std::uint64_t setpoint_updates;
   std::uint64_t stale_state_failures;
   std::int64_t odometry_gap_us;
@@ -793,6 +855,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
     trajectories_received = trajectory_received_count_;
     trajectories_accepted = trajectory_accepted_count_;
     trajectories_rejected = trajectory_rejected_count_;
+    trajectory_start_guard_rejections = trajectory_start_guard_rejection_count_;
     setpoint_updates = setpoint_update_count_;
     stale_state_failures = stale_state_failure_count_;
     odometry_gap_us = maximum_odometry_callback_gap_us_;
@@ -804,6 +867,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   RCLCPP_INFO(node().get_logger(),
               "external_mode_metrics odom_callbacks=%lu odom_max_gap_us=%ld "
               "trajectory_received=%lu trajectory_accepted=%lu trajectory_rejected=%lu "
+              "trajectory_start_guard_rejections=%lu "
               "setpoint_updates=%lu setpoint_max_gap_us=%ld last_state_age_s=%.6f "
               "stale_state_failures=%lu velocity_command_enu=(%.3f,%.3f,%.3f) "
               "forward_guard_count=%lu",
@@ -812,6 +876,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(trajectories_received),
               static_cast<unsigned long>(trajectories_accepted),
               static_cast<unsigned long>(trajectories_rejected),
+              static_cast<unsigned long>(trajectory_start_guard_rejections),
               static_cast<unsigned long>(setpoint_updates),
               static_cast<long>(setpoint_gap_us), state_age_s,
               static_cast<unsigned long>(stale_state_failures), velocity_command_enu.x(),
@@ -875,10 +940,26 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     previous_setpoint_time = last_setpoint_time_;
   }
 
-  if (promoted_trajectory.has_value() && mission_controller_) {
-    mission_controller_->onTrajectory(true, promoted_trajectory->trajectory_role,
-                                       promoted_trajectory->safety_plan_kind,
-                                       now.seconds(), promoted_trajectory->duration_s);
+  if (promoted_trajectory.has_value()) {
+    if (const auto guard_failure =
+            trajectoryStartGuardFailure(*promoted_trajectory, now);
+        guard_failure.has_value()) {
+      RCLCPP_ERROR(node().get_logger(),
+                   "Rejecting pending trajectory at activation: %s",
+                   guard_failure->c_str());
+      {
+        std::lock_guard<std::mutex> lock(trajectory_mutex_);
+        ++trajectory_rejected_count_;
+        ++trajectory_start_guard_rejection_count_;
+      }
+      failNavigation("trajectory start state stale or discontinuous");
+      return;
+    }
+    if (mission_controller_) {
+      mission_controller_->onTrajectory(true, promoted_trajectory->trajectory_role,
+                                         promoted_trajectory->safety_plan_kind,
+                                         now.seconds(), promoted_trajectory->duration_s);
+    }
   }
   const auto velocityOnlyActive = [this]() {
     return output_mode_ == OutputMode::Velocity && !velocity_only_fallback_active_;
@@ -1118,8 +1199,7 @@ NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
   navigation_mode->setPositionControlHandover([this]() {
     RCLCPP_WARN(node_.get_logger(), "External Mode requesting PX4 POSCTL handover");
     scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result result) {
-      RCLCPP_INFO(node_.get_logger(), "PX4 POSCTL handover completed with result=%s",
-                  px4_ros2::resultToString(result));
+      onPositionControlHandoverCompleted(result, true);
     });
   });
 }
@@ -1140,16 +1220,33 @@ void NavigationModeExecutor::onOwnedModeCompleted(px4_ros2::Result result) {
     RCLCPP_ERROR(node_.get_logger(), "Navigation mode completed with result=%s; handing over to POSCTL",
                  px4_ros2::resultToString(result));
     scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result handover_result) {
-      RCLCPP_INFO(node_.get_logger(), "PX4 POSCTL handover completed with result=%s",
-                  px4_ros2::resultToString(handover_result));
+      onPositionControlHandoverCompleted(handover_result, false);
     });
     return;
   }
   RCLCPP_INFO(node_.get_logger(), "Navigation mission completed; handing over to PX4 POSCTL");
   scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result handover_result) {
-    RCLCPP_INFO(node_.get_logger(), "PX4 POSCTL handover completed with result=%s",
-                px4_ros2::resultToString(handover_result));
+    onPositionControlHandoverCompleted(handover_result, false);
   });
+}
+
+void NavigationModeExecutor::onPositionControlHandoverCompleted(
+    px4_ros2::Result result, bool complete_navigation_failure) {
+  if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
+    RCLCPP_INFO(node_.get_logger(), "PX4 POSCTL handover completed with result=%s",
+                px4_ros2::resultToString(result));
+    return;
+  }
+
+  RCLCPP_ERROR(node_.get_logger(),
+               "PX4 POSCTL handover failed with result=%s; navigation cannot continue",
+               px4_ros2::resultToString(result));
+  if (complete_navigation_failure) {
+    // scheduleMode() invokes this callback synchronously for Rejected/Timeout.
+    // Without a terminal completion the executor keeps the external mode alive
+    // while NavigationMode publishes a stationary setpoint indefinitely.
+    ownedMode().completed(px4_ros2::Result::ModeFailureOther);
+  }
 }
 
 void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
