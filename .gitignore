@@ -5,6 +5,8 @@ log/
 build-*/
 install-*/
 log-*/
+.ros/
+test-results/
 
 # Editor and operating-system files
 .vscode/

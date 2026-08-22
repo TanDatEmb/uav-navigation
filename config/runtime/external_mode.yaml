@@ -1,40 +1,32 @@
 px4_navigation_external_mode:
   ros__parameters:
     navigation:
-      # Atomic nominal/safety contract. The legacy trajectory topic remains
-      # available only when explicitly configured for migration tests. The
-      # failure-only compatibility channel below is separate so an invalid
-      # replanning result can hand over to PX4 without accepting a nominal-only
-      # legacy success and losing the atomic safety backup.
-      trajectory_bundle_topic: /navigation/trajectory_bundle
-      trajectory_topic: ""
-      trajectory_failure_topic: /navigation/trajectory
+      # SUPER publishes one polynomial trajectory. PX4 evaluates this native
+      # contract directly at the 50 Hz setpoint rate.
+      super_trajectory_topic: /navigation/super_trajectory
+      planner_heartbeat_topic: /navigation/planner_heartbeat
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
-      # A/B benchmark: send the verified trajectory position/velocity/
-      # acceleration directly. The velocity-only tracker remains available
-      # for missions that explicitly request it, but its feedback/jerk state
-      # can hide planner handover behaviour behind a second controller.
-      prefer_velocity_output: false
+      # The benchmark uses the bounded velocity tracker as the final PX4
+      # handover guard.  Direct P/V/A output allowed a stale position or
+      # acceleration setpoint to produce measured-speed runaway far above the
+      # planner cap; velocity-only output keeps the commanded norm inside the
+      # speed sweep authority while preserving planner PVA for diagnostics.
+      prefer_velocity_output: true
       mission_complete_topic: /navigation/mission_complete
       trajectory_stale_after_s: 0.75
       # The SITL LIO/external-odometry stream has measured nominal gaps up to
       # 0.82 s under mapping load; keep a finite fail-closed margin above that.
       state_stale_after_s: 1.0
-      # Immediate trajectory handovers must start close to the live vehicle
-      # state. A stale first point is unsafe with direct PVA output because
-      # PX4 would chase a point behind the vehicle while it is still moving.
-      trajectory_start_state_max_age_s: 0.25
-      trajectory_start_position_error_m: 0.35
       trajectory_wait_timeout_s: 2.0
       # Allow a bounded scan re-anchor burst; sustained invalid observability
       # still fails closed (negative localization profiles).
       lio_health_grace_s: 1.0
       velocity_tracker:
         position_gain: 1.0
-        max_velocity_mps: 3.0
-        max_acceleration_mps2: 3.0
-        max_deceleration_mps2: 3.0
+        max_velocity_mps: 5.0
+        max_acceleration_mps2: 5.0
+        max_deceleration_mps2: 5.0
         max_position_error_m: 2.0
-        max_jerk_mps3: 6.0
+        max_jerk_mps3: 12.0
         trajectory_preview_s: 0.15

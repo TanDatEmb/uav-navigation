@@ -2,12 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 project(px4_navigation_external_mode LANGUAGES CXX)
 
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD 20)
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
+find_package(mars_quadrotor_msgs REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -20,7 +21,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 
 add_library(${PROJECT_NAME}_contract
-  src/trajectory_contract.cpp
+  src/super_polynomial.cpp
   src/velocity_tracker.cpp
   src/mission.cpp
   src/mission_controller.cpp)
@@ -29,7 +30,7 @@ target_include_directories(${PROJECT_NAME}_contract PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
 target_link_libraries(${PROJECT_NAME}_contract PUBLIC yaml-cpp::yaml-cpp)
-ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC diagnostic_msgs geometry_msgs navigation_interfaces nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC diagnostic_msgs geometry_msgs mars_quadrotor_msgs navigation_interfaces nav_msgs)
 target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node
@@ -57,16 +58,16 @@ install(EXPORT ${PROJECT_NAME}Targets
   DESTINATION share/${PROJECT_NAME}/cmake)
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 diagnostic_msgs geometry_msgs navigation_interfaces nav_msgs px4_ros2_cpp rclcpp std_msgs yaml-cpp)
+ament_export_dependencies(Eigen3 diagnostic_msgs geometry_msgs mars_quadrotor_msgs navigation_interfaces nav_msgs px4_ros2_cpp rclcpp std_msgs yaml-cpp)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_trajectory_contract test/test_trajectory_contract.cpp)
-  target_link_libraries(test_trajectory_contract ${PROJECT_NAME}_contract)
-  ament_target_dependencies(test_trajectory_contract geometry_msgs navigation_interfaces nav_msgs)
   ament_add_gtest(test_mission test/test_mission.cpp)
   target_link_libraries(test_mission ${PROJECT_NAME}_contract)
   ament_target_dependencies(test_mission geometry_msgs navigation_interfaces nav_msgs)
+  ament_add_gtest(test_super_polynomial test/test_super_polynomial.cpp)
+  target_link_libraries(test_super_polynomial ${PROJECT_NAME}_contract)
+  ament_target_dependencies(test_super_polynomial mars_quadrotor_msgs)
 endif()
 
 ament_package()

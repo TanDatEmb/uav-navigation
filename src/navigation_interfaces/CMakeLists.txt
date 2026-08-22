@@ -13,14 +13,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SampleOdometryAtTime.srv"
   "msg/NavigationGoal.msg"
   "msg/NavigationModeStatus.msg"
-  "msg/LidarMappingObservation.msg"
-  "msg/PlannedTrajectory.msg"
-  "msg/TrajectoryCandidate.msg"
-  "msg/PlannedTrajectoryBundle.msg"
-  "msg/TrajectorySegment.msg"
-  "msg/TrajectoryBundle.msg"
-  "msg/SafetyActivation.msg"
-  "msg/PlannerCycleTrace.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
 install(DIRECTORY include/ DESTINATION include)

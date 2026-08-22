@@ -30,7 +30,8 @@ ros2 launch navigation_bringup px4_external_mode.launch.py \
 ```
 
 `make external-mode-check` validates the product path in simulation:
-`/navigation/goal` → `navigation_runtime` planner → `/navigation/trajectory` →
+`/navigation/goal` → `MappingWorldNode` → immutable `/navigation/world_snapshot` →
+`PlanningControllerNode` → `/navigation/trajectory_bundle` →
 PX4 External Mode → `/fmu/in/trajectory_setpoint`. It uses the simulation-only
 collision envelope and a bounded goal in the LiDAR-observed free sensor cell;
 real-flight profiles remain fail-closed until an authoritative vehicle

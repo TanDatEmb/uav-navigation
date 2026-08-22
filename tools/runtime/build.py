@@ -17,6 +17,60 @@ PARALLEL_WORKERS = os.environ.get("PARALLEL_WORKERS", "1")
 MAKE_JOBS = os.environ.get("MAKE_JOBS", "1")
 COLCON_FLAGS = shlex.split(os.environ.get("COLCON_FLAGS", ""))
 STANDALONE_EXCLUDED_PACKAGES: tuple[str, ...] = ()
+# The pinned px4_ros2_interface_lib submodule contains the product library and
+# upstream example packages.  The examples are independently discoverable by
+# colcon, but are not used by this workspace's runtime or acceptance path.
+PX4_ROS2_EXAMPLE_PACKAGE_REGEX = r"^example_.*_cpp$"
+BUILD_PX4_ROS2_EXAMPLES = os.environ.get("BUILD_PX4_ROS2_EXAMPLES", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+# These packages are upstream examples/integration tests.  They are useful
+# when an FMU and the upstream test harness are available, but they are not
+# part of the product acceptance gate and otherwise make `make test` depend
+# on an external PX4 process.
+PRODUCT_TEST_EXCLUDED_PACKAGES: tuple[str, ...] = (
+    "px4_ros2_cpp",
+    "example_executor_with_multiple_modes_cpp",
+    "example_global_navigation_cpp",
+    "example_local_navigation_cpp",
+    "example_mode_fw_attitude_cpp",
+    "example_mode_goto_cpp",
+    "example_mode_goto_global_cpp",
+    "example_mode_manual_cpp",
+    "example_mode_mission_cpp",
+    "example_mode_rtl_replacement_cpp",
+    "example_mode_vtol_cpp",
+    "example_mode_with_executor_cpp",
+    "example_rover_velocity_mode_cpp",
+)
+PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
+    "mars_quadrotor_msgs",
+    "fast_lio_core",
+    "fast_lio_ros",
+    "fast_lio_tools",
+    "navigation_interfaces",
+    "navigation_runtime",
+    "super_planner_vendor",
+    "px4_navigation_external_mode",
+    "px4_odometry_bridge",
+    "uav_simulation",
+)
+# `make build` is a product build, not a workspace-wide discovery build. The
+# list intentionally excludes simulator/demo packages and lets colcon resolve
+# only the transitive dependencies of the FAST-LIO -> ROG-Map -> SUPER -> PX4
+# path. An explicit `build --packages ...` remains available for development.
+PRODUCT_BUILD_PACKAGES: tuple[str, ...] = (
+    "fast_lio_ros",
+    "fast_lio_tools",
+    "mars_quadrotor_msgs",
+    "navigation_bringup",
+    "navigation_runtime",
+    "px4_navigation_external_mode",
+    "px4_odometry_bridge",
+    "super_planner_vendor",
+)
 MODES = {
     "release": {
         "build_type": "Release",
@@ -58,6 +112,11 @@ def mode_paths(mode: str) -> tuple[Path, Path, Path]:
     )
 
 
+def test_result_base(mode: str) -> Path:
+    suffix = "" if mode == "release" else f"-{mode}"
+    return Path(os.environ.get("TEST_RESULT_BASE", ROOT / f"test-results{suffix}"))
+
+
 def ros_environment(install: Path | None = None) -> dict[str, str]:
     setup_files = [Path("/opt/ros/jazzy/setup.bash")]
     if install is not None and (install / "setup.bash").is_file():
@@ -74,6 +133,11 @@ def ros_environment(install: Path | None = None) -> dict[str, str]:
         text=False,
     )
     environment = os.environ.copy()
+    # Keep ROS client logs inside workspace-owned artifacts. This makes
+    # package tests hermetic in CI, containers, and managed runners where the
+    # user home may be read-only.
+    environment.setdefault("ROS_HOME", str(ROOT / ".ros"))
+    environment.setdefault("ROS_LOG_DIR", str(ROOT / "log" / "ros"))
     for item in result.stdout.split(b"\0"):
         if b"=" in item:
             key, value = item.split(b"=", 1)
@@ -147,6 +211,13 @@ def main() -> int:
                     f"-DCMAKE_SHARED_LINKER_FLAGS={compile_flags}",
                 ]
             )
+        if not BUILD_PX4_ROS2_EXAMPLES:
+            command.extend(
+                [
+                    "--packages-ignore-regex",
+                    PX4_ROS2_EXAMPLE_PACKAGE_REGEX,
+                ]
+            )
         command.extend(COLCON_FLAGS)
     elif args.action == "test":
         command = [
@@ -160,6 +231,8 @@ def main() -> int:
             str(build),
             "--install-base",
             str(install),
+            "--test-result-base",
+            str(test_result_base(args.mode)),
             "--event-handlers",
             "console_cohesion+",
         ]
@@ -168,13 +241,17 @@ def main() -> int:
             "colcon",
             "test-result",
             "--test-result-base",
-            str(build),
+            str(test_result_base(args.mode)),
             "--verbose",
         ]
 
     packages = getattr(args, "packages", None)
     if args.action in {"build", "test"} and STANDALONE_EXCLUDED_PACKAGES:
         command.extend(["--packages-skip", *STANDALONE_EXCLUDED_PACKAGES])
+    if args.action == "test" and not packages:
+        command.extend(["--packages-select", *PRODUCT_TEST_PACKAGES])
+    if args.action == "build" and not packages:
+        command.extend(["--packages-up-to", *PRODUCT_BUILD_PACKAGES])
     if packages:
         command.extend(["--packages-select", *packages])
     # GCC ThreadSanitizer can fail before main() under Linux's randomized

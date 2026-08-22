@@ -4,11 +4,12 @@
 <package format="3">
   <name>px4_navigation_external_mode</name>
   <version>0.1.0</version>
-  <description>PX4 v1.17 ROS 2 Control Interface external navigation mode.</description>
+  <description>PX4 v1.17 ROS 2 External Mode for native SUPER polynomial navigation.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>mars_quadrotor_msgs</depend>
   <depend>eigen3_cmake_module</depend>
   <depend>geometry_msgs</depend>
   <depend>diagnostic_msgs</depend>

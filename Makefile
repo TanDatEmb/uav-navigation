@@ -4,11 +4,12 @@ DATASET ?=
 RATE ?= 1.0
 FRONTIER_DEBUG ?= 0
 PX4_DIR ?= $(HOME)/Dev/Autopilot
+BUILD_PX4_ROS2_EXAMPLES ?= 0
 # Keep legacy runtime environments from re-enabling the old RViz sidecar.
 NO_RVIZ_ENV = export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1;
 ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 ROS_GUI_ENV = export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RVIZ=0; source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
-BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
+BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" BUILD_PX4_ROS2_EXAMPLES="$${BUILD_PX4_ROS2_EXAMPLES:-$(BUILD_PX4_ROS2_EXAMPLES)}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 FRONTIER_DEBUG_ARG = $(if $(filter 1 true yes,$(FRONTIER_DEBUG)),--frontier-debug,)
 DUAL_PLANNING ?= 0
 DUAL_PLANNING_ARG = $(if $(filter 1 true yes,$(DUAL_PLANNING)),--dual-planning,)
@@ -18,18 +19,21 @@ TEST_CASE ?= positive
 MOTION_PRESET ?= nominal
 MAP_SEED ?= 0
 MANUAL_TAKEOFF ?= 0
+SPEED_CAP_MPS ?=
 MAP_PROFILE_ARG = $(if $(strip $(MAP_PROFILE)),--map-profile $(MAP_PROFILE),)
 MAP_SCENE_ARG = $(if $(strip $(MAP_PROFILE)),,--map-scene $(MAP_SCENE))
 TEST_CASE_ARG = --test-case $(TEST_CASE)
 MOTION_PRESET_ARG = --motion-preset $(MOTION_PRESET)
 MAP_SEED_ARG = --map-seed $(MAP_SEED)
 MANUAL_TAKEOFF_ARG = $(if $(filter 1 true yes,$(MANUAL_TAKEOFF)),--manual-takeoff,)
+SPEED_CAP_MPS_ARG = $(if $(strip $(SPEED_CAP_MPS)),--speed-cap-mps $(SPEED_CAP_MPS),)
 
 .PHONY: help build test replay dataset-check sim-check external-mode-check external-mode-gui external-mode sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
 	@echo "  make build                                 static ROS build; no runtime data required"
+	@echo "  BUILD_PX4_ROS2_EXAMPLES=1 make build       include upstream PX4 ROS 2 examples (default: off)"
 	@echo "  make test                                  unit/integration tests; not a runtime verdict"
 	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset pipeline; PX4 not required"
@@ -41,13 +45,14 @@ help:
 	@echo "  DUAL_PLANNING=1 make external-mode-check  simulation-only nominal/safety experiment"
 	@echo "  MAP_SCENE=sanity_open|structured_obstacle|long_route|tunnel|clutter|planner_negative"
 	@echo "  TEST_CASE=positive|degenerate|detour|no_path  MOTION_PRESET=nominal|slow|fast"
+	@echo "  SPEED_CAP_MPS=<number>                      temporary speed cap for one mission run"
 	@echo "  MAP_PROFILE=<legacy alias> (optional; overrides MAP_SCENE)"
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
 	@echo "  Runtime guard                              one workspace-owned simulation; concurrent starts are rejected"
 	@echo "  make clean                                 keep build/install; remove stale variants, logs and caches"
-	@echo "Artifacts: .artifacts/runtime/<workflow>-*/REPORT.md and report.json"
+	@echo "Artifacts: shared Git root .artifacts/runtime/<workflow>-*/REPORT.html, REPORT.md and report.json"
 	@echo "PASS requires samples, freshness, validity, cleanup, and workflow-specific acceptance."
 
 build:
@@ -55,6 +60,7 @@ build:
 
 test:
 	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py test
+	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py check
 	@python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
 	@python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
 
@@ -70,13 +76,13 @@ sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim-check
 
 external-mode-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG)
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
 
 sim:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim
 
 external-mode-gui:
-	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG)
+	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
 
 external-mode: external-mode-gui
 

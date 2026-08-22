@@ -1,25 +1,24 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    # Navigation runtime runs as a separate ROS 2
-    # process from fast_lio_node. It must never be included inside
-    # fast_lio.launch.py's process/container; compose the two launch files
-    # from a parent launch description instead.
     return LaunchDescription(
         [
             DeclareLaunchArgument(
                 "config_file",
-                description="Path to the navigation_runtime parameter YAML.",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("navigation_runtime"), "config", "super_navigation.yaml"]
+                ),
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             Node(
                 package="navigation_runtime",
-                executable="navigation_runtime_node",
-                name="navigation_runtime",
+                executable="super_navigation_node",
+                name="super_navigation_node",
                 output="screen",
                 parameters=[
                     LaunchConfiguration("config_file"),

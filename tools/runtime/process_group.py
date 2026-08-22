@@ -92,12 +92,13 @@ class Session:
             directory = root / f"{workflow}-{stamp}-{os.getpid()}-{suffix}"
             suffix += 1
         session = cls(directory)
-        latest = root / "latest"
-        temporary = root / f".latest-{os.getpid()}.tmp"
-        temporary.unlink(missing_ok=True)
-        temporary.symlink_to(directory.name)
-        temporary.replace(latest)
-        session.write_state({"workflow": workflow, "status": "STARTING", "created_at": time.time()})
+        update_latest(root, directory)
+        session.write_state({
+            "workflow": workflow,
+            "status": "STARTING",
+            "created_at": time.time(),
+            "owner_pid": os.getpid(),
+        })
         return session
 
     @classmethod
@@ -143,6 +144,9 @@ class Session:
         log_path = self.logs / f"{role}.log"
         log = log_path.open("a", encoding="utf-8")
         child_env = os.environ.copy()
+        # Python otherwise block-buffers stdout when it is redirected to a
+        # session log, making a healthy scenario look silent until it exits.
+        child_env.setdefault("PYTHONUNBUFFERED", "1")
         if env_remove:
             for key in env_remove:
                 child_env.pop(key, None)
@@ -247,4 +251,17 @@ def resolve_latest(root: Path) -> Path:
     return latest
 
 
-__all__ = ["Session", "resolve_latest"]
+def update_latest(root: Path, directory: Path) -> None:
+    """Atomically point ``latest`` at an existing session directory."""
+    root = root.resolve()
+    directory = directory.resolve()
+    if directory.parent != root or not directory.is_dir():
+        raise ValueError(f"latest target is not a runtime session under {root}: {directory}")
+    latest = root / "latest"
+    temporary = root / f".latest-{os.getpid()}.tmp"
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(directory.name)
+    temporary.replace(latest)
+
+
+__all__ = ["Session", "resolve_latest", "update_latest"]

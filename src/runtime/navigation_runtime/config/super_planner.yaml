@@ -1,0 +1,132 @@
+super_planner:
+  detailed_log_en: false
+  visualization_en: false
+  use_fov_cut: false
+  print_log: false
+  visual_process: false
+  frontend_in_known_free: true
+  goal_yaw_en: false
+  goal_vel_en: true
+  corridor_bound_dis: 0.8
+  corridor_line_max_length: 1.0
+  safe_corridor_line_max_length: 6.0
+  iris_iter_num: 2
+  obs_skip_num: 2
+  # Replan before the short high-speed local horizon expires.  A value equal
+  # to the trajectory duration makes SUPER return NO_NEED at the boundary and
+  # leaves PX4 tracking a finished polynomial.
+  replan_forward_dt: 0.5
+  planning_horizon: 12.0
+  sensing_horizon: -1
+  receding_dis: 1.0
+  robot_r: 0.3
+  # Vertical avoidance opens only after the horizontal search is infeasible;
+  # keep it inside the mission flight envelope.
+  vertical_avoidance_min_z: 0.5
+  vertical_avoidance_max_z: 4.5
+  yaw_dot_max: 3.0
+  yaw_mode: 1
+  mpc_horizon: 15
+
+traj_opt:
+  switch:
+    save_log_en: false
+    print_optimizer_log: false
+  boundary:
+    max_vel: 1.0
+    # Keep SUPER's acceleration/jerk envelope so replans can absorb the
+    # measured PX4/LIO state error; the mission speed contract is enforced by
+    # max_vel and the External Mode evaluator.
+    max_acc: 15.0
+    max_jerk: 120.0
+    max_omg: 2.5
+    max_acc_thr: 17.0
+    min_acc_thr: 6.0
+    penna_margin: 0.05
+  exp_traj:
+    pos_constraint_type: 1
+    energy_cost_type: 4
+    block_energy_cost: false
+    opt_accuracy: 5.0e-6
+    scale_factor: 1.0
+    integral_reso: 15
+    smooth_eps: 0.01
+    penna_t: 1.0e+7
+    penna_pos: 5.0e+9
+    penna_vel: 5.0e+8
+    penna_acc: 5.0e+8
+    penna_jerk: -5.0e+8
+    penna_attract: 5.0e+8
+    penna_omg: -1
+    penna_thr: -1
+  flatness:
+    mass: 1.64
+    dh: 0.35
+    dv: 0.35
+    cp: 0.001
+    v_eps: 0.0001
+    grav: 9.81
+
+astar:
+  map_voxel_num: [500, 500, 100]
+  visual_process: false
+  allow_diag: true
+  heu_type: 2
+  debug_visualization_en: false
+
+rog_map:
+  resolution: 0.05
+  inflation_resolution: 0.1
+  inflation_step: 3
+  unk_inflation_en: false
+  unk_inflation_step: 1
+  # Route progress is along ENU X; keep the local map long in X and narrow in
+  # Y so SUPER does not hit the longitudinal boundary at 7.45 m.
+  map_size: [110, 15, 6]
+  fix_map_origin: [0, 0, 1.5]
+  frontier_extraction_en: false
+  # ORIGIN_AT_CORNER snaps the ceiling down by one inflation step. The PX4
+  # mission flies at z=3.0 m and SUPER also needs the robot/corridor margin,
+  # so 3.5 m produced an effective ceiling of 3.15 m and made the start
+  # corridor infeasible. Keep a real margin above the mission altitude.
+  virtual_ceil_height: 5.0
+  # Keep the actual ground plane below the LIO origin; ORIGIN_AT_CORNER snaps
+  # this value upward by one inflation step.
+  virtual_ground_height: -0.5
+  load_pcd_en: false
+  map_sliding:
+    enable: true
+    threshold: 3.0
+  esdf:
+    enable: false
+    resolution: 0.1
+    local_update_box: [5, 5, 3]
+  ros_callback:
+    enable: false
+    cloud_topic: "/lio/registered_points"
+    odom_topic: "/lio/odometry_propagated"
+    odom_timeout: 2.0
+  visualization:
+    enable: false
+    use_dynamic_reconfigure: false
+    time_rate: 0
+    frame_rate: 0
+    range: [15, 15, 4]
+    frame_id: "world"
+    pub_unknown_map_en: false
+  intensity_thresh: -10
+  point_filt_num: 1
+  raycasting:
+    # SUPER's unknown=blocked frontend requires free-space evidence along the
+    # lidar rays; endpoint-only updates leave the open route unknown.
+    enable: true
+    batch_update_size: 1
+    local_update_box: [100, 100, 5]
+    ray_range: [0.5, 100]
+    p_min: 0.12
+    p_miss: 0.49
+    p_free: 0.499
+    p_occ: 0.85
+    p_hit: 0.9
+    p_max: 0.98
+    unk_thresh: 1.0

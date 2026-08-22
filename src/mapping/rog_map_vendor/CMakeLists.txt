@@ -44,6 +44,7 @@ set(ROG_MAP_VENDOR_SOURCES
 )
 
 add_library(rog_map_vendor STATIC ${ROG_MAP_VENDOR_SOURCES})
+set_target_properties(rog_map_vendor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(rog_map_vendor PUBLIC cxx_std_20)
 target_compile_definitions(rog_map_vendor PUBLIC ${ROG_MAP_VENDOR_DEFINITIONS})
 target_include_directories(rog_map_vendor PUBLIC

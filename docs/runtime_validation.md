@@ -25,6 +25,128 @@ make stop
 make clean
 ```
 
+### Lệnh chạy các mission hiện tại
+
+Đây là các lệnh headless SITL dùng để nghiệm thu pipeline SUPER + FAST-LIO +
+ROG-Map + PX4 External Mode. Chạy từ thư mục workspace:
+
+```bash
+cd /home/letandat/Dev/uav-navigation
+PX4_DIR=/home/letandat/Dev/Autopilot make build
+
+# Mission rộng, 2 waypoint, tốc độ mục tiêu 5 m/s
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=long_open_featured_speed SPEED_CAP_MPS=5
+
+# Mission map 3 cột, 2 waypoint, tốc độ mục tiêu 5 m/s
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
+```
+
+Các bài kiểm tra obstacle và checkpoint hiện có:
+
+```bash
+# Một cột trên map 3 cột; dùng để cô lập lỗi né ngang
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=single_pillar_speed SPEED_CAP_MPS=2
+
+# Chặng thẳng 60 m trên map rộng, không có ablation controller
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=long_open_featured_core_60 SPEED_CAP_MPS=2
+
+# Đối chứng PV của checkpoint 60 m
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=long_open_featured_core_60_pv SPEED_CAP_MPS=1
+
+# Obstacle/corridor/tunnel/clutter
+PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=pillar
+PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=corridor
+PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=tunnel_irregular
+PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=forest_clutter MAP_SEED=11
+
+# Negative test: phải fail-closed, không được coi là mission thành công
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=no_path TEST_CASE=no_path
+```
+
+Liệt kê profile được runner chấp nhận:
+
+```bash
+python3 tools/runtime/runner.py external-mode-check --help
+```
+
+Có thể chạy bằng GUI để quan sát Gazebo/RViz:
+
+```bash
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-gui MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
+
+# GUI nhưng takeoff/arm thủ công qua QGC
+MANUAL_TAKEOFF=1 PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-gui MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
+```
+
+Nếu cần tách session khi một SITL khác đang chạy, dùng đồng thời ROS domain và
+XRCE port mới:
+
+```bash
+UAV_NAV_ROS_DOMAIN_ID=77 UAV_NAV_XRCE_PORT=8897 \
+PX4_DIR=/home/letandat/Dev/Autopilot \
+  make external-mode-check MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
+```
+
+Không khởi động session thứ hai khi session trước chưa dừng. Kiểm tra và dừng
+session do workspace sở hữu bằng:
+
+```bash
+make status
+make stop
+```
+
+Mỗi lần chạy tạo artifact tại
+`.artifacts/runtime/external-mode-check-<timestamp>-<pid>/`. Xem verdict và các
+waypoint đã nhận của lần chạy gần nhất:
+
+```bash
+latest_artifact=$(find .artifacts/runtime -maxdepth 1 -type d \
+  -name 'external-mode-check-*' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
+echo "$latest_artifact"
+python3 - "$latest_artifact/report.json" <<'PY'
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+acceptance = report.get("acceptance", {})
+external = report.get("external_mode", {})
+lio = report.get("lio", {})
+print("verdict:", report.get("verdict"))
+print("outcome:", external.get("outcome"))
+print("mission_complete:", acceptance.get("mission_complete_observed"))
+print("waypoints:", acceptance.get("waypoint_acceptance_indices"))
+print("measured_speed_p95_mps:", external.get("speed_metrics", {}).get("measured_mps", {}).get("p95"))
+print("collision_count:", external.get("collision_count"))
+print("minimum_clearance_m:", external.get("actual_min_clearance_m"))
+print("failsafe_seen:", external.get("failsafe_seen"))
+print("lio:", lio.get("state"), "navigation_valid=", lio.get("navigation_valid"))
+PY
+```
+
+Một mission chỉ được ghi nhận PASS khi `report.json` có `verdict=PASS`, đủ
+waypoint, có `mission_complete=true`, không collision, không PX4 failsafe,
+LIO ở `TRACKING` với `navigation_valid=true`, và các ngưỡng tốc độ/clearance
+của profile đều đạt. `no_path` là bài kiểm tra fail-closed nên kết quả đúng
+là dừng an toàn, không phải `PASS` mission.
+
+Tình trạng nghiệm thu đã biết tại thời điểm cập nhật tài liệu:
+
+| Profile | Kết quả | Artifact |
+|---|---|---|
+| `long_open_featured_speed`, 5 m/s | PASS; đủ 2 waypoint, 0 collision, không failsafe, measured-speed p95 khoảng 5.01 m/s | `.artifacts/runtime/external-mode-check-20260822T111010-1212232` |
+| `long_three_pillars_speed`, 5 m/s | FAIL/INTERRUPTED; mới nhận waypoint 0, chưa có `mission_complete` | `.artifacts/runtime/external-mode-check-20260822T112649-1227169` |
+
+Artifact 3 cột ở trên chưa phải nghiệm thu thành công và không được dùng làm
+bằng chứng “đã chạy ổn định”.
+
 `dataset-check` requires a prepared ROS 2 bag. `RATE` changes rosbag replay
 speed inside the same workflow; it does not select a profile. The dataset
 workflow starts FAST-LIO with `config/runtime/dataset.yaml`, remaps the
@@ -141,7 +263,8 @@ Useful inspection commands from another terminal:
 ```bash
 make status
 ros2 topic echo /lio/diagnostics
-ros2 topic echo /navigation/trajectory
+ros2 topic echo /navigation/super_trajectory
+ros2 topic echo /navigation/mission_complete
 ros2 topic echo /navigation_mapping/visualization/occupied
 ros2 topic echo /fmu/in/trajectory_setpoint
 ```
@@ -169,28 +292,27 @@ session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
 
 ### Long mission with three route columns
 
-The deterministic `long_three_pillars` profile is the stress benchmark for
-continuous receding-horizon navigation. It contains many non-route texture
-features, while exactly three cylinders (`long_three_pillar_01..03`) intersect
-the WP0→WP1 long leg. The mission is 48 m to a far waypoint (longer than the
-observed local horizon), followed by 5 m/7 m/5 m orthogonal pass-through turns.
-The runner selects a 4 m local target, keeps the planner fail-closed in
-Unknown space, and records every replanning/safety decision.
+The deterministic `long_three_pillars_speed` profile is the high-speed stress
+benchmark. It contains many non-route texture features and exactly three
+cylinders (`long_three_speed_pillar_01..03`) on the 140 m WP0→WP1 leg. The
+mission currently has two waypoints at the same altitude; the planner first
+searches in the horizontal plane to preserve altitude precision. If a future
+waypoint has a different Z, it opens a bounded vertical phase after the XY
+phase and still validates the final X/Y/Z waypoint error.
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 export UAV_NAV_ROS_DOMAIN_ID=77 UAV_NAV_XRCE_PORT=8897
 PX4_DIR=$HOME/Dev/Autopilot python3 tools/runtime/runner.py \
-  external-mode-check --map-profile long_three_pillars \
-  --ros-domain-id 77 --xrce-port 8897
+  external-mode-check --map-profile long_three_pillars_speed \
+  --speed-cap-mps 5 --ros-domain-id 77 --xrce-port 8897
 ```
 
 The session directory printed by the runner contains `scenario.json`,
-`benchmark_metrics.json`, `samples.jsonl`, and the self-contained `REPORT.html`.
-The report distinguishes route columns from texture-only objects, plots the
-ground-truth flight path and committed local paths, and reports mission time,
-replan count, local horizon, cross-track error, speed, LIO residual, collision
-count, and minimum vehicle clearance.
+`benchmark_metrics.json`, `samples.jsonl`, `report.json`, `REPORT.md`, and the
+self-contained `REPORT.html`. The report distinguishes route columns from
+texture-only objects and records mission completion, waypoint indices, speed,
+LIO residual, collision count, failsafe state, and minimum vehicle clearance.
 
 ## Configuration
 
@@ -306,23 +428,25 @@ required because the external-vision-only simulation profile disables GPS and
 PX4 therefore rejects generic Loiter handover when its global-position health
 requirement is not met.
 
-The current planning execution contract is deliberately conservative:
+The current planning execution contract is the single SUPER polynomial path:
 
 ```text
-nominal A* plan (Inflated + KnownFree)
-  -> commit as the active trajectory
-nominal plan failure
-  -> known-free safety route, role=SAFETY
-  -> if no route, known-free braking stop, role=SAFETY
-  -> retry the same correlated goal only after a braking stop
-  -> fail External Mode if no safe candidate or retry succeeds
+PointCloud2 + Odometry
+  -> ROG-Map update
+  -> A* / corridor / SUPER optimizer
+  -> mars_quadrotor_msgs/PolynomialTrajectory
+  -> /navigation/super_trajectory
+  -> PX4 External Mode P/V/A evaluation and ENU/FLU -> NED/FRD conversion
 ```
 
-`SAFETY` route may count as waypoint progress because it is a known-free route;
-`SAFETY` braking stop never counts as waypoint progress and is required to end
-at zero velocity and acceleration. The runtime executes a nominal path through
-unknown cells only when the explicit simulation-only `DUAL_PLANNING=1` gate is
-enabled. The default and real profiles remain known-free-only.
+There is no `TrajectoryBundle`, `WorldSnapshot`, old B-spline contract, or
+separate backup/rollback trajectory branch in this runtime contract. A stale,
+invalid, emergency, non-finite, or non-monotonic polynomial is rejected
+fail-closed. The node does not silently reuse an expired trajectory; it stops
+publishing the invalid trajectory and reports the failure for the harness.
+
+The planner is known-free by default. `DUAL_PLANNING=1` remains an explicit
+simulation-only experiment and is not an acceptance configuration.
 
 The simulation `allow_unknown_start` exception creates a virtual `KnownFree`
 overlay over the current vehicle footprint to handle the LiDAR body shadow.
@@ -331,25 +455,11 @@ m`). It converts only `Unknown`; `Occupied` evidence always wins, cells outside
 the footprint remain fail-closed, and the overlay is never written into the
 persistent ROG-Map.
 
-The replan timer remains bounded at 5 Hz. A committed trajectory is reused on
-unchanged revisions and revalidated against the remaining corridor when the
-WorldModel revision changes. A verified braking stop is latched for the active
-request and can only be replaced after verifier rejection, never by restarting
-nominal execution. Full replanning is reserved for a changed goal, tracking
-error beyond `navigation.replan_tracking_error_m`, or an invalidated corridor.
-The planning report exposes `trajectory_revalidation_count`,
-`trajectory_revalidation_failure_count`, `trajectory_reuse_count`, and
-`full_replan_count` alongside the existing planner counters.
-
-Rolling replans use an explicit time contract rather than resetting the PX4
-adapter phase on every message. A successful `PlannedTrajectory` carries a
-monotonic `trajectory_id`, its `parent_trajectory_id`, and `valid_from`. When a
-map update arrives while a previous path is active, the runtime evaluates the
-old sampled trajectory at `t_switch = t_now + switch_delay_s`, uses that `(p,v,a)` as
-the new initial state, and asks PX4 to atomically promote the replacement only
-at `valid_from`. The adapter keeps the old trajectory until promotion. Runtime
-verification and PX4 consume the same sampled PVA contract; the planner's
-bounded polynomial remains the source of the smooth samples.
+The replan timer remains bounded at 5 Hz. A new trajectory has a monotonically
+increasing `trajectory_id` and is published with depth-one QoS. Map and input
+updates are coalesced while planning is busy; they do not create an unbounded
+queue. The SUPER message keeps `piece_num_pos`, `order_pos`, `time_pos`,
+coefficients, and `start_wt_pos` as the sole planner-to-PX4 contract.
 
 Mission waypoints have an explicit `behavior`: `pass_through` for intermediate
 points and `stop` for terminal/inspection points. A pass-through goal carries
@@ -371,31 +481,23 @@ free-horizon are published in planner diagnostics for benchmark comparison.
 ## Mission stress profiles
 
 The External Mode runner keeps one scenario harness and varies only the world
-and static mission file:
+and static mission file. The high-speed acceptance profiles are:
 
 | Profile | Purpose | Expected result |
 |---|---|---|
-| `open` | baseline textured geometry | mission complete |
-| `pillar` | obstacle detour and ground-truth clearance | mission complete |
-| `corridor` | narrow known-free corridor | mission complete without limit violation |
-| `speed` | higher velocity/acceleration envelope | mission complete; setpoint cap respected |
-| `long_open` | long-distance sliding map with asymmetric acceleration/deceleration | diagnostic baseline; current run loses LIO before mission completion |
-| `long_open_slow` | same sparse map at reduced speed/acceleration | LIO stays TRACKING; current run still fails at waypoint 1 during safety retry |
-| `long_featured` | 53 m route at z=2.8–3.0 m with six low pillars, roadside trees, six non-periodic texture panels and asymmetric scaffold | LIO feature coverage/clearance diagnostic; GUI run must pass all five waypoints |
-| `occlusion` | revealed obstacle and dual-planning telemetry | experimental; no flight-policy promotion |
-| `no_path` | sealed wall with unreachable first waypoint | brake, `PAUSED_SAFETY_STOP`, POSCTL, GUI remains alive |
+| `long_open_featured_speed` | map rộng, 2 waypoint, tốc độ mục tiêu 5 m/s | mission complete, speed gate đạt, không collision/failsafe |
+| `long_three_pillars_speed` | map rộng có 3 cột trên tuyến, 2 waypoint, tốc độ mục tiêu 5 m/s | né ngang an toàn rồi hoàn tất waypoint 1 |
+| `single_pillar_speed` | cô lập một cột trên cùng map 3 cột | mission complete; dùng để debug né ngang |
+| `long_open_featured_core_60` | checkpoint 60 m cho đường thẳng và LIO | mission complete |
+| `long_open_featured_core_60_pv` | ablation PV của checkpoint 60 m | mission complete ở giới hạn tốc độ thấp hơn |
+| `pillar`, `corridor`, `tunnel_irregular`, `forest_clutter` | regression obstacle/geometry | mission complete theo profile |
+| `no_path` | tường kín, không có đường tới goal | fail-closed và dừng an toàn; không phải mission PASS |
 
-The long-map A/B pair is intentionally diagnostic. “Texture” means LiDAR
-geometric structure (edges, corners, depth variation), not SDF visual colour.
-`long_open_slow` changes only the motion envelope; `long_featured` changes
-the static geometry and its ground-truth collision model. The featured route
-keeps the setpoints in the 2–3 m band and places discrete, non-periodic
-vertical surfaces 4--7 m to either side, so the MID-360 sees returns without
-creating a continuous wall. Its final waypoint is x=53 m on the far side of
-the obstacle field. A featured map that keeps LIO TRACKING while the sparse
-fast map loses it is evidence that geometric observability matters. The LIO
-failure reason, filtered-point metrics, stream gaps and full waypoint order
-must be recorded with every GUI run.
+“Texture” means LiDAR geometric structure (edges, corners, depth variation),
+not SDF visual colour. The speed profiles keep the current waypoints at z=3 m.
+Vertical avoidance is available for a future waypoint with different Z, but
+the current 3-column phase is deliberately horizontal first so X/Y/Z waypoint
+accuracy is not sacrificed by an unnecessary altitude change.
 
 `no_path` is not a successful mission. The acceptance contract is planner
 failure plus structured `PAUSED/SAFETY_STOP` status, verified braking, and
@@ -409,11 +511,10 @@ records `minimum_collision_clearance_m`, `collision_count`, and
 `collision_event_count` in `scenario.json`. The configured minimum clearance
 margin is 0.10 m after subtracting the vehicle collision radius; a breach of
 that margin or a collision fails the scenario, independent of LIO state, so an
-estimator failure cannot hide a physical collision. The latest long-distance
-runs remain known failing gates: the sparse fast baseline reaches `LOST`, the
-slow sparse run stops at waypoint 1 after safety fallback retries, and the
-featured run stops before waypoint 3 despite LIO remaining `TRACKING`. They
-must not be reported as successful mission benchmarks.
+estimator failure cannot hide a physical collision. The latest known evidence
+is recorded in the command section above: the wide 5 m/s profile has a PASS
+artifact, while the latest three-column 5 m/s attempt was interrupted after
+waypoint 0 and remains a failed acceptance gate until rerun to completion.
 
 ## Localization root-cause evidence
 
@@ -421,10 +522,9 @@ FAST-LIO reports a normalized translational information matrix derived from
 accepted point-to-plane normals. A correction is usable only when
 `lambda_min / lambda_max` is finite and meets
 `registration.minimum_translation_observability_ratio` (0.01 in the
-canonical profiles). An invalid correction is rolled back, excluded from the
+canonical profiles). An invalid correction is rejected, excluded from the
 registration map, and propagated as an unhealthy navigation state; External
-Mode then publishes a stationary velocity setpoint during handover and does
-not issue flight actions.
+Mode then fails closed and does not issue flight actions from stale data.
 
 The `no_path` profile is accepted only after its sealed wall is observed in
 both raw LiDAR and occupied-voxel evidence. The simulation watchdog aligns

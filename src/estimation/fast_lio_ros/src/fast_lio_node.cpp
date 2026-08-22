@@ -110,7 +110,6 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           livoxTimestampPolicy(parameters_)),
       public_frame_generation_(std::make_shared<LioPublicFrameGeneration>()),
       output_publisher_(*this, parameters_, public_frame_generation_),
-      mapping_observation_publisher_(*this, parameters_, public_frame_generation_),
       transform_publisher_(*this, parameters_) {
   runtime_diagnostics_.imu_queue_capacity =
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
@@ -660,7 +659,6 @@ void FastLioNode::publishAvailableResults() {
       augmented.diagnostics.sensor = ingress_diagnostics_;
     }
     output_publisher_.publish(augmented);
-    mapping_observation_publisher_.publish(augmented);
     if (augmented.diagnostics.initial_prior.applied) {
       closeInitialStatePriorStream();
     }
@@ -725,19 +723,6 @@ void FastLioNode::publishTransportSnapshot() {
     runtime.covariance_projection =
         output_publisher_.covarianceProjectionRuntime()->snapshot();
     runtime_statistics_.populate(runtime);
-    runtime.mapping_observation_publish_count =
-        mapping_observation_publisher_.publishedCount();
-    runtime.mapping_observation_skip_not_ready_count =
-        mapping_observation_publisher_.skippedNotReadyCount();
-    runtime.mapping_observation_skip_public_frame_invalid_count =
-        mapping_observation_publisher_.skippedPublicFrameInvalidCount();
-    runtime.mapping_observation_last_sequence =
-        mapping_observation_publisher_.lastPublishedSequence();
-    runtime.mapping_observation_stream_id =
-        mapping_observation_publisher_.observationStreamId();
-    runtime.mapping_observation_publish_skip_count =
-        runtime.mapping_observation_skip_not_ready_count +
-        runtime.mapping_observation_skip_public_frame_invalid_count;
     const auto tf = transform_publisher_.diagnostics();
     runtime.dynamic_tf_publication_count = tf.publication_count;
     runtime.dynamic_tf_timestamp_suppressed_count =

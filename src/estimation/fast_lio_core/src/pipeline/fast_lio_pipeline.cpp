@@ -469,14 +469,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   }
   diagnostics_.registration.input_point_count = preprocessed.value().stats.input_point_count;
   diagnostics_.registration.filtered_point_count = preprocessed.value().stats.output_point_count;
-  if (preprocessed.value().mapping_candidate_points.has_value()) {
-    result.mapping_candidate_points_lidar_m.reserve(
-        preprocessed.value().mapping_candidate_points->size());
-    for (const LidarPoint& point : *preprocessed.value().mapping_candidate_points) {
-      result.mapping_candidate_points_lidar_m.push_back(
-          point.position_lidar_m.cast<double>());
-    }
-  }
   const std::vector<Eigen::Vector3d> points_lidar_m = toDoublePoints(preprocessed.value().scan);
   if (points_lidar_m.size() < config_.insertion_policy.minimum_point_count) {
     result.lidar_update_status = LidarUpdateStatus::kRejected;
@@ -614,18 +606,6 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     result.corrected_kinematic_estimate = kinematic.value();
   }
   result.registered_points_odom_m = transformPointsToOdom(points_lidar_m, state_);
-  // ^lio_odom T_livox at exactly this scan's reference epoch, derived from the
-  // same corrected state used above. Never derived from predicted/propagated
-  // state or from TF; see docs/architecture/navigation_layers.md.
-  const RigidTransform T_odom_imu(lioOdomFrame(), imuFrame(), state_.orientation_odom_imu(),
-                                  state_.position_odom_imu_m());
-  const RigidTransform T_imu_lidar_corrected(imuFrame(), lidarFrame(), state_.rotation_imu_lidar(),
-                                             state_.position_imu_lidar_m());
-  const auto T_odom_lidar = T_odom_imu.compose(T_imu_lidar_corrected);
-  if (T_odom_lidar.ok()) {
-    result.sensor_pose_odom_lidar = T_odom_lidar.value();
-  }
-
   MapInsertionContext insertion_context;
   insertion_context.estimator_tracking = status_ == EstimatorStatus::kTracking;
   insertion_context.lidar_update_successful =

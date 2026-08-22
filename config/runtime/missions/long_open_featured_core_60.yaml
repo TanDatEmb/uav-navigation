@@ -1,0 +1,30 @@
+mission:
+  version: 1
+  id: external_mode_long_open_featured_core_60
+  frame: lio_odom
+  waypoints:
+    - id: open_core_start
+      position: [0.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: open_core_finish
+      position: [60.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: stop
+      hold_s: 0.5
+  planning:
+    replan_rate_hz: 5.0
+    max_velocity_mps: 8.0
+    max_acceleration_mps2: 3.0
+    max_deceleration_mps2: 3.0
+    max_jerk_mps3: 8.0
+    continuation_speed_fraction: 0.50
+    # This is a bounded LIO/map checkpoint, not the obstacle benchmark.
+    route_guide_enabled: false
+    # Keep the open calibration on the smooth generator; this choice is
+    # isolated from the pillar stress mission below.
+    unknown_policy: blocked
+  control:
+    output: auto
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

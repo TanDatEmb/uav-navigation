@@ -49,9 +49,9 @@ fast_lio:
         crop_trigger_distance_m: 5.0
         absolute_map_point_guard: 250000
     output:
-      publish_registered_points: false
-      mapping_observation:
-        enabled: true
+      # FAST-LIO already deskews, filters, and publishes this cloud in the
+      # odometry/world frame for the SUPER ROG-Map input boundary.
+      publish_registered_points: true
     propagated_odometry:
       enabled: true
       publish_rate_hz: 50.0

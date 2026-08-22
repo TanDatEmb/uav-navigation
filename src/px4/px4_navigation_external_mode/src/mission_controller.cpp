@@ -90,7 +90,7 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
     } else if (success && is_braking_stop) {
       const bool has_positive_duration = std::isfinite(duration_s) && duration_s > 0.0;
       if (has_positive_duration) {
-        // A positive-duration replacement is a new braking phase. Restart its
+        // A positive-duration replacement is a new braking interval. Restart its
         // own confirmation window so an old stopped interval cannot trigger an
         // early handover while the replacement trajectory is still active.
         braking_start_time_s_ = now_s;
@@ -148,6 +148,17 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
   checkpoint_valid_ = true;
   trajectory_ready_ = false;
   pending_position_control_ = true;
+}
+
+void MissionController::onNativeTrajectoryReady() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (state_ == MissionControllerState::Idle ||
+      state_ == MissionControllerState::Complete ||
+      state_ == MissionControllerState::Failed) {
+    return;
+  }
+  checkpoint_valid_ = true;
+  trajectory_ready_ = true;
 }
 
 MissionControllerEvent MissionController::update(
@@ -226,6 +237,15 @@ MissionControllerEvent MissionController::update(
       // stop waypoint still follows the fail-closed POSCTL path below.
       if (pass_through) return {};
       if (!stopped_start_time_s_.has_value()) stopped_start_time_s_ = now_s;
+      const double replan_grace_s = mission_.control.safety_stop_replan_grace_s;
+      if (std::isfinite(replan_grace_s) && replan_grace_s > 0.0 &&
+          now_s - *stopped_start_time_s_ < replan_grace_s) {
+        // Do not hand over on the first settled local stop when the mission
+        // explicitly permits a bounded map/replan grace period. A newer
+        // safety route is handled by onTrajectory() and resumes Braking;
+        // absence of one still falls through to the fail-closed handover.
+        return {};
+      }
       if (now_s - *stopped_start_time_s_ >= kSafetyStopConfirmationS) {
         state_ = MissionControllerState::Paused;
         return {MissionControllerEvent::Type::RequestPositionControl,

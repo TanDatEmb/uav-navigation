@@ -252,7 +252,7 @@ Result<ImuTrajectory> IkfomEstimator::predict(
   IkfomState state_before_prediction = filter_.get_x();
   IkfomFilter::cov covariance_before_prediction = filter_.get_P();
   bool filter_mutated = false;
-  const auto rollback = [&]() {
+  const auto restoreEstimatorState = [&]() {
     if (filter_mutated) {
       filter_.change_x(state_before_prediction);
       filter_.change_P(covariance_before_prediction);
@@ -270,14 +270,14 @@ Result<ImuTrajectory> IkfomEstimator::predict(
     const ManifoldState predicted = stateView();
     if (!predicted.allFinite() ||
         !covarianceSaneDuringPrediction(filter_.get_P())) {
-      rollback();
+      restoreEstimatorState();
       return Status(StatusCode::kNumericalFailure,
                     "IKFoM prediction produced non-finite state");
     }
     trajectory_status =
         trajectory.addState(trajectoryState(predicted, current.time));
     if (!trajectory_status.ok()) {
-      rollback();
+      restoreEstimatorState();
       return trajectory_status;
     }
   }

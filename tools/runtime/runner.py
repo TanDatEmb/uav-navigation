@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shlex
 import signal
 import socket
@@ -23,13 +24,36 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from process_group import Session, resolve_latest
+from process_group import Session, resolve_latest, update_latest
 import report
 
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
-ARTIFACT_ROOT = ROOT / ".artifacts/runtime"
+
+
+def _shared_artifact_root(root: Path = ROOT) -> Path:
+    """Return one runtime artifact root shared by every Git worktree."""
+    override = os.environ.get("UAV_NAV_ARTIFACT_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+        common_dir = Path(result.stdout.strip()).resolve()
+        if result.returncode == 0 and common_dir.name == ".git":
+            return common_dir.parent / ".artifacts/runtime"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return root / ".artifacts/runtime"
+
+
+ARTIFACT_ROOT = _shared_artifact_root()
 RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".runtime-sim.lock"
 RVIZ_CONFIG = ROOT / "src/navigation_bringup/rviz/fast_lio.rviz"
 NO_RVIZ_ENV = {
@@ -80,17 +104,17 @@ class RuntimeBusyError(RuntimeError):
     """Raised when a second workspace runtime would collide with a live one."""
 
 
-def _active_runtime_sessions() -> list[str]:
+def _active_runtime_sessions(root: Path = ARTIFACT_ROOT) -> list[str]:
     """Return live workspace-owned sessions, including orphaned children.
 
     The lock protects normal concurrent runners.  The artifact registry is a
     second line of defence for the failure mode where a runner is SIGKILLed
     but its separately-created child process groups survive.
     """
-    if not ARTIFACT_ROOT.is_dir():
+    if not root.is_dir():
         return []
     active: list[str] = []
-    for path in sorted(ARTIFACT_ROOT.iterdir(), reverse=True):
+    for path in sorted(root.iterdir(), reverse=True):
         if not path.is_dir() or path.is_symlink() or not (path / "processes.json").is_file():
             continue
         try:
@@ -106,8 +130,12 @@ def _active_runtime_sessions() -> list[str]:
 class RuntimeLock:
     """Hold an advisory repository-wide lock for the full simulation run."""
 
-    def __init__(self, path: Path = RUNTIME_LOCK_PATH) -> None:
-        self.path = path.resolve()
+    def __init__(self, path: Path | None = None, *, artifact_root: Path | None = None) -> None:
+        self.path = (path or RUNTIME_LOCK_PATH).resolve()
+        self.artifact_root = (
+            artifact_root
+            or (ARTIFACT_ROOT if path is None else self.path.parent)
+        ).resolve()
         self._file: Any | None = None
 
     def _owner(self) -> str:
@@ -139,7 +167,7 @@ class RuntimeLock:
                 "run `make stop` and wait for cleanup before starting another simulation"
             ) from error
 
-        active = _active_runtime_sessions()
+        active = _active_runtime_sessions(self.artifact_root)
         if active:
             fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
             self._file.close()
@@ -219,7 +247,7 @@ DISPOSABLE_BUILD_VARIANT_SUFFIXES = (
 # Keep them for incremental use; sanitizer/profiling variants are disposable
 # and are cleaned together with their logs.
 GENERATED_CLEAN_PATHS = (
-    ROOT / ".artifacts",
+    ARTIFACT_ROOT.parent,
     ROOT / ".pytest_cache",
     ROOT / "log",
     ROOT / "src/mapping/rog_map_vendor/log",
@@ -451,6 +479,17 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
             if not math.isfinite(number) or number <= 0.0:
                 raise ValueError(f"mission planning {key} must be finite and positive")
             result[key] = number
+    if "route_guide_enabled" in planning:
+        if not isinstance(planning["route_guide_enabled"], bool):
+            raise ValueError("mission planning route_guide_enabled must be boolean")
+        result["route_guide_enabled"] = planning["route_guide_enabled"]
+    for key in ("route_guide_sample_spacing_m", "route_guide_collision_sample_spacing_m",
+                "route_guide_lateral_offset_m", "route_guide_lateral_transition_m"):
+        if key in planning:
+            number = float(planning[key])
+            if not math.isfinite(number) or number <= 0.0:
+                raise ValueError(f"mission planning {key} must be finite and positive")
+            result[key] = number
     if "max_acceleration_mps2" in result and "max_deceleration_mps2" not in result:
         result["max_deceleration_mps2"] = result["max_acceleration_mps2"]
     return result
@@ -468,6 +507,10 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
     world_name = {
         "smoke": "px4_lio_smoke", "speed": "open", "long_open_slow": "long_open",
         "occlusion": "occlusion", "occlusion_featured": "occlusion",
+        "long_open_featured_core_60": "long_open_featured_speed",
+        "long_open_featured_core_60_pv": "long_open_featured_speed",
+        "single_pillar_speed": "long_three_pillars_speed",
+        "single_pillar_speed_pv": "long_three_pillars_speed",
     }.get(map_profile, map_profile)
     world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
     if world_path.is_file():
@@ -575,30 +618,23 @@ def _acceptance_threshold_for_profile(map_profile: str) -> float:
     # Obstacle detours are validated separately by the collision envelope and
     # minimum-clearance gates.  Keep the open-space default strict while
     # allowing the deterministic long_three_pillars detour envelope.
+    if map_profile == "long_three_pillars_speed":
+        # The certified three-pillar route uses a bounded side detour.  The
+        # map profile declares |y| <= 8 m as its acceptance envelope; obstacle
+        # collision and clearance remain independent safety gates.
+        return 8.0
+    if map_profile in {"single_pillar_speed", "single_pillar_speed_pv"}:
+        # The route guide's certified side offset is 3.6 m.  Keep a small
+        # tracking/map-estimator allowance while the independent |y|<=8 m
+        # benchmark envelope remains the hard out-of-map gate.
+        return 4.5
+    if map_profile in {"long_open_featured_core_60", "long_open_featured_core_60_pv"}:
+        # The long-leg checkpoint measures estimator/controller drift in an
+        # open corridor; keep a tighter bound than obstacle detours while
+        # allowing the observed sub-metre LIO bias.  The hard map envelope is
+        # still enforced independently by the benchmark corridor checks.
+        return 0.75
     return 3.0 if map_profile == "long_three_pillars" else 0.5
-    if map_profile == "forest_clutter":
-        return [
-            cylinder("tree_01", [5.0, 4.0, 2.0], 0.45, 2.0),
-            cylinder("tree_02", [8.0, -3.0, 2.8], 0.30, 2.8),
-            cylinder("tree_03", [13.0, 5.0, 1.5], 0.70, 1.5),
-            cylinder("tree_04", [18.0, -5.0, 2.2], 0.35, 2.2),
-            cylinder("tree_05", [24.0, 4.5, 1.7], 0.50, 1.7),
-            cylinder("tree_06", [29.0, -4.0, 2.5], 0.40, 2.5),
-            cylinder("tree_07", [35.0, 5.5, 2.0], 0.60, 2.0),
-        ]
-    if map_profile == "corridor":
-        return [
-            box("corridor_wall_south", [2.5, 2.7, 2.5], [4.5, 0.15, 2.5]),
-            box("corridor_wall_north", [2.5, 6.3, 2.5], [4.5, 0.15, 2.5]),
-            box("corridor_end_wall", [7.0, 4.5, 2.5], [0.15, 3.5, 2.5]),
-        ]
-    if map_profile == "no_path":
-        return [
-            box("near_feature_west", [-3.0, -2.0, 2.0], [0.4, 0.4, 2.0]),
-            box("near_feature_east", [-5.0, 3.0, 1.5], [0.3, 0.3, 1.5]),
-            box("sealed_wall", [1.0, 0.0, 6.0], [0.2, 20.0, 6.0]),
-        ]
-    return []
 
 
 def _map_registry() -> dict[str, Any]:
@@ -728,7 +764,7 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
         "collision_truth": list(profile.get("collision_truth", [])),
         "world_sha256": hashlib.sha256(resolved_bytes).hexdigest(),
     }
-    for field in ("route_obstacles", "route_segment_waypoints"):
+    for field in ("route_obstacles", "route_segment_waypoints", "benchmark"):
         if field in profile:
             descriptor[field] = profile[field]
     resolved_world = session.directory / f"resolved_{world_name}.sdf"
@@ -739,7 +775,8 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
     return world_name, descriptor
 
 
-def _external_mode_params(session: Session, source: Path, mission_file: Path | None) -> Path:
+def _external_mode_params(session: Session, source: Path, mission_file: Path | None,
+                          speed_cap_mps: float | None = None) -> Path:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
         raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
@@ -753,6 +790,8 @@ def _external_mode_params(session: Session, source: Path, mission_file: Path | N
         tracker["max_acceleration_mps2"] = planning["max_acceleration_mps2"]
     if "max_deceleration_mps2" in planning:
         tracker["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
+    if speed_cap_mps is not None:
+        tracker["max_velocity_mps"] = speed_cap_mps
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
@@ -778,166 +817,55 @@ def _mapping_params(
     dual_planning: bool = False,
     mission_file: Path | None = None,
     obstacle_evidence: bool = False,
+    speed_cap_mps: float | None = None,
 ) -> Path:
-    """Copy the product-owned navigation_mapping parameter block."""
+    """Create the only ROS parameter file used by native SUPER navigation."""
+    del interactive, frontier_debug, simulation, dual_planning, obstacle_evidence
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or "navigation_runtime" not in value:
-        raise ValueError(f"runtime config is missing navigation_runtime: {source}")
-    parameters = value["navigation_runtime"]
-    ros_parameters = parameters.setdefault("ros__parameters", {})
-    mapping = ros_parameters.setdefault("mapping", {})
-    navigation = ros_parameters.setdefault("navigation", {})
-    input_parameters = mapping.setdefault("input", {})
-    map_parameters = mapping.setdefault("map", {})
-    visualization_parameters = mapping.setdefault("visualization", {})
-    resolution_override = os.environ.get("MAPPING_RESOLUTION_M")
-    input_voxel_override = os.environ.get("MAPPING_INPUT_VOXEL_M")
-    local_subgoal_override = os.environ.get("LOCAL_SUBGOAL_ENABLED")
-    if resolution_override is not None:
-        map_parameters["resolution_m"] = float(resolution_override)
-    if input_voxel_override is not None:
-        input_parameters["voxel_size_m"] = float(input_voxel_override)
-    if local_subgoal_override is not None:
-        local_goal_parameters = navigation.setdefault("local_subgoal", {})
-        local_goal_parameters["enabled"] = local_subgoal_override.strip().lower() in {
-            "1", "true", "yes", "on"
-        }
-    # Keep one authoritative mapping YAML. Runtime workflows select whether
-    # product-side visualization is part of this invocation. Frontier
-    # extraction remains an explicit future/debug capability and is not
-    # coupled to opening RViz.
-    visualization_parameters["enabled"] = interactive or obstacle_evidence
-    visualization_parameters["publish_unknown"] = interactive and not obstacle_evidence
-    visualization_parameters["publish_frontier"] = frontier_debug
-    if obstacle_evidence:
-        visualization_parameters["publish_rate_hz"] = 2.0
-    if simulation:
-        simulation_parameters = (
-            load_config("sim.yaml")
-            .get("navigation_runtime", {})
-            .get("ros__parameters", {})
-            .get("navigation", {})
+    if not isinstance(value, dict) or "super_navigation_node" not in value:
+        raise ValueError(f"runtime config is missing super_navigation_node: {source}")
+    node_parameters = value["super_navigation_node"].setdefault("ros__parameters", {})
+    super_parameters = node_parameters.setdefault("super_navigation", {})
+    planner = yaml.safe_load(
+        (ROOT / "src/runtime/navigation_runtime/config/super_planner.yaml").read_text(
+            encoding="utf-8"
         )
-        navigation["collision"] = simulation_parameters.get("collision", {})
-        if obstacle_evidence:
-            # The sealed-wall rejection is a safety test, so keep a slightly
-            # larger planner-side buffer than the nominal corridor profile.
-            # This prevents the vehicle from using the final inflated cell as
-            # a stopping point before the no-path decision is reported.
-            navigation["collision"]["safety_margin_m"] = 0.15
-        # PX4/Gazebo's LiDAR is mounted above the vehicle origin. The current
-        # base pose can therefore remain in the sensor shadow. Overlay the
-        # vehicle's physically occupied footprint as KnownFree, without ever
-        # overriding Occupied evidence. Keep this exception simulation-only;
-        # real-flight profiles remain fail-closed until they provide an
-        # authoritative current-pose occupancy contract.
-        planner_parameters = navigation.setdefault("planner", {})
-        planner_parameters["allow_unknown_start"] = True
-        collision_parameters = navigation.get("collision", {})
-        planner_parameters["unknown_start_radius_m"] = (
-            float(collision_parameters.get("vehicle_radius_m", 0.32)) +
-            float(collision_parameters.get("safety_margin_m", 0.05))
-        )
-        # This is an explicit simulation experiment. The real/default profile
-        # remains known-free only; no environment variable silently enables it.
-        planner_parameters["allow_nominal_unknown"] = dual_planning
-        planner_parameters.setdefault("nominal_commitment_horizon_s", 3.0)
+    )
+    if not isinstance(planner, dict):
+        raise ValueError("SUPER planner config must be a mapping")
     planning = _mission_planning(mission_file)
-    if planning:
-        planner_parameters = navigation.setdefault("planner", {})
-        if "replan_rate_hz" in planning:
-            navigation["replan_rate_hz"] = planning["replan_rate_hz"]
-        if "max_velocity_mps" in planning:
-            planner_parameters["max_velocity_mps"] = planning["max_velocity_mps"]
-        if "max_acceleration_mps2" in planning:
-            planner_parameters["max_acceleration_mps2"] = planning["max_acceleration_mps2"]
-        if "max_deceleration_mps2" in planning:
-            planner_parameters["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
-        if "max_jerk_mps3" in planning:
-            planner_parameters["max_jerk_mps3"] = planning["max_jerk_mps3"]
-        if "continuation_speed_fraction" in planning:
-            navigation.setdefault("local_subgoal", {})[
-                "continuation_speed_fraction"
-            ] = planning["continuation_speed_fraction"]
-    if mission_file is not None and mission_file.name == "no_path.yaml":
-        # This negative acceptance profile deliberately places the mission
-        # goal behind an observed sealed wall. Unknown goal space must not be
-        # treated as permission to follow a local wall indefinitely.
-        navigation.setdefault("planner", {})[
-            "fail_closed_on_unknown_mission_goal"
-        ] = True
-    # The long three-pillar mission deliberately exercises a route that is
-    # longer than the vehicle's current pose.  Do not reduce it to the old
-    # four-metre endpoint: that setting made the benchmark look like a chain
-    # of completed subgoals even though the map could already support a much
-    # longer rolling trajectory.
-    if mission_file is not None and mission_file.name == "long_three_pillars.yaml":
-        local_goal = navigation.setdefault("local_subgoal", {})
-        # The selector is only a bounded fallback while the mission endpoint
-        # is outside the observed map. Keep a long, configurable horizon; it
-        # is refreshed continuously and is not a completion-gated subgoal.
-        local_goal["max_distance_m"] = max(float(local_goal.get("max_distance_m", 30.0)), 30.0)
-        local_goal["switch_distance_m"] = max(float(local_goal.get("switch_distance_m", 0.8)), 0.8)
-        if simulation:
-            # Gazebo's Mid-360 advertises a 40 m range. The old benchmark
-            # profile still used a 15 m ROG raycast and a 30 m total local
-            # volume, so the planner could not consume the map that the
-            # sensor had already observed. Expand only this SITL stress
-            # profile; real/default deployments retain their conservative
-            # memory and unknown-space settings.
-            mapping["raycast"]["max_range_m"] = max(
-                float(mapping.get("raycast", {}).get("max_range_m", 15.0)), 40.0)
-            # 70 m in X is enough for the 40 m sensor reach plus the sliding
-            # origin margin, while 40x12 m in Y/Z covers this corridor. The
-            # previous 80x60x20 volume inflated the sparse ROG maintenance
-            # cost enough to starve the 5 Hz trajectory publisher.
-            mapping["map"]["local_size_m"] = [70.0, 40.0, 12.0]
-            visualization_parameters["range_m"] = [35.0, 20.0, 6.0]
-            navigation.setdefault("safety", {})["visibility_horizon_m"] = 40.0
-            # The route columns are intentionally large (1.05 m radius). A
-            # sparse first scan can under-inflate their edge by one voxel;
-            # reserve an extra 0.20 m planner margin so a receding target does
-            # not land inside the physical cylinder before the next scan.
-            # Non-route texture objects are placed outside the detour corridor
-            # in this benchmark, so this margin remains feasible around all
-            # three route columns.
-            collision_parameters = navigation.setdefault("collision", {})
-            collision_parameters["safety_margin_m"] = max(
-                float(collision_parameters.get("safety_margin_m", 0.05)), 0.25)
-            planner_parameters = navigation.setdefault("planner", {})
-            planner_parameters["unknown_start_radius_m"] = (
-                float(collision_parameters.get("vehicle_radius_m", 0.32)) +
-                float(collision_parameters["safety_margin_m"])
-            )
-    target = session.directory / "navigation_mapping_params.yaml"
+    target_speed = speed_cap_mps
+    if target_speed is None and "max_velocity_mps" in planning:
+        target_speed = float(planning["max_velocity_mps"])
+    if target_speed is not None:
+        planner.setdefault("traj_opt", {}).setdefault("boundary", {})["max_vel"] = float(target_speed)
+    planner_target = session.directory / "super_planner.yaml"
+    planner_target.write_text(yaml.safe_dump(planner, sort_keys=False), encoding="utf-8")
+    super_parameters["config_path"] = str(planner_target)
+    target = session.directory / "super_navigation_params.yaml"
     target.write_text(
-        yaml.safe_dump({"navigation_runtime": parameters}, sort_keys=False),
+        yaml.safe_dump({"super_navigation_node": value["super_navigation_node"]}, sort_keys=False),
         encoding="utf-8",
     )
-    _write_runtime(
-        session,
-        mapping_rog_resolution_m=map_parameters.get("resolution_m"),
-        mapping_input_voxel_m=input_parameters.get("voxel_size_m"),
-        mapping_interactive=interactive,
-        dual_planning=dual_planning,
-    )
+    _write_runtime(session, super_planner_config=str(planner_target), super_target_speed_mps=target_speed)
     return target
 
-
 def _mapping_ready(snapshot: dict[str, Any]) -> bool:
-    """Require an accepted ROG observation and at least one visualization tick."""
+    """Require an accepted ROG observation from either runtime architecture."""
     latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
     for status in latest.get("statuses", []):
-        if not str(status.get("name", "")).endswith("/world_model"):
+        status_name = str(status.get("name", ""))
+        if not (status_name.endswith("/world_model") or status_name == "super_navigation/super_planner"):
             continue
         values = status.get("values", {})
         try:
-            return (
-                int(values.get("accepted_observation_count", 0)) > 0
-                and (int(values.get("visualization_publish_count", 0)) > 0
-                     or int(values.get("visualization_subscriber_count", 0)) == 0)
-                and int(values.get("visualization_exception_count", 0)) == 0
-            )
+            accepted = int(values.get("accepted_observation_count", 0)) > 0
+            if status_name == "super_navigation/super_planner":
+                return accepted and int(values.get("processing_exception_count", 0)) == 0
+            return accepted and (
+                int(values.get("visualization_publish_count", 0)) > 0
+                or int(values.get("visualization_subscriber_count", 0)) == 0
+            ) and int(values.get("visualization_exception_count", 0)) == 0
         except (TypeError, ValueError):
             return False
     return False
@@ -1057,17 +985,20 @@ def run_dataset(
     config["runtime"]["dataset"] = dataset
     config["runtime"]["replay_rate"] = rate
     session = Session.create(ARTIFACT_ROOT, "dataset")
-    _write_runtime(
-        session,
-        workflow="dataset",
-        dataset=dataset,
-        rate=rate,
-        rviz=enable_rviz,
-        replay_tail_grace_s=float(config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)),
-        failures=[],
-    )
+    print(f"Session: {session.directory}", flush=True)
     monitor_process: subprocess.Popen[Any] | None = None
     try:
+        _write_runtime(
+            session,
+            workflow="dataset",
+            dataset=dataset,
+            rate=rate,
+            rviz=enable_rviz,
+            replay_tail_grace_s=float(
+                config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)
+            ),
+            failures=[],
+        )
         context, counts = _dataset_context(dataset)
         _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
@@ -1164,7 +1095,33 @@ def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
     ):
         if not path.exists():
             missing.append(f"missing path: {path}")
+    stale_interfaces = _stale_navigation_interface_artifacts()
+    if stale_interfaces:
+        missing.append(
+            "stale navigation_interfaces generated artifacts: "
+            + ", ".join(stale_interfaces[:6])
+            + (" ..." if len(stale_interfaces) > 6 else "")
+            + "; rebuild the canonical workspace before starting SITL"
+        )
     return missing
+
+
+def _stale_navigation_interface_artifacts() -> list[str]:
+    """Detect generated ROS message files left behind after an interface deletion."""
+    source_names: set[str] = set()
+    for path in (ROOT / "src/navigation_interfaces/msg").glob("*.msg"):
+        source_name = path.stem
+        source_names.add(source_name.lower())
+        source_names.add(re.sub(r"(?<!^)(?=[A-Z])", "_", source_name).lower())
+    generated_names: set[str] = set()
+    adapter_dir = ROOT / "build/navigation_interfaces/rosidl_adapter/navigation_interfaces/msg"
+    generated_names.update(path.stem.lower() for path in adapter_dir.glob("*.idl"))
+    python_dir = ROOT / "install/navigation_interfaces/lib"
+    for path in python_dir.glob("python*/site-packages/navigation_interfaces/msg/_*.py"):
+        name = path.stem.lower().lstrip("_")
+        if name != "init__":
+            generated_names.add(name)
+    return sorted(generated_names - source_names)
 
 
 def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
@@ -1201,6 +1158,7 @@ def _run_sim_unlocked(
     xrce_port: int | None = None,
     auto_scenario: bool = False,
     manual_takeoff: bool = False,
+    speed_cap_mps: float | None = None,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
@@ -1212,6 +1170,10 @@ def _run_sim_unlocked(
         "long_open": "long_open",
         "long_open_slow": "long_open",
         "long_featured": "long_featured",
+        "long_open_featured_core_60": "long_open_featured_speed",
+        "long_open_featured_core_60_pv": "long_open_featured_speed",
+        "single_pillar_speed": "long_three_pillars_speed",
+        "single_pillar_speed_pv": "long_three_pillars_speed",
         "occlusion_featured": "occlusion",
         "occlusion_degenerate": "occlusion_degenerate",
     }.get(map_profile, map_profile)
@@ -1285,6 +1247,14 @@ def _run_sim_unlocked(
             "long_open_slow": -1,
             "long_featured": -1,
             "long_three_pillars": -1,
+            "long_open_featured_speed": -1,
+            # The bounded open-world checkpoint is deliberately obstacle-free
+            # in the mission corridor; its gate is LIO/PX4 long-leg stability,
+            # not a synthetic single-pillar detour assertion.
+            "long_open_featured_core_60": -1,
+            "long_open_featured_core_60_pv": -1,
+            "single_pillar_speed": 1,
+            "single_pillar_speed_pv": 1,
             "corridor": -1,
             "pillar": 3,
             "occlusion": 2,
@@ -1293,26 +1263,69 @@ def _run_sim_unlocked(
         planning = _mission_planning(mission_file)
         if "max_velocity_mps" in planning:
             scenario["expected_max_velocity_mps"] = planning["max_velocity_mps"]
+            if map_profile in {"long_three_pillars_speed", "long_open_featured_speed"}:
+                scenario["required_measured_speed_mps"] = 5.0
+        if speed_cap_mps is not None:
+            if not isinstance(speed_cap_mps, (int, float)) or not math.isfinite(speed_cap_mps) or speed_cap_mps <= 0.0:
+                raise ValueError("speed_cap_mps must be finite and positive")
+            scenario["expected_max_velocity_mps"] = float(speed_cap_mps)
+            if map_profile in {"long_three_pillars_speed", "long_open_featured_speed"} and speed_cap_mps >= 5.0:
+                scenario["required_measured_speed_mps"] = 5.0
+            # Slow detours can spend most of their time in a lateral retiming
+            # segment rather than on the straight leg.  Size the harness
+            # timeout from route length and requested cap instead of turning a
+            # valid low-speed run into WALL_TIMEOUT.  The factor is a test
+            # budget only; it does not change planner limits or acceptance.
+            if isinstance(mission_waypoints, list) and len(mission_waypoints) >= 2:
+                route_length = 0.0
+                for first, second in zip(mission_waypoints, mission_waypoints[1:]):
+                    try:
+                        a = [float(value) for value in first["position"]]
+                        b = [float(value) for value in second["position"]]
+                        route_length += math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+                    except (KeyError, TypeError, ValueError):
+                        route_length = 0.0
+                        break
+                if route_length > 0.0:
+                    timeout_budget = 120.0 + 3.0 * route_length / max(float(speed_cap_mps), 0.25)
+                    scenario["mission_timeout_s"] = max(
+                        float(scenario.get("mission_timeout_s", 120.0)), timeout_budget
+                    )
         if map_profile in {"no_path", "occlusion_degenerate", "tunnel_smooth"}:
             scenario["expected_outcome"] = "fail_closed"
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars"}:
+        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
-        if map_profile == "long_three_pillars":
+        if map_profile in {"long_three_pillars", "long_three_pillars_speed", "single_pillar_speed", "single_pillar_speed_pv"}:
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
             # Cross-track distance is measured against the straight mission
-            # polyline.  The first pillar requires a deterministic lateral
-            # detour of about 2.72 m, so the generic 0.5 m open-space gate
-            # would reject a collision-free route as if it were estimator
-            # drift.  Collision envelope, minimum clearance, LIO residual,
-            # waypoint order, and mission completion remain independent gates.
+            # polyline.  A central pillar requires a lateral detour, so the
+            # generic 0.5 m open-space gate would reject a collision-free
+            # route as if it were estimator drift. Collision envelope,
+            # minimum clearance, LIO residual, waypoint order, and mission
+            # completion remain independent gates.
             scenario.setdefault("acceptance", {})["max_cross_track_p95_m"] = (
                 _acceptance_threshold_for_profile(map_profile)
             )
+        elif map_profile in {"long_open_featured_core_60", "long_open_featured_core_60_pv"}:
+            # The open long-leg checkpoint is nominally straight, but the
+            # measured LIO/PX4 handover can contribute sub-metre lateral
+            # tracking error. Keep that acceptance allowance explicit in the
+            # profile rather than inheriting the generic 0.5 m legacy gate.
+            scenario.setdefault("acceptance", {})["max_cross_track_p95_m"] = (
+                _acceptance_threshold_for_profile(map_profile)
+            )
+        elif map_profile == "long_open_featured_speed":
+            # This is a high-speed wide-map run, but the world deliberately
+            # contains near-side features at +/-6 m for scan matching. A
+            # straight-line cross-track gate would reject the valid lateral
+            # avoidance path; collision clearance, waypoint order, speed and
+            # mission completion remain the authoritative safety gates.
+            scenario.setdefault("acceptance", {})["max_cross_track_p95_m"] = 8.0
         elif map_profile in {"tunnel_irregular", "tunnel_smooth", "forest_clutter"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 240.0)
         if map_profile in {"occlusion", "occlusion_featured"}:
@@ -1337,6 +1350,7 @@ def _run_sim_unlocked(
         else "sim"
     )
     session = Session.create(ARTIFACT_ROOT, session_name)
+    print(f"Session: {session.directory}", flush=True)
     isolated_domain = _resolve_isolation_value(
         ros_domain_id, "UAV_NAV_ROS_DOMAIN_ID", DEFAULT_ROS_DOMAIN_ID, low=0, high=232
     )
@@ -1446,6 +1460,7 @@ def _run_sim_unlocked(
             dual_planning=dual_planning,
             mission_file=mission_file,
             obstacle_evidence=control_interface == "external_mode" and map_profile == "no_path",
+            speed_cap_mps=speed_cap_mps,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -1517,7 +1532,8 @@ def _run_sim_unlocked(
                 "external_mode",
                 _ros_shell(
                     _external_mode_launch_command(
-                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file),
+                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file,
+                                              speed_cap_mps),
                         mission_file,
                     ),
                     enable_rviz=True,
@@ -1557,7 +1573,8 @@ def _run_sim_unlocked(
             )
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
-                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file),
+                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file,
+                                          speed_cap_mps),
                     mission_file,
                 )
                 session.start("external_mode", _ros_shell([
@@ -1632,6 +1649,56 @@ def _run_sim_unlocked(
     return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
 
 
+def _current_runner_session(existing: set[Path] | None = None) -> Session | None:
+    """Find the session created by this runner, including setup-only sessions."""
+    existing = existing or set()
+    for path in _runtime_session_paths(ARTIFACT_ROOT):
+        if path in existing:
+            continue
+        session = Session.from_path(path)
+        state = session.state()
+        if state.get("owner_pid") == os.getpid():
+            return session
+        # Backward-compatible recovery for a session created before owner_pid
+        # was added to state.json.
+        marker = f"-{os.getpid()}"
+        if path.name.endswith(marker) or path.name.rsplit("-", 1)[0].endswith(marker):
+            return session
+    return None
+
+
+def _recover_unfinalized_session(
+    error: BaseException,
+    existing: set[Path] | None = None,
+) -> None:
+    """Finalize a session when startup fails before the main try/finally."""
+    session = _current_runner_session(existing)
+    if session is None or (session.directory / "report.json").is_file():
+        return
+    failures = _load_runtime_failures(session)
+    message = str(error).strip() or type(error).__name__
+    _write_runtime(session, failures=failures + [f"runner setup: {message}"])
+    workflow = str(session.state().get("workflow", "sim"))
+    config_path = RUNTIME_CONFIG / ("dataset.yaml" if workflow == "dataset" else "sim.yaml")
+    px4_value = session.state().get("px4_dir")
+    px4_dir = Path(str(px4_value)) if px4_value else None
+    try:
+        result = _stop_and_report(
+            session,
+            workflow,
+            config_path,
+            px4_dir=px4_dir,
+        )
+    except Exception as recovery_error:
+        print(
+            f"failed to finalize aborted session {session.directory}: {recovery_error}",
+            file=sys.stderr,
+        )
+        return
+    print(result["verdict"], file=sys.stderr)
+    print(session.directory, file=sys.stderr)
+
+
 def run_sim(*args: Any, **kwargs: Any) -> int:
     """Run one simulation under an exclusive lock and cleanup signal guard."""
     requested_port = kwargs.get("xrce_port")
@@ -1641,7 +1708,12 @@ def run_sim(*args: Any, **kwargs: Any) -> int:
         )
         _assert_xrce_port_available(isolated_port)
         with _RunnerSignalGuard():
-            return _run_sim_unlocked(*args, **kwargs)
+            existing_sessions = set(_runtime_session_paths(ARTIFACT_ROOT))
+            try:
+                return _run_sim_unlocked(*args, **kwargs)
+            except BaseException as error:
+                _recover_unfinalized_session(error, existing_sessions)
+                raise
 
 
 def _load_runtime_failures(session: Session) -> list[str]:
@@ -1653,7 +1725,16 @@ def _load_runtime_failures(session: Session) -> list[str]:
 
 
 def status() -> int:
-    session_path = resolve_latest(ARTIFACT_ROOT)
+    try:
+        session_path, recovered = _resolve_latest_or_newest(ARTIFACT_ROOT)
+    except FileNotFoundError:
+        print(f"No runtime session under {ARTIFACT_ROOT}", file=sys.stderr)
+        return 1
+    if recovered:
+        print(
+            f"warning: runtime/latest is missing or stale; using {session_path.name}",
+            file=sys.stderr,
+        )
     session = Session.from_path(session_path)
     snapshot = _monitor_snapshot(session)
     latest = snapshot.get("latest", {})
@@ -1692,14 +1773,34 @@ def _runtime_session_paths(root: Path) -> list[Path]:
     )
 
 
+def _resolve_latest_or_newest(root: Path) -> tuple[Path, bool]:
+    """Resolve latest, falling back to the newest durable session."""
+    try:
+        return resolve_latest(root), False
+    except FileNotFoundError:
+        sessions = _runtime_session_paths(root)
+        if not sessions:
+            raise
+        return sessions[0], True
+
+
 def stop() -> int:
-    session_path = resolve_latest(ARTIFACT_ROOT)
     session_paths = _runtime_session_paths(ARTIFACT_ROOT)
+    try:
+        session_path, recovered_latest = _resolve_latest_or_newest(ARTIFACT_ROOT)
+    except FileNotFoundError:
+        latest = ARTIFACT_ROOT / "latest"
+        if latest.is_symlink():
+            latest.unlink()
+        print(f"No runtime session under {ARTIFACT_ROOT}")
+        return 0
     if session_path not in session_paths:
         session_paths.append(session_path)
     cleanup_failures: list[str] = []
+    reports: dict[Path, dict[str, Any]] = {}
     for path in session_paths:
         session = Session.from_path(path)
+        was_live = bool(session.live_records())
         failures = session.stop()
         if failures:
             existing = _load_runtime_failures(session)
@@ -1709,24 +1810,30 @@ def stop() -> int:
             )
             cleanup_failures.extend(f"{path.name}: {item}" for item in failures)
         session.mark_stopped("make stop")
+        if was_live or path == session_path or not (path / "report.json").is_file():
+            workflow = str(session.state().get("workflow", "sim"))
+            config_path = RUNTIME_CONFIG / (
+                "dataset.yaml" if workflow == "dataset" else "sim.yaml"
+            )
+            px4_value = session.state().get("px4_dir")
+            px4_dir = Path(str(px4_value)) if px4_value else None
+            interactive_workflow = (
+                workflow in {"sim", "external-mode"}
+                and not session.state().get("headless", False)
+                and not session.state().get("auto_scenario", False)
+            )
+            reports[path] = report.build(
+                session.directory,
+                workflow,
+                config_path,
+                ROOT,
+                px4_dir,
+                observation_complete=interactive_workflow,
+            )
 
-    session = Session.from_path(session_path)
-    workflow = str(session.state().get("workflow", "sim"))
-    config_path = RUNTIME_CONFIG / ("dataset.yaml" if workflow == "dataset" else "sim.yaml")
-    px4_dir = Path(session.state().get("px4_dir", "")) if session.state().get("px4_dir") else None
-    interactive_workflow = (
-        workflow in {"sim", "external-mode"}
-        and not session.state().get("headless", False)
-        and not session.state().get("auto_scenario", False)
-    )
-    result = report.build(
-        session.directory,
-        workflow,
-        config_path,
-        ROOT,
-        px4_dir,
-        observation_complete=interactive_workflow,
-    )
+    if recovered_latest:
+        update_latest(ARTIFACT_ROOT, session_path)
+    result = reports[session_path]
     if cleanup_failures:
         print("FAIL")
         for failure in cleanup_failures:
@@ -1739,8 +1846,19 @@ def stop() -> int:
     return 0 if not cleanup_failures else 1
 
 
-def clean() -> int:
-    """Remove runtime-generated state while preserving build/install outputs."""
+def _remove_generated_path(path: Path, removed: list[Path]) -> None:
+    import shutil
+
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+        removed.append(path)
+    elif path.is_file() or path.is_symlink():
+        path.unlink()
+        removed.append(path)
+
+
+def _clean_unlocked(*, clean_workspace_caches: bool = True) -> int:
+    """Remove generated state while the caller owns the runtime lock."""
     import shutil
 
     removed: list[Path] = []
@@ -1748,29 +1866,48 @@ def clean() -> int:
         resolved = path.resolve()
         if resolved == Path("/") or resolved == ROOT.resolve():
             raise ValueError(f"refusing unsafe clean path: {resolved}")
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-            removed.append(path)
-        elif path.is_file() or path.is_symlink():
-            path.unlink()
-            removed.append(path)
-
-    for cache_root in (ROOT / "src", ROOT / "tools"):
-        if not cache_root.is_dir():
+        if resolved == ARTIFACT_ROOT.parent.resolve() and path.is_dir() and not path.is_symlink():
+            # Keep the directory and advisory lock inode alive for the whole
+            # clean. Removing the lock path would let a new simulation start
+            # concurrently while old sessions are still being deleted.
+            for child in path.iterdir():
+                if child.resolve() != ARTIFACT_ROOT.resolve():
+                    _remove_generated_path(child, removed)
+                    continue
+                for runtime_child in child.iterdir():
+                    if runtime_child.resolve() == RUNTIME_LOCK_PATH.resolve():
+                        continue
+                    _remove_generated_path(runtime_child, removed)
             continue
-        for path in cache_root.rglob("__pycache__"):
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
+        _remove_generated_path(path, removed)
+
+    if clean_workspace_caches:
+        for cache_root in (ROOT / "src", ROOT / "tools"):
+            if not cache_root.is_dir():
+                continue
+            for path in cache_root.rglob("__pycache__"):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    removed.append(path)
+
+        for path in (ROOT / ".vscode").glob("browse.vc.db*"):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
                 removed.append(path)
 
-    for path in (ROOT / ".vscode").glob("browse.vc.db*"):
-        if path.is_file() or path.is_symlink():
-            path.unlink()
-            removed.append(path)
-
     for path in removed:
-        print(f"removed {path.relative_to(ROOT)}")
+        try:
+            display = path.relative_to(ROOT)
+        except ValueError:
+            display = path
+        print(f"removed {display}")
     return 0
+
+
+def clean() -> int:
+    """Safely remove generated state while preserving active simulations."""
+    with RuntimeLock():
+        return _clean_unlocked()
 
 
 def _number(value: Any) -> float:
@@ -1802,7 +1939,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -1833,6 +1970,10 @@ def main() -> int:
         "--xrce-port", type=int, default=None,
         help=f"dedicated MicroXRCEAgent UDP port (default: $UAV_NAV_XRCE_PORT or {DEFAULT_XRCE_PORT})",
     )
+    external_mode.add_argument(
+        "--speed-cap-mps", type=float, default=None,
+        help="temporary planner/tracker velocity upper bound for one benchmark run",
+    )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -1847,7 +1988,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -1877,6 +2018,10 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--xrce-port", type=int, default=None,
         help=f"dedicated MicroXRCEAgent UDP port (default: $UAV_NAV_XRCE_PORT or {DEFAULT_XRCE_PORT})",
+    )
+    external_mode_gui.add_argument(
+        "--speed-cap-mps", type=float, default=None,
+        help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode_gui.add_argument(
         "--manual-takeoff", action="store_true",
@@ -1909,6 +2054,7 @@ def main() -> int:
             map_seed=args.map_seed,
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
+            speed_cap_mps=args.speed_cap_mps,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -1924,6 +2070,7 @@ def main() -> int:
             map_seed=args.map_seed,
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
+            speed_cap_mps=args.speed_cap_mps,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
         )

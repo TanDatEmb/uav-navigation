@@ -77,6 +77,30 @@ TEST(MissionLoader, LoadsCompatibleControlContract) {
             px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
 }
 
+TEST(MissionLoader, AcceptsRuntimeRouteGuidePlanningMetadata) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: route_guide_metadata
+  frame: lio_odom
+  waypoints:
+    - {id: start, position: [0.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [10.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+  planning:
+    route_guide_enabled: true
+    route_guide_sample_spacing_m: 0.5
+    route_guide_collision_sample_spacing_m: 0.2
+    route_guide_lateral_offset_m: 3.6
+    route_guide_lateral_transition_m: 3.0
+    unknown_policy: blocked
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  EXPECT_TRUE(mission.planning.route_guide_enabled);
+  EXPECT_DOUBLE_EQ(mission.planning.route_guide_sample_spacing_m, 0.5);
+  EXPECT_DOUBLE_EQ(mission.planning.route_guide_lateral_offset_m, 3.6);
+}
+
 TEST(MissionLoader, DefaultsIntermediateWaypointToPassThrough) {
   const auto path = writeMission(R"yaml(
 mission:
@@ -145,7 +169,7 @@ TEST(MissionController, PublishesWaypointsAndCompletesWithoutFlightActions) {
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
 
-  event = controller.update(0.2, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+  event = controller.update(0.3, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
                             Eigen::Vector3d::Zero());
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(event, 0U);
@@ -176,6 +200,32 @@ TEST(MissionController, WaitsForAirborneBeforePublishingMissionGoal) {
             px4_navigation_external_mode::MissionControllerEvent::Type::None);
   EXPECT_EQ(controller.update(0.0, std::nullopt, true).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+}
+
+TEST(MissionController, NativeTrajectoryReadySurvivesAirborneTransitionRace) {
+  const auto path = writeMission(kValidMission);
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  EXPECT_EQ(controller.update(0.0, std::nullopt, false).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  ASSERT_EQ(controller.update(0.0, std::nullopt, true).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  // The native SUPER callback may arrive immediately after goal publication,
+  // before the next mission timer tick. It must not be ignored because the
+  // controller has only just crossed the airborne transition.
+  controller.onNativeTrajectoryReady();
+
+  auto event = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                 Eigen::Vector3d::Zero());
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+  EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  event = controller.update(0.3, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                            Eigen::Vector3d::Zero());
+  EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 0U);
 }
 
 TEST(MissionController, HighSpeedFlyThroughDoesNotCompleteWaypoint) {
@@ -533,6 +583,70 @@ TEST(MissionController, SafetyFallbackBrakesAndRequestsPositionControl) {
   EXPECT_EQ(handover.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Paused);
+}
+
+TEST(MissionController, SafetyStopGraceAllowsRollingRouteReplacement) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: safety_replan_grace
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+  control:
+    safety_stop_replan_grace_s: 2.0
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 1U, 2U, 0.0, 0.2);
+  EXPECT_EQ(controller.update(0.3, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.update(1.0, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Braking);
+
+  // A verified route arriving during the grace window resumes execution
+  // instead of handing the vehicle to POSCTL.
+  controller.onTrajectory(true, 1U, 1U, 1.1, 0.8);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+  EXPECT_EQ(controller.update(1.2, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+}
+
+TEST(MissionController, SafetyStopGraceStillFailsClosedAfterTimeout) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: safety_replan_grace_timeout
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    safety_stop_replan_grace_s: 1.0
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 1U, 2U, 0.0, 0.2);
+  EXPECT_EQ(controller.update(0.4, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.update(1.5, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
 }
 
 TEST(MissionController, BrakingWaitsForTrajectoryEndBeforeConfirmation) {

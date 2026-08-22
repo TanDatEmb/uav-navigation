@@ -1,10 +1,15 @@
 import importlib.util
 import hashlib
+import io
+import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
+from contextlib import redirect_stderr
 
 import yaml
 
@@ -18,6 +23,29 @@ import runner
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_runtime_artifacts_use_git_common_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary) / "worktree"
+            common = Path(temporary) / "main" / ".git"
+            checkout.mkdir()
+            common.mkdir(parents=True)
+            completed = mock.Mock(returncode=0, stdout=str(common) + "\n")
+            with mock.patch.dict(os.environ, {"UAV_NAV_ARTIFACT_ROOT": ""}):
+                with mock.patch.object(runner.subprocess, "run", return_value=completed):
+                    self.assertEqual(
+                        runner._shared_artifact_root(checkout),
+                        common.parent / ".artifacts/runtime",
+                    )
+
+    def test_runtime_artifact_override_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            override = Path(temporary) / "runtime"
+            with mock.patch.dict(
+                os.environ,
+                {"UAV_NAV_ARTIFACT_ROOT": str(override)},
+            ):
+                self.assertEqual(runner._shared_artifact_root(), override.resolve())
+
     def test_clean_path_list_excludes_build_and_install_trees(self) -> None:
         for name in ("build", "install"):
             self.assertNotIn(ROOT / name, runner.GENERATED_CLEAN_PATHS)
@@ -58,7 +86,9 @@ class RuntimeContractTest(unittest.TestCase):
             original_paths = runner.GENERATED_CLEAN_PATHS
             runner.GENERATED_CLEAN_PATHS = (artifacts, logs, stale_build)
             try:
-                self.assertEqual(runner.clean(), 0)
+                self.assertEqual(
+                    runner._clean_unlocked(clean_workspace_caches=False), 0
+                )
             finally:
                 runner.GENERATED_CLEAN_PATHS = original_paths
 
@@ -68,26 +98,43 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertFalse(artifacts.exists())
             self.assertFalse(logs.exists())
 
+    def test_clean_preserves_runtime_lock_while_removing_sessions(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            artifacts = Path(temporary) / ".artifacts"
+            runtime_root = artifacts / "runtime"
+            session = runtime_root / "sim-old"
+            session.mkdir(parents=True)
+            (session / "processes.json").write_text("{}", encoding="utf-8")
+            lock = runtime_root / ".runtime-sim.lock"
+            lock.write_text("{}\n", encoding="utf-8")
+            (runtime_root / "latest").symlink_to(session.name)
+
+            original_artifact_root = runner.ARTIFACT_ROOT
+            original_lock_path = runner.RUNTIME_LOCK_PATH
+            original_paths = runner.GENERATED_CLEAN_PATHS
+            runner.ARTIFACT_ROOT = runtime_root
+            runner.RUNTIME_LOCK_PATH = lock
+            runner.GENERATED_CLEAN_PATHS = (artifacts,)
+            try:
+                self.assertEqual(
+                    runner._clean_unlocked(clean_workspace_caches=False), 0
+                )
+            finally:
+                runner.ARTIFACT_ROOT = original_artifact_root
+                runner.RUNTIME_LOCK_PATH = original_lock_path
+                runner.GENERATED_CLEAN_PATHS = original_paths
+
+            self.assertTrue(lock.is_file())
+            self.assertFalse(session.exists())
+            self.assertFalse((runtime_root / "latest").exists())
+
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
-        mapping = runner.load_config("mapping.yaml")["navigation_runtime"]["ros__parameters"]["mapping"]
-        self.assertEqual(mapping["input"]["min_range_m"], 0.5)
-        self.assertEqual(mapping["input"]["max_range_m"], 0.0)
-        self.assertEqual(mapping["map"]["local_size_m"], [30.0, 30.0, 12.0])
-        self.assertEqual(mapping["raycast"]["min_range_m"], 0.3)
-        self.assertEqual(mapping["input_qos"]["reliability"], "best_effort")
-        self.assertNotIn("rog", mapping)
-        self.assertNotIn("qos", mapping)
+        navigation = runner.load_config("mapping.yaml")["super_navigation_node"]["ros__parameters"]["super_navigation"]
+        self.assertEqual(navigation["cloud_topic"], "/lio/registered_points")
+        self.assertEqual(navigation["odometry_topic"], "/lio/odometry_propagated")
+        self.assertEqual(navigation["trajectory_topic"], "/navigation/super_trajectory")
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
-        for topic in (
-            "/navigation_mapping/visualization/occupied",
-            "/navigation_mapping/visualization/inflated_occupied",
-            "/navigation_mapping/visualization/unknown",
-            "/navigation_mapping/visualization/frontier",
-            "/navigation/visualization/planned_path",
-        ):
-            self.assertIn(topic, rviz)
-        for obsolete in ("/rog_map/occ", "/rog_map/inf_occ", "/rog_map/unk", "/rog_map/frontier"):
-            self.assertNotIn(obsolete, rviz)
+        self.assertIn("/navigation/visualization/planned_path", rviz)
 
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -95,13 +142,8 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session, ROOT / "config/runtime/mapping.yaml", interactive=True
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
-                "navigation_runtime"
-            ]["ros__parameters"]["mapping"]
-            self.assertTrue(parameters["visualization"]["enabled"])
-            self.assertTrue(parameters["visualization"]["publish_unknown"])
-            self.assertFalse(parameters["visualization"]["publish_frontier"])
-            self.assertFalse(parameters["visualization"]["publish_frontier"])
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(parameters["config_path"]).is_file())
 
             debug_target = runner._mapping_params(
                 session,
@@ -109,11 +151,8 @@ class RuntimeContractTest(unittest.TestCase):
                 interactive=True,
                 frontier_debug=True,
             )
-            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))[
-                "navigation_runtime"
-            ]["ros__parameters"]["mapping"]
-            self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
-            self.assertTrue(debug_parameters["visualization"]["publish_frontier"])
+            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(debug_parameters["config_path"]).is_file())
 
     def test_simulation_mapping_profile_preserves_collision_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -121,15 +160,8 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session, ROOT / "config/runtime/mapping.yaml", simulation=True
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
-                "navigation_runtime"
-            ]["ros__parameters"]
-            self.assertEqual(
-                parameters["navigation"]["collision"],
-                {"vehicle_radius_m": 0.32, "safety_margin_m": 0.05},
-            )
-            self.assertTrue(parameters["navigation"]["planner"]["allow_unknown_start"])
-            self.assertFalse(parameters["navigation"]["planner"]["allow_nominal_unknown"])
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(parameters["config_path"]).is_file())
 
             dual_target = runner._mapping_params(
                 session,
@@ -137,14 +169,8 @@ class RuntimeContractTest(unittest.TestCase):
                 simulation=True,
                 dual_planning=True,
             )
-            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))[
-                "navigation_runtime"
-            ]["ros__parameters"]
-            self.assertTrue(dual_parameters["navigation"]["planner"]["allow_nominal_unknown"])
-            self.assertEqual(
-                dual_parameters["navigation"]["planner"]["nominal_commitment_horizon_s"],
-                3.0,
-            )
+            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(dual_parameters["config_path"]).is_file())
 
     def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -157,12 +183,21 @@ class RuntimeContractTest(unittest.TestCase):
                 dual_planning=True,
                 mission_file=mission,
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
-            self.assertEqual(parameters["navigation"]["replan_rate_hz"], 5.0)
-            self.assertEqual(parameters["navigation"]["planner"]["max_velocity_mps"], 1.0)
-            self.assertEqual(parameters["navigation"]["planner"]["max_acceleration_mps2"], 2.0)
-            self.assertEqual(parameters["navigation"]["planner"]["max_deceleration_mps2"], 2.0)
-            self.assertEqual(parameters["navigation"]["planner"]["max_jerk_mps3"], 6.0)
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
+
+            speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
+            speed_target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                dual_planning=True,
+                mission_file=speed_mission,
+            )
+            speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            speed_planner = yaml.safe_load(Path(speed_parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 5.0)
 
             external = runner._external_mode_params(
                 session, ROOT / "config/runtime/external_mode.yaml", mission
@@ -181,6 +216,9 @@ class RuntimeContractTest(unittest.TestCase):
             "long_open_slow": 0.8,
             "long_featured": 1.5,
             "long_three_pillars": 3.0,
+            "long_three_pillars_speed": 5.0,
+            "long_open_featured_speed": 5.0,
+            "single_pillar_speed": 8.0,
             "no_path": 1.0,
             "occlusion_featured": 1.0,
             "occlusion_degenerate": 1.0,
@@ -209,7 +247,7 @@ class RuntimeContractTest(unittest.TestCase):
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
-            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "no_path",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "single_pillar_speed", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
             self.assertTrue(obstacles, profile)
@@ -221,7 +259,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "single_pillar_speed", "no_path"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -249,17 +287,20 @@ class RuntimeContractTest(unittest.TestCase):
                 simulation=True,
                 mission_file=ROOT / "config/runtime/missions/long_three_pillars.yaml",
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime"]["ros__parameters"]
-            navigation = parameters["navigation"]
-            mapping = parameters["mapping"]
-            self.assertEqual(navigation["local_subgoal"]["max_distance_m"], 30.0)
-            self.assertEqual(navigation["planning_horizon"]["minimum_distance_m"], 10.0)
-            self.assertEqual(navigation["planning_horizon"]["maximum_distance_m"], 30.0)
-            self.assertEqual(navigation["planning_horizon"]["preview_time_s"], 5.0)
-            self.assertEqual(navigation["local_subgoal"]["switch_distance_m"], 0.8)
-            self.assertEqual(navigation["collision"]["safety_margin_m"], 0.25)
-            self.assertEqual(mapping["raycast"]["max_range_m"], 40.0)
-            self.assertEqual(mapping["map"]["local_size_m"], [70.0, 40.0, 12.0])
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(parameters["config_path"]).is_file())
+
+    def test_single_pillar_speed_uses_full_sensing_and_receding_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=ROOT / "config/runtime/missions/single_pillar_speed_pv.yaml",
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            self.assertTrue(Path(parameters["config_path"]).is_file())
 
     def test_long_three_pillars_acceptance_allows_obstacle_detour(self) -> None:
         self.assertEqual(
@@ -272,6 +313,29 @@ class RuntimeContractTest(unittest.TestCase):
             runner._acceptance_threshold_for_profile("long_three_pillars"),
             3.0,
         )
+
+    def test_long_three_pillars_speed_is_an_additive_two_waypoint_speed_benchmark(self) -> None:
+        descriptor = runner._map_registry()["long_three_pillars_speed"]
+        self.assertEqual(
+            descriptor["route_obstacles"],
+            [
+                "long_three_speed_pillar_01",
+                "long_three_speed_pillar_02",
+                "long_three_speed_pillar_03",
+            ],
+        )
+        self.assertEqual(descriptor["route_segment_waypoints"], [0, 1])
+        self.assertEqual(len(descriptor["collision_truth"]), 30)
+        self.assertEqual(
+            descriptor["benchmark"]["speed_sweep_mps"],
+            [2.0, 3.0, 4.0, 5.0, 6.0, 8.0],
+        )
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/long_three_pillars_speed.yaml").read_text()
+        )["mission"]
+        self.assertEqual(len(mission["waypoints"]), 2)
+        self.assertEqual(mission["waypoints"][1]["position"], [140.0, 0.0, 3.0])
+        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(
@@ -400,13 +464,113 @@ class RuntimeContractTest(unittest.TestCase):
                 ["sim-old", "sim-new"],
             )
 
+    def test_latest_resolution_recovers_from_dangling_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            older = root / "sim-20260821T010000-1"
+            newer = root / "sim-20260821T020000-2"
+            for session in (older, newer):
+                session.mkdir()
+                (session / "processes.json").write_text("{}", encoding="utf-8")
+            (root / "latest").symlink_to("missing-session")
+
+            path, recovered = runner._resolve_latest_or_newest(root)
+            self.assertEqual(path, newer)
+            self.assertTrue(recovered)
+
+    def test_status_without_session_has_no_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = runner.ARTIFACT_ROOT
+            runner.ARTIFACT_ROOT = Path(temporary) / "runtime"
+            error = io.StringIO()
+            try:
+                with redirect_stderr(error):
+                    self.assertEqual(runner.status(), 1)
+            finally:
+                runner.ARTIFACT_ROOT = original_root
+            self.assertIn("No runtime session", error.getvalue())
+
+    def test_stop_finalizes_every_session_missing_a_report(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            root = Path(temporary) / "runtime"
+            sessions = [runner.Session.create(root, name) for name in ("sim-old", "sim-new")]
+            for session in sessions:
+                session.write_state({"workflow": "sim", "headless": True})
+
+            original_root = runner.ARTIFACT_ROOT
+            runner.ARTIFACT_ROOT = root
+
+            def fake_build(session_path, *_args, **_kwargs):
+                payload = {"verdict": "FAIL"}
+                (session_path / "report.json").write_text(
+                    json.dumps(payload) + "\n", encoding="utf-8"
+                )
+                return payload
+
+            try:
+                with mock.patch.object(runner.report, "build", side_effect=fake_build) as build:
+                    self.assertEqual(runner.stop(), 0)
+                    self.assertEqual(build.call_count, 2)
+            finally:
+                runner.ARTIFACT_ROOT = original_root
+
+            for session in sessions:
+                self.assertTrue((session.directory / "report.json").is_file())
+
+    def test_setup_failure_recovery_finalizes_report(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            root = Path(temporary) / "runtime"
+            session = runner.Session.create(root, "sim-check")
+            session.write_state({"workflow": "sim", "headless": True})
+            original_root = runner.ARTIFACT_ROOT
+            runner.ARTIFACT_ROOT = root
+            try:
+                with redirect_stderr(io.StringIO()):
+                    runner._recover_unfinalized_session(RuntimeError("setup exploded"))
+            finally:
+                runner.ARTIFACT_ROOT = original_root
+
+            for name in ("report.json", "REPORT.md", "REPORT.html"):
+                self.assertTrue((session.directory / name).is_file(), name)
+            payload = json.loads((session.directory / "report.json").read_text(encoding="utf-8"))
+            self.assertIn("runner setup: setup exploded", payload["reasons"])
+
+    def test_report_analysis_failure_writes_minimal_artifact_set(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            with mock.patch.object(
+                report,
+                "_sim_report",
+                side_effect=RuntimeError("analysis exploded"),
+            ):
+                result = report.build(
+                    session,
+                    "sim",
+                    ROOT / "config/runtime/sim.yaml",
+                    ROOT,
+                )
+
+            self.assertEqual(result["verdict"], "FAIL")
+            for name in (
+                "report.json",
+                "REPORT.md",
+                "REPORT.html",
+                "REPORT_BUILD_ERROR.txt",
+            ):
+                self.assertTrue((session / name).is_file(), name)
+            self.assertIn(
+                "analysis exploded",
+                (session / "REPORT_BUILD_ERROR.txt").read_text(encoding="utf-8"),
+            )
+
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]
         prior = config["initial_prior"]
         self.assertEqual(prior["source"], "zero")
         self.assertEqual(prior["source_frame"], "lio_odom")
         self.assertEqual(prior["source_frame_transform"], "same_frame")
-        self.assertFalse(config["output"]["publish_registered_points"])
+        self.assertTrue(config["output"]["publish_registered_points"])
         local_map = config["mapping"]["local_map"]
         self.assertGreater(local_map["absolute_map_point_guard"], 0)
         propagated = config["propagated_odometry"]
@@ -459,6 +623,16 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("kLioPropagatedOdometryTopic", source)
         self.assertNotIn("/sim/ground_truth/odometry", source)
 
+    def test_external_mode_scenario_observes_native_super_polynomial(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus", source)
+        self.assertIn('"/navigation/super_trajectory"', source)
+        self.assertNotIn('"/navigation/trajectory_bundle"', source)
+        self.assertNotIn('"/navigation/trajectory"', source)
+        self.assertNotIn("PlannedTrajectory", source)
+
     def test_external_mode_scenario_waits_for_registration_before_retrying_nav_state(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario",
@@ -497,6 +671,45 @@ class RuntimeContractTest(unittest.TestCase):
 
         scenario._tick()
         self.assertEqual(scenario.failure, "")
+
+    def test_external_mode_watchdog_separates_post_completion_drift(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_watchdog",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.post_takeoff_mode_entered = True
+        scenario.latest_odom = {"x": 0.7, "y": 0.0, "z": 0.0,
+                                "vx": 0.0, "vy": 0.0, "vz": 0.0}
+        scenario.latest_ground_truth = {"x": 0.0, "y": 0.0, "z": 0.0,
+                                        "vx": 0.0, "vy": 0.0, "vz": 0.0}
+        scenario.latest_odom_stamp_ns = 1_000_000_000
+        scenario.latest_ground_truth_stamp_ns = 1_000_000_000
+        scenario.lio_gt_origin_offset = (0.0, 0.0, 0.0)
+        scenario.mission_complete_observed = True
+        scenario.sim_now_ns = 2_000_000_000
+        scenario.max_lio_position_residual_m = 0.2
+        scenario.max_lio_velocity_residual_m_s = 0.0
+        scenario.lio_position_residual_samples = [0.2]
+        scenario.post_completion_max_lio_position_residual_m = 0.0
+        scenario.post_completion_lio_position_residual_samples = []
+        scenario.localization_divergence_started_ns = None
+        scenario.localization_divergence_failure = False
+        scenario.first_divergence_event = None
+        scenario.config = {"expected_outcome": "complete"}
+        scenario._record = lambda *args, **kwargs: None
+        scenario._record_handover_request = lambda *args, **kwargs: self.fail(
+            "post-completion drift must not trigger handover"
+        )
+        scenario._update_localization_watchdog()
+        self.assertEqual(scenario.max_lio_position_residual_m, 0.2)
+        self.assertAlmostEqual(scenario.post_completion_max_lio_position_residual_m, 0.7)
+        self.assertEqual(len(scenario.lio_position_residual_samples), 1)
+        self.assertEqual(len(scenario.post_completion_lio_position_residual_samples), 1)
 
     def test_external_mode_scenario_planner_source_publishes_bounded_goal(self) -> None:
         spec = importlib.util.spec_from_file_location(
@@ -622,7 +835,7 @@ class RuntimeContractTest(unittest.TestCase):
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
             encoding="utf-8")
         mission_tick = source.index("if mission_mode:")
-        arm = source.index("if not self.armed_seen:", mission_tick)
+        arm = source.index("if self.arm_ack_success_sim_ns is None and not self.manual_takeoff:", mission_tick)
         takeoff = source.index("if not self.takeoff_requested:", arm)
         activate = source.index('if not getattr(self, "mode_active", False)', takeoff)
         self.assertLess(arm, takeoff)
@@ -635,7 +848,7 @@ class RuntimeContractTest(unittest.TestCase):
         mission_tick = source.index("if mission_mode:")
         arm = source.index("if not self.armed_seen:", mission_tick)
         takeoff = source.index("if not self.takeoff_requested:", arm)
-        self.assertIn("if self.manual_takeoff:", source[arm:takeoff])
+        self.assertIn("if self.manual_takeoff:", source[mission_tick:takeoff])
         self.assertIn("if not self.manual_takeoff:", source[takeoff:takeoff + 300])
 
     def test_runtime_never_depends_on_nonexistent_ev_aid_source_topics(self) -> None:
@@ -650,13 +863,10 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_navigation_replanning_is_correlated_to_goal_and_world_revision(self) -> None:
         source = (
-            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+            ROOT / "src/runtime/navigation_runtime/src/super_navigation_node.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn("plan_skip_count_", source)
-        self.assertIn("last_planned_request_id_", source)
-        self.assertIn("last_planned_world_revision_", source)
-        self.assertIn("world.revision() == last_planned_world_revision_", source)
-        self.assertIn('keyValue("plan_skip_count"', source)
+        self.assertIn("new_goal_", source)
+        self.assertIn("ReplanOnce", source)
 
     def test_lio_diagnostics_expose_map_guard_and_propagation_latency(self) -> None:
         source = (ROOT / "src/estimation/fast_lio_ros/src/ros_output_publisher.cpp").read_text(

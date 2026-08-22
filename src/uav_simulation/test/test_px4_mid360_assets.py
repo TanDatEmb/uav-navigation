@@ -95,3 +95,64 @@ def test_long_featured_low_altitude_corridor_has_roadside_features():
     mission = yaml.safe_load((ROOT.parent.parent / "config/runtime/missions/long_featured.yaml").read_text())
     altitudes = [waypoint["position"][2] for waypoint in mission["mission"]["waypoints"]]
     assert min(altitudes) >= 2.0 and max(altitudes) <= 3.1
+
+
+def test_long_three_pillars_speed_has_long_two_waypoint_geometry():
+    world = element_tree.parse(ROOT / "worlds/long_three_pillars_speed.sdf")
+    assert world.find(".//world").attrib["name"] == "long_three_pillars_speed"
+    models = {model.attrib["name"]: model for model in world.findall(".//model")}
+    route_names = [
+        "long_three_speed_pillar_01",
+        "long_three_speed_pillar_02",
+        "long_three_speed_pillar_03",
+    ]
+    assert all(name in models for name in route_names)
+    poses = [models[name].findtext("pose").split() for name in route_names]
+    assert [float(pose[0]) for pose in poses] == [35.0, 70.0, 105.0]
+    assert all(float(pose[1]) == 0.0 for pose in poses)
+    assert all(
+        models[name].findtext("link/collision/geometry/cylinder/radius") == "1.20"
+        for name in route_names
+    )
+    assert all(
+        models[name].findtext("link/collision/geometry/cylinder/length") == "6.50"
+        for name in route_names
+    )
+    assert len([name for name in models if name.startswith("speed_feature_")]) >= 27
+    assert all(
+        f"speed_feature_{kind}_{index:02d}" in models
+        for kind, index in (("tree", 7), ("tree", 14), ("panel", 5), ("panel", 6),
+                            ("corner", 3), ("overhead", 6))
+    )
+    # The primary speed benchmark must not contaminate the nominal detour
+    # band with perception-only collision geometry.  Overhead returns are
+    # intentionally exempt because they are above the flight level.
+    for name, model in models.items():
+        if not name.startswith("speed_feature_") or "overhead" in name:
+            continue
+        pose = model.findtext("pose").split()
+        assert abs(float(pose[1])) >= 7.5, name
+    mission = yaml.safe_load(
+        (ROOT.parent.parent / "config/runtime/missions/long_three_pillars_speed.yaml").read_text()
+    )["mission"]
+    assert [waypoint["position"] for waypoint in mission["waypoints"]] == [
+        [0.0, 0.0, 3.0],
+        [140.0, 0.0, 3.0],
+    ]
+
+
+def test_long_open_featured_speed_is_obstacle_free_and_featured():
+    world = element_tree.parse(ROOT / "worlds/long_open_featured_speed.sdf")
+    assert world.find(".//world").attrib["name"] == "long_open_featured_speed"
+    models = {model.attrib["name"]: model for model in world.findall(".//model")}
+    feature_names = [name for name in models if name.startswith("open_speed_")]
+    assert len(feature_names) == 45
+    # Most calibration features stay outside the +/-8 m route band. The
+    # explicit near_* ablation features retain at least 5.5 m center-line
+    # clearance and therefore cannot obstruct the vehicle.
+    for name in feature_names:
+        if "overhead" in name:
+            continue
+        y = abs(float(models[name].findtext("pose").split()[1]))
+        assert y >= (5.5 if "near_" in name else 8.0)
+    assert not any("pillar" in name for name in models)

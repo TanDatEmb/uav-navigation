@@ -1447,7 +1447,8 @@ def _navigation_mapping_summary(
     level = "NOT_AVAILABLE"
     message = "NOT_AVAILABLE"
     for status in statuses:
-        if not str(status.get("name", "")).endswith("/world_model"):
+        status_name = str(status.get("name", ""))
+        if not (status_name.endswith("/world_model") or status_name == "super_navigation/super_planner"):
             continue
         candidate = status.get("values", {})
         if isinstance(candidate, dict):
@@ -1517,7 +1518,8 @@ def _navigation_mapping_summary(
         "/navigation_mapping/visualization/frontier",
         "/navigation/visualization/planned_path",
         "/navigation/visualization/markers",
-        "/navigation/trajectory",
+        "/navigation/trajectory_bundle",
+        "/navigation/super_trajectory",
     ]
     return result
 
@@ -1733,7 +1735,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     }
 
 
-def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
+def _build_complete_report(session: Path, workflow: str, config_path: Path, workspace: Path, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
     import yaml
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     common_path = config_path.parent / "common.yaml"
@@ -1787,6 +1789,47 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
         )
         (session / "REPORT.html").write_text(fallback, encoding="utf-8")
     return report
+
+
+def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
+    """Build a complete report, or a durable FAIL report if analysis crashes."""
+    try:
+        return _build_complete_report(
+            session,
+            workflow,
+            config_path,
+            workspace,
+            px4_dir,
+            observation_complete,
+        )
+    except Exception as error:
+        session = session.resolve()
+        session.mkdir(parents=True, exist_ok=True)
+        error_text = f"{type(error).__name__}: {error}"
+        fallback = {
+            "workflow": workflow,
+            "verdict": "FAIL",
+            "reasons": [f"report generation failed: {error_text}"],
+            "streams": {},
+            "session": str(session),
+            "schema_version": 1,
+        }
+        (session / "REPORT_BUILD_ERROR.txt").write_text(error_text + "\n", encoding="utf-8")
+        (session / "report.json").write_text(
+            json.dumps(fallback, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (session / "REPORT.md").write_text(render(fallback), encoding="utf-8")
+        (session / "REPORT.html").write_text(
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<title>UAV navigation report</title></head><body>"
+            "<h1>UAV navigation report</h1><p>Verdict: FAIL</p>"
+            f"<p>Report generation failed: <code>{html.escape(error_text)}</code></p>"
+            f"<p>Session: <code>{html.escape(str(session))}</code></p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        return fallback
 
 
 def _json(value: Any) -> str:

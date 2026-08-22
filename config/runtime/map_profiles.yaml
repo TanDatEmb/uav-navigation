@@ -76,6 +76,106 @@ profiles:
     collision_truth: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03, texture_tree_01, texture_tree_02, texture_tree_03, texture_tree_04, texture_tree_05, texture_tree_06, texture_panel_01, texture_panel_02, texture_panel_03, texture_panel_04, texture_panel_05, texture_panel_06, feature_corner_a, feature_corner_b, feature_beam, texture_overhead_01, texture_overhead_02, texture_overhead_03]
     route_obstacles: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03]
     route_segment_waypoints: [0, 1]
+  long_three_pillars_speed:
+    family: long_route
+    world: long_three_pillars_speed
+    mission: long_three_pillars_speed
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03, speed_feature_tree_01, speed_feature_tree_02, speed_feature_tree_03, speed_feature_tree_04, speed_feature_tree_05, speed_feature_tree_06, speed_feature_tree_07, speed_feature_tree_08, speed_feature_tree_09, speed_feature_tree_10, speed_feature_tree_13, speed_feature_tree_14, speed_feature_panel_01, speed_feature_panel_02, speed_feature_panel_03, speed_feature_panel_04, speed_feature_panel_05, speed_feature_panel_06, speed_feature_corner_01, speed_feature_corner_02, speed_feature_corner_03, speed_feature_overhead_01, speed_feature_overhead_02, speed_feature_overhead_03, speed_feature_overhead_04, speed_feature_overhead_05, speed_feature_overhead_06]
+    route_obstacles: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03]
+    route_segment_waypoints: [0, 1]
+    benchmark:
+      objective: maximize_safe_speed
+      route_length_m: 140.0
+      pillar_spacing_m: 35.0
+      speed_sweep_mps: [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 12.0
+      max_cross_track_m: 8.0
+  long_open_featured_speed:
+    family: long_route
+    world: long_open_featured_speed
+    mission: long_open_featured_speed
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [open_speed_tree_01, open_speed_tree_02, open_speed_tree_03, open_speed_tree_04, open_speed_tree_05, open_speed_tree_06, open_speed_panel_01, open_speed_panel_02, open_speed_panel_03, open_speed_corner_01, open_speed_corner_02, open_speed_corner_03, open_speed_corner_04, open_speed_corner_05, open_speed_post_01, open_speed_post_02, open_speed_post_03, open_speed_post_04, open_speed_post_05, open_speed_post_06, open_speed_post_07, open_speed_post_08, open_speed_post_09, open_speed_post_10, open_speed_post_11, open_speed_post_12, open_speed_texture_01, open_speed_texture_02, open_speed_texture_03, open_speed_texture_04, open_speed_texture_05, open_speed_texture_06, open_speed_overhead_01, open_speed_overhead_02, open_speed_overhead_03, open_speed_landmark_01, open_speed_landmark_02, open_speed_landmark_03, open_speed_landmark_04, open_speed_near_01, open_speed_near_02, open_speed_near_03, open_speed_near_04]
+    route_segment_waypoints: [0, 1]
+    benchmark:
+      objective: calibrate_open_speed_and_lio
+      route_length_m: 140.0
+      speed_sweep_mps: [2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 0.0
+      max_cross_track_m: 0.5
+  long_open_featured_core_60:
+    family: long_route_checkpoint
+    world: long_open_featured_speed
+    mission: long_open_featured_core_60
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [open_speed_tree_01, open_speed_tree_02, open_speed_tree_03, open_speed_tree_04, open_speed_tree_05, open_speed_tree_06, open_speed_panel_01, open_speed_panel_02, open_speed_panel_03, open_speed_corner_01, open_speed_corner_02, open_speed_corner_03, open_speed_corner_04, open_speed_corner_05, open_speed_post_01, open_speed_post_02, open_speed_post_03, open_speed_post_04, open_speed_post_05, open_speed_post_06, open_speed_post_07, open_speed_post_08, open_speed_post_09, open_speed_post_10, open_speed_post_11, open_speed_post_12, open_speed_texture_01, open_speed_texture_02, open_speed_texture_03, open_speed_texture_04, open_speed_texture_05, open_speed_texture_06, open_speed_overhead_01, open_speed_overhead_02, open_speed_landmark_01, open_speed_landmark_02, open_speed_landmark_03, open_speed_near_01, open_speed_near_02, open_speed_near_03, open_speed_near_04]
+    route_segment_waypoints: [0, 1]
+    benchmark:
+      objective: lio_long_leg_checkpoint
+      route_length_m: 60.0
+      speed_sweep_mps: [1.0, 2.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 0.0
+      max_cross_track_m: 0.5
+  long_open_featured_core_60_pv:
+    family: long_route_checkpoint_ablation
+    world: long_open_featured_speed
+    mission: long_open_featured_core_60_pv
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [open_speed_tree_01, open_speed_tree_02, open_speed_tree_03, open_speed_tree_04, open_speed_tree_05, open_speed_tree_06, open_speed_panel_01, open_speed_panel_02, open_speed_panel_03, open_speed_corner_01, open_speed_corner_02, open_speed_corner_03, open_speed_corner_04, open_speed_corner_05, open_speed_post_01, open_speed_post_02, open_speed_post_03, open_speed_post_04, open_speed_post_05, open_speed_post_06, open_speed_post_07, open_speed_post_08, open_speed_post_09, open_speed_post_10, open_speed_post_11, open_speed_post_12, open_speed_texture_01, open_speed_texture_02, open_speed_texture_03, open_speed_texture_04, open_speed_texture_05, open_speed_texture_06, open_speed_overhead_01, open_speed_landmark_01, open_speed_landmark_02, open_speed_landmark_03, open_speed_landmark_04, open_speed_near_01, open_speed_near_02, open_speed_near_03, open_speed_near_04]
+    route_segment_waypoints: [0, 1]
+    benchmark:
+      objective: controller_altitude_ablation
+      route_length_m: 60.0
+      speed_sweep_mps: [0.75, 1.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 0.0
+      max_cross_track_m: 0.75
+  single_pillar_speed:
+    family: obstacle_route_checkpoint
+    world: long_three_pillars_speed
+    mission: single_pillar_speed
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    route_obstacles: [long_three_speed_pillar_01]
+    route_segment_waypoints: [0, 1]
+    collision_truth: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03, speed_feature_tree_01, speed_feature_tree_02, speed_feature_tree_03, speed_feature_tree_04, speed_feature_tree_05, speed_feature_tree_06, speed_feature_tree_07, speed_feature_tree_08, speed_feature_tree_09, speed_feature_tree_10, speed_feature_tree_13, speed_feature_tree_14, speed_feature_panel_01, speed_feature_panel_02, speed_feature_panel_03, speed_feature_panel_04, speed_feature_panel_05, speed_feature_panel_06, speed_feature_corner_01, speed_feature_corner_02, speed_feature_corner_03, speed_feature_overhead_01, speed_feature_overhead_02, speed_feature_overhead_03, speed_feature_overhead_04, speed_feature_overhead_05, speed_feature_overhead_06]
+    benchmark:
+      objective: single_pillar_route
+      route_length_m: 60.0
+      speed_sweep_mps: [1.0, 2.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 1.0
+      max_cross_track_m: 4.0
+  single_pillar_speed_pv:
+    family: obstacle_route_checkpoint_ablation
+    world: long_three_pillars_speed
+    mission: single_pillar_speed_pv
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    route_obstacles: [long_three_speed_pillar_01]
+    route_segment_waypoints: [0, 1]
+    collision_truth: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03, speed_feature_tree_01, speed_feature_tree_02, speed_feature_tree_03, speed_feature_tree_04, speed_feature_tree_05, speed_feature_tree_06, speed_feature_tree_07, speed_feature_tree_08, speed_feature_tree_09, speed_feature_tree_10, speed_feature_tree_13, speed_feature_tree_14, speed_feature_panel_01, speed_feature_panel_02, speed_feature_panel_03, speed_feature_panel_04, speed_feature_panel_05, speed_feature_panel_06, speed_feature_corner_01, speed_feature_corner_02, speed_feature_corner_03, speed_feature_overhead_01, speed_feature_overhead_02, speed_feature_overhead_03, speed_feature_overhead_04, speed_feature_overhead_05, speed_feature_overhead_06]
+    benchmark:
+      objective: controller_obstacle_route_ablation
+      route_length_m: 60.0
+      speed_sweep_mps: [0.75, 1.0]
+      open_zone_min_m: 15.0
+      bypass_zone_expected_m: 1.0
+      max_cross_track_m: 4.5
   no_path:
     family: planner_negative
     world: no_path
@@ -105,6 +205,8 @@ scenes:
       fast: long_open
       slow: long_open_slow
       three_pillars: long_three_pillars
+      speed_benchmark: long_three_pillars_speed
+      open_speed_calibration: long_open_featured_speed
   tunnel:
     variants:
       positive: tunnel_irregular

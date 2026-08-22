@@ -5,9 +5,13 @@
 
 #include <Eigen/Core>
 
-#include "px4_navigation_external_mode/trajectory_contract.hpp"
-
 namespace px4_navigation_external_mode {
+
+struct TrajectorySample {
+  Eigen::Vector3d position_enu{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d velocity_enu{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d acceleration_enu{Eigen::Vector3d::Zero()};
+};
 
 struct VelocityTrackerConfig {
   double position_gain{1.0};
@@ -32,7 +36,7 @@ class VelocityTracker final {
                                        double dt_s);
 
   // Position feedback is evaluated at the current-time reference.  A short
-  // preview contributes only its velocity direction, avoiding a phase lead
+  // preview contributes only its velocity direction, avoiding a time lead
   // when replanning replaces the trajectory at the same request id.
   [[nodiscard]] Eigen::Vector3d update(const TrajectorySample& current_reference,
                                        const TrajectorySample& preview_reference,

@@ -29,6 +29,14 @@ struct MissionPlanningConfig {
   // contract to its local-goal tangent parameter.
   double continuation_speed_fraction{0.35};
   std::string unknown_policy{"blocked"};
+  // Route-guide fields are consumed by the navigation runtime.  External
+  // Mode owns the mission file as well, so it validates and preserves the
+  // contract instead of rejecting planner-only metadata as an unknown field.
+  bool route_guide_enabled{false};
+  double route_guide_sample_spacing_m{0.5};
+  double route_guide_collision_sample_spacing_m{0.2};
+  double route_guide_lateral_offset_m{3.6};
+  double route_guide_lateral_transition_m{3.0};
 };
 
 struct MissionControlConfig {
@@ -40,6 +48,10 @@ struct MissionControlConfig {
   // receding-horizon planner shape a corner before the vehicle reaches the
   // waypoint instead of asking it to reverse an already committed velocity.
   double pass_through_lookahead_m{0.0};
+  // Keep External Mode in a verified stationary safety hold briefly so a
+  // rolling map update can replace a local braking stop with a KnownFree
+  // bypass. Zero preserves the legacy immediate POSCTL handover.
+  double safety_stop_replan_grace_s{0.0};
 };
 
 struct Mission {
