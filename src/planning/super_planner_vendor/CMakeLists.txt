@@ -21,6 +21,7 @@ set(SUPER_PLANNER_SOURCES
   src/super_core/ciri.cpp
   src/super_core/corridor_generator.cpp
   src/super_core/super_planner.cpp
+  src/traj_opt/backup_traj_optimizer_s4.cpp
   src/traj_opt/exp_traj_optimizer_s4.cpp
   src/traj_opt/yaw_traj_opt.cpp
   src/utils/banded_system.cpp

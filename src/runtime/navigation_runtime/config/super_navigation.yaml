@@ -4,8 +4,21 @@ super_navigation_node:
       cloud_topic: /lio/registered_points
       odometry_topic: /lio/odometry_propagated
       goal_topic: /navigation/goal
-      trajectory_topic: /navigation/super_trajectory
+      status_topic: /navigation/mode_status
+      command_topic: /navigation/super_command
       planning_frame: lio_odom
+      # Keep one mutually-exclusive planning callback at a time. On this SITL
+      # host 15 Hz contends with the 50 Hz map update and made hot replans
+      # slower; 10 Hz is the measured stable scheduling point.
       planner_rate_hz: 10.0
-      heartbeat_rate_hz: 50.0
-      heartbeat_horizon_s: 3.0
+      command_rate_hz: 50.0
+      input_pair_max_skew_s: 0.1
+      max_safety_suffix_anchor_error_m: 0.75
+      # Command freshness is not planner freshness: invalidate the committed
+      # main path if a solver generation does not return within this budget.
+      planner_solve_timeout_s: 1.0
+      plan_from_rest_failure_confirmation_s: 0.5
+      # A transient first solve is common while the local map initializes.
+      # Persistent failure is terminal; do not wait until a later frontier
+      # happens to become optimizable for an unreachable waypoint.
+      max_plan_from_rest_failures: 3

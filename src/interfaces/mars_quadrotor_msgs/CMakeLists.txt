@@ -16,7 +16,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 
 set(msg_files
-  "msg/PolynomialTrajectory.msg"
+  "msg/PositionCommand.msg"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

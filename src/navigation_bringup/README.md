@@ -11,12 +11,12 @@ FAST-LIO inputs, native SUPER navigation, and PX4 External Mode.
 
 `navigation_runtime.launch.py` starts only `super_navigation_node`. The planner
 consumes the newest `PointCloud2` and `Odometry` frames, owns the ROG-Map update,
-and publishes one native `mars_quadrotor_msgs/PolynomialTrajectory` on
-`/navigation/super_trajectory`.
+and publishes sampled PVA commands as `mars_quadrotor_msgs/PositionCommand` on
+`/navigation/super_command`.
 
 `px4_external_mode.launch.py` launches the PX4 v1.17 ROS 2 Control Interface
 node. The node registers `NavigationMode` and its `NavigationModeExecutor`,
-then consumes the native polynomial contract on `/navigation/super_trajectory`.
+then consumes the PVA command contract on `/navigation/super_command`.
 Its config is `config/runtime/external_mode.yaml`. It is the PX4 control
 boundary; do not replace it with direct `OffboardControlMode` publishers.
 
@@ -33,7 +33,7 @@ python3 tools/runtime/send_goal.py 5.0 0.0 1.0
 python3 tools/runtime/send_goal.py 5.0 0.0 1.0 --repeat 20 --period 1.0
 ```
 
-The native polynomial trajectory is published on `/navigation/super_trajectory`.
+The native PVA command stream is published on `/navigation/super_command`.
 The RViz path is visualization-only.
 
 Runtime behavior and parameter ownership remain in `config/runtime/` and

@@ -118,6 +118,12 @@ namespace rog_map {
         void boxSearch(const Vec3f &_box_min, const Vec3f &_box_max,
                        const GridType &gt, vec_E<Vec3f> &out_points) const;
 
+        // Return only occupied probability-buffer cells. Virtual ground and
+        // ceiling occupancy is intentionally excluded so geometric consumers
+        // can express those planar limits once as half-space constraints.
+        void boxSearchObservedOccupied(const Vec3f &box_min, const Vec3f &box_max,
+                                       vec_E<Vec3f> &out_points) const;
+
         void boxSearchInflate(const Vec3f &box_min, const Vec3f &box_max,
                               const GridType &gt, vec_E<Vec3f> &out_points) const;
 

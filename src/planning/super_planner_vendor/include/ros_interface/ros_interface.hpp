@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -18,6 +19,8 @@ namespace ros_interface {
 class RosInterface {
  public:
   using Ptr = std::shared_ptr<RosInterface>;
+  explicit RosInterface(std::function<double()> clock_seconds = {})
+      : clock_seconds_(std::move(clock_seconds)) {}
   virtual ~RosInterface() = default;
 
   template <typename... Args>
@@ -37,10 +40,11 @@ class RosInterface {
   void error(const std::string& message) const { logText("ERROR", message); }
   void fatal(const std::string& message) const { logText("FATAL", message); }
 
-  void setSimTime(double seconds) { sim_time_s_ = seconds; }
   [[nodiscard]] virtual double getSimTime() const {
-    return sim_time_s_ > 0.0 ? sim_time_s_ :
-      std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    return clock_seconds_
+               ? clock_seconds_()
+               : std::chrono::duration<double>(
+                     std::chrono::steady_clock::now().time_since_epoch()).count();
   }
   void getSimTime(std::int32_t& seconds, std::uint32_t& nanoseconds) const {
     const double now = getSimTime();
@@ -52,15 +56,19 @@ class RosInterface {
   void setVisualizationEn(bool enabled) { visualization_en_ = enabled; }
 
   void vizExpTraj(const geometry_utils::Trajectory&, const std::string& = "exp_traj") {}
+  void vizBackupTraj(const geometry_utils::Trajectory&) {}
   void vizFrontendPath(const super_utils::vec_Vec3f&) {}
   void vizExpSfc(const geometry_utils::PolytopeVec&) {}
+  void vizBackupSfc(const geometry_utils::Polytope&) {}
   void vizGoalPath(const super_utils::vec_Vec3f&) {}
   void vizCommittedTraj(const geometry_utils::Trajectory&, double) {}
   void vizYawTraj(const geometry_utils::Trajectory&, const geometry_utils::Trajectory&) {}
   void vizAstarBoundingBox(const super_utils::Vec3f&, const super_utils::Vec3f&) {}
   void vizAstarPoints(const super_utils::Vec3f&, const Color&, const std::string&, double = 0.1, int = 0) {}
   void vizReplanLog(const geometry_utils::Trajectory&, const geometry_utils::Trajectory&,
-                    const geometry_utils::PolytopeVec&, const super_utils::vec_Vec3f&, int) {}
+                    const geometry_utils::Trajectory&, const geometry_utils::Trajectory&,
+                    const geometry_utils::PolytopeVec&, const geometry_utils::Polytope&,
+                    const super_utils::vec_Vec3f&, int) {}
   void vizCiriSeedLine(const super_utils::Vec3f&, const super_utils::Vec3f&, double) {}
   void vizCiriEllipsoid(const geometry_utils::Ellipsoid&) {}
   void vizCiriInfeasiblePoint(const super_utils::Vec3f&) {}
@@ -76,7 +84,7 @@ class RosInterface {
     fmt::print("[SUPER {}] {}\n", level, message);
   }
 
-  double sim_time_s_{0.0};
+  std::function<double()> clock_seconds_;
   double resolution_{0.1};
   bool visualization_en_{false};
 };

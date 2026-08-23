@@ -541,6 +541,44 @@ ProbMap::boxSearch(const Vec3f& _box_min, const Vec3f& _box_max, const GridType&
     }
 }
 
+void ProbMap::boxSearchObservedOccupied(const Vec3f& _box_min,
+                                        const Vec3f& _box_max,
+                                        vec_E<Vec3f>& out_points) const {
+    out_points.clear();
+    if (map_empty_ || (_box_max - _box_min).minCoeff() <= 0) {
+        return;
+    }
+
+    Vec3f box_min = _box_min;
+    Vec3f box_max = _box_max;
+    boundBoxByLocalMap(box_min, box_max);
+    if ((box_max - box_min).minCoeff() <= 0) {
+        return;
+    }
+
+    Vec3i min_id;
+    Vec3i max_id;
+    posToGlobalIndex(box_min, min_id);
+    posToGlobalIndex(box_max, max_id);
+    const Vec3i box_size = max_id - min_id;
+    out_points.reserve(std::max(0, box_size.prod() / 12));
+    for (int x = min_id.x() + 1; x < max_id.x(); ++x) {
+        for (int y = min_id.y() + 1; y < max_id.y(); ++y) {
+            for (int z = min_id.z() + 1; z < max_id.z(); ++z) {
+                const Vec3i id_g{x, y, z};
+                if (!insideLocalMap(id_g)) {
+                    continue;
+                }
+                if (isOccupied(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)])) {
+                    Vec3f point;
+                    globalIndexToPos(id_g, point);
+                    out_points.emplace_back(point);
+                }
+            }
+        }
+    }
+}
+
 void ProbMap::boxSearchInflate(const Vec3f& box_min, const Vec3f& box_max, const GridType& gt,
                                vec_E<Vec3f>& out_points) const {
     inf_map_->boxSearch(box_min, box_max, gt, out_points);

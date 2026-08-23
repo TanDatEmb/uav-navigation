@@ -2,7 +2,7 @@
 <package format="3">
   <name>navigation_runtime</name>
   <version>0.1.0</version>
-  <description>Native SUPER polynomial navigation runtime for PX4.</description>
+  <description>Native SUPER PVA navigation runtime for PX4.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

@@ -23,6 +23,8 @@
 
 #include <super_core/corridor_generator.h>
 
+#include <chrono>
+
 using namespace super_utils;
 
 namespace super_planner {
@@ -41,8 +43,13 @@ namespace super_planner {
         robot_r_ = robot_r;
         box_search_skip_num_ = box_search_skip_num;
         iris_iter_num_ = iris_iter_num;
-        virtual_ceil_height_ = virtual_ceil_height - robot_r;
-        virtual_groud_height_ = virtual_groud_height + robot_r;
+        // ROG-Map quantizes the configured virtual floor/ceiling to the
+        // inflation grid during initialization.  Corridor constraints must
+        // use those effective values; using the raw YAML values gives A*/CIRI
+        // different feasible sets near the vertical boundaries.
+        const auto &map_cfg = map_ptr_->getMapConfig();
+        virtual_ceil_height_ = map_cfg.virtual_ceil_height - robot_r;
+        virtual_groud_height_ = map_cfg.virtual_ground_height + robot_r;
 //        failed_traj_log.open(DEBUG_FILE_DIR("sfc.csv"), std::ios::out | std::ios::trunc);
     }
 
@@ -88,8 +95,16 @@ namespace super_planner {
             second_id = first_id;
             for (int j = first_id + 1; j < path.size(); j++) {
                 bool reach_segment = false;
-                if (!map_ptr_->isLineFree(path[first_id], path[j], seed_line_max_length_,
-                                          line_seed_neighbor_list)) {
+                const double seed_length = (path[j] - path[first_id]).norm();
+                // Use one deterministic collision oracle throughout A*, main
+                // trajectory truncation and corridor generation.  The map's
+                // inflated layer includes the continuous vehicle radius plus
+                // a voxel-rasterization shell, so repeating every ray sample
+                // over the base-grid spherical neighbour list is redundant
+                // and can stall for seconds around an obstacle boundary.
+                const bool line_free = seed_length <= seed_line_max_length_ &&
+                    map_ptr_->isLineFree(path[first_id], path[j], true, false);
+                if (!line_free) {
                     reach_segment = true;
                 }
                 if (reach_segment) {
@@ -103,14 +118,16 @@ namespace super_planner {
             }
 
             if (second_id == first_id && second_id + 1 < path.size()) {
-                second_id += 1;
+                ros_ptr_->warn(
+                        " -- [SUPER] Frontend path contains a blocked adjacent edge at index {}",
+                        first_id);
+                return false;
             }
 
             seed_lines.emplace_back(path[first_id], path[second_id]);
             if ((path[first_id] - path[second_id]).norm() > seed_line_max_length_ * 1.5) {
                 fmt::print("first: {}\n second: {}\n seed line max: {}\n", path[first_id].transpose(),
                            path[second_id].transpose(), seed_line_max_length_);
-                throw std::runtime_error("seed line too long");
                 return false;
             }
             if (!GeneratePolytopeFromLine(seed_lines.back(), temp_poly)) {
@@ -208,11 +225,13 @@ namespace super_planner {
         Eigen::Vector3d box_max, box_min;
         vec_E<Vec3f> pc;
         getSeedBBox(pt, pt, box_min, box_max);
-        // TODO the box did not consider the robot_r
         map_ptr_->boundBoxByLocalMap(box_min, box_max);
-        map_ptr_->boxSearch(box_min, box_max, OCCUPIED, pc);
-        box_min.z() += robot_r_;
-        box_max.z() -= robot_r_;
+        box_min.z() = std::max(box_min.z(), virtual_groud_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
+        // Virtual floor and ceiling are deterministic planes, not sampled
+        // obstacles. Account for the vehicle radius directly in the boundary
+        // half-spaces and keep them out of CIRI's quadratic point loop.
         MatD4f planes;
         Eigen::Vector3d a = pt, b = pt;
         Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
@@ -246,7 +265,18 @@ namespace super_planner {
         latest_pc.insert(latest_pc.end(), pc.begin(), pc.end());
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         super_utils::TimeConsuming tc("emvp", false);
+        const auto ciri_start = std::chrono::steady_clock::now();
+        if (pc.size() >= 500) {
+            ros_ptr_->info(" -- [CIRI] point seed solve start points={} length={} a={} b={}",
+                           pc.size(), (a - b).norm(), a.transpose(), b.transpose());
+        }
         RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
+        const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - ciri_start).count();
+        if (ciri_wall_ms > 100.0) {
+            ros_ptr_->warn(" -- [CIRI] point seed solve slow points={} wall_ms={} result={}",
+                           pc.size(), ciri_wall_ms, static_cast<int>(success));
+        }
         double dt = tc.stop();
         if (success == SUCCESS) {
             ciri_cnt++;
@@ -306,9 +336,9 @@ namespace super_planner {
         vec_E<Vec3f> pc, pts{line.first, line.second};
         getSeedBBox(line.first, line.second, box_min, box_max);
         map_ptr_->boundBoxByLocalMap(box_min, box_max);
-        map_ptr_->boxSearch(box_min, box_max, OCCUPIED, pc);
-        box_min.z() += robot_r_;
-        box_max.z() -= robot_r_;
+        box_min.z() = std::max(box_min.z(), virtual_groud_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
         MatD4f planes;
         Eigen::Vector3d a = line.first, b = line.second;
         Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
@@ -343,7 +373,18 @@ namespace super_planner {
         latest_pc.insert(latest_pc.end(), pc.begin(), pc.end());
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         super_utils::TimeConsuming tc("emvp", false);
+        const auto ciri_start = std::chrono::steady_clock::now();
+        if (pc.size() >= 500) {
+            ros_ptr_->info(" -- [CIRI] line seed solve start points={} length={} a={} b={}",
+                           pc.size(), (a - b).norm(), a.transpose(), b.transpose());
+        }
         RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
+        const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - ciri_start).count();
+        if (ciri_wall_ms > 100.0) {
+            ros_ptr_->warn(" -- [CIRI] line seed solve slow points={} wall_ms={} result={}",
+                           pc.size(), ciri_wall_ms, static_cast<int>(success));
+        }
         double dt = tc.stop();
         if (success == SUCCESS) {
             ciri_cnt++;

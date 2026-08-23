@@ -263,7 +263,7 @@ Useful inspection commands from another terminal:
 ```bash
 make status
 ros2 topic echo /lio/diagnostics
-ros2 topic echo /navigation/super_trajectory
+ros2 topic echo /navigation/super_command
 ros2 topic echo /navigation/mission_complete
 ros2 topic echo /navigation_mapping/visualization/occupied
 ros2 topic echo /fmu/in/trajectory_setpoint
@@ -428,20 +428,21 @@ required because the external-vision-only simulation profile disables GPS and
 PX4 therefore rejects generic Loiter handover when its global-position health
 requirement is not met.
 
-The current planning execution contract is the single SUPER polynomial path:
+The current planning execution contract is the sampled SUPER PVA path:
 
 ```text
 PointCloud2 + Odometry
   -> ROG-Map update
   -> A* / corridor / SUPER optimizer
-  -> mars_quadrotor_msgs/PolynomialTrajectory
-  -> /navigation/super_trajectory
-  -> PX4 External Mode P/V/A evaluation and ENU/FLU -> NED/FRD conversion
+  -> mars_quadrotor_msgs/PositionCommand
+  -> /navigation/super_command
+  -> PX4 External Mode ENU/FLU -> NED/FRD conversion
 ```
 
 There is no `TrajectoryBundle`, `WorldSnapshot`, old B-spline contract, or
-separate backup/rollback trajectory branch in this runtime contract. A stale,
-invalid, emergency, non-finite, or non-monotonic polynomial is rejected
+separate backup/rollback transport branch in this runtime contract. Main and
+backup selection stays inside the planner FSM. A stale, invalid, emergency,
+non-finite, or non-monotonic PVA command is rejected
 fail-closed. The node does not silently reuse an expired trajectory; it stops
 publishing the invalid trajectory and reports the failure for the harness.
 

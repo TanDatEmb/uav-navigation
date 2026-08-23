@@ -4,8 +4,12 @@ super_navigation_node:
       cloud_topic: /lio/registered_points
       odometry_topic: /lio/odometry_propagated
       goal_topic: /navigation/goal
-      trajectory_topic: /navigation/super_trajectory
+      command_topic: /navigation/super_command
       planning_frame: lio_odom
       planner_rate_hz: 10.0
-      heartbeat_rate_hz: 50.0
-      heartbeat_horizon_s: 3.0
+      command_rate_hz: 50.0
+      input_pair_max_skew_s: 0.1
+      max_safety_suffix_anchor_error_m: 0.75
+      planner_solve_timeout_s: 1.0
+      plan_from_rest_failure_confirmation_s: 0.5
+      max_plan_from_rest_failures: 3

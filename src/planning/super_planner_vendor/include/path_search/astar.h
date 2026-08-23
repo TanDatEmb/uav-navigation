@@ -24,6 +24,8 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "Eigen/Dense"
 #include "vector"
 #include "rog_map_ros/rog_map_ros1.hpp"
@@ -82,12 +84,6 @@ namespace path_search {
         ros_interface::RosInterface::Ptr ros_ptr_;
 
         PathSearchConfig cfg_;
-        // The planner can stage avoidance: keep the first search in the
-        // horizontal plane and open the vertical dimension only for the
-        // explicit vertical-avoidance phase.
-        bool vertical_search_en_{true};
-        const double tie_breaker_ = 1.0 + 1e-5;
-        rog_map::vec_Vec3i sorted_pts;
         rog_map::vec_Vec3i neighbor_list;
 
         vector<GridNodePtr> grid_node_buffer_;
@@ -150,15 +146,13 @@ namespace path_search {
 
         void setVisualProcessEn(const bool &en);
 
-        void setVerticalSearchEn(const bool &en) { vertical_search_en_ = en; }
-
         void setFineInfNeighbors(const int & neighbor_step);
 
         RET_CODE pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                         const int &flag,
                                         const double &searching_horizon,
                                         rog_map::vec_Vec3f &out_path,
-                                        const double &time_out = 0.1);
+                                        const double &time_out = -1.0);
 
         /// @ brief: The escape path only for path search from prob map to inf map. from non-occupied point to
         ///          inf map free (or known freee) point . Aim to find a path from current point to (known) free point

@@ -1,5 +1,7 @@
 #include "px4_odometry_bridge/frame_converter.hpp"
 
+#include <coordinate_conventions/frame_conventions.hpp>
+
 #include <cmath>
 
 namespace px4_odometry_bridge {
@@ -21,13 +23,7 @@ Eigen::Vector3d rotate_variance(const Eigen::Matrix3d &rotation,
 }  // namespace
 
 const Eigen::Matrix3d &FrameConverter::c_enu_ned() {
-  // PX4 NED -> ROS ENU coordinate conversion is its own inverse:
-  //   [x_enu y_enu z_enu]^T = C_enu_ned [x_ned y_ned z_ned]^T
-  //   x_enu=y_ned, y_enu=x_ned, z_enu=-z_ned.
-  static const Eigen::Matrix3d matrix = (Eigen::Matrix3d() << 0.0, 1.0, 0.0,
-                                         1.0, 0.0, 0.0, 0.0, 0.0, -1.0)
-                                            .finished();
-  return matrix;
+  return coordinate_conventions::c_enu_ned();
 }
 
 const Eigen::Matrix3d &FrameConverter::c_flu_frd() {

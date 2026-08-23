@@ -29,6 +29,8 @@
 
 namespace super_planner {
     enum SUPER_RET_CODE {
+        SUPER_SUCCESS_WITH_BACKUP = 3,
+        SUPER_SUCCESS_NO_BACKUP = 2,
         SUPER_SUCCESS = 1,
         SUPPER_UNDEFINED = -0,
         SUPER_NO_ODOM = -1,
@@ -38,6 +40,10 @@ namespace super_planner {
 
     static std::string SUPER_RET_CODE_STR(const int& ret) {
         switch (ret) {
+        case SUPER_SUCCESS_WITH_BACKUP:
+            return "Success, with backup trajectory also success";
+        case SUPER_SUCCESS_NO_BACKUP:
+            return "Success, without need of backup";
         case SUPER_SUCCESS:
             return "Success";
         case SUPPER_UNDEFINED:

@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string_view>
 
+#include <coordinate_conventions/frame_conventions.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
 
 namespace px4_navigation_external_mode {
@@ -16,12 +17,7 @@ constexpr char kModeName[] = "UAV Navigation";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
 
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
-  // ROS uses ENU (+X east, +Y north, +Z up); PX4 setpoints use NED
-  // (+X north, +Y east, +Z down).  Keep this identical to the odometry
-  // bridge so position and velocity commands use the same world basis.
-  return Eigen::Vector3f{static_cast<float>(value_enu.y()),
-                         static_cast<float>(value_enu.x()),
-                         static_cast<float>(-value_enu.z())};
+  return coordinate_conventions::enuToNed(value_enu).cast<float>();
 }
 
 bool diagnosticValueIsTrue(
@@ -66,56 +62,37 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
     : ModeBase(node, Settings{kModeName}),
       node_(node),
       trajectory_setpoint_(std::make_shared<px4_ros2::TrajectorySetpointType>(*this)),
-      super_trajectory_topic_(node.declare_parameter<std::string>(
-          "navigation.super_trajectory_topic", "/navigation/super_trajectory")),
+      super_command_topic_(node.declare_parameter<std::string>(
+          "navigation.super_command_topic", "/navigation/super_command")),
       goal_topic_(node.declare_parameter<std::string>(
           "navigation.goal_topic", "/navigation/goal")),
-      planner_heartbeat_topic_(node.declare_parameter<std::string>(
-          "navigation.planner_heartbeat_topic", "/navigation/planner_heartbeat")),
       planning_frame_(node.declare_parameter<std::string>(
           "navigation.planning_frame", "lio_odom")),
       stale_after_s_(node.declare_parameter<double>(
           "navigation.trajectory_stale_after_s", 0.75)),
+      command_anchor_max_error_m_(node.declare_parameter<double>(
+          "navigation.command_anchor_max_error_m", 2.0)),
       state_stale_after_s_(node.declare_parameter<double>(
           "navigation.state_stale_after_s", 0.5)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.trajectory_wait_timeout_s", 2.0)),
-      trajectory_preview_s_(node.declare_parameter<double>(
-          "navigation.velocity_tracker.trajectory_preview_s", 0.15)),
       prefer_velocity_output_(node.declare_parameter(
-          "navigation.prefer_velocity_output", true)),
+          "navigation.prefer_velocity_output", false)),
       lio_health_grace_s_(node.declare_parameter<double>(
-          "navigation.lio_health_grace_s", 1.0)),
-      velocity_tracker_([&node]() {
-        VelocityTrackerConfig config;
-        config.position_gain = node.declare_parameter<double>(
-            "navigation.velocity_tracker.position_gain", 1.0);
-        config.max_velocity_mps = node.declare_parameter<double>(
-            "navigation.velocity_tracker.max_velocity_mps", 2.0);
-        config.max_acceleration_mps2 = node.declare_parameter<double>(
-            "navigation.velocity_tracker.max_acceleration_mps2", 3.0);
-        config.max_deceleration_mps2 = node.declare_parameter<double>(
-            "navigation.velocity_tracker.max_deceleration_mps2", 3.0);
-        config.max_jerk_mps3 = node.declare_parameter<double>(
-            "navigation.velocity_tracker.max_jerk_mps3", 6.0);
-        config.max_position_error_m = node.declare_parameter<double>(
-            "navigation.velocity_tracker.max_position_error_m", 2.0);
-        return config;
-      }()) {
-  if (super_trajectory_topic_.empty() || goal_topic_.empty() ||
-      planner_heartbeat_topic_.empty() || planning_frame_.empty() ||
-      !std::isfinite(stale_after_s_) ||
-      stale_after_s_ <= 0.0 || !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
+          "navigation.lio_health_grace_s", 1.0)) {
+  if (super_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
+      !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
+      !std::isfinite(command_anchor_max_error_m_) || command_anchor_max_error_m_ <= 0.0 ||
+      !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
-      !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0 ||
-      !std::isfinite(trajectory_preview_s_) || trajectory_preview_s_ < 0.0) {
+      !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0) {
     throw std::invalid_argument("invalid PX4 navigation external mode parameters");
   }
-  super_trajectory_subscription_ = node.create_subscription<
-      mars_quadrotor_msgs::msg::PolynomialTrajectory>(
-      super_trajectory_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
-      [this](const mars_quadrotor_msgs::msg::PolynomialTrajectory::ConstSharedPtr& message) {
-        onSuperTrajectory(message);
+  super_command_subscription_ = node.create_subscription<
+      mars_quadrotor_msgs::msg::PositionCommand>(
+      super_command_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
+      [this](const mars_quadrotor_msgs::msg::PositionCommand::ConstSharedPtr& message) {
+        onSuperCommand(message);
       });
   const auto state_topic = node.declare_parameter<std::string>(
       "navigation.state_topic", "/lio/odometry_propagated");
@@ -136,12 +113,6 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       [this](const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message) {
         onLioDiagnostics(message);
       });
-  planner_heartbeat_subscription_ = node.create_subscription<std_msgs::msg::Empty>(
-      planner_heartbeat_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
-      [this](const std_msgs::msg::Empty::ConstSharedPtr& message) {
-        onPlannerHeartbeat(message);
-      });
-
   const auto mission_file = node.declare_parameter<std::string>("navigation.mission_file", "");
   if (!mission_file.empty()) {
     if (goal_topic_.empty()) {
@@ -178,6 +149,18 @@ void NavigationMode::setPositionControlHandover(std::function<void()> callback) 
   position_control_handover_ = std::move(callback);
 }
 
+std::optional<Eigen::Vector3d> NavigationMode::handoverPosition() {
+  std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  if (safety_hold_position_.has_value()) return safety_hold_position_;
+  if (completion_position_.has_value()) return completion_position_;
+  if (odometry_.has_value()) {
+    return Eigen::Vector3d{odometry_->pose.pose.position.x,
+                           odometry_->pose.pose.position.y,
+                           odometry_->pose.pose.position.z};
+  }
+  return std::nullopt;
+}
+
 void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
                                    const MissionControllerEvent* event) {
   if (!status_publisher_ || !mission_ || !mission_controller_) return;
@@ -205,8 +188,8 @@ void NavigationMode::onActivate() {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     activation_time_ = node().get_clock()->now();
     last_setpoint_time_ = activation_time_;
-    velocity_tracker_.reset();
     failure_reported_ = false;
+    super_command_.reset();
     mission_complete_published_ = false;
     // Estimator and odometry freshness are process-level observations, not
     // per-activation state.  Clearing them here makes PX4 see an artificial
@@ -221,7 +204,7 @@ void NavigationMode::onActivate() {
     setpoint_update_count_ = 0U;
     stale_state_failure_count_ = 0U;
     last_goal_publish_ns_ = 0;
-    last_trajectory_receive_ns_ = 0;
+    last_command_receive_ns_ = 0;
     maximum_odometry_callback_gap_us_ = 0;
     last_setpoint_update_ns_ = 0;
     maximum_setpoint_callback_gap_us_ = 0;
@@ -231,6 +214,7 @@ void NavigationMode::onActivate() {
     mission_terminal_ = false;
     handover_requested_ = false;
     completion_position_.reset();
+    safety_hold_position_.reset();
   }
   if (mission_controller_) {
     if (mission_complete_publisher_) {
@@ -254,8 +238,7 @@ void NavigationMode::onDeactivate() {
     // a new generation; otherwise the runtime can repopulate the cached
     // trajectory while the PX4 mode executor is already handing over.
     failure_reported_ = true;
-    super_trajectory_.reset();
-    velocity_tracker_.reset();
+    super_command_.reset();
   }
   if (mission_controller_) mission_controller_->deactivate();
   if (last_status_state_ != navigation_interfaces::msg::NavigationModeStatus::PAUSED &&
@@ -295,59 +278,90 @@ void NavigationMode::checkArmingAndRunConditions(
   const bool waiting_for_airborne = mission_controller_ &&
                                     mission_controller_->waitingForAirborne();
   // During the disarmed warm-up activation the mission deliberately has no
-  // goal yet, so the planner has nothing to heartbeat.  Requiring a planner
-  // heartbeat here makes PX4 fail the warm-up before the arm/takeoff cycle can
-  // complete. Once airborne, the normal heartbeat gate is active.
+  // goal yet, so the planner has no command to publish. Requiring command
+  // freshness here makes PX4 fail the warm-up before arm/takeoff completes.
+  // Once airborne, the normal command freshness gate is active.
   if (mission_ && !waiting_for_airborne &&
-      (last_planner_heartbeat_ns_ <= 0 ||
-       stale(last_planner_heartbeat_ns_, trajectory_wait_timeout_s_))) {
+      stale(last_command_receive_ns_, trajectory_wait_timeout_s_)) {
     const double active_s = activation_time_.nanoseconds() > 0
                                 ? static_cast<double>(now_ns - activation_time_.nanoseconds()) / 1e9
                                 : 0.0;
     if (active_s > trajectory_wait_timeout_s_) {
       reporter.armingCheckFailureExt(
-          px4_ros2::events::ID("uav_navigation_planner_heartbeat_stale"),
-          px4_ros2::events::Log::Error, "Navigation planner heartbeat is stale");
+          px4_ros2::events::ID("uav_navigation_planner_command_stale"),
+          px4_ros2::events::Log::Error, "Navigation planner command is stale");
     }
   }
 }
 
-void NavigationMode::onSuperTrajectory(
-    const mars_quadrotor_msgs::msg::PolynomialTrajectory::ConstSharedPtr& message) {
-  SuperPolynomialTrajectory candidate;
-  std::string error;
-  if (!candidate.assign(*message, &error)) {
-    RCLCPP_WARN(node().get_logger(), "Rejecting SUPER polynomial trajectory: %s", error.c_str());
-    bool active = false;
-    {
-      std::lock_guard<std::mutex> lock(trajectory_mutex_);
-      ++trajectory_rejected_count_;
-      super_trajectory_.reset();
-      active = mode_active_;
-    }
-    if (active) failNavigation("SUPER polynomial trajectory invalid");
+void NavigationMode::onSuperCommand(
+    const mars_quadrotor_msgs::msg::PositionCommand::ConstSharedPtr& message) {
+  const auto finite = [](double value) { return std::isfinite(value); };
+  const bool valid = message != nullptr && message->header.frame_id == planning_frame_ &&
+                     (message->header.stamp.sec > 0 || message->header.stamp.nanosec > 0) &&
+                     finite(message->position.x) && finite(message->position.y) &&
+                     finite(message->position.z) && finite(message->velocity.x) &&
+                     finite(message->velocity.y) && finite(message->velocity.z) &&
+                     finite(message->acceleration.x) && finite(message->acceleration.y) &&
+                     finite(message->acceleration.z) && finite(message->jerk.x) &&
+                     finite(message->jerk.y) && finite(message->jerk.z) &&
+                     finite(message->yaw) && finite(message->yaw_dot) &&
+                     message->trajectory_id != 0U && message->trajectory_status !=
+                         mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_EMPTY &&
+                     (message->trajectory_flag ==
+                          mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_MAIN ||
+                      message->trajectory_flag ==
+                          mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_BACKUP);
+  if (!valid) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    ++trajectory_rejected_count_;
+    super_command_.reset();
     return;
   }
+
+  bool accepted = false;
+  bool anchor_invalid = false;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    const std::uint32_t newest_id = super_trajectory_.has_value()
-                                        ? super_trajectory_->trajectoryId()
-                                        : 0U;
-    if (candidate.trajectoryId() <= newest_id) {
+    if (super_command_.has_value() &&
+        message->trajectory_id <= super_command_->trajectory_id) {
       ++trajectory_rejected_count_;
-      RCLCPP_WARN(node().get_logger(),
-                  "Rejecting non-monotonic SUPER trajectory id=%u newest=%u",
-                  candidate.trajectoryId(), newest_id);
       return;
     }
-    super_trajectory_ = std::move(candidate);
-    ++trajectory_received_count_;
-    ++trajectory_accepted_count_;
-    last_trajectory_receive_ns_ = node().get_clock()->now().nanoseconds();
-    last_planner_heartbeat_ns_ = last_trajectory_receive_ns_;
-    failure_reported_ = false;
+    const bool terminal_failure =
+        message->trajectory_status ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_EMER ||
+        message->trajectory_status ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_ILLEGAL_START ||
+        message->trajectory_status ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_ILLEGAL_FINAL ||
+        message->trajectory_status ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_IMPOSSIBLE;
+    if (!terminal_failure && odometry_.has_value()) {
+      const auto& point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      const Eigen::Vector3d command_position{message->position.x, message->position.y,
+                                              message->position.z};
+      anchor_invalid = measured.allFinite() && command_position.allFinite() &&
+                       (command_position - measured).norm() > command_anchor_max_error_m_;
+      if (anchor_invalid) {
+        ++trajectory_rejected_count_;
+      }
+    }
+    if (!anchor_invalid) {
+      super_command_ = *message;
+      ++trajectory_received_count_;
+      ++trajectory_accepted_count_;
+      last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
+      failure_reported_ = false;
+      accepted = true;
+    }
   }
-  if (mission_controller_) mission_controller_->onNativeTrajectoryReady();
+  if (anchor_invalid) {
+    safetyStopNavigation("SUPER PVA command anchor is not near vehicle");
+    return;
+  }
+  if (accepted && mission_controller_) mission_controller_->onNativeTrajectoryReady();
 }
 
 void NavigationMode::updateMission() {
@@ -383,8 +397,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     const auto& waypoint = mission_controller_->activeWaypoint();
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
-      super_trajectory_.reset();
-      velocity_tracker_.reset();
+      super_command_.reset();
     }
     navigation_interfaces::msg::NavigationGoal goal;
     goal.header.frame_id = planning_frame_;
@@ -424,8 +437,6 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       mission_terminal_ = true;
       handover_requested_ = true;
       completion_position_ = mission_->waypoints.at(event.waypoint_index).position_enu;
-      super_trajectory_.reset();
-      velocity_tracker_.reset();
     }
     RCLCPP_INFO(node().get_logger(), "Mission '%s' completed; notifying the supervisor",
                 mission_->id.c_str());
@@ -458,12 +469,10 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     return;
   }
   if (event.type == MissionControllerEvent::Type::Failure) {
-    publishStatus(navigation_interfaces::msg::NavigationModeStatus::FAILED,
-                  navigation_interfaces::msg::NavigationModeStatus::TRAJECTORY_INVALID);
     RCLCPP_ERROR(node().get_logger(), "Mission '%s' failed at waypoint %zu",
                  mission_->id.c_str(), event.waypoint_index);
     (void)now_s;
-    failNavigation("mission controller reported failure");
+    safetyStopNavigation("mission controller reported failure");
   }
 }
 
@@ -509,12 +518,6 @@ void NavigationMode::onLioDiagnostics(
     }
     return;
   }
-}
-
-void NavigationMode::onPlannerHeartbeat(
-    const std_msgs::msg::Empty::ConstSharedPtr& /*message*/) {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  last_planner_heartbeat_ns_ = node().get_clock()->now().nanoseconds();
 }
 
 void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
@@ -566,14 +569,42 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(forward_guard_count));
 }
 
+void NavigationMode::safetyStopNavigation(const char* reason) {
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (failure_reported_) return;
+    if (odometry_.has_value()) {
+      const auto& point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      if (measured.allFinite()) safety_hold_position_ = measured;
+    }
+    failure_reported_ = true;
+    handover_requested_ = true;
+    super_command_.reset();
+  }
+  if (mission_controller_) mission_controller_->deactivate();
+  publishStatus(navigation_interfaces::msg::NavigationModeStatus::PAUSED,
+                navigation_interfaces::msg::NavigationModeStatus::SAFETY_STOP);
+  RCLCPP_ERROR(node().get_logger(), "%s; safety hold then handover to PX4 POSCTL", reason);
+  if (position_control_handover_) {
+    position_control_handover_();
+  } else {
+    completed(px4_ros2::Result::ModeFailureOther);
+  }
+}
+
 void NavigationMode::failNavigation(const char* reason) {
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (failure_reported_) return;
+    if (odometry_.has_value()) {
+      const auto& point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      if (measured.allFinite()) safety_hold_position_ = measured;
+    }
     failure_reported_ = true;
     handover_requested_ = true;
-    super_trajectory_.reset();
-    velocity_tracker_.reset();
+    super_command_.reset();
   }
   if (mission_controller_) mission_controller_->deactivate();
   const auto status_reason = std::string_view(reason).find("odometry") != std::string_view::npos
@@ -589,22 +620,17 @@ void NavigationMode::failNavigation(const char* reason) {
 }
 
 void NavigationMode::updateSetpoint(float /*dt_s*/) {
-  std::optional<SuperPolynomialTrajectory> super_trajectory;
+  std::optional<mars_quadrotor_msgs::msg::PositionCommand> super_command;
   std::optional<nav_msgs::msg::Odometry> odometry;
   const auto now = node().get_clock()->now();
-  rclcpp::Time previous_setpoint_time;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    super_trajectory = super_trajectory_;
+    super_command = super_command_;
     odometry = odometry_;
-    previous_setpoint_time = last_setpoint_time_;
   }
-  const auto velocityOnlyActive = [this]() {
-    return output_mode_ == OutputMode::Velocity;
-  };
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
-    if (velocityOnlyActive() || !position_enu.has_value()) {
+    if (!position_enu.has_value()) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
       setpoint.withPosition(enuToNed(*position_enu)).withVelocity(Eigen::Vector3f::Zero());
@@ -640,7 +666,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     if (failure_reported_) {
       // Keep the PX4 setpoint stream valid and stationary while the mode
       // executor performs the handover after a terminal navigation failure.
-      publishStationary(std::nullopt);
+      publishStationary(safety_hold_position_);
       last_setpoint_time_ = now;
       return;
     }
@@ -651,7 +677,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
     if (handover_requested_) {
       std::optional<Eigen::Vector3d> handover_position;
-      if (mission_controller_) {
+      if (safety_hold_position_.has_value()) {
+        handover_position = safety_hold_position_;
+      } else if (mission_controller_) {
         handover_position = mission_controller_->activeWaypoint().position_enu;
       }
       publishStationary(handover_position);
@@ -706,105 +734,73 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     return;
   }
 
-  // Native SUPER path. PX4 receives one polynomial and evaluates its
-  // position/velocity/acceleration at the 50 Hz setpoint rate.
-  if (super_trajectory.has_value()) {
+  // Native SUPER command path.  The planner FSM already evaluated the
+  // polynomial and selected main versus backup trajectory.  PX4 must receive
+  // that PVA state directly; applying a second velocity controller here would
+  // change SUPER's trajectory and reintroduce the old terminal oscillation.
+  if (super_command.has_value()) {
     const auto receive_ns = [&]() {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
-      return last_trajectory_receive_ns_;
+      return last_command_receive_ns_;
     }();
-    const double trajectory_remaining_s =
-        super_trajectory->startTimeSeconds() + super_trajectory->totalDurationSeconds() -
-        now.seconds();
     if (receive_ns > 0 && now.nanoseconds() >= receive_ns &&
-        static_cast<double>(now.nanoseconds() - receive_ns) / 1e9 > stale_after_s_ &&
-        (!std::isfinite(trajectory_remaining_s) ||
-         trajectory_remaining_s <= stale_after_s_)) {
-      failNavigation("SUPER polynomial trajectory stale");
+        static_cast<double>(now.nanoseconds() - receive_ns) / 1e9 > stale_after_s_) {
+      safetyStopNavigation("SUPER PVA command stale");
       return;
     }
-    const auto state = super_trajectory->evaluate(now.seconds());
-    if (state.finished || !state.position.allFinite() || !state.velocity.allFinite() ||
-        !state.acceleration.allFinite()) {
-      failNavigation(state.finished ? "SUPER polynomial trajectory expired"
-                                    : "SUPER polynomial trajectory evaluation invalid");
+    const auto& command = *super_command;
+    const auto command_stamp_ns = rclcpp::Time(command.header.stamp).nanoseconds();
+    if (command_stamp_ns <= 0 ||
+        (now.nanoseconds() >= command_stamp_ns &&
+         static_cast<double>(now.nanoseconds() - command_stamp_ns) / 1e9 > stale_after_s_) ||
+        (command_stamp_ns > now.nanoseconds() &&
+         static_cast<double>(command_stamp_ns - now.nanoseconds()) / 1e9 > stale_after_s_)) {
+      safetyStopNavigation("SUPER PVA command timestamp invalid or stale");
       return;
     }
-    if (!odometry.has_value()) {
-      failNavigation("navigation odometry unavailable for SUPER tracking");
+    const Eigen::Vector3d position_enu{command.position.x, command.position.y,
+                                       command.position.z};
+    const Eigen::Vector3d velocity_enu{command.velocity.x, command.velocity.y,
+                                       command.velocity.z};
+    const Eigen::Vector3d acceleration_enu{command.acceleration.x, command.acceleration.y,
+                                            command.acceleration.z};
+    if (command.trajectory_status ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_EMER ||
+        command.trajectory_status ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_ILLEGAL_START ||
+        command.trajectory_status ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_ILLEGAL_FINAL ||
+        command.trajectory_status ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_IMPOSSIBLE) {
+      safetyStopNavigation("SUPER planner failed without a valid backup trajectory");
       return;
     }
-
-    const Eigen::Vector3d measured_position_enu{
-        odometry->pose.pose.position.x, odometry->pose.pose.position.y,
-        odometry->pose.pose.position.z};
-    if (!measured_position_enu.allFinite()) {
-      failNavigation("navigation odometry invalid for SUPER tracking");
-      return;
-    }
-
-    // Keep SUPER's polynomial P/V/A evaluation as the reference contract, but
-    // use the bounded velocity tracker when
-    // the mission resolves to velocity output.  Sending raw high-order
-    // acceleration feed-forward directly to PX4 makes small polynomial or
-    // estimator residuals turn into large lateral/vertical excursions in
-    // SITL.  The tracker preserves the SUPER tangent while enforcing the
-    // configured velocity, acceleration, deceleration and jerk limits.
-    const auto preview_state = super_trajectory->evaluate(now.seconds() + trajectory_preview_s_);
-    if (!preview_state.position.allFinite() || !preview_state.velocity.allFinite() ||
-        !preview_state.acceleration.allFinite()) {
-      failNavigation("SUPER polynomial preview evaluation invalid");
-      return;
-    }
-    TrajectorySample current_reference;
-    current_reference.position_enu = state.position;
-    current_reference.velocity_enu = state.velocity;
-    current_reference.acceleration_enu = state.acceleration;
-    TrajectorySample preview_reference;
-    preview_reference.position_enu = preview_state.position;
-    preview_reference.velocity_enu = preview_state.velocity;
-    preview_reference.acceleration_enu = preview_state.acceleration;
-    const double dt_s = std::max(1e-3, (now - previous_setpoint_time).seconds());
-
-    Eigen::Vector3d command_velocity_enu = state.velocity;
-    {
-      std::lock_guard<std::mutex> lock(trajectory_mutex_);
-      if (velocityOnlyActive()) {
-        command_velocity_enu = velocity_tracker_.update(
-            current_reference, preview_reference, measured_position_enu, dt_s);
-        last_forward_guard_count_ = velocity_tracker_.forwardGuardCount();
+    if (command.trajectory_status ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED) {
+      publishPositionHold(position_enu);
+      if (command.trajectory_flag ==
+          mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_BACKUP) {
+        safetyStopNavigation("SUPER backup trajectory completed before planner recovery");
+        return;
       }
-      last_velocity_command_enu_ = command_velocity_enu;
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
       last_setpoint_time_ = now;
-    }
-    if (now.nanoseconds() - last_super_debug_log_ns_ >= 1000000000LL) {
-      RCLCPP_INFO(node_.get_logger(),
-                  "super_native_state ref_p=(%.2f,%.2f,%.2f) ref_v=(%.2f,%.2f,%.2f) "
-                  "measured=(%.2f,%.2f,%.2f) command=(%.2f,%.2f,%.2f)",
-                  state.position.x(), state.position.y(), state.position.z(),
-                  state.velocity.x(), state.velocity.y(), state.velocity.z(),
-                  measured_position_enu.x(), measured_position_enu.y(), measured_position_enu.z(),
-                  command_velocity_enu.x(), command_velocity_enu.y(), command_velocity_enu.z());
-      last_super_debug_log_ns_ = now.nanoseconds();
+      return;
     }
     px4_ros2::TrajectorySetpoint setpoint;
-    if (velocityOnlyActive()) {
-      // Keep the planner's horizontal tangent as the high-speed command.  The
-      // nominal polynomial remains the sole source of this command; no
-      // alternate trajectory branch is introduced at the PX4 boundary.
-      setpoint.withVelocity(enuToNed(command_velocity_enu));
-    } else {
-      setpoint.withPosition(enuToNed(state.position))
-          .withVelocity(enuToNed(state.velocity));
-      if (output_mode_ == OutputMode::PositionVelocityAcceleration) {
-        setpoint.withAcceleration(enuToNed(state.acceleration));
-      }
-    }
+    setpoint.withPosition(enuToNed(position_enu))
+        .withVelocity(enuToNed(velocity_enu))
+        .withAcceleration(enuToNed(acceleration_enu));
     trajectory_setpoint_->update(setpoint);
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      last_velocity_command_enu_ = velocity_enu;
+      last_setpoint_time_ = now;
+    }
     return;
   }
 
-  // A goal publication and its first polynomial are asynchronous. Hold the
+  // A goal publication and its first PVA command are asynchronous. Hold the
   // current position during this bounded acquisition window so the mode does
   // not hand over to POSCTL on the same 50 Hz tick that starts planning. Once
   // the window expires, fail closed instead of reusing an older trajectory.
@@ -826,17 +822,52 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     last_setpoint_time_ = now;
     return;
   }
-  failNavigation("SUPER polynomial trajectory unavailable");
+  safetyStopNavigation("SUPER PVA command unavailable");
 }
 
-NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
-    : ModeExecutorBase(px4_ros2::ModeExecutorBase::Settings{}, owned_mode),
-      node_(owned_mode.node()) {
-  auto* navigation_mode = dynamic_cast<NavigationMode*>(&owned_mode);
-  if (navigation_mode == nullptr) {
-    throw std::invalid_argument("navigation mode executor received an incompatible owned mode");
+NavigationHoldMode::NavigationHoldMode(rclcpp::Node& node)
+    : ModeBase(node, Settings{"UAV Navigation Hold"}),
+      trajectory_setpoint_(std::make_shared<px4_ros2::TrajectorySetpointType>(*this)) {
+  setSetpointUpdateRate(50.0F);
+}
+
+void NavigationHoldMode::setHoldPosition(const Eigen::Vector3d& position_enu) {
+  std::lock_guard<std::mutex> lock(target_mutex_);
+  target_enu_ = position_enu;
+}
+
+void NavigationHoldMode::onActivate() {
+  RCLCPP_INFO(node().get_logger(), "UAV Navigation Hold activated");
+}
+
+void NavigationHoldMode::onDeactivate() {
+  RCLCPP_INFO(node().get_logger(), "UAV Navigation Hold deactivated");
+}
+
+void NavigationHoldMode::updateSetpoint(float) {
+  std::optional<Eigen::Vector3d> target;
+  {
+    std::lock_guard<std::mutex> lock(target_mutex_);
+    target = target_enu_;
   }
-  navigation_mode->setPositionControlHandover([this]() {
+  if (!target.has_value()) {
+    completed(px4_ros2::Result::ModeFailureOther);
+    return;
+  }
+  px4_ros2::TrajectorySetpoint setpoint;
+  setpoint.withPosition(enuToNed(*target))
+      .withVelocity(Eigen::Vector3f::Zero())
+      .withAcceleration(Eigen::Vector3f::Zero());
+  trajectory_setpoint_->update(setpoint);
+}
+
+NavigationModeExecutor::NavigationModeExecutor(
+    px4_ros2::ModeBase& owned_mode, NavigationHoldMode& hold_mode)
+    : ModeExecutorBase(px4_ros2::ModeExecutorBase::Settings{}, owned_mode),
+      node_(owned_mode.node()),
+      navigation_mode_(dynamic_cast<NavigationMode&>(owned_mode)),
+      hold_mode_(hold_mode) {
+  navigation_mode_.setPositionControlHandover([this]() {
     RCLCPP_WARN(node_.get_logger(), "External Mode requesting PX4 POSCTL handover");
     scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result result) {
       onPositionControlHandoverCompleted(result, true);
@@ -878,8 +909,37 @@ void NavigationModeExecutor::onPositionControlHandoverCompleted(
     return;
   }
 
+  // POSCTL requires a manual-control source and PX4 LOITER requires a global
+  // position on common headless LIO-only configurations.  Transition to the
+  // registered position-hold mode when POSCTL is unavailable.
+  RCLCPP_WARN(node_.get_logger(),
+              "PX4 POSCTL handover failed with result=%s; requesting External Hold",
+              px4_ros2::resultToString(result));
+  scheduleExternalHold(complete_navigation_failure);
+}
+
+void NavigationModeExecutor::scheduleExternalHold(bool complete_navigation_failure) {
+  const auto hold_position = navigation_mode_.handoverPosition();
+  if (!hold_position.has_value()) {
+    onHoldHandoverCompleted(px4_ros2::Result::Rejected, complete_navigation_failure);
+    return;
+  }
+  hold_mode_.setHoldPosition(*hold_position);
+  scheduleMode(hold_mode_.id(), [this, complete_navigation_failure](px4_ros2::Result hold_result) {
+    onHoldHandoverCompleted(hold_result, complete_navigation_failure);
+  });
+}
+
+void NavigationModeExecutor::onHoldHandoverCompleted(
+    px4_ros2::Result result, bool complete_navigation_failure) {
+  if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
+    RCLCPP_INFO(node_.get_logger(), "External Hold handover completed with result=%s",
+                px4_ros2::resultToString(result));
+    return;
+  }
+
   RCLCPP_ERROR(node_.get_logger(),
-               "PX4 POSCTL handover failed with result=%s; navigation cannot continue",
+               "External Hold handover failed with result=%s; navigation cannot continue",
                px4_ros2::resultToString(result));
   if (complete_navigation_failure) {
     // scheduleMode() invokes this callback synchronously for Rejected/Timeout.
@@ -904,7 +964,8 @@ int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   using Node = px4_ros2::NodeWithModeExecutor<
       px4_navigation_external_mode::NavigationModeExecutor,
-      px4_navigation_external_mode::NavigationMode>;
+      px4_navigation_external_mode::NavigationMode,
+      px4_navigation_external_mode::NavigationHoldMode>;
   rclcpp::spin(std::make_shared<Node>("px4_navigation_external_mode", true));
   rclcpp::shutdown();
   return 0;

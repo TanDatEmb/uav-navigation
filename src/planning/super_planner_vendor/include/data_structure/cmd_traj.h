@@ -26,6 +26,7 @@
 #define CMD_TRAJ_H
 
 #include <data_structure/exp_traj.h>
+#include <data_structure/backup_traj.h>
 #include <data_structure/base/trajectory.h>
 
 
@@ -45,7 +46,26 @@ namespace super_planner {
         Trajectory yaw_traj_{};
 
         double start_WT_{0.0};
+        double backup_traj_start_TT_{0.0};
+        /* some part of exp traj may belong to last backup, record this */
+        double on_backup_start_TT_{-1}, on_backup_end_TT_{-1};
+        bool first_part_exp_has_backup_traj_{false};
+
+
+        /* some flags */
         bool flag_empty_{true};
+        bool flag_backup_traj_avilibale_{false};
+
+        void checkFirstPartBackupTraj(const ExpTraj & exp) {
+            double tmp_s, tmp_e;
+            if(exp.getFirstPartBackupTraj(tmp_s, tmp_e)) {
+                on_backup_end_TT_ = tmp_e;
+                on_backup_start_TT_ = tmp_s;
+                first_part_exp_has_backup_traj_ = true;
+            }else {
+                first_part_exp_has_backup_traj_ =false;
+            }
+        }
 
     public:
         explicit  CmdTraj() = default;
@@ -67,17 +87,66 @@ namespace super_planner {
         }
 
 
+        bool setTrajectory(const ExpTraj&exp_traj,
+            const BackupTraj & backup_traj) {
+            LOCK_G
+            Trajectory tmp_pos_traj, tmp_yaw_traj;
+            backup_traj_start_TT_ = backup_traj.getStartTT();
+            if (!exp_traj.getPartialTrajectoryByTrajectoryTime(0, backup_traj_start_TT_,
+                                                               tmp_pos_traj, tmp_yaw_traj)) {
+                fmt::print(fg(fmt::color::indian_red)," -- [SUPER] in [PlanFromRest] getPartialTrajectoryByTime failed.\n");
+                return false;
+            }
+            pos_traj_ = tmp_pos_traj + backup_traj.posTraj();
+            yaw_traj_ = tmp_yaw_traj + backup_traj.yawTraj();
+
+            start_WT_ = pos_traj_.start_WT;
+
+            flag_empty_ = false;
+            flag_backup_traj_avilibale_ = true;
+            checkFirstPartBackupTraj(exp_traj);
+            return true;
+        }
+
         void setTrajectory(const ExpTraj&exp_traj) {
             LOCK_G
             pos_traj_ = exp_traj.posTraj();
             yaw_traj_ = exp_traj.yawTraj();
             start_WT_ = pos_traj_.start_WT;
             flag_empty_ = false;
+            backup_traj_start_TT_ = 99999999;
+            flag_backup_traj_avilibale_ = false;
+            checkFirstPartBackupTraj(exp_traj);
+        }
+
+        bool isTTOnBackupTraj(const double & checkTT) const {
+            if(!backupTrajAvilibale()) {
+                return false;
+            }
+
+            if(first_part_exp_has_backup_traj_ &&
+                (checkTT<on_backup_end_TT_ && checkTT>on_backup_start_TT_)) {
+                return true;
+            }
+
+            if(checkTT > backup_traj_start_TT_) {
+                return true;
+            }
+
+            return false;
+        }
+
+        bool backupTrajAvilibale() const {
+            return flag_backup_traj_avilibale_;
         }
 
 
         double getTotalDuration() const {
             return pos_traj_.getTotalDuration();
+        }
+
+        double getBackupTrajStartTT() const {
+            return backup_traj_start_TT_;
         }
 
         Vec3f getPos(const double & t)const {

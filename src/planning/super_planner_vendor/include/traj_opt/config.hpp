@@ -58,8 +58,11 @@ namespace traj_opt {
         double max_vel{0}, max_acc{0}, max_jerk{0}, max_omg{0}, max_acc_thr{0}, min_acc_thr{0};
         // Penalty cost.
         double penna_scale{-1}, penna_vel{0}, penna_acc{0}, penna_jerk{0}, penna_omg{0}, penna_thr{0};
-        // penna_t; penna_pos are used by corridor optimization.
+        // penna_t; penna_pos only for corridor based method.
         double penna_t{0}, penna_pos{0}, penna_attract{0};
+        // penna_ts only for backupTraj;
+        double penna_ts{0};
+        // for backup traj piece num
         int piece_num{0};
 
         double penna_margin{0.05};
@@ -106,6 +109,7 @@ namespace traj_opt {
 
             loader.LoadParam("traj_opt" + ns + "penna_scale", penna_scale, -1.0);
             loader.LoadParam("traj_opt" + ns + "penna_t", penna_t, -1.0);
+            loader.LoadParam("traj_opt" + ns + "penna_ts", penna_ts, -1.0);
             loader.LoadParam("traj_opt" + ns + "penna_pos", penna_pos, -1.0);
             loader.LoadParam("traj_opt" + ns + "penna_vel", penna_vel, -1.0);
             loader.LoadParam("traj_opt" + ns + "penna_acc", penna_acc, -1.0);
@@ -116,6 +120,7 @@ namespace traj_opt {
 
             if (penna_scale > 0) {
                 penna_t = penna_t * penna_scale;
+                penna_ts = penna_ts * penna_scale;
                 penna_pos = penna_pos * penna_scale;
                 penna_vel = penna_vel * penna_scale;
                 penna_acc = penna_acc * penna_scale;

@@ -132,7 +132,7 @@ class RuntimeContractTest(unittest.TestCase):
         navigation = runner.load_config("mapping.yaml")["super_navigation_node"]["ros__parameters"]["super_navigation"]
         self.assertEqual(navigation["cloud_topic"], "/lio/registered_points")
         self.assertEqual(navigation["odometry_topic"], "/lio/odometry_propagated")
-        self.assertEqual(navigation["trajectory_topic"], "/navigation/super_trajectory")
+        self.assertEqual(navigation["command_topic"], "/navigation/super_command")
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("/navigation/visualization/planned_path", rviz)
 
@@ -186,6 +186,8 @@ class RuntimeContractTest(unittest.TestCase):
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
 
             speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
             speed_target = runner._mapping_params(
@@ -199,14 +201,23 @@ class RuntimeContractTest(unittest.TestCase):
             speed_planner = yaml.safe_load(Path(speed_parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 5.0)
 
+            capped_target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=speed_mission,
+                speed_cap_mps=2.0,
+            )
+            capped_parameters = yaml.safe_load(capped_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            capped_planner = yaml.safe_load(Path(capped_parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(capped_planner["traj_opt"]["boundary"]["max_vel"], 2.0)
+
             external = runner._external_mode_params(
                 session, ROOT / "config/runtime/external_mode.yaml", mission
             )
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
-            tracker = external_parameters["navigation"]["velocity_tracker"]
-            self.assertEqual(tracker["max_velocity_mps"], 1.0)
-            self.assertEqual(tracker["max_acceleration_mps2"], 2.0)
-            self.assertEqual(tracker["max_deceleration_mps2"], 2.0)
+            self.assertNotIn("velocity_tracker", external_parameters["navigation"])
+            self.assertFalse(external_parameters["navigation"]["prefer_velocity_output"])
 
     def test_stress_profiles_have_explicit_mission_limits_and_worlds(self) -> None:
         profiles = {
@@ -623,12 +634,12 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("kLioPropagatedOdometryTopic", source)
         self.assertNotIn("/sim/ground_truth/odometry", source)
 
-    def test_external_mode_scenario_observes_native_super_polynomial(self) -> None:
+    def test_external_mode_scenario_observes_native_super_pva(self) -> None:
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
             encoding="utf-8"
         )
         self.assertIn("from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus", source)
-        self.assertIn('"/navigation/super_trajectory"', source)
+        self.assertIn('"/navigation/super_command"', source)
         self.assertNotIn('"/navigation/trajectory_bundle"', source)
         self.assertNotIn('"/navigation/trajectory"', source)
         self.assertNotIn("PlannedTrajectory", source)

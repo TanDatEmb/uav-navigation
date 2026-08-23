@@ -31,6 +31,9 @@ namespace super_planner {
         EPX_TRAJ_FRONTEND = 0,
         EXP_TRAJ_OPT,
         GENERATE_EXP_TRAJ,
+        BACK_TRAJ_FRONTEND,
+        BACK_TRAJ_OPT,
+        GENERATE_BACK_TRAJ,
         TOTAL_REPLAN,
         VISUALIZATION
     };
@@ -40,6 +43,9 @@ namespace super_planner {
                     "EPX_TRAJ_FRONTEND",
                     " EXP_TRAJ_OPT",
                     " GENERATE_EXP_TRAJ",
+                    " BACK_TRAJ_FRONTEND",
+                    " BACK_TRAJ_OPT",
+                    " GENERATE_BACK_TRAJ",
                     " TOTAL_REPLAN",
                     " VISUALIZATION"
             };
@@ -64,11 +70,21 @@ namespace super_planner {
         Trajectory exp_traj;
         Trajectory exp_yaw_traj;
 
+        // for backup traj
+        double backup_init_ts, ts_max, ts_min;
+        VecDf backup_init_t_vec;
+        // the last point is the init fina p
+        vec_Vec3f backup_init_ps;
+        StatePVAJ backup_init_state, backup_fina_state;
+        Polytope backup_sfc;
+        Trajectory backup_traj;
+        Trajectory backup_yaw_traj;
+
         // RET
         int ret_code{SUPPER_UNDEFINED};
 
         // comp_t
-        double mapping_t{0.0}, astar_t{0.0}, exp_sfc_t{0.0}, exp_opt_t{0.0},
+        double mapping_t{0.0}, astar_t{0.0}, exp_sfc_t{0.0}, exp_opt_t{0.0}, backup_sfc_t{0.0}, backup_opt_t{0.0},
                 total_t{0.0}, viz_t{0.0};
 
     public:
@@ -90,7 +106,8 @@ namespace super_planner {
         }
 
         void visualize(ros_interface::RosInterface::Ptr &viz_ptr) {
-            viz_ptr->vizReplanLog(exp_traj, exp_yaw_traj, exp_sfc, pc_for_sfc, ret_code);
+            viz_ptr->vizReplanLog(exp_traj, backup_traj, exp_yaw_traj, backup_yaw_traj, exp_sfc, backup_sfc, pc_for_sfc,
+                                  ret_code);
             viz_ptr->vizFrontendPath(exp_init_ps);
         }
 
@@ -102,8 +119,11 @@ namespace super_planner {
                     pc_for_sfc,
                     exp_sfc,
                     exp_init_state, exp_fina_state, exp_init_t_vec, exp_init_ps, exp_traj, exp_yaw_traj,
-                    ret_code,
-                    mapping_t, astar_t, exp_sfc_t, exp_opt_t, total_t, viz_t);
+                    backup_init_ts, ts_max, ts_min, backup_init_t_vec, backup_init_ps, backup_init_state,
+                    backup_fina_state,
+                    backup_sfc,
+                    backup_traj, backup_yaw_traj, ret_code,
+                    mapping_t, astar_t, exp_sfc_t, exp_opt_t, backup_sfc_t, backup_opt_t, total_t, viz_t);
         }
 
         void reset() {
@@ -111,13 +131,19 @@ namespace super_planner {
             astar_t = 0.0;
             exp_sfc_t = 0.0;
             exp_opt_t = 0.0;
+            backup_sfc_t = 0.0;
+            backup_opt_t = 0.0;
             total_t = 0.0;
             viz_t = 0.0;
             ret_code = SUPER_RET_CODE::SUPPER_UNDEFINED;
             exp_traj.clear();
             exp_yaw_traj.clear();
+            backup_traj.clear();
+            backup_yaw_traj.clear();
             exp_sfc.clear();
+            backup_sfc.Reset();
             exp_init_ps.clear();
+            backup_init_ps.clear();
             reference_path.clear();
         }
 
@@ -152,6 +178,20 @@ namespace super_planner {
             exp_sfc = _sfcs;
         }
 
+        void setBackupCondition(const double &_init_ts, const VecDf &_init_t_vec,
+                                const vec_Vec3f &_init_ps,
+                                const double &_ts_min,
+                                const double &_ts_max,
+                                const Polytope &_sfc) {
+            ts_max = _ts_max;
+            ts_min = _ts_min;
+            backup_init_ts = _init_ts;
+            backup_init_t_vec = _init_t_vec;
+            backup_sfc = _sfc;
+            backup_init_ps = _init_ps;
+            backup_sfc = _sfc;
+        }
+
         void setExpTraj(const Trajectory &_traj) {
             exp_traj = _traj;
         }
@@ -160,11 +200,20 @@ namespace super_planner {
             exp_yaw_traj = _traj;
         }
 
+        void setBackupTraj(const Trajectory &_traj) {
+            backup_traj = _traj;
+        }
+
+        void setBackupYawTraj(const Trajectory &_traj) {
+            backup_yaw_traj = _traj;
+        }
+
         void setComptT(const vector<double> &comp_times) {
             astar_t = comp_times[LogTime::EPX_TRAJ_FRONTEND];
             exp_opt_t = comp_times[LogTime::EXP_TRAJ_OPT];
+            backup_opt_t = comp_times[LogTime::BACK_TRAJ_OPT];
             viz_t = comp_times[LogTime::VISUALIZATION];
-            total_t = astar_t + exp_opt_t + viz_t;
+            total_t = astar_t + exp_opt_t + backup_opt_t + viz_t;
         }
 
         void setSfcPc(const vec_Vec3f &_pc) {
@@ -192,6 +241,38 @@ namespace super_planner {
             );
         }
 
+        void replanBackupTrajectory(const BackupTrajOpt::Ptr &backup_traj_opt, Trajectory &traj) {
+            if (exp_traj.empty() || backup_init_ps.size() == 0 || backup_init_t_vec.size() == 0
+                || (backup_init_ps.size()!=backup_init_t_vec.size())
+            ) {
+                fmt::print(fg(fmt::color::indian_red),"Backup traj is empty\n");
+                return;
+            }
+            fmt::print("Online backup trajectory==========================\n");
+            fmt::print("ts_min: {}\n", ts_min);
+            fmt::print("ts_max: {}\n", ts_max);
+            fmt::print("backup_init_ts: {}\n", backup_init_ts);
+            fmt::print("backup_init_ps: \n{}\n", backup_init_ps.size());
+            fmt::print("backup_init_t_vec: {}\n", backup_init_t_vec.size());
+
+            traj.clear();
+//            // for backup traj
+//            double backup_init_ts, ts_max, ts_min;
+//            VecDf backup_init_t_vec;
+//            // the last point is the init fina p
+//            vec_Vec3f backup_init_ps;
+            double out_ts;
+            backup_traj_opt->optimize(exp_traj,
+                                      ts_min,
+                                      ts_max,
+                                      backup_init_ts,
+                                      backup_sfc,
+                                      backup_init_t_vec,
+                                      backup_init_ps,
+                                      traj,
+                                      out_ts
+            );
+        }
     };
 
 }

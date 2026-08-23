@@ -450,13 +450,27 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                  RESET << endl;
             return false;
         }
+        curIV.resize(3, 0);
         geometry_utils::enumerateVs(curIH, interior, curIV);
+        if (curIV.cols() == 0) {
+            ros_ptr_->warn(
+                    " -- [ExpOpt] Corridor overlap {} cannot be vertex-enumerated "
+                    "(corridors={}, overlap_depth={})",
+                    i, opt_vars.hPolytopes.size(), 2.0 * dis);
+            return false;
+        }
         const double test_sum = curIV.sum();
         if (std::isnan(test_sum) || std::isinf(test_sum)) {
+            ros_ptr_->warn(
+                    " -- [ExpOpt] Corridor overlap {} produced non-finite vertices "
+                    "(corridors={}, overlap_depth={})",
+                    i, opt_vars.hPolytopes.size(), 2.0 * dis);
             return false;
         }
         opt_vars.waypoint_attractor.col(i) = interior;
         opt_vars.waypoint_attractor_dead_d(i) = dis;
+        // Safe default when no guide sample belongs to this overlap.
+        opt_vars.points.col(i) = interior;
         nv = curIV.cols();
         curIOB.resize(3, nv);
         curIOB.col(0) = curIV.col(0);
@@ -465,23 +479,39 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     }
 
     // * 3) Time and waypoint allocation for hot initialization
-    VecDf min_dis(opt_vars.waypoint_attractor.cols());
     VecDi min_id(opt_vars.waypoint_attractor.cols());
     VecDf time_stamps(opt_vars.waypoint_attractor.cols() + 2);
     time_stamps(0) = 0.0;
     time_stamps(opt_vars.waypoint_attractor.cols() + 1) = opt_vars.guide_t.back();
     min_id.setConstant(0);
-    min_dis.setConstant(std::numeric_limits<double>::max());
-    for (int i = 0; i < opt_vars.guide_path.size(); i++) {
-        for (int j = 0; j < opt_vars.waypoint_attractor.cols(); j++) {
-            const double dis = (opt_vars.guide_path[i] - opt_vars.waypoint_attractor.col(j)).norm();
-            if (dis < min_dis[j]) {
-                min_dis[j] = dis;
-                min_id[j] = i;
-                opt_vars.points.col(j) = opt_vars.waypoint_attractor.col(j);//opt_vars.guide_path[i];
-                time_stamps(j + 1) = opt_vars.guide_t[i];
+    int first_guide_index = 0;
+    for (int j = 0; j < opt_vars.waypoint_attractor.cols(); j++) {
+        const Vec3f interior = opt_vars.waypoint_attractor.col(j);
+        int nearest_index = first_guide_index;
+        double nearest_distance = std::numeric_limits<double>::max();
+        for (int i = first_guide_index; i < static_cast<int>(opt_vars.guide_path.size()); i++) {
+            const double distance = (opt_vars.guide_path[i] - interior).norm();
+            if (distance < nearest_distance) {
+                nearest_distance = distance;
+                nearest_index = i;
             }
         }
+
+        min_id[j] = nearest_index;
+        first_guide_index = nearest_index;
+        const Vec3f &guide_point = opt_vars.guide_path[nearest_index];
+        const VecDf guide_plane_values =
+                opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
+                opt_vars.hOverlapPolytopes[j].col(3);
+        // Preserve SUPER's interior-point initialization and its timestamp
+        // allocation, but bias it toward the collision-checked A* route when
+        // that corresponding guide sample belongs to the same convex overlap.
+        // A conservative blend avoids the ill-conditioned boundary start of
+        // direct guide initialization while reducing corridor-centre drift.
+        opt_vars.points.col(j) = guide_plane_values.maxCoeff() <= 1.0e-6
+                ? 0.70 * interior + 0.30 * guide_point
+                : interior;
+        time_stamps(j + 1) = opt_vars.guide_t[nearest_index];
     }
 
     for (int i = 1; i < time_stamps.size(); i++) {
@@ -490,6 +520,8 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     }
 
     if (!geometry_utils::enumerateVs(opt_vars.hPolytopes.back(), curIV)) {
+        ros_ptr_->warn(" -- [ExpOpt] Final corridor {} cannot be vertex-enumerated",
+                       opt_vars.hPolytopes.size() - 1);
         return false;
     }
     nv = curIV.cols();
@@ -712,11 +744,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
     }
 
-    if ((cfg_.penna_pos > 0 && opt_vars.penalty_log(1) > 0.2) ||
+    const bool position_violation =
+            cfg_.penna_pos > 0 && opt_vars.penalty_log(POS_IDX) > 0.2;
+    const bool acceleration_violation =
+            cfg_.penna_acc > 0 &&
+            opt_vars.penalty_log(ACC_IDX) > cfg_.max_acc * cfg_.penna_margin;
+    const bool body_rate_violation =
+            cfg_.penna_omg > 0 &&
+            opt_vars.penalty_log(OMG_IDX) > cfg_.max_omg * cfg_.penna_margin;
+    const bool thrust_violation =
+            cfg_.penna_thr > 0 &&
+            opt_vars.penalty_log(THR_IDX) > cfg_.max_acc * cfg_.penna_margin;
+    if (position_violation ||
         // (cfg_.penna_vel > 0 && opt_vars.penalty_log(2) > cfg_.max_vel * cfg_.penna_margin) ||
-        (cfg_.penna_acc > 0 && opt_vars.penalty_log(3) > cfg_.max_acc * cfg_.penna_margin) ||
-        (cfg_.penna_omg > 0 && opt_vars.penalty_log(6) > cfg_.max_omg * cfg_.penna_margin) ||
-        (cfg_.penna_thr > 0 && opt_vars.penalty_log(7) > cfg_.max_acc * cfg_.penna_margin)) {
+        acceleration_violation || body_rate_violation || thrust_violation) {
         if (cfg_.print_optimizer_log) {
             cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
             cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
@@ -729,7 +770,17 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
             cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
         }
-        ros_ptr_->warn(" -- [ExpOpt] Opt failed, Omg or thr or Pos violation.");
+        ros_ptr_->warn(
+                " -- [ExpOpt] Constraint rejection: pos={} (limit=0.2, fail={}), "
+                "acc_sq={} (limit={}, fail={}), omg_sq={} (limit={}, fail={}), "
+                "thrust_sq={} (limit={}, fail={}), lbfgs_ret={}",
+                opt_vars.penalty_log(POS_IDX), position_violation,
+                opt_vars.penalty_log(ACC_IDX), cfg_.max_acc * cfg_.penna_margin,
+                acceleration_violation,
+                opt_vars.penalty_log(OMG_IDX), cfg_.max_omg * cfg_.penna_margin,
+                body_rate_violation,
+                opt_vars.penalty_log(THR_IDX), cfg_.max_acc * cfg_.penna_margin,
+                thrust_violation, ret);
         ret = -1;
     }
 

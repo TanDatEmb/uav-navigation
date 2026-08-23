@@ -29,6 +29,8 @@
 #include "string"
 #include "utils/header/type_utils.hpp"
 #include "utils/header/yaml_loader.hpp"
+#include <cmath>
+#include <stdexcept>
 
 namespace path_search {
     using super_utils::Vec3i;
@@ -44,6 +46,8 @@ namespace path_search {
         bool debug_visualization_en;
         bool allow_diag{false};
         int heu_type{0};
+        double heuristic_weight{1.00001};
+        double search_time_limit_s{0.1};
 
         PathSearchConfig() {};
 
@@ -54,7 +58,16 @@ namespace path_search {
             loader.LoadParam(name_space + "/allow_diag", allow_diag, false);
             loader.LoadParam(name_space + "/debug_visualization_en", debug_visualization_en, false);
             loader.LoadParam(name_space + "/heu_type", heu_type, 0);
+            loader.LoadParam(name_space + "/heuristic_weight", heuristic_weight, 1.00001);
             loader.LoadParam(name_space + "/visual_process", visual_process, false);
+            loader.LoadParam(name_space + "/search_time_limit_s", search_time_limit_s, 0.1);
+            if (!std::isfinite(search_time_limit_s) || search_time_limit_s <= 0.0) {
+                throw std::invalid_argument("astar/search_time_limit_s must be finite and positive");
+            }
+            if (!std::isfinite(heuristic_weight) || heuristic_weight < 1.0 ||
+                heuristic_weight > 5.0) {
+                throw std::invalid_argument("astar/heuristic_weight must be within [1, 5]");
+            }
             map_voxel_num = Vec3i(vox_[0], vox_[1], vox_[2]);
             map_size_i = map_voxel_num / 2;
             map_voxel_num = map_size_i * 2 + Vec3i::Constant(1);

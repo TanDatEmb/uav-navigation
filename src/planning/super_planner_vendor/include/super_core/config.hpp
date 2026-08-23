@@ -41,11 +41,12 @@ namespace super_planner {
             YAW_TO_GOAL = 2
         };
 
-        traj_opt::Config exp_traj_cfg;
+        traj_opt::Config exp_traj_cfg, back_traj_cfg;
 
         // Bool Params
         bool visualization_en{true};
         bool detailed_log_en{false};
+        bool backup_traj_en;
         bool use_fov_cut, print_log;
         bool goal_vel_en,goal_yaw_en;
         bool visual_process;
@@ -64,8 +65,6 @@ namespace super_planner {
         double replan_forward_dt;
         double sample_traj_dt;
         double robot_r;
-        double vertical_avoidance_min_z{0.5};
-        double vertical_avoidance_max_z{4.5};
         int iris_iter_num;
 
         int mpc_horizon{};
@@ -81,9 +80,11 @@ namespace super_planner {
         Config(const std::string & cfg_path) {
             yaml_loader::YamlLoader loader(cfg_path);
             exp_traj_cfg = traj_opt::Config(cfg_path, "exp_traj");
+            back_traj_cfg = traj_opt::Config(cfg_path, "backup_traj");
             loader.LoadParam("super_planner/print_log", print_log, false);
             loader.LoadParam("super_planner/detailed_log_en", detailed_log_en, false);
             loader.LoadParam("super_planner/visualization_en", visualization_en, false);
+            loader.LoadParam("super_planner/backup_traj_en", backup_traj_en, false);
             loader.LoadParam("super_planner/goal_vel_en", goal_vel_en, false);
             loader.LoadParam("super_planner/goal_yaw_en", goal_yaw_en, false);
             loader.LoadParam("super_planner/visual_process", visual_process, false);
@@ -98,10 +99,6 @@ namespace super_planner {
             loader.LoadParam("super_planner/planning_horizon", planning_horizon, 10.0);
             loader.LoadParam("super_planner/receding_dis", receding_dis, 5.0);
             loader.LoadParam("super_planner/robot_r", robot_r, 0.3);
-            loader.LoadParam("super_planner/vertical_avoidance_min_z",
-                             vertical_avoidance_min_z, 0.5);
-            loader.LoadParam("super_planner/vertical_avoidance_max_z",
-                             vertical_avoidance_max_z, 4.5);
             loader.LoadParam("super_planner/iris_iter_num", iris_iter_num, 1);
             loader.LoadParam("super_planner/yaw_mode", yaw_mode, 1);
             loader.LoadParam("super_planner/mpc_horizon", mpc_horizon, 1);

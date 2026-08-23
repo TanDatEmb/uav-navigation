@@ -1,29 +1,37 @@
 super_planner:
+  backup_traj_en: true
   detailed_log_en: false
   visualization_en: false
   use_fov_cut: false
   print_log: false
   visual_process: false
-  frontend_in_known_free: true
+  frontend_in_known_free: false
   goal_yaw_en: false
-  goal_vel_en: true
-  corridor_bound_dis: 0.8
-  corridor_line_max_length: 1.0
-  safe_corridor_line_max_length: 6.0
-  iris_iter_num: 2
+  goal_vel_en: false
+  corridor_bound_dis: 3.0
+  corridor_line_max_length: 3.0
+  # Backup is a local braking/safety trajectory, not a second long-range main
+  # path. Keep its visibility/corridor seed bounded to the upstream 3 m local
+  # horizon so CIRI never receives a 20--30 m obstacle-dense line.
+  safe_corridor_line_max_length: 3.0
+  # One CIRI pass already separates every occupied point from the seed line.
+  # Additional passes only enlarge the inscribed volume and create an
+  # unbounded latency tail near dense obstacle surfaces.
+  iris_iter_num: 1
   obs_skip_num: 2
-  # Replan before the short high-speed local horizon expires.  A value equal
-  # to the trajectory duration makes SUPER return NO_NEED at the boundary and
-  # leaves PX4 tracking a finished polynomial.
-  replan_forward_dt: 0.5
-  planning_horizon: 12.0
+  # Hot-replan p95 is about 0.79 s with mapping and LIO active on the target
+  # SITL host.  The stitch point must be farther ahead than that measured
+  # compute budget or every valid optimization is discarded after completion.
+  replan_forward_dt: 1.0
+  planning_horizon: 30.0
   sensing_horizon: -1
-  receding_dis: 1.0
-  robot_r: 0.3
-  # Vertical avoidance opens only after the horizontal search is infeasible;
-  # keep it inside the mission flight envelope.
-  vertical_avoidance_min_z: 0.5
-  vertical_avoidance_max_z: 4.5
+  # Preserve a short dynamically continuous prefix, then rebuild the route
+  # from current map evidence. A long/infinite retained prefix recreates the
+  # stale normal-path behaviour seen after contact or optimizer drift.
+  receding_dis: 3.0
+  # Canonical center-clearance envelope: 0.35 m vehicle collision radius
+  # plus 0.05 m acceptance margin.
+  robot_r: 0.4
   yaw_dot_max: 3.0
   yaw_mode: 1
   mpc_horizon: 15
@@ -33,14 +41,11 @@ traj_opt:
     save_log_en: false
     print_optimizer_log: false
   boundary:
-    max_vel: 1.0
-    # Keep SUPER's acceleration/jerk envelope so replans can absorb the
-    # measured PX4/LIO state error; the mission speed contract is enforced by
-    # max_vel and the External Mode evaluator.
-    max_acc: 15.0
+    max_vel: 25.0
+    max_acc: 20.0
     max_jerk: 120.0
-    max_omg: 2.5
-    max_acc_thr: 17.0
+    max_omg: 5.0
+    max_acc_thr: 25.0
     min_acc_thr: 6.0
     penna_margin: 0.05
   exp_traj:
@@ -51,14 +56,35 @@ traj_opt:
     scale_factor: 1.0
     integral_reso: 15
     smooth_eps: 0.01
-    penna_t: 1.0e+7
-    penna_pos: 5.0e+9
+    penna_t: 1.0e+8
+    penna_pos: 5.0e+8
     penna_vel: 5.0e+8
     penna_acc: 5.0e+8
-    penna_jerk: -5.0e+8
-    penna_attract: 5.0e+8
-    penna_omg: -1
-    penna_thr: -1
+    penna_jerk: -5.0e+11
+    # SUPER baseline: a negative weight disables the corridor-center attractor.
+    # Enabling it here caused competing waypoint pulls, open-space slalom and
+    # flatness/position infeasibility around obstacle corridor overlaps.
+    penna_attract: -1.0e+7
+    penna_omg: 5.0e+8
+    penna_thr: 5.0e+8
+  backup_traj:
+    uniform_time_en: true
+    pos_constraint_type: 1
+    piece_num: 2
+    energy_cost_type: 4
+    block_energy_cost: true
+    opt_accuracy: 1.0e-6
+    scale_factor: 1.0
+    integral_reso: 12
+    smooth_eps: 0.01
+    penna_t: 1.0e+6
+    penna_ts: 1.0e+7
+    penna_pos: 1.0e+10
+    penna_vel: 1.0e+8
+    penna_acc: 1.0e+8
+    penna_jerk: -1.0e+8
+    penna_omg: 5.0e+8
+    penna_thr: 5.0e+8
   flatness:
     mass: 1.64
     dh: 0.35
@@ -69,14 +95,31 @@ traj_opt:
 
 astar:
   map_voxel_num: [500, 500, 100]
+  # Weighted A* bounds obstacle-search latency. Collision checks and corridor
+  # verification are unchanged, so the weight trades geometric optimality for
+  # deterministic real-time search without weakening safety.
+  heuristic_weight: 1.5
+  # A* runs concurrently with mapping and state estimation in SITL. Keep a
+  # bounded slice of the 1 s replan budget instead of a fixed 0.1 s cutoff.
+  search_time_limit_s: 0.25
   visual_process: false
   allow_diag: true
   heu_type: 2
   debug_visualization_en: false
 
 rog_map:
-  resolution: 0.05
-  inflation_resolution: 0.1
+  # The registered cloud is voxelized at 0.20 m. Keep measured occupancy at
+  # that evidence resolution; a denser grid creates thousands of duplicate
+  # surface constraints and gives CIRI quadratic work without adding geometry.
+  # ROG-Map requires the inflated grid to be no finer than measured occupancy;
+  # both layers therefore share this evidence resolution.
+  resolution: 0.2
+  inflation_resolution: 0.2
+  # A 0.4 m continuous clearance cannot be represented safely by marking only
+  # voxel centres whose centre distance is <= 0.4 m: a ray can pass through a
+  # voxel corner closer than 0.4 m while the inflated lookup still says FREE.
+  # One extra rasterization shell makes the discrete collision layer a
+  # conservative representation of the 0.4 m continuous CIRI/vehicle radius.
   inflation_step: 3
   unk_inflation_en: false
   unk_inflation_step: 1
@@ -85,18 +128,21 @@ rog_map:
   map_size: [110, 15, 6]
   fix_map_origin: [0, 0, 1.5]
   frontier_extraction_en: false
-  # ORIGIN_AT_CORNER snaps the ceiling down by one inflation step. The PX4
-  # mission flies at z=3.0 m and SUPER also needs the robot/corridor margin,
-  # so 3.5 m produced an effective ceiling of 3.15 m and made the start
-  # corridor infeasible. Keep a real margin above the mission altitude.
-  virtual_ceil_height: 5.0
-  # Keep the actual ground plane below the LIO origin; ORIGIN_AT_CORNER snaps
-  # this value upward by one inflation step.
-  virtual_ground_height: -0.5
+  # These are pre-quantization inputs. With ORIGIN_AT_CORNER and three 0.2 m
+  # inflation steps, ROG-Map moves the effective limits inward by about 0.8 m.
+  # Compensate here so the map actually exposes the intended [-0.4, 5.0] m
+  # flight volume. The former [-0.5, 5.0] inputs became [0.0, 4.2]: mapping
+  # rejected pre-takeoff odometry and a vehicle at z=3.7 had no dynamic margin
+  # inside the robot-radius-tightened corridor.
+  virtual_ceil_height: 5.8
+  virtual_ground_height: -1.1
   load_pcd_en: false
   map_sliding:
     enable: true
-    threshold: 3.0
+    # Must stay comfortably below the smallest local-map half extent (3 m in
+    # Z).  A 3 m threshold let the vehicle reach the old map ceiling before a
+    # slide, so A* produced seeds outside CIRI's local domain.
+    threshold: 1.5
   esdf:
     enable: false
     resolution: 0.1
@@ -122,7 +168,11 @@ rog_map:
     enable: true
     batch_update_size: 1
     local_update_box: [100, 100, 5]
-    ray_range: [0.5, 100]
+    # Reject returns from the airframe before occupancy insertion. This only
+    # affects the planning map; the estimator keeps its own registered cloud.
+    # The radius must cover the complete body/landing-gear envelope, not just
+    # the planner collision radius.
+    ray_range: [0.7, 100]
     p_min: 0.12
     p_miss: 0.49
     p_free: 0.499

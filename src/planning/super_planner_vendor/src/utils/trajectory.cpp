@@ -23,9 +23,6 @@
 
 #include <data_structure/base/trajectory.h>
 
-#include <algorithm>
-#include <cmath>
-
 using namespace geometry_utils;
 using namespace super_utils;
 using namespace color_text;
@@ -257,86 +254,109 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
     }
 
     out_traj.clear();
-
-    // Cut in global trajectory time, then express every retained piece in a
-    // fresh local time origin.  The upstream helper used the global start
-    // time as the polynomial shift and used the global end time as the final
-    // piece duration.  That is only correct for a one-piece trajectory.  On
-    // a receding-horizon trajectory it corrupts the hot-start prefix as soon
-    // as a cut crosses a piece boundary, which appears as a growing lateral
-    // excursion after each replan.
-    const auto shiftedCoefficients = [](const Eigen::MatrixXd& coefficients,
-                                        double shift) {
-        const int degree = static_cast<int>(coefficients.cols()) - 1;
-        Eigen::MatrixXd shifted;
-        if (degree == 5) {
-            const double t2 = shift * shift;
-            const double t3 = t2 * shift;
-            const double t4 = t3 * shift;
-            const double t5 = t4 * shift;
-            Eigen::Matrix<double, 6, 6> transform;
-            transform << 1, 0, 0, 0, 0, 0,
-                         5 * shift, 1, 0, 0, 0, 0,
-                         10 * t2, 4 * shift, 1, 0, 0, 0,
-                         10 * t3, 6 * t2, 3 * shift, 1, 0, 0,
-                         5 * t4, 4 * t3, 3 * t2, 2 * shift, 1, 0,
-                         t5, t4, t3, t2, shift, 1;
-            shifted = coefficients * transform.transpose();
-        } else if (degree == 7) {
-            const double t2 = shift * shift;
-            const double t3 = t2 * shift;
-            const double t4 = t3 * shift;
-            const double t5 = t4 * shift;
-            const double t6 = t3 * t3;
-            const double t7 = t3 * t4;
-            Eigen::Matrix<double, 8, 8> transform;
-            transform << 1, 0, 0, 0, 0, 0, 0, 0,
-                         7 * shift, 1, 0, 0, 0, 0, 0, 0,
-                         21 * t2, 6 * shift, 1, 0, 0, 0, 0, 0,
-                         35 * t3, 15 * t2, 5 * shift, 1, 0, 0, 0, 0,
-                         35 * t4, 20 * t3, 10 * t2, 4 * shift, 1, 0, 0, 0,
-                         21 * t5, 15 * t4, 10 * t3, 6 * t2, 3 * shift, 1, 0, 0,
-                         7 * t6, 6 * t5, 5 * t4, 4 * t3, 3 * t2, 2 * shift, 1, 0,
-                         t7, t6, t5, t4, t3, t2, shift, 1;
-            shifted = coefficients * transform.transpose();
-        }
-        return shifted;
-    };
-
-    double piece_start = 0.0;
-    for (const auto& piece : pieces) {
-        const double piece_end = piece_start + piece.getDuration();
-        const double slice_start = std::max(start_TT, piece_start);
-        const double slice_end = std::min(end_TT, piece_end);
-        if (slice_end > slice_start) {
-            const double local_start = slice_start - piece_start;
-            const double local_end = slice_end - piece_start;
-            Eigen::MatrixXd coefficients = piece.getCoeffMat();
-            if (local_start > 0.0) {
-                // Force the product to finish before replacing the matrix;
-                // Eigen may otherwise evaluate the self-referential product
-                // in-place under Release optimization.
-                coefficients = shiftedCoefficients(coefficients, local_start);
-                if (coefficients.size() == 0U) {
-                    std::cerr << "[Trajectory] unsupported polynomial degree: "
-                              << piece.getDegree() << std::endl;
-                    return false;
-                }
-                if (!coefficients.allFinite()) {
-                    std::cerr << "[Trajectory] non-finite local slice: degree="
-                              << piece.getDegree() << " shift=" << local_start
-                              << " duration=" << piece.getDuration() << std::endl;
-                    return false;
-                }
+    if (start_TT == 0) {
+        // 只需要修改终点时间即可
+//            print("Only change end time.\n");
+        double t0 = end_TT;
+        int pieceIdx = locatePieceIdx(t0);
+//            print("pieceIdx = {}, t0 = {}.\n",pieceIdx,t0);
+        if (pieceIdx == 0) {
+            Piece new_pie = pieces[pieceIdx];
+            new_pie.setDuration(t0);
+            out_traj.emplace_back(new_pie);
+        } else {
+            for (int i = 0; i < pieceIdx; i++) {
+                out_traj.emplace_back(pieces[i]);
             }
-            out_traj.emplace_back(local_end - local_start, coefficients);
+            Piece new_pie = pieces[pieceIdx];
+            new_pie.setDuration(t0);
+            out_traj.emplace_back(new_pie);
         }
-        piece_start = piece_end;
-        if (piece_start >= end_TT) break;
+        out_traj.start_WT = start_WT;
+        return true;
     }
-    if (out_traj.empty()) return false;
-    out_traj.start_WT = start_WT + start_TT;
-    return true;
+
+    // Get the start piece id
+    double t0 = start_TT;
+    double local_end_t = end_TT;
+    int pieceIdx = locatePieceIdx(t0);
+    if (pieces[pieceIdx].getDegree() == 5) {
+        int pieceEndIdx = locatePieceIdx(local_end_t);
+        double t02 = t0 * t0;
+        double t03 = t02 * t0;
+        double t04 = t03 * t0;
+        double t05 = t04 * t0;
+        // Cut current traj;
+        Eigen::MatrixXd coef_mat = pieces[pieceIdx].getCoeffMat();
+        Eigen::Matrix<double, 6, 6> cvt_M;
+        cvt_M << 1, 0, 0, 0, 0, 0,
+                5 * t0, 1, 0, 0, 0, 0,
+                10 * t02, 4 * t0, 1, 0, 0, 0,
+                10 * t03, 6 * t02, 3 * t0, 1, 0, 0,
+                5 * t04, 4 * t03, 3 * t02, 2 * t0, 1, 0,
+                t05, 1 * t04, 1 * t03, t02, t0, 1;
+
+        coef_mat = coef_mat * cvt_M.transpose();
+        double p1_t = std::min(pieces[pieceIdx].getDuration() - t0, end_TT - start_TT);
+        Piece new_pie(p1_t, coef_mat);
+        out_traj.pieces.push_back(new_pie);
+        if (pieceIdx == pieceEndIdx) {
+            out_traj.start_WT = start_WT + start_TT;
+            return true;
+        }
+        // input the rest traj;
+        for (int i = pieceIdx + 1; i < pieceEndIdx; i++) {
+            out_traj.pieces.push_back(pieces[i]);
+        }
+        Eigen::MatrixXd end_coef = pieces[pieceEndIdx].getCoeffMat();
+        Piece new_pie_end(local_end_t, end_coef);
+        out_traj.pieces.push_back(new_pie_end);
+        out_traj.start_WT = start_WT + start_TT;
+        return true;
+    } else if (pieces[pieceIdx].getDegree() == 7) {
+        int pieceEndIdx = locatePieceIdx(local_end_t);
+        double t02 = t0 * t0;
+        double t03 = t02 * t0;
+        double t04 = t03 * t0;
+        double t05 = t04 * t0;
+        double t06 = t03 * t03;
+        double t07 = t03 * t04;
+
+        // Cut current traj;
+        Eigen::MatrixXd coef_mat = pieces[pieceIdx].getCoeffMat();
+        Eigen::Matrix<double, 8, 8> cvt_M;
+        cvt_M << 1, 0, 0, 0, 0, 0, 0, 0,
+                7 * t0, 1, 0, 0, 0, 0, 0, 0,
+                21 * t02, 6 * t0, 1, 0, 0, 0, 0, 0,
+                35 * t03, 15 * t02, 5 * t0, 1, 0, 0, 0, 0,
+                35 * t04, 20 * t03, 10 * t02, 4 * t0, 1, 0, 0, 0,
+                21 * t05, 15 * t04, 10 * t03, 6 * t02, 3 * t0, 1, 0, 0,
+                7 * t06, 6 * t05, 5 * t04, 4 * t03, 3 * t02, 2 * t0, 1, 0,
+                t07, t06, 1 * t05, t04, t03, t02, t0, 1;
+
+        coef_mat = coef_mat * cvt_M.transpose();
+        double p1_t = std::min(pieces[pieceIdx].getDuration() - t0, end_TT - start_TT);
+        Piece new_pie(p1_t, coef_mat);
+        out_traj.pieces.push_back(new_pie);
+        if (pieceIdx == pieceEndIdx) {
+            out_traj.start_WT = start_WT + start_TT;
+            return true;
+        }
+        // input the rest traj;
+        for (int i = pieceIdx + 1; i < pieceEndIdx; i++) {
+            out_traj.pieces.push_back(pieces[i]);
+        }
+        Eigen::MatrixXd end_coef = pieces[pieceEndIdx].getCoeffMat();
+        Piece new_pie_end(local_end_t, end_coef);
+        out_traj.pieces.push_back(new_pie_end);
+        out_traj.start_WT = start_WT + start_TT;
+        return true;
+
+    } else {
+        std::cout << "[getPartialTrajectory] ERROR, the piece degree is neither 5 n or 7" << std::endl;
+        Trajectory out_empty;
+        return false;
+    }
 }
 
 double Trajectory::getMaxVelRate() const {

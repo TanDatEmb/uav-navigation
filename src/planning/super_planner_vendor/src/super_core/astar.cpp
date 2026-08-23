@@ -32,7 +32,7 @@ namespace path_search {
 
     Astar::Astar(const std::string &cfg_path,
                  const ros_interface::RosInterface::Ptr &ros_ptr,
-                 rog_map::ROGMapROS::Ptr rm) : ros_ptr_(ros_ptr), map_ptr_(rm) {
+                 rog_map::ROGMapROS::Ptr rm) : map_ptr_(rm), ros_ptr_(ros_ptr) {
         cfg_ = PathSearchConfig(cfg_path);
         cout << rog_map::GREEN << " -- [RM] Init Astar-map." << rog_map::RESET << endl;
         int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
@@ -43,21 +43,6 @@ namespace path_search {
         }
         cout << rog_map::BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << rog_map::RESET << endl;
         cout << rog_map::BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << rog_map::RESET << endl;
-        int test_num = 100;
-        for (int i = -test_num; i <= test_num; i++) {
-            for (int j = -test_num; j <= test_num; j++) {
-                for (int k = -test_num; k <= test_num; k++) {
-                    rog_map::Vec3i delta(i, j, k);
-                    sorted_pts.push_back(delta);
-                }
-            }
-        }
-        sort(sorted_pts.begin(), sorted_pts.end(),
-             [](const rog_map::Vec3i &pt1, const rog_map::Vec3i &pt2) {
-                 double dist1 = pt1.x() * pt1.x() + pt1.y() * pt1.y() + pt1.z() * pt1.z();
-                 double dist2 = pt2.x() * pt2.x() + pt2.y() * pt2.y() + pt2.z() * pt2.z();
-                 return dist1 < dist2;
-             });
     }
 
     RET_CODE
@@ -128,17 +113,17 @@ namespace path_search {
                 if (dz == 0) {
                     h = 1.0 * sqrt(3.0) * diag + sqrt(2.0) * std::min(dx, dy) + 1.0 * std::abs(dx - dy);
                 }
-                return tie_breaker_ * h;
+                return cfg_.heuristic_weight * h;
             }
             case MANH: {
                 double dx = std::abs(node1->id_g(0) - node2->id_g(0));
                 double dy = std::abs(node1->id_g(1) - node2->id_g(1));
                 double dz = std::abs(node1->id_g(2) - node2->id_g(2));
 
-                return tie_breaker_ * (dx + dy + dz);
+                return cfg_.heuristic_weight * (dx + dy + dz);
             }
             case EUCL: {
-                return tie_breaker_ * (node2->id_g - node1->id_g).norm();
+                return cfg_.heuristic_weight * (node2->id_g - node1->id_g).norm();
             }
             default: {
                 fmt::print(fg(fmt::color::indian_red), " -- [A*] Wrong hue type.\n");
@@ -233,6 +218,7 @@ namespace path_search {
     RET_CODE Astar::pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                            const int &flag, const double &searching_horizon,
                                            rog_map::vec_Vec3f &out_path, const double &time_out) {
+        const double effective_time_out = time_out > 0.0 ? time_out : cfg_.search_time_limit_s;
         RET_CODE setup_ret = setup(start_pt, end_pt, flag, searching_horizon);
         if (setup_ret != SUCCESS) {
             return setup_ret;
@@ -245,6 +231,7 @@ namespace path_search {
         rog_map::Vec3f hit_pt;
         rog_map::Vec3f local_start_pt, local_end_pt;
         bool start_pt_out_local_map = false;
+        bool end_pt_out_local_map = false;
 
         local_start_pt = start_pt;
         local_end_pt = end_pt;
@@ -280,6 +267,7 @@ namespace path_search {
                 rog_map::Vec3f dir = (hit_pt - end_pt).normalized();
                 double dis = (hit_pt - end_pt).norm();
                 local_end_pt = end_pt + dir * (dis + 2.5);
+                end_pt_out_local_map = true;
 
                 if (!map_ptr_->getNearestInfCellNot(OCCUPIED, local_end_pt, local_end_pt, 2.0)) {
                     ros_ptr_->error(
@@ -294,6 +282,29 @@ namespace path_search {
                     return INIT_ERROR;
                 }
             }
+        }
+
+        // The A* scratch grid is centred on every search start and can extend
+        // beyond the currently allocated ROG map.  Projecting only to that
+        // scratch-grid boundary lets the direct-line fast path return points
+        // that mapping/corridor generation cannot represent.  Intersect the
+        // endpoint with the actual ROG map as the authoritative bound.
+        if (!map_ptr_->insideLocalMap(local_end_pt)) {
+            const Vec3f map_center = map_ptr_->getLocalMapOrigin();
+            const Vec3f map_half_size = 0.5 * map_ptr_->getLocalMapSize();
+            const Vec3f map_margin = Vec3f::Constant(2.0 * md_.resolution);
+            const Vec3f map_min = map_center - map_half_size + map_margin;
+            const Vec3f map_max = map_center + map_half_size - map_margin;
+            if (!rog_map::lineIntersectBox(local_end_pt, local_start_pt,
+                                           map_min, map_max, hit_pt)) {
+                ros_ptr_->error(
+                        " -- [A*] Cannot project endpoint {} into ROG map [{}, {}]",
+                        local_end_pt.transpose(), map_min.transpose(), map_max.transpose());
+                return INIT_ERROR;
+            }
+            const Vec3f inward = (local_start_pt - hit_pt).normalized();
+            local_end_pt = hit_pt + inward * (2.0 * md_.resolution);
+            end_pt_out_local_map = true;
         }
 
         if (cfg_.visual_process) {
@@ -323,6 +334,27 @@ namespace path_search {
                 ros_ptr_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
             }
             return INIT_ERROR;
+        }
+
+        // A large open local segment does not need a 3-D graph expansion.
+        // ROG-Map checks the complete segment against the same inflated map
+        // and unknown-space policy used below. Preserve a resolution-dense
+        // path so corridor generation still validates and bounds every seed
+        // segment instead of receiving one long unchecked edge.
+        if (map_ptr_->insideLocalMap(local_start_pt) &&
+            map_ptr_->insideLocalMap(local_end_pt) &&
+            map_ptr_->isLineFree(local_start_pt, local_end_pt,
+                                 md_.use_inf_map, md_.unknown_as_occ)) {
+            const Vec3f delta = local_end_pt - local_start_pt;
+            const int sample_count = std::max(
+                    1, static_cast<int>(std::ceil(delta.norm() / md_.resolution)));
+            out_path.reserve(static_cast<std::size_t>(sample_count + 1));
+            for (int sample = 0; sample <= sample_count; ++sample) {
+                const double ratio = static_cast<double>(sample) /
+                                     static_cast<double>(sample_count);
+                out_path.emplace_back(local_start_pt + ratio * delta);
+            }
+            return end_pt_out_local_map ? REACH_HORIZON : REACH_GOAL;
         }
 
 
@@ -386,7 +418,12 @@ namespace path_search {
                     node_path.push_back(temp_ptr);
                 }
                 ConvertNodePathToPointPath(node_path, out_path);
-                return REACH_GOAL;
+                // Reaching a goal projected onto the local-map boundary is not
+                // equivalent to reaching the mission goal.  Reporting
+                // REACH_GOAL makes PathSearch append the remote mission goal to
+                // this dense local path, creating one unvalidated corridor seed
+                // line from the map boundary to the remote goal.
+                return end_pt_out_local_map ? REACH_HORIZON : REACH_GOAL;
             }
 
             // Distance terminate condition
@@ -415,9 +452,6 @@ namespace path_search {
                         if (dx == 0 && dy == 0 && dz == 0) {
                             continue;
                         }
-                        if (!vertical_search_en_ && dz != 0) {
-                            continue;
-                        }
                         if (!cfg_.allow_diag &&
                             (std::abs(dx) + std::abs(dy) + std::abs(dz) > 1)) {
                             continue;
@@ -432,6 +466,21 @@ namespace path_search {
 
                         if (!insideLocalMap(neighborIdx)) {
                             continue;
+                        }
+
+                        // A free diagonal endpoint does not imply a free
+                        // continuous edge: the segment can cut through the
+                        // corner of an inflated occupied voxel. Corridor
+                        // generation and CIRI operate on continuous seed
+                        // lines, so A* must validate the same geometry.
+                        if (std::abs(dx) + std::abs(dy) + std::abs(dz) > 1) {
+                            rog_map::Vec3f current_pos;
+                            globalIndexToPos(current->id_g, current_pos);
+                            if (!map_ptr_->isLineFree(current_pos, neighborPos,
+                                                      md_.use_inf_map,
+                                                      md_.unknown_as_occ)) {
+                                continue;
+                            }
                         }
 
                         rog_map::GridType neighbor_type;
@@ -453,10 +502,6 @@ namespace path_search {
                         }
 
                         if (neighbor_type == OCCUPIED || neighbor_type == OUT_OF_MAP) {
-                            continue;
-                        }
-
-                        if (md_.unknown_as_occ && neighbor_type == UNKNOWN) {
                             continue;
                         }
 
@@ -508,14 +553,16 @@ namespace path_search {
                         }
                     }
             double time_2 = ros_ptr_->getSimTime();
-            if (!cfg_.visual_process && (time_2 - time_1) > time_out) {
+            if (!cfg_.visual_process && (time_2 - time_1) > effective_time_out) {
                 fmt::print(fg(fmt::color::indian_red),
-                           "Failed in A star path searching !!! {} seconds time limit exceeded.\n", time_out);
+                           "Failed in A star path searching after {} iterations: "
+                           "{} seconds time limit exceeded.\n",
+                           num_iter, effective_time_out);
                 return TIME_OUT;
             }
         }
         double time_2 = ros_ptr_->getSimTime();
-        if ((time_2 - time_1) > time_out) {
+        if ((time_2 - time_1) > effective_time_out) {
             fmt::print(fg(fmt::color::indian_red), "Time consume in A star path finding is {} s, iter={}.\n",
                        (time_2 - time_1),
                        num_iter);
@@ -523,19 +570,21 @@ namespace path_search {
         }
 
         if (md_.unknown_as_occ && !frontier_queue.empty()) {
-            GridNodePtr local_goal;
+            GridNodePtr local_goal{nullptr};
             while (!frontier_queue.empty()) {
-                local_goal = frontier_queue.top();
+                GridNodePtr candidate = frontier_queue.top();
                 frontier_queue.pop();
                 rog_map::Vec3f pos;
-                globalIndexToPos(local_goal->id_g, pos);
+                globalIndexToPos(candidate->id_g, pos);
                 if ((pos - start_pt).norm() < 1.0) {
                     continue;
                 }
+                local_goal = candidate;
                 break;
             }
-            if (frontier_queue.empty()) {
-                cout << rog_map::RED << " -- [A*] Frontier queue is empty, return." << rog_map::RESET << endl;
+            if (local_goal == nullptr) {
+                cout << rog_map::RED << " -- [A*] No frontier farther than 1 m, return."
+                     << rog_map::RESET << endl;
                 return NO_PATH;
             }
             retrievePath(local_goal, node_path);
@@ -551,6 +600,9 @@ namespace path_search {
     }
 
     RET_CODE Astar::escapePathSearch(const rog_map::Vec3f &start_pt, const int flag, rog_map::vec_Vec3f &out_path) {
+        // setup() records the goal even though escape search only uses the
+        // start-centred horizon. Avoid propagating an indeterminate Eigen
+        // vector into mission state.
         Vec3f tmp = start_pt;
         RET_CODE setup_ret = setup(start_pt, tmp, flag, 999);
         if (setup_ret != SUCCESS) {

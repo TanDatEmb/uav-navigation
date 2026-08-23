@@ -22,8 +22,9 @@
 */
 
 
-#ifndef EXP_TRAJ_H
-#define EXP_TRAJ_H
+#ifndef BACKUP_TRAJ_H
+#define BACKUP_TRAJ_H
+
 #include <data_structure/base/trajectory.h>
 
 
@@ -31,7 +32,7 @@ namespace super_planner {
     using geometry_utils::Trajectory;
     using geometry_utils::PolytopeVec;
 
-    class ExpTraj{
+    class BackupTraj{
         /* The optimized positional trajectory */
         Trajectory pos_traj_{};
 
@@ -40,59 +41,59 @@ namespace super_planner {
 
         double start_WT_{0.0};
 
+        /* The start time on exp traj*/
+        double start_TT_{0.0};
+
         /* The safe flight corridor */
-        PolytopeVec sfc_{};
+        Polytope sfc_{};
 
         /* some flags */
-        bool flag_connected_goal_{false};
         bool flag_empty_{true};
-        bool flag_whole_known_free_{false};
 
-        /* some part of exp traj may belong to last backup, record this */
-        double on_backup_start_TT{-1}, on_backup_end_TT{-1};
+        /* Robot position during replan */
+        Vec3f robot_p_;
+
+
+
 
     public:
-        explicit  ExpTraj() = default;
+        explicit  BackupTraj() = default;
+
+        ~BackupTraj() = default;
 
         void setEmpty() {
             flag_empty_ = true;
+            start_TT_ = -1;
         }
 
         bool empty() const {
             return flag_empty_;
         }
 
-        bool connectedToGoal()const {
-            return flag_connected_goal_;
+        void setRobotPos(const Vec3f & _p) {
+            robot_p_ = _p;
         }
 
-        size_t getSFCSize() const {
-            return sfc_.size();
+        Vec3f getRobotPos() const {
+            return robot_p_;
         }
 
-        bool getFirstPartBackupTraj(double & on_backup_traj_start_TT,
-            double & on_backup_traj_end_TT) const {
-            if(on_backup_start_TT < 0 || on_backup_end_TT < 0 || on_backup_end_TT < on_backup_start_TT) {
-                return false;
-            }
-            on_backup_traj_start_TT = on_backup_start_TT;
-            on_backup_traj_end_TT = on_backup_end_TT;
-            return true;
+        double getStartTT() const {
+            return start_TT_;
         }
 
         void setTrajectory(const double & start_WT,
+            const double & start_TT,
             const Trajectory & pos_traj_in,
-            const Trajectory & yaw_traj_in,
-            const double & _on_backup_start_TT = -1,
-            const double & _on_backup_end_TT = -1) {
+            const Trajectory & yaw_traj_in) {
+
             pos_traj_ = pos_traj_in;
             yaw_traj_ = yaw_traj_in;
             start_WT_ = start_WT;
             pos_traj_.start_WT = start_WT;
             yaw_traj_.start_WT = start_WT;
+            start_TT_ = start_TT;
             flag_empty_ = false;
-            on_backup_start_TT = _on_backup_start_TT;
-            on_backup_end_TT = _on_backup_end_TT;
         }
 
         double getTotalDuration() const {
@@ -112,21 +113,15 @@ namespace super_planner {
         }
 
 
-        void setSFC(const PolytopeVec & sfc) {
+        void setSFC(const Polytope & sfc) {
             sfc_ = sfc;
+            sfc_.SetKnownFree(true);
         }
 
-        void setGoalConnectedFlag(const bool & _in) {
-            flag_connected_goal_ = _in;
+        const Polytope & getSFC(){
+            return sfc_;
         }
 
-        void setWholeTrajKnownFreeFlag(const bool & _in) {
-            flag_whole_known_free_ = _in;
-        }
-
-        bool wholeTrajKnownFree() const {
-            return flag_whole_known_free_;
-        }
 
         const Trajectory & posTraj() const {
             return pos_traj_;
@@ -143,7 +138,7 @@ namespace super_planner {
         bool getPartialTrajectoryByTrajectoryTime(const double & start_t,
             const double & end_t,
             Trajectory & partial_pos_traj,
-            Trajectory & partial_yaw_traj)  const {
+            Trajectory & partial_yaw_traj) {
 
             if(!pos_traj_.getPartialTrajectoryByTime(start_t,end_t,partial_pos_traj)) {
                 return false;
@@ -159,4 +154,4 @@ namespace super_planner {
     };
 }
 
-#endif //EXP_TRAJ_H
+#endif //BACKUP_TRAJ_H

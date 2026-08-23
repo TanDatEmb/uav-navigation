@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
+find_package(coordinate_conventions REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -36,7 +37,7 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
 target_link_libraries(${PROJECT_NAME}_core Eigen3::Eigen)
-ament_target_dependencies(${PROJECT_NAME}_core nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_core coordinate_conventions nav_msgs)
 target_compile_options(${PROJECT_NAME}_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/px4_odometry_bridge_node.cpp)
@@ -95,5 +96,5 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 diagnostic_msgs nav_msgs rclcpp navigation_interfaces px4_msgs)
+ament_export_dependencies(coordinate_conventions Eigen3 diagnostic_msgs nav_msgs rclcpp navigation_interfaces px4_msgs)
 ament_package()

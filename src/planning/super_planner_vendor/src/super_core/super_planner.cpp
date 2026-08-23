@@ -28,37 +28,9 @@
 #include <fmt/color.h>
 
 using namespace super_utils;
+using std::isnan;
 
 namespace super_planner {
-    using std::isnan;
-
-    namespace {
-        constexpr double kHorizontalPhaseZHalfWidthM = 0.25;
-
-        void constrainVerticalBounds(PolytopeVec &sfcs,
-                                      const double lower_z,
-                                      const double upper_z) {
-            for (auto &sfc : sfcs) {
-                const MatD4f planes = sfc.GetPlanes();
-                MatD4f constrained(planes.rows() + 2, 4);
-                constrained.topRows(planes.rows()) = planes;
-                constrained.row(planes.rows()) << 0.0, 0.0, 1.0, -upper_z;
-                constrained.row(planes.rows() + 1) << 0.0, 0.0, -1.0, lower_z;
-                sfc.SetPlanes(constrained);
-            }
-        }
-
-        void constrainHorizontalCorridor(PolytopeVec &sfcs,
-                                          const double z,
-                                          const double lower_z,
-                                          const double upper_z) {
-            constrainVerticalBounds(
-                    sfcs,
-                    std::max(lower_z, z - kHorizontalPhaseZHalfWidthM),
-                    std::min(upper_z, z + kHorizontalPhaseZHalfWidthM));
-        }
-    }
-
     SuperPlanner::SuperPlanner
             (const std::string &cfg_path,
              const ros_interface::RosInterface::Ptr &ros_ptr,
@@ -68,6 +40,7 @@ namespace super_planner {
         ros_ptr_->setResolution(cfg_.resolution);
         ros_ptr_->setVisualizationEn(cfg_.visualization_en);
         exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, ros_ptr_);
+        back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, ros_ptr_);
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max);
         const auto &rog_map_cfg = map_ptr_->getMapConfig();
         astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
@@ -81,10 +54,15 @@ namespace super_planner {
         cg_ptr_->SetLineNeighborList(cfg_.seed_line_neighbour);
 
 
-        time_consuming_.resize(5);
+        time_consuming_.resize(8);
 
         robot_state_.rcv = false;
         planner_process_start_WT_ = ros_ptr_->getSimTime();
+        fov_checker_ = std::make_shared<FOVChecker>(FOVType::OMNI,
+                                                    -1.0,
+                                                    -35.0,
+                                                    35.0);
+
         const int neighbor_step = floor(cfg_.robot_r / cfg_.resolution);
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
@@ -94,6 +72,7 @@ namespace super_planner {
                                const double &goal_yaw,
                                const bool &new_goal) {
         std::lock_guard<std::mutex> guard(replan_lock_);
+        solve_stage_.store(1);
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, robot_state_);
         if (robot_state_.rcv == false) {
@@ -122,30 +101,11 @@ namespace super_planner {
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_NO_START_POINT);
             return FAILED;
         }
-        // The product ROG-Map uses a rolling ENU map and may classify a stale
-        // or unobserved cell as a distant non-occupied voxel.  Passing that
-        // voxel to the optimizer creates a teleport-like polynomial prefix
-        // (observed in SITL as a z=3 m vehicle receiving a trajectory that
-        // starts at z=0).  The vehicle pose is the only valid trajectory
-        // boundary; accept the nearest-cell projection only when it is a
-        // small voxel quantization/projection correction.
-        constexpr float kMaximumStartProjectionM = 0.20F;
-        const float start_projection_error = (local_star_pt - robot_state_.p).norm();
-        if (!std::isfinite(start_projection_error)) {
-            ros_ptr_->error(" -- [SUPER] in [PlanFromRest] Invalid local start projection.");
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_NO_START_POINT);
-            return FAILED;
-        }
-        if (start_projection_error > kMaximumStartProjectionM) {
-            ros_ptr_->warn(
-                    " -- [SUPER] in [PlanFromRest] Ignoring distant free start projection {:.3f} m; using odometry pose.",
-                    start_projection_error);
-            local_star_pt = robot_state_.p;
-        }
         latest_replan.setLocalStartP(local_star_pt);
 
-        /// 2) Generate the single committed polynomial trajectory.
+        /// 2) Generate Exp traj
         ExpTraj exp_traj_info;
+        BackupTraj back_traj_info;
         last_exp_traj_info_.setEmpty();
         local_start_p_ = local_star_pt;
         RET_CODE exp_ret_code = generateExpTraj(last_exp_traj_info_, exp_traj_info);
@@ -158,11 +118,61 @@ namespace super_planner {
             ros_ptr_->info(" -- [SUPER] in [PlanFromRest] GenerateExpTrajectory SUCCESS.");
         }
 
+        back_traj_info.setEmpty();
+        solve_stage_.store(5);
+        RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);;
+
+        if (back_ret_code == SUCCESS) {
+            if (cfg_.print_log) {
+                ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
+            }
+
+            cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info);
+            last_exp_traj_info_ = exp_traj_info;
+            robot_on_backup_traj_ = false;
+            gi_.new_goal = false;
+
+            // For visualization
+            {
+                TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
+                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS_WITH_BACKUP);
+            }
+
+            return SUCCESS;
+        } else if (back_ret_code == FINISH || back_ret_code == NO_NEED) {
+            if (cfg_.print_log) {
+                ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
+            }
+            robot_on_backup_traj_ = false;
+            cmd_traj_info_.setTrajectory(exp_traj_info);
+            last_exp_traj_info_ = exp_traj_info;
+            gi_.new_goal = false;
+
+            // For visualization
+            TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
+            {
+                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+            }
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS_NO_BACKUP);
+            return SUCCESS;
+        }
+        // The EXP trajectory has already passed frontend, corridor and dynamic
+        // optimization.  A backup optimizer failure must not discard that
+        // newer safe main trajectory and leave the command stream on an older
+        // route.  Commit main-only; the runtime will fail closed if a later
+        // main replan fails before a valid backup is available.
+        ros_ptr_->warn(
+                " -- [SUPER] in [PlanFromRest] backup generation returned [{}]; "
+                "committing validated main trajectory without backup",
+                RET_CODE_STR[back_ret_code].c_str());
+        robot_on_backup_traj_ = false;
         cmd_traj_info_.setTrajectory(exp_traj_info);
         last_exp_traj_info_ = exp_traj_info;
         gi_.new_goal = false;
-        ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1.0);
-        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS);
+        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS_NO_BACKUP);
         return SUCCESS;
     }
 
@@ -173,6 +183,7 @@ namespace super_planner {
                              const bool &new_goal) {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
+        solve_stage_.store(1);
 
         gi_.goal_p = goal_p;
         gi_.goal_yaw = goal_yaw;
@@ -222,17 +233,94 @@ namespace super_planner {
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
+
+        BackupTraj back_traj_info;
+        // 2）生成back轨迹
+        solve_stage_.store(5);
+        TimeConsuming t_back("t_back", false);
+        RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);
+        time_consuming_[GENERATE_BACK_TRAJ] = t_back.stop();
+
+        {
+            ft += time_consuming_[EPX_TRAJ_FRONTEND] + time_consuming_[BACK_TRAJ_FRONTEND];
+            ft_cnt++;
+            bt += time_consuming_[BACK_TRAJ_OPT] + time_consuming_[EXP_TRAJ_OPT];
+            bt_cnt++;
+        }
+
         double replan_dt = replan_total_t.stop();
         if (replan_dt > cfg_.replan_forward_dt * 0.9) {
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
             return FAILED;
         }
 
+        if (back_ret_code == SUCCESS) {
+            cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info);
+            last_exp_traj_info_ = exp_traj_info;
+            robot_on_backup_traj_ = false;
+            gi_.new_goal = false;
+
+            {
+                // For visualization
+                TimeConsuming t_viz("tviz", false);
+                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+            }
+
+            latest_replan.setRetCode(SUPER_SUCCESS_WITH_BACKUP);
+            if (cfg_.print_log)
+                ros_ptr_->info(" -- [SUPER] in [ReplanOnce]: Replan a new back traj success, all replan success.");
+            return SUCCESS;
+        } else if (back_ret_code == NO_NEED) {
+            // 这次生成backup轨迹的点没有意义,
+            cmd_traj_info_.setTrajectory(exp_traj_info);
+            robot_on_backup_traj_ = false;
+            last_exp_traj_info_ = exp_traj_info;
+            gi_.new_goal = false;
+
+
+            {
+                TimeConsuming t_viz("tviz", false);
+                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+
+            }
+
+            if (cfg_.print_log)
+                ros_ptr_->info(" -- [SUPER] in [ReplanOnce]: No need back traj success, all replan success.");
+            latest_replan.setRetCode(SUPER_SUCCESS_NO_BACKUP);
+            return SUCCESS;
+        } else if (back_ret_code == FINISH) {
+            // Which means the exp traj is all in known free, no need for backup traj
+            cmd_traj_info_.setTrajectory(exp_traj_info);
+            last_exp_traj_info_ = exp_traj_info;
+            robot_on_backup_traj_ = false;
+            gi_.new_goal = false;
+
+            {
+                TimeConsuming t_viz("tviz", false);
+                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+            }
+
+            if (cfg_.print_log)
+                ros_ptr_->info(" -- [SUPER] in [ReplanOnce]: No need back traj success, all replan success.");
+            latest_replan.setRetCode(SUPER_SUCCESS_NO_BACKUP);
+            return SUCCESS;
+        }
+        // Main and backup are independent acceptance gates.  Rejecting a
+        // valid freshly replanned EXP trajectory because backup optimization
+        // failed keeps publishing the older route -- exactly the stale-path
+        // behaviour the external-mode safety contract forbids.
+        ros_ptr_->warn(
+                " -- [SUPER] in [ReplanOnce]: backup generation returned {}; "
+                "committing validated main trajectory without backup",
+                RET_CODE_STR[back_ret_code].c_str());
         cmd_traj_info_.setTrajectory(exp_traj_info);
         last_exp_traj_info_ = exp_traj_info;
+        robot_on_backup_traj_ = false;
         gi_.new_goal = false;
-        ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1.0);
-        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS);
+        latest_replan.setRetCode(SUPER_SUCCESS_NO_BACKUP);
         return SUCCESS;
     }
 
@@ -245,6 +333,11 @@ namespace super_planner {
             eval_t = total_dur;
         }
         start_WT_pos = cmd_traj_info_.getStartWallTime();
+        if (cmd_traj_info_.backupTrajAvilibale() && eval_t > cmd_traj_info_.getBackupTrajStartTT()) {
+            robot_on_backup_traj_ = true;
+        } else {
+            robot_on_backup_traj_ = false;
+        }
     }
 
     Trajectory SuperPlanner::getCommittedPositionTrajectory() {
@@ -255,25 +348,25 @@ namespace super_planner {
         return cmd_traj_info_.yawTraj();
     }
 
-    bool SuperPlanner::getCommittedPartialTrajectory(const double start_t,
-                                                      const double end_t,
-                                                      Trajectory &position,
-                                                      Trajectory &yaw) {
-        return cmd_traj_info_.getPartialTrajectoryByTrajectoryTime(start_t, end_t, position, yaw);
-    }
-
 
     void SuperPlanner::getOneCommandFromTraj(StatePVAJ &pvaj,
                                              double &yaw,
                                              double &yaw_dot,
+                                             bool &on_backup_traj,
                                              bool &traj_finish) {
         cmd_traj_info_.lock();
         const double &cur_t = ros_ptr_->getSimTime();
         const double &cmd_start_WT = cmd_traj_info_.getStartWallTime();
+//        const bool &backup_avilibale = cmd_traj_info_.backupTrajAvilibale();
+//        const double &backup_start_TT = cmd_traj_info_.getBackupTrajStartTT();
         const double &total_dur = cmd_traj_info_.getTotalDuration();
 
         traj_finish = (cur_t - cmd_start_WT) > total_dur;
         const double &eval_t = traj_finish ? total_dur : (cur_t - cmd_start_WT);
+
+//        bool last_round_robot_on_backup_traj = robot_on_backup_traj_;
+        robot_on_backup_traj_ = cmd_traj_info_.isTTOnBackupTraj(eval_t);
+        on_backup_traj = robot_on_backup_traj_;
 
         pvaj = cmd_traj_info_.posTraj().getState(eval_t);
 
@@ -294,6 +387,15 @@ namespace super_planner {
             yaw_dot = 0;
         }
 
+//        if (last_round_robot_on_backup_traj != robot_on_backup_traj_) {
+//            if (last_round_robot_on_backup_traj) {
+//                ros_ptr_->info(" -- [CMD] Emergency Stop End ========================");
+//            } else {
+//                ros_ptr_->info(" -- [CMD] Emergency Stop Start ========================");
+//            }
+//        }
+
+//        double cur_yaw = geometry_utils::get_yaw_from_quaternion(robot_state_.q);
         cmd_traj_info_.unlock();
     }
 
@@ -355,6 +457,13 @@ namespace super_planner {
             if (replan_state_TT >= cmd_traj_info_.getTotalDuration()) {
                 out_exp_traj_info = last_exp_traj_info;
 
+                if (robot_on_backup_traj_) {
+                    if (cfg_.print_log)
+                        ros_ptr_->warn(
+                                " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
+                    return FAILED;
+                }
+
                 if (cfg_.print_log) {
                     ros_ptr_->warn(
                             " -- [generateExpTraj] replan_state_TT >= cmd_traj_info_.pos_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
@@ -368,7 +477,14 @@ namespace super_planner {
                     if (cfg_.print_log)
                         ros_ptr_->warn(
                                 " -- [generateExpTraj] replan_state_TT >= last_exp_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
-                    return NO_NEED;
+                    if (robot_on_backup_traj_) {
+                        if (cfg_.print_log)
+                            ros_ptr_->warn(
+                                    " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
+                        return FAILED;
+                    } else {
+                        return NO_NEED;
+                    }
                 }
 
                 /// 1) Check a series of early termination conditions.
@@ -379,7 +495,14 @@ namespace super_planner {
                     }
 
                     out_exp_traj_info = last_exp_traj_info;
-                    return NO_NEED;
+                    if (robot_on_backup_traj_) {
+                        if (cfg_.print_log)
+                            ros_ptr_->warn(
+                                    " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
+                        return FAILED;
+                    } else {
+                        return NO_NEED;
+                    }
                 }
 
                 if (!gi_.new_goal &&
@@ -389,13 +512,23 @@ namespace super_planner {
                     out_exp_traj_info.setGoalConnectedFlag(true);
 
                     ros_ptr_->warn(" -- [SUPER] Replan, close to goal and return NONEED.");
-                    return NO_NEED;
+                    if (robot_on_backup_traj_) {
+                        ros_ptr_->warn(
+                                " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
+                        return FAILED;
+                    } else {
+                        return NO_NEED;
+                    }
                 }
             }
             /// Ready for replan.
             out_exp_traj_info.setGoalConnectedFlag(false);
 
-            // Perform collision check on the guide trajectory.
+            // * 2) Check if in backup trajectory. While in backup trajectory,
+            // *    the guide trajectory should be a part of cmd trajectory.
+            // TODO: Why cannot directly replan on cmd traj? 241121
+
+            // * 3) Perform collision check on the guide trajectory.
             // TODO 0929 critical change for hot init.
             double eval_t = replan_state_TT; //replan_process_start_TT;
             double guide_pos_traj_total_time = guide_pos_traj.getTotalDuration();
@@ -432,9 +565,12 @@ namespace super_planner {
             // *    If the whole trajectory if free,  the whole trajectory should be receding and if not, or a new goal
             // *    is given, we should only receiding a small distance and replan new trajectory ASAP
             double split_dis = cfg_.receding_dis;
-            if (last_exp_traj_info.wholeTrajKnownFree() && !gi_.new_goal && cfg_.receding_dis > 0.0) {
-                split_dis = std::numeric_limits<double>::max();
-            }
+            // Do not turn a collision-free committed trajectory into an
+            // infinite immutable guide.  That upstream shortcut recursively
+            // feeds optimizer drift back into every later replan and lets the
+            // displayed normal path advance independently of newly sensed
+            // geometry. Keep only the configured continuity prefix; A* owns
+            // the rest of the route on every planning cycle.
 
 
             // * 7）Begin replan process, first get the replan state from the committed trajectory.
@@ -497,18 +633,6 @@ namespace super_planner {
             guide_stamp.insert(guide_stamp.begin(), 0.0);
         }
 
-        // Keep the high-speed baseline in a horizontal slice. A* may have
-        // found a horizontal route, but the unconstrained 3-D optimizer can
-        // otherwise leave that route and create unnecessary altitude motion.
-        // Vertical motion remains available when PathSearch explicitly enters
-        // its vertical-avoidance phase.
-        if (!vertical_avoidance_active_) {
-            const double hold_z = pos_init_state.col(0).z();
-            for (auto &point : guide_path) {
-                point.z() = hold_z;
-            }
-        }
-
         // if need a geometry path
         if (temp_horizon > cfg_.resolution * 2) {
             /// start point TT + exp_traj start_WT
@@ -547,6 +671,7 @@ namespace super_planner {
 //                        return FAILED;
 //                    }
 //                }
+                solve_stage_.store(2);
                 if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon, new_path)) {
                     ros_ptr_->warn(" -- [SUPER] PathSearch for new path failed");
                     return FAILED;
@@ -609,6 +734,15 @@ namespace super_planner {
         const bool connected_goal = (guide_path.back().head(2) - gi_.goal_p.head(2)).norm() < cfg_.resolution * 2;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
+        latest_guide_start_ = guide_path.front();
+        latest_guide_end_ = guide_path.back();
+        latest_guide_min_ = guide_path.front();
+        latest_guide_max_ = guide_path.front();
+        for (const auto &point : guide_path) {
+            latest_guide_min_ = latest_guide_min_.cwiseMin(point);
+            latest_guide_max_ = latest_guide_max_.cwiseMax(point);
+        }
+
         sfc.clear();
         {
             TimeConsuming t_viz("tviz", false);
@@ -616,19 +750,12 @@ namespace super_planner {
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
         shifted_sfc_start_pt_ = Vec3f(9999,9999,9999);
+        solve_stage_.store(3);
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut);
 
         if (!bool_ret_code) {
             ros_ptr_->warn(" -- [SUPER] SearchPolytopeOnPath for new path failed");
             return FAILED;
-        }
-        if (!vertical_avoidance_active_) {
-            constrainHorizontalCorridor(sfc, pos_init_state.col(0).z(),
-                                        cfg_.vertical_avoidance_min_z,
-                                        cfg_.vertical_avoidance_max_z);
-        } else {
-            constrainVerticalBounds(sfc, cfg_.vertical_avoidance_min_z,
-                                    cfg_.vertical_avoidance_max_z);
         }
         {
             TimeConsuming t_viz("tviz", false);
@@ -654,6 +781,7 @@ namespace super_planner {
         Trajectory out_traj;
         TimeConsuming t_exp_opt("t_exp_opt", false);
         auto original_sfc = sfc;
+        solve_stage_.store(4);
         temp_ret = exp_traj_opt_->optimize(pos_init_state,
                                            pos_fina_state,
                                            guide_path,
@@ -672,7 +800,7 @@ namespace super_planner {
             return FAILED;
         }
         double replan_total_t = (ros_ptr_->getSimTime() - replan_process_start_WT);
-        if (replan_total_t > cfg_.replan_forward_dt) {
+        if (!last_exp_traj_info.empty() && replan_total_t > cfg_.replan_forward_dt) {
             ros_ptr_->warn(" -- [SUPER] Replan over time({})!!!! Return FAILED", replan_total_t);
             return FAILED;
         }
@@ -683,7 +811,13 @@ namespace super_planner {
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
-        double new_traj_WT = replan_process_start_WT;
+        // A rest-to-rest solve holds the vehicle while optimizing.  Start its
+        // command clock at commit time so optimizer latency cannot advance the
+        // first PVA sample several metres ahead of the stationary vehicle.
+        // Hot replans retain the original future-state stitching timestamp.
+        double new_traj_WT = last_exp_traj_info.empty()
+                                 ? ros_ptr_->getSimTime()
+                                 : replan_process_start_WT;
 
         replan_process_start_TT = replan_process_start_WT - guide_pos_traj.start_WT;
         Trajectory temp_exp_traj;
@@ -727,7 +861,14 @@ namespace super_planner {
         }
 
         const auto temp_yaw_traj = old_traj + new_traj;
-        out_exp_traj_info.setTrajectory(new_traj_WT, temp_exp_traj, temp_yaw_traj);
+        // check if part of the exp on last backup
+        double on_backup_end_TT{-1}, on_backup_start_TT{-1};
+        if (!last_exp_traj_info.empty() && replan_state_TT > cmd_traj_info_.getBackupTrajStartTT()) {
+            on_backup_start_TT = cmd_traj_info_.getBackupTrajStartTT() - replan_process_start_TT;
+            on_backup_end_TT = replan_state_TT - replan_process_start_TT;
+        }
+        out_exp_traj_info.setTrajectory(new_traj_WT, temp_exp_traj, temp_yaw_traj, on_backup_start_TT,
+                                        on_backup_end_TT);
 
         latest_replan.setExpYawTraj(temp_yaw_traj);
         latest_replan.setExpTraj(temp_exp_traj);
@@ -735,13 +876,324 @@ namespace super_planner {
         return SUCCESS;
     }
 
+    RET_CODE SuperPlanner::generateBackupTrajectory(ExpTraj &ref_exp_traj, BackupTraj &back_traj_info) {
+        drone_state_mutex_.lock();
+        back_traj_info.setRobotPos(robot_state_.p);
+        drone_state_mutex_.unlock();
+        TimeConsuming t_back_frontend("t_back_frontend", false);
+        double total_dur = ref_exp_traj.getTotalDuration();
+        double start_t = ros_ptr_->getSimTime() - ref_exp_traj.getStartWallTime();
+
+
+        if (start_t > total_dur - 0.01) {
+            if (cfg_.print_log) {
+                ros_ptr_->info(" -- [SUPER] in [generateBackupTrajectory]: start_t > total_dur, return NO_NEED");
+            }
+            return NO_NEED;
+        }
+
+        Vec3f temp_point;
+        double out_t;
+        bool all_traj_visible{true};
+        // 同时记录每一个点的刹车时间和刹车距离
+        vector<double> min_stop_dis;
+        vector<TimePosPair> eval_ps;
+        Vec3f temp_vel;
+
+        // Collect geometrically distinct samples first. A nearly straight
+        // trajectory shares one sensor ray, so checking every longer prefix
+        // from the robot is quadratic in trajectory length at fine map
+        // resolution. In that common open-space case one farthest-endpoint
+        // ray is equivalent for occupied-grid visibility.
+        vector<TimePosPair> candidate_ps;
+        Vec3f last_pos = ref_exp_traj.getPos(start_t);
+        for (out_t = start_t; out_t < total_dur; out_t += cfg_.sample_traj_dt) {
+            temp_point = ref_exp_traj.getPos(out_t);
+            if ((last_pos - temp_point).norm() < cfg_.resolution * 0.8) {
+                continue;
+            }
+            last_pos = temp_point;
+            candidate_ps.emplace_back(out_t, temp_point);
+        }
+
+        bool shared_visibility_ray{false};
+        const Vec3f visibility_origin = back_traj_info.getRobotPos();
+        if (!candidate_ps.empty()) {
+            const Vec3f farthest_delta = candidate_ps.back().second - visibility_origin;
+            const double farthest_distance = farthest_delta.norm();
+            if (farthest_distance > cfg_.resolution) {
+                const Vec3f ray_direction = farthest_delta / farthest_distance;
+                double last_projection{-1.0};
+                shared_visibility_ray = true;
+                // isLineFree checks the configured robot-radius neighbor tube
+                // around the ray. Any stitched prefix contained by that same
+                // tube is covered by the endpoint check as well.
+                const double lateral_tolerance = std::max(cfg_.resolution, cfg_.robot_r);
+                for (const auto &sample : candidate_ps) {
+                    const Vec3f delta = sample.second - visibility_origin;
+                    const double projection = delta.dot(ray_direction);
+                    const double lateral_error = (delta - projection * ray_direction).norm();
+                    if (projection + cfg_.resolution < last_projection || projection < 0.0 ||
+                        projection > farthest_distance + cfg_.resolution ||
+                        lateral_error > lateral_tolerance) {
+                        shared_visibility_ray = false;
+                        break;
+                    }
+                    last_projection = projection;
+                }
+            }
+        }
+
+        const double visibility_limit =
+                cfg_.sensing_horizon > 0 ? std::min(cfg_.sensing_horizon, cfg_.safe_corridor_line_max_length)
+                                         : cfg_.safe_corridor_line_max_length;
+        const auto inflated_line_visible = [&](const Vec3f &endpoint) {
+            if (visibility_limit > 0.0 &&
+                (endpoint - visibility_origin).norm() > visibility_limit) {
+                return false;
+            }
+            // ROG-Map's inflated layer already represents the configured
+            // vehicle safety envelope. Re-expanding every base-grid sample by
+            // seed_line_neighbour here is equivalent but cubic in radius/grid
+            // resolution and dominated planning time at fine resolutions.
+            return map_ptr_->isLineFree(visibility_origin, endpoint, true, false);
+        };
+        if (shared_visibility_ray &&
+            inflated_line_visible(candidate_ps.back().second)) {
+            eval_ps = candidate_ps;
+            out_t = total_dur;
+        } else {
+            eval_ps.clear();
+            for (const auto &sample : candidate_ps) {
+                out_t = sample.first;
+                eval_ps.push_back(sample);
+                if (!inflated_line_visible(sample.second)) {
+                    all_traj_visible = false;
+                    break;
+                }
+            }
+            if (all_traj_visible) out_t = total_dur;
+        }
+        for (const auto &sample : eval_ps) {
+            temp_vel = ref_exp_traj.getVel(sample.first);
+            const double v_norm = temp_vel.norm();
+            min_stop_dis.push_back(v_norm * v_norm / 2.0 / cfg_.exp_traj_cfg.max_acc);
+        }
+
+        if (all_traj_visible) {
+            // No backup trajectory is needed when every remaining EXP sample
+            // is visible. The upstream branch generated a long corridor from
+            // the robot to the terminal point and then immediately discarded
+            // it by returning FINISH. At fine map resolution that dead IRIS
+            // solve dominates ReplanOnce and can make a valid plan miss its
+            // stitching deadline. Keep the observable result identical and
+            // avoid constructing an unused safety corridor.
+            back_traj_info.setEmpty();
+            time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+            return FINISH;
+        }
+        Vec3f invisible_p = eval_ps.back().second;
+        while (out_t > start_t) {
+            out_t -= cfg_.sample_traj_dt;
+            Vec3f out_p = ref_exp_traj.getPos(out_t);
+            if ((out_p - invisible_p).norm() > cfg_.robot_r) {
+                break;
+            }
+        }
+
+        double seed_point_t = std::max(start_t, out_t);
+
+        // TODO check this logic, comment on Dec. 13
+        // if
+        // 1) last exp traj has a backup traj
+        // 2) last backup WT is larger than this term
+        // 3) last exp is collision free
+        // if (ref_exp_traj.back_traj_start_TT > 0 &&
+        // seed_point_t < ref_exp_traj.back_traj_start_TT) {
+        // return NO_NEED;
+        // }
+
+
+        Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
+
+        Vec3f shifted_robot_p = shifted_sfc_start_pt_.norm()> 999?robot_state_.p:shifted_sfc_start_pt_;
+        if (!map_ptr_->getNearestCellNot(GridType::OCCUPIED, shifted_robot_p, shifted_robot_p, 3.0)) {
+            ros_ptr_->error(
+                    " -- [SUPER] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_NO_START_POINT);
+            return FAILED;
+        }
+
+        Line line{shifted_robot_p, seed_point};
+        Polytope temp_poly;
+        if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly)) {
+            ros_ptr_->warn(" -- [SUPER] GeneratePolytopeFromLine failed, force return");
+            return FAILED;
+        }
+        Eigen::Vector3d inner;
+        Eigen::Matrix3Xd vPoly;
+        if (!geometry_utils::findInterior(temp_poly.GetPlanes(), inner)) {
+            ros_ptr_->warn(" -- [SUPER] Cannot generate feasible backup sfc, force return");
+            vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
+            return FAILED;
+        }
+
+        if (cfg_.use_fov_cut) {
+            if (!fov_checker_->cutPolyByFov(robot_state_.p, robot_state_.q, seed_point,
+                                            temp_poly)) {
+                ros_ptr_->warn(" -- [SUPER] cutPolyByFov failed, force return");
+                return FAILED;
+            }
+        }
+        // cut by sensing horizon
+        if (cfg_.sensing_horizon > 0 &&
+            !fov_checker_->cutPolyBySensingHorizon(robot_state_.p, seed_point, cfg_.sensing_horizon,
+                                                   temp_poly)) {
+            ros_ptr_->warn(" -- [SUPER] cutPolyBySensingHorizon failed, force return");
+            vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
+            return FAILED;
+        }
+
+        back_traj_info.setSFC(temp_poly);
+
+        {
+            TimeConsuming t_viz("tviz", false);
+            ros_ptr_->vizBackupSfc(temp_poly);
+            time_consuming_[VISUALIZATION] += t_viz.stop();
+        }
+
+//        Vec3f out_p = temp_point;
+//        double t_R = 0.0;
+        double eval_t = eval_ps.back().first + cfg_.sample_traj_dt;
+        last_pos = eval_ps.back().second;
+        while (temp_poly.PointIsInside(eval_ps.back().second) && eval_t < total_dur) {
+            Vec3f cur_pos = ref_exp_traj.getPos(eval_t);
+
+            if ((cur_pos - last_pos).norm() < cfg_.resolution * 0.8) {
+                eval_t += cfg_.sample_traj_dt;
+                continue;
+            }
+            temp_vel = ref_exp_traj.getVel(out_t);
+            double v_norm = temp_vel.norm();
+            min_stop_dis.push_back(v_norm * v_norm / 2.0 / cfg_.exp_traj_cfg.max_acc);
+            eval_ps.emplace_back(eval_t, cur_pos);
+            last_pos = cur_pos;
+            eval_t += cfg_.sample_traj_dt;
+        }
+        eval_ps.pop_back();
+        seed_point = eval_ps.back().second;
+        seed_point_t = eval_ps.back().first;
+
+        //        bool use_new{true};
+        //        if (use_new) {
+        double t0 = ros_ptr_->getSimTime() -
+                    ref_exp_traj.getStartWallTime() + 0.01;
+        double te = seed_point_t;
+        //            cout << "t0: " << t0 << endl;
+        //            cout << "te: " << te << endl;
+        //            cout << "exp_traj_dur: " << ref_exp_traj.optimized_exp_traj.getTotalDuration() << endl;
+        double vel_e_n = ref_exp_traj.getVel(te).norm();
+        double heu_ts = std::max((t0 + te) / 2, te - vel_e_n / cfg_.back_traj_cfg.max_acc);
+        double heu_dur = te - heu_ts;
+        Vec3f heu_p = seed_point;
+        time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+        TimeConsuming t_back_opt("t_back_opt", false);
+        double opt_ts = heu_ts;
+        Trajectory temp_pos_traj;
+        bool temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
+                                                 t0,
+                                                 te,
+                                                 heu_ts,
+                                                 heu_p,
+                                                 heu_dur,
+                                                 back_traj_info.getSFC(),
+                                                 temp_pos_traj,
+                                                 opt_ts);
+        time_consuming_[BACK_TRAJ_OPT] = t_back_opt.stop();
+
+        {
+            double init_ts;
+            VecDf init_times;
+            vec_Vec3f init_ps;
+            back_traj_opt_->getInitValue(init_ts, init_times, init_ps);
+            latest_replan.setBackupCondition(init_ts, init_times, init_ps,
+                                             t0, te,
+                                             back_traj_info.getSFC());
+        }
+
+        if (!temp_ret) {
+            ros_ptr_->warn(" -- [SUPER] OptimizationBakTrajInPolytopes failed, force return");
+            back_traj_info.setEmpty();
+            return OPT_FAILED;
+        } else {
+            Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
+            Vec4f yaw_goal{0, 0, 0, 0};
+            bool free_end{true};
+            if (cfg_.goal_yaw_en) {
+                if (!isnan(gi_.goal_yaw)) {
+                    free_end = false;
+                    yaw_goal[0] = gi_.goal_yaw;
+                }
+            }
+            Trajectory temp_yaw_traj;
+            if (!yaw_traj_opt_->optimize(yaw_init_vec, yaw_goal, temp_pos_traj,
+                                         temp_yaw_traj, 3, false, free_end)) {
+                ros_ptr_->error(" -- [SUPER] in [generateBackupTrajectory] YawTrajOpt FAILD.");
+                return OPT_FAILED;
+            }
+
+
+            if (opt_ts < t0) {
+                ros_ptr_->error(" -- [SUPER] opt_ts {} < t0 {}", opt_ts, t0);
+                return OPT_FAILED;
+            }
+            double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
+            const auto &committed_ts_WT = cmd_traj_info_.getBackupTrajStartTT();
+            if (committed_ts_WT < cmd_traj_info_.getTotalDuration() && new_ts_WT < committed_ts_WT) {
+                ros_ptr_->error(" -- [SUPER] new_ts_WT {} < committed_ts_WT {}", new_ts_WT, committed_ts_WT);
+                return OPT_FAILED;
+            }
+
+
+            {
+                TimeConsuming t_viz("tviz", false);
+                ros_ptr_->vizBackupTraj(temp_pos_traj);
+                time_consuming_[VISUALIZATION] += t_viz.stop();
+            }
+
+            back_traj_info.setTrajectory(new_ts_WT, opt_ts, temp_pos_traj, temp_yaw_traj);
+            latest_replan.setBackupTraj(temp_pos_traj);
+            latest_replan.setBackupYawTraj(temp_yaw_traj);
+            return SUCCESS;
+        }
+        ros_ptr_->warn(" -- [SUPER] Cannot find backup traj start point.");
+        return FAILED;
+    }
+
+    int SuperPlanner::getNearestFurtherGoalPoint(const vec_E<Vec3f> &goals, const Vec3f &start_pt) {
+        if (goals.size() == 1) {
+            return 0;
+        }
+        Vec3f a = start_pt, b;
+        int min_id = 0;
+        double min_dis = 1e10;
+        for (long unsigned int i = 0; i < goals.size() - 1; i++) {
+            b = goals[i];
+            double dis = geometry_utils::pointLineSegmentDistance(start_pt, a, b);
+            if (dis < min_dis) {
+                min_dis = dis;
+                min_id = i;
+            }
+            a = b;
+        }
+        return min_id;
+    }
 
     bool
     SuperPlanner::PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                              const double &searching_horizon,
                              vec_Vec3f &path) {
         using namespace path_search;
-        vertical_avoidance_active_ = false;
         if (searching_horizon <= 0.0) {
             ros_ptr_->error(" -- [SUPER] Goal waypoints empty or searching horizon negative, force return.");
             return false;
@@ -781,89 +1233,37 @@ namespace super_planner {
             shifted_start_pt = start_point_escape_path.back();
         }
 
-        Vec3f temp_start_point;
+        Vec3f temp_goal_point, temp_start_point;
         temp_start_point = shifted_start_pt;
         double temp_plannning_horizon = searching_horizon;
         //            int start_id = getNearestFurtherGoalPoint(goal_waypoints, start_pt);
 
         int flag = ON_INF_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) | DONT_USE_INF_NEIGHBOR;
 
-        const auto search_phase = [&](const Vec3f &phase_start,
-                                      const Vec3f &phase_goal,
-                                      const bool allow_vertical,
-                                      const double phase_horizon,
-                                      vec_Vec3f &phase_path) {
-            astar_ptr_->setVerticalSearchEn(allow_vertical);
-            int phase_flag = flag;
-            RET_CODE phase_ret = astar_ptr_->pointToPointPathSearch(
-                    phase_start, phase_goal, phase_flag, phase_horizon, phase_path);
+        RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(temp_start_point, goal, flag, temp_plannning_horizon,
+                                                               path);
 
-            if (phase_ret == NO_PATH) {
-                phase_flag = ON_PROB_MAP |
-                             (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) |
-                             USE_INF_NEIGHBOR;
-                phase_ret = astar_ptr_->pointToPointPathSearch(
-                        phase_start, phase_goal, phase_flag, phase_horizon, phase_path);
-            }
-            return phase_ret;
-        };
-
-        // Stage 1 is deliberately horizontal. This prevents the high-speed
-        // mission from oscillating in Z merely because the 3-D search has a
-        // cheap diagonal option. A different final altitude is handled only
-        // after the XY route reaches the horizontal goal.
-        const bool needs_vertical_phase =
-                std::abs(goal.z() - temp_start_point.z()) > map_ptr_->getResolution();
-        const Vec3f horizontal_goal(
-                goal.x(), goal.y(), needs_vertical_phase ? temp_start_point.z() : goal.z());
-        vec_Vec3f horizontal_path;
-        RET_CODE ret_code = search_phase(temp_start_point, horizontal_goal, false,
-                                         temp_plannning_horizon, horizontal_path);
-
-        if (ret_code == INIT_ERROR) {
+        if(ret_code == INIT_ERROR){
             gi_.goal_valid = false;
             return false;
         }
+        //add may23, if failed on inf map, use prob map try again
 
-        path = std::move(horizontal_path);
-        Vec3f searched_goal = horizontal_goal;
-
-        // If a horizontal route is not feasible, open the third dimension and
-        // solve the same waypoint in one explicit vertical-avoidance phase.
-        // This is a search-policy fallback, never a second trajectory branch.
-        if (needs_vertical_phase &&
-            ret_code != REACH_HORIZON && ret_code != REACH_GOAL) {
-            path.clear();
-            ret_code = search_phase(temp_start_point, goal, true,
-                                    temp_plannning_horizon, path);
-            if (ret_code == REACH_HORIZON || ret_code == REACH_GOAL) {
-                vertical_avoidance_active_ = true;
-                searched_goal = goal;
+        if (ret_code == NO_PATH) {
+            flag = ON_PROB_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) |
+                   USE_INF_NEIGHBOR;
+            fmt::print(fg(fmt::color::indian_red) | fmt::emphasis::bold,
+                       " -- [Astar] Path search failed on inf map, try again on prob map.\n");
+            ret_code = astar_ptr_->pointToPointPathSearch(temp_start_point, goal, flag, temp_plannning_horizon,
+                                                          path);
+            if (ret_code == SUCCESS || ret_code == REACH_HORIZON || ret_code == REACH_GOAL) {
+                fmt::print(fg(fmt::color::lime_green) | fmt::emphasis::bold,
+                           " -- [Astar] Path search on prob map success.\n");
+            } else {
+                fmt::print(fg(fmt::color::indian_red) | fmt::emphasis::bold,
+                           " -- [Astar] Path search failed on prob map still failed.\n");
             }
         }
-
-        // Stage 2 is a real vertical-avoidance phase, not a second
-        // trajectory branch: it extends the same guide path to the requested
-        // XYZ waypoint and therefore preserves the final altitude contract.
-        if (needs_vertical_phase && ret_code == REACH_GOAL && !vertical_avoidance_active_) {
-            vec_Vec3f vertical_path;
-            const double vertical_horizon = std::max(
-                    temp_plannning_horizon,
-                    (goal - path.back()).norm() + 2.0 * map_ptr_->getResolution());
-            const RET_CODE vertical_ret = search_phase(
-                    path.back(), goal, true, vertical_horizon, vertical_path);
-            if (vertical_ret != REACH_HORIZON && vertical_ret != REACH_GOAL) {
-                ros_ptr_->error(" -- [SUPER] Vertical avoidance phase failed with [{}].",
-                                RET_CODE_STR[vertical_ret].c_str());
-                return false;
-            }
-            if (vertical_path.size() > 1) {
-                path.insert(path.end(), std::next(vertical_path.begin()), vertical_path.end());
-            }
-            ret_code = vertical_ret;
-            searched_goal = goal;
-        }
-
         if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL) {
             ros_ptr_->error(
                     " -- [SUPER] Path search failed with [{}], force return.\n", RET_CODE_STR[ret_code].c_str());
@@ -874,14 +1274,34 @@ namespace super_planner {
                         start_point_escape_path.end());
         }
 
+        // Keep the route inside the exact metric box used by corridor
+        // generation. ROG's circular-buffer insideLocalMap predicate is index
+        // based and can accept a point beyond this box near a sliding edge,
+        // which leaves MINCO's tail outside every generated polytope.
+        const Vec3f corridor_center = map_ptr_->getLocalMapOrigin();
+        const Vec3f corridor_half_size = 0.5 * map_ptr_->getLocalMapSize();
+        const Vec3f corridor_margin = Vec3f::Constant(2.0 * map_ptr_->getInfResolution());
+        const Vec3f corridor_min = corridor_center - corridor_half_size + corridor_margin;
+        const Vec3f corridor_max = corridor_center + corridor_half_size - corridor_margin;
+        const auto inside_corridor_map = [&](const Vec3f &point) {
+            return (point.array() >= corridor_min.array()).all() &&
+                   (point.array() <= corridor_max.array()).all();
+        };
+        bool trimmed_to_corridor_map = false;
+        while (!path.empty() && !inside_corridor_map(path.back())) {
+            path.pop_back();
+            trimmed_to_corridor_map = true;
+        }
+
         if (path.empty()) {
             ros_ptr_->warn(
                     " -- [SUPER] Path search failed with empty segments, force return.");
             return false;
         }
         path.insert(path.begin(), start_pt);
-        if (ret_code == REACH_GOAL) {
-            path.push_back(searched_goal);
+        if (ret_code == REACH_GOAL && !trimmed_to_corridor_map &&
+            inside_corridor_map(goal)) {
+            path.push_back(goal);
         }
         return true;
     }

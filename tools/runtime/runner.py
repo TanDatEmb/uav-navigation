@@ -780,18 +780,9 @@ def _external_mode_params(session: Session, source: Path, mission_file: Path | N
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
         raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
-    parameters = value["px4_navigation_external_mode"].setdefault("ros__parameters", {})
-    navigation = parameters.setdefault("navigation", {})
-    tracker = navigation.setdefault("velocity_tracker", {})
-    planning = _mission_planning(mission_file)
-    if "max_velocity_mps" in planning:
-        tracker["max_velocity_mps"] = planning["max_velocity_mps"]
-    if "max_acceleration_mps2" in planning:
-        tracker["max_acceleration_mps2"] = planning["max_acceleration_mps2"]
-    if "max_deceleration_mps2" in planning:
-        tracker["max_deceleration_mps2"] = planning["max_deceleration_mps2"]
-    if speed_cap_mps is not None:
-        tracker["max_velocity_mps"] = speed_cap_mps
+    # SUPER PVA is the nominal contract.  Limits are injected into SUPER by
+    # _mapping_params, never into this transport layer.
+    del mission_file, speed_cap_mps
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
@@ -833,12 +824,29 @@ def _mapping_params(
     )
     if not isinstance(planner, dict):
         raise ValueError("SUPER planner config must be a mapping")
-    planning = _mission_planning(mission_file)
+    # PVA is the direct control contract, so mission limits must constrain the
+    # SUPER optimizer itself.  Applying them here avoids reintroducing an
+    # external velocity/acceleration limiter that would distort the planned
+    # trajectory after optimization.
+    planning = _mission_planning(mission_file) if mission_file is not None else {}
+    unknown_policy = planning.get("unknown_policy")
+    if unknown_policy is not None:
+        if unknown_policy != "blocked":
+            raise ValueError("SUPER only supports the mission unknown_policy 'blocked'")
+        planner.setdefault("super_planner", {})["frontend_in_known_free"] = True
     target_speed = speed_cap_mps
-    if target_speed is None and "max_velocity_mps" in planning:
-        target_speed = float(planning["max_velocity_mps"])
+    if target_speed is None:
+        target_speed = planning.get("max_velocity_mps")
+    boundary = planner.setdefault("traj_opt", {}).setdefault("boundary", {})
     if target_speed is not None:
-        planner.setdefault("traj_opt", {}).setdefault("boundary", {})["max_vel"] = float(target_speed)
+        target_speed = float(target_speed)
+        if not math.isfinite(target_speed) or target_speed <= 0.0:
+            raise ValueError("SUPER target speed must be finite and positive")
+        boundary["max_vel"] = target_speed
+    if "max_acceleration_mps2" in planning:
+        boundary["max_acc"] = float(planning["max_acceleration_mps2"])
+    if "max_jerk_mps3" in planning:
+        boundary["max_jerk"] = float(planning["max_jerk_mps3"])
     planner_target = session.directory / "super_planner.yaml"
     planner_target.write_text(yaml.safe_dump(planner, sort_keys=False), encoding="utf-8")
     super_parameters["config_path"] = str(planner_target)
@@ -1546,7 +1554,7 @@ def _run_sim_unlocked(
         _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING")
         _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
         _wait_until(session, _mapping_ready,
-                    float(config["runtime"]["timeouts"]["external_odometry_s"]),
+                    float(config["runtime"]["timeouts"].get("mapping_ready_s", config["runtime"]["timeouts"]["external_odometry_s"])),
                     "ROG-Map output and visualization")
         _write_runtime(session, startup_complete=True)
         if headless or auto_scenario:

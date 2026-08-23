@@ -117,8 +117,25 @@ namespace geometry_utils {
                 }
             }
             if (start_id < 0 || end_id < 0) {
-                std::cout << color_text::RED << " -- [EXPTrajOpt] Ill corridor! Forced return." <<  color_text::
-                RESET << std::endl;
+                double best_head_violation = std::numeric_limits<double>::infinity();
+                double best_tail_violation = std::numeric_limits<double>::infinity();
+                for (const auto &sfc : sfcs) {
+                    const MatD4f planes = sfc.GetPlanes();
+                    best_head_violation = std::min(
+                            best_head_violation,
+                            (planes.leftCols<3>() * head_p + planes.col(3)).maxCoeff());
+                    best_tail_violation = std::min(
+                            best_tail_violation,
+                            (planes.leftCols<3>() * tail_p + planes.col(3)).maxCoeff());
+                }
+                std::cout << color_text::RED
+                          << " -- [EXPTrajOpt] Ill corridor: count=" << sfcs.size()
+                          << " head=" << head_p.transpose()
+                          << " head_best_violation=" << best_head_violation
+                          << " tail=" << tail_p.transpose()
+                          << " tail_best_violation=" << best_tail_violation
+                          << " start_id=" << start_id << " end_id=" << end_id
+                          << color_text::RESET << std::endl;
                 return false;
             }
             if (start_id >= end_id) {
@@ -155,4 +172,3 @@ namespace geometry_utils {
         return true;
     }
 }
-

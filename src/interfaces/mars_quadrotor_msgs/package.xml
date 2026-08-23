@@ -4,7 +4,7 @@
 <package format="3">
   <name>mars_quadrotor_msgs</name>
   <version>2.0.8</version>
-  <description>SUPER-compatible polynomial trajectory message.</description>
+  <description>PVA position command contract for the integrated navigation runtime.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
 

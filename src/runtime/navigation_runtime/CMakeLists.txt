@@ -46,4 +46,17 @@ install(TARGETS super_navigation_node
 )
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 ament_export_dependencies(navigation_interfaces mars_quadrotor_msgs super_planner_vendor)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_input_pairing test/test_input_pairing.cpp)
+  target_include_directories(test_input_pairing PRIVATE include)
+  ament_target_dependencies(test_input_pairing nav_msgs)
+  ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
+  target_include_directories(test_planner_fsm PRIVATE include)
+  ament_target_dependencies(test_planner_fsm super_planner_vendor)
+  ament_add_gtest(test_command_clock test/test_command_clock.cpp)
+  ament_target_dependencies(test_command_clock super_planner_vendor)
+endif()
+
 ament_package()

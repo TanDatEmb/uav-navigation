@@ -1519,7 +1519,7 @@ def _navigation_mapping_summary(
         "/navigation/visualization/planned_path",
         "/navigation/visualization/markers",
         "/navigation/trajectory_bundle",
-        "/navigation/super_trajectory",
+        "/navigation/super_command",
     ]
     return result
 

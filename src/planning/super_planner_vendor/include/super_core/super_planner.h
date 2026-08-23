@@ -36,9 +36,11 @@
 
 
 #include "traj_opt/exp_traj_optimizer_s4.h"
+#include "traj_opt/backup_traj_optimizer_s4.h"
 #include "path_search/astar.h"
 #include "rog_map/rog_map.h"
 #include "super_core/corridor_generator.h"
+#include "super_core/fov_checker.h"
 
 #include "traj_opt/yaw_traj_opt.h"
 #include "super_core/super_ret_code.hpp"
@@ -47,6 +49,7 @@
 #include <super_core/log_utils.hpp>
 #include <data_structure/exp_traj.h>
 #include <data_structure/cmd_traj.h>
+#include <data_structure/backup_traj.h>
 
 
 namespace super_planner {
@@ -63,6 +66,7 @@ namespace super_planner {
         Vec3f shifted_sfc_start_pt_;
 
         traj_opt::ExpTrajOpt::Ptr exp_traj_opt_;
+        traj_opt::BackupTrajOpt::Ptr back_traj_opt_;
         traj_opt::YawTrajOpt::Ptr yaw_traj_opt_;
 
         CIRI::Ptr ciri_;
@@ -74,6 +78,10 @@ namespace super_planner {
 
         Vec3f local_start_p_;
 
+        bool robot_on_backup_traj_{false};
+        // use negative value to indicate the traj is not available
+        double on_backup_start_WT{-1}, on_backup_end_WT{-1};
+
         double planner_process_start_WT_;
 
         struct GoalInfo {
@@ -83,15 +91,20 @@ namespace super_planner {
             bool goal_valid{true};
         } gi_;
 
+        FOVChecker::Ptr fov_checker_;
+
         CmdTraj cmd_traj_info_;
         ExpTraj last_exp_traj_info_;
-        // True only while the current guide path was produced by the
-        // explicit vertical-avoidance phase.  The nominal planner remains a
-        // single trajectory pipeline; this flag only controls the Z corridor
-        // policy for the current optimization.
-        bool vertical_avoidance_active_{false};
 
         vector<double> time_consuming_;
+        // 0 idle, 1 setup, 2 A*, 3 corridor/CIRI, 4 main MINCO,
+        // 5 backup generation/MINCO. Read by the external watchdog.
+        std::atomic<int> solve_stage_{0};
+
+        Vec3f latest_guide_start_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Vec3f latest_guide_min_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Vec3f latest_guide_max_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -122,14 +135,27 @@ namespace super_planner {
 
         Trajectory getCommittedYawTrajectory();
 
-        bool getCommittedPartialTrajectory(double start_t,
-                                           double end_t,
-                                           Trajectory &position,
-                                           Trajectory &yaw);
+        // Runtime safety metadata for the currently committed command. These
+        // accessors keep CmdTraj ownership inside SUPER while allowing the
+        // mission/PX4 FSM to validate its optimized safety suffix.
+        bool committedBackupTrajectoryAvailable() const {
+            return cmd_traj_info_.backupTrajAvilibale();
+        }
+
+        double getCommittedBackupStartTrajectoryTime() const {
+            return cmd_traj_info_.getBackupTrajStartTT();
+        }
+
+        Vec3f latestGuideStart() const { return latest_guide_start_; }
+        Vec3f latestGuideEnd() const { return latest_guide_end_; }
+        Vec3f latestGuideMin() const { return latest_guide_min_; }
+        Vec3f latestGuideMax() const { return latest_guide_max_; }
+        int solveStage() const noexcept { return solve_stage_.load(); }
 
         void getOneCommandFromTraj(StatePVAJ &pvaj,
                                    double &yaw,
                                    double &yaw_dot,
+                                   bool &on_backup_traj,
                                    bool &traj_finish);
 
         void getModuleTimeConsuming(vector<double> &time);
@@ -148,6 +174,11 @@ namespace super_planner {
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
                                  ExpTraj &out_exp_traj_info);
 
+        /* For Backup traj generation */
+        RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj, BackupTraj &back_traj_info);
+
+        int getNearestFurtherGoalPoint(const vec_E<Vec3f> &goals, const Vec3f &start_pt);
+
         bool PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                         const double &searching_horizon,
                         vec_Vec3f &path);
@@ -160,6 +191,25 @@ namespace super_planner {
 
         rog_map::ROGMapROS::Ptr &getMap() {
             return map_ptr_;
+        }
+
+        double ft{0}, bt{0};
+        int ft_cnt{0}, bt_cnt{0};
+
+        double getFrontendTime() {
+            if (ft_cnt == 0) return -1;
+            double ave_t = ft / ft_cnt;
+            ft = 0;
+            ft_cnt = 0;
+            return ave_t;
+        }
+
+        double getBackendTime() {
+            if (bt_cnt == 0) return -1;
+            double ave_t = bt / bt_cnt;
+            bt = 0;
+            bt_cnt = 0;
+            return ave_t;
         }
 
         void updateROGMap(const rog_map::PointCloud &cloud, const super_utils::Pose &pose) const {
