@@ -7,6 +7,7 @@ install-*/
 log-*/
 .ros/
 test-results/
+test-results-debug/
 
 # Editor and operating-system files
 .vscode/
