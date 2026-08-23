@@ -34,10 +34,8 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
-    max_deceleration_mps2: 2.0
     max_jerk_mps3: 6.0
     unknown_policy: blocked
   control:
-    output: auto
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

@@ -503,13 +503,13 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         const VecDf guide_plane_values =
                 opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
                 opt_vars.hOverlapPolytopes[j].col(3);
-        // Preserve SUPER's interior-point initialization and its timestamp
-        // allocation, but bias it toward the collision-checked A* route when
-        // that corresponding guide sample belongs to the same convex overlap.
-        // A conservative blend avoids the ill-conditioned boundary start of
-        // direct guide initialization while reducing corridor-centre drift.
+        // Initialize on the collision-checked A* route when the corresponding
+        // sample belongs to this convex overlap. The guide-plane test above
+        // guarantees feasibility. A centre-dominant blend creates lateral and
+        // vertical drift in open space; the receding prefix then feeds that
+        // drift into every later solve.
         opt_vars.points.col(j) = guide_plane_values.maxCoeff() <= 1.0e-6
-                ? 0.70 * interior + 0.30 * guide_point
+                ? guide_point
                 : interior;
         time_stamps(j + 1) = opt_vars.guide_t[nearest_index];
     }

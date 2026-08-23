@@ -66,7 +66,10 @@ namespace super_planner {
         // password: wtr
         //	TimeConsuming t___("SearchPolytopeOnPath");
         sfcs.clear();
+        solve_stage_.store(1);
+        solve_point_count_.store(0);
         if (path.empty()) {
+            solve_stage_.store(0);
             return false;
         }
 
@@ -84,6 +87,12 @@ namespace super_planner {
             first_id++;
         }
 
+        if (first_id >= static_cast<int>(path.size())) {
+            ros_ptr_->warn(" -- [SUPER] Corridor path is entirely inside inflated occupancy");
+            solve_stage_.store(0);
+            return false;
+        }
+
         if(first_id!=0){
             shifted_start_pt = path[first_id];
             double dis = (path[first_id] - path[0]).norm() * 1.2;
@@ -92,6 +101,7 @@ namespace super_planner {
         }
 
         while (cnt_loop++ < max_loop) {
+            solve_stage_.store(1);
             second_id = first_id;
             for (int j = first_id + 1; j < path.size(); j++) {
                 bool reach_segment = false;
@@ -121,6 +131,7 @@ namespace super_planner {
                 ros_ptr_->warn(
                         " -- [SUPER] Frontend path contains a blocked adjacent edge at index {}",
                         first_id);
+                solve_stage_.store(0);
                 return false;
             }
 
@@ -128,10 +139,12 @@ namespace super_planner {
             if ((path[first_id] - path[second_id]).norm() > seed_line_max_length_ * 1.5) {
                 fmt::print("first: {}\n second: {}\n seed line max: {}\n", path[first_id].transpose(),
                            path[second_id].transpose(), seed_line_max_length_);
+                solve_stage_.store(0);
                 return false;
             }
             if (!GeneratePolytopeFromLine(seed_lines.back(), temp_poly)) {
                 cout << YELLOW << " -- [SUPER] GeneratePolytopeFromLine failed." << RESET << endl;
+                solve_stage_.store(0);
                 return false;
             }
 
@@ -140,6 +153,7 @@ namespace super_planner {
 //            usleep(10000);
 
             if (!sfcs.empty()) {
+                solve_stage_.store(4);
                 overlap = sfcs.back().CrossWith(temp_poly);
                 interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                 temp_poly.overlap_depth_with_last_one = interior_depth;
@@ -147,6 +161,7 @@ namespace super_planner {
                 if (interior_depth < min_overlap_threshold_) {
                     if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p)) {
                         cout << YELLOW << " -- [SUPER] GeneratePolytopeFromPoint failed." << RESET << endl;
+                        solve_stage_.store(0);
                         return false;
                     }
                     overlap = sfcs.back().CrossWith(temp_poly_fix_p);
@@ -159,6 +174,7 @@ namespace super_planner {
 //                        ros_ptr_->vizCiriPointCloud(latest_pc);
 //                        usleep(100000);
 //                        exit(-1);
+                        solve_stage_.store(0);
                         return false;
                     }
                     temp_poly_fix_p.overlap_depth_with_last_one = interior_depth;
@@ -174,6 +190,7 @@ namespace super_planner {
 //                        ros_ptr_->vizCiriPointCloud(latest_pc);
 //                        usleep(100000);
 //                        exit(-1);
+                        solve_stage_.store(0);
                         return false;
                     }
                 } else {
@@ -201,13 +218,16 @@ namespace super_planner {
 
         if (cnt_loop >= max_loop) {
             cout << YELLOW << " -- [SUPER] Reach max iteration, failed." << RESET << endl;
+            solve_stage_.store(0);
             return false;
         }
 
         if (sfcs.empty()) {
+            solve_stage_.store(0);
             return false;
         }
 
+        solve_stage_.store(0);
         return true;
     }
 
@@ -228,7 +248,9 @@ namespace super_planner {
         map_ptr_->boundBoxByLocalMap(box_min, box_max);
         box_min.z() = std::max(box_min.z(), virtual_groud_height_);
         box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        solve_stage_.store(5);
         map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
+        solve_point_count_.store(pc.size());
         // Virtual floor and ceiling are deterministic planes, not sampled
         // obstacles. Account for the vehicle radius directly in the boundary
         // half-spaces and keep them out of CIRI's quadratic point loop.
@@ -266,10 +288,7 @@ namespace super_planner {
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         super_utils::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
-        if (pc.size() >= 500) {
-            ros_ptr_->info(" -- [CIRI] point seed solve start points={} length={} a={} b={}",
-                           pc.size(), (a - b).norm(), a.transpose(), b.transpose());
-        }
+        solve_stage_.store(6);
         RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
@@ -338,7 +357,9 @@ namespace super_planner {
         map_ptr_->boundBoxByLocalMap(box_min, box_max);
         box_min.z() = std::max(box_min.z(), virtual_groud_height_);
         box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        solve_stage_.store(2);
         map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
+        solve_point_count_.store(pc.size());
         MatD4f planes;
         Eigen::Vector3d a = line.first, b = line.second;
         Eigen::Matrix<double, 6, 4> bd = Eigen::Matrix<double, 6, 4>::Zero();
@@ -374,10 +395,7 @@ namespace super_planner {
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         super_utils::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
-        if (pc.size() >= 500) {
-            ros_ptr_->info(" -- [CIRI] line seed solve start points={} length={} a={} b={}",
-                           pc.size(), (a - b).norm(), a.transpose(), b.transpose());
-        }
+        solve_stage_.store(3);
         RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();

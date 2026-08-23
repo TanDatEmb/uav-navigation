@@ -33,7 +33,6 @@ mission:
     # continuity at flight speed rather than at a deliberately slow crawl.
     max_velocity_mps: 3.0
     max_acceleration_mps2: 2.0
-    max_deceleration_mps2: 2.0
     max_jerk_mps3: 8.0
     # Do not force a 2.4 m/s endpoint on every 3--5 m rolling horizon.  That
     # endpoint condition makes the B-spline time scaler stretch the whole
@@ -43,10 +42,8 @@ mission:
     # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
     # observed obstacle detour so the estimator/controller does not chase a
     # sharp local tangent at the next waypoint.
-    continuation_speed_fraction: 0.50
     unknown_policy: blocked
   control:
-    output: auto
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5
     # Switch a pass-through corner early enough for the next local trajectory

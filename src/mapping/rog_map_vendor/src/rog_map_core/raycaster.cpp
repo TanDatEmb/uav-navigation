@@ -185,6 +185,22 @@ namespace rog_map {
                 return false;
             }
 
+            // A finished axis must never be selected again.  The upstream
+            // DDA compares only boundary times; round-off at a voxel face can
+            // otherwise select an axis after it has reached its end index.
+            // That axis then overshoots and can never equal the endpoint
+            // again, turning a planner collision query into an infinite loop.
+            const double never = std::numeric_limits<double>::max();
+            if (cur_ray_pt_id_x_ == end_x_i_) {
+                t_to_bound_x_ = never;
+            }
+            if (cur_ray_pt_id_y_ == end_y_i_) {
+                t_to_bound_y_ = never;
+            }
+            if (cur_ray_pt_id_z_ == end_z_i_) {
+                t_to_bound_z_ = never;
+            }
+
             // compute firest bound point
             if (t_to_bound_x_ < t_to_bound_y_) {
                 if (t_to_bound_x_ < t_to_bound_z_) {

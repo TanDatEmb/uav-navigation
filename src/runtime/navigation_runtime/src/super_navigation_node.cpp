@@ -768,11 +768,12 @@ void SuperNavigationNode::publishCommand() {
         planner_failure_latched_.store(true);
         safety_suffix_active_.store(false);
         RCLCPP_ERROR(get_logger(),
-                     "SUPER planner watchdog timed out generation=%lu age=%.3f s stage=%d; "
+                     "SUPER planner watchdog timed out generation=%lu age=%.3f s stage=%d points=%zu; "
                      "invalidating committed main trajectory",
                      static_cast<unsigned long>(active_solve),
                      static_cast<double>(solve_age_ns) / 1e9,
-                     planner_->solveStage());
+                     planner_->solveStage(),
+                     planner_->solvePointCount());
       }
     }
   }

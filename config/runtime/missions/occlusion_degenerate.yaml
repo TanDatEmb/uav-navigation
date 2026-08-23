@@ -8,5 +8,4 @@ mission:
     - {id: reveal_hidden_obstacle, position: [-3.0, 6.0, 3.0], acceptance_radius_m: 0.7, hold_s: 0.2}
     - {id: occlusion_detour, position: [-5.5, 2.5, 3.0], acceptance_radius_m: 0.7, hold_s: 0.5}
     - {id: occlusion_finish, position: [-3.0, 5.5, 3.0], acceptance_radius_m: 0.7, hold_s: 0.5}
-  planning: {replan_rate_hz: 5.0, max_velocity_mps: 1.0, max_acceleration_mps2: 2.0, max_deceleration_mps2: 2.0, max_jerk_mps3: 6.0, unknown_policy: blocked}
-  control: {output: auto}
+  planning: {replan_rate_hz: 5.0, max_velocity_mps: 1.0, max_acceleration_mps2: 2.0, max_jerk_mps3: 6.0, unknown_policy: blocked}

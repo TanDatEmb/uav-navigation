@@ -4,15 +4,15 @@ px4_navigation_external_mode:
       super_command_topic: /navigation/super_command
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
-      # SUPER PVA is forwarded directly; no external velocity tracker or
-      # position/acceleration limiter modifies the nominal command.
-      prefer_velocity_output: false
       mission_complete_topic: /navigation/mission_complete
       trajectory_stale_after_s: 0.75
       # Keep the same bounded tracking envelope used by the planner runtime;
       # a multi-metre lead is a trajectory-ownership failure, not a nominal
       # PX4 transient.
       command_anchor_max_error_m: 0.75
+      # Permit the expected forward reference lead of a moving PVA setpoint,
+      # while lateral/reverse error remains bounded by the geometric limit.
+      command_tracking_lag_s: 0.25
       # The SITL LIO/external-odometry stream has measured nominal gaps up to
       # 0.82 s under mapping load; keep a finite fail-closed margin above that.
       state_stale_after_s: 1.0

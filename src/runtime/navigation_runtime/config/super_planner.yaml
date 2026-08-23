@@ -8,21 +8,29 @@ super_planner:
   frontend_in_known_free: false
   goal_yaw_en: false
   goal_vel_en: false
-  corridor_bound_dis: 3.0
+  # Keep the convex search box local to the collision-checked A* guide. A
+  # 3 m half-width is clipped asymmetrically by the vertical map envelope at
+  # nominal altitude, moving the initialization toward z~=2.1 m and feeding
+  # that drift into the next receding-horizon prefix. 1.5 m still leaves more
+  # than three vehicle radii around the guide while removing unused volume.
+  corridor_bound_dis: 1.5
   corridor_line_max_length: 3.0
-  # Backup is a local braking/safety trajectory, not a second long-range main
-  # path. Keep its visibility/corridor seed bounded to the upstream 3 m local
-  # horizon so CIRI never receives a 20--30 m obstacle-dense line.
-  safe_corridor_line_max_length: 3.0
+  # This upstream parameter is used as the visibility horizon before choosing
+  # the backup switch point. It must include braking distance plus more than
+  # one replan interval; 3 m leaves only ~0.45 s of main trajectory at 5 m/s.
+  # Keep it finite and inside the local observed map while preserving a useful
+  # high-speed main window.
+  safe_corridor_line_max_length: 10.0
   # One CIRI pass already separates every occupied point from the seed line.
   # Additional passes only enlarge the inscribed volume and create an
   # unbounded latency tail near dense obstacle surfaces.
   iris_iter_num: 1
   obs_skip_num: 2
-  # Hot-replan p95 is about 0.79 s with mapping and LIO active on the target
-  # SITL host.  The stitch point must be farther ahead than that measured
-  # compute budget or every valid optimization is discarded after completion.
-  replan_forward_dt: 1.0
+  # Replan from a short future state to preserve PVA continuity without
+  # committing the vehicle to a one-second blind prefix near obstacles.
+  # Current integrated hot-replan p95 is below 40 ms in SITL; 0.2 s leaves a
+  # bounded compute margin while remaining close to SUPER's 0.1 s profiles.
+  replan_forward_dt: 0.2
   planning_horizon: 30.0
   sensing_horizon: -1
   # Preserve a short dynamically continuous prefix, then rebuild the route

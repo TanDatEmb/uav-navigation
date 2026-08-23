@@ -16,20 +16,8 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 5.0
     max_acceleration_mps2: 5.0
-    max_deceleration_mps2: 5.0
     max_jerk_mps3: 12.0
-    continuation_speed_fraction: 0.50
-    # This calibration leg has no route obstacle.  Keep topology generation
-    # out of the open-speed measurement so a temporarily unobserved voxel can
-    # never turn a straight-line LIO/PX4 limit test into a lateral detour.
-    # Obstacle maps exercise the same route guide through the pillar mission.
-    route_guide_enabled: false
-    route_guide_sample_spacing_m: 0.5
-    route_guide_collision_sample_spacing_m: 0.2
-    route_guide_lateral_offset_m: 3.6
-    route_guide_lateral_transition_m: 3.0
     unknown_policy: blocked
   control:
-    output: velocity
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

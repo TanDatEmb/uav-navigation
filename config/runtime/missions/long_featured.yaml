@@ -28,11 +28,9 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 1.5
     max_acceleration_mps2: 1.0
-    max_deceleration_mps2: 1.0
     max_jerk_mps3: 6.0
     unknown_policy: blocked
   control:
-    output: auto
     # A waypoint is confirmed only after entering its radius and remaining
     # below this measured-speed threshold for the confirmation window.
     acceptance_speed_mps: 0.15

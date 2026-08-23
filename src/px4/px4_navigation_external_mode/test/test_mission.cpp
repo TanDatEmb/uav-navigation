@@ -37,10 +37,9 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
-    continuation_speed_fraction: 0.2
+    max_jerk_mps3: 6.0
     unknown_policy: blocked
   control:
-    output: velocity
     acceptance_confirmation_s: 0.0
 )yaml";
 
@@ -71,13 +70,13 @@ TEST(MissionLoader, LoadsCompatibleControlContract) {
   ASSERT_EQ(mission.waypoints.size(), 2U);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].position_enu.x(), 1.0);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].hold_s, 0.1);
-  EXPECT_DOUBLE_EQ(mission.planning.continuation_speed_fraction, 0.2);
+  EXPECT_DOUBLE_EQ(mission.planning.max_jerk_mps3, 6.0);
   EXPECT_DOUBLE_EQ(mission.control.pass_through_lookahead_m, 0.0);
   EXPECT_EQ(mission.waypoints[0].behavior,
             px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
 }
 
-TEST(MissionLoader, AcceptsRuntimeRouteGuidePlanningMetadata) {
+TEST(MissionLoader, RejectsRemovedRouteGuidePlanningMetadata) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -94,11 +93,9 @@ mission:
     route_guide_lateral_transition_m: 3.0
     unknown_policy: blocked
 )yaml");
-  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  EXPECT_THROW(px4_navigation_external_mode::loadMission(path.string(), "lio_odom"),
+               std::invalid_argument);
   std::filesystem::remove(path);
-  EXPECT_TRUE(mission.planning.route_guide_enabled);
-  EXPECT_DOUBLE_EQ(mission.planning.route_guide_sample_spacing_m, 0.5);
-  EXPECT_DOUBLE_EQ(mission.planning.route_guide_lateral_offset_m, 3.6);
 }
 
 TEST(MissionLoader, DefaultsIntermediateWaypointToPassThrough) {

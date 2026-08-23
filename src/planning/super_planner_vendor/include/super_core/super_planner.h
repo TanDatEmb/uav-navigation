@@ -150,7 +150,13 @@ namespace super_planner {
         Vec3f latestGuideEnd() const { return latest_guide_end_; }
         Vec3f latestGuideMin() const { return latest_guide_min_; }
         Vec3f latestGuideMax() const { return latest_guide_max_; }
-        int solveStage() const noexcept { return solve_stage_.load(); }
+        int solveStage() const noexcept {
+            const int stage = solve_stage_.load();
+            return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;
+        }
+        std::size_t solvePointCount() const noexcept {
+            return cg_ptr_ ? cg_ptr_->solvePointCount() : 0;
+        }
 
         void getOneCommandFromTraj(StatePVAJ &pvaj,
                                    double &yaw,

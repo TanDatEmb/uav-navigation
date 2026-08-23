@@ -185,6 +185,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(parameters["planner_rate_hz"], 5.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
@@ -217,7 +218,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
-            self.assertFalse(external_parameters["navigation"]["prefer_velocity_output"])
+            self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
 
     def test_stress_profiles_have_explicit_mission_limits_and_worlds(self) -> None:
         profiles = {

@@ -22,25 +22,11 @@ struct MissionPlanningConfig {
   double replan_rate_hz{5.0};
   double max_velocity_mps{1.0};
   double max_acceleration_mps2{2.0};
-  double max_deceleration_mps2{2.0};
   double max_jerk_mps3{6.0};
-  // Non-zero continuation speed keeps rolling local replans from becoming
-  // stop-and-go at every visible horizon.  The runtime maps this mission
-  // contract to its local-goal tangent parameter.
-  double continuation_speed_fraction{0.35};
   std::string unknown_policy{"blocked"};
-  // Route-guide fields are consumed by the navigation runtime.  External
-  // Mode owns the mission file as well, so it validates and preserves the
-  // contract instead of rejecting planner-only metadata as an unknown field.
-  bool route_guide_enabled{false};
-  double route_guide_sample_spacing_m{0.5};
-  double route_guide_collision_sample_spacing_m{0.2};
-  double route_guide_lateral_offset_m{3.6};
-  double route_guide_lateral_transition_m{3.0};
 };
 
 struct MissionControlConfig {
-  std::string output{"auto"};
   double acceptance_speed_mps{0.15};
   double acceptance_confirmation_s{0.5};
   // Distance before a pass-through waypoint at which the next leg may be

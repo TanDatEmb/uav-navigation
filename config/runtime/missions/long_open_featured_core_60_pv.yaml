@@ -16,15 +16,8 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 8.0
     max_acceleration_mps2: 3.0
-    max_deceleration_mps2: 3.0
     max_jerk_mps3: 8.0
-    continuation_speed_fraction: 0.50
-    route_guide_enabled: false
     unknown_policy: blocked
   control:
-    # Controlled ablation: the only intended difference from core_60 is the
-    # explicit finite position+velocity PX4 setpoint.  This anchors altitude
-    # while retaining the same planner, map, speed cap and mission geometry.
-    output: position_velocity
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

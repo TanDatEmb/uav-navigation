@@ -16,24 +16,9 @@ mission:
     replan_rate_hz: 5.0
     max_velocity_mps: 5.0
     max_acceleration_mps2: 5.0
-    max_deceleration_mps2: 5.0
     max_jerk_mps3: 12.0
-    continuation_speed_fraction: 0.50
-    route_guide_enabled: true
-    route_guide_sample_spacing_m: 0.5
-    route_guide_collision_sample_spacing_m: 0.2
-    # The inflated pillar corridor requires a full side offset to be KnownFree
-    # before the detour is committed.  Keep this at 3.6 m; a smaller 2.6 m
-    # candidate fell inside the inflated second pillar and correctly failed
-    # closed before it could establish a bypass.
-    route_guide_lateral_offset_m: 3.6
-    route_guide_lateral_transition_m: 3.0
-    # The pillar route previously stretched a B-spline transition beyond the
-    # rolling horizon.  Use the bounded-time fit only for this mission while
-    # leaving open-route calibration on B-spline.
     unknown_policy: blocked
   control:
-    output: velocity
     safety_stop_replan_grace_s: 2.0
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

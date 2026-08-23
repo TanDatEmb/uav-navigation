@@ -468,30 +468,23 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     planning = mission.get("planning", {}) if isinstance(mission, dict) else {}
     if not isinstance(planning, dict):
         raise ValueError("mission.planning must be a mapping")
+    allowed_keys = {
+        "replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
+        "max_jerk_mps3", "unknown_policy",
+    }
+    unknown_keys = sorted(set(planning) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(f"unsupported mission planning fields: {', '.join(unknown_keys)}")
     if planning.get("unknown_policy", "blocked") != "blocked":
         raise ValueError("mission planning unknown_policy must be 'blocked'")
     result = {}
     for key in ("replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
-                "max_deceleration_mps2", "max_jerk_mps3",
-                "continuation_speed_fraction"):
+                "max_jerk_mps3"):
         if key in planning:
             number = float(planning[key])
             if not math.isfinite(number) or number <= 0.0:
                 raise ValueError(f"mission planning {key} must be finite and positive")
             result[key] = number
-    if "route_guide_enabled" in planning:
-        if not isinstance(planning["route_guide_enabled"], bool):
-            raise ValueError("mission planning route_guide_enabled must be boolean")
-        result["route_guide_enabled"] = planning["route_guide_enabled"]
-    for key in ("route_guide_sample_spacing_m", "route_guide_collision_sample_spacing_m",
-                "route_guide_lateral_offset_m", "route_guide_lateral_transition_m"):
-        if key in planning:
-            number = float(planning[key])
-            if not math.isfinite(number) or number <= 0.0:
-                raise ValueError(f"mission planning {key} must be finite and positive")
-            result[key] = number
-    if "max_acceleration_mps2" in result and "max_deceleration_mps2" not in result:
-        result["max_deceleration_mps2"] = result["max_acceleration_mps2"]
     return result
 
 
@@ -829,6 +822,8 @@ def _mapping_params(
     # external velocity/acceleration limiter that would distort the planned
     # trajectory after optimization.
     planning = _mission_planning(mission_file) if mission_file is not None else {}
+    if "replan_rate_hz" in planning:
+        super_parameters["planner_rate_hz"] = float(planning["replan_rate_hz"])
     unknown_policy = planning.get("unknown_policy")
     if unknown_policy is not None:
         if unknown_policy != "blocked":

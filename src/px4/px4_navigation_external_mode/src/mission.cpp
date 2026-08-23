@@ -40,17 +40,6 @@ double finiteScalar(const YAML::Node& node, const char* name, double minimum,
   return value;
 }
 
-bool booleanScalar(const YAML::Node& node, const char* name) {
-  if (!node || !node.IsScalar()) {
-    throw std::invalid_argument(std::string("mission field '") + name + "' must be boolean");
-  }
-  try {
-    return node.as<bool>();
-  } catch (const YAML::Exception&) {
-    throw std::invalid_argument(std::string("mission field '") + name + "' must be boolean");
-  }
-}
-
 }  // namespace
 
 Mission loadMission(const std::string& path, const std::string& expected_frame) {
@@ -140,14 +129,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     if (node["planning"]) {
       requireMap(node["planning"], "planning");
       rejectUnknownKeys(node["planning"], {"replan_rate_hz", "max_velocity_mps",
-                                            "max_acceleration_mps2", "max_deceleration_mps2",
-                                            "max_jerk_mps3",
-                                            "continuation_speed_fraction",
-                                            "unknown_policy", "route_guide_enabled",
-                                            "route_guide_sample_spacing_m",
-                                            "route_guide_collision_sample_spacing_m",
-                                            "route_guide_lateral_offset_m",
-                                            "route_guide_lateral_transition_m"},
+                                            "max_acceleration_mps2", "max_jerk_mps3",
+                                            "unknown_policy"},
                         "planning");
       const auto planning = node["planning"];
       if (planning["replan_rate_hz"]) {
@@ -162,51 +145,12 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
         mission.planning.max_acceleration_mps2 = finiteScalar(
             planning["max_acceleration_mps2"], "planning.max_acceleration_mps2", 0.0);
       }
-      if (planning["max_deceleration_mps2"]) {
-        mission.planning.max_deceleration_mps2 = finiteScalar(
-            planning["max_deceleration_mps2"], "planning.max_deceleration_mps2", 0.0);
-      } else {
-        mission.planning.max_deceleration_mps2 = mission.planning.max_acceleration_mps2;
-      }
       if (planning["max_jerk_mps3"]) {
         mission.planning.max_jerk_mps3 = finiteScalar(
             planning["max_jerk_mps3"], "planning.max_jerk_mps3", 0.0);
       }
-      if (planning["continuation_speed_fraction"]) {
-        mission.planning.continuation_speed_fraction = finiteScalar(
-            planning["continuation_speed_fraction"],
-            "planning.continuation_speed_fraction", 0.0, true);
-        if (mission.planning.continuation_speed_fraction > 1.0) {
-          throw std::invalid_argument(
-              "mission planning continuation_speed_fraction must be at most 1.0");
-        }
-      }
       if (planning["unknown_policy"]) {
         mission.planning.unknown_policy = planning["unknown_policy"].as<std::string>();
-      }
-      if (planning["route_guide_enabled"]) {
-        mission.planning.route_guide_enabled =
-            booleanScalar(planning["route_guide_enabled"], "planning.route_guide_enabled");
-      }
-      if (planning["route_guide_sample_spacing_m"]) {
-        mission.planning.route_guide_sample_spacing_m = finiteScalar(
-            planning["route_guide_sample_spacing_m"],
-            "planning.route_guide_sample_spacing_m", 0.0);
-      }
-      if (planning["route_guide_collision_sample_spacing_m"]) {
-        mission.planning.route_guide_collision_sample_spacing_m = finiteScalar(
-            planning["route_guide_collision_sample_spacing_m"],
-            "planning.route_guide_collision_sample_spacing_m", 0.0);
-      }
-      if (planning["route_guide_lateral_offset_m"]) {
-        mission.planning.route_guide_lateral_offset_m = finiteScalar(
-            planning["route_guide_lateral_offset_m"],
-            "planning.route_guide_lateral_offset_m", 0.0, true);
-      }
-      if (planning["route_guide_lateral_transition_m"]) {
-        mission.planning.route_guide_lateral_transition_m = finiteScalar(
-            planning["route_guide_lateral_transition_m"],
-            "planning.route_guide_lateral_transition_m", 0.0, true);
       }
     }
     if (mission.planning.unknown_policy != "blocked") {
@@ -215,13 +159,10 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
 
     if (node["control"]) {
       requireMap(node["control"], "control");
-      rejectUnknownKeys(node["control"], {"output", "acceptance_speed_mps",
+      rejectUnknownKeys(node["control"], {"acceptance_speed_mps",
                                             "acceptance_confirmation_s",
                                             "pass_through_lookahead_m",
                                             "safety_stop_replan_grace_s"}, "control");
-      if (node["control"]["output"]) {
-        mission.control.output = node["control"]["output"].as<std::string>();
-      }
       if (node["control"]["acceptance_speed_mps"]) {
         mission.control.acceptance_speed_mps = finiteScalar(
             node["control"]["acceptance_speed_mps"], "control.acceptance_speed_mps", 0.0,
@@ -242,14 +183,6 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
             node["control"]["safety_stop_replan_grace_s"],
             "control.safety_stop_replan_grace_s", 0.0, true);
       }
-    }
-    if (mission.control.output != "auto" &&
-        mission.control.output != "position_velocity_acceleration" &&
-        mission.control.output != "position_velocity" &&
-        mission.control.output != "velocity") {
-      throw std::invalid_argument(
-          "mission control output must be auto, position_velocity_acceleration, "
-          "position_velocity, or velocity");
     }
     return mission;
   } catch (const YAML::Exception& error) {

@@ -10,6 +10,8 @@
 #include <coordinate_conventions/frame_conventions.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
 
+#include "px4_navigation_external_mode/tracking_envelope.hpp"
+
 namespace px4_navigation_external_mode {
 namespace {
 
@@ -36,26 +38,6 @@ std::string diagnosticValue(
   return {};
 }
 
-NavigationMode::OutputMode resolveOutputMode(const std::string& output,
-                                             bool prefer_velocity_output) {
-  if (output == "velocity") return NavigationMode::OutputMode::Velocity;
-  if (output == "position_velocity") return NavigationMode::OutputMode::PositionVelocity;
-  return prefer_velocity_output ? NavigationMode::OutputMode::Velocity
-                                : NavigationMode::OutputMode::PositionVelocityAcceleration;
-}
-
-const char* outputModeName(NavigationMode::OutputMode mode) {
-  switch (mode) {
-    case NavigationMode::OutputMode::PositionVelocityAcceleration:
-      return "position_velocity_acceleration";
-    case NavigationMode::OutputMode::PositionVelocity:
-      return "position_velocity";
-    case NavigationMode::OutputMode::Velocity:
-      return "velocity";
-  }
-  return "unknown";
-}
-
 }  // namespace
 
 NavigationMode::NavigationMode(rclcpp::Node& node)
@@ -72,17 +54,18 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_stale_after_s", 0.75)),
       command_anchor_max_error_m_(node.declare_parameter<double>(
           "navigation.command_anchor_max_error_m", 2.0)),
+      command_tracking_lag_s_(node.declare_parameter<double>(
+          "navigation.command_tracking_lag_s", 0.25)),
       state_stale_after_s_(node.declare_parameter<double>(
           "navigation.state_stale_after_s", 0.5)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.trajectory_wait_timeout_s", 2.0)),
-      prefer_velocity_output_(node.declare_parameter(
-          "navigation.prefer_velocity_output", false)),
       lio_health_grace_s_(node.declare_parameter<double>(
           "navigation.lio_health_grace_s", 1.0)) {
   if (super_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
       !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
       !std::isfinite(command_anchor_max_error_m_) || command_anchor_max_error_m_ <= 0.0 ||
+      !std::isfinite(command_tracking_lag_s_) || command_tracking_lag_s_ < 0.0 ||
       !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
       !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0) {
@@ -119,9 +102,7 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       throw std::invalid_argument("navigation.goal_topic must not be empty for a mission");
     }
     mission_ = loadMission(mission_file, planning_frame_);
-    output_mode_ = resolveOutputMode(mission_->control.output, prefer_velocity_output_);
-    RCLCPP_INFO(node.get_logger(), "External Mode output '%s' resolved to '%s'",
-                mission_->control.output.c_str(), outputModeName(output_mode_));
+    RCLCPP_INFO(node.get_logger(), "External Mode command contract: SUPER PVA");
     mission_controller_ = std::make_unique<MissionController>(*mission_);
     goal_publisher_ = node.create_publisher<navigation_interfaces::msg::NavigationGoal>(
         goal_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
@@ -321,6 +302,7 @@ void NavigationMode::onSuperCommand(
 
   bool accepted = false;
   bool anchor_invalid = false;
+  TrackingEnvelopeResult tracking_envelope;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (super_command_.has_value() &&
@@ -342,8 +324,12 @@ void NavigationMode::onSuperCommand(
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{message->position.x, message->position.y,
                                               message->position.z};
-      anchor_invalid = measured.allFinite() && command_position.allFinite() &&
-                       (command_position - measured).norm() > command_anchor_max_error_m_;
+      const Eigen::Vector3d command_velocity{message->velocity.x, message->velocity.y,
+                                             message->velocity.z};
+      tracking_envelope = evaluateTrackingEnvelope(
+          measured, command_position, command_velocity, command_anchor_max_error_m_,
+          command_tracking_lag_s_);
+      anchor_invalid = !tracking_envelope.valid;
       if (anchor_invalid) {
         ++trajectory_rejected_count_;
       }
@@ -358,6 +344,15 @@ void NavigationMode::onSuperCommand(
     }
   }
   if (anchor_invalid) {
+    RCLCPP_ERROR(node().get_logger(),
+                 "SUPER tracking envelope exceeded: longitudinal=%.3f/%.3f m "
+                 "lateral=%.3f/%.3f m speed=%.3f m/s",
+                 tracking_envelope.longitudinal_error_m,
+                 tracking_envelope.longitudinal_limit_m,
+                 tracking_envelope.lateral_error_m,
+                 command_anchor_max_error_m_,
+                 std::hypot(message->velocity.x,
+                            std::hypot(message->velocity.y, message->velocity.z)));
     safetyStopNavigation("SUPER PVA command anchor is not near vehicle");
     return;
   }
@@ -634,9 +629,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
       setpoint.withPosition(enuToNed(*position_enu)).withVelocity(Eigen::Vector3f::Zero());
-      if (output_mode_ == OutputMode::PositionVelocityAcceleration) {
-        setpoint.withAcceleration(Eigen::Vector3f::Zero());
-      }
+      setpoint.withAcceleration(Eigen::Vector3f::Zero());
     }
     trajectory_setpoint_->update(setpoint);
   };

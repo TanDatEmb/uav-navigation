@@ -33,8 +33,6 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void setPositionControlHandover(std::function<void()> callback);
   std::optional<Eigen::Vector3d> handoverPosition();
 
-  enum class OutputMode { PositionVelocityAcceleration, PositionVelocity, Velocity };
-
   void onActivate() override;
   void onDeactivate() override;
   void checkArmingAndRunConditions(px4_ros2::HealthAndArmingCheckReporter& reporter) override;
@@ -74,9 +72,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::string planning_frame_;
   double stale_after_s_{0.5};
   double command_anchor_max_error_m_{2.0};
+  double command_tracking_lag_s_{0.25};
   double state_stale_after_s_{0.5};
   double trajectory_wait_timeout_s_{2.0};
-  bool prefer_velocity_output_{true};
   // FAST-LIO can report one or two unhealthy registration updates while a
   // scan is being re-anchored.  Keep the last valid control stream through a
   // short, bounded burst; a sustained invalid state still fails closed.
@@ -88,7 +86,6 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t lio_unhealthy_since_ns_{0};
   std::optional<Mission> mission_;
   std::unique_ptr<MissionController> mission_controller_;
-  OutputMode output_mode_{OutputMode::PositionVelocityAcceleration};
   std::function<void()> position_control_handover_;
   bool failure_reported_{false};
   bool mode_active_{false};

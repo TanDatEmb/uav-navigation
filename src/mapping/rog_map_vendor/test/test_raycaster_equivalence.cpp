@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <random>
 #include <utility>
 #include <vector>
@@ -79,3 +80,43 @@ TEST(RogMapRayCaster, IndexTraversalMatchesLegacyMetricTraversal) {
   }
 }
 
+TEST(RogMapRayCaster, TraversalIsBoundedAndNeverOvershootsAnEndpointAxis) {
+  auto rays = makeRays();
+  std::mt19937 generator(0xB0ADED);
+  std::uniform_real_distribution<double> distribution(-30.0, 30.0);
+  for (int i = 0; i < 4096; ++i) {
+    rays.emplace_back(
+        Eigen::Vector3d(distribution(generator), distribution(generator), distribution(generator)),
+        Eigen::Vector3d(distribution(generator), distribution(generator), distribution(generator)));
+  }
+
+  for (const auto& ray : rays) {
+    rog_map::raycaster::RayCaster caster(0.2);
+    int sx, sy, sz, ex, ey, ez;
+    caster.posToIndex(ray.first.x(), sx);
+    caster.posToIndex(ray.first.y(), sy);
+    caster.posToIndex(ray.first.z(), sz);
+    caster.posToIndex(ray.second.x(), ex);
+    caster.posToIndex(ray.second.y(), ey);
+    caster.posToIndex(ray.second.z(), ez);
+    const int expected_steps = std::abs(ex - sx) + std::abs(ey - sy) + std::abs(ez - sz);
+
+    if (!caster.setInput(ray.first, ray.second)) {
+      EXPECT_EQ(expected_steps, 0);
+      continue;
+    }
+
+    rog_map::Vec3i voxel;
+    int steps = 0;
+    while (caster.stepIndex(voxel)) {
+      ++steps;
+      ASSERT_LE(steps, expected_steps)
+          << "start=" << ray.first.transpose() << " end=" << ray.second.transpose();
+      if (sx == ex) EXPECT_EQ(voxel.x(), ex);
+      if (sy == ey) EXPECT_EQ(voxel.y(), ey);
+      if (sz == ez) EXPECT_EQ(voxel.z(), ez);
+    }
+    EXPECT_EQ(steps, expected_steps)
+        << "start=" << ray.first.transpose() << " end=" << ray.second.transpose();
+  }
+}

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <atomic>
 #include "memory"
 
 #include <super_core/config.hpp>
@@ -68,6 +69,11 @@ namespace super_planner {
 
         double ciri_t{0};
         int ciri_cnt{0};
+        // Detailed, lock-free progress for the outer planner watchdog.
+        // 0 idle, 1 segment/ray checks, 2 line box query, 3 line CIRI,
+        // 4 overlap LP, 5 point box query, 6 point CIRI.
+        std::atomic<int> solve_stage_{0};
+        std::atomic<std::size_t> solve_point_count_{0};
     public:
         vec_Vec3f getLatestCloud() {
             vec_Vec3f out = latest_pc;
@@ -91,6 +97,9 @@ namespace super_planner {
         void SetLineNeighborList(const vec_E<Vec3i> &line_seed_neighbor_list);
 
         typedef std::shared_ptr<CorridorGenerator> Ptr;
+
+        int solveStage() const noexcept { return solve_stage_.load(); }
+        std::size_t solvePointCount() const noexcept { return solve_point_count_.load(); }
 
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,
