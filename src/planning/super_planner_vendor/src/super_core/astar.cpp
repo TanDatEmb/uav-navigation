@@ -48,12 +48,14 @@ namespace path_search {
         int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
         grid_node_buffer_.resize(map_buffer_size);
         for (auto &i: grid_node_buffer_) {
-            i = new GridNode;
+            i = std::make_unique<GridNode>();
             i->rounds = 0;
         }
         cout << BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << RESET << endl;
         cout << BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << RESET << endl;
     }
+
+    Astar::~Astar() = default;
 
     RET_CODE
     Astar::setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag, const double &searching_horizon) {
@@ -388,8 +390,8 @@ namespace path_search {
         }
 
 
-        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)];
-        GridNodePtr endPtr = grid_node_buffer_[getLocalIndexHash(end_idx)];
+        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)].get();
+        GridNodePtr endPtr = grid_node_buffer_[getLocalIndexHash(end_idx)].get();
         endPtr->id_g = end_idx;
 
         std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
@@ -443,9 +445,11 @@ namespace path_search {
                 if (start_pt_out_local_map) {
                     rog_map::Vec3i start_idx_g;
                     posToGlobalIndex(start_pt, start_idx_g);
-                    GridNodePtr temp_ptr(new GridNode);
-                    temp_ptr->id_g = start_idx_g;
-                    node_path.push_back(temp_ptr);
+                    GridNode temporary_start;
+                    temporary_start.id_g = start_idx_g;
+                    node_path.push_back(&temporary_start);
+                    ConvertNodePathToPointPath(node_path, out_path);
+                    return end_pt_out_local_map ? REACH_HORIZON : REACH_GOAL;
                 }
                 ConvertNodePathToPointPath(node_path, out_path);
                 // Reaching a goal projected onto the local-map boundary is not
@@ -543,7 +547,7 @@ namespace path_search {
                             continue;
                         }
 
-                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)];
+                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)].get();
                         if (neighborPtr == nullptr) {
                             cout << RED << " -- [RM] neighborPtr is null, which should not happen." <<
                                  RESET
@@ -685,7 +689,7 @@ namespace path_search {
         rog_map::Vec3i start_idx;
         posToGlobalIndex(local_start_pt, start_idx);
 
-        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)];
+        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)].get();
         std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
         GridNodePtr neighborPtr = NULL;
         GridNodePtr current = NULL;
@@ -778,7 +782,7 @@ namespace path_search {
                             continue;
                         }
 
-                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)];
+                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)].get();
                         if (neighborPtr == nullptr) {
                             cout << RED << " -- [RM] neighborPtr is null, which should not happen" <<
                                  RESET << endl;

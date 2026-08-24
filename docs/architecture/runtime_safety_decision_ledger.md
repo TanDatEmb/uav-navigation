@@ -494,3 +494,29 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   vegetation, and closed-loop SITL remain required before WM-3 is certified.
   No queue, timeout/freshness relaxation, input downsampling or scheduling
   bypass was introduced to make the sanitizer runs pass.
+
+### 2026-08-25 - Astar node ownership exposed by full-node shutdown ASan
+
+- The first ASan execution of the real `SuperNavigationNode` destruction path
+  reported a direct leak of 1,419,661,656 bytes in 25,351,101 allocations. The
+  allocation authority was `Astar::grid_node_buffer_`: its constructor created
+  one heap `GridNode` per configured search voxel while its destructor owned no
+  corresponding release. A second out-of-local-map search branch also created
+  a temporary heap node that was converted to value positions and then lost.
+- `grid_node_buffer_` now uses `std::unique_ptr<GridNode>` while retaining the
+  same indexed vector, individual node allocation, stable heap addresses,
+  hashes and raw non-owning pointers used by queues and `father_ptr`. Copy and
+  move are explicitly rejected. This closes normal destruction and partial
+  constructor failure without changing A* mathematics, map dimensions or
+  search policy. The one-shot search node is stack-owned and remains alive
+  through the synchronous path-to-position conversion.
+- The full-node shutdown test then passed under the coherent ASan overlay with
+  `halt_on_error=1:abort_on_error=1:detect_leaks=1`; LeakSanitizer reported no
+  remaining leak. Measured process evidence was 13.22 seconds elapsed and
+  3,326,428 KiB peak RSS on this host. These values are evidence, not a new
+  timeout or memory gate.
+- Performance debt remains explicit: the product config still constructs more
+  than 25 million separately allocated A* nodes and later releases them one by
+  one. Contiguous/lazy storage and smaller search-domain representations require
+  separate behavior-parity and benchmark work; no map-size reduction,
+  downsampling or test-only bypass was used to close this ownership defect.

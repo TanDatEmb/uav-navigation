@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <memory>
 #include <mutex>
 
 #include "Eigen/Dense"
@@ -85,7 +86,7 @@ namespace path_search {
         PathSearchConfig cfg_;
         vec_Vec3i neighbor_list;
 
-        vector<GridNodePtr> grid_node_buffer_;
+        vector<std::unique_ptr<GridNode>> grid_node_buffer_;
 
         int rounds_{0};
 
@@ -139,7 +140,11 @@ namespace path_search {
               const ros_interface::RosInterface::Ptr &ros_ptr,
               navigation_world_model::WorldModelViewPtr rm);
 
-        ~Astar() {};
+        ~Astar();
+        Astar(const Astar&) = delete;
+        Astar& operator=(const Astar&) = delete;
+        Astar(Astar&&) = delete;
+        Astar& operator=(Astar&&) = delete;
 
         typedef std::shared_ptr<Astar> Ptr;
 
