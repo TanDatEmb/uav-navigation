@@ -1,14 +1,29 @@
 #pragma once
 
 #include <cstdlib>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <utility>
 
 #include <builtin_interfaces/msg/time.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
 namespace navigation_runtime::input_pairing {
+
+template <typename Payload>
+struct StampedObservation {
+  Payload payload;
+  std::int64_t stamp_ns{0};
+};
+
+template <typename Payload>
+struct CoherentPair {
+  Payload payload;
+  nav_msgs::msg::Odometry corrected_odometry;
+  std::int64_t stamp_ns{0};
+};
 
 inline std::int64_t stampNanoseconds(const builtin_interfaces::msg::Time& stamp) {
   return static_cast<std::int64_t>(stamp.sec) * 1000000000LL +
@@ -32,6 +47,34 @@ inline std::optional<std::size_t> nearestOdometryIndex(
     }
   }
   return best_index;
+}
+
+inline std::optional<std::size_t> exactOdometryIndex(
+    const std::deque<nav_msgs::msg::Odometry>& history,
+    std::int64_t observation_stamp_ns) {
+  if (history.empty() || observation_stamp_ns <= 0) return std::nullopt;
+  for (std::size_t index = 0; index < history.size(); ++index) {
+    if (stampNanoseconds(history[index].header.stamp) == observation_stamp_ns) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+template <typename Payload>
+std::optional<CoherentPair<Payload>> tryTakeExactPair(
+    std::optional<StampedObservation<Payload>>& pending,
+    std::deque<nav_msgs::msg::Odometry>& corrected_history) {
+  if (!pending) return std::nullopt;
+  const auto index = exactOdometryIndex(corrected_history, pending->stamp_ns);
+  if (!index) return std::nullopt;
+  CoherentPair<Payload> result{
+      std::move(pending->payload), corrected_history.at(*index), pending->stamp_ns};
+  pending.reset();
+  corrected_history.erase(
+      corrected_history.begin(),
+      corrected_history.begin() + static_cast<std::ptrdiff_t>(*index + 1U));
+  return result;
 }
 
 }  // namespace navigation_runtime::input_pairing

@@ -37,7 +37,7 @@ namespace super_planner {
 
     class CmdTraj{
         /* The update and query lock */
-        std::mutex mtx_;
+        mutable std::mutex mtx_;
 
         /* The optimized positional trajectory */
         Trajectory pos_traj_{};
@@ -55,6 +55,22 @@ namespace super_planner {
         /* some flags */
         bool flag_empty_{true};
         bool flag_backup_traj_avilibale_{false};
+        std::uint64_t generation_{0};
+
+        static bool trajectoryFinite(const Trajectory &trajectory) {
+            if (trajectory.empty() || !std::isfinite(trajectory.start_WT) ||
+                !std::isfinite(trajectory.getTotalDuration()) ||
+                trajectory.getTotalDuration() < 0.0) {
+                return false;
+            }
+            constexpr std::size_t kValidationIntervals = 100U;
+            for (std::size_t index = 0; index <= kValidationIntervals; ++index) {
+                const double t = trajectory.getTotalDuration() *
+                    static_cast<double>(index) / static_cast<double>(kValidationIntervals);
+                if (!trajectory.getState(t).allFinite()) return false;
+            }
+            return true;
+        }
 
         void checkFirstPartBackupTraj(const ExpTraj & exp) {
             double tmp_s, tmp_e;
@@ -89,26 +105,46 @@ namespace super_planner {
 
         bool setTrajectory(const ExpTraj&exp_traj,
             const BackupTraj & backup_traj) {
-            LOCK_G
             Trajectory tmp_pos_traj, tmp_yaw_traj;
-            backup_traj_start_TT_ = backup_traj.getStartTT();
-            if (!exp_traj.getPartialTrajectoryByTrajectoryTime(0, backup_traj_start_TT_,
+            const double candidate_backup_start_tt = backup_traj.getStartTT();
+            if (!std::isfinite(candidate_backup_start_tt) ||
+                !exp_traj.getPartialTrajectoryByTrajectoryTime(0, candidate_backup_start_tt,
                                                                tmp_pos_traj, tmp_yaw_traj)) {
                 fmt::print(fg(fmt::color::indian_red)," -- [SUPER] in [PlanFromRest] getPartialTrajectoryByTime failed.\n");
                 return false;
             }
-            pos_traj_ = tmp_pos_traj + backup_traj.posTraj();
-            yaw_traj_ = tmp_yaw_traj + backup_traj.yawTraj();
+            Trajectory candidate_pos = tmp_pos_traj + backup_traj.posTraj();
+            Trajectory candidate_yaw = tmp_yaw_traj + backup_traj.yawTraj();
+            if (!trajectoryFinite(candidate_pos) || !trajectoryFinite(candidate_yaw)) {
+                return false;
+            }
+
+            double inherited_start = -1.0;
+            double inherited_end = -1.0;
+            const bool inherited_backup =
+                exp_traj.getFirstPartBackupTraj(inherited_start, inherited_end);
+
+            LOCK_G
+            pos_traj_ = std::move(candidate_pos);
+            yaw_traj_ = std::move(candidate_yaw);
+            backup_traj_start_TT_ = candidate_backup_start_tt;
 
             start_WT_ = pos_traj_.start_WT;
 
             flag_empty_ = false;
             flag_backup_traj_avilibale_ = true;
-            checkFirstPartBackupTraj(exp_traj);
+            first_part_exp_has_backup_traj_ = inherited_backup;
+            on_backup_start_TT_ = inherited_start;
+            on_backup_end_TT_ = inherited_end;
+            ++generation_;
             return true;
         }
 
-        void setTrajectory(const ExpTraj&exp_traj) {
+        bool setTrajectory(const ExpTraj&exp_traj) {
+            if (!trajectoryFinite(exp_traj.posTraj()) ||
+                !trajectoryFinite(exp_traj.yawTraj())) {
+                return false;
+            }
             LOCK_G
             pos_traj_ = exp_traj.posTraj();
             yaw_traj_ = exp_traj.yawTraj();
@@ -117,6 +153,8 @@ namespace super_planner {
             backup_traj_start_TT_ = 99999999;
             flag_backup_traj_avilibale_ = false;
             checkFirstPartBackupTraj(exp_traj);
+            ++generation_;
+            return true;
         }
 
         // Commit a safety-only trajectory generated from the current measured
@@ -125,9 +163,7 @@ namespace super_planner {
         // ownership visible to the command thread as one atomic bundle.
         bool setEmergencyBackup(const Trajectory &pos_traj,
                                 const Trajectory &yaw_traj) {
-            if (pos_traj.empty() || yaw_traj.empty() ||
-                !std::isfinite(pos_traj.start_WT) ||
-                !std::isfinite(yaw_traj.start_WT) ||
+            if (!trajectoryFinite(pos_traj) || !trajectoryFinite(yaw_traj) ||
                 std::abs(pos_traj.start_WT - yaw_traj.start_WT) > 1.0e-6 ||
                 yaw_traj.getTotalDuration() + 1.0e-6 <
                     pos_traj.getTotalDuration()) {
@@ -143,20 +179,17 @@ namespace super_planner {
             first_part_exp_has_backup_traj_ = false;
             flag_empty_ = false;
             flag_backup_traj_avilibale_ = true;
+            ++generation_;
             return true;
         }
 
         bool isTTOnBackupTraj(const double & checkTT) const {
-            if(!backupTrajAvilibale()) {
-                return false;
-            }
-
             if(first_part_exp_has_backup_traj_ &&
-                (checkTT<on_backup_end_TT_ && checkTT>on_backup_start_TT_)) {
+                (checkTT <= on_backup_end_TT_ && checkTT >= on_backup_start_TT_)) {
                 return true;
             }
 
-            if(checkTT > backup_traj_start_TT_) {
+            if(flag_backup_traj_avilibale_ && checkTT >= backup_traj_start_TT_) {
                 return true;
             }
 
@@ -175,6 +208,8 @@ namespace super_planner {
         double getBackupTrajStartTT() const {
             return backup_traj_start_TT_;
         }
+
+        std::uint64_t generation() const { return generation_; }
 
         Vec3f getPos(const double & t)const {
             return pos_traj_.getPos(t);

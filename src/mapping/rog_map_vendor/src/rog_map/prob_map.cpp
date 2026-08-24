@@ -947,6 +947,9 @@ void ProbMap::updateLocalBox(const Vec3f& cur_odom) {
      * and do not related to the map origin and map bound
      * the map origin and map bound is only update in [SlidingMap::mapSliding(const Vec3f &odom)]
      * */
+    // Endpoint-only mode has no raycast update box. Do not manufacture one
+    // from uninitialized indices merely to preserve unused diagnostics.
+    if (!cfg_.raycasting_en) return;
     // The local map should be inside in index wise
     // update: the virtual floor and ceil should not influence the raycasting.
     // 2) local map size
@@ -958,10 +961,8 @@ void ProbMap::updateLocalBox(const Vec3f& cur_odom) {
     posToGlobalIndex(cur_odom, cur_odom_i);
     Vec3i local_updatebox_min_i, local_updatebox_max_i;
 
-    if (cfg_.raycasting_en) {
-        local_updatebox_max_i = cur_odom_i + cfg_.half_local_update_box_i;
-        local_updatebox_min_i = cur_odom_i - cfg_.half_local_update_box_i;
-    }
+    local_updatebox_max_i = cur_odom_i + cfg_.half_local_update_box_i;
+    local_updatebox_min_i = cur_odom_i - cfg_.half_local_update_box_i;
 
     globalIndexToPos(local_updatebox_min_i, raycast_data_.local_update_box_min);
     globalIndexToPos(local_updatebox_max_i, raycast_data_.local_update_box_max);

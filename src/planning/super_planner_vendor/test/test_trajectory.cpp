@@ -1,4 +1,6 @@
 #include <cmath>
+#include <atomic>
+#include <thread>
 #include <vector>
 
 #include <Eigen/Core>
@@ -103,4 +105,98 @@ TEST(SuperTrajectory, EmergencyBundleIsAtomicallyOwnedByBackup) {
   EXPECT_TRUE(command.isTTOnBackupTraj(0.01));
   EXPECT_NEAR(command.getPos(0.5).x(), 0.5, 1.0e-12);
   EXPECT_NEAR(command.getYaw(0.5).x(), 0.4, 1.0e-12);
+}
+
+TEST(SuperTrajectory, RobotStateHasDeterministicFiniteDefaults) {
+  const super_utils::RobotState state;
+  EXPECT_TRUE(state.p.isZero());
+  EXPECT_TRUE(state.v.isZero());
+  EXPECT_TRUE(state.a.isZero());
+  EXPECT_TRUE(state.j.isZero());
+  EXPECT_TRUE(state.q.coeffs().allFinite());
+  EXPECT_DOUBLE_EQ(state.q.norm(), 1.0);
+  EXPECT_FALSE(state.rcv);
+}
+
+TEST(SuperTrajectory, FailedCandidateLeavesEmergencyBundleUnchanged) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 7.0;
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  const auto generation = command.generation();
+  const auto before = command.getPos(0.5);
+  geometry_utils::Trajectory invalid_yaw;
+  EXPECT_FALSE(command.setEmergencyBackup(position, invalid_yaw));
+  EXPECT_EQ(command.generation(), generation);
+  EXPECT_TRUE(command.getPos(0.5).isApprox(before));
+}
+
+TEST(SuperTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  super_planner::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.0, 0.4);
+  super_planner::CmdTraj command;
+  command.setTrajectory(exp);
+  EXPECT_FALSE(command.backupTrajAvilibale());
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
+  EXPECT_FALSE(command.isTTOnBackupTraj(0.5));
+}
+
+TEST(SuperTrajectory, NonFiniteYawCannotReplaceCommittedGeneration) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 5.0;
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  const auto generation = command.generation();
+
+  Eigen::MatrixXd invalid_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  invalid_coefficients(0, 7) = std::numeric_limits<double>::quiet_NaN();
+  geometry_utils::Trajectory invalid_yaw({1.0}, {invalid_coefficients});
+  invalid_yaw.start_WT = 5.0;
+  EXPECT_FALSE(command.setEmergencyBackup(position, invalid_yaw));
+  EXPECT_EQ(command.generation(), generation);
+}
+
+TEST(SuperTrajectory, ConcurrentCommitAndSnapshotNeverMixGenerations) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 1.0;
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 1.0;
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  std::atomic_bool failed{false};
+  std::thread writer([&] {
+    for (int index = 0; index < 500; ++index) {
+      if (!command.setEmergencyBackup(position, yaw)) failed.store(true);
+    }
+  });
+  std::thread reader([&] {
+    std::uint64_t previous_generation = 0;
+    for (int index = 0; index < 500; ++index) {
+      command.lock();
+      const auto generation = command.generation();
+      const auto state = command.getPos(0.5);
+      const bool backup = command.isTTOnBackupTraj(0.5);
+      command.unlock();
+      if (generation < previous_generation || !state.allFinite() || !backup) {
+        failed.store(true);
+      }
+      previous_generation = generation;
+    }
+  });
+  writer.join();
+  reader.join();
+  EXPECT_FALSE(failed.load());
 }

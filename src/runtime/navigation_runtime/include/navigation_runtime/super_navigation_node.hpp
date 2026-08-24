@@ -20,6 +20,7 @@
 
 #include "navigation_runtime/input_pairing.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/runtime_state.hpp"
 #include <ros_interface/ros_interface.hpp>
 #include <rog_map_ros/rog_map_ros2.hpp>
 #include <super_core/super_planner.h>
@@ -35,7 +36,8 @@ class SuperNavigationNode final : public rclcpp::Node {
 
  private:
   void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
-  void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
+  void onCorrectedOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
+  void onPropagatedOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
   void onGoal(const navigation_interfaces::msg::NavigationGoal::ConstSharedPtr& message);
   void onModeStatus(
       const navigation_interfaces::msg::NavigationModeStatus::ConstSharedPtr& message);
@@ -47,12 +49,15 @@ class SuperNavigationNode final : public rclcpp::Node {
   static builtin_interfaces::msg::Time rosTimeFromSeconds(double seconds);
   static std::int64_t stampNanoseconds(const builtin_interfaces::msg::Time& stamp);
   std::string cloud_topic_;
-  std::string odometry_topic_;
+  std::string corrected_odometry_topic_;
+  std::string propagated_odometry_topic_;
   std::string goal_topic_;
   std::string status_topic_;
   std::string command_topic_;
   std::string super_config_path_;
   std::string planning_frame_;
+  std::string deployment_profile_;
+  bool hardware_visibility_certified_{false};
   double planner_rate_hz_{10.0};
   double command_rate_hz_{50.0};
   double input_pair_max_skew_s_{0.1};
@@ -63,7 +68,8 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint32_t max_plan_from_rest_failures_{3U};
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr corrected_odometry_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr propagated_odometry_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::NavigationGoal>::SharedPtr goal_subscription_;
   rclcpp::Subscription<navigation_interfaces::msg::NavigationModeStatus>::SharedPtr
       status_subscription_;
@@ -75,12 +81,10 @@ class SuperNavigationNode final : public rclcpp::Node {
   rclcpp::CallbackGroup::SharedPtr command_callback_group_;
 
   std::mutex input_mutex_;
-  struct StampedCloud {
-    std::shared_ptr<rog_map::PointCloud> cloud;
-    std::int64_t stamp_ns{0};
-  };
-  std::optional<StampedCloud> latest_cloud_;
-  std::deque<nav_msgs::msg::Odometry> odometry_history_;
+  std::optional<input_pairing::StampedObservation<std::shared_ptr<rog_map::PointCloud>>>
+      latest_cloud_;
+  std::deque<nav_msgs::msg::Odometry> corrected_odometry_history_;
+  std::optional<nav_msgs::msg::Odometry> latest_propagated_odometry_;
   std::optional<navigation_interfaces::msg::NavigationGoal> active_goal_;
   bool new_goal_{false};
   // PASS_THROUGH waypoint transitions retarget SUPER through ReplanOnce so the
@@ -98,6 +102,8 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint64_t received_cloud_count_{0};
   std::uint64_t accepted_cloud_count_{0};
   std::uint64_t stale_input_count_{0};
+  std::uint64_t corrected_pair_mismatch_count_{0};
+  std::uint64_t invalid_execution_state_count_{0};
   std::uint64_t map_update_exception_count_{0};
   std::int64_t last_input_conversion_us_{0};
   std::atomic_uint32_t command_id_{0};

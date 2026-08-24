@@ -131,6 +131,7 @@ bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& en
          << RESET << endl;
     return false;
   }
+  if (!insideLocalMap(start_pt) || !insideLocalMap(end_pt)) return false;
   raycaster::RayCaster raycaster;
   if (use_inf_map) {
     raycaster.setResolution(cfg_.inflation_resolution);
@@ -140,6 +141,7 @@ bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& en
   Vec3f ray_pt;
   raycaster.setInput(start_pt, end_pt);
   while (raycaster.step(ray_pt)) {
+    if (!insideLocalMap(ray_pt)) return false;
     if (!use_unk_as_occ) {
       // allow both unk and free
       if (use_inf_map) {

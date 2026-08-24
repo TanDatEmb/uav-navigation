@@ -2,11 +2,16 @@ super_navigation_node:
   ros__parameters:
     super_navigation:
       cloud_topic: /lio/registered_points
-      odometry_topic: /lio/odometry_propagated
+      corrected_odometry_topic: /lio/odometry_corrected
+      propagated_odometry_topic: /lio/odometry_propagated
       goal_topic: /navigation/goal
       status_topic: /navigation/mode_status
       command_topic: /navigation/super_command
       planning_frame: lio_odom
+      # OMNI endpoint-only visibility is certified for SITL only. A hardware
+      # deployment must provide a reviewed Mid-360 FOV/mounting certificate.
+      deployment_profile: sitl
+      hardware_visibility_certified: false
       # Keep one mutually-exclusive planning callback at a time. On this SITL
       # host 15 Hz contends with the 50 Hz map update and made hot replans
       # slower; 10 Hz is the measured stable scheduling point.

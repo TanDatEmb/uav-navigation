@@ -81,7 +81,6 @@ namespace super_planner {
 
         Vec3f local_start_p_;
 
-        bool robot_on_backup_traj_{false};
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
 
@@ -153,6 +152,10 @@ namespace super_planner {
             return cmd_traj_info_.getBackupTrajStartTT();
         }
 
+        std::uint64_t getCommittedGeneration() const {
+            return cmd_traj_info_.generation();
+        }
+
         Vec3f latestGuideStart() const { return latest_guide_start_; }
         Vec3f latestGuideEnd() const { return latest_guide_end_; }
         Vec3f latestGuideMin() const { return latest_guide_min_; }
@@ -178,6 +181,18 @@ namespace super_planner {
                                    double &yaw_dot,
                                    bool &on_backup_traj,
                                    bool &traj_finish);
+
+        enum class TrajectoryRole : std::uint8_t { MAIN = 0, BACKUP = 1 };
+        struct CommandSample {
+            StatePVAJ pvaj{StatePVAJ::Zero()};
+            double yaw{0.0};
+            double yaw_rate{0.0};
+            TrajectoryRole role{TrajectoryRole::MAIN};
+            bool finished{false};
+            bool valid{false};
+            std::uint64_t generation{0};
+        };
+        CommandSample sampleCommand();
 
         // Last-resort SUPER-owned braking bundle.  This is intentionally not
         // a main-only adapter trajectory: it is committed as BACKUP only
@@ -215,6 +230,8 @@ namespace super_planner {
 
     public:
         void getRobotState(rog_map::RobotState &out);
+
+        bool setPlannerExecutionState(const rog_map::RobotState &state);
 
         bool isEasyGoal(const Vec3f &goal_position);
 

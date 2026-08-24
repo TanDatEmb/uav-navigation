@@ -33,3 +33,31 @@ TEST(InputPairing, RejectsInvalidTimestamps) {
   EXPECT_FALSE(navigation_runtime::input_pairing::nearestOdometryIndex(
       history, 0, 100000000LL));
 }
+
+TEST(InputPairing, ExactPairRequiresTheCorrectionEpoch) {
+  std::deque<nav_msgs::msg::Odometry> history{
+      odometryAt(1000000000LL), odometryAt(1050000000LL)};
+  const auto exact = navigation_runtime::input_pairing::exactOdometryIndex(
+      history, 1050000000LL);
+  ASSERT_TRUE(exact.has_value());
+  EXPECT_EQ(*exact, 1U);
+  EXPECT_FALSE(navigation_runtime::input_pairing::exactOdometryIndex(
+      history, 1049999999LL));
+}
+
+TEST(InputPairing, PendingObservationIsRetainedUntilExactPairAndConsumedOnce) {
+  std::optional<navigation_runtime::input_pairing::StampedObservation<int>> pending{
+      navigation_runtime::input_pairing::StampedObservation<int>{42, 1050000000LL}};
+  std::deque<nav_msgs::msg::Odometry> history{odometryAt(1000000000LL)};
+  EXPECT_FALSE(navigation_runtime::input_pairing::tryTakeExactPair(pending, history));
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_EQ(pending->payload, 42);
+
+  history.push_back(odometryAt(1050000000LL));
+  const auto pair = navigation_runtime::input_pairing::tryTakeExactPair(pending, history);
+  ASSERT_TRUE(pair.has_value());
+  EXPECT_EQ(pair->payload, 42);
+  EXPECT_FALSE(pending.has_value());
+  EXPECT_TRUE(history.empty());
+  EXPECT_FALSE(navigation_runtime::input_pairing::tryTakeExactPair(pending, history));
+}

@@ -118,7 +118,8 @@ namespace super_planner {
         BackupTraj back_traj_info;
         last_exp_traj_info_.setEmpty();
         local_start_p_ = local_star_pt;
-        RET_CODE exp_ret_code = generateExpTraj(last_exp_traj_info_, exp_traj_info);
+        ExpTraj previous_exp_snapshot = last_exp_traj_info_;
+        RET_CODE exp_ret_code = generateExpTraj(previous_exp_snapshot, exp_traj_info);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
             ros_ptr_->warn(" -- [SUPER] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
@@ -151,7 +152,6 @@ namespace super_planner {
                 }
             }
             last_exp_traj_info_ = exp_traj_info;
-            robot_on_backup_traj_ = false;
             gi_.new_goal = false;
 
             // For visualization
@@ -167,14 +167,16 @@ namespace super_planner {
             if (cfg_.print_log) {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
             }
-            robot_on_backup_traj_ = false;
             {
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) {
                     latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
                     return FAILED;
                 }
-                cmd_traj_info_.setTrajectory(exp_traj_info);
+                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -227,7 +229,8 @@ namespace super_planner {
         /// 1) Replan EXP traj
         ExpTraj exp_traj_info;
         TimeConsuming t_exp("t_exp", false);
-        RET_CODE exp_ret_code = generateExpTraj(last_exp_traj_info_, exp_traj_info);
+        ExpTraj previous_exp_snapshot = last_exp_traj_info_;
+        RET_CODE exp_ret_code = generateExpTraj(previous_exp_snapshot, exp_traj_info);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
@@ -292,7 +295,6 @@ namespace super_planner {
                 }
             }
             last_exp_traj_info_ = exp_traj_info;
-            robot_on_backup_traj_ = false;
             gi_.new_goal = false;
 
             {
@@ -314,9 +316,11 @@ namespace super_planner {
                     latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
                     return FAILED;
                 }
-                cmd_traj_info_.setTrajectory(exp_traj_info);
+                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
             }
-            robot_on_backup_traj_ = false;
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
 
@@ -340,10 +344,12 @@ namespace super_planner {
                     latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
                     return FAILED;
                 }
-                cmd_traj_info_.setTrajectory(exp_traj_info);
+                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
             }
             last_exp_traj_info_ = exp_traj_info;
-            robot_on_backup_traj_ = false;
             gi_.new_goal = false;
 
             {
@@ -369,6 +375,7 @@ namespace super_planner {
     }
 
     void SuperPlanner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
+        cmd_traj_info_.lock();
         double eval_t = (ros_ptr_->getSimTime() - cmd_traj_info_.getStartWallTime());
         traj_finish = false;
         double total_dur = cmd_traj_info_.getTotalDuration();
@@ -377,11 +384,7 @@ namespace super_planner {
             eval_t = total_dur;
         }
         start_WT_pos = cmd_traj_info_.getStartWallTime();
-        if (cmd_traj_info_.backupTrajAvilibale() && eval_t > cmd_traj_info_.getBackupTrajStartTT()) {
-            robot_on_backup_traj_ = true;
-        } else {
-            robot_on_backup_traj_ = false;
-        }
+        cmd_traj_info_.unlock();
     }
 
     Trajectory SuperPlanner::getCommittedPositionTrajectory() {
@@ -398,6 +401,16 @@ namespace super_planner {
                                              double &yaw_dot,
                                              bool &on_backup_traj,
                                              bool &traj_finish) {
+        const auto sample = sampleCommand();
+        pvaj = sample.pvaj;
+        yaw = sample.yaw;
+        yaw_dot = sample.yaw_rate;
+        on_backup_traj = sample.role == TrajectoryRole::BACKUP;
+        traj_finish = sample.finished;
+    }
+
+    SuperPlanner::CommandSample SuperPlanner::sampleCommand() {
+        CommandSample sample;
         cmd_traj_info_.lock();
         const double &cur_t = ros_ptr_->getSimTime();
         const double &cmd_start_WT = cmd_traj_info_.getStartWallTime();
@@ -405,31 +418,16 @@ namespace super_planner {
 //        const double &backup_start_TT = cmd_traj_info_.getBackupTrajStartTT();
         const double &total_dur = cmd_traj_info_.getTotalDuration();
 
-        traj_finish = (cur_t - cmd_start_WT) > total_dur;
-        const double &eval_t = traj_finish ? total_dur : (cur_t - cmd_start_WT);
-
-//        bool last_round_robot_on_backup_traj = robot_on_backup_traj_;
-        robot_on_backup_traj_ = cmd_traj_info_.isTTOnBackupTraj(eval_t);
-        on_backup_traj = robot_on_backup_traj_;
-
-        pvaj = cmd_traj_info_.posTraj().getState(eval_t);
-
-
-        /// Get Yaw planning
-        static double last_yaw = robot_state_.yaw;
-
-        yaw = cmd_traj_info_.getYaw((eval_t))[0];
-        yaw_dot = cmd_traj_info_.getYawRate((eval_t))[0];
-
-        if (isnan(yaw)) {
-            yaw = last_yaw;
-            yaw_dot = 0;
-        } else {
-            last_yaw = yaw;
-        }
-        if (isnan(yaw_dot)) {
-            yaw_dot = 0;
-        }
+        sample.finished = (cur_t - cmd_start_WT) > total_dur;
+        const double eval_t = sample.finished ? total_dur : (cur_t - cmd_start_WT);
+        sample.role = cmd_traj_info_.isTTOnBackupTraj(eval_t)
+                          ? TrajectoryRole::BACKUP : TrajectoryRole::MAIN;
+        sample.pvaj = cmd_traj_info_.posTraj().getState(eval_t);
+        sample.yaw = cmd_traj_info_.getYaw(eval_t)[0];
+        sample.yaw_rate = cmd_traj_info_.getYawRate(eval_t)[0];
+        sample.generation = cmd_traj_info_.generation();
+        sample.valid = sample.pvaj.allFinite() && std::isfinite(sample.yaw) &&
+                       std::isfinite(sample.yaw_rate);
 
 //        if (last_round_robot_on_backup_traj != robot_on_backup_traj_) {
 //            if (last_round_robot_on_backup_traj) {
@@ -441,6 +439,7 @@ namespace super_planner {
 
 //        double cur_yaw = geometry_utils::get_yaw_from_quaternion(robot_state_.q);
         cmd_traj_info_.unlock();
+        return sample;
     }
 
     bool SuperPlanner::commitEmergencyBrake(const StatePVAJ &measured_state,
@@ -539,7 +538,6 @@ namespace super_planner {
             ros_ptr_->error(" -- [SUPER] emergency brake atomic commit rejected");
             return false;
         }
-        robot_on_backup_traj_ = true;
         ros_ptr_->warn(
                 " -- [SUPER] committed measured-state emergency brake: "
                 "initial_speed={} speed_limit={} initial_overspeed={} duration={} distance={} "
@@ -611,7 +609,7 @@ namespace super_planner {
             if (replan_state_TT >= cmd_traj_info_.getTotalDuration()) {
                 out_exp_traj_info = last_exp_traj_info;
 
-                if (robot_on_backup_traj_) {
+                if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                     if (cfg_.print_log)
                         ros_ptr_->warn(
                                 " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
@@ -631,7 +629,7 @@ namespace super_planner {
                     if (cfg_.print_log)
                         ros_ptr_->warn(
                                 " -- [generateExpTraj] replan_state_TT >= last_exp_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
-                    if (robot_on_backup_traj_) {
+                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                         if (cfg_.print_log)
                             ros_ptr_->warn(
                                     " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
@@ -649,7 +647,7 @@ namespace super_planner {
                     }
 
                     out_exp_traj_info = last_exp_traj_info;
-                    if (robot_on_backup_traj_) {
+                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                         if (cfg_.print_log)
                             ros_ptr_->warn(
                                     " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
@@ -666,7 +664,7 @@ namespace super_planner {
                     out_exp_traj_info.setGoalConnectedFlag(true);
 
                     ros_ptr_->warn(" -- [SUPER] Replan, close to goal and return NONEED.");
-                    if (robot_on_backup_traj_) {
+                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                         ros_ptr_->warn(
                                 " -- [SUPER] Replan, emergency stop, return FAILED and wait for plan form rest.");
                         return FAILED;
@@ -885,7 +883,7 @@ namespace super_planner {
             }
         }
 
-        const bool connected_goal = (guide_path.back().head(2) - gi_.goal_p.head(2)).norm() < cfg_.resolution * 2;
+        const bool connected_goal = (guide_path.back() - gi_.goal_p).norm() < cfg_.resolution * 2;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
         latest_guide_start_ = guide_path.front();
@@ -1252,6 +1250,11 @@ namespace super_planner {
             last_pos = cur_pos;
             eval_t += cfg_.sample_traj_dt;
         }
+        if (eval_ps.size() <= 1U) {
+            ros_ptr_->warn(
+                    " -- [SUPER] backup visibility produced no certified seed before first invisible sample");
+            return FAILED;
+        }
         eval_ps.pop_back();
         seed_point = eval_ps.back().second;
         seed_point_t = eval_ps.back().first;
@@ -1412,9 +1415,13 @@ namespace super_planner {
             return OPT_FAILED;
         }
         double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
-        const auto &committed_ts_WT = cmd_traj_info_.getBackupTrajStartTT();
-        if (committed_ts_WT < cmd_traj_info_.getTotalDuration() && new_ts_WT < committed_ts_WT) {
-            ros_ptr_->error(" -- [SUPER] new_ts_WT {} < committed_ts_WT {}", new_ts_WT, committed_ts_WT);
+        const double committed_start_wt = cmd_traj_info_.getStartWallTime();
+        const double new_ts_TT = new_ts_WT - committed_start_wt;
+        const double committed_ts_TT = cmd_traj_info_.getBackupTrajStartTT();
+        if (committed_ts_TT < cmd_traj_info_.getTotalDuration() &&
+            new_ts_TT < committed_ts_TT) {
+            ros_ptr_->error(" -- [SUPER] new_ts_TT {} < committed_ts_TT {}",
+                           new_ts_TT, committed_ts_TT);
             return OPT_FAILED;
         }
 
@@ -1633,7 +1640,20 @@ namespace super_planner {
 
 
     void SuperPlanner::getRobotState(rog_map::RobotState &out) {
-        robot_state_ = map_ptr_->getRobotState();
         out = robot_state_;
+    }
+
+    bool SuperPlanner::setPlannerExecutionState(const rog_map::RobotState &state) {
+        if (!state.rcv || !state.p.allFinite() || !state.v.allFinite() ||
+            !state.a.allFinite() || !state.j.allFinite() ||
+            !state.q.coeffs().allFinite() || state.q.norm() <= 1.0e-6 ||
+            !std::isfinite(state.yaw) || !std::isfinite(state.rcv_time) ||
+            state.rcv_time <= 0.0) {
+            return false;
+        }
+        std::lock_guard<std::mutex> guard(drone_state_mutex_);
+        robot_state_ = state;
+        robot_state_.q.normalize();
+        return true;
     }
 }

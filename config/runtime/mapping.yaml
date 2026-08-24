@@ -2,10 +2,13 @@ super_navigation_node:
   ros__parameters:
     super_navigation:
       cloud_topic: /lio/registered_points
-      odometry_topic: /lio/odometry_propagated
+      corrected_odometry_topic: /lio/odometry_corrected
+      propagated_odometry_topic: /lio/odometry_propagated
       goal_topic: /navigation/goal
       command_topic: /navigation/super_command
       planning_frame: lio_odom
+      deployment_profile: sitl
+      hardware_visibility_certified: false
       planner_rate_hz: 10.0
       command_rate_hz: 50.0
       input_pair_max_skew_s: 0.1

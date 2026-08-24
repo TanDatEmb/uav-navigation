@@ -60,4 +60,6 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   // Space behind (beyond) the endpoint -> remains unknown (never raycast).
   EXPECT_TRUE(map.isUnknown(rog_map::Vec3f(4.5, 0.0, 0.0)));
   EXPECT_FALSE(map.isLineKnownFree(sensor_origin, rog_map::Vec3f(4.5, 0.0, 0.0)));
+  EXPECT_FALSE(map.isLineFree(sensor_origin, rog_map::Vec3f(100.0, 0.0, 0.0),
+                              true, false));
 }

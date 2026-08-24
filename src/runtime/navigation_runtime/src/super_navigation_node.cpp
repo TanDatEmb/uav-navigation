@@ -53,14 +53,25 @@ std::int64_t steadyNowNanoseconds() {
 SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
     : rclcpp::Node("super_navigation_node", options) {
   cloud_topic_ = declare_parameter("super_navigation.cloud_topic", std::string("/lio/registered_points"));
-  odometry_topic_ = declare_parameter(
+  const auto legacy_odometry_topic = declare_parameter(
       "super_navigation.odometry_topic", std::string("/lio/odometry_propagated"));
+  RCLCPP_WARN_ONCE(get_logger(),
+                   "Parameter super_navigation.odometry_topic is deprecated; use "
+                   "super_navigation.propagated_odometry_topic");
+  propagated_odometry_topic_ = declare_parameter(
+      "super_navigation.propagated_odometry_topic", legacy_odometry_topic);
+  corrected_odometry_topic_ = declare_parameter(
+      "super_navigation.corrected_odometry_topic", std::string("/lio/odometry_corrected"));
   goal_topic_ = declare_parameter("super_navigation.goal_topic", std::string("/navigation/goal"));
   status_topic_ = declare_parameter(
       "super_navigation.status_topic", std::string("/navigation/mode_status"));
   command_topic_ = declare_parameter(
       "super_navigation.command_topic", std::string("/navigation/super_command"));
   planning_frame_ = declare_parameter("super_navigation.planning_frame", std::string("lio_odom"));
+  deployment_profile_ = declare_parameter(
+      "super_navigation.deployment_profile", std::string("sitl"));
+  hardware_visibility_certified_ = declare_parameter(
+      "super_navigation.hardware_visibility_certified", false);
   planner_rate_hz_ = declare_parameter("super_navigation.planner_rate_hz", 10.0);
   command_rate_hz_ = declare_parameter("super_navigation.command_rate_hz", 50.0);
   input_pair_max_skew_s_ = declare_parameter("super_navigation.input_pair_max_skew_s", 0.1);
@@ -83,6 +94,15 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
 
   if (!std::filesystem::exists(super_config_path_)) {
     throw std::runtime_error("SUPER config does not exist: " + super_config_path_);
+  }
+  if (deployment_profile_ != "sitl" && deployment_profile_ != "hardware") {
+    throw std::invalid_argument(
+        "super_navigation.deployment_profile must be 'sitl' or 'hardware'");
+  }
+  if (deployment_profile_ == "hardware" && !hardware_visibility_certified_) {
+    throw std::invalid_argument(
+        "hardware SUPER runtime is blocked until the Mid-360 visibility/FOV "
+        "certificate is explicitly enabled");
   }
   if (!std::isfinite(planner_rate_hz_) || planner_rate_hz_ <= 0.0) {
     throw std::invalid_argument("super_navigation.planner_rate_hz must be positive");
@@ -128,8 +148,12 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       cloud_topic_, qos, std::bind(&SuperNavigationNode::onCloud, this, std::placeholders::_1));
-  odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
-      odometry_topic_, qos, std::bind(&SuperNavigationNode::onOdometry, this, std::placeholders::_1));
+  corrected_odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+      corrected_odometry_topic_, qos,
+      std::bind(&SuperNavigationNode::onCorrectedOdometry, this, std::placeholders::_1));
+  propagated_odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+      propagated_odometry_topic_, qos,
+      std::bind(&SuperNavigationNode::onPropagatedOdometry, this, std::placeholders::_1));
   goal_subscription_ = create_subscription<navigation_interfaces::msg::NavigationGoal>(
       goal_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
       std::bind(&SuperNavigationNode::onGoal, this, std::placeholders::_1));
@@ -159,8 +183,10 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
       command_period, std::bind(&SuperNavigationNode::publishCommand, this),
       command_callback_group_);
   RCLCPP_INFO(get_logger(),
-              "SUPER runtime ready: cloud=%s odometry=%s goal=%s output=%s planner=%.1fHz command=%.1fHz",
-              cloud_topic_.c_str(), odometry_topic_.c_str(), goal_topic_.c_str(),
+              "SUPER runtime ready: cloud=%s corrected_odom=%s propagated_odom=%s goal=%s "
+              "output=%s planner=%.1fHz command=%.1fHz",
+              cloud_topic_.c_str(), corrected_odometry_topic_.c_str(),
+              propagated_odometry_topic_.c_str(), goal_topic_.c_str(),
               command_topic_.c_str(), planner_rate_hz_, command_rate_hz_);
 }
 
@@ -228,11 +254,13 @@ void SuperNavigationNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstShar
   last_input_conversion_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - decode_started).count();
   if (latest_cloud_) ++dropped_cloud_count_;
-  latest_cloud_ = StampedCloud{std::move(decoded), stamp_ns};
+  latest_cloud_ = input_pairing::StampedObservation<
+      std::shared_ptr<rog_map::PointCloud>>{std::move(decoded), stamp_ns};
   ++accepted_cloud_count_;
 }
 
-void SuperNavigationNode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
+void SuperNavigationNode::onCorrectedOdometry(
+    const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
   if (message->header.frame_id != planning_frame_) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                          "Dropping odometry frame '%s'; SUPER input must be in '%s'",
@@ -242,14 +270,32 @@ void SuperNavigationNode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedP
   const auto stamp_ns = stampNanoseconds(message->header.stamp);
   if (stamp_ns <= 0) return;
   std::lock_guard<std::mutex> lock(input_mutex_);
-  if (!odometry_history_.empty() &&
-      stamp_ns < stampNanoseconds(odometry_history_.back().header.stamp)) {
+  if (!corrected_odometry_history_.empty() &&
+      stamp_ns < stampNanoseconds(corrected_odometry_history_.back().header.stamp)) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                          "Dropping out-of-order odometry timestamp");
     return;
   }
-  odometry_history_.push_back(*message);
-  while (odometry_history_.size() > 64U) odometry_history_.pop_front();
+  corrected_odometry_history_.push_back(*message);
+  while (corrected_odometry_history_.size() > 64U) corrected_odometry_history_.pop_front();
+}
+
+void SuperNavigationNode::onPropagatedOdometry(
+    const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
+  if (message->header.frame_id != planning_frame_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "Dropping propagated odometry frame '%s'; expected '%s'",
+                         message->header.frame_id.c_str(), planning_frame_.c_str());
+    return;
+  }
+  const auto stamp_ns = stampNanoseconds(message->header.stamp);
+  if (stamp_ns <= 0) return;
+  std::lock_guard<std::mutex> lock(input_mutex_);
+  if (latest_propagated_odometry_ &&
+      stamp_ns < stampNanoseconds(latest_propagated_odometry_->header.stamp)) {
+    return;
+  }
+  latest_propagated_odometry_ = *message;
 }
 
 void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoal::ConstSharedPtr& message) {
@@ -347,9 +393,8 @@ void SuperNavigationNode::onModeStatus(
 void SuperNavigationNode::runCycle() {
   const auto cycle_started = std::chrono::steady_clock::now();
   ++cycle_count_;
-  std::shared_ptr<rog_map::PointCloud> cloud;
-  std::int64_t cloud_stamp_ns = 0;
-  std::optional<nav_msgs::msg::Odometry> odometry;
+  std::optional<MappingObservation> mapping_observation;
+  std::optional<nav_msgs::msg::Odometry> propagated_odometry;
   std::optional<navigation_interfaces::msg::NavigationGoal> goal;
   bool new_goal = false;
   bool hot_goal_transition = false;
@@ -362,17 +407,26 @@ void SuperNavigationNode::runCycle() {
     last_input_lock_wait_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - input_lock_started).count();
     if (latest_cloud_) {
-      cloud = std::move(latest_cloud_->cloud);
-      cloud_stamp_ns = latest_cloud_->stamp_ns;
-    }
-    if (cloud && !odometry_history_.empty()) {
-      const auto nearest_index = input_pairing::nearestOdometryIndex(
-          odometry_history_, cloud_stamp_ns,
-          static_cast<std::int64_t>(input_pair_max_skew_s_ * 1e9));
-      if (nearest_index.has_value()) {
-        odometry = odometry_history_.at(*nearest_index);
+      auto pair = input_pairing::tryTakeExactPair(
+          latest_cloud_, corrected_odometry_history_);
+      if (pair) {
+        mapping_observation = MappingObservation{
+            std::move(pair->payload), std::move(pair->corrected_odometry), pair->stamp_ns};
+      } else {
+        const auto pending_stamp_ns = latest_cloud_->stamp_ns;
+        const auto newest_corrected_stamp_ns = corrected_odometry_history_.empty()
+            ? 0 : stampNanoseconds(corrected_odometry_history_.back().header.stamp);
+        if (newest_corrected_stamp_ns > pending_stamp_ns) {
+          ++corrected_pair_mismatch_count_;
+          latest_cloud_.reset();
+        } else if (std::llabs(now().nanoseconds() - pending_stamp_ns) >
+                   static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
+          ++stale_input_count_;
+          latest_cloud_.reset();
+        }
       }
     }
+    propagated_odometry = latest_propagated_odometry_;
     goal = active_goal_;
     new_goal = new_goal_;
     hot_goal_transition = hot_goal_transition_;
@@ -380,25 +434,65 @@ void SuperNavigationNode::runCycle() {
     input_conversion_us = last_input_conversion_us_;
     dropped_cloud_count = dropped_cloud_count_;
   }
-  if (!cloud || !odometry) return;
+  if (!mapping_observation || !propagated_odometry) return;
+  const auto& cloud = mapping_observation->cloud;
+  const auto cloud_stamp_ns = mapping_observation->stamp_ns;
+  const auto& corrected_odometry = mapping_observation->corrected_odometry;
+  const auto& execution_odometry = *propagated_odometry;
   const auto now_ns = now().nanoseconds();
-  const auto odometry_stamp_ns = stampNanoseconds(odometry->header.stamp);
+  const auto corrected_stamp_ns = stampNanoseconds(corrected_odometry.header.stamp);
+  const auto execution_stamp_ns = stampNanoseconds(execution_odometry.header.stamp);
   const auto cloud_age_ns = std::llabs(now_ns - cloud_stamp_ns);
-  const auto odometry_age_ns = std::llabs(now_ns - odometry_stamp_ns);
-  if (cloud_stamp_ns <= 0 || odometry_stamp_ns <= 0 ||
+  const auto corrected_age_ns = std::llabs(now_ns - corrected_stamp_ns);
+  const auto execution_age_ns = std::llabs(now_ns - execution_stamp_ns);
+  if (cloud_stamp_ns <= 0 || corrected_stamp_ns != cloud_stamp_ns || execution_stamp_ns <= 0 ||
       cloud_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9) ||
-      odometry_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
+      corrected_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9) ||
+      execution_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
     ++stale_input_count_;
     RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
-        "SUPER rejecting stale planning snapshot cloud_age=%.3f odom_age=%.3f limit=%.3f",
+        "SUPER rejecting stale snapshot cloud_age=%.3f corrected_age=%.3f "
+        "execution_age=%.3f limit=%.3f",
         static_cast<double>(cloud_age_ns) * 1e-9,
-        static_cast<double>(odometry_age_ns) * 1e-9, input_max_age_s_);
+        static_cast<double>(corrected_age_ns) * 1e-9,
+        static_cast<double>(execution_age_ns) * 1e-9, input_max_age_s_);
     return;
   }
-  if (!std::isfinite(odometry->pose.pose.position.x) ||
-      !std::isfinite(odometry->pose.pose.position.y) ||
-      !std::isfinite(odometry->pose.pose.position.z)) {
+  if (!std::isfinite(corrected_odometry.pose.pose.position.x) ||
+      !std::isfinite(corrected_odometry.pose.pose.position.y) ||
+      !std::isfinite(corrected_odometry.pose.pose.position.z)) {
+    return;
+  }
+
+  const Eigen::Quaterniond execution_q{
+      execution_odometry.pose.pose.orientation.w,
+      execution_odometry.pose.pose.orientation.x,
+      execution_odometry.pose.pose.orientation.y,
+      execution_odometry.pose.pose.orientation.z};
+  const Eigen::Vector3d velocity_body{
+      execution_odometry.twist.twist.linear.x,
+      execution_odometry.twist.twist.linear.y,
+      execution_odometry.twist.twist.linear.z};
+  PlannerExecutionState execution_state;
+  if (execution_q.coeffs().allFinite() && execution_q.norm() > 1.0e-6 &&
+      velocity_body.allFinite()) {
+    const Eigen::Quaterniond normalized = execution_q.normalized();
+    const auto velocity_world = normalized * velocity_body;
+    execution_state.position = super_utils::Vec3f{
+        execution_odometry.pose.pose.position.x, execution_odometry.pose.pose.position.y,
+        execution_odometry.pose.pose.position.z};
+    execution_state.velocity = velocity_world;
+    execution_state.orientation = super_utils::Quatf{
+        normalized.w(), normalized.x(), normalized.y(), normalized.z()};
+    const auto rotation = normalized.toRotationMatrix();
+    execution_state.yaw = std::atan2(rotation(1, 0), rotation(0, 0));
+    execution_state.stamp_s = static_cast<double>(execution_stamp_ns) * 1e-9;
+    execution_state.valid = true;
+  }
+  if (!execution_state.finite() ||
+      !planner_->setPlannerExecutionState(execution_state.toRobotState())) {
+    ++invalid_execution_state_count_;
     return;
   }
 
@@ -416,9 +510,9 @@ void SuperNavigationNode::runCycle() {
   }
   if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
     const auto& target_message = plannerTarget(*goal);
-    const double dx = pointFromMessage(target_message, 0) - odometry->pose.pose.position.x;
-    const double dy = pointFromMessage(target_message, 1) - odometry->pose.pose.position.y;
-    const double dz = pointFromMessage(target_message, 2) - odometry->pose.pose.position.z;
+    const double dx = pointFromMessage(target_message, 0) - execution_state.position.x();
+    const double dy = pointFromMessage(target_message, 1) - execution_state.position.y();
+    const double dz = pointFromMessage(target_message, 2) - execution_state.position.z();
     constexpr double kGoalReachedDistanceM = 0.20;
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kGoalReachedDistanceM) {
       std::lock_guard<std::mutex> lock(input_mutex_);
@@ -434,12 +528,12 @@ void SuperNavigationNode::runCycle() {
                   "SUPER local trajectory finished before goal; restarting PlanFromRest "
                   "goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
                   pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
-                  pointFromMessage(target_message, 2), odometry->pose.pose.position.x,
-                  odometry->pose.pose.position.y, odometry->pose.pose.position.z);
+                  pointFromMessage(target_message, 2), execution_state.position.x(),
+                  execution_state.position.y(), execution_state.position.z());
     }
   }
 
-  const auto& pose = odometry->pose.pose;
+  const auto& pose = corrected_odometry.pose.pose;
   const super_utils::Pose super_pose{
       super_utils::Vec3f{pose.position.x, pose.position.y, pose.position.z},
       super_utils::Quatf{pose.orientation.w, pose.orientation.x, pose.orientation.y,
@@ -474,6 +568,8 @@ void SuperNavigationNode::runCycle() {
   add_value("trajectory_publish_count", cycle_success_count_);
   add_value("dropped_cloud_count", dropped_cloud_count);
   add_value("stale_input_count", stale_input_count_);
+  add_value("corrected_pair_mismatch_count", corrected_pair_mismatch_count_);
+  add_value("invalid_execution_state_count", invalid_execution_state_count_);
   add_value("processing_exception_count", map_update_exception_count_);
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
@@ -491,10 +587,8 @@ void SuperNavigationNode::runCycle() {
   // recovery impossible by construction and force every transient hot-replan
   // miss to end in hold/handover.
 
-  // SUPER keeps a planner-local RobotState copy while ROG-Map owns the
-  // authoritative state. Refresh it after every coherent map update before
-  // invoking either PlanFromRest or ReplanOnce; otherwise the imported core
-  // legitimately reports "No odom" even though the ROS odometry is healthy.
+  // Planner execution state is independently owned by propagated odometry;
+  // ROG-Map's corrected scan-epoch pose is mapping-only.
   rog_map::RobotState planner_state;
   planner_->getRobotState(planner_state);
 
@@ -642,39 +736,12 @@ void SuperNavigationNode::runCycle() {
     double current_vehicle_yaw = planner_state.yaw;
     bool fresh_vehicle_state = false;
     double latest_vehicle_state_age_s = std::numeric_limits<double>::infinity();
-    {
-      std::lock_guard<std::mutex> lock(input_mutex_);
-      if (!odometry_history_.empty()) {
-        const auto& latest = odometry_history_.back();
-        const double latest_stamp_s =
-            static_cast<double>(stampNanoseconds(latest.header.stamp)) * 1e-9;
-        latest_vehicle_state_age_s = now().seconds() - latest_stamp_s;
-        // Propagated odometry can be stamped a few milliseconds ahead of the
-        // ROS clock read performed on another executor thread. Freshness is a
-        // clock-skew magnitude, not a one-sided age test.
-        fresh_vehicle_state = std::isfinite(latest_vehicle_state_age_s) &&
-                              std::abs(latest_vehicle_state_age_s) <=
-                                  input_pair_max_skew_s_ * 2.0;
-        current_vehicle_position = super_utils::Vec3f{
-            latest.pose.pose.position.x, latest.pose.pose.position.y,
-            latest.pose.pose.position.z};
-        const Eigen::Quaterniond world_from_body{
-            latest.pose.pose.orientation.w, latest.pose.pose.orientation.x,
-            latest.pose.pose.orientation.y, latest.pose.pose.orientation.z};
-        const Eigen::Vector3d velocity_body{
-            latest.twist.twist.linear.x, latest.twist.twist.linear.y,
-            latest.twist.twist.linear.z};
-        if (world_from_body.coeffs().allFinite() &&
-            world_from_body.norm() > 1.0e-6 && velocity_body.allFinite()) {
-          const Eigen::Quaterniond normalized = world_from_body.normalized();
-          current_vehicle_velocity = normalized * velocity_body;
-          const Eigen::Matrix3d rotation = normalized.toRotationMatrix();
-          current_vehicle_yaw = std::atan2(rotation(1, 0), rotation(0, 0));
-        } else {
-          fresh_vehicle_state = false;
-        }
-      }
-    }
+    latest_vehicle_state_age_s = now().seconds() - execution_state.stamp_s;
+    fresh_vehicle_state = execution_state.valid && execution_state.finite() &&
+                          std::abs(latest_vehicle_state_age_s) <= input_max_age_s_;
+    current_vehicle_position = execution_state.position;
+    current_vehicle_velocity = execution_state.velocity;
+    current_vehicle_yaw = execution_state.yaw;
     const double anchor_error_m = committed.empty() || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();
@@ -684,21 +751,27 @@ void SuperNavigationNode::runCycle() {
         std::numeric_limits<double>::quiet_NaN());
     rog_map::GridType first_blocked_grid = rog_map::GridType::UNKNOWN;
     if (sampled_path_clear) {
-      constexpr double kSafetySamplePeriodS = 0.05;
-      for (double sample_t = clamped_elapsed_s; sample_t <= total_duration_s;
-           sample_t += kSafetySamplePeriodS) {
+      const double spatial_step_m = std::max(0.02, 0.5 * map_->getInfResolution());
+      super_utils::Vec3f previous_sample = committed.getPos(clamped_elapsed_s);
+      for (double sample_t = clamped_elapsed_s; sample_t <= total_duration_s;) {
         const auto sample = committed.getPos(sample_t);
         const auto grid = sample.allFinite()
                               ? map_->getInfGridType(sample)
                               : rog_map::GridType::OUT_OF_MAP;
         if (grid == rog_map::GridType::OCCUPIED ||
-            grid == rog_map::GridType::OUT_OF_MAP) {
+            grid == rog_map::GridType::OUT_OF_MAP ||
+            !map_->isLineFree(previous_sample, sample, true, false)) {
           sampled_path_clear = false;
           first_blocked_sample_s = sample_t;
           first_blocked_sample = sample;
           first_blocked_grid = grid;
           break;
         }
+        previous_sample = sample;
+        const double speed_mps = std::max(0.1, committed.getVel(sample_t).norm());
+        const double adaptive_dt = std::clamp(spatial_step_m / speed_mps, 0.002, 0.05);
+        if (sample_t >= total_duration_s) break;
+        sample_t = std::min(total_duration_s, sample_t + adaptive_dt);
       }
     }
     // If replanning fails after the main-to-backup switch, the usable safety
@@ -813,12 +886,21 @@ void SuperNavigationNode::runCycle() {
     const double nearest_occupied_distance = nearest_occupied_found
                                                  ? (nearest_occupied - planner_state.p).norm()
                                                  : std::numeric_limits<double>::infinity();
+    const auto committed_generation = planner_->getCommittedGeneration();
     RCLCPP_INFO(get_logger(),
-                "SUPER plan_result mode=%s result=%d target=(%.2f,%.2f,%.2f) "
+                "SUPER decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
+                "cloud_stamp_ns=%ld corrected_stamp_ns=%ld propagated_stamp_ns=%ld "
+                "state_age_ms=%.3f mode=%s result=%d target=(%.2f,%.2f,%.2f) "
                 "committed_end=(%.2f,%.2f,%.2f) endpoint_error=%.3f command=%d failure=%d "
                 "exp_frontend_ms=%.3f exp_opt_ms=%.3f backup_frontend_ms=%.3f "
                 "backup_opt_ms=%.3f robot_grid=%d robot_inf_grid=%d nearest_free_m=%.3f "
                 "nearest_occ_m=%.3f nearest_occ=(%.2f,%.2f,%.2f)",
+                static_cast<unsigned long>(cycle_count_),
+                static_cast<unsigned long>(solve_generation),
+                static_cast<unsigned long>(committed_generation),
+                static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
+                static_cast<long>(execution_stamp_ns),
+                static_cast<double>(execution_age_ns) * 1e-6,
                 plan_from_rest ? "PlanFromRest" : "ReplanOnce", result, target.x(), target.y(),
                 target.z(), committed_end.x(), committed_end.y(), committed_end.z(),
                 endpoint_error, planner_command_available_.load(), planner_failure_latched_.load(),
@@ -878,7 +960,8 @@ void SuperNavigationNode::runCycle() {
                                     backup_start_s, 0.0, committed_duration));
     RCLCPP_INFO(get_logger(),
                 "super_cycle_metrics cycles=%lu commands=%lu dropped_cloud=%lu "
-                "planner_cycle_ms=%.3f p50_ms=%.3f p95_ms=%.3f input_us=%ld map_us=%ld "
+                "planner_cycle_ms=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f "
+                "input_us=%ld map_us=%ld "
                 "planner_us=%ld publish_us=%ld input_lock_us=%ld target=(%.2f,%.2f,%.2f) "
                 "robot=(%.2f,%.2f,%.2f) committed_start=(%.2f,%.2f,%.2f) "
                 "committed_q1=(%.2f,%.2f,%.2f) committed_mid=(%.2f,%.2f,%.2f) "
@@ -889,7 +972,8 @@ void SuperNavigationNode::runCycle() {
                 static_cast<unsigned long>(cycle_count_),
                 static_cast<unsigned long>(command_publish_count_.load()),
                 static_cast<unsigned long>(dropped_cloud_count), planner_cycle_ms,
-                percentile(0.50), percentile(0.95), static_cast<long>(input_conversion_us),
+                percentile(0.50), percentile(0.95), percentile(0.99),
+                static_cast<long>(input_conversion_us),
                 static_cast<long>(last_map_update_us_), static_cast<long>(last_planner_us_),
                 static_cast<long>(last_publish_us_.load()),
                 static_cast<long>(last_input_lock_wait_us_), target.x(), target.y(), target.z(),
@@ -942,11 +1026,27 @@ void SuperNavigationNode::publishCommand() {
   const bool planner_failed = planner_failure_latched_.load();
   if (!planner_command_available_.load() && !planner_failed) return;
   if (planner_command_available_.load()) {
-    planner_->getOneCommandFromTraj(pvaj, yaw, yaw_dot, on_backup_traj, traj_finish);
+    const auto sample = planner_->sampleCommand();
+    if (!sample.valid) {
+      planner_command_available_.store(false);
+      planner_failure_latched_.store(true);
+      safety_suffix_active_.store(false);
+      RCLCPP_ERROR_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "SUPER invalidated non-finite committed sample generation=%lu",
+          static_cast<unsigned long>(sample.generation));
+      pvaj.setZero();
+    } else {
+      pvaj = sample.pvaj;
+      yaw = sample.yaw;
+      yaw_dot = sample.yaw_rate;
+      on_backup_traj = sample.role == super_planner::SuperPlanner::TrajectoryRole::BACKUP;
+      traj_finish = sample.finished;
+    }
     // The safety suffix contains the dynamically continuous main prefix up to
     // SUPER's backup switch plus the braking polynomial. Once frozen by a
     // failed hot replan, the whole suffix is safety-owned.
-    if (safety_suffix_active) on_backup_traj = true;
+    if (sample.valid && safety_suffix_active) on_backup_traj = true;
     if (traj_finish) trajectory_finished_.store(true);
   } else {
     // PlanFromRest can fail before CmdTraj has ever been committed. Emit an
