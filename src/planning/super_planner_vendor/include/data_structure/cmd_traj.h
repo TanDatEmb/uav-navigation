@@ -28,10 +28,42 @@
 #include <data_structure/exp_traj.h>
 #include <data_structure/backup_traj.h>
 #include <data_structure/base/trajectory.h>
+#include <navigation_world_model/world_model_view.hpp>
+#include <algorithm>
+#include <optional>
+#include <vector>
 
 
 namespace super_planner {
     using geometry_utils::Trajectory;
+
+    enum class CandidateTrajectoryRole : std::uint8_t { MAIN = 0, BACKUP = 1 };
+    enum class BackupDisposition : std::uint8_t {
+        SUCCESS = 0, FINISH = 1, NO_NEED = 2, EMERGENCY = 3
+    };
+
+    struct CandidateRoleInterval {
+        double begin_tt{0.0};
+        double end_tt{0.0};
+        CandidateTrajectoryRole role{CandidateTrajectoryRole::MAIN};
+    };
+
+    struct CandidateCommandBundle {
+        Trajectory position{};
+        Trajectory yaw{};
+        double start_wall_time{0.0};
+        std::vector<CandidateRoleInterval> roles{};
+        bool backup_suffix_available{false};
+        double backup_start_tt{0.0};
+        bool connected_goal{false};
+        BackupDisposition backup_disposition{BackupDisposition::SUCCESS};
+    };
+
+    struct CommandCertificate {
+        navigation_world_model::WorldSnapshotIdentity pinned_world{};
+        navigation_world_model::WorldSnapshotIdentity validated_world{};
+        double validation_begin_tt{0.0};
+    };
 
 #define LOCK_G std::lock_guard<std::mutex> lock(mtx_);
 
@@ -56,6 +88,8 @@ namespace super_planner {
         bool flag_empty_{true};
         bool flag_backup_traj_avilibale_{false};
         std::uint64_t generation_{0};
+        std::vector<CandidateRoleInterval> role_intervals_{};
+        CommandCertificate certificate_{};
 
         static bool trajectoryFinite(const Trajectory &trajectory) {
             if (trajectory.empty() || !std::isfinite(trajectory.start_WT) ||
@@ -103,58 +137,144 @@ namespace super_planner {
         }
 
 
-        bool setTrajectory(const ExpTraj&exp_traj,
-            const BackupTraj & backup_traj) {
+        static std::optional<CandidateCommandBundle> buildCandidate(
+            const ExpTraj& exp_traj, const BackupTraj* backup_traj,
+            BackupDisposition disposition) {
             Trajectory tmp_pos_traj, tmp_yaw_traj;
-            const double candidate_backup_start_tt = backup_traj.getStartTT();
-            if (!std::isfinite(candidate_backup_start_tt) ||
-                !exp_traj.getPartialTrajectoryByTrajectoryTime(0, candidate_backup_start_tt,
-                                                               tmp_pos_traj, tmp_yaw_traj)) {
-                fmt::print(fg(fmt::color::indian_red)," -- [SUPER] in [PlanFromRest] getPartialTrajectoryByTime failed.\n");
-                return false;
+            CandidateCommandBundle candidate;
+            candidate.connected_goal = exp_traj.connectedToGoal();
+            candidate.backup_disposition = disposition;
+            if (backup_traj != nullptr) {
+                const double backup_start = backup_traj->getStartTT();
+                if (!std::isfinite(backup_start) || backup_start < 0.0 ||
+                    !exp_traj.getPartialTrajectoryByTrajectoryTime(
+                        0, backup_start, tmp_pos_traj, tmp_yaw_traj)) {
+                    return std::nullopt;
+                }
+                candidate.position = tmp_pos_traj + backup_traj->posTraj();
+                candidate.yaw = tmp_yaw_traj + backup_traj->yawTraj();
+                candidate.backup_suffix_available = true;
+                candidate.backup_start_tt = backup_start;
+            } else {
+                candidate.position = exp_traj.posTraj();
+                candidate.yaw = exp_traj.yawTraj();
+                candidate.backup_suffix_available = false;
+                candidate.backup_start_tt = candidate.position.getTotalDuration();
             }
-            Trajectory candidate_pos = tmp_pos_traj + backup_traj.posTraj();
-            Trajectory candidate_yaw = tmp_yaw_traj + backup_traj.yawTraj();
-            if (!trajectoryFinite(candidate_pos) || !trajectoryFinite(candidate_yaw)) {
-                return false;
+            if (!trajectoryFinite(candidate.position) || !trajectoryFinite(candidate.yaw) ||
+                std::abs(candidate.position.start_WT - candidate.yaw.start_WT) > 1.0e-6) {
+                return std::nullopt;
             }
+            candidate.start_wall_time = candidate.position.start_WT;
 
             double inherited_start = -1.0;
             double inherited_end = -1.0;
             const bool inherited_backup =
                 exp_traj.getFirstPartBackupTraj(inherited_start, inherited_end);
 
+            const double duration = candidate.position.getTotalDuration();
+            std::vector<CandidateRoleInterval> backup_intervals;
+            if (inherited_backup) {
+                const double upper = backup_traj
+                    ? std::min(duration, candidate.backup_start_tt) : duration;
+                const double clipped_begin = std::max(0.0, inherited_start);
+                const double clipped_end = std::min(upper, inherited_end);
+                if (clipped_end >= clipped_begin) {
+                    backup_intervals.push_back(
+                        {clipped_begin, clipped_end, CandidateTrajectoryRole::BACKUP});
+                }
+            }
+            if (candidate.backup_suffix_available) {
+                backup_intervals.push_back({candidate.backup_start_tt, duration,
+                                            CandidateTrajectoryRole::BACKUP});
+            }
+            std::sort(backup_intervals.begin(), backup_intervals.end(),
+                      [](const auto& lhs, const auto& rhs) {
+                          return lhs.begin_tt < rhs.begin_tt;
+                      });
+            std::vector<CandidateRoleInterval> merged_backup;
+            for (const auto& interval : backup_intervals) {
+                if (!merged_backup.empty() &&
+                    interval.begin_tt <= merged_backup.back().end_tt) {
+                    merged_backup.back().end_tt = std::max(
+                        merged_backup.back().end_tt, interval.end_tt);
+                } else {
+                    merged_backup.push_back(interval);
+                }
+            }
+            double cursor = 0.0;
+            for (const auto& interval : merged_backup) {
+                if (interval.begin_tt > cursor) {
+                    candidate.roles.push_back(
+                        {cursor, interval.begin_tt, CandidateTrajectoryRole::MAIN});
+                }
+                candidate.roles.push_back(interval);
+                cursor = interval.end_tt;
+            }
+            if (cursor < duration || candidate.roles.empty()) {
+                candidate.roles.push_back(
+                    {cursor, duration, CandidateTrajectoryRole::MAIN});
+            }
+            return candidate;
+        }
+
+        static std::optional<CandidateCommandBundle> buildEmergencyCandidate(
+                const Trajectory& position, const Trajectory& yaw) {
+            if (!trajectoryFinite(position) || !trajectoryFinite(yaw) ||
+                std::abs(position.start_WT - yaw.start_WT) > 1.0e-6 ||
+                yaw.getTotalDuration() + 1.0e-6 < position.getTotalDuration()) {
+                return std::nullopt;
+            }
+            CandidateCommandBundle candidate;
+            candidate.position = position;
+            candidate.yaw = yaw;
+            candidate.start_wall_time = position.start_WT;
+            candidate.backup_suffix_available = true;
+            candidate.backup_start_tt = 0.0;
+            candidate.backup_disposition = BackupDisposition::EMERGENCY;
+            candidate.roles.push_back(
+                {0.0, position.getTotalDuration(), CandidateTrajectoryRole::BACKUP});
+            return candidate;
+        }
+
+        bool commitCandidate(CandidateCommandBundle&& candidate,
+                             const CommandCertificate& certificate) {
             LOCK_G
-            pos_traj_ = std::move(candidate_pos);
-            yaw_traj_ = std::move(candidate_yaw);
-            backup_traj_start_TT_ = candidate_backup_start_tt;
-
+            pos_traj_ = std::move(candidate.position);
+            yaw_traj_ = std::move(candidate.yaw);
             start_WT_ = pos_traj_.start_WT;
-
             flag_empty_ = false;
-            flag_backup_traj_avilibale_ = true;
-            first_part_exp_has_backup_traj_ = inherited_backup;
-            on_backup_start_TT_ = inherited_start;
-            on_backup_end_TT_ = inherited_end;
+            flag_backup_traj_avilibale_ = candidate.backup_suffix_available;
+            backup_traj_start_TT_ = candidate.backup_start_tt;
+            role_intervals_ = std::move(candidate.roles);
+            certificate_ = certificate;
+            first_part_exp_has_backup_traj_ = false;
+            on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
+            for (const auto& interval : role_intervals_) {
+                if (interval.role == CandidateTrajectoryRole::BACKUP &&
+                    (!flag_backup_traj_avilibale_ ||
+                     interval.end_tt < backup_traj_start_TT_)) {
+                    first_part_exp_has_backup_traj_ = true;
+                    on_backup_start_TT_ = interval.begin_tt;
+                    on_backup_end_TT_ = interval.end_tt;
+                    break;
+                }
+            }
             ++generation_;
             return true;
         }
 
+        bool setTrajectory(const ExpTraj&exp_traj,
+            const BackupTraj & backup_traj) {
+            auto candidate = buildCandidate(
+                exp_traj, &backup_traj, BackupDisposition::SUCCESS);
+            return candidate && commitCandidate(std::move(*candidate), {});
+        }
+
         bool setTrajectory(const ExpTraj&exp_traj) {
-            if (!trajectoryFinite(exp_traj.posTraj()) ||
-                !trajectoryFinite(exp_traj.yawTraj())) {
-                return false;
-            }
-            LOCK_G
-            pos_traj_ = exp_traj.posTraj();
-            yaw_traj_ = exp_traj.yawTraj();
-            start_WT_ = pos_traj_.start_WT;
-            flag_empty_ = false;
-            backup_traj_start_TT_ = 99999999;
-            flag_backup_traj_avilibale_ = false;
-            checkFirstPartBackupTraj(exp_traj);
-            ++generation_;
-            return true;
+            auto candidate = buildCandidate(
+                exp_traj, nullptr, BackupDisposition::NO_NEED);
+            return candidate && commitCandidate(std::move(*candidate), {});
         }
 
         // Commit a safety-only trajectory generated from the current measured
@@ -163,36 +283,17 @@ namespace super_planner {
         // ownership visible to the command thread as one atomic bundle.
         bool setEmergencyBackup(const Trajectory &pos_traj,
                                 const Trajectory &yaw_traj) {
-            if (!trajectoryFinite(pos_traj) || !trajectoryFinite(yaw_traj) ||
-                std::abs(pos_traj.start_WT - yaw_traj.start_WT) > 1.0e-6 ||
-                yaw_traj.getTotalDuration() + 1.0e-6 <
-                    pos_traj.getTotalDuration()) {
-                return false;
-            }
-            LOCK_G
-            pos_traj_ = pos_traj;
-            yaw_traj_ = yaw_traj;
-            start_WT_ = pos_traj_.start_WT;
-            backup_traj_start_TT_ = 0.0;
-            on_backup_start_TT_ = -1.0;
-            on_backup_end_TT_ = -1.0;
-            first_part_exp_has_backup_traj_ = false;
-            flag_empty_ = false;
-            flag_backup_traj_avilibale_ = true;
-            ++generation_;
-            return true;
+            auto candidate = buildEmergencyCandidate(pos_traj, yaw_traj);
+            return candidate && commitCandidate(std::move(*candidate), {});
         }
 
         bool isTTOnBackupTraj(const double & checkTT) const {
-            if(first_part_exp_has_backup_traj_ &&
-                (checkTT <= on_backup_end_TT_ && checkTT >= on_backup_start_TT_)) {
-                return true;
+            for (const auto& interval : role_intervals_) {
+                if (interval.role == CandidateTrajectoryRole::BACKUP &&
+                    checkTT >= interval.begin_tt && checkTT <= interval.end_tt) {
+                    return true;
+                }
             }
-
-            if(flag_backup_traj_avilibale_ && checkTT >= backup_traj_start_TT_) {
-                return true;
-            }
-
             return false;
         }
 
@@ -210,6 +311,7 @@ namespace super_planner {
         }
 
         std::uint64_t generation() const { return generation_; }
+        const CommandCertificate& certificate() const { return certificate_; }
 
         Vec3f getPos(const double & t)const {
             return pos_traj_.getPos(t);

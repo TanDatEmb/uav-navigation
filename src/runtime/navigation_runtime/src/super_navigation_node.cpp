@@ -4,6 +4,7 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/timestamp_freshness.hpp"
 #include "super_core/solve_stage.hpp"
+#include "super_core/trajectory_world_validator.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -170,7 +171,8 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   world_snapshot_store_.publish(initial_world_view);
   world_model_view_ = world_snapshot_store_.load().view;
   planner_ = std::make_shared<super_planner::SuperPlanner>(
-      super_config_path_, ros_interface_, world_model_view_, mission_limits);
+      super_config_path_, ros_interface_, world_model_view_, mission_limits,
+      world_snapshot_store_);
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -916,27 +918,31 @@ void SuperNavigationNode::runCycle() {
         std::numeric_limits<double>::quiet_NaN());
     rog_map::GridType first_blocked_grid = rog_map::GridType::UNKNOWN;
     if (sampled_path_clear) {
-      const double spatial_step_m = std::max(0.02, 0.5 * map_->getInfResolution());
-      super_utils::Vec3f previous_sample = committed.getPos(clamped_elapsed_s);
-      for (double sample_t = clamped_elapsed_s; sample_t <= total_duration_s;) {
-        const auto sample = committed.getPos(sample_t);
-        const auto grid = sample.allFinite()
-                              ? map_->getInfGridType(sample)
-                              : rog_map::GridType::OUT_OF_MAP;
-        if (grid == rog_map::GridType::OCCUPIED ||
-            grid == rog_map::GridType::OUT_OF_MAP ||
-            !map_->isLineFree(previous_sample, sample, true, false)) {
-          sampled_path_clear = false;
-          first_blocked_sample_s = sample_t;
-          first_blocked_sample = sample;
-          first_blocked_grid = grid;
-          break;
-        }
-        previous_sample = sample;
-        const double speed_mps = std::max(0.1, committed.getVel(sample_t).norm());
-        const double adaptive_dt = std::clamp(spatial_step_m / speed_mps, 0.002, 0.05);
-        if (sample_t >= total_duration_s) break;
-        sample_t = std::min(total_duration_s, sample_t + adaptive_dt);
+      super_planner::CandidateCommandBundle retained;
+      retained.position = committed;
+      retained.yaw = committed_yaw;
+      retained.start_wall_time = committed.start_WT;
+      const auto latest_world = world_snapshot_store_.latest();
+      const auto validation = latest_world
+          ? super_planner::validateExecutableCandidate(
+                *latest_world.view, retained, now().seconds())
+          : super_planner::SweptValidationResult{};
+      sampled_path_clear = validation.valid;
+      if (!sampled_path_clear) {
+        first_blocked_sample_s = std::isfinite(validation.first_blocked_tt)
+            ? validation.first_blocked_tt : clamped_elapsed_s;
+        first_blocked_sample = committed.getPos(std::clamp(
+            first_blocked_sample_s, 0.0, total_duration_s));
+        const auto state = latest_world
+            ? latest_world.view->classify(
+                  first_blocked_sample,
+                  navigation_world_model::GridLayer::kInflated)
+            : navigation_world_model::CellState::kOutOfMap;
+        first_blocked_grid = state == navigation_world_model::CellState::kOccupied
+            ? rog_map::GridType::OCCUPIED
+            : (state == navigation_world_model::CellState::kOutOfMap
+                   ? rog_map::GridType::OUT_OF_MAP
+                   : rog_map::GridType::UNKNOWN);
       }
     }
     // If replanning fails after the main-to-backup switch, the usable safety
@@ -1032,6 +1038,8 @@ void SuperNavigationNode::runCycle() {
   {
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
+    const auto committed_generation = planner_->getCommittedGeneration();
+    const auto committed_certificate = planner_->getCommittedCertificate();
     planner_->unlockCommittedTraj();
     const auto committed_end = committed.empty()
                                    ? super_utils::Vec3f{}
@@ -1054,9 +1062,9 @@ void SuperNavigationNode::runCycle() {
     const double nearest_occupied_distance = nearest_occupied_found
                                                  ? (nearest_occupied - planner_state.p).norm()
                                                  : std::numeric_limits<double>::infinity();
-    const auto committed_generation = planner_->getCommittedGeneration();
     const int solve_stage = planner_->solveStage();
     const int replan_return_code = planner_->latestReplanReturnCode();
+    const int commit_decision = planner_->latestCommitDecision();
     const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;
     const bool solve_deadline_exceeded =
         planner_elapsed_ms > planner_->solveDeadlineSeconds() * 1000.0;
@@ -1064,8 +1072,10 @@ void SuperNavigationNode::runCycle() {
                 "SUPER decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
                 "pinned_world_generation=%lu pinned_world_revision=%lu "
                 "pinned_world_stamp_ns=%ld "
+                "certificate_world_generation=%lu certificate_world_revision=%lu "
+                "certificate_world_stamp_ns=%ld "
                 "cloud_stamp_ns=%ld corrected_stamp_ns=%ld propagated_stamp_ns=%ld "
-                "state_age_ms=%.3f mode=%s result=%d replan_code=%d "
+                "state_age_ms=%.3f mode=%s result=%d replan_code=%d commit_decision=%d "
                 "solve_stage=%d solve_stage_name=%s solve_elapsed_ms=%.3f "
                 "solve_deadline_exceeded=%d target=(%.2f,%.2f,%.2f) "
                 "committed_end=(%.2f,%.2f,%.2f) endpoint_error=%.3f command=%d failure=%d "
@@ -1078,11 +1088,14 @@ void SuperNavigationNode::runCycle() {
                 static_cast<unsigned long>(pinned_world.identity.generation),
                 static_cast<unsigned long>(pinned_world.identity.revision),
                 static_cast<long>(pinned_world.identity.observation_stamp_ns),
+                static_cast<unsigned long>(committed_certificate.validated_world.generation),
+                static_cast<unsigned long>(committed_certificate.validated_world.revision),
+                static_cast<long>(committed_certificate.validated_world.observation_stamp_ns),
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
                 static_cast<double>(execution_age_ns) * 1e-6,
                 plan_from_rest ? "PlanFromRest" : "ReplanOnce", result,
-                replan_return_code, solve_stage,
+                replan_return_code, commit_decision, solve_stage,
                 super_planner::solveStageName(solve_stage).data(), planner_elapsed_ms,
                 solve_deadline_exceeded, target.x(), target.y(),
                 target.z(), committed_end.x(), committed_end.y(), committed_end.z(),
@@ -1120,8 +1133,15 @@ void SuperNavigationNode::runCycle() {
     add_trace_value("pinned_world_generation", pinned_world.identity.generation);
     add_trace_value("pinned_world_revision", pinned_world.identity.revision);
     add_trace_value("pinned_world_stamp_ns", pinned_world.identity.observation_stamp_ns);
+    add_trace_value("certificate_world_generation",
+                    committed_certificate.validated_world.generation);
+    add_trace_value("certificate_world_revision",
+                    committed_certificate.validated_world.revision);
+    add_trace_value("certificate_world_stamp_ns",
+                    committed_certificate.validated_world.observation_stamp_ns);
     add_trace_value("candidate_result", static_cast<int>(result));
     add_trace_value("replan_code", replan_return_code);
+    add_trace_value("commit_decision", commit_decision);
     add_trace_value("solve_stage", solve_stage);
     {
       diagnostic_msgs::msg::KeyValue item;

@@ -25,6 +25,7 @@
 #include <super_core/absolute_deadline.hpp>
 #include <super_core/backup_braking.hpp>
 #include <super_core/guide_endpoint.hpp>
+#include <super_core/trajectory_world_validator.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
@@ -40,8 +41,10 @@ namespace super_planner {
             (const std::string &cfg_path,
              const ros_interface::RosInterface::Ptr &ros_ptr,
              navigation_world_model::WorldModelViewPtr map_ptr,
-             const std::optional<DynamicLimits> &mission_limits
-            ) : cfg_(Config(cfg_path, mission_limits)), ros_ptr_(ros_ptr), map_ptr_(std::move(map_ptr)) {
+             const std::optional<DynamicLimits> &mission_limits,
+             navigation_world_model::WorldCommitAuthorizer& commit_authorizer
+            ) : cfg_(Config(cfg_path, mission_limits)), map_ptr_(std::move(map_ptr)),
+                commit_authorizer_(&commit_authorizer), ros_ptr_(ros_ptr) {
 
         ros_ptr_->setResolution(cfg_.resolution);
         ros_ptr_->setVisualizationEn(cfg_.visualization_en);
@@ -79,6 +82,51 @@ namespace super_planner {
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
 
+    bool SuperPlanner::authorizeAndCommit(CandidateCommandBundle&& candidate) {
+        if (commit_authorizer_ == nullptr || !map_ptr_) {
+            latest_commit_decision_.store(static_cast<int>(
+                navigation_world_model::WorldCommitDecision::kCandidateRejected));
+            ros_ptr_->error(" -- [SUPER] command rejected: no WorldModel commit authorizer");
+            return false;
+        }
+        const auto pinned_identity = map_ptr_->identity();
+        const auto lease = commit_authorizer_->latest();
+        if (!lease || lease.identity.generation != pinned_identity.generation) {
+            latest_commit_decision_.store(static_cast<int>(
+                lease ? navigation_world_model::WorldCommitDecision::kWorldAdvanced
+                      : navigation_world_model::WorldCommitDecision::kNoPublishedWorld));
+            ros_ptr_->warn(" -- [SUPER] command rejected: WorldModel generation changed");
+            return false;
+        }
+        const double authorization_wall_time = ros_ptr_->getSimTime();
+        const auto validation = validateExecutableCandidate(
+            *lease.view, candidate, authorization_wall_time);
+        if (!validation.valid) {
+            latest_commit_decision_.store(static_cast<int>(
+                navigation_world_model::WorldCommitDecision::kCandidateRejected));
+            ros_ptr_->warn(
+                " -- [SUPER] command rejected by latest WorldModel at trajectory time {}",
+                validation.first_blocked_tt);
+            return false;
+        }
+        const CommandCertificate certificate{
+            pinned_identity, lease.identity, validation.begin_tt};
+        const auto decision = commit_authorizer_->commitIfCurrent(
+            lease.identity, [&]() {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load()) return false;
+                return cmd_traj_info_.commitCandidate(
+                    std::move(candidate), certificate);
+            });
+        latest_commit_decision_.store(static_cast<int>(decision));
+        if (decision != navigation_world_model::WorldCommitDecision::kCommitted) {
+            ros_ptr_->warn(" -- [SUPER] command authorization rejected with reason {}",
+                           static_cast<int>(decision));
+            return false;
+        }
+        return true;
+    }
+
     RET_CODE
     SuperPlanner::PlanFromRest(const Vec3f &goal_p,
                                const double &goal_yaw,
@@ -87,6 +135,8 @@ namespace super_planner {
         const AbsoluteDeadline solve_deadline(
                 ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
+        latest_commit_decision_.store(static_cast<int>(
+            navigation_world_model::WorldCommitDecision::kNotAttempted));
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, robot_state_);
         if (robot_state_.rcv == false) {
@@ -159,13 +209,11 @@ namespace super_planner {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
             }
 
-            {
-                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-                if (solve_cancelled_.load() ||
-                    !cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info)) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
+            auto candidate = CmdTraj::buildCandidate(
+                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
+            if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -183,16 +231,13 @@ namespace super_planner {
             if (cfg_.print_log) {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
             }
-            {
-                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-                if (solve_cancelled_.load()) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
-                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
+            const auto disposition = back_ret_code == FINISH
+                ? BackupDisposition::FINISH : BackupDisposition::NO_NEED;
+            auto candidate = CmdTraj::buildCandidate(
+                exp_traj_info, nullptr, disposition);
+            if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -227,6 +272,8 @@ namespace super_planner {
         const AbsoluteDeadline solve_deadline(
                 ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
+        latest_commit_decision_.store(static_cast<int>(
+            navigation_world_model::WorldCommitDecision::kNotAttempted));
 
         gi_.goal_p = goal_p;
         gi_.goal_yaw = goal_yaw;
@@ -310,13 +357,11 @@ namespace super_planner {
         }
 
         if (back_ret_code == SUCCESS) {
-            {
-                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-                if (solve_cancelled_.load() ||
-                    !cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info)) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
+            auto candidate = CmdTraj::buildCandidate(
+                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
+            if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -334,16 +379,11 @@ namespace super_planner {
             return SUCCESS;
         } else if (back_ret_code == NO_NEED) {
             // 这次生成backup轨迹的点没有意义,
-            {
-                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-                if (solve_cancelled_.load()) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
-                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
+            auto candidate = CmdTraj::buildCandidate(
+                exp_traj_info, nullptr, BackupDisposition::NO_NEED);
+            if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -362,16 +402,11 @@ namespace super_planner {
             return SUCCESS;
         } else if (back_ret_code == FINISH) {
             // Which means the exp traj is all in known free, no need for backup traj
-            {
-                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-                if (solve_cancelled_.load()) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
-                if (!cmd_traj_info_.setTrajectory(exp_traj_info)) {
-                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
-                    return FAILED;
-                }
+            auto candidate = CmdTraj::buildCandidate(
+                exp_traj_info, nullptr, BackupDisposition::FINISH);
+            if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -450,6 +485,7 @@ namespace super_planner {
         sample.yaw = cmd_traj_info_.getYaw(eval_t)[0];
         sample.yaw_rate = cmd_traj_info_.getYawRate(eval_t)[0];
         sample.generation = cmd_traj_info_.generation();
+        sample.certificate_world = cmd_traj_info_.certificate().validated_world;
         sample.valid = sample.pvaj.allFinite() && std::isfinite(sample.yaw) &&
                        std::isfinite(sample.yaw_rate);
 
@@ -528,38 +564,9 @@ namespace super_planner {
             return false;
         }
 
-        // ROG-Map is already inflated by the configured vehicle envelope. A
-        // 5 ms sweep keeps adjacent samples below 6 cm even at the x500
-        // product cap of 12 m/s. UNKNOWN remains traversable, matching the
-        // no-raycasting SUPER policy; OCCUPIED and OUT_OF_MAP fail closed.
-        constexpr double kMapSamplePeriodS = 0.005;
-        const std::size_t intervals = std::max<std::size_t>(
-                1U, static_cast<std::size_t>(
-                        std::ceil(seed.duration_s / kMapSamplePeriodS)));
-        for (std::size_t sample_index = 0; sample_index <= intervals;
-             ++sample_index) {
-            const double sample_time = seed.duration_s *
-                    static_cast<double>(sample_index) /
-                    static_cast<double>(intervals);
-            const Vec3f sample_position = position_trajectory.getPos(sample_time);
-            const auto grid = sample_position.allFinite()
-                    ? map_ptr_->classify(sample_position,
-                                         navigation_world_model::GridLayer::kInflated)
-                    : navigation_world_model::CellState::kOutOfMap;
-            if (grid == navigation_world_model::CellState::kOccupied ||
-                grid == navigation_world_model::CellState::kOutOfMap) {
-                ros_ptr_->error(
-                        " -- [SUPER] emergency brake map gate failed at t={} p={} grid={}",
-                        sample_time, sample_position.transpose(),
-                        static_cast<int>(grid));
-                return false;
-            }
-        }
-
-        std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
-        if (solve_cancelled_.load() ||
-            !cmd_traj_info_.setEmergencyBackup(
-                    position_trajectory, yaw_trajectory)) {
+        auto candidate = CmdTraj::buildEmergencyCandidate(
+            position_trajectory, yaw_trajectory);
+        if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
             ros_ptr_->error(" -- [SUPER] emergency brake atomic commit rejected");
             return false;
         }

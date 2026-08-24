@@ -1,4 +1,6 @@
 #include <navigation_runtime/world_snapshot_store.hpp>
+#include <super_core/super_planner.h>
+#include <super_core/trajectory_world_validator.hpp>
 
 #include <atomic>
 #include <future>
@@ -13,7 +15,11 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
   explicit IdentityOnlyWorld(navigation_world_model::WorldSnapshotIdentity identity)
       : identity_(identity) {}
 
-  navigation_world_model::WorldGeometry geometry() const noexcept override { return {}; }
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry result;
+    result.inflated_resolution_m = 0.2;
+    return result;
+  }
   navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
     return identity_;
   }
@@ -139,6 +145,33 @@ TEST(WorldSnapshotStore, PublicationCannotInterleaveAnAuthorizedCommit) {
   publication.get();
   EXPECT_TRUE(publication_finished.load());
   EXPECT_EQ(store.load().identity.revision, 2U);
+}
+
+TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle) {
+  navigation_runtime::WorldSnapshotStore store;
+  store.publish(world(1, 1, 100));
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 10.0;
+  auto candidate = super_planner::CmdTraj::buildEmergencyCandidate(position, yaw);
+  ASSERT_TRUE(candidate);
+  const auto lease = store.latest();
+  ASSERT_TRUE(super_planner::validateExecutableCandidate(
+      *lease.view, *candidate, 10.0).valid);
+
+  store.publish(world(1, 2, 200));
+  super_planner::CmdTraj command;
+  bool commit_invoked = false;
+  EXPECT_EQ(store.commitIfCurrent(lease.identity, [&] {
+              commit_invoked = true;
+              return command.commitCandidate(std::move(*candidate), {});
+            }), navigation_world_model::WorldCommitDecision::kWorldAdvanced);
+  EXPECT_FALSE(commit_invoked);
+  EXPECT_TRUE(command.empty());
+  EXPECT_EQ(command.generation(), 0U);
 }
 
 }  // namespace

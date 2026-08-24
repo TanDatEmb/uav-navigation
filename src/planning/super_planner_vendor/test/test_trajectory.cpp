@@ -11,8 +11,64 @@
 #include "super_core/absolute_deadline.hpp"
 #include "super_core/guide_endpoint.hpp"
 #include "super_core/solve_stage.hpp"
+#include "super_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
+
+namespace {
+class SweepWorld : public navigation_world_model::WorldModelView {
+ public:
+  double blocked_from_x{std::numeric_limits<double>::infinity()};
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry value;
+    value.inflated_resolution_m = 0.2;
+    return value;
+  }
+  navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+    return {1, 1, 1};
+  }
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& p,
+      navigation_world_model::GridLayer) const noexcept override {
+    return p.x() >= blocked_from_x
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kUnknown;
+  }
+  bool contains(const navigation_world_model::Point3&) const noexcept override { return true; }
+  navigation_world_model::GridIndex3 positionToIndex(
+      const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
+    return {};
+  }
+  navigation_world_model::Point3 indexToPosition(
+      const navigation_world_model::GridIndex3&, navigation_world_model::GridLayer) const noexcept override {
+    return {};
+  }
+  std::optional<navigation_world_model::Point3> nearestNotOccupied(
+      const navigation_world_model::Point3& p, navigation_world_model::GridLayer,
+      double) const override { return p; }
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& a,
+      const navigation_world_model::Point3& b,
+      navigation_world_model::GridLayer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (policy != navigation_world_model::UnknownPolicy::kAllowUnknown) return false;
+    return std::max(a.x(), b.x()) < blocked_from_x;
+  }
+  navigation_world_model::AxisAlignedBox clampToLocalBounds(
+      const navigation_world_model::AxisAlignedBox& box) const noexcept override { return box; }
+  navigation_world_model::PointVector observedOccupiedPoints(
+      const navigation_world_model::AxisAlignedBox&) const override { return {}; }
+};
+
+geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
+}  // namespace
 
 TEST(SuperTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   std::vector<double> durations{1.0, 1.0};
@@ -151,6 +207,135 @@ TEST(SuperTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
   EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
   EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
   EXPECT_FALSE(command.isTTOnBackupTraj(0.5));
+}
+
+TEST(SuperTrajectory, CandidateBuilderPreservesInheritedAndNewBackupRoles) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  super_planner::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.1, 0.3);
+  super_planner::BackupTraj backup;
+  auto backup_position = linearTrajectory(0.5, 10.6);
+  auto backup_yaw = linearTrajectory(0.5, 10.6);
+  backup.setTrajectory(10.6, 0.6, backup_position, backup_yaw);
+
+  auto candidate = super_planner::CmdTraj::buildCandidate(
+      exp, &backup, super_planner::BackupDisposition::SUCCESS);
+  ASSERT_TRUE(candidate);
+  EXPECT_NEAR(candidate->position.getTotalDuration(), 1.1, 1.0e-12);
+  ASSERT_EQ(candidate->roles.size(), 4U);
+  EXPECT_EQ(candidate->roles[0].role, super_planner::CandidateTrajectoryRole::MAIN);
+  EXPECT_DOUBLE_EQ(candidate->roles[1].begin_tt, 0.1);
+  EXPECT_DOUBLE_EQ(candidate->roles[1].end_tt, 0.3);
+  EXPECT_EQ(candidate->roles[1].role, super_planner::CandidateTrajectoryRole::BACKUP);
+  EXPECT_DOUBLE_EQ(candidate->roles[3].begin_tt, 0.6);
+  EXPECT_DOUBLE_EQ(candidate->roles[3].end_tt, 1.1);
+  EXPECT_EQ(candidate->roles[3].role, super_planner::CandidateTrajectoryRole::BACKUP);
+}
+
+TEST(SuperTrajectory, InheritedBackupIntersectionNeverCrossesNewSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  auto backup_position = linearTrajectory(0.5, 10.6);
+  auto backup_yaw = linearTrajectory(0.5, 10.6);
+  super_planner::BackupTraj backup;
+  backup.setTrajectory(10.6, 0.6, backup_position, backup_yaw);
+
+  for (const auto [begin, end] : std::vector<std::pair<double, double>>{
+           {0.7, 0.9}, {0.5, 0.8}, {0.6, 0.6}, {0.2, 0.6}}) {
+    super_planner::ExpTraj exp;
+    exp.setTrajectory(10.0, position, yaw, begin, end);
+    auto candidate = super_planner::CmdTraj::buildCandidate(
+        exp, &backup, super_planner::BackupDisposition::SUCCESS);
+    ASSERT_TRUE(candidate);
+    double previous_end = 0.0;
+    for (const auto& interval : candidate->roles) {
+      EXPECT_LE(interval.begin_tt, interval.end_tt);
+      EXPECT_DOUBLE_EQ(interval.begin_tt, previous_end);
+      previous_end = interval.end_tt;
+    }
+    EXPECT_DOUBLE_EQ(previous_end, candidate->position.getTotalDuration());
+    EXPECT_TRUE(std::any_of(candidate->roles.begin(), candidate->roles.end(),
+                            [](const auto& interval) {
+                              return interval.role ==
+                                         super_planner::CandidateTrajectoryRole::BACKUP &&
+                                     interval.begin_tt <= 0.6 && interval.end_tt >= 0.6;
+                            }));
+    if (begin > 0.6) {
+      const auto first_backup = std::find_if(
+          candidate->roles.begin(), candidate->roles.end(), [](const auto& interval) {
+            return interval.role == super_planner::CandidateTrajectoryRole::BACKUP;
+          });
+      ASSERT_NE(first_backup, candidate->roles.end());
+      EXPECT_DOUBLE_EQ(first_backup->begin_tt, 0.6);
+    }
+  }
+}
+
+TEST(SuperTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  super_planner::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.0, 0.2);
+  for (const auto disposition : {super_planner::BackupDisposition::FINISH,
+                                 super_planner::BackupDisposition::NO_NEED}) {
+    auto candidate = super_planner::CmdTraj::buildCandidate(
+        exp, nullptr, disposition);
+    ASSERT_TRUE(candidate);
+    EXPECT_EQ(candidate->backup_disposition, disposition);
+    EXPECT_FALSE(candidate->backup_suffix_available);
+    ASSERT_EQ(candidate->roles.size(), 2U);
+    EXPECT_EQ(candidate->roles.front().role,
+              super_planner::CandidateTrajectoryRole::BACKUP);
+    EXPECT_EQ(candidate->roles.back().role,
+              super_planner::CandidateTrajectoryRole::MAIN);
+  }
+
+  auto emergency = super_planner::CmdTraj::buildEmergencyCandidate(position, yaw);
+  ASSERT_TRUE(emergency);
+  EXPECT_EQ(emergency->backup_disposition,
+            super_planner::BackupDisposition::EMERGENCY);
+  ASSERT_EQ(emergency->roles.size(), 1U);
+  EXPECT_EQ(emergency->roles.front().role,
+            super_planner::CandidateTrajectoryRole::BACKUP);
+}
+
+TEST(SuperTrajectory, LatestWorldSweepAllowsUnknownAndRejectsFutureObstacle) {
+  super_planner::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  SweepWorld world;
+  EXPECT_TRUE(super_planner::validateExecutableCandidate(world, candidate, 10.0).valid);
+  world.blocked_from_x = 0.7;
+  const auto blocked = super_planner::validateExecutableCandidate(world, candidate, 10.0);
+  EXPECT_FALSE(blocked.valid);
+  EXPECT_GE(blocked.first_blocked_tt, 0.6);
+}
+
+TEST(SuperTrajectory, LatestWorldSweepIgnoresAlreadyExecutedBlockedPrefix) {
+  super_planner::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  class PrefixWorld final : public SweepWorld {
+   public:
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& p,
+        navigation_world_model::GridLayer) const noexcept override {
+      return p.x() < 0.4 ? navigation_world_model::CellState::kOccupied
+                         : navigation_world_model::CellState::kUnknown;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& a,
+        const navigation_world_model::Point3&,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy) const noexcept override {
+      return a.x() >= 0.4;
+    }
+  } prefix_world;
+  EXPECT_TRUE(super_planner::validateExecutableCandidate(
+      prefix_world, candidate, 10.5).valid);
 }
 
 TEST(SuperTrajectory, NonFiniteYawCannotReplaceCommittedGeneration) {

@@ -7,8 +7,11 @@
 #include <utility>
 
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_world_model/world_commit_authorizer.hpp>
 
 namespace navigation_runtime {
+
+using WorldCommitDecision = navigation_world_model::WorldCommitDecision;
 
 struct PinnedWorldSnapshot {
   navigation_world_model::WorldModelViewPtr view;
@@ -19,18 +22,12 @@ struct PinnedWorldSnapshot {
   }
 };
 
-enum class WorldCommitDecision {
-  kCommitted,
-  kNoPublishedWorld,
-  kWorldAdvanced,
-  kCommitRejected,
-};
-
 // Product-owned publication boundary between the sole mutable mapping owner
 // and planners that pin immutable views. Snapshot construction and candidate
 // validation happen outside publication_gate_; only publication and the final
 // authorized commit are linearized here.
-class WorldSnapshotStore {
+class WorldSnapshotStore final
+    : public navigation_world_model::WorldCommitAuthorizer {
  public:
   WorldSnapshotStore() = default;
   WorldSnapshotStore(const WorldSnapshotStore&) = delete;
@@ -40,6 +37,12 @@ class WorldSnapshotStore {
     auto view = latest_.load(std::memory_order_acquire);
     return {view, view ? view->identity()
                        : navigation_world_model::WorldSnapshotIdentity{}};
+  }
+
+  [[nodiscard]] navigation_world_model::WorldValidationLease latest()
+      const noexcept override {
+    const auto pinned = load();
+    return {pinned.view, pinned.identity};
   }
 
   void publish(navigation_world_model::WorldModelViewPtr next) {
@@ -57,18 +60,24 @@ class WorldSnapshotStore {
   }
 
   template <typename CommitFunction>
-  WorldCommitDecision authorize(
+  navigation_world_model::WorldCommitDecision authorize(
       const navigation_world_model::WorldSnapshotIdentity& validated_identity,
       CommitFunction&& commit) {
     std::lock_guard<std::mutex> guard(publication_gate_);
     const auto latest = latest_.load(std::memory_order_acquire);
-    if (!latest) return WorldCommitDecision::kNoPublishedWorld;
+    if (!latest) return navigation_world_model::WorldCommitDecision::kNoPublishedWorld;
     if (!sameIdentity(latest->identity(), validated_identity)) {
-      return WorldCommitDecision::kWorldAdvanced;
+      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
     }
     return std::invoke(std::forward<CommitFunction>(commit))
-        ? WorldCommitDecision::kCommitted
-        : WorldCommitDecision::kCommitRejected;
+        ? navigation_world_model::WorldCommitDecision::kCommitted
+        : navigation_world_model::WorldCommitDecision::kCancelled;
+  }
+
+  navigation_world_model::WorldCommitDecision commitIfCurrent(
+      const navigation_world_model::WorldSnapshotIdentity& validated_identity,
+      const std::function<bool()>& final_commit) override {
+    return authorize(validated_identity, final_commit);
   }
 
   [[nodiscard]] static bool sameIdentity(

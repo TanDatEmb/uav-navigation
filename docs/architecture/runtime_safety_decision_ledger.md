@@ -127,6 +127,47 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-3B exact candidate and latest-world commit authorization
+
+- SUPER now constructs the exact executable position/yaw polynomial bundle,
+  including inherited and new BACKUP role intervals, before taking any commit
+  lock. All five normal commit paths and the emergency-brake path use one
+  product-owned `WorldCommitAuthorizer`; runtime result inspection is no
+  longer treated as authority after an internal command swap.
+- Authorization validates only the unexecuted suffix against one latest
+  immutable snapshot, then uses the short snapshot publication gate to prove
+  that revision is still current while the swap occurs. The lock order is
+  publication gate, solve-commit mutex, command-bundle mutex. A generation
+  reset or a publication between validation and the gate rejects the candidate
+  without changing command/history state; there is no retry loop.
+- HG-010's existing adaptive profile remains authoritative in this refactor:
+  spatial step is half the inflated resolution with 0.02 m minimum and the
+  velocity-derived time step is clamped to 2-50 ms. OCCUPIED and OUT_OF_MAP
+  fail closed and every adjacent segment is ray-checked. These values remain
+  PROVISIONAL and were not tuned in WM-3B.
+- BACKUP is deliberately not redefined as persisted occupancy KNOWN_FREE in
+  this batch. With endpoint-only observation and raycasting disabled, current
+  SUPER backup provenance means visibility/obstacle-free certified while
+  occupancy UNKNOWN remains traversable. Requiring KNOWN_FREE here would be an
+  undocumented behavior change and a likely false-reject source. A stronger
+  product visibility certificate is a separate behavior batch and remains a
+  hardware-flight prerequisite.
+- Focused evidence passes 18 trajectory/builder/sweep tests, five snapshot-store
+  tests (including a real candidate rejected after WORLD_ADVANCED), and all
+  eight runtime test targets. Independent post-change review found no remaining
+  P0 source blocker for a sequential-only checkpoint.
+- The 1x dataset artifact
+  `.artifacts/runtime/dataset-20260824T191351-105860` remains FAIL: 2,581 of
+  2,756 accepted observations were published and 175 pending observations were
+  replaced. Accounting is valid, processing exceptions are zero, mapping
+  callback p99 is 17.436 ms and snapshot export p99 is 7.000 ms. The dataset
+  publishes no goals, so it exercises neither the new authorization path nor
+  A*/CIRI/MINCO; it is evidence that the known single-timer inbox scheduling
+  defect persists, not permission to queue, downsample or relax a gate.
+- WM-3C mapping worker scheduling and closed-loop SITL authorization evidence
+  remain explicitly out of scope for this checkpoint. This commit is not
+  authority for concurrent mapping publication.
+
 ### 2026-08-25 - WM-3A revisioned snapshot store and solve-local pin staging
 
 - Added a product-owned `WorldSnapshotStore` with acquire/release publication,

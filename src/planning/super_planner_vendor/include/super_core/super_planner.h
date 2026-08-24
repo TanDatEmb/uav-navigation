@@ -43,6 +43,7 @@
 #include "traj_opt/backup_traj_optimizer_s4.h"
 #include "path_search/astar.h"
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_world_model/world_commit_authorizer.hpp>
 #include "super_core/corridor_generator.h"
 #include "super_core/fov_checker.h"
 
@@ -64,6 +65,7 @@ namespace super_planner {
         LogOneReplan latest_replan;
         super_planner::Config cfg_;
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::WorldCommitAuthorizer* commit_authorizer_{nullptr};
         CorridorGenerator::Ptr cg_ptr_;
         path_search::Astar::Ptr astar_ptr_;
         ros_interface::RosInterface::Ptr ros_ptr_;
@@ -105,6 +107,8 @@ namespace super_planner {
         // 5 backup generation/MINCO. Read by the external watchdog.
         std::atomic<int> solve_stage_{0};
         std::atomic_bool solve_cancelled_{false};
+        std::atomic<int> latest_commit_decision_{
+            static_cast<int>(navigation_world_model::WorldCommitDecision::kNotAttempted)};
         std::uint64_t backup_refinement_success_count_{0};
         std::uint64_t backup_refinement_fallback_count_{0};
 
@@ -113,13 +117,16 @@ namespace super_planner {
         Vec3f latest_guide_min_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_max_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
 
+        bool authorizeAndCommit(CandidateCommandBundle&& candidate);
+
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
         explicit SuperPlanner(const std::string &cfg_path,
                               const ros_interface::RosInterface::Ptr &ros_ptr,
                               navigation_world_model::WorldModelViewPtr map_ptr,
-                              const std::optional<DynamicLimits> &mission_limits = std::nullopt);
+                              const std::optional<DynamicLimits> &mission_limits,
+                              navigation_world_model::WorldCommitAuthorizer& commit_authorizer);
 
         ~SuperPlanner() = default;
 
@@ -158,6 +165,10 @@ namespace super_planner {
             return cmd_traj_info_.generation();
         }
 
+        CommandCertificate getCommittedCertificate() const {
+            return cmd_traj_info_.certificate();
+        }
+
         Vec3f latestGuideStart() const { return latest_guide_start_; }
         Vec3f latestGuideEnd() const { return latest_guide_end_; }
         Vec3f latestGuideMin() const { return latest_guide_min_; }
@@ -168,6 +179,9 @@ namespace super_planner {
         }
         int latestReplanReturnCode() const noexcept {
             return latest_replan.getRetCode();
+        }
+        int latestCommitDecision() const noexcept {
+            return latest_commit_decision_.load();
         }
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
@@ -208,6 +222,7 @@ namespace super_planner {
             bool finished{false};
             bool valid{false};
             std::uint64_t generation{0};
+            navigation_world_model::WorldSnapshotIdentity certificate_world{};
         };
         CommandSample sampleCommand();
 
