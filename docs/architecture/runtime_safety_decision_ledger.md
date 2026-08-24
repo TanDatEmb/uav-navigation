@@ -127,6 +127,23 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - Stage immutable WorldModel ownership before concurrency
+
+- Accepted ADR-011 after the 2x dataset overload evidence. ROG-Map is mutable
+  and SUPER currently reaches 19 vendor methods across 49 call sites; moving
+  mapping to another callback group now would introduce races rather than fix
+  ownership.
+- The migration order is product query boundary, explicit mapping revision,
+  genuinely immutable snapshot, then independent scheduling. A map lock held
+  for the full solve, an unbounded queue, or two divergent mutable maps are
+  explicitly rejected.
+- Independent orchestration review additionally requires single-latest inbox
+  accounting, one pinned revision per solve, a short latest-world
+  revalidation/commit gate, reset-driven world generations, bounded snapshot
+  lifetime and deterministic worker shutdown. These are acceptance contracts,
+  not optional performance enhancements.
+- No runtime behavior or hard-gate value changes in this decision batch.
+
 ### 2026-08-24 - Establish mandatory gate and bypass governance
 
 - Added explicit per-generation SUPER stage/deadline/result telemetry and report
