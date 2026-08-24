@@ -1,0 +1,159 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include <data_structure/base/piece.h>
+#include <utils/header/eigen_alias.hpp>
+
+namespace super_planner {
+
+struct BackupBrakingSeed {
+  double switch_time_s{0.0};
+  double duration_s{0.0};
+  super_utils::Vec3f endpoint{super_utils::Vec3f::Zero()};
+  double maximum_velocity_mps{std::numeric_limits<double>::infinity()};
+  double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
+  double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
+  bool feasible{false};
+};
+
+inline double jerkLimitedStopTime(double speed_mps, double max_acc_mps2,
+                                  double max_jerk_mps3) {
+  if (!std::isfinite(speed_mps) || !std::isfinite(max_acc_mps2) ||
+      !std::isfinite(max_jerk_mps3) || speed_mps < 0.0 ||
+      max_acc_mps2 <= 0.0 || max_jerk_mps3 <= 0.0) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double velocity_at_full_accel =
+      max_acc_mps2 * max_acc_mps2 / max_jerk_mps3;
+  if (speed_mps <= velocity_at_full_accel) {
+    return 2.0 * std::sqrt(speed_mps / max_jerk_mps3);
+  }
+  return speed_mps / max_acc_mps2 + max_acc_mps2 / max_jerk_mps3;
+}
+
+inline double jerkLimitedStopDistance(double speed_mps, double max_acc_mps2,
+                                      double max_jerk_mps3) {
+  const double stop_time_s =
+      jerkLimitedStopTime(speed_mps, max_acc_mps2, max_jerk_mps3);
+  return std::isfinite(stop_time_s)
+             ? 0.5 * speed_mps * stop_time_s
+             : std::numeric_limits<double>::infinity();
+}
+
+inline geometry_utils::Piece minimumSnapStopPiece(
+    const super_utils::StatePVAJ &initial_state, double duration_s) {
+  Eigen::Matrix<double, 3, 8> coefficients;
+  coefficients.setZero();
+  const auto position = initial_state.col(0);
+  const auto velocity = initial_state.col(1);
+  const auto acceleration = initial_state.col(2);
+  const auto jerk = initial_state.col(3);
+  const double t2 = duration_s * duration_s;
+  const double t3 = t2 * duration_s;
+  const double t4 = t3 * duration_s;
+  const double t5 = t4 * duration_s;
+
+  // Piece stores descending powers [t^7 ... t 1]. These coefficients are the
+  // free-end-position minimum-snap polynomial with terminal V/A/J equal zero.
+  coefficients.col(0).setZero();
+  coefficients.col(1) =
+      (-t2 * jerk / 12.0 - duration_s * acceleration / 2.0 - velocity) / t5;
+  coefficients.col(2) =
+      (3.0 * t2 * jerk + 16.0 * duration_s * acceleration + 30.0 * velocity) /
+      (10.0 * t4);
+  coefficients.col(3) =
+      (-3.0 * t2 * jerk - 12.0 * duration_s * acceleration - 20.0 * velocity) /
+      (8.0 * t3);
+  coefficients.col(4) = jerk / 6.0;
+  coefficients.col(5) = acceleration / 2.0;
+  coefficients.col(6) = velocity;
+  coefficients.col(7) = position;
+  return geometry_utils::Piece(duration_s, coefficients);
+}
+
+inline Eigen::Matrix<double, 3, 8> minimumSnapStopBezierControlPoints(
+    const super_utils::StatePVAJ &initial_state, double duration_s) {
+  const auto piece = minimumSnapStopPiece(initial_state, duration_s);
+  const auto &coefficients = piece.getCoeffMat();
+  Eigen::Matrix<double, 3, 8> power;
+  double duration_power = 1.0;
+  for (int degree = 0; degree <= 7; ++degree) {
+    power.col(degree) = coefficients.col(7 - degree) * duration_power;
+    duration_power *= duration_s;
+  }
+  constexpr int binomial[8][8] = {
+      {1, 0, 0, 0, 0, 0, 0, 0},
+      {1, 1, 0, 0, 0, 0, 0, 0},
+      {1, 2, 1, 0, 0, 0, 0, 0},
+      {1, 3, 3, 1, 0, 0, 0, 0},
+      {1, 4, 6, 4, 1, 0, 0, 0},
+      {1, 5, 10, 10, 5, 1, 0, 0},
+      {1, 6, 15, 20, 15, 6, 1, 0},
+      {1, 7, 21, 35, 35, 21, 7, 1},
+  };
+  Eigen::Matrix<double, 3, 8> control_points;
+  control_points.setZero();
+  for (int i = 0; i <= 7; ++i) {
+    for (int k = 0; k <= i; ++k) {
+      control_points.col(i) += power.col(k) *
+          static_cast<double>(binomial[i][k]) /
+          static_cast<double>(binomial[7][k]);
+    }
+  }
+  return control_points;
+}
+
+inline BackupBrakingSeed makeBackupBrakingSeed(
+    double switch_time_s, const super_utils::StatePVAJ &switch_state,
+    double max_velocity_mps, double max_acc_mps2, double max_jerk_mps3,
+    double sample_traj_dt_s, double feasibility_margin) {
+  BackupBrakingSeed result;
+  result.switch_time_s = switch_time_s;
+  if (!std::isfinite(switch_time_s) || !switch_state.allFinite() ||
+      !std::isfinite(max_velocity_mps) || max_velocity_mps <= 0.0 ||
+      !std::isfinite(max_acc_mps2) || max_acc_mps2 <= 0.0 ||
+      !std::isfinite(max_jerk_mps3) || max_jerk_mps3 <= 0.0 ||
+      !std::isfinite(sample_traj_dt_s) || sample_traj_dt_s <= 0.0 ||
+      !std::isfinite(feasibility_margin) || feasibility_margin < 0.0) {
+    return result;
+  }
+
+  const double speed_mps = switch_state.col(1).norm();
+  const double acceleration_mps2 = switch_state.col(2).norm();
+  // Conservatively account for removing an arbitrary initial acceleration
+  // before the symmetric stopping phase. The polynomial below retains the
+  // exact PVAJ boundary and Piece's analytic extrema remain authoritative.
+  const double acceleration_release_s = acceleration_mps2 / max_jerk_mps3;
+  const double effective_speed_mps =
+      speed_mps + 0.5 * acceleration_mps2 * acceleration_release_s;
+  double duration_s = acceleration_release_s +
+      jerkLimitedStopTime(effective_speed_mps, max_acc_mps2, max_jerk_mps3);
+  duration_s = std::max(4.0 * sample_traj_dt_s, 1.15 * duration_s);
+
+  const double gate = 1.0 + feasibility_margin;
+  for (int attempt = 0; attempt < 12; ++attempt) {
+    const auto piece = minimumSnapStopPiece(switch_state, duration_s);
+    result.duration_s = duration_s;
+    result.endpoint = piece.getPos(duration_s);
+    result.maximum_velocity_mps = piece.getMaxVelRate();
+    result.maximum_acceleration_mps2 = piece.getMaxAccRate();
+    result.maximum_jerk_mps3 = piece.getMaxJerRate();
+    result.feasible = result.endpoint.allFinite() &&
+        std::isfinite(result.maximum_velocity_mps) &&
+        std::isfinite(result.maximum_acceleration_mps2) &&
+        std::isfinite(result.maximum_jerk_mps3) &&
+        result.maximum_velocity_mps <= gate * max_velocity_mps &&
+        result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
+        result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
+    if (result.feasible) {
+      return result;
+    }
+    duration_s *= 1.25;
+  }
+  return result;
+}
+
+}  // namespace super_planner

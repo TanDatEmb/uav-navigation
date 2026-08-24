@@ -20,6 +20,7 @@ scenario:
   trajectory_publish_period_s: 0.50
   command_retry_period_s: 1.0
   arm_retry_period_s: 5.0
+  hold_handover_timeout_s: 5.0
   # GUI runs can override this through MANUAL_TAKEOFF=1. In that mode the
   # harness observes the operator's Takeoff/arm and sends neither command.
   manual_takeoff: false

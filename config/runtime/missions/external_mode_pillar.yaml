@@ -35,7 +35,7 @@ mission:
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
     max_jerk_mps3: 6.0
-    unknown_policy: blocked
+    unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

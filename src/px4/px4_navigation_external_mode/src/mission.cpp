@@ -153,34 +153,40 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
         mission.planning.unknown_policy = planning["unknown_policy"].as<std::string>();
       }
     }
-    if (mission.planning.unknown_policy != "blocked") {
-      throw std::invalid_argument("mission planning unknown_policy must be 'blocked'");
+    if (mission.planning.unknown_policy != "blocked" &&
+        mission.planning.unknown_policy != "allow_unknown") {
+      throw std::invalid_argument(
+          "mission planning unknown_policy must be 'blocked' or 'allow_unknown'");
     }
 
-    if (node["control"]) {
-      requireMap(node["control"], "control");
-      rejectUnknownKeys(node["control"], {"acceptance_speed_mps",
-                                            "acceptance_confirmation_s",
-                                            "pass_through_lookahead_m",
-                                            "safety_stop_replan_grace_s"}, "control");
-      if (node["control"]["acceptance_speed_mps"]) {
+    // YAML permits an optional section to be written as `control:` with no
+    // values.  Treat that spelling like an omitted section so legacy SUPER
+    // mission files keep the struct defaults instead of aborting startup.
+    const YAML::Node control = node["control"];
+    if (control && !control.IsNull()) {
+      requireMap(control, "control");
+      rejectUnknownKeys(control, {"acceptance_speed_mps",
+                                  "acceptance_confirmation_s",
+                                  "pass_through_lookahead_m",
+                                  "safety_stop_replan_grace_s"}, "control");
+      if (control["acceptance_speed_mps"]) {
         mission.control.acceptance_speed_mps = finiteScalar(
-            node["control"]["acceptance_speed_mps"], "control.acceptance_speed_mps", 0.0,
+            control["acceptance_speed_mps"], "control.acceptance_speed_mps", 0.0,
             true);
       }
-      if (node["control"]["acceptance_confirmation_s"]) {
+      if (control["acceptance_confirmation_s"]) {
         mission.control.acceptance_confirmation_s = finiteScalar(
-            node["control"]["acceptance_confirmation_s"],
+            control["acceptance_confirmation_s"],
             "control.acceptance_confirmation_s", 0.0, true);
       }
-      if (node["control"]["pass_through_lookahead_m"]) {
+      if (control["pass_through_lookahead_m"]) {
         mission.control.pass_through_lookahead_m = finiteScalar(
-            node["control"]["pass_through_lookahead_m"],
+            control["pass_through_lookahead_m"],
             "control.pass_through_lookahead_m", 0.0, true);
       }
-      if (node["control"]["safety_stop_replan_grace_s"]) {
+      if (control["safety_stop_replan_grace_s"]) {
         mission.control.safety_stop_replan_grace_s = finiteScalar(
-            node["control"]["safety_stop_replan_grace_s"],
+            control["safety_stop_replan_grace_s"],
             "control.safety_stop_replan_grace_s", 0.0, true);
       }
     }

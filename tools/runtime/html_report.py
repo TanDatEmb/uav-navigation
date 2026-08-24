@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Analyze a recorded SITL session and publish its Flight Review HTML view.
+"""Internal metric extraction for the single runtime report tool.
 
 The metric extraction stays here for compatibility with the runtime report
-contract and tests.  The public ``generate`` entrypoint delegates rendering
-to ``flight_review_report.py`` so evaluation and debug trace presentation are
-kept separate.
+contract and tests.  It is not a standalone command; ``report.py`` owns the
+public report workflow.
 """
 
 from __future__ import annotations
 
-import argparse
 import html
 import json
 import math
@@ -251,10 +249,13 @@ def _samples(session: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
                             "position": position,
                             "velocity": _point(payload.get("linear_velocity")),
                         })
-                elif item.get("stream") == "planning_diagnostics":
+                elif item.get("stream") in {"planning_diagnostics", "mapping_diagnostics", "diagnostics"}:
                     payload = item.get("payload", {})
                     for status in payload.get("statuses", []):
-                        if isinstance(status, dict) and status.get("name") == "navigation_planning/planner":
+                        if isinstance(status, dict) and status.get("name") in {
+                            "navigation_planning/planner",
+                            "super_navigation/super_planner",
+                        }:
                             values = status.get("values", {})
                             if isinstance(values, dict):
                                 planning.append({
@@ -368,6 +369,11 @@ def _planning_continuity(planning: list[dict[str, Any]]) -> dict[str, Any]:
         if tangent is not None:
             previous_tangent = tangent
 
+    measured_safety_kinds = [
+        str(item.get("safety_plan_kind"))
+        for item in rolling_planning
+        if item.get("safety_plan_kind") not in (None, "", "unknown")
+    ]
     return {
         "sample_count": len(planning),
         "rolling_sample_count": len(rolling_planning),
@@ -387,9 +393,9 @@ def _planning_continuity(planning: list[dict[str, Any]]) -> dict[str, Any]:
         "plan_role_counts": roles,
         "safety_plan_kind_counts": safety_kinds,
         "safety_stop_ratio": (
-            sum(count for key, count in safety_kinds.items()
-                if key.lower() in {"braking_stop", "2"}) / len(planning)
-            if rolling_planning else 0.0
+            sum(key.lower() in {"braking_stop", "2"} for key in measured_safety_kinds)
+            / len(measured_safety_kinds)
+            if measured_safety_kinds else None
         ),
     }
 
@@ -663,27 +669,3 @@ def _analyze(session: Path) -> dict[str, Any]:
         "plan_series": plan_series,
         "descriptor": descriptor,
     }
-
-
-def generate(session: Path) -> Path:
-    """Write the summary-first Flight Review page as REPORT.html.
-
-    report.build calls this function after every runtime session is finalized,
-    including interrupted and fail-closed flights.
-    """
-    from flight_review_report import render
-
-    return render(session.resolve(), session.resolve() / "REPORT.html")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--session", type=Path, required=True)
-    args = parser.parse_args()
-    output = generate(args.session.resolve())
-    print(output)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

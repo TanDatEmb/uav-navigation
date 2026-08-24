@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/exp_traj_optimizer_s4.h>
+#include <traj_opt/trajectory_dynamics.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <ros_interface/ros_interface.hpp>
 
@@ -746,18 +747,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     const bool position_violation =
             cfg_.penna_pos > 0 && opt_vars.penalty_log(POS_IDX) > 0.2;
-    const bool acceleration_violation =
-            cfg_.penna_acc > 0 &&
-            opt_vars.penalty_log(ACC_IDX) > cfg_.max_acc * cfg_.penna_margin;
-    const bool body_rate_violation =
-            cfg_.penna_omg > 0 &&
-            opt_vars.penalty_log(OMG_IDX) > cfg_.max_omg * cfg_.penna_margin;
-    const bool thrust_violation =
-            cfg_.penna_thr > 0 &&
-            opt_vars.penalty_log(THR_IDX) > cfg_.max_acc * cfg_.penna_margin;
-    if (position_violation ||
-        // (cfg_.penna_vel > 0 && opt_vars.penalty_log(2) > cfg_.max_vel * cfg_.penna_margin) ||
-        acceleration_violation || body_rate_violation || thrust_violation) {
+    if (position_violation) {
         if (cfg_.print_optimizer_log) {
             cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
             cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
@@ -771,16 +761,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
         }
         ros_ptr_->warn(
-                " -- [ExpOpt] Constraint rejection: pos={} (limit=0.2, fail={}), "
-                "acc_sq={} (limit={}, fail={}), omg_sq={} (limit={}, fail={}), "
-                "thrust_sq={} (limit={}, fail={}), lbfgs_ret={}",
-                opt_vars.penalty_log(POS_IDX), position_violation,
-                opt_vars.penalty_log(ACC_IDX), cfg_.max_acc * cfg_.penna_margin,
-                acceleration_violation,
-                opt_vars.penalty_log(OMG_IDX), cfg_.max_omg * cfg_.penna_margin,
-                body_rate_violation,
-                opt_vars.penalty_log(THR_IDX), cfg_.max_acc * cfg_.penna_margin,
-                thrust_violation, ret);
+                " -- [ExpOpt] weighted position cost rejected trajectory: cost={} limit=0.2 lbfgs_ret={}",
+                opt_vars.penalty_log(POS_IDX), ret);
         ret = -1;
     }
 
@@ -801,6 +783,75 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //        opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.temporalDim);
         opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
         opt_vars.minco.getTrajectory(traj);
+        const double gate_margin = 1.0 + cfg_.penna_margin;
+        double maximum_velocity = traj.getMaxVelRate();
+        double maximum_acceleration = traj.getMaxAccRate();
+        double maximum_jerk = traj.getMaxJerRate();
+        // Project an otherwise valid geometric solution into the vehicle's
+        // dynamic envelope by reallocating segment time and rebuilding MINCO.
+        // This preserves the head/tail PVAJ conditions and all waypoints; the
+        // planner's corridor and collision verifiers still run afterwards.
+        for (int attempt = 0; attempt < 4 &&
+             std::isfinite(maximum_velocity) &&
+             std::isfinite(maximum_acceleration) &&
+             std::isfinite(maximum_jerk); ++attempt) {
+            const double velocity_ratio = maximum_velocity / (cfg_.max_vel * gate_margin);
+            const double acceleration_ratio = std::sqrt(
+                    maximum_acceleration / (cfg_.max_acc * gate_margin));
+            const double jerk_ratio = std::cbrt(
+                    maximum_jerk / (cfg_.max_jerk * gate_margin));
+            const double required_scale = std::max({
+                    1.0, velocity_ratio, acceleration_ratio, jerk_ratio});
+            if (required_scale <= 1.0) {
+                break;
+            }
+            const double bounded_scale = std::min(4.0, required_scale * 1.05);
+            opt_vars.times *= bounded_scale;
+            opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
+            traj.clear();
+            opt_vars.minco.getTrajectory(traj);
+            maximum_velocity = traj.getMaxVelRate();
+            maximum_acceleration = traj.getMaxAccRate();
+            maximum_jerk = traj.getMaxJerRate();
+            ros_ptr_->info(
+                    " -- [ExpOpt] time feasibility projection attempt={} scale={} "
+                    "vel={} acc={} jerk={}",
+                    attempt + 1, bounded_scale,
+                    maximum_velocity, maximum_acceleration, maximum_jerk);
+        }
+        if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
+            !std::isfinite(maximum_jerk) ||
+            maximum_velocity > cfg_.max_vel * gate_margin ||
+            maximum_acceleration > cfg_.max_acc * gate_margin ||
+            maximum_jerk > cfg_.max_jerk * gate_margin) {
+            ros_ptr_->warn(
+                    " -- [ExpOpt] physical hard gate rejected trajectory: "
+                    "vel={}/{} acc={}/{} jerk={}/{}",
+                    maximum_velocity, cfg_.max_vel * gate_margin,
+                    maximum_acceleration, cfg_.max_acc * gate_margin,
+                    maximum_jerk, cfg_.max_jerk * gate_margin);
+            traj.clear();
+            ret = -1;
+            minCostFunctional = INFINITY;
+        }
+        if (ret >= 0) {
+            TrajectoryDynamicReport dynamic_report;
+            if (!trajectorySatisfiesFlatnessEnvelope(traj, cfg_, &dynamic_report)) {
+                ros_ptr_->warn(
+                        " -- [ExpOpt] flatness hard gate rejected trajectory: "
+                        "finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
+                        dynamic_report.finite,
+                        dynamic_report.maximum_body_rate_rad_s,
+                        cfg_.max_omg * (1.0 + cfg_.penna_margin),
+                        dynamic_report.minimum_thrust_n,
+                        dynamic_report.maximum_thrust_n,
+                        cfg_.min_acc_thr * cfg_.mass / (1.0 + cfg_.penna_margin),
+                        cfg_.max_acc_thr * cfg_.mass * (1.0 + cfg_.penna_margin));
+                traj.clear();
+                ret = -1;
+                minCostFunctional = INFINITY;
+            }
+        }
     } else {
         traj.clear();
         minCostFunctional = INFINITY;

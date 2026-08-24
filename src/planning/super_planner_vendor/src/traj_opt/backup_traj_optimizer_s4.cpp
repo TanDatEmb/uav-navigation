@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/backup_traj_optimizer_s4.h>
+#include <traj_opt/trajectory_dynamics.hpp>
 #include <utils/header/color_msg_utils.hpp>
 
 using namespace traj_opt;
@@ -528,11 +529,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
         cout << "\tTs: " << opt_vars.ts << endl;
     }
-    if ((cfg_.penna_pos > 0 && opt_vars.penalty_log(1) > 0.2) ||
-        (cfg_.penna_vel > 0 && opt_vars.penalty_log(2) > cfg_.max_vel * cfg_.penna_margin) ||
-        (cfg_.penna_acc > 0 && opt_vars.penalty_log(3) > cfg_.max_acc * cfg_.penna_margin) ||
-        (cfg_.penna_omg > 0 && opt_vars.penalty_log(6) > cfg_.max_omg * cfg_.penna_margin) ||
-        (cfg_.penna_thr > 0 && opt_vars.penalty_log(7) > cfg_.max_acc * cfg_.penna_margin)) {
+    if (cfg_.penna_pos > 0 && opt_vars.penalty_log(1) > 0.2) {
         ret = -1;
         if (cfg_.print_optimizer_log) {
             cout << " -- [BaclOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
@@ -615,16 +612,37 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const ros_interface::R
 }
 
 bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
-    if (cfg_.penna_vel > 0 && out_traj.getMaxVelRate() > 1.2 * cfg_.max_vel) {
+    const double maximum_jerk = out_traj.getMaxJerRate();
+    const double jerk_gate = cfg_.max_jerk * (1.0 + cfg_.penna_margin);
+    if (!std::isfinite(maximum_jerk) || maximum_jerk > jerk_gate) {
+        std::cout << YELLOW << " -- [TrajOpt] Minco backup hard jerk gate failed: "
+                  << maximum_jerk << " > " << jerk_gate << RESET << std::endl;
+        return false;
+    }
+    const double gate_margin = 1.0 + cfg_.penna_margin;
+    if (out_traj.getMaxVelRate() > gate_margin * cfg_.max_vel) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max vel:\t" << out_traj.getMaxVelRate() << " m/s" << RESET
                   << std::endl;
         return false;
     }
-    if (cfg_.penna_acc > 0 && out_traj.getMaxAccRate() > 1.2 * cfg_.max_acc) {
+    if (out_traj.getMaxAccRate() > gate_margin * cfg_.max_acc) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max Acc:\t" << out_traj.getMaxAccRate() << " m/s" << RESET
                   << std::endl;
+        return false;
+    }
+    TrajectoryDynamicReport dynamic_report;
+    if (!trajectorySatisfiesFlatnessEnvelope(out_traj, cfg_, &dynamic_report)) {
+        std::cout << YELLOW << " -- [TrajOpt] Minco backup flatness hard gate failed: "
+                  << "finite=" << dynamic_report.finite
+                  << " body_rate=" << dynamic_report.maximum_body_rate_rad_s
+                  << "/" << cfg_.max_omg * gate_margin
+                  << " thrust=[" << dynamic_report.minimum_thrust_n << ","
+                  << dynamic_report.maximum_thrust_n << "]/["
+                  << cfg_.min_acc_thr * cfg_.mass / gate_margin << ","
+                  << cfg_.max_acc_thr * cfg_.mass * gate_margin << "]"
+                  << RESET << std::endl;
         return false;
     }
     return true;
@@ -747,6 +765,9 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     const double heu_dur = init_t_vec.sum();
     opt_vars.times.setConstant(heu_dur / opt_vars.piece_num);
     opt_vars.ts = heu_ts;
+    if (opt_vars.uniform_time_en) {
+        opt_vars.total_time(0) = heu_dur;
+    }
 
     opt_vars.given_init_ts_and_ps = true;
     opt_vars.given_init_t_vec = init_t_vec;

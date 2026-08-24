@@ -76,6 +76,12 @@ profiles:
     collision_truth: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03, texture_tree_01, texture_tree_02, texture_tree_03, texture_tree_04, texture_tree_05, texture_tree_06, texture_panel_01, texture_panel_02, texture_panel_03, texture_panel_04, texture_panel_05, texture_panel_06, feature_corner_a, feature_corner_b, feature_beam, texture_overhead_01, texture_overhead_02, texture_overhead_03]
     route_obstacles: [long_three_pillar_01, long_three_pillar_02, long_three_pillar_03]
     route_segment_waypoints: [0, 1]
+    benchmark:
+      objective: safe_three_pillar_route
+      # The pillars alternate across the nominal y=0 leg.  This bounds the
+      # necessary avoidance envelope without treating a safe detour as LIO
+      # drift; collision truth and minimum clearance remain separate gates.
+      max_cross_track_m: 4.5
   long_three_pillars_speed:
     family: long_route
     world: long_three_pillars_speed

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a compact, review-oriented SITL report.
+"""Internal HTML renderer for the single runtime report tool.
 
 The existing runtime report is intentionally useful for debugging, but it is
 too dense for a human assessment.  This generator keeps the raw artifacts
@@ -10,7 +10,6 @@ number of interpretable plots, and raw evidence behind collapsed details.
 
 from __future__ import annotations
 
-import argparse
 import html
 import json
 import math
@@ -105,6 +104,8 @@ def line_chart(
     x_label: str = "simulation time (s)",
     threshold: float | None = None,
     threshold_label: str | None = None,
+    y_min: float | None = None,
+    y_max: float | None = None,
     height: int = 300,
 ) -> str:
     plotted = [
@@ -122,20 +123,36 @@ def line_chart(
     max_t = max(point[0] for point in all_points)
     if max_t <= min_t:
         max_t = min_t + 1.0
-    max_y = max(point[1] for point in all_points)
+    data_min = min(point[1] for point in all_points)
+    data_max = max(point[1] for point in all_points)
+    allow_negative = (
+        data_min < 0.0
+        or (y_min is not None and y_min < 0.0)
+        or (threshold is not None and threshold < 0.0)
+    )
+    axis_min = min(0.0, data_min) if y_min is None else y_min
+    axis_max = max(0.0, data_max) if y_max is None else y_max
     if threshold is not None:
-        max_y = max(max_y, threshold)
-    max_y = max(1.0, max_y * 1.08)
+        axis_min = min(axis_min, threshold)
+        axis_max = max(axis_max, threshold)
+    if axis_max <= axis_min:
+        axis_max = axis_min + 1.0
+    padding = max((axis_max - axis_min) * 0.08, 1e-6)
+    axis_min -= padding
+    axis_max += padding
+    if not allow_negative:
+        axis_min = 0.0
     left, top, right, bottom = 70, 46, 24, 56
     width = 980
     plot_w = width - left - right
     plot_h = height - top - bottom
-    y_ticks = nice_ticks(0.0, max_y, 5)
-    y_max = max(y_ticks[-1], max_y)
+    y_ticks = nice_ticks(axis_min, axis_max, 5)
+    axis_min = min(axis_min, y_ticks[0])
+    axis_max = max(axis_max, y_ticks[-1])
 
     def point_xy(point: tuple[float, float]) -> tuple[float, float]:
         x = left + (point[0] - min_t) / (max_t - min_t) * plot_w
-        y = top + (1.0 - point[1] / y_max) * plot_h
+        y = top + (1.0 - (point[1] - axis_min) / (axis_max - axis_min)) * plot_h
         return x, y
 
     parts = [
@@ -144,7 +161,7 @@ def line_chart(
         f'<title>{esc(title)}</title><rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>',
     ]
     for tick in y_ticks:
-        y = top + (1.0 - tick / y_max) * plot_h
+        y = top + (1.0 - (tick - axis_min) / (axis_max - axis_min)) * plot_h
         parts.append(
             f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="{GRID}"/>'
             f'<text x="{left-10}" y="{y+4:.1f}" text-anchor="end" class="axis-label">{esc(tick_label(tick))}</text>'
@@ -163,7 +180,7 @@ def line_chart(
         f'<text x="{left + plot_w/2:.1f}" y="{height-10}" text-anchor="middle" class="axis-title">{esc(x_label)}</text>',
     ])
     if threshold is not None:
-        y = top + (1.0 - threshold / y_max) * plot_h
+        y = top + (1.0 - (threshold - axis_min) / (axis_max - axis_min)) * plot_h
         label = threshold_label or f"limit {fmt(threshold)}"
         parts.append(
             f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="{RED}" stroke-width="1.5" stroke-dasharray="7 5"/>'
@@ -334,11 +351,122 @@ def comparison_bars(items: list[tuple[str, float | None, str, str]], title: str)
 
 
 def status_class(status: str) -> str:
-    return {"PASS": "pass", "FAIL": "fail", "OBSERVE": "observe", "INFO": "info"}.get(status, "info")
+    return {"PASS": "pass", "FAIL": "fail", "INCOMPLETE": "observe", "N/A": "na", "OBSERVE": "observe", "INFO": "info"}.get(status, "info")
 
 
 def status_chip(status: str, label: str | None = None) -> str:
     return f'<span class="status {status_class(status)}">{esc(label or status)}</span>'
+
+
+def _bool_value(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1"}:
+            return True
+        if lowered in {"false", "no", "0"}:
+            return False
+    return None
+
+
+def _gate_status(condition: bool | None) -> str:
+    if condition is None:
+        return "N/A"
+    return "PASS" if condition else "FAIL"
+
+
+def _evaluation(
+    report: dict[str, Any],
+    safety: dict[str, Any],
+    acceptance: dict[str, Any],
+    lio: dict[str, Any],
+    px4: dict[str, Any],
+    cross_p95: float | None,
+    cross_limit: float | None,
+    collision_count: float | None,
+) -> dict[str, Any]:
+    """Compute display gates from recorded evidence, never from presentation defaults."""
+    outcome = str(safety.get("outcome") or "").upper()
+    expected = str(acceptance.get("expected_outcome") or "complete").lower()
+    if expected == "fail_closed":
+        mission_condition = None if not outcome else outcome in {"PAUSED_SAFETY_STOP", "FAILED_COMPONENT"}
+    else:
+        complete = _bool_value(acceptance.get("mission_complete_observed"))
+        mission_condition = None if complete is None else complete and outcome == "COMPLETE"
+
+    waypoint_condition = _bool_value(acceptance.get("waypoint_acceptance_complete"))
+    waypoint_reasons = acceptance.get("reasons", [])
+    if (
+        waypoint_condition is False
+        and not acceptance.get("waypoint_acceptance_indices")
+        and isinstance(waypoint_reasons, list)
+        and any("unavailable" in str(reason).lower() for reason in waypoint_reasons)
+    ):
+        waypoint_condition = None
+    cross_condition = (
+        None if cross_p95 is None or cross_limit is None else cross_p95 <= cross_limit
+    )
+    collision_condition = None if collision_count is None else collision_count == 0.0
+
+    lio_state = lio.get("state")
+    lio_valid = _bool_value(lio.get("navigation_valid"))
+    lio_condition = None if lio_state is None or lio_valid is None else str(lio_state) == "TRACKING" and lio_valid
+
+    px4_keys = ("estimator_initialized", "local_position_valid", "local_velocity_valid")
+    px4_values = [_bool_value(px4.get(key)) for key in px4_keys]
+    px4_condition = None if any(value is None for value in px4_values) else all(px4_values)
+
+    gates = {
+        "mission": _gate_status(mission_condition),
+        "waypoint": _gate_status(waypoint_condition),
+        "cross_track": _gate_status(cross_condition),
+        "collision": _gate_status(collision_condition),
+        "lio": _gate_status(lio_condition),
+        "px4": _gate_status(px4_condition),
+    }
+    required = list(gates.values())
+    overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
+    telemetry_verdict = str(report.get("verdict") or "N/A")
+    return {"overall": overall, "telemetry_verdict": telemetry_verdict, "gates": gates}
+
+
+def _timing_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only measured processing-time rows; absent telemetry stays absent."""
+    rows: list[dict[str, Any]] = []
+
+    def add_distribution(component: str, metric: str, value: Any, unit: str = "us") -> None:
+        if not isinstance(value, dict):
+            return
+        measured = any(
+            value.get(key) is not None
+            for key in ("mean", "p50", "p95", "p99", "max", "maximum", "maximum_maintenance_us")
+        )
+        if not measured:
+            return
+        rows.append({
+            "component": component,
+            "metric": metric,
+            "unit": unit,
+            "mean": value.get("mean"),
+            "p50": value.get("p50"),
+            "p95": value.get("p95"),
+            "p99": value.get("p99"),
+            "max": value.get("max", value.get("maximum", value.get("maximum_maintenance_us"))),
+            "count": value.get("sample_count", value.get("count")),
+        })
+
+    lio = report.get("lio", {}) if isinstance(report.get("lio"), dict) else {}
+    add_distribution("LIO", "map maintenance", lio.get("map_maintenance"))
+    mapping = report.get("navigation_mapping", {}) if isinstance(report.get("navigation_mapping"), dict) else {}
+    for metric, value in (mapping.get("timing_distributions") or {}).items():
+        add_distribution("ROG-Map", metric.replace("_", " "), value)
+    planning = report.get("planning", {}) if isinstance(report.get("planning"), dict) else {}
+    for metric in ("planning_path_search_us", "planning_corridor_us", "planning_trajectory_optimization_us", "planning_total_us"):
+        add_distribution("Planner", metric.replace("_us", "").replace("_", " "), planning.get(metric))
+    external = report.get("external_mode", {}) if isinstance(report.get("external_mode"), dict) else {}
+    add_distribution("External Mode", "fallback latency", external.get("fallback_latency_ms"), "ms")
+    return rows
 
 
 def _replay_point(value: Any) -> list[float] | None:
@@ -646,12 +774,23 @@ def replay_section(data: dict[str, Any]) -> str:
     payload = _replay_payload(data)
     if not payload["ground_truth"]:
         return ""
+    if payload["plans"]:
+        replay_description = (
+            "Scrub or play the recorded timeline. Blue is observed ground truth; "
+            "the dashed line is the latest generated trajectory available at that time. "
+            "Click a colored marker to jump to a path publication."
+        )
+    else:
+        replay_description = (
+            "Only observed ground truth is available in this recording; trajectory "
+            "publication timestamps were not captured, so no generated path is inferred."
+        )
     encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     script = _REPLAY_SCRIPT.replace("__REPLAY_DATA__", encoded)
     return f"""
   <section id="flight-replay" class="replay-section">
     <h2>Flight replay · movement and generated paths</h2>
-    <p class="small">Scrub or play the recorded timeline. Blue is observed ground truth; the dashed line is the latest generated trajectory available at that time. Click a colored marker to jump to a path publication.</p>
+    <p class="small">{replay_description}</p>
     <div class="replay-toolbar">
       <button id="replay-play" type="button">Play</button><button id="replay-reset" type="button">Reset</button>
       <label class="replay-time-control" for="replay-time">simulation time <output id="replay-time-value">—</output><input id="replay-time" type="range" aria-label="Replay simulation time"></label>
@@ -690,18 +829,23 @@ def render(session: Path, output: Path) -> Path:
     lio = report.get("lio", {}) if isinstance(report, dict) else {}
     px4 = report.get("px4", {}) if isinstance(report, dict) else {}
 
-    outcome = str(safety.get("outcome") or report.get("verdict") or "UNKNOWN")
-    accepted_indices = acceptance.get("waypoint_acceptance_indices") or []
+    # A report verdict is the aggregate telemetry verdict, not the mission's
+    # observed outcome.  Keep the two separate so a missing scenario outcome
+    # cannot be displayed as a real mission state.
+    outcome = str(safety.get("outcome") or "N/A")
+    accepted_indices = acceptance.get("waypoint_acceptance_indices")
+    if not isinstance(accepted_indices, list):
+        accepted_indices = []
     waypoint_count = int(mission.get("waypoint_count") or 0)
     accepted_count = len(accepted_indices)
     cross_track = tracking.get("cross_track_error_m", {})
     cross_p95 = finite(cross_track.get("p95"))
     cross_limit = finite(acceptance.get("max_cross_track_p95_m"))
-    collision_count = int(finite(safety.get("collision_count")) or 0)
+    collision_count = finite(safety.get("collision_count"))
     min_clearance = finite(safety.get("minimum_collision_clearance_m"))
     known_free = planning.get("known_free_horizon_m", {})
     continuity = planning.get("continuity", {})
-    safety_stop_ratio = finite(continuity.get("safety_stop_ratio")) or 0.0
+    safety_stop_ratio = finite(continuity.get("safety_stop_ratio"))
     trace = planning.get("rolling_bundle_trace", {})
     trace_records = trace.get("records", []) if isinstance(trace, dict) else []
     zero_trace_fields: list[str] = []
@@ -710,11 +854,15 @@ def render(session: Path, output: Path) -> Path:
         if values and all(value == 0.0 for value in values):
             zero_trace_fields.append(field)
 
+    evaluation = _evaluation(
+        report, safety, acceptance, lio, px4, cross_p95, cross_limit, collision_count
+    )
+    gates = evaluation["gates"]
     findings = [
-        ("FAIL", "The run ended INTERRUPTED before External Mode exit or mission completion was observed."),
-        ("FAIL", f"Waypoint acceptance stopped at {accepted_count}/{waypoint_count}; published goals are diagnostics, not acceptance evidence."),
-        ("FAIL", f"Cross-track p95 was {fmt(cross_p95, 2, ' m')} against the {fmt(cross_limit, 2, ' m')} acceptance limit."),
-        ("PASS", f"Safety was preserved: {collision_count} collisions, no recorded failsafe, and {fmt(min_clearance, 2, ' m')} minimum clearance at {safety.get('minimum_collision_obstacle_name') or 'unknown obstacle'}."),
+        (gates["mission"], f"Mission outcome: {outcome or 'N/A'}; expected {acceptance.get('expected_outcome') or 'complete'}."),
+        (gates["waypoint"], f"Waypoint acceptance: {accepted_count}/{waypoint_count}; only explicit acceptance events are counted."),
+        (gates["cross_track"], f"Cross-track p95: {fmt(cross_p95, 2, ' m')} against limit {fmt(cross_limit, 2, ' m')}."),
+        (gates["collision"], f"Collision safety: {fmt(collision_count, 0)} collisions; minimum clearance {fmt(min_clearance, 2, ' m')}."),
     ]
     if zero_trace_fields:
         findings.append(("OBSERVE", f"The rolling trace contains constant zero values for {', '.join(zero_trace_fields)}; those fields are treated as unpopulated, not as measured zero residuals."))
@@ -733,6 +881,7 @@ def render(session: Path, output: Path) -> Path:
 
     error_series = []
     speed_series = []
+    velocity_series = {"vx": [], "vy": [], "vz": []}
     for item in path_points:
         if len(data["waypoints"]) >= 2:
             error_series.append((item["t"], min(
@@ -742,6 +891,10 @@ def render(session: Path, output: Path) -> Path:
         velocity = item.get("velocity")
         if velocity:
             speed_series.append((item["t"], math.sqrt(sum(value * value for value in velocity))))
+            for axis, index in zip(("vx", "vy", "vz"), range(3)):
+                value = finite(velocity[index]) if len(velocity) > index else None
+                if value is not None:
+                    velocity_series[axis].append((item["t"], value))
     planning_horizon_series = [
         (item["t"], value)
         for item in data["planning"]
@@ -773,16 +926,15 @@ def render(session: Path, output: Path) -> Path:
         )
     progress_html = '<div class="waypoints">' + "<div class=\"waypoint-line\"></div>" + "".join(progress_cells) + "</div>"
 
-    px4_valid = all(bool(px4.get(key)) for key in ("estimator_initialized", "local_position_valid", "local_velocity_valid"))
-    lio_ok = str(lio.get("state")) == "TRACKING" and bool(lio.get("navigation_valid"))
+    px4_observed = {"PASS": "valid", "FAIL": "not valid"}.get(gates["px4"], "N/A")
     status_rows = [
-        ("Mission outcome", outcome, "COMPLETE", "FAIL"),
-        ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", f"{waypoint_count}/{waypoint_count}", "FAIL"),
-        ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", "FAIL" if cross_p95 is not None and cross_limit is not None and cross_p95 > cross_limit else "PASS"),
-        ("Collision safety", f"{collision_count} collisions", "0", "PASS" if collision_count == 0 else "FAIL"),
-        ("LIO navigation state", str(lio.get("state") or "unknown"), "TRACKING + valid", "PASS" if lio_ok else "FAIL"),
-        ("PX4 estimator / local position", "valid" if px4_valid else "not valid", "valid", "PASS" if px4_valid else "FAIL"),
-        ("Planner safety-stop selection", percent(safety_stop_ratio), "context", "OBSERVE"),
+        ("Mission outcome", outcome or "N/A", "COMPLETE", gates["mission"]),
+        ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", f"{waypoint_count}/{waypoint_count}", gates["waypoint"]),
+        ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", gates["cross_track"]),
+        ("Collision safety", f"{fmt(collision_count, 0)} collisions", "0", gates["collision"]),
+        ("LIO navigation state", str(lio.get("state") or "N/A"), "TRACKING + valid", gates["lio"]),
+        ("PX4 estimator / local position", px4_observed, "valid", gates["px4"]),
+        ("Planner safety-stop selection", percent(safety_stop_ratio), "diagnostic only", "OBSERVE" if safety_stop_ratio is not None else "N/A"),
     ]
     table_rows = "".join(
         f'<tr><td>{esc(label)}</td><td class="observed">{esc(observed)}</td><td>{esc(criterion)}</td><td>{status_chip(status)}</td></tr>'
@@ -792,7 +944,8 @@ def render(session: Path, output: Path) -> Path:
     plot_html = "".join([
         map_svg(data),
         line_chart("Cross-track error", [{"label": "error", "points": error_series, "color": RED}], "distance error (m)", threshold=cross_limit, threshold_label=f"acceptance limit {fmt(cross_limit, 2, ' m')}"),
-        line_chart("Vehicle speed", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "setpoint start", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)"),
+        line_chart("Velocity components", [{"label": "vx", "points": velocity_series["vx"], "color": BLUE}, {"label": "vy", "points": velocity_series["vy"], "color": TEAL}, {"label": "vz", "points": velocity_series["vz"], "color": ORANGE}], "velocity (m/s)"),
+        line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "setpoint start", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)"),
         line_chart("Available planning horizon", [{"label": "planning horizon", "points": planning_horizon_series, "color": PURPLE}, {"label": "known-free horizon", "points": known_horizon_series, "color": ORANGE, "dash": "6 4"}], "distance (m)"),
         comparison_bars([
             ("longest route leg", finite(mission.get("longest_leg_m")), RED, "route geometry"),
@@ -803,7 +956,6 @@ def render(session: Path, output: Path) -> Path:
 
     session_name = session.name
     raw_links = [
-        ("markdown summary", "REPORT.md"),
         ("report schema", "report.json"),
         ("scenario snapshot", "scenario.json"),
         ("sample stream", "samples.jsonl"),
@@ -816,10 +968,21 @@ def render(session: Path, output: Path) -> Path:
         + (f"The following fields are constant zero across all records: {', '.join(zero_trace_fields)}." if zero_trace_fields else "No constant-zero trace fields were found.")
     )
     interpretation = (
-        f"This is a safety-preserving but unsuccessful navigation run. The estimator and PX4 validity signals remain healthy, while route progress and tracking quality fail the mission gate. "
-        f"The {fmt(mission.get('longest_leg_m'), 1, ' m')} longest route leg is larger than the {fmt(known_free.get('maximum'), 1, ' m')} maximum known-free horizon observed in this session; the planner also selected a safety-stop profile in {percent(safety_stop_ratio)} of rolling samples. "
-        "Those are the most actionable system-level clues; the report does not treat them as proof of a single root cause."
+        f"Overall acceptance verdict: {evaluation['overall']}. "
+        f"The estimator and PX4 validity signals are {gates['lio']} and {gates['px4']}. "
+        f"The longest route leg is {fmt(mission.get('longest_leg_m'), 1, ' m')}; the maximum measured known-free horizon is {fmt(known_free.get('maximum'), 1, ' m')}. "
+        "Unavailable planner measurements are shown as N/A and are not treated as zero."
     )
+    timing_rows = _timing_rows(report)
+    timing_html = "".join(
+        f'<tr><td>{esc(row["component"])}</td><td>{esc(row["metric"])} ({esc(row["unit"])})</td>'
+        f'<td>{fmt(row["mean"], 1)}</td><td>{fmt(row["p50"], 1)}</td>'
+        f'<td>{fmt(row["p95"], 1)}</td><td>{fmt(row["max"], 1)}</td>'
+        f'<td>{integer(row["count"])}</td></tr>'
+        for row in timing_rows
+    )
+    if not timing_rows:
+        timing_html = '<tr><td colspan="7">No processing-time telemetry was recorded.</td></tr>'
     html_text = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -840,7 +1003,7 @@ def render(session: Path, output: Path) -> Path:
     .session {{ font-size:12px; color:var(--muted); word-break:break-all; }}
     .hero-right {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
     .status {{ display:inline-flex; align-items:center; justify-content:center; min-width:68px; padding:4px 9px; border-radius:999px; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }}
-    .status.pass {{ color:#126747; background:#dcf5e9; }} .status.fail {{ color:#9d2d22; background:#fde4e1; }} .status.observe {{ color:#855b00; background:#fff0c2; }} .status.info {{ color:#365878; background:#e4edf7; }}
+    .status.pass {{ color:#126747; background:#dcf5e9; }} .status.fail {{ color:#9d2d22; background:#fde4e1; }} .status.na {{ color:#53677b; background:#e9eef2; }} .status.observe {{ color:#855b00; background:#fff0c2; }} .status.info {{ color:#365878; background:#e4edf7; }}
     .hero .status {{ font-size:13px; padding:8px 15px; min-width:86px; }}
     .card, section {{ background:var(--paper); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 8px rgba(28,54,78,.04); }}
     section {{ padding:20px; margin-top:18px; }}
@@ -884,17 +1047,17 @@ def render(session: Path, output: Path) -> Path:
 <main>
   <header class="hero">
     <div><div class="eyebrow">PX4 / SITL flight review</div><h1>External Mode · {esc(metrics.get('mission', {}).get('waypoint_count', 0))}-waypoint mission</h1><p class="session">Session: {esc(session_name)} · {fmt(mission.get('duration_sim_s'), 1, ' s')} simulated · generated from recorded artifacts</p></div>
-    <div class="hero-right">{status_chip("FAIL" if outcome != "COMPLETE" else "PASS", outcome)}</div>
+    <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
   </header>
 
-  <p class="lede">{esc("Safety was preserved, but the mission did not meet its navigation acceptance contract: the run was interrupted, waypoint coverage is incomplete, and tracking error exceeds the configured limit.")}</p>
+  <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 
   <div class="kpis">
-    <div class="card kpi fail"><div class="kpi-label">Mission outcome</div><div class="kpi-value">{esc(outcome)}</div><div class="kpi-sub">expected {esc(acceptance.get('expected_outcome') or 'complete')}</div></div>
-    <div class="card kpi fail"><div class="kpi-label">Waypoint progress</div><div class="kpi-value">{accepted_count}/{waypoint_count}</div><div class="kpi-sub">acceptance events observed</div></div>
-    <div class="card kpi fail"><div class="kpi-label">Cross-track p95</div><div class="kpi-value">{fmt(cross_p95, 2, ' m')}</div><div class="kpi-sub">limit {fmt(cross_limit, 2, ' m')}</div></div>
-    <div class="card kpi pass"><div class="kpi-label">Collision safety</div><div class="kpi-value">{collision_count}</div><div class="kpi-sub">collisions · min clearance {fmt(min_clearance, 2, ' m')}</div></div>
-    <div class="card kpi {"pass" if lio_ok else "fail"}"><div class="kpi-label">Localization</div><div class="kpi-value">{esc(lio.get('state') or 'unknown')}</div><div class="kpi-sub">navigation_valid = {esc(lio.get('navigation_valid'))}</div></div>
+    <div class="card kpi {status_class(gates['mission'])}"><div class="kpi-label">Mission outcome</div><div class="kpi-value">{esc(outcome or 'N/A')}</div><div class="kpi-sub">{status_chip(gates['mission'])} expected {esc(acceptance.get('expected_outcome') or 'complete')}</div></div>
+    <div class="card kpi {status_class(gates['waypoint'])}"><div class="kpi-label">Waypoint progress</div><div class="kpi-value">{accepted_count}/{waypoint_count}</div><div class="kpi-sub">{status_chip(gates['waypoint'])} explicit acceptance events</div></div>
+    <div class="card kpi {status_class(gates['cross_track'])}"><div class="kpi-label">Cross-track p95</div><div class="kpi-value">{fmt(cross_p95, 2, ' m')}</div><div class="kpi-sub">{status_chip(gates['cross_track'])} limit {fmt(cross_limit, 2, ' m')}</div></div>
+    <div class="card kpi {status_class(gates['collision'])}"><div class="kpi-label">Collision safety</div><div class="kpi-value">{fmt(collision_count, 0)}</div><div class="kpi-sub">{status_chip(gates['collision'])} collisions · min clearance {fmt(min_clearance, 2, ' m')}</div></div>
+    <div class="card kpi {status_class(gates['lio'])}"><div class="kpi-label">Localization</div><div class="kpi-value">{esc(lio.get('state') or 'N/A')}</div><div class="kpi-sub">{status_chip(gates['lio'])} navigation_valid = {esc(lio.get('navigation_valid'))}</div></div>
   </div>
 
   <section><h2>What the run says</h2><div class="findings">{"".join(f'<div class="finding">{status_chip(status)}<span>{esc(text)}</span></div>' for status, text in findings)}</div></section>
@@ -905,9 +1068,11 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 
+  <section><h2>Measured processing time</h2><p class="small">Only runtime-supplied processing measurements are shown. Values are microseconds unless marked ms; missing telemetry is N/A, never zero.</p><table class="evidence"><thead><tr><th>Component</th><th>Metric</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{timing_html}</tbody></table></section>
+
   <section><h2>Flight overview</h2><p class="small">Plots are sampled for readability. Each plot has its own scale, units, labelled axes and legend; p95/limits remain visible in the cards above and in the gate table.</p><div class="charts">{plot_html}</div></section>
 
-  <section><div class="two-col"><div><h2>Interpretation</h2><div class="callout"><p>{esc(interpretation)}</p></div></div><div><h2>Run context</h2><p class="small"><strong>Estimator:</strong> {esc(lio.get('state') or 'unknown')} · residual p95 {fmt(metrics.get('localization', {}).get('p95_position_residual_m'), 3, ' m')}.</p><p class="small"><strong>PX4:</strong> {"estimator, local position and local velocity valid" if px4_valid else "one or more validity checks failed"}; failsafe observed = {esc(external.get('failsafe_seen'))}.</p><p class="small"><strong>Planner:</strong> {integer(planning.get('diagnostic_sample_count'))} diagnostic samples · {integer(continuity.get('endpoint_change_count'))} endpoint changes · {integer(smoothness.get('handover_expired_count'))} expired handovers.</p></div></div></section>
+  <section><div class="two-col"><div><h2>Interpretation</h2><div class="callout"><p>{esc(interpretation)}</p></div></div><div><h2>Run context</h2><p class="small"><strong>Estimator:</strong> {esc(lio.get('state') or 'N/A')} · residual p95 {fmt(metrics.get('localization', {}).get('p95_position_residual_m'), 3, ' m')}.</p><p class="small"><strong>PX4:</strong> {esc(px4_observed)}; failsafe observed = {esc(external.get('failsafe_seen'))}.</p><p class="small"><strong>Planner:</strong> {integer(planning.get('diagnostic_sample_count'))} diagnostic samples · {integer(continuity.get('endpoint_change_count'))} endpoint changes · {integer(smoothness.get('handover_expired_count'))} expired handovers.</p></div></div></section>
 
   <section><h2>Evidence and raw artifacts</h2><p class="small">{esc(trace_note)}</p><details><summary>Why the old trace table is not in the main report</summary><p class="small">The old table presented runtime fields as if they were meaningful measurements, although several columns were constant 0.000 in every record. That creates false precision and makes a debug trace look like an evaluation result. The raw trace is preserved in the source artifacts below for engineering diagnosis.</p></details><details><summary>Source files</summary><div class="raw-links">{links_html}</div></details><details><summary>Provenance</summary><p class="small">Navigation commit: <code>{esc((report.get('provenance', {}) if isinstance(report, dict) else {}).get('navigation_commit') or 'unknown')}</code> · dirty workspace: <code>{esc((report.get('provenance', {}) if isinstance(report, dict) else {}).get('navigation_dirty'))}</code>.</p></details></section>
 
@@ -918,18 +1083,3 @@ def render(session: Path, output: Path) -> Path:
 """
     output.write_text(html_text, encoding="utf-8")
     return output
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--session", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=None)
-    args = parser.parse_args()
-    session = args.session.resolve()
-    output = (args.output or (session / "REPORT.html")).resolve()
-    print(render(session, output))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

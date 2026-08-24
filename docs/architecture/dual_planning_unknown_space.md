@@ -92,25 +92,27 @@ and stop-distance gates below are satisfied.
 
 - Unit tests for unknown/occupied/known-free classification and map revision
   invalidation.
-- Regression tests where the current voxel is unknown but the next braking
-  voxel is unknown; the stop must fail closed. The current voxel exception must
-  not become a free-space radius.
+- Regression tests where newly observed occupied evidence intersects the
+  committed prefix or braking tube; the bundle must fail closed. Endpoint-only
+  mapping does not manufacture KNOWN_FREE evidence from absent ray misses.
 - Deterministic tests where nominal planning succeeds but safety planning does
   not; result must be `FAILED`, not nominal-only flight.
-- Deterministic tests where the nominal route enters unknown and the safety
-  stop remains known-free; only the committed prefix may be published.
+- Deterministic tests where nominal planning succeeds but the inflated occupied
+  tube or safety stop is infeasible; no nominal-only prefix may be published.
 - Swept-volume tests through a narrow opening and around the pillar scenario.
 - Runtime metrics for commitment length, nominal-to-safety switches, stop
   distance, verifier latency, stale-map rejects, and trajectory discontinuity.
 - Simulation stages: open textured scene, single pillar, unknown wall revealed
   at the commitment boundary, then multi-obstacle route. The runner exposes
-  these as `MAP_PROFILE=open|pillar|occlusion`; real profile remains
-  `unknown_policy: blocked` until all gates pass.
+  these as `MAP_PROFILE=open|pillar|occlusion`; endpoint-only SUPER profiles
+  declare `unknown_policy: allow_unknown` because probabilistic raycasting is
+  intentionally disabled.
 
 The implementation deliberately stops at the smallest useful experiment: a
 simulation-only nominal candidate producer, dual verifier, and runtime metrics.
 It does not add a full FIRI/MPC port or a general planner plugin framework. The
 data contract is in `navigation_planning/trajectory_verifier.hpp`; map revision
-correlation and known-free runtime verification remain active in every profile.
-Real/default flight profiles remain fail-closed until the nominal candidate and
-safety route/stop fallback are exercised against revealed-obstacle scenarios.
+correlation and inflated-occupied runtime verification remain active in every
+profile. Real/default flight profiles remain fail-closed when an atomic
+main-plus-backup bundle cannot be generated or revalidated against newly
+observed occupied evidence.

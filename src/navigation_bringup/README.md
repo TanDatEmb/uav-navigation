@@ -20,6 +20,15 @@ then consumes the PVA command contract on `/navigation/super_command`.
 Its config is `config/runtime/external_mode.yaml`. It is the PX4 control
 boundary; do not replace it with direct `OffboardControlMode` publishers.
 
+avoidance_mission.launch.py is the product mission entrypoint. It passes one
+mission file to both native SUPER and the PX4 External Mode node, so velocity,
+acceleration and jerk limits are applied before optimizer construction and
+cannot diverge from the mission controller contract:
+
+    ros2 launch navigation_bringup avoidance_mission.launch.py \
+      config_file:=$PWD/config/runtime/mapping.yaml \
+      mission_file:=$PWD/config/runtime/missions/long_three_pillars.yaml
+
 Interactive workflows use the project-owned RViz profile in `rviz/`. The
 profile shows the LIO registered scan, bounded local map, TF tree, corrected
 LIO odometry, and the last successful navigation plan on

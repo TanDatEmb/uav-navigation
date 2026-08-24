@@ -2,6 +2,7 @@
 
 #include <coordinate_conventions/frame_conventions.hpp>
 #include <mars_quadrotor_msgs/msg/position_command.hpp>
+#include <px4_ros2/utils/frame_conversion.hpp>
 
 TEST(PositionCommandContract, UsesDistinctMainAndBackupFlags) {
   mars_quadrotor_msgs::msg::PositionCommand command;
@@ -16,6 +17,11 @@ TEST(PositionCommandContract, UsesDistinctMainAndBackupFlags) {
             mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_BACKUP);
   EXPECT_NE(command.trajectory_flag,
             mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_MAIN);
+}
+
+TEST(PositionCommandContract, ConvertsSuperYawAndYawRateFromEnuToNed) {
+  EXPECT_FLOAT_EQ(1.57079632679F, px4_ros2::yawEnuToNed(0.0F));
+  EXPECT_FLOAT_EQ(-0.7F, px4_ros2::yawRateEnuToNed(0.7F));
 }
 
 TEST(PositionCommandContract, ConvertsPvaWithTheSharedEnuNedMatrix) {

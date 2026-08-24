@@ -9,13 +9,14 @@
 
 #include <coordinate_conventions/frame_conventions.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
+#include <px4_ros2/utils/frame_conversion.hpp>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
 
-constexpr char kModeName[] = "UAV Navigation";
+constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
 
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
@@ -126,20 +127,8 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   setSetpointUpdateRate(50.0F);
 }
 
-void NavigationMode::setPositionControlHandover(std::function<void()> callback) {
-  position_control_handover_ = std::move(callback);
-}
-
-std::optional<Eigen::Vector3d> NavigationMode::handoverPosition() {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  if (safety_hold_position_.has_value()) return safety_hold_position_;
-  if (completion_position_.has_value()) return completion_position_;
-  if (odometry_.has_value()) {
-    return Eigen::Vector3d{odometry_->pose.pose.position.x,
-                           odometry_->pose.pose.position.y,
-                           odometry_->pose.pose.position.z};
-  }
-  return std::nullopt;
+void NavigationMode::setPx4HoldHandover(std::function<void()> callback) {
+  px4_hold_handover_ = std::move(callback);
 }
 
 void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
@@ -319,7 +308,30 @@ void NavigationMode::onSuperCommand(
             mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_ILLEGAL_FINAL ||
         message->trajectory_status ==
             mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_IMPOSSIBLE;
-    if (!terminal_failure && odometry_.has_value()) {
+    const bool completed_main_command =
+        message->trajectory_status ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_COMPLETED &&
+        message->trajectory_flag ==
+            mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_MAIN;
+    bool terminal_hold_inside_acceptance = false;
+    // The final COMPLETED PVA can arrive after MissionController has already
+    // advanced its checkpoint past the last waypoint.  Do not dereference
+    // activeWaypoint() for that late terminal notification.
+    if (completed_main_command && !mission_terminal_ && mission_controller_ &&
+        odometry_.has_value()) {
+      const auto& waypoint = mission_controller_->activeWaypoint();
+      const auto& point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      const Eigen::Vector3d command_position{message->position.x, message->position.y,
+                                             message->position.z};
+      terminal_hold_inside_acceptance =
+          waypoint.behavior == MissionWaypoint::Behavior::Stop &&
+          (measured - waypoint.position_enu).allFinite() &&
+          (command_position - waypoint.position_enu).allFinite() &&
+          (measured - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m &&
+          (command_position - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m;
+    }
+    if (!terminal_failure && !terminal_hold_inside_acceptance && odometry_.has_value()) {
       const auto& point = odometry_->pose.pose.position;
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{message->position.x, message->position.y,
@@ -454,12 +466,12 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     publishStatus(navigation_interfaces::msg::NavigationModeStatus::PAUSED,
                   navigation_interfaces::msg::NavigationModeStatus::SAFETY_STOP);
     RCLCPP_WARN(node().get_logger(),
-                "Safety stop completed at waypoint %zu; handing over to PX4 POSCTL",
+                "Safety stop completed at waypoint %zu; handing over to PX4 Hold",
                 event.waypoint_index);
-    if (position_control_handover_) {
-      position_control_handover_();
+    if (px4_hold_handover_) {
+      px4_hold_handover_();
     } else {
-      failNavigation("position-control handover callback is unavailable");
+      failNavigation("PX4 Hold handover callback is unavailable");
     }
     return;
   }
@@ -580,9 +592,9 @@ void NavigationMode::safetyStopNavigation(const char* reason) {
   if (mission_controller_) mission_controller_->deactivate();
   publishStatus(navigation_interfaces::msg::NavigationModeStatus::PAUSED,
                 navigation_interfaces::msg::NavigationModeStatus::SAFETY_STOP);
-  RCLCPP_ERROR(node().get_logger(), "%s; safety hold then handover to PX4 POSCTL", reason);
-  if (position_control_handover_) {
-    position_control_handover_();
+  RCLCPP_ERROR(node().get_logger(), "%s; safety hold then handover to PX4 Hold", reason);
+  if (px4_hold_handover_) {
+    px4_hold_handover_();
   } else {
     completed(px4_ros2::Result::ModeFailureOther);
   }
@@ -606,9 +618,9 @@ void NavigationMode::failNavigation(const char* reason) {
                                  ? navigation_interfaces::msg::NavigationModeStatus::ODOMETRY_STALE
                                  : navigation_interfaces::msg::NavigationModeStatus::TRAJECTORY_INVALID;
   publishStatus(navigation_interfaces::msg::NavigationModeStatus::FAILED, status_reason);
-  RCLCPP_ERROR(node().get_logger(), "%s; handing over to PX4 POSCTL", reason);
-  if (position_control_handover_) {
-    position_control_handover_();
+  RCLCPP_ERROR(node().get_logger(), "%s; handing over to PX4 Hold", reason);
+  if (px4_hold_handover_) {
+    px4_hold_handover_();
   } else {
     completed(px4_ros2::Result::ModeFailureOther);
   }
@@ -783,7 +795,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     px4_ros2::TrajectorySetpoint setpoint;
     setpoint.withPosition(enuToNed(position_enu))
         .withVelocity(enuToNed(velocity_enu))
-        .withAcceleration(enuToNed(acceleration_enu));
+        .withAcceleration(enuToNed(acceleration_enu))
+        .withYaw(px4_ros2::yawEnuToNed(static_cast<float>(command.yaw)))
+        .withYawRate(px4_ros2::yawRateEnuToNed(static_cast<float>(command.yaw_dot)));
     trajectory_setpoint_->update(setpoint);
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -795,7 +809,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
 
   // A goal publication and its first PVA command are asynchronous. Hold the
   // current position during this bounded acquisition window so the mode does
-  // not hand over to POSCTL on the same 50 Hz tick that starts planning. Once
+  // not hand over to PX4 Hold on the same 50 Hz tick that starts planning. Once
   // the window expires, fail closed instead of reusing an older trajectory.
   std::int64_t goal_publish_ns = 0;
   {
@@ -818,58 +832,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   safetyStopNavigation("SUPER PVA command unavailable");
 }
 
-NavigationHoldMode::NavigationHoldMode(rclcpp::Node& node)
-    : ModeBase(node, Settings{"UAV Navigation Hold"}),
-      trajectory_setpoint_(std::make_shared<px4_ros2::TrajectorySetpointType>(*this)) {
-  setSetpointUpdateRate(50.0F);
-}
-
-void NavigationHoldMode::setHoldPosition(const Eigen::Vector3d& position_enu) {
-  std::lock_guard<std::mutex> lock(target_mutex_);
-  target_enu_ = position_enu;
-}
-
-void NavigationHoldMode::onActivate() {
-  RCLCPP_INFO(node().get_logger(), "UAV Navigation Hold activated");
-}
-
-void NavigationHoldMode::onDeactivate() {
-  RCLCPP_INFO(node().get_logger(), "UAV Navigation Hold deactivated");
-}
-
-void NavigationHoldMode::updateSetpoint(float) {
-  std::optional<Eigen::Vector3d> target;
-  {
-    std::lock_guard<std::mutex> lock(target_mutex_);
-    target = target_enu_;
-  }
-  if (!target.has_value()) {
-    completed(px4_ros2::Result::ModeFailureOther);
-    return;
-  }
-  px4_ros2::TrajectorySetpoint setpoint;
-  setpoint.withPosition(enuToNed(*target))
-      .withVelocity(Eigen::Vector3f::Zero())
-      .withAcceleration(Eigen::Vector3f::Zero());
-  trajectory_setpoint_->update(setpoint);
-}
-
-NavigationModeExecutor::NavigationModeExecutor(
-    px4_ros2::ModeBase& owned_mode, NavigationHoldMode& hold_mode)
+NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
     : ModeExecutorBase(px4_ros2::ModeExecutorBase::Settings{}, owned_mode),
       node_(owned_mode.node()),
-      navigation_mode_(dynamic_cast<NavigationMode&>(owned_mode)),
-      hold_mode_(hold_mode) {
-  navigation_mode_.setPositionControlHandover([this]() {
-    RCLCPP_WARN(node_.get_logger(), "External Mode requesting PX4 POSCTL handover");
-    scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result result) {
-      onPositionControlHandoverCompleted(result, true);
-    });
+      navigation_mode_(dynamic_cast<NavigationMode&>(owned_mode)) {
+  navigation_mode_.setPx4HoldHandover([this]() {
+    RCLCPP_WARN(node_.get_logger(), "Avoidance Mission requesting PX4 Hold handover");
+    schedulePx4Hold(true);
   });
 }
 
 void NavigationModeExecutor::onActivate() {
-  RCLCPP_INFO(node_.get_logger(), "UAV Navigation External Mode activated");
+  RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor activated");
   scheduleMode(ownedMode().id(), [this](px4_ros2::Result result) {
     onOwnedModeCompleted(result);
   });
@@ -881,58 +855,32 @@ void NavigationModeExecutor::onOwnedModeCompleted(px4_ros2::Result result) {
     return;
   }
   if (result != px4_ros2::Result::Success) {
-    RCLCPP_ERROR(node_.get_logger(), "Navigation mode completed with result=%s; handing over to POSCTL",
+    RCLCPP_ERROR(node_.get_logger(), "Avoidance Mission completed with result=%s; handing over to PX4 Hold",
                  px4_ros2::resultToString(result));
-    scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result handover_result) {
-      onPositionControlHandoverCompleted(handover_result, false);
-    });
+    schedulePx4Hold(false);
     return;
   }
-  RCLCPP_INFO(node_.get_logger(), "Navigation mission completed; handing over to PX4 POSCTL");
-  scheduleMode(px4_ros2::ModeBase::kModeIDPosctl, [this](px4_ros2::Result handover_result) {
-    onPositionControlHandoverCompleted(handover_result, false);
+  RCLCPP_INFO(node_.get_logger(), "Avoidance Mission completed; handing over to PX4 Hold");
+  schedulePx4Hold(false);
+}
+
+void NavigationModeExecutor::schedulePx4Hold(bool complete_navigation_failure) {
+  scheduleMode(px4_ros2::ModeBase::kModeIDLoiter,
+               [this, complete_navigation_failure](px4_ros2::Result hold_result) {
+    onPx4HoldHandoverCompleted(hold_result, complete_navigation_failure);
   });
 }
 
-void NavigationModeExecutor::onPositionControlHandoverCompleted(
+void NavigationModeExecutor::onPx4HoldHandoverCompleted(
     px4_ros2::Result result, bool complete_navigation_failure) {
   if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
-    RCLCPP_INFO(node_.get_logger(), "PX4 POSCTL handover completed with result=%s",
-                px4_ros2::resultToString(result));
-    return;
-  }
-
-  // POSCTL requires a manual-control source and PX4 LOITER requires a global
-  // position on common headless LIO-only configurations.  Transition to the
-  // registered position-hold mode when POSCTL is unavailable.
-  RCLCPP_WARN(node_.get_logger(),
-              "PX4 POSCTL handover failed with result=%s; requesting External Hold",
-              px4_ros2::resultToString(result));
-  scheduleExternalHold(complete_navigation_failure);
-}
-
-void NavigationModeExecutor::scheduleExternalHold(bool complete_navigation_failure) {
-  const auto hold_position = navigation_mode_.handoverPosition();
-  if (!hold_position.has_value()) {
-    onHoldHandoverCompleted(px4_ros2::Result::Rejected, complete_navigation_failure);
-    return;
-  }
-  hold_mode_.setHoldPosition(*hold_position);
-  scheduleMode(hold_mode_.id(), [this, complete_navigation_failure](px4_ros2::Result hold_result) {
-    onHoldHandoverCompleted(hold_result, complete_navigation_failure);
-  });
-}
-
-void NavigationModeExecutor::onHoldHandoverCompleted(
-    px4_ros2::Result result, bool complete_navigation_failure) {
-  if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
-    RCLCPP_INFO(node_.get_logger(), "External Hold handover completed with result=%s",
+    RCLCPP_INFO(node_.get_logger(), "PX4 Hold handover completed with result=%s",
                 px4_ros2::resultToString(result));
     return;
   }
 
   RCLCPP_ERROR(node_.get_logger(),
-               "External Hold handover failed with result=%s; navigation cannot continue",
+               "PX4 Hold handover failed with result=%s; navigation cannot continue",
                px4_ros2::resultToString(result));
   if (complete_navigation_failure) {
     // scheduleMode() invokes this callback synchronously for Rejected/Timeout.
@@ -943,7 +891,7 @@ void NavigationModeExecutor::onHoldHandoverCompleted(
 }
 
 void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
-  RCLCPP_INFO(node_.get_logger(), "UAV Navigation External Mode deactivated (%s)",
+  RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor deactivated (%s)",
               reason == DeactivateReason::FailsafeActivated ? "failsafe" : "mode_exit");
 }
 
@@ -957,8 +905,7 @@ int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   using Node = px4_ros2::NodeWithModeExecutor<
       px4_navigation_external_mode::NavigationModeExecutor,
-      px4_navigation_external_mode::NavigationMode,
-      px4_navigation_external_mode::NavigationHoldMode>;
+      px4_navigation_external_mode::NavigationMode>;
   rclcpp::spin(std::make_shared<Node>("px4_navigation_external_mode", true));
   rclcpp::shutdown();
   return 0;

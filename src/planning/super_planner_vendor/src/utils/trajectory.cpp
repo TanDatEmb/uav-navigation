@@ -381,6 +381,14 @@ double Trajectory::getMaxAccRate() const {
     return maxAccRate;
 }
 
+double Trajectory::getMaxJerRate() const {
+    double maxJerRate = -INFINITY;
+    for (const auto& piece : pieces) {
+        maxJerRate = std::max(maxJerRate, piece.getMaxJerRate());
+    }
+    return maxJerRate;
+}
+
 bool Trajectory::checkMaxVelRate(const double &maxVelRate) const {
     int N = getPieceNum();
     bool feasible = true;

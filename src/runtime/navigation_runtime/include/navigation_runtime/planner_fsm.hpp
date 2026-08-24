@@ -9,6 +9,13 @@
 
 namespace navigation_runtime {
 
+inline bool canHotRetargetAtWaypointTransition(
+    bool same_logical_goal, bool previous_goal_was_pass_through,
+    bool command_available, bool planner_failure_latched, bool safety_suffix_active) {
+  return !same_logical_goal && previous_goal_was_pass_through && command_available &&
+         !planner_failure_latched && !safety_suffix_active;
+}
+
 enum class PlannerResultDisposition {
   CommandReady,
   RestartFromRest,
@@ -74,13 +81,24 @@ inline bool committedSafetySuffixIsUsable(
     bool safety_trajectory_available, double elapsed_s, double total_duration_s,
     double safety_transition_s, double anchor_error_m, double maximum_anchor_error_m,
     bool sampled_path_clear) {
-  return safety_trajectory_available && std::isfinite(elapsed_s) &&
-         std::isfinite(total_duration_s) && std::isfinite(safety_transition_s) &&
-         std::isfinite(anchor_error_m) && std::isfinite(maximum_anchor_error_m) &&
-         elapsed_s >= 0.0 && total_duration_s > elapsed_s &&
-         safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s &&
-         maximum_anchor_error_m > 0.0 &&
-         anchor_error_m <= maximum_anchor_error_m && sampled_path_clear;
+  const bool common_contract = std::isfinite(elapsed_s) &&
+                               std::isfinite(total_duration_s) &&
+                               std::isfinite(safety_transition_s) &&
+                               std::isfinite(anchor_error_m) &&
+                               std::isfinite(maximum_anchor_error_m) &&
+                               elapsed_s >= 0.0 && total_duration_s > elapsed_s &&
+                               maximum_anchor_error_m > 0.0 &&
+                               anchor_error_m <= maximum_anchor_error_m && sampled_path_clear;
+  if (!common_contract) return false;
+
+  // SUPER intentionally commits main-only when the complete EXP trajectory is
+  // visible and no braking branch is needed.  A transient optimizer miss must
+  // not invalidate that still-visible command.  With an explicit backup the
+  // main-to-backup transition remains part of the contract.
+  if (!safety_trajectory_available) {
+    return std::abs(safety_transition_s - elapsed_s) <= 1.0e-9;
+  }
+  return safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s;
 }
 
 }  // namespace navigation_runtime

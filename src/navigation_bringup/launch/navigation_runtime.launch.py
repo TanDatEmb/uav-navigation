@@ -15,14 +15,18 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("mission_file", default_value=""),
             Node(
                 package="navigation_runtime",
                 executable="super_navigation_node",
                 name="super_navigation_node",
                 output="screen",
-                parameters=[
-                    LaunchConfiguration("config_file"),
-                    {"use_sim_time": LaunchConfiguration("use_sim_time")},
+                    parameters=[
+                        LaunchConfiguration("config_file"),
+                        {
+                            "use_sim_time": LaunchConfiguration("use_sim_time"),
+                            "super_navigation.mission_file": LaunchConfiguration("mission_file"),
+                        },
                 ],
             ),
         ]

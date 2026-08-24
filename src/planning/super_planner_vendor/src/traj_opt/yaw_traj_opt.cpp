@@ -184,9 +184,9 @@ namespace traj_opt {
 //
 //            yaw_traj.printProfile();
         double max_yaw_rate = yaw_traj.getMaxVelRate();
-        if (max_yaw_rate > yaw_dot_max_ + 2.0) {
+        if (!std::isfinite(max_yaw_rate) || max_yaw_rate > yaw_dot_max_ + 1.0e-6) {
             cout << YELLOW << " Yaw rate too large, " << max_yaw_rate << RESET << endl;
-//                return false;
+            return false;
         }
         out_traj = yaw_traj;
         out_traj.start_WT = pos_traj.start_WT;

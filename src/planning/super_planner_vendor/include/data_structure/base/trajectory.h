@@ -165,6 +165,8 @@ namespace geometry_utils {
 
         double getMaxAccRate() const;
 
+        double getMaxJerRate() const;
+
         bool checkMaxVelRate(const double& maxVelRate) const;
 
         bool checkMaxAccRate(const double& maxAccRate) const;

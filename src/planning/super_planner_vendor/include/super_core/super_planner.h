@@ -25,6 +25,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <optional>
 #include "Eigen/Eigen"
 
 
@@ -75,6 +76,7 @@ namespace super_planner {
 
         std::mutex drone_state_mutex_;
         std::mutex replan_lock_;
+        std::mutex solve_commit_mutex_;
 
         Vec3f local_start_p_;
 
@@ -100,6 +102,7 @@ namespace super_planner {
         // 0 idle, 1 setup, 2 A*, 3 corridor/CIRI, 4 main MINCO,
         // 5 backup generation/MINCO. Read by the external watchdog.
         std::atomic<int> solve_stage_{0};
+        std::atomic_bool solve_cancelled_{false};
 
         Vec3f latest_guide_start_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
@@ -111,7 +114,8 @@ namespace super_planner {
 
         explicit SuperPlanner(const std::string &cfg_path,
                               const ros_interface::RosInterface::Ptr &ros_ptr,
-                              const rog_map::ROGMapROS::Ptr &map_ptr);
+                              const rog_map::ROGMapROS::Ptr &map_ptr,
+                              const std::optional<DynamicLimits> &mission_limits = std::nullopt);
 
         ~SuperPlanner() = default;
 
@@ -153,6 +157,14 @@ namespace super_planner {
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();
             return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;
+        }
+        void resetSolveCancellation() noexcept {
+            solve_cancelled_.store(false);
+        }
+
+        void cancelActiveSolve() {
+            std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+            solve_cancelled_.store(true);
         }
         std::size_t solvePointCount() const noexcept {
             return cg_ptr_ ? cg_ptr_->solvePointCount() : 0;

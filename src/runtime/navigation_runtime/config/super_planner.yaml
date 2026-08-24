@@ -15,12 +15,19 @@ super_planner:
   # than three vehicle radii around the guide while removing unused volume.
   corridor_bound_dis: 1.5
   corridor_line_max_length: 3.0
-  # This upstream parameter is used as the visibility horizon before choosing
-  # the backup switch point. It must include braking distance plus more than
-  # one replan interval; 3 m leaves only ~0.45 s of main trajectory at 5 m/s.
-  # Keep it finite and inside the local observed map while preserving a useful
-  # high-speed main window.
-  safe_corridor_line_max_length: 10.0
+  # This parameter bounds the visibility horizon before choosing the backup
+  # switch point. Config validation requires it to cover braking distance,
+  # one replan interval and the full safety envelope.
+  # At the 12 m/s product ceiling, jerk-limited stopping needs 8.4 m; two
+  # 0.2 s replan cycles add 4.8 m and the complete safety envelope adds 0.8 m.
+  # The product envelope reaches 12 m/s. With the speed benchmark's lower
+  # 5 m/s^2 acceleration and 12 m/s^3 jerk limits, a fail-closed stop plus two
+  # replan-forward intervals and the 0.8 m body/error tube requires 22.5 m.
+  safe_corridor_line_max_length: 23.0
+  # Preserve the measured-stable local CIRI problem size at ordinary mission
+  # speeds. Config raises it only when the actual mission braking envelope
+  # requires more visibility, up to the product cap above.
+  safe_corridor_line_nominal_length: 14.0
   # One CIRI pass already separates every occupied point from the seed line.
   # Additional passes only enlarge the inscribed volume and create an
   # unbounded latency tail near dense obstacle surfaces.
@@ -32,14 +39,23 @@ super_planner:
   # bounded compute margin while remaining close to SUPER's 0.1 s profiles.
   replan_forward_dt: 0.2
   planning_horizon: 30.0
+  # SUPER convention: a non-positive value disables the explicit sensing
+  # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
+  # limit below and checked against known-free map evidence.
   sensing_horizon: -1
   # Preserve a short dynamically continuous prefix, then rebuild the route
   # from current map evidence. A long/infinite retained prefix recreates the
   # stale normal-path behaviour seen after contact or optimizer drift.
   receding_dis: 3.0
-  # Canonical center-clearance envelope: 0.35 m vehicle collision radius
-  # plus 0.05 m acceptance margin.
-  robot_r: 0.4
+  # Planning envelope is derived from physical vehicle size and independent
+  # tracking/localization/mapping budgets. Keep this equal to their sum; the
+  # SUPER config validator rejects silent safety-radius drift.
+  vehicle_radius_m: 0.35
+  tracking_error_budget_m: 0.25
+  localization_error_budget_m: 0.05
+  mapping_error_budget_m: 0.10
+  planning_margin_m: 0.05
+  robot_r: 0.80
   yaw_dot_max: 3.0
   yaw_mode: 1
   mpc_horizon: 15
@@ -49,9 +65,11 @@ traj_opt:
     save_log_en: false
     print_optimizer_log: false
   boundary:
-    max_vel: 25.0
-    max_acc: 20.0
-    max_jerk: 120.0
+    # X500 product envelope, intentionally below SUPER's aggressive research
+    # defaults. Missions may lower these values but never raise them.
+    max_vel: 12.0
+    max_acc: 12.0
+    max_jerk: 30.0
     max_omg: 5.0
     max_acc_thr: 25.0
     min_acc_thr: 6.0
@@ -64,17 +82,23 @@ traj_opt:
     scale_factor: 1.0
     integral_reso: 15
     smooth_eps: 0.01
-    penna_t: 1.0e+8
+    # X500 smooth-flight profile (derived from SUPER click_smooth), not the
+    # static_high_speed research time pressure that drives short segments into
+    # L-BFGS line-search failure.
+    penna_t: 12000.0
     penna_pos: 5.0e+8
-    penna_vel: 5.0e+8
-    penna_acc: 5.0e+8
-    penna_jerk: -5.0e+11
+    # X500-scaled dynamic penalties. Jerk remains outside the objective because
+    # its high-order gradient destabilizes hot replans; the analytic hard gate
+    # below is authoritative for both main and backup trajectories.
+    penna_vel: 5.0e+5
+    penna_acc: 5.0e+5
+    penna_jerk: -1.0
     # SUPER baseline: a negative weight disables the corridor-center attractor.
     # Enabling it here caused competing waypoint pulls, open-space slalom and
     # flatness/position infeasibility around obstacle corridor overlaps.
     penna_attract: -1.0e+7
-    penna_omg: 5.0e+8
-    penna_thr: 5.0e+8
+    penna_omg: 1.0e+5
+    penna_thr: 1.0e+5
   backup_traj:
     uniform_time_en: true
     pos_constraint_type: 1
@@ -85,14 +109,17 @@ traj_opt:
     scale_factor: 1.0
     integral_reso: 12
     smooth_eps: 0.01
-    penna_t: 1.0e+6
-    penna_ts: 1.0e+7
+    penna_t: 1200.0
+    penna_ts: 1.0e+5
     penna_pos: 1.0e+10
-    penna_vel: 1.0e+8
-    penna_acc: 1.0e+8
-    penna_jerk: -1.0e+8
-    penna_omg: 5.0e+8
-    penna_thr: 5.0e+8
+    penna_vel: 1.0e+5
+    penna_acc: 1.0e+5
+    # Backup has only two pieces and starts from a certified minimum-snap seed;
+    # keep jerk in its objective so L-BFGS cannot shorten a feasible stop into
+    # a trajectory that is rejected only by the post-solve hard gate.
+    penna_jerk: 1.0e+5
+    penna_omg: 1.0e+5
+    penna_thr: 1.0e+5
   flatness:
     mass: 1.64
     dh: 0.35
@@ -107,9 +134,10 @@ astar:
   # verification are unchanged, so the weight trades geometric optimality for
   # deterministic real-time search without weakening safety.
   heuristic_weight: 1.5
-  # A* runs concurrently with mapping and state estimation in SITL. Keep a
-  # bounded slice of the 1 s replan budget instead of a fixed 0.1 s cutoff.
-  search_time_limit_s: 0.25
+  # PathSearch can retry once on the probabilistic map. Bound each search to a
+  # quarter of the 0.2 s future-state lead so both searches plus CIRI/MINCO fit
+  # SUPER's own 0.18 s hot-replan acceptance deadline.
+  search_time_limit_s: 0.04
   visual_process: false
   allow_diag: true
   heu_type: 2
@@ -123,12 +151,10 @@ rog_map:
   # both layers therefore share this evidence resolution.
   resolution: 0.2
   inflation_resolution: 0.2
-  # A 0.4 m continuous clearance cannot be represented safely by marking only
-  # voxel centres whose centre distance is <= 0.4 m: a ray can pass through a
-  # voxel corner closer than 0.4 m while the inflated lookup still says FREE.
-  # One extra rasterization shell makes the discrete collision layer a
-  # conservative representation of the 0.4 m continuous CIRI/vehicle radius.
-  inflation_step: 3
+  # Match the 0.80 m planner envelope in the inflated visibility grid. SUPER's
+  # endpoint-only backup check treats UNKNOWN as visible but must still reject
+  # every occupied voxel inside the complete vehicle/error tube.
+  inflation_step: 4
   unk_inflation_en: false
   unk_inflation_step: 1
   # Route progress is along ENU X; keep the local map long in X and narrow in
@@ -171,9 +197,11 @@ rog_map:
   intensity_thresh: -10
   point_filt_num: 1
   raycasting:
-    # SUPER's unknown=blocked frontend requires free-space evidence along the
-    # lidar rays; endpoint-only updates leave the open route unknown.
-    enable: true
+    # Keep SUPER's high-speed endpoint-only map update. Unknown remains UNKNOWN
+    # between the sensor and an observed endpoint. The main frontend may explore
+    # it; backup visibility uses the robot-radius inflated occupied tube exactly
+    # as the pinned SUPER implementation does.
+    enable: false
     batch_update_size: 1
     local_update_box: [100, 100, 5]
     # Reject returns from the airframe before occupancy insertion. This only

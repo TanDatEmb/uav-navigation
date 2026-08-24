@@ -17,7 +17,7 @@ param set CBRK_SUPPLY_CHK "${PX4_PARAM_CBRK_SUPPLY_CHK:-894281}"
 # The launcher exports these before rcS, so its parameter override loop applies
 # them before Gazebo bridge and EKF2 start.  Print the effective values into
 # px4_gazebo.log for every run; they are an audit trail, not a new data source.
-echo "PX4 external-vision-only contract (ground truth odometry disabled):"
+echo "PX4 multisensor + external-vision contract (ground truth odometry disabled):"
 param show SIM_GZ_EN_ODOM
 param show SIM_GZ_EN_GPS
 param show SIM_GZ_EN_BARO

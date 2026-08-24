@@ -121,9 +121,13 @@ namespace geometry_utils {
 
         Eigen::MatrixXd normalizeAccCoeffMat() const;
 
+        Eigen::MatrixXd normalizeJerCoeffMat() const;
+
         double getMaxVelRate() const;
 
         double getMaxAccRate() const;
+
+        double getMaxJerRate() const;
 
         bool checkMaxVelRate(const double& maxVelRate) const;
 

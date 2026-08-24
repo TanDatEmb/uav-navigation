@@ -13,6 +13,7 @@ super_navigation_node:
       planner_rate_hz: 10.0
       command_rate_hz: 50.0
       input_pair_max_skew_s: 0.1
+      input_max_age_s: 0.5
       max_safety_suffix_anchor_error_m: 0.75
       # Command freshness is not planner freshness: invalidate the committed
       # main path if a solver generation does not return within this budget.

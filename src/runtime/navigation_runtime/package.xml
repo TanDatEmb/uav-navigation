@@ -15,5 +15,6 @@
   <depend>super_planner_vendor</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>yaml-cpp</depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

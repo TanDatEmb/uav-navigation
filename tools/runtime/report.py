@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build the single report schema used by all runtime workflows."""
+"""Build the single report artifact used by all runtime workflows.
+
+This is the only public report tool.  The HTML analysis and renderer modules
+are implementation details invoked from this entrypoint.
+"""
 
 from __future__ import annotations
 
@@ -1345,9 +1349,10 @@ def _timing_distribution(values: list[float]) -> dict[str, Any]:
 
 
 def _diagnostic_timing_summary(
-    samples: list[dict[str, Any]], status_name: str, fields: tuple[str, ...],
+    samples: list[dict[str, Any]], status_name: str | tuple[str, ...], fields: tuple[str, ...],
     stream_names: tuple[str, ...] = ("diagnostics", "planning_diagnostics"),
 ) -> dict[str, dict[str, Any]]:
+    status_names = {status_name} if isinstance(status_name, str) else set(status_name)
     values_by_field = {field: [] for field in fields}
     for stream_name in stream_names:
         for item in _series(samples, stream_name):
@@ -1355,7 +1360,7 @@ def _diagnostic_timing_summary(
             if not isinstance(statuses, list):
                 continue
             for status in statuses:
-                if not isinstance(status, dict) or status.get("name") != status_name:
+                if not isinstance(status, dict) or status.get("name") not in status_names:
                     continue
                 status_values = status.get("values", {})
                 if not isinstance(status_values, dict):
@@ -1370,20 +1375,26 @@ def _diagnostic_timing_summary(
 def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return _diagnostic_timing_summary(
         samples,
-        "navigation_planning/planner",
+        ("navigation_planning/planner", "super_navigation/super_planner"),
         (
             "planning_path_search_us",
             "planning_corridor_us",
             "planning_trajectory_optimization_us",
             "planning_total_us",
         ),
-        stream_names=("planning_diagnostics", "diagnostics"),
+        stream_names=("planning_diagnostics", "mapping_diagnostics", "diagnostics"),
     )
 
 
 def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return the latest planner counters without treating them as timings."""
-    latest = snapshot.get("latest", {}).get("planning_diagnostics", {})
+    latest_values = snapshot.get("latest", {})
+    latest = (
+        latest_values.get("planning_diagnostics") or
+        latest_values.get("mapping_diagnostics") or
+        latest_values.get("diagnostics") or
+        {}
+    )
     statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
     keys = (
         "plan_count",
@@ -1415,11 +1426,30 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "splice_velocity_residual_mps", "splice_acceleration_residual_mps2",
     )
     for status in statuses:
-        if not isinstance(status, dict) or status.get("name") != "navigation_planning/planner":
+        if not isinstance(status, dict) or status.get("name") not in {
+            "navigation_planning/planner", "super_navigation/super_planner"
+        }:
             continue
         values = status.get("values", {})
         if not isinstance(values, dict):
             continue
+        if status.get("name") == "super_navigation/super_planner":
+            return {
+                "available": True,
+                "status_name": status.get("name"),
+                **{
+                    key: int(_number(values[key], 0.0))
+                    for key in (
+                        "received_observation_count",
+                        "accepted_observation_count",
+                        "cycle_count",
+                        "trajectory_publish_count",
+                        "dropped_cloud_count",
+                        "processing_exception_count",
+                    )
+                    if key in values
+                },
+            }
         result: dict[str, Any] = {key: int(_number(values.get(key), 0.0)) for key in keys}
         if any(field in values for field in optional_count_fields):
             result.update({key: int(_number(values.get(key), 0.0)) for key in optional_count_fields})
@@ -1433,7 +1463,7 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
                 length / trajectory_length if trajectory_length > 1e-9 else None
             )
         return result
-    return {key: 0 for key in keys}
+    return {"available": False}
 
 
 def _navigation_mapping_summary(
@@ -1487,17 +1517,18 @@ def _navigation_mapping_summary(
         "observation_sequence_max_consecutive_missing",
     )
     result: dict[str, Any] = {
-        "topic": "/navigation_mapping/diagnostics",
+        "topic": "/navigation/diagnostics",
         "sample_count": stream.get("received", 0),
         "mean_rate_hz": stream.get("mean_rate_hz", 0.0),
         "status_level": level,
         "status_message": message,
     }
     for field in integer_fields:
-        result[field] = int(values.get(field, 0) or 0)
+        if field in values and values[field] is not None:
+            result[field] = int(values[field] or 0)
     result["timing_distributions"] = _diagnostic_timing_summary(
         samples or [],
-        "navigation_mapping/world_model",
+        ("navigation_mapping/world_model", "super_navigation/super_planner"),
         (
             "ros_pointcloud_decode_us",
             "mapping_filter_us",
@@ -1511,16 +1542,7 @@ def _navigation_mapping_summary(
         ),
         stream_names=("mapping_diagnostics", "diagnostics"),
     )
-    result["output_topics"] = [
-        "/navigation_mapping/visualization/occupied",
-        "/navigation_mapping/visualization/inflated_occupied",
-        "/navigation_mapping/visualization/unknown",
-        "/navigation_mapping/visualization/frontier",
-        "/navigation/visualization/planned_path",
-        "/navigation/visualization/markers",
-        "/navigation/trajectory_bundle",
-        "/navigation/super_command",
-    ]
+    result["output_topics"] = ["/navigation/super_command", "/navigation/diagnostics"]
     return result
 
 
@@ -1766,17 +1788,17 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["session"] = str(session.resolve())
     report["schema_version"] = 1
     (session / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (session / "REPORT.md").write_text(render(report), encoding="utf-8")
     # Keep the machine-readable report as the contract, and add a standalone
     # visualization artifact for SITL mission analysis. Every completed
     # session gets REPORT.html, including sessions with incomplete telemetry;
     # a minimal fallback keeps the artifact contract intact if a diagnostic
     # chart encounters malformed data.
     try:
-        import html_report
-        html_path = html_report.generate(session)
+        from flight_review_report import render as render_html
+
+        html_path = render_html(session.resolve(), session.resolve() / "REPORT.html")
         if not Path(html_path).is_file():
-            raise RuntimeError("html_report did not create REPORT.html")
+            raise RuntimeError("HTML renderer did not create REPORT.html")
     except Exception as error:  # pragma: no cover - defensive artifact path
         (session / "REPORT_HTML_ERROR.txt").write_text(str(error) + "\n", encoding="utf-8")
         fallback = (
@@ -1819,7 +1841,6 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
             json.dumps(fallback, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        (session / "REPORT.md").write_text(render(fallback), encoding="utf-8")
         (session / "REPORT.html").write_text(
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<title>UAV navigation report</title></head><body>"
@@ -1830,22 +1851,6 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
             encoding="utf-8",
         )
         return fallback
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True)
-
-
-def render(report: dict[str, Any]) -> str:
-    lines = [f"# Runtime report: {report.get('workflow', 'unknown')}", "", f"- Verdict: **{report.get('verdict')}**", f"- Session: `{report.get('session', '')}`", "- HTML: [REPORT.html](REPORT.html)", ""]
-    reasons = report.get("reasons", [])
-    lines += ["## Reasons", ""] + ([f"- {reason}" for reason in reasons] if reasons else ["- none"]) + ["", "## Stream metrics", "", "| Stream | Samples | Mean Hz | Min window Hz | p95 interval ms | Max gap ms | Callback stalls | Source stale | Regressions | Epoch discarded |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
-    for name, row in report.get("streams", {}).items():
-        lines.append(f"| {name} | {row.get('sample_count', 0)} | {_number(row.get('mean_rate_hz')):.3f} | {_number(row.get('minimum_window_rate_hz')):.3f} | {row.get('p95_interval_ms', 'n/a')} | {_number(row.get('maximum_gap_ms')):.3f} | {row.get('active_callback_stall_count', row.get('stale_event_count', 0))} | {row.get('source_stale_event_count', row.get('stale_event_count', 0))} | {row.get('timestamp_regression_count', 0)} | {row.get('timestamp_epoch_discard_count', 0)} |")
-    for section in ("map", "lio", "navigation_mapping", "planning", "tracking", "px4", "residuals", "conversion_contract", "ground_truth_residuals", "offboard", "external_mode", "provenance"):
-        if section in report:
-            lines += ["", f"## {section}", "", "```json", _json(report[section]), "```"]
-    return "\n".join(lines) + "\n"
 
 
 def main() -> int:

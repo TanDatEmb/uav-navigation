@@ -30,8 +30,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
  public:
   explicit NavigationMode(rclcpp::Node& node);
 
-  void setPositionControlHandover(std::function<void()> callback);
-  std::optional<Eigen::Vector3d> handoverPosition();
+  void setPx4HoldHandover(std::function<void()> callback);
 
   void onActivate() override;
   void onDeactivate() override;
@@ -86,7 +85,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t lio_unhealthy_since_ns_{0};
   std::optional<Mission> mission_;
   std::unique_ptr<MissionController> mission_controller_;
-  std::function<void()> position_control_handover_;
+  std::function<void()> px4_hold_handover_;
   bool failure_reported_{false};
   bool mode_active_{false};
   bool mission_terminal_{false};
@@ -114,23 +113,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t last_forward_guard_count_{0U};
 };
 
-class NavigationHoldMode final : public px4_ros2::ModeBase {
- public:
-  explicit NavigationHoldMode(rclcpp::Node& node);
-  void setHoldPosition(const Eigen::Vector3d& position_enu);
-  void onActivate() override;
-  void onDeactivate() override;
-  void updateSetpoint(float dt_s) override;
-
- private:
-  std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
-  std::mutex target_mutex_;
-  std::optional<Eigen::Vector3d> target_enu_;
-};
-
 class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
  public:
-  NavigationModeExecutor(px4_ros2::ModeBase& owned_mode, NavigationHoldMode& hold_mode);
+  explicit NavigationModeExecutor(px4_ros2::ModeBase& owned_mode);
 
   void onActivate() override;
   void onDeactivate(DeactivateReason reason) override;
@@ -138,15 +123,12 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
 
  private:
   void onOwnedModeCompleted(px4_ros2::Result result);
-  void onPositionControlHandoverCompleted(px4_ros2::Result result,
-                                          bool complete_navigation_failure);
-  void onHoldHandoverCompleted(px4_ros2::Result result,
-                               bool complete_navigation_failure);
-  void scheduleExternalHold(bool complete_navigation_failure);
+  void schedulePx4Hold(bool complete_navigation_failure);
+  void onPx4HoldHandoverCompleted(px4_ros2::Result result,
+                                  bool complete_navigation_failure);
 
   rclcpp::Node& node_;
   NavigationMode& navigation_mode_;
-  NavigationHoldMode& hold_mode_;
 };
 
 }  // namespace px4_navigation_external_mode

@@ -155,6 +155,22 @@ Eigen::MatrixXd Piece::normalizeAccCoeffMat() const {
     return nAccCoeffMat;
 }
 
+Eigen::MatrixXd Piece::normalizeJerCoeffMat() const {
+    Eigen::MatrixXd nJerCoeffMat(3, D - 2);
+    int n = 3;
+    int m = 2;
+    int l = 1;
+    double t = duration * duration * duration;
+    for (int i = D - 3; i >= 0; i--) {
+        nJerCoeffMat.col(i) = n * m * l * coeffMat.col(i) * t;
+        n++;
+        m++;
+        l++;
+        t *= duration;
+    }
+    return nJerCoeffMat;
+}
+
 double Piece::getMaxVelRate() const {
     Eigen::MatrixXd nVelCoeffMat = normalizeVelCoeffMat();
     Eigen::VectorXd coeff = math_utils::RootFinder::polySqr(nVelCoeffMat.row(0)) +
@@ -242,6 +258,41 @@ double Piece::getMaxAccRate() const {
         }
         return sqrt(maxAccRateSqr);
     }
+}
+
+double Piece::getMaxJerRate() const {
+    Eigen::MatrixXd nJerCoeffMat = normalizeJerCoeffMat();
+    Eigen::VectorXd coeff = math_utils::RootFinder::polySqr(nJerCoeffMat.row(0)) +
+                            math_utils::RootFinder::polySqr(nJerCoeffMat.row(1)) +
+                            math_utils::RootFinder::polySqr(nJerCoeffMat.row(2));
+    const int N = coeff.size();
+    int degree = N - 1;
+    for (int i = 0; i < N; i++) {
+        coeff(i) *= degree--;
+    }
+    if (coeff.head(N - 1).squaredNorm() < DBL_EPSILON) {
+        return getJer(0.0).norm();
+    }
+    double l = -0.0625;
+    double r = 1.0625;
+    while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), l)) < DBL_EPSILON) {
+        l *= 0.5;
+    }
+    while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), r)) < DBL_EPSILON) {
+        r = 0.5 * (r + 1.0);
+    }
+    std::set<double> candidates = math_utils::RootFinder::solvePolynomial(
+            coeff.head(N - 1), l, r, FLT_EPSILON / duration);
+    candidates.insert(0.0);
+    candidates.insert(1.0);
+    double maxJerRateSqr = -INFINITY;
+    for (const double candidate : candidates) {
+        if (0.0 <= candidate && candidate <= 1.0) {
+            maxJerRateSqr = std::max(maxJerRateSqr,
+                                     getJer(candidate * duration).squaredNorm());
+        }
+    }
+    return sqrt(maxJerRateSqr);
 }
 
 Eigen::MatrixXd Piece::getState(const double &t) const {

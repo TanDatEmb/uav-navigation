@@ -36,7 +36,7 @@ rog_map:
     resolution: 0.2
     local_update_box: [10.0, 10.0, 6.0]
   raycasting:
-    enable: true
+    enable: false
     batch_update_size: 1
     unk_thresh: 0.70
     p_hit: 0.70

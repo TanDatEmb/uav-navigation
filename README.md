@@ -22,11 +22,14 @@ make clean
 
 `make sim-check` is a retained headless odometry smoke workflow and still runs
 the legacy deterministic offboard trajectory with `COM_RC_IN_MODE=4`; it is not
-the target navigation control path. The M1 node can be launched with:
+the target navigation control path. The product planner and Avoidance Mission
+mode are launched together with one shared mission contract:
 
 ```bash
-ros2 launch navigation_bringup px4_external_mode.launch.py \
-  config_file:=$PWD/config/runtime/external_mode.yaml use_sim_time:=true
+ros2 launch navigation_bringup avoidance_mission.launch.py \
+  config_file:=$PWD/config/runtime/mapping.yaml \
+  mission_file:=$PWD/config/runtime/missions/pillar.yaml \
+  use_sim_time:=true
 ```
 
 `make external-mode-check` validates the product path in simulation:

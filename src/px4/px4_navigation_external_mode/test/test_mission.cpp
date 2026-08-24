@@ -98,6 +98,40 @@ mission:
   std::filesystem::remove(path);
 }
 
+TEST(MissionLoader, AllowsExplicitExplorationIntoUnknownSpace) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: explore_unknown
+  frame: lio_odom
+  waypoints:
+    - {id: start, position: [0.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [10.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+  planning:
+    unknown_policy: allow_unknown
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  EXPECT_EQ(mission.planning.unknown_policy, "allow_unknown");
+}
+
+TEST(MissionLoader, AllowsEmptyOptionalControlSection) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: empty_control
+  frame: lio_odom
+  waypoints:
+    - {id: start, position: [0.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+    - {id: finish, position: [1.0, 0.0, 3.0], acceptance_radius_m: 0.4}
+  control:
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  EXPECT_EQ(mission.id, "empty_control");
+  EXPECT_DOUBLE_EQ(mission.control.acceptance_speed_mps, 0.15);
+}
+
 TEST(MissionLoader, DefaultsIntermediateWaypointToPassThrough) {
   const auto path = writeMission(R"yaml(
 mission:

@@ -163,16 +163,18 @@ export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"
 # Ground-truth model odometry must never compete with ROS LIO external vision.
 export PX4_PARAM_SIM_GZ_EN_ODOM=0
 
-# External-vision-only estimator fusion. Barometer transport remains enabled
-# for PX4 preflight health checks, but barometer/rangefinder fusion is disabled.
-export PX4_PARAM_SIM_GZ_EN_GPS=0
+# Use PX4's normal multisensor estimator contract and fuse propagated LIO as
+# external vision in addition to GNSS/barometer/range/magnetometer aiding.
+# Ground-truth odometry remains disabled above, so EV still has exactly one
+# product-owned source.
+export PX4_PARAM_SIM_GZ_EN_GPS=1
 export PX4_PARAM_SIM_GZ_EN_BARO=1
-export PX4_PARAM_SIM_GPS_USED=0
-export PX4_PARAM_EKF2_GPS_CTRL=0
-export PX4_PARAM_EKF2_BARO_CTRL=0
-export PX4_PARAM_EKF2_RNG_CTRL=0
-export PX4_PARAM_EKF2_MAG_TYPE=5
-export PX4_PARAM_EKF2_HGT_REF=3
+export PX4_PARAM_SIM_GPS_USED=10
+export PX4_PARAM_EKF2_GPS_CTRL=7
+export PX4_PARAM_EKF2_BARO_CTRL=1
+export PX4_PARAM_EKF2_RNG_CTRL=1
+export PX4_PARAM_EKF2_MAG_TYPE=0
+export PX4_PARAM_EKF2_HGT_REF=1
 export PX4_PARAM_EKF2_EV_CTRL=15
 
 
@@ -183,7 +185,7 @@ echo
 echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
 echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE}"
-echo "PX4 visual odometry: ROS LIO only (SIM_GZ_EN_ODOM=0; EKF2 EV=15; GPS/baro/range fusion=0)"
+echo "PX4 estimator: normal GNSS/baro/range/mag aiding + ROS LIO EV=15 (Gazebo truth odom disabled)"
 echo "Runtime stack is started by tools/runtime/runner.py."
 echo
 cd "${PX4_ROOTFS}"

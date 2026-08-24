@@ -1,10 +1,5 @@
-// Vendor-level smoke test: ROG-Map must construct, initialize from a YAML
-// config, accept synthetic point clouds via the manual updateMap() API, and
-// produce the expected occupied/free/unknown raycast semantics. This is a
-// vendor sanity check; frame/transform correctness is covered at the
-// navigation_mapping package level (see P1 test plan section 21).
-#include <gtest/gtest.h>
 
+#include <gtest/gtest.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -36,7 +31,7 @@ TEST(RogMapVendorSmoke, ConstructAndInit) {
   ASSERT_NO_THROW(map.loadConfigAndInit(testConfigPath()));
 }
 
-TEST(RogMapVendorSmoke, RaycastGeometryFreeOccupiedUnknown) {
+TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   TestRogMap map;
   map.loadConfigAndInit(testConfigPath());
 
@@ -44,16 +39,25 @@ TEST(RogMapVendorSmoke, RaycastGeometryFreeOccupiedUnknown) {
   const rog_map::Vec3f obstacle(3.0, 0.0, 0.0);
   const rog_map::Pose pose(sensor_origin, Eigen::Quaterniond::Identity());
 
-  // Repeated observations let the probabilistic log-odds filter cross the
-  // occupied/free thresholds, matching real sequential-scan behavior.
   for (int i = 0; i < 8; ++i) {
     map.updateMap(singlePointCloud(obstacle), pose);
   }
 
-  // Cell well before the obstacle along the ray -> free.
-  EXPECT_TRUE(map.isKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0)));
+  EXPECT_FALSE(map.isKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0)));
+  EXPECT_FALSE(map.isLineKnownFree(sensor_origin, rog_map::Vec3f(1.0, 0.0, 0.0)));
+  EXPECT_EQ(map.getInfGridType(rog_map::Vec3f(1.0, 0.0, 0.0)),
+            rog_map::GridType::UNKNOWN);
   // The endpoint itself -> occupied.
   EXPECT_TRUE(map.isOccupied(obstacle));
+  EXPECT_EQ(map.getInfGridType(obstacle), rog_map::GridType::OCCUPIED);
+  // SUPER's endpoint-only visibility contract allows UNKNOWN, but the
+  // inflated query must still reject an obstacle inside the vehicle tube even
+  // when the base-grid centre line does not cross the occupied voxel.
+  const rog_map::Vec3f offset_start(0.0, 0.25, 0.0);
+  const rog_map::Vec3f offset_end(4.0, 0.25, 0.0);
+  EXPECT_TRUE(map.isLineFree(offset_start, offset_end, false, false));
+  EXPECT_FALSE(map.isLineFree(offset_start, offset_end, true, false));
   // Space behind (beyond) the endpoint -> remains unknown (never raycast).
   EXPECT_TRUE(map.isUnknown(rog_map::Vec3f(4.5, 0.0, 0.0)));
+  EXPECT_FALSE(map.isLineKnownFree(sensor_origin, rog_map::Vec3f(4.5, 0.0, 0.0)));
 }

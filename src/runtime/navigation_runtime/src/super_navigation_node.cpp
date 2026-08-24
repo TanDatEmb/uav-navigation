@@ -1,4 +1,5 @@
 #include "navigation_runtime/super_navigation_node.hpp"
+#include "navigation_runtime/mission_dynamics.hpp"
 
 #include "navigation_runtime/planner_fsm.hpp"
 
@@ -31,6 +32,16 @@ double pointFromMessage(const geometry_msgs::msg::Point& point, int axis) {
   return point.z;
 }
 
+const geometry_msgs::msg::Point& plannerTarget(
+    const navigation_interfaces::msg::NavigationGoal& goal) {
+  // SUPER accepts one terminal target per solve.  next_target is directional
+  // metadata for the mission controller; using it as the terminal target
+  // would remove the current checkpoint from the geometric problem entirely.
+  // PASS_THROUGH continuity is provided by accepting the current checkpoint
+  // before its trajectory ends and hot-retargeting the committed PVA state.
+  return goal.target;
+}
+
 std::int64_t steadyNowNanoseconds() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
@@ -53,6 +64,7 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   planner_rate_hz_ = declare_parameter("super_navigation.planner_rate_hz", 10.0);
   command_rate_hz_ = declare_parameter("super_navigation.command_rate_hz", 50.0);
   input_pair_max_skew_s_ = declare_parameter("super_navigation.input_pair_max_skew_s", 0.1);
+  input_max_age_s_ = declare_parameter("super_navigation.input_max_age_s", 0.5);
   max_safety_suffix_anchor_error_m_ = declare_parameter(
       "super_navigation.max_safety_suffix_anchor_error_m", 0.75);
   planner_solve_timeout_s_ = declare_parameter(
@@ -62,6 +74,8 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   const auto max_plan_from_rest_failures =
       declare_parameter("super_navigation.max_plan_from_rest_failures", 3);
   super_config_path_ = declare_parameter("super_navigation.config_path", std::string{});
+  const auto mission_file =
+      declare_parameter("super_navigation.mission_file", std::string{});
   if (super_config_path_.empty()) {
     super_config_path_ = ament_index_cpp::get_package_share_directory("navigation_runtime") +
                          "/config/super_planner.yaml";
@@ -75,6 +89,7 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   }
   if (!std::isfinite(command_rate_hz_) || command_rate_hz_ <= 0.0 ||
       !std::isfinite(input_pair_max_skew_s_) || input_pair_max_skew_s_ <= 0.0 ||
+      !std::isfinite(input_max_age_s_) || input_max_age_s_ <= 0.0 ||
       !std::isfinite(max_safety_suffix_anchor_error_m_) ||
       max_safety_suffix_anchor_error_m_ <= 0.0 ||
       !std::isfinite(planner_solve_timeout_s_) || planner_solve_timeout_s_ <= 0.0 ||
@@ -94,9 +109,21 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
 
   ros_interface_ = std::make_shared<ros_interface::RosInterface>(
       [this]() { return now().seconds(); });
+  std::optional<super_planner::DynamicLimits> mission_limits;
+  if (!mission_file.empty()) {
+    mission_limits = loadMissionDynamicLimits(mission_file);
+    RCLCPP_INFO(
+        get_logger(),
+        "Applying mission dynamics to SUPER before optimizer construction: "
+        "velocity=%.3f acceleration=%.3f jerk=%.3f",
+        mission_limits->max_velocity_mps,
+        mission_limits->max_acceleration_mps2,
+        mission_limits->max_jerk_mps3);
+  }
   map_ = std::make_shared<rog_map::ROGMapROS>([this] { return now().seconds(); });
   map_->loadConfigAndInit(super_config_path_);
-  planner_ = std::make_shared<super_planner::SuperPlanner>(super_config_path_, ros_interface_, map_);
+  planner_ = std::make_shared<super_planner::SuperPlanner>(
+      super_config_path_, ros_interface_, map_, mission_limits);
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -235,16 +262,31 @@ void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoa
       active_goal_->mission_id == message->mission_id &&
       active_goal_->waypoint_index == message->waypoint_index &&
       active_goal_->request_id == message->request_id;
+  const bool can_hot_retarget = canHotRetargetAtWaypointTransition(
+      same_logical_goal,
+      active_goal_.has_value() &&
+          active_goal_->behavior ==
+              navigation_interfaces::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
+      planner_command_available_.load(), planner_failure_latched_.load(),
+      safety_suffix_active_.load());
+  if (!same_logical_goal) {
+    // Cancel before exposing the new waypoint identity. SUPER's commit gate
+    // guarantees that a solve for the previous waypoint cannot publish a new
+    // CmdTraj after this callback has invalidated it. The already committed
+    // atomic bundle remains available for smooth hot-retarget continuity.
+    planner_->cancelActiveSolve();
+  }
   active_goal_ = *message;
   if (!same_logical_goal) {
-    // The previous waypoint must not remain command-authoritative while a
-    // new PlanFromRest solve is pending.
-    planner_command_available_.store(false);
     planner_failure_latched_.store(false);
     safety_suffix_active_.store(false);
     plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
-    new_goal_ = true;
+    hot_goal_transition_ = can_hot_retarget;
+    new_goal_ = !can_hot_retarget;
+    if (!can_hot_retarget) {
+      planner_command_available_.store(false);
+    }
     restart_from_rest_ = false;
     skip_replan_once_ = false;
     trajectory_finished_.store(false);
@@ -269,8 +311,10 @@ void SuperNavigationNode::onModeStatus(
               "mission=%s waypoint=%u request=%lu",
               message->state, message->reason, message->mission_id.c_str(),
               message->waypoint_index, static_cast<unsigned long>(message->request_id));
+  planner_->cancelActiveSolve();
   active_goal_.reset();
   new_goal_ = false;
+  hot_goal_transition_ = false;
   restart_from_rest_ = false;
   skip_replan_once_ = false;
   planner_command_available_.store(false);
@@ -290,6 +334,7 @@ void SuperNavigationNode::runCycle() {
   std::optional<nav_msgs::msg::Odometry> odometry;
   std::optional<navigation_interfaces::msg::NavigationGoal> goal;
   bool new_goal = false;
+  bool hot_goal_transition = false;
   bool restart_from_rest = false;
   std::int64_t input_conversion_us = 0;
   std::uint64_t dropped_cloud_count = 0;
@@ -312,11 +357,27 @@ void SuperNavigationNode::runCycle() {
     }
     goal = active_goal_;
     new_goal = new_goal_;
+    hot_goal_transition = hot_goal_transition_;
     restart_from_rest = restart_from_rest_;
     input_conversion_us = last_input_conversion_us_;
     dropped_cloud_count = dropped_cloud_count_;
   }
   if (!cloud || !odometry) return;
+  const auto now_ns = now().nanoseconds();
+  const auto odometry_stamp_ns = stampNanoseconds(odometry->header.stamp);
+  const auto cloud_age_ns = std::llabs(now_ns - cloud_stamp_ns);
+  const auto odometry_age_ns = std::llabs(now_ns - odometry_stamp_ns);
+  if (cloud_stamp_ns <= 0 || odometry_stamp_ns <= 0 ||
+      cloud_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9) ||
+      odometry_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
+    ++stale_input_count_;
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "SUPER rejecting stale planning snapshot cloud_age=%.3f odom_age=%.3f limit=%.3f",
+        static_cast<double>(cloud_age_ns) * 1e-9,
+        static_cast<double>(odometry_age_ns) * 1e-9, input_max_age_s_);
+    return;
+  }
   if (!std::isfinite(odometry->pose.pose.position.x) ||
       !std::isfinite(odometry->pose.pose.position.y) ||
       !std::isfinite(odometry->pose.pose.position.z)) {
@@ -329,7 +390,7 @@ void SuperNavigationNode::runCycle() {
   // cells can extend the route. Waypoint progression remains owned by the
   // mission controller; this only retries the planner-local FSM.
   if (trajectory_finished_.exchange(false) && goal && !trajectory_reaches_goal_.load()) {
-    const auto& target_message = goal->target;
+    const auto& target_message = plannerTarget(*goal);
     const double dx = pointFromMessage(target_message, 0) - odometry->pose.pose.position.x;
     const double dy = pointFromMessage(target_message, 1) - odometry->pose.pose.position.y;
     const double dz = pointFromMessage(target_message, 2) - odometry->pose.pose.position.z;
@@ -337,8 +398,10 @@ void SuperNavigationNode::runCycle() {
     if (std::sqrt(dx * dx + dy * dy + dz * dz) > kGoalReachedDistanceM) {
       std::lock_guard<std::mutex> lock(input_mutex_);
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
-          active_goal_->waypoint_index == goal->waypoint_index) {
+          active_goal_->waypoint_index == goal->waypoint_index &&
+          active_goal_->request_id == goal->request_id) {
         restart_from_rest_ = true;
+        hot_goal_transition_ = false;
         restart_from_rest = true;
         skip_replan_once_ = false;
       }
@@ -385,6 +448,7 @@ void SuperNavigationNode::runCycle() {
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
   add_value("dropped_cloud_count", dropped_cloud_count);
+  add_value("stale_input_count", stale_input_count_);
   add_value("processing_exception_count", map_update_exception_count_);
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
@@ -409,11 +473,10 @@ void SuperNavigationNode::runCycle() {
   rog_map::RobotState planner_state;
   planner_->getRobotState(planner_state);
 
-  // SUPER owns one local polynomial for the currently requested goal. The
-  // mission controller may expose a lookahead waypoint for bookkeeping, but
-  // sending that lookahead into the optimizer makes the planner solve beyond
-  // the observed local corridor and is not part of the SUPER contract.
-  const auto& planner_target = goal->target;
+  // Always retain the current mission checkpoint as SUPER's geometric target.
+  // PASS_THROUGH is implemented by hot-retargeting while the committed
+  // trajectory still carries non-zero PVA, not by skipping to next_target.
+  const auto& planner_target = plannerTarget(*goal);
   const super_utils::Vec3f target{
       static_cast<float>(pointFromMessage(planner_target, 0)),
       static_cast<float>(pointFromMessage(planner_target, 1)),
@@ -424,6 +487,7 @@ void SuperNavigationNode::runCycle() {
   // SUPER itself owns the committed main/backup timing; the ROS adapter must
   // not add a second horizon-expiry or trajectory-slicing policy.
   const bool plan_from_rest = new_goal || restart_from_rest;
+  const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest;
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
@@ -431,7 +495,7 @@ void SuperNavigationNode::runCycle() {
     planner_failure_latched_.store(false);
     trajectory_reaches_goal_.store(false);
   }
-  if (!plan_from_rest && skip_replan_once_) {
+  if (!plan_from_rest && !replan_for_new_goal && skip_replan_once_) {
     skip_replan_once_ = false;
     return;
   }
@@ -439,10 +503,11 @@ void SuperNavigationNode::runCycle() {
   const std::uint64_t solve_generation = ++planner_solve_generation_;
   planner_solve_started_steady_ns_.store(steadyNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
+  planner_->resetSolveCancellation();
   try {
     result = plan_from_rest
                  ? planner_->PlanFromRest(target, 0.0, true)
-                 : planner_->ReplanOnce(target, 0.0, false);
+                 : planner_->ReplanOnce(target, 0.0, replan_for_new_goal);
   } catch (const std::exception& error) {
     RCLCPP_ERROR(get_logger(), "SUPER planner exception: %s", error.what());
     result = super_utils::EMER;
@@ -484,8 +549,10 @@ void SuperNavigationNode::runCycle() {
     trajectory_finished_.store(true);
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
-        active_goal_->waypoint_index == goal->waypoint_index) {
+        active_goal_->waypoint_index == goal->waypoint_index &&
+        active_goal_->request_id == goal->request_id) {
       restart_from_rest_ = true;
+      hot_goal_transition_ = false;
     }
     RCLCPP_INFO(get_logger(),
                 "SUPER local trajectory boundary reached; scheduling PlanFromRest");
@@ -569,13 +636,24 @@ void SuperNavigationNode::runCycle() {
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();
     bool sampled_path_clear = !committed.empty();
+    double first_blocked_sample_s = std::numeric_limits<double>::quiet_NaN();
+    super_utils::Vec3f first_blocked_sample = super_utils::Vec3f::Constant(
+        std::numeric_limits<double>::quiet_NaN());
+    rog_map::GridType first_blocked_grid = rog_map::GridType::UNKNOWN;
     if (sampled_path_clear) {
       constexpr double kSafetySamplePeriodS = 0.05;
       for (double sample_t = clamped_elapsed_s; sample_t <= total_duration_s;
            sample_t += kSafetySamplePeriodS) {
         const auto sample = committed.getPos(sample_t);
-        if (!sample.allFinite() || map_->isOccupiedInflate(sample)) {
+        const auto grid = sample.allFinite()
+                              ? map_->getInfGridType(sample)
+                              : rog_map::GridType::OUT_OF_MAP;
+        if (grid == rog_map::GridType::OCCUPIED ||
+            grid == rog_map::GridType::OUT_OF_MAP) {
           sampled_path_clear = false;
+          first_blocked_sample_s = sample_t;
+          first_blocked_sample = sample;
+          first_blocked_grid = grid;
           break;
         }
       }
@@ -589,22 +667,29 @@ void SuperNavigationNode::runCycle() {
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
         anchor_error_m, max_safety_suffix_anchor_error_m_, sampled_path_clear);
-    safety_suffix_active_.store(use_safety_suffix);
+    // A visible main-only trajectory remains a MAIN command. Only an actual
+    // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
+    safety_suffix_active_.store(use_safety_suffix && backup_available);
     planner_failure_latched_.store(!use_safety_suffix);
     if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
-                  "SUPER hot replan failed (%d); freezing committed safety suffix "
-                  "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f",
-                  result, elapsed_s, safety_transition_s, total_duration_s, anchor_error_m);
+                  "SUPER hot replan failed (%d); retaining visible committed trajectory "
+                  "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f",
+                  result, backup_available, elapsed_s, safety_transition_s,
+                  total_duration_s, anchor_error_m);
     } else {
       planner_command_available_.store(false);
       RCLCPP_ERROR(get_logger(),
                    "SUPER hot replan failed without a valid safety suffix: backup=%d "
                    "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f "
-                   "state_age=%.3f clear=%d",
+                   "state_age=%.3f clear=%d blocked_t=%.3f blocked_grid=%d "
+                   "blocked=(%.2f,%.2f,%.2f)",
                    backup_available, elapsed_s,
                    safety_transition_s, total_duration_s,
-                   anchor_error_m, latest_vehicle_state_age_s, sampled_path_clear);
+                   anchor_error_m, latest_vehicle_state_age_s, sampled_path_clear,
+                   first_blocked_sample_s, static_cast<int>(first_blocked_grid),
+                   first_blocked_sample.x(), first_blocked_sample.y(),
+                   first_blocked_sample.z());
     }
   }
   if (disposition == PlannerResultDisposition::CommandReady) {
@@ -628,8 +713,11 @@ void SuperNavigationNode::runCycle() {
     // would keep publishing the previous waypoint while the mission has
     // already advanced.
     if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
-        active_goal_->waypoint_index == goal->waypoint_index) {
+        active_goal_->waypoint_index == goal->waypoint_index &&
+        active_goal_->request_id == goal->request_id) {
       if (new_goal) new_goal_ = false;
+      if (plan_from_rest) hot_goal_transition_ = false;
+      if (replan_for_new_goal) hot_goal_transition_ = false;
       if (restart_from_rest) restart_from_rest_ = false;
     }
   }
@@ -764,6 +852,7 @@ void SuperNavigationNode::publishCommand() {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
+        planner_->cancelActiveSolve();
         planner_command_available_.store(false);
         planner_failure_latched_.store(true);
         safety_suffix_active_.store(false);
@@ -795,7 +884,7 @@ void SuperNavigationNode::publishCommand() {
     if (traj_finish) trajectory_finished_.store(true);
   } else {
     // PlanFromRest can fail before CmdTraj has ever been committed. Emit an
-    // explicit terminal status so External Mode enters its hold/POSCTL path;
+    // explicit terminal status so External Mode enters its PX4 Hold path;
     // never synthesize a zero-velocity nominal command from this state.
     pvaj.setZero();
   }

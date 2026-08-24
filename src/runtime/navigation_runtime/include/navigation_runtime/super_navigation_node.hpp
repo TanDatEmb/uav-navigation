@@ -56,6 +56,7 @@ class SuperNavigationNode final : public rclcpp::Node {
   double planner_rate_hz_{10.0};
   double command_rate_hz_{50.0};
   double input_pair_max_skew_s_{0.1};
+  double input_max_age_s_{0.5};
   double max_safety_suffix_anchor_error_m_{0.75};
   double planner_solve_timeout_s_{1.0};
   double plan_from_rest_failure_confirmation_s_{0.5};
@@ -82,6 +83,9 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::deque<nav_msgs::msg::Odometry> odometry_history_;
   std::optional<navigation_interfaces::msg::NavigationGoal> active_goal_;
   bool new_goal_{false};
+  // PASS_THROUGH waypoint transitions retarget SUPER through ReplanOnce so the
+  // committed polynomial supplies the future PVA initial state.
+  bool hot_goal_transition_{false};
   bool restart_from_rest_{false};
   // SUPER's native FSM skips one replan timer callback immediately after a
   // successful PlanFromRest.  Keep that state at the ROS adapter boundary so
@@ -93,6 +97,7 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint64_t dropped_cloud_count_{0};
   std::uint64_t received_cloud_count_{0};
   std::uint64_t accepted_cloud_count_{0};
+  std::uint64_t stale_input_count_{0};
   std::uint64_t map_update_exception_count_{0};
   std::int64_t last_input_conversion_us_{0};
   std::atomic_uint32_t command_id_{0};

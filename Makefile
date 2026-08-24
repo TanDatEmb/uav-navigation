@@ -52,7 +52,7 @@ help:
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
 	@echo "  Runtime guard                              one workspace-owned simulation; concurrent starts are rejected"
 	@echo "  make clean                                 keep build/install; remove stale variants, logs and caches"
-	@echo "Artifacts: shared Git root .artifacts/runtime/<workflow>-*/REPORT.html, REPORT.md and report.json"
+	@echo "Artifacts: shared Git root .artifacts/runtime/<workflow>-*/REPORT.html and report.json"
 	@echo "PASS requires samples, freshness, validity, cleanup, and workflow-specific acceptance."
 
 build:

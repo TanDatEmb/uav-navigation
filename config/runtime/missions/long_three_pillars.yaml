@@ -42,7 +42,7 @@ mission:
     # Keep a non-zero hand-over speed, but reduce the endpoint impulse at an
     # observed obstacle detour so the estimator/controller does not chase a
     # sharp local tangent at the next waypoint.
-    unknown_policy: blocked
+    unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

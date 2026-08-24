@@ -77,6 +77,24 @@ TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {
       true, 4.0, 4.0, 4.0, 0.2, 0.75, true));
 }
 
+TEST(PlannerFsm, RetainsVisibleMainOnlyTrajectoryAfterTransientReplanFailure) {
+  EXPECT_TRUE(committedSafetySuffixIsUsable(
+      false, 0.8, 1.395, 0.8, 0.187, 0.75, true));
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      false, 0.8, 1.395, 0.8, 0.187, 0.75, false));
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      false, 1.395, 1.395, 1.395, 0.187, 0.75, true));
+}
+
+TEST(PlannerFsm, PassThroughHotRetargetsOnlyFromNominalCommand) {
+  EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, false));
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(true, true, true, false, false));
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, false, true, false, false));
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, false, false, false));
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, true, false));
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
+}
+
 TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
   const double elapsed_s = 2.5;
   const double original_backup_start_s = 2.0;

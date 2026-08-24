@@ -110,14 +110,14 @@ PX4 `rcS` starts the Gazebo bridge and EKF2:
 | PX4 parameter | Value | Purpose |
 |---|---:|---|
 | `SIM_GZ_EN_ODOM` | `0` | prohibit direct Gazebo truth -> `vehicle_visual_odometry` |
-| `SIM_GZ_EN_GPS`, `SIM_GPS_USED`, `EKF2_GPS_CTRL` | `0` | prohibit simulated GPS aiding |
-| `SIM_GZ_EN_BARO` | `1` | retain barometer transport solely for PX4 preflight health checks |
-| `EKF2_BARO_CTRL`, `EKF2_RNG_CTRL` | `0` | prohibit barometer/rangefinder height aiding |
-| `EKF2_MAG_TYPE` | `5` | prohibit competing magnetometer yaw aid |
+| `SIM_GZ_EN_GPS`, `SIM_GPS_USED`, `EKF2_GPS_CTRL` | `1`, `10`, `7` | enable normal simulated GNSS position, altitude, and velocity aiding |
+| `SIM_GZ_EN_BARO`, `EKF2_BARO_CTRL` | `1`, `1` | enable normal barometer transport and height aiding |
+| `EKF2_RNG_CTRL` | `1` | enable PX4's conditional rangefinder aiding when a source is available |
+| `EKF2_MAG_TYPE` | `0` | use PX4's normal automatic magnetometer fusion |
 | `EKF2_EV_CTRL` | `15` | enable EV horizontal position, vertical position, velocity, and yaw |
-| `EKF2_HGT_REF` | `3` | select vision as the height reference |
+| `EKF2_HGT_REF` | `1` | select GNSS as the normal multisensor height reference |
 
-Therefore the only runtime route into PX4 visual odometry is:
+The only runtime route into PX4's external-vision input remains:
 
 ```text
 /lio/odometry_propagated (ENU/FLU, lio_odom -> base_link)

@@ -35,6 +35,7 @@ namespace super_planner {
         SUPPER_UNDEFINED = -0,
         SUPER_NO_ODOM = -1,
         SUPER_NO_START_POINT = -2,
+        SUPER_BACKUP_FAILED = -3,
 
     };
 
@@ -52,6 +53,8 @@ namespace super_planner {
             return "No odom, return at the start of the replan";
         case SUPER_NO_START_POINT:
             return "Cannot find a start point in the local map";
+        case SUPER_BACKUP_FAILED:
+            return "Backup trajectory required but generation failed";
         }
     };
 }

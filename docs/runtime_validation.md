@@ -177,10 +177,12 @@ stale one-shot trajectory. The M1 External Mode node is launched with
 `navigation_bringup/px4_external_mode.launch.py` and
 `config/runtime/external_mode.yaml`; it registers through `px4_ros2_cpp` and
 hands setpoints to PX4 internal controllers. For mission execution, the mode
-publishes `/navigation/mission_complete` and hands control to PX4 POSCTL. Neither
+publishes `/navigation/mission_complete` and hands control to PX4 native Hold
+(`AUTO_LOITER`). Neither
 the External Mode node nor the mission harness issues LAND, RTL, or disarm. The
-external-vision-only profile intentionally has no global position, so POSCTL is
-the generic handover target; completion remains a supervisor boundary. `sim`
+multisensor PX4 profile fuses normal GNSS/barometer/range/magnetometer inputs
+alongside propagated LIO external vision, so Hold's local/global-position health
+contract remains available. Completion remains a supervisor boundary. `sim`
 starts the same stack with
 the Gazebo GUI and RViz, but no automatic flight controller;
 stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
@@ -309,7 +311,7 @@ PX4_DIR=$HOME/Dev/Autopilot python3 tools/runtime/runner.py \
 ```
 
 The session directory printed by the runner contains `scenario.json`,
-`benchmark_metrics.json`, `samples.jsonl`, `report.json`, `REPORT.md`, and the
+`benchmark_metrics.json`, `samples.jsonl`, `report.json`, and the
 self-contained `REPORT.html`. The report distinguishes route columns from
 texture-only objects and records mission completion, waypoint indices, speed,
 LIO residual, collision count, failsafe state, and minimum vehicle clearance.
@@ -400,7 +402,7 @@ is ever substituted for a missing correction.
 
 Each session is under `.artifacts/runtime/<workflow>-<timestamp>-<pid>/` and
 contains process logs, `processes.json`, `state.json`, `monitor.json`,
-`samples.jsonl`, `report.json`, and `REPORT.md`. The latest session is exposed
+`samples.jsonl`, `report.json`, and `REPORT.html`. The latest session is exposed
 through `.artifacts/runtime/latest`.
 
 The report verdict is one of `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN`, or
@@ -420,13 +422,12 @@ takeoff/airborne supervisor
   -> activate External Mode
   -> static mission YAML -> correlated goals -> PVA/PV/V setpoints
   -> mission_complete event
-  -> PX4 POSCTL handover (mission checkpoint retained for reactivation)
+  -> PX4 native Hold/AUTO_LOITER handover (mission checkpoint retained for reactivation)
 ```
 
-The mission event is a notification boundary, not a flight action. This is
-required because the external-vision-only simulation profile disables GPS and
-PX4 therefore rejects generic Loiter handover when its global-position health
-requirement is not met.
+The mission event is a notification boundary, not a flight action. Runtime
+acceptance requires PX4 to confirm the transition to native Hold; publishing
+mission completion alone is not sufficient.
 
 The current planning execution contract is the sampled SUPER PVA path:
 

@@ -456,7 +456,17 @@ GridType ProbMap::getInfGridType(const Vec3f& pos) const {
     if(!insideLocalMap(pos)) {
         return OUT_OF_MAP;
     }
-    return inf_map_->getGridType(pos);
+    const GridType inflated_type = inf_map_->getGridType(pos);
+    if (inflated_type == OCCUPIED || cfg_.unk_inflation_en) {
+        return inflated_type;
+    }
+    // When UNKNOWN inflation is intentionally disabled, the inflated layer
+    // still owns the robot-radius OCCUPIED envelope but cannot classify
+    // observation provenance. Preserve UNKNOWN/KNOWN_FREE from the base
+    // probability map instead of silently treating all non-occupied cells as
+    // observed free. SUPER can then choose UNKNOWN_AS_FREE or
+    // UNKNOWN_AS_OCCUPIED without requiring a conservative unknown halo.
+    return getGridType(pos);
 }
 
 GridType ProbMap::getInfBaseGridType(const Vec3i& id_g) const {

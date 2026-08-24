@@ -82,3 +82,8 @@ ament_package()
 
 ament_add_gtest(test_trajectory test/test_trajectory.cpp)
 target_link_libraries(test_trajectory ${PROJECT_NAME})
+
+ament_add_gtest(test_super_config test/test_super_config.cpp)
+target_compile_definitions(test_super_config PRIVATE
+  SUPER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/super_planner.yaml")
+target_link_libraries(test_super_config ${PROJECT_NAME})

@@ -22,8 +22,11 @@
 */
 
 #include <super_core/super_planner.h>
+#include <super_core/backup_braking.hpp>
+#include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <super_utils/scope_timer.hpp>
 #include <fmt/color.h>
 
@@ -34,8 +37,9 @@ namespace super_planner {
     SuperPlanner::SuperPlanner
             (const std::string &cfg_path,
              const ros_interface::RosInterface::Ptr &ros_ptr,
-             const rog_map::ROGMapROS::Ptr &map_ptr
-            ) : cfg_(Config(cfg_path)), ros_ptr_(ros_ptr), map_ptr_(map_ptr) {
+             const rog_map::ROGMapROS::Ptr &map_ptr,
+             const std::optional<DynamicLimits> &mission_limits
+            ) : cfg_(Config(cfg_path, mission_limits)), ros_ptr_(ros_ptr), map_ptr_(map_ptr) {
 
         ros_ptr_->setResolution(cfg_.resolution);
         ros_ptr_->setVisualizationEn(cfg_.visualization_en);
@@ -43,6 +47,12 @@ namespace super_planner {
         back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, ros_ptr_);
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max);
         const auto &rog_map_cfg = map_ptr_->getMapConfig();
+        const double occupied_inflation_radius =
+                rog_map_cfg.inflation_resolution * rog_map_cfg.inflation_step;
+        if (occupied_inflation_radius + 1.0e-9 < cfg_.robot_r) {
+            throw std::invalid_argument(
+                    "ROG-Map occupied inflation radius is smaller than SUPER robot_r");
+        }
         astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
         cg_ptr_ = std::make_shared<CorridorGenerator>(ros_ptr_, map_ptr_, cfg_.corridor_bound_dis,
                                                       cfg_.corridor_line_max_length,
@@ -122,12 +132,24 @@ namespace super_planner {
         solve_stage_.store(5);
         RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);;
 
+        if (solve_cancelled_.load()) {
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            return FAILED;
+        }
+
         if (back_ret_code == SUCCESS) {
             if (cfg_.print_log) {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
             }
 
-            cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info);
+            {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load() ||
+                    !cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info)) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
+            }
             last_exp_traj_info_ = exp_traj_info;
             robot_on_backup_traj_ = false;
             gi_.new_goal = false;
@@ -146,7 +168,14 @@ namespace super_planner {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
             }
             robot_on_backup_traj_ = false;
-            cmd_traj_info_.setTrajectory(exp_traj_info);
+            {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load()) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
+                cmd_traj_info_.setTrajectory(exp_traj_info);
+            }
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
 
@@ -159,21 +188,15 @@ namespace super_planner {
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS_NO_BACKUP);
             return SUCCESS;
         }
-        // The EXP trajectory has already passed frontend, corridor and dynamic
-        // optimization.  A backup optimizer failure must not discard that
-        // newer safe main trajectory and leave the command stream on an older
-        // route.  Commit main-only; the runtime will fail closed if a later
-        // main replan fails before a valid backup is available.
+        // A candidate is not safe to commit without a feasible backup.  Keep
+        // the previously committed atomic bundle so the runtime can drain its
+        // existing safety suffix or enter its fail-closed handover path.
         ros_ptr_->warn(
                 " -- [SUPER] in [PlanFromRest] backup generation returned [{}]; "
-                "committing validated main trajectory without backup",
+                "rejecting candidate because backup is required",
                 RET_CODE_STR[back_ret_code].c_str());
-        robot_on_backup_traj_ = false;
-        cmd_traj_info_.setTrajectory(exp_traj_info);
-        last_exp_traj_info_ = exp_traj_info;
-        gi_.new_goal = false;
-        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS_NO_BACKUP);
-        return SUCCESS;
+        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+        return FAILED;
     }
 
 
@@ -254,8 +277,20 @@ namespace super_planner {
             return FAILED;
         }
 
+        if (solve_cancelled_.load()) {
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            return FAILED;
+        }
+
         if (back_ret_code == SUCCESS) {
-            cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info);
+            {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load() ||
+                    !cmd_traj_info_.setTrajectory(exp_traj_info, back_traj_info)) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
+            }
             last_exp_traj_info_ = exp_traj_info;
             robot_on_backup_traj_ = false;
             gi_.new_goal = false;
@@ -273,7 +308,14 @@ namespace super_planner {
             return SUCCESS;
         } else if (back_ret_code == NO_NEED) {
             // 这次生成backup轨迹的点没有意义,
-            cmd_traj_info_.setTrajectory(exp_traj_info);
+            {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load()) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
+                cmd_traj_info_.setTrajectory(exp_traj_info);
+            }
             robot_on_backup_traj_ = false;
             last_exp_traj_info_ = exp_traj_info;
             gi_.new_goal = false;
@@ -292,7 +334,14 @@ namespace super_planner {
             return SUCCESS;
         } else if (back_ret_code == FINISH) {
             // Which means the exp traj is all in known free, no need for backup traj
-            cmd_traj_info_.setTrajectory(exp_traj_info);
+            {
+                std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+                if (solve_cancelled_.load()) {
+                    latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                    return FAILED;
+                }
+                cmd_traj_info_.setTrajectory(exp_traj_info);
+            }
             last_exp_traj_info_ = exp_traj_info;
             robot_on_backup_traj_ = false;
             gi_.new_goal = false;
@@ -308,20 +357,15 @@ namespace super_planner {
             latest_replan.setRetCode(SUPER_SUCCESS_NO_BACKUP);
             return SUCCESS;
         }
-        // Main and backup are independent acceptance gates.  Rejecting a
-        // valid freshly replanned EXP trajectory because backup optimization
-        // failed keeps publishing the older route -- exactly the stale-path
-        // behaviour the external-mode safety contract forbids.
+        // Main and backup form one atomic safety bundle.  A failed backup
+        // must leave CmdTraj untouched so the runtime can retain/drain the
+        // previously committed suffix instead of executing main-only EXP.
         ros_ptr_->warn(
                 " -- [SUPER] in [ReplanOnce]: backup generation returned {}; "
-                "committing validated main trajectory without backup",
+                "rejecting candidate because backup is required",
                 RET_CODE_STR[back_ret_code].c_str());
-        cmd_traj_info_.setTrajectory(exp_traj_info);
-        last_exp_traj_info_ = exp_traj_info;
-        robot_on_backup_traj_ = false;
-        gi_.new_goal = false;
-        latest_replan.setRetCode(SUPER_SUCCESS_NO_BACKUP);
-        return SUCCESS;
+        latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+        return FAILED;
     }
 
     void SuperPlanner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
@@ -861,6 +905,18 @@ namespace super_planner {
         }
 
         const auto temp_yaw_traj = old_traj + new_traj;
+        traj_opt::TrajectoryDynamicReport exp_dynamic_report;
+        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                temp_exp_traj, cfg_.exp_traj_cfg, &exp_dynamic_report,
+                0.01, &temp_yaw_traj)) {
+            ros_ptr_->error(
+                    " -- [SUPER] combined EXP position/yaw body-rate or thrust gate failed: "
+                    "body_rate={} thrust=[{},{}]",
+                    exp_dynamic_report.maximum_body_rate_rad_s,
+                    exp_dynamic_report.minimum_thrust_n,
+                    exp_dynamic_report.maximum_thrust_n);
+            return FAILED;
+        }
         // check if part of the exp on last backup
         double on_backup_end_TT{-1}, on_backup_start_TT{-1};
         if (!last_exp_traj_info.empty() && replan_state_TT > cmd_traj_info_.getBackupTrajStartTT()) {
@@ -928,7 +984,12 @@ namespace super_planner {
                 // isLineFree checks the configured robot-radius neighbor tube
                 // around the ray. Any stitched prefix contained by that same
                 // tube is covered by the endpoint check as well.
-                const double lateral_tolerance = std::max(cfg_.resolution, cfg_.robot_r);
+                // A single inflated ray may represent another sample only when
+                // their centerlines are the same ray. Merely being within one
+                // robot radius is unsafe: the two radius-r tubes then overlap
+                // but neither contains the other.
+                const double lateral_tolerance =
+                        std::max(1.0e-9, cfg_.resolution * 1.0e-6);
                 for (const auto &sample : candidate_ps) {
                     const Vec3f delta = sample.second - visibility_origin;
                     const double projection = delta.dot(ray_direction);
@@ -952,10 +1013,11 @@ namespace super_planner {
                 (endpoint - visibility_origin).norm() > visibility_limit) {
                 return false;
             }
-            // ROG-Map's inflated layer already represents the configured
-            // vehicle safety envelope. Re-expanding every base-grid sample by
-            // seed_line_neighbour here is equivalent but cubic in radius/grid
-            // resolution and dominated planning time at fine resolutions.
+            // SUPER's endpoint-only ROG-Map deliberately leaves unobserved
+            // cells UNKNOWN.  Backup visibility is therefore the upstream
+            // obstacle-free sensor tube, not a persisted probabilistic FREE
+            // label.  The inflated layer supplies the robot-radius tube in one
+            // lookup and preserves the upstream unknown-as-visible semantics.
             return map_ptr_->isLineFree(visibility_origin, endpoint, true, false);
         };
         if (shared_visibility_ray &&
@@ -1094,19 +1156,84 @@ namespace super_planner {
         //            cout << "exp_traj_dur: " << ref_exp_traj.optimized_exp_traj.getTotalDuration() << endl;
         double vel_e_n = ref_exp_traj.getVel(te).norm();
         double heu_ts = std::max((t0 + te) / 2, te - vel_e_n / cfg_.back_traj_cfg.max_acc);
-        double heu_dur = te - heu_ts;
-        Vec3f heu_p = seed_point;
+        // Preserve SUPER's visibility/braking-derived switch point.  The
+        // main+backup bundle is already committed atomically; forcing the
+        // switch into a fixed number of replanning cycles makes a vehicle at
+        // low speed brake before it can enter an obstacle detour.
+        heu_ts = std::clamp(heu_ts, t0, te);
+        StatePVAJ switch_state;
+        BackupBrakingSeed braking_seed;
+        bool braking_seed_inside_sfc = false;
+        const double initial_switch_guess = heu_ts;
+        // The latest visibility-derived switch is desirable for progress, but
+        // its braking endpoint may lie outside the generated safety corridor.
+        // Search backward on the EXP trajectory until the complete Bezier
+        // hull of a dynamically feasible stop is contained by that corridor.
+        // This retains the latest certifiable switch instead of either
+        // disabling backup or imposing an unrelated fixed replan horizon.
+        for (double candidate_ts = heu_ts;;) {
+            switch_state = ref_exp_traj.posTraj().getState(candidate_ts);
+            braking_seed = makeBackupBrakingSeed(
+                    candidate_ts, switch_state,
+                    cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
+                    cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt,
+                    cfg_.back_traj_cfg.penna_margin);
+            braking_seed_inside_sfc = braking_seed.feasible &&
+                    braking_seed.duration_s > cfg_.sample_traj_dt;
+            if (braking_seed_inside_sfc) {
+                const auto braking_control_points = minimumSnapStopBezierControlPoints(
+                        switch_state, braking_seed.duration_s);
+                for (int i = 0;
+                     braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
+                    braking_seed_inside_sfc =
+                            temp_poly.PointIsInside(braking_control_points.col(i));
+                }
+            }
+            if (braking_seed_inside_sfc) {
+                heu_ts = candidate_ts;
+                break;
+            }
+            if (candidate_ts <= t0 + 1.0e-9) break;
+            candidate_ts = std::max(t0, candidate_ts - cfg_.sample_traj_dt);
+        }
+        if (!braking_seed_inside_sfc) {
+            ros_ptr_->warn(
+                    " -- [SUPER] no dynamically feasible minimum-snap backup hull inside SFC");
+            return OPT_FAILED;
+        }
+        if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt * 0.5) {
+            ros_ptr_->info(
+                    " -- [SUPER] moved backup switch backward from {} to {} for certified hull",
+                    initial_switch_guess, heu_ts);
+        }
+        double heu_dur = braking_seed.duration_s;
+        // Keep the optimized switch close to the derived braking state. A
+        // small interval avoids mapping an exact interval endpoint to
+        // infinity while preventing the split-time reward from drifting back
+        // toward the visibility boundary.
+        const double backup_switch_upper_bound = std::min(
+                te, heu_ts + std::max(0.01, cfg_.replan_forward_dt * 0.25));
         time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
         TimeConsuming t_back_opt("t_back_opt", false);
         double opt_ts = heu_ts;
         Trajectory temp_pos_traj;
+        VecDf seed_times(cfg_.back_traj_cfg.piece_num);
+        seed_times.setConstant(heu_dur / cfg_.back_traj_cfg.piece_num);
+        vec_Vec3f seed_points;
+        seed_points.reserve(cfg_.back_traj_cfg.piece_num);
+        const auto braking_piece = minimumSnapStopPiece(switch_state, heu_dur);
+        for (int i = 1; i <= cfg_.back_traj_cfg.piece_num; ++i) {
+            seed_points.emplace_back(braking_piece.getPos(
+                    heu_dur * static_cast<double>(i) /
+                    cfg_.back_traj_cfg.piece_num));
+        }
         bool temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
                                                  t0,
-                                                 te,
+                                                 backup_switch_upper_bound,
                                                  heu_ts,
-                                                 heu_p,
-                                                 heu_dur,
                                                  back_traj_info.getSFC(),
+                                                 seed_times,
+                                                 seed_points,
                                                  temp_pos_traj,
                                                  opt_ts);
         time_consuming_[BACK_TRAJ_OPT] = t_back_opt.stop();
@@ -1117,57 +1244,72 @@ namespace super_planner {
             vec_Vec3f init_ps;
             back_traj_opt_->getInitValue(init_ts, init_times, init_ps);
             latest_replan.setBackupCondition(init_ts, init_times, init_ps,
-                                             t0, te,
+                                             t0, backup_switch_upper_bound,
                                              back_traj_info.getSFC());
         }
 
         if (!temp_ret) {
-            ros_ptr_->warn(" -- [SUPER] OptimizationBakTrajInPolytopes failed, force return");
-            back_traj_info.setEmpty();
-            return OPT_FAILED;
-        } else {
-            Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
-            Vec4f yaw_goal{0, 0, 0, 0};
-            bool free_end{true};
-            if (cfg_.goal_yaw_en) {
-                if (!isnan(gi_.goal_yaw)) {
-                    free_end = false;
-                    yaw_goal[0] = gi_.goal_yaw;
-                }
-            }
-            Trajectory temp_yaw_traj;
-            if (!yaw_traj_opt_->optimize(yaw_init_vec, yaw_goal, temp_pos_traj,
-                                         temp_yaw_traj, 3, false, free_end)) {
-                ros_ptr_->error(" -- [SUPER] in [generateBackupTrajectory] YawTrajOpt FAILD.");
-                return OPT_FAILED;
-            }
-
-
-            if (opt_ts < t0) {
-                ros_ptr_->error(" -- [SUPER] opt_ts {} < t0 {}", opt_ts, t0);
-                return OPT_FAILED;
-            }
-            double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
-            const auto &committed_ts_WT = cmd_traj_info_.getBackupTrajStartTT();
-            if (committed_ts_WT < cmd_traj_info_.getTotalDuration() && new_ts_WT < committed_ts_WT) {
-                ros_ptr_->error(" -- [SUPER] new_ts_WT {} < committed_ts_WT {}", new_ts_WT, committed_ts_WT);
-                return OPT_FAILED;
-            }
-
-
-            {
-                TimeConsuming t_viz("tviz", false);
-                ros_ptr_->vizBackupTraj(temp_pos_traj);
-                time_consuming_[VISUALIZATION] += t_viz.stop();
-            }
-
-            back_traj_info.setTrajectory(new_ts_WT, opt_ts, temp_pos_traj, temp_yaw_traj);
-            latest_replan.setBackupTraj(temp_pos_traj);
-            latest_replan.setBackupYawTraj(temp_yaw_traj);
-            return SUCCESS;
+            // The seed has already passed exact PVAJ boundary checks,
+            // analytic velocity/acceleration/jerk extrema, and full Bezier
+            // hull containment. L-BFGS is an optional refinement, not an
+            // authority to discard that certified safety trajectory.
+            ros_ptr_->warn(
+                    " -- [SUPER] backup refinement failed; using certified minimum-snap seed");
+            temp_pos_traj.clear();
+            temp_pos_traj.emplace_back(braking_piece);
+            opt_ts = heu_ts;
         }
-        ros_ptr_->warn(" -- [SUPER] Cannot find backup traj start point.");
-        return FAILED;
+        Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
+        Vec4f yaw_goal{0, 0, 0, 0};
+        bool free_end{true};
+        if (cfg_.goal_yaw_en) {
+            if (!isnan(gi_.goal_yaw)) {
+                free_end = false;
+                yaw_goal[0] = gi_.goal_yaw;
+            }
+        }
+        Trajectory temp_yaw_traj;
+        if (!yaw_traj_opt_->optimize(yaw_init_vec, yaw_goal, temp_pos_traj,
+                                     temp_yaw_traj, 3, false, free_end)) {
+            ros_ptr_->error(" -- [SUPER] in [generateBackupTrajectory] YawTrajOpt FAILD.");
+            return OPT_FAILED;
+        }
+        traj_opt::TrajectoryDynamicReport backup_dynamic_report;
+        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                temp_pos_traj, cfg_.back_traj_cfg, &backup_dynamic_report,
+                0.01, &temp_yaw_traj)) {
+            ros_ptr_->error(
+                    " -- [SUPER] combined backup position/yaw body-rate or thrust gate failed: "
+                    "body_rate={} thrust=[{},{}]",
+                    backup_dynamic_report.maximum_body_rate_rad_s,
+                    backup_dynamic_report.minimum_thrust_n,
+                    backup_dynamic_report.maximum_thrust_n);
+            return OPT_FAILED;
+        }
+
+
+        if (opt_ts < t0) {
+            ros_ptr_->error(" -- [SUPER] opt_ts {} < t0 {}", opt_ts, t0);
+            return OPT_FAILED;
+        }
+        double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
+        const auto &committed_ts_WT = cmd_traj_info_.getBackupTrajStartTT();
+        if (committed_ts_WT < cmd_traj_info_.getTotalDuration() && new_ts_WT < committed_ts_WT) {
+            ros_ptr_->error(" -- [SUPER] new_ts_WT {} < committed_ts_WT {}", new_ts_WT, committed_ts_WT);
+            return OPT_FAILED;
+        }
+
+
+        {
+            TimeConsuming t_viz("tviz", false);
+            ros_ptr_->vizBackupTraj(temp_pos_traj);
+            time_consuming_[VISUALIZATION] += t_viz.stop();
+        }
+
+        back_traj_info.setTrajectory(new_ts_WT, opt_ts, temp_pos_traj, temp_yaw_traj);
+        latest_replan.setBackupTraj(temp_pos_traj);
+        latest_replan.setBackupYawTraj(temp_yaw_traj);
+        return SUCCESS;
     }
 
     int SuperPlanner::getNearestFurtherGoalPoint(const vec_E<Vec3f> &goals, const Vec3f &start_pt) {

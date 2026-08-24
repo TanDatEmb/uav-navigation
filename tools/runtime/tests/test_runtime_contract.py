@@ -134,7 +134,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(navigation["odometry_topic"], "/lio/odometry_propagated")
         self.assertEqual(navigation["command_topic"], "/navigation/super_command")
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
-        self.assertIn("/navigation/visualization/planned_path", rviz)
+        self.assertIn("/lio/registered_points", rviz)
 
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -189,6 +189,12 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
+            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
+            self.assertGreater(planner["traj_opt"]["backup_traj"]["penna_jerk"], 0.0)
+            self.assertFalse(planner["super_planner"]["frontend_in_known_free"])
+            self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
+            self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+            self.assertEqual(planner["rog_map"]["raycasting"]["ray_range"][0], 0.7)
 
             speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
             speed_target = runner._mapping_params(
@@ -220,6 +226,55 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
 
+    def test_allow_unknown_policy_is_forwarded_to_exploration_planner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            mission = Path(temporary) / "allow_unknown.yaml"
+            mission.write_text(
+                "mission:\n"
+                "  planning:\n"
+                "    unknown_policy: allow_unknown\n"
+                "    max_velocity_mps: 1.0\n"
+                "    max_acceleration_mps2: 2.0\n"
+                "    max_jerk_mps3: 6.0\n",
+                encoding="utf-8",
+            )
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                dual_planning=True,
+                mission_file=mission,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))
+            planner_path = Path(
+                parameters["super_navigation_node"]["ros__parameters"]
+                ["super_navigation"]["config_path"]
+            )
+            planner = yaml.safe_load(planner_path.read_text(encoding="utf-8"))
+            self.assertFalse(planner["super_planner"]["frontend_in_known_free"])
+            self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
+            self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+
+    def test_runtime_rejects_mission_limits_above_x500_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mission = Path(temporary) / "too_fast.yaml"
+            mission.write_text(
+                "mission:\n"
+                "  planning:\n"
+                "    unknown_policy: allow_unknown\n"
+                "    max_velocity_mps: 12.1\n"
+                "    max_acceleration_mps2: 12.0\n"
+                "    max_jerk_mps3: 30.0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "exceeds X500 limit 12 m/s"):
+                runner._mapping_params(
+                    runner.Session(Path(temporary) / "session"),
+                    ROOT / "config/runtime/mapping.yaml",
+                    mission_file=mission,
+                )
+
     def test_stress_profiles_have_explicit_mission_limits_and_worlds(self) -> None:
         profiles = {
             "corridor": 1.0,
@@ -250,7 +305,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(world.is_file(), profile)
             self.assertTrue(mission.is_file(), profile)
             mission_value = yaml.safe_load(mission.read_text(encoding="utf-8"))
-            self.assertEqual(mission_value["mission"]["planning"]["unknown_policy"], "blocked")
+            self.assertEqual(mission_value["mission"]["planning"]["unknown_policy"], "allow_unknown")
             planning = runner._mission_planning(mission)
             self.assertEqual(planning["max_velocity_mps"], expected_velocity)
             self.assertGreater(planning["max_acceleration_mps2"], 0.0)
@@ -323,7 +378,20 @@ class RuntimeContractTest(unittest.TestCase):
         # scenario artifact is generated; open-space profiles retain 0.5 m.
         self.assertEqual(
             runner._acceptance_threshold_for_profile("long_three_pillars"),
-            3.0,
+            4.5,
+        )
+        self.assertEqual(
+            runner._acceptance_threshold_for_profile("pillar"),
+            1.5,
+        )
+
+    def test_cross_track_threshold_uses_declared_benchmark_envelope(self) -> None:
+        self.assertEqual(
+            runner._acceptance_threshold_for_profile(
+                "long_three_pillars",
+                {"benchmark": {"max_cross_track_m": 4.25}},
+            ),
+            4.25,
         )
 
     def test_long_three_pillars_speed_is_an_additive_two_waypoint_speed_benchmark(self) -> None:
@@ -455,11 +523,11 @@ class RuntimeContractTest(unittest.TestCase):
             for value in map(float, rpy.split()):
                 self.assertAlmostEqual(value, 0.0, places=12)
 
-    def test_product_rviz_config_shows_only_published_odometry(self) -> None:
+    def test_product_rviz_config_shows_current_super_input_and_odometry(self) -> None:
         config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("Fixed Frame: lio_odom", config)
         self.assertIn("Value: /lio/odometry_corrected", config)
-        self.assertNotIn("/lio/registered_points", config)
+        self.assertIn("Value: /lio/registered_points", config)
         self.assertNotIn("/lio/local_map", config)
         self.assertIn("Class: rviz_default_plugins/Odometry", config)
 
@@ -542,7 +610,7 @@ class RuntimeContractTest(unittest.TestCase):
             finally:
                 runner.ARTIFACT_ROOT = original_root
 
-            for name in ("report.json", "REPORT.md", "REPORT.html"):
+            for name in ("report.json", "REPORT.html"):
                 self.assertTrue((session.directory / name).is_file(), name)
             payload = json.loads((session.directory / "report.json").read_text(encoding="utf-8"))
             self.assertIn("runner setup: setup exploded", payload["reasons"])
@@ -566,7 +634,6 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(result["verdict"], "FAIL")
             for name in (
                 "report.json",
-                "REPORT.md",
                 "REPORT.html",
                 "REPORT_BUILD_ERROR.txt",
             ):
@@ -819,7 +886,7 @@ class RuntimeContractTest(unittest.TestCase):
         )())
         self.assertTrue(scenario.mode_exit_observed)
 
-    def test_external_mode_scenario_records_position_control_handover_without_commands(self) -> None:
+    def test_external_mode_scenario_records_px4_hold_handover_without_commands(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario_handover",
             ROOT / "tools/runtime/external_mode_scenario.py",
@@ -840,7 +907,7 @@ class RuntimeContractTest(unittest.TestCase):
         scenario._record_handover_request("second_request")
 
         self.assertEqual(len(scenario.events), 2)
-        self.assertEqual(scenario.events[0]["name"], "position_control_handover_requested")
+        self.assertEqual(scenario.events[0]["name"], "px4_hold_handover_requested")
         self.assertEqual(scenario.events[0]["detail"], {"nav_state": 18})
 
     def test_mission_arms_and_takes_off_before_external_mode_activation(self) -> None:

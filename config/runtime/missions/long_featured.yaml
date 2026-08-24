@@ -29,7 +29,7 @@ mission:
     max_velocity_mps: 1.5
     max_acceleration_mps2: 1.0
     max_jerk_mps3: 6.0
-    unknown_policy: blocked
+    unknown_policy: allow_unknown
   control:
     # A waypoint is confirmed only after entering its radius and remaining
     # below this measured-speed threshold for the confirmation window.
