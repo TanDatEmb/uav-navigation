@@ -57,6 +57,43 @@ class PlannerTraceTest(unittest.TestCase):
         )
         self.assertEqual(records, [])
 
+    def test_super_decision_trace_preserves_stage_and_deadline_fields(self) -> None:
+        records = collect_planner_trace_records(
+            samples=[
+                {
+                    "kind": "sample",
+                    "t": 12.5,
+                    "payload": {
+                        "statuses": [
+                            {
+                                "name": "super_navigation/super_planner",
+                                "values": {
+                                    "planning_cycle_id": "42",
+                                    "bundle_id": "17",
+                                    "solve_generation": "23",
+                                    "candidate_result": "0",
+                                    "replan_code": "-3",
+                                    "solve_stage": "5",
+                                    "solve_stage_name": "backup",
+                                    "planning_latency_ms": "8.25",
+                                    "solve_deadline_exceeded": "0",
+                                    "command_available": "1",
+                                    "planner_failure_latched": "0",
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        )
+        self.assertEqual(len(records), 1)
+        self.assertTrue(records[0]["complete"])
+        self.assertEqual(records[0]["solve_generation"], 23)
+        self.assertEqual(records[0]["solve_stage_name"], "backup")
+        self.assertEqual(records[0]["replan_code"], "-3")
+        self.assertFalse(records[0]["solve_deadline_exceeded"])
+        self.assertTrue(records[0]["command_available"])
+
 
 if __name__ == "__main__":
     unittest.main()

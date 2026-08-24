@@ -47,6 +47,14 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "corridor_region_count": ("corridor_region_count",),
     "world_generation": ("world_generation",),
     "world_revision": ("world_revision",),
+    "solve_generation": ("solve_generation",),
+    "candidate_result": ("candidate_result",),
+    "replan_code": ("replan_code",),
+    "solve_stage": ("solve_stage",),
+    "solve_stage_name": ("solve_stage_name",),
+    "solve_deadline_exceeded": ("solve_deadline_exceeded",),
+    "command_available": ("command_available",),
+    "planner_failure_latched": ("planner_failure_latched",),
 }
 
 
@@ -153,6 +161,17 @@ def normalize_planner_trace_record(
         "corridor_region_count": _int(values["corridor_region_count"]),
         "world_generation": _int(values["world_generation"]),
         "world_revision": _int(values["world_revision"]),
+        "solve_generation": _int(values["solve_generation"]),
+        "candidate_result": str(values["candidate_result"])
+        if values["candidate_result"] is not None else None,
+        "replan_code": str(values["replan_code"])
+        if values["replan_code"] is not None else None,
+        "solve_stage": _int(values["solve_stage"]),
+        "solve_stage_name": str(values["solve_stage_name"])
+        if values["solve_stage_name"] is not None else None,
+        "solve_deadline_exceeded": _bool(values["solve_deadline_exceeded"]),
+        "command_available": _bool(values["command_available"]),
+        "planner_failure_latched": _bool(values["planner_failure_latched"]),
         "source": source,
     }
     if timestamp_s is not None:
@@ -178,7 +197,9 @@ def _payload_records(samples: Iterable[dict[str, Any]]) -> Iterable[tuple[dict[s
         found = False
         if isinstance(statuses, list):
             for status in statuses:
-                if not isinstance(status, dict) or status.get("name") != "navigation_planning/planner":
+                if not isinstance(status, dict) or status.get("name") not in {
+                    "navigation_planning/planner", "super_navigation/super_planner"
+                }:
                     continue
                 values = status.get("values")
                 if isinstance(values, dict):

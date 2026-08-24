@@ -862,7 +862,10 @@ void SuperNavigationNode::runCycle() {
     }
   }
 
-  if (plan_from_rest || disposition != PlannerResultDisposition::CommandReady) {
+  // Emit one decision record for every solve generation.  Successful hot
+  // replans are as important as failures for latency distributions and for
+  // proving that sampled commands came from one committed generation.
+  {
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
     planner_->unlockCommittedTraj();
@@ -926,6 +929,40 @@ void SuperNavigationNode::runCycle() {
                 static_cast<int>(robot_grid_type), static_cast<int>(robot_inflated_grid_type),
                 nearest_known_free_distance, nearest_occupied_distance,
                 nearest_occupied.x(), nearest_occupied.y(), nearest_occupied.z());
+
+    diagnostic_msgs::msg::DiagnosticArray trace_diagnostics;
+    trace_diagnostics.header.stamp = now();
+    diagnostic_msgs::msg::DiagnosticStatus trace_status;
+    trace_status.name = "super_navigation/super_planner";
+    trace_status.level = result == super_utils::SUCCESS
+                             ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                             : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    trace_status.message = "DECISION_TRACE";
+    const auto add_trace_value = [&trace_status](const std::string& key,
+                                                  const auto& value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      item.value = std::to_string(value);
+      trace_status.values.push_back(std::move(item));
+    };
+    add_trace_value("planning_cycle_id", cycle_count_);
+    add_trace_value("bundle_id", committed_generation);
+    add_trace_value("solve_generation", solve_generation);
+    add_trace_value("candidate_result", static_cast<int>(result));
+    add_trace_value("replan_code", replan_return_code);
+    add_trace_value("solve_stage", solve_stage);
+    {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = "solve_stage_name";
+      item.value = std::string(super_planner::solveStageName(solve_stage));
+      trace_status.values.push_back(std::move(item));
+    }
+    add_trace_value("planning_latency_ms", planner_elapsed_ms);
+    add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);
+    add_trace_value("command_available", planner_command_available_.load() ? 1 : 0);
+    add_trace_value("planner_failure_latched", planner_failure_latched_.load() ? 1 : 0);
+    trace_diagnostics.status.push_back(std::move(trace_status));
+    diagnostics_publisher_->publish(trace_diagnostics);
   }
 
   const auto metrics_now = std::chrono::steady_clock::now();
