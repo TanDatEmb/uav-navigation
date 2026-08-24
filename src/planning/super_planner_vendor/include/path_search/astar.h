@@ -147,6 +147,10 @@ namespace path_search {
 
         void setFineInfNeighbors(const int & neighbor_step);
 
+        void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
+            map_ptr_ = std::move(view);
+        }
+
         RET_CODE pointToPointPathSearch(const Vec3f &start_pt, const Vec3f &end_pt,
                                         const int &flag,
                                         const double &searching_horizon,

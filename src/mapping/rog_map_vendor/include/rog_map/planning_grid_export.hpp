@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <super_utils/eigen_alias.hpp>
@@ -26,15 +27,24 @@ struct PlanningGridExport {
   PlanningGridLayoutExport base_layout;
   InflatedPlanningGridExport inflated;
   std::vector<std::uint8_t> base_state;
-  std::vector<super_utils::Vec3i> nearest_offsets;
+  std::shared_ptr<const std::vector<super_utils::Vec3i>> nearest_offsets;
   bool unknown_inflation_enabled{false};
   double virtual_ground_m{0.0};
   double virtual_ceiling_m{0.0};
+  double inflated_virtual_ground_m{0.0};
+  double inflated_virtual_ceiling_m{0.0};
   double occupied_inflation_radius_m{0.0};
 
+  [[nodiscard]] std::size_t ownedByteSize() const noexcept {
+    return base_state.size() + inflated.occupied.size() + inflated.unknown.size();
+  }
+
+  [[nodiscard]] std::size_t sharedMetadataByteSize() const noexcept {
+    return nearest_offsets ? nearest_offsets->size() * sizeof(super_utils::Vec3i) : 0U;
+  }
+
   [[nodiscard]] std::size_t byteSize() const noexcept {
-    return base_state.size() + inflated.occupied.size() + inflated.unknown.size() +
-           nearest_offsets.size() * sizeof(super_utils::Vec3i);
+    return ownedByteSize() + sharedMetadataByteSize();
   }
 };
 

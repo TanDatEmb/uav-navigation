@@ -99,6 +99,9 @@ namespace super_planner {
 
         int solveStage() const noexcept { return solve_stage_.load(); }
         std::size_t solvePointCount() const noexcept { return solve_point_count_.load(); }
+        void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
+            map_ptr_ = std::move(view);
+        }
 
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,

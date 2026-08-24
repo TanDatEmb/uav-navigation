@@ -248,9 +248,17 @@ deterministic digest benchmark.
 
 Added `ROGMap::exportPlanningGrid()` and the corresponding inflated-layer
 export. The mapping owner converts circular mutable probability/counter
-storage into compact semantic byte arrays in logical global-index order. The
-returned value owns all storage and preserves the configured nearest-neighbor
-offset order; it exposes neither probability values nor mutable buffers.
+storage into compact semantic byte arrays in logical global-index order. Each
+returned value owns its dynamic cell arrays. The configured nearest-neighbor
+table is copied once after initialization into a separately owned immutable
+allocation and safely shared by exports; it never aliases mutable config.
+The export exposes neither probability values nor mutable buffers.
+
+Export precomputes the three circular-index axes once and then performs
+cache-local scalar traversal. This preserves logical output order and exact
+public cell semantics while avoiding millions of repeated modulo/index
+conversions per observation. This is representation-only: mapping state,
+thresholds and query results are unchanged.
 
 This is the staging boundary for a genuinely immutable product WorldSnapshot.
 It does not change mapping updates or query thresholds, and it is never called

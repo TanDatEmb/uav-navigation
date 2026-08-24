@@ -176,6 +176,15 @@ namespace super_planner {
             solve_cancelled_.store(false);
         }
 
+        // Planning-thread-only. Runtime pins one immutable revision before a
+        // solve; A* and corridor generation receive that same pointer.
+        void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
+            if (!view) throw std::invalid_argument("WorldModelView must not be null");
+            map_ptr_ = std::move(view);
+            astar_ptr_->setWorldModelView(map_ptr_);
+            cg_ptr_->setWorldModelView(map_ptr_);
+        }
+
         void cancelActiveSolve() {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
             solve_cancelled_.store(true);

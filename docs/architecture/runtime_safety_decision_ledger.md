@@ -127,6 +127,67 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-2B immutable revisioned WorldModel snapshot
+
+- Runtime now exports and publishes a detached `RogWorldSnapshot` after each
+  successful corrected observation. SUPER, A* and corridor construction pin
+  that product-owned view; no planner query aliases mutable ROG storage. A
+  publication advances exactly one revision and carries the scan timestamp.
+- Virtual-plane values are semantic provenance from ROG, not newly tuned
+  gates. Evidence classification uses the configured raw ground/ceiling and
+  inflated classification uses `inflation_resolution * (1 + inflation_step)`.
+  Legacy segment traversal intentionally differs: inflated OCCUPIED uses the
+  raw planes, while inflated UNKNOWN uses one inflation-resolution band.
+  Exact and plus/minus epsilon parity tests lock both contracts; they must not
+  be collapsed into one shortcut without an explicit behavior-change batch.
+- Boundary testing exposed that WM-2A exported raw probability classification
+  and therefore omitted ROG's index-domain virtual-plane semantics. Export now
+  stores the public `getGridType(index)` result. ROG export and runtime parity
+  suites pass after the correction.
+- Snapshot construction validates finite positive geometry, voxel-count
+  overflow, detached array sizes, virtual ordering and generation identity
+  before publication. A mutable ROG update or subsequent snapshot export that
+  throws is fail-stop: the node rethrows after a FATAL diagnostic rather than
+  retaining the old snapshot and later relabelling a partially mutated map.
+  This is a safety invariant, not a retry bypass; automatic generation rebuild
+  remains future work and requires deterministic fault-injection tests.
+- Diagnostics now report world generation/revision, detached byte size and
+  snapshot export latency separately from ROG update time. No deadline,
+  freshness value, downsampling policy, UNKNOWN policy or planner mathematics
+  changed. Dataset p50/p95/p99 and RSS evidence are still required before
+  enabling independent mapping/planning workers.
+- First 1x Mid-360 replay artifact
+  `.artifacts/runtime/dataset-20260824T181711-85406` is correctly retained as
+  FAIL: 2,521 of 2,756 observations published and 235 pending observations were
+  replaced. The 4,019,364-byte snapshot export dominates mapping with
+  p50/p95/p99 16.504/22.367/27.789 ms versus ROG update
+  0/0.842/2.884 ms; mapping callback p99 is 31.258 ms. These measurements are
+  characterization, not thresholds. Do not hide this overload by relaxing
+  integrity/freshness gates or adding an unbounded queue. Optimize immutable
+  representation/copy work and repeat 1x/2x plus dense vegetation evidence.
+- O1 representation optimization shares the detached immutable nearest-offset
+  table and precomputes circular-axis mappings while retaining logical x/y/z
+  cell order. It changes no map/query policy. Intermediate artifact
+  `.artifacts/runtime/dataset-20260824T182847-89816` remained FAIL but improved
+  export p50/p95/p99 to 6.059/11.110/13.694 ms and replacements from 235 to
+  178. After removing the remaining per-voxel modulo operations, artifact
+  `.artifacts/runtime/dataset-20260824T183449-91366` PASSed exact-once mapping:
+  2,756 received/started/published, zero replacement/failure/violation and
+  revision 2,756. Export p50/p95/p99 is 6.038/9.554/10.876 ms and callback p99
+  is 22.020 ms. Peak live snapshot count is two with 6,472,320 owned bytes;
+  the single shared metadata table is 783,204 bytes. This one PASS is screening
+  evidence only; repeatability, 2x overload and dense vegetation remain open.
+- Pre-commit adversarial gates delete snapshot copy/move operations so lifetime
+  counters cannot underflow, and exhaustively compare logical base/inflated
+  exports after signed x/y/z map slides. Release suites pass; the focused ROG
+  ASan suite passes all nine tests including the slide matrix. Navigation ASan
+  remains part of WM-3 because its isolated invocation lacked the required
+  ASan-built dependency overlay; this failure did not indicate a sanitizer
+  finding and is not recorded as a PASS.
+- Verification:
+  `ctest --test-dir build/rog_map_vendor --output-on-failure` and
+  `ctest --test-dir build/navigation_runtime --output-on-failure`.
+
 ### 2026-08-25 - WM-2A detached compact planning-grid export
 
 - Rejected copying `ROGMap`: mutex/queue state is not cloneable, submaps are

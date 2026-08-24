@@ -22,6 +22,7 @@
 #include "navigation_runtime/observation_accounting.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/rog_world_model_adapter.hpp"
+#include "navigation_runtime/rog_world_snapshot.hpp"
 #include "navigation_runtime/runtime_state.hpp"
 #include <ros_interface/ros_interface.hpp>
 #include <super_core/super_planner.h>
@@ -131,6 +132,10 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::atomic_uint64_t cycle_success_count_{0};
   std::atomic_uint64_t command_publish_count_{0};
   std::int64_t last_map_update_us_{0};
+  std::int64_t last_snapshot_export_us_{0};
+  std::uint64_t last_snapshot_bytes_{0};
+  std::uint64_t last_snapshot_owned_bytes_{0};
+  std::uint64_t last_snapshot_shared_metadata_bytes_{0};
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};
   std::int64_t last_input_lock_wait_us_{0};
@@ -143,7 +148,9 @@ class SuperNavigationNode final : public rclcpp::Node {
 
   ros_interface::RosInterface::Ptr ros_interface_;
   std::shared_ptr<RuntimeRogMap> map_;
-  std::shared_ptr<RogWorldModelView> world_model_view_;
+  navigation_world_model::WorldModelViewPtr world_model_view_;
+  std::uint64_t world_generation_{1};
+  std::uint64_t world_revision_{0};
   super_planner::SuperPlanner::Ptr planner_;
 };
 

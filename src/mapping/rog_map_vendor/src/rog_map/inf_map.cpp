@@ -40,10 +40,34 @@ namespace rog_map {
 
         std::size_t logical_offset = 0;
         const Vec3i global_max = output.layout.global_min_index + sc_.map_size_i;
-        for (int x = output.layout.global_min_index.x(); x < global_max.x(); ++x) {
-            for (int y = output.layout.global_min_index.y(); y < global_max.y(); ++y) {
-                for (int z = output.layout.global_min_index.z(); z < global_max.z(); ++z) {
-                    const int hash = getHashIndexFromGlobalIndex(Vec3i{x, y, z});
+        const auto logical_coordinate = [this](int global, int axis) {
+            int local = global % sc_.map_size_i(axis);
+            if (local > sc_.half_map_size_i(axis)) local -= sc_.map_size_i(axis);
+            if (local < -sc_.half_map_size_i(axis)) local += sc_.map_size_i(axis);
+            return local + sc_.half_map_size_i(axis);
+        };
+        std::vector<int> hash_x(static_cast<std::size_t>(sc_.map_size_i.x()));
+        std::vector<int> hash_y(static_cast<std::size_t>(sc_.map_size_i.y()));
+        std::vector<int> hash_z(static_cast<std::size_t>(sc_.map_size_i.z()));
+        for (int i = 0; i < sc_.map_size_i.x(); ++i) {
+            hash_x[static_cast<std::size_t>(i)] =
+                logical_coordinate(output.layout.global_min_index.x() + i, 0) *
+                sc_.map_size_i.y() * sc_.map_size_i.z();
+        }
+        for (int i = 0; i < sc_.map_size_i.y(); ++i) {
+            hash_y[static_cast<std::size_t>(i)] =
+                logical_coordinate(output.layout.global_min_index.y() + i, 1) * sc_.map_size_i.z();
+        }
+        for (int i = 0; i < sc_.map_size_i.z(); ++i) {
+            hash_z[static_cast<std::size_t>(i)] =
+                logical_coordinate(output.layout.global_min_index.z() + i, 2);
+        }
+        for (int x = output.layout.global_min_index.x(), xi = 0; x < global_max.x(); ++x, ++xi) {
+            for (int y = output.layout.global_min_index.y(), yi = 0; y < global_max.y(); ++y, ++yi) {
+                const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
+                                    hash_y[static_cast<std::size_t>(yi)];
+                for (int z = output.layout.global_min_index.z(), zi = 0; z < global_max.z(); ++z, ++zi) {
+                    const int hash = hash_xy + hash_z[static_cast<std::size_t>(zi)];
                     output.occupied[logical_offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
                     if (cfg_.unk_inflation_en) {
                         output.unknown[logical_offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;

@@ -111,6 +111,7 @@ class ROGMap : public ProbMap {
   [[nodiscard]] PlanningGridExport exportPlanningGrid() const;
 
  protected:
+  std::shared_ptr<const std::vector<Vec3i>> planning_nearest_offsets_;
   std::ofstream time_log_file_, map_info_log_file_;
 
   void updateRobotState(const Pose& pose);

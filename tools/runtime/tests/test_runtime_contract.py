@@ -1317,6 +1317,38 @@ class RuntimeContractTest(unittest.TestCase):
         planning = report._planning_timing_summary(samples)
         self.assertEqual(planning["planning_total_us"]["sample_count"], 0)
 
+    def test_navigation_mapping_summary_preserves_snapshot_identity_and_cost(self) -> None:
+        values = {
+            "world_generation": "3",
+            "world_revision": "17",
+            "world_snapshot_bytes": "4019364",
+            "world_snapshot_owned_bytes": "3236160",
+            "world_snapshot_shared_metadata_bytes": "783204",
+            "world_snapshot_live_count": "1",
+            "world_snapshot_peak_live_count": "2",
+            "world_snapshot_export_us": "15018",
+        }
+        snapshot = {
+            "streams": {"mapping_diagnostics": {"received": 1, "mean_rate_hz": 10.0}},
+            "latest": {"mapping_diagnostics": {"statuses": [{
+                "name": "super_navigation/super_planner",
+                "level": 0,
+                "message": "MAP_READY",
+                "values": values,
+            }]}},
+        }
+        samples = [{"stream": "diagnostics", "payload": {"statuses": [{
+            "name": "super_navigation/super_planner", "values": values,
+        }]}}]
+        mapping = report._navigation_mapping_summary(snapshot, samples)
+        self.assertEqual(mapping["world_generation"], 3)
+        self.assertEqual(mapping["world_revision"], 17)
+        self.assertEqual(mapping["world_snapshot_bytes"], 4019364)
+        self.assertEqual(mapping["world_snapshot_owned_bytes"], 3236160)
+        self.assertEqual(mapping["world_snapshot_peak_live_count"], 2)
+        self.assertEqual(
+            mapping["timing_distributions"]["world_snapshot_export_us"]["p50"], 15018.0)
+
     def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
         snapshot = {
             "latest": {

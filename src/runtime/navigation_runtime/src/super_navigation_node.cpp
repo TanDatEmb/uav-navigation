@@ -164,7 +164,9 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   }
   map_ = std::make_shared<RuntimeRogMap>([this] { return now().seconds(); });
   map_->loadConfigAndInit(super_config_path_);
-  world_model_view_ = std::make_shared<RogWorldModelView>(map_);
+  world_model_view_ = std::make_shared<RogWorldSnapshot>(
+      map_->exportPlanningGrid(), navigation_world_model::WorldSnapshotIdentity{
+                                      world_generation_, world_revision_, 0});
   planner_ = std::make_shared<super_planner::SuperPlanner>(
       super_config_path_, ros_interface_, world_model_view_, mission_limits);
 
@@ -546,12 +548,34 @@ void SuperNavigationNode::runCycle() {
   const auto map_started = std::chrono::steady_clock::now();
   try {
     map_->updateMap(*cloud, super_pose);
-    world_model_view_->recordSuccessfulUpdate(cloud_stamp_ns);
   } catch (const std::exception& error) {
     ++map_update_exception_count_;
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
-                          "SUPER ROG-Map update failed: %s", error.what());
-    return;
+    RCLCPP_FATAL(get_logger(),
+                 "ROG-Map update threw after mutation may have begun; terminating to prevent "
+                 "publication of a partial world generation: %s",
+                 error.what());
+    throw;
+  }
+  const auto snapshot_started = std::chrono::steady_clock::now();
+  try {
+    auto next_world_view = std::make_shared<RogWorldSnapshot>(
+        map_->exportPlanningGrid(), navigation_world_model::WorldSnapshotIdentity{
+                                        world_generation_, world_revision_ + 1, cloud_stamp_ns});
+    last_snapshot_export_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - snapshot_started).count();
+    last_snapshot_bytes_ = next_world_view->byteSize();
+    last_snapshot_owned_bytes_ = next_world_view->ownedByteSize();
+    last_snapshot_shared_metadata_bytes_ = next_world_view->sharedMetadataByteSize();
+    world_model_view_ = std::move(next_world_view);
+    ++world_revision_;
+    planner_->setWorldModelView(world_model_view_);
+  } catch (const std::exception& error) {
+    ++map_update_exception_count_;
+    RCLCPP_FATAL(get_logger(),
+                 "World snapshot publication failed after mutable map update; terminating "
+                 "instead of planning against an unpublishable world revision: %s",
+                 error.what());
+    throw;
   }
   last_map_update_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - map_started).count();
@@ -603,6 +627,15 @@ void SuperNavigationNode::runCycle() {
   add_value("observation_accounting_violation_count", accounting.violation_count);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
+  add_value("world_generation", world_generation_);
+  add_value("world_revision", world_revision_);
+  add_value("world_snapshot_bytes", last_snapshot_bytes_);
+  add_value("world_snapshot_owned_bytes", last_snapshot_owned_bytes_);
+  add_value("world_snapshot_shared_metadata_bytes", last_snapshot_shared_metadata_bytes_);
+  add_value("world_snapshot_live_count", RogWorldSnapshot::liveCount());
+  add_value("world_snapshot_peak_live_count", RogWorldSnapshot::peakLiveCount());
+  add_value("world_snapshot_live_owned_bytes", RogWorldSnapshot::liveOwnedBytes());
+  add_value("world_snapshot_peak_live_owned_bytes", RogWorldSnapshot::peakLiveOwnedBytes());
   add_duration("ros_pointcloud_decode_us", input_conversion_us);
   add_duration("observation_pair_wait_us", last_pair_wait_us_);
   add_duration("mapping_input_lock_wait_us", last_input_lock_wait_us_);
@@ -612,6 +645,7 @@ void SuperNavigationNode::runCycle() {
   add_duration("rog_inflation_us", map_diagnostics.rog_inflation_us);
   add_duration("rog_slide_us", map_diagnostics.rog_slide_us);
   add_duration("rog_total_update_us", map_diagnostics.rog_total_update_us);
+  add_duration("world_snapshot_export_us", last_snapshot_export_us_);
   add_duration(
       "mapping_callback_total_us",
       std::chrono::duration_cast<std::chrono::microseconds>(

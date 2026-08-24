@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -45,7 +46,10 @@ TEST(RogMapPlanningGridExport, OwnsDetachedLogicalStateWithExactOrdering) {
   EXPECT_EQ(snapshot.byteSize(), snapshot.base_state.size() +
                                     snapshot.inflated.occupied.size() +
                                     snapshot.inflated.unknown.size() +
-                                    snapshot.nearest_offsets.size() * sizeof(Eigen::Vector3i));
+                                    snapshot.nearest_offsets->size() * sizeof(Eigen::Vector3i));
+  EXPECT_EQ(snapshot.ownedByteSize(), snapshot.base_state.size() +
+                                         snapshot.inflated.occupied.size() +
+                                         snapshot.inflated.unknown.size());
   RecordProperty("export_elapsed_us", elapsed_us);
   RecordProperty("export_bytes", snapshot.byteSize());
 
@@ -106,4 +110,52 @@ TEST(RogMapPlanningGridExport, EarlierValueDoesNotAliasLaterMapUpdate) {
 
   EXPECT_EQ(before.base_state, before_state);
   EXPECT_NE(before.base_state, after.base_state);
+  EXPECT_EQ(before.nearest_offsets.get(), after.nearest_offsets.get());
+  EXPECT_NE(static_cast<const void*>(before.nearest_offsets.get()),
+            static_cast<const void*>(&map.getMapConfig().spherical_neighbor));
+}
+
+TEST(RogMapPlanningGridExport, CircularLogicalOrderingMatchesAfterSignedAxisSlides) {
+  TestRogMap map;
+  map.loadConfigAndInit(testConfigPath());
+  const auto& config = map.getMapConfig();
+  const std::array<Eigen::Vector3d, 6> slide_poses{
+      Eigen::Vector3d{2.1, 0.0, 0.0}, Eigen::Vector3d{-2.1, 0.0, 0.0},
+      Eigen::Vector3d{0.0, 2.1, 0.0}, Eigen::Vector3d{0.0, -2.1, 0.0},
+      Eigen::Vector3d{0.0, 0.0, 2.1}, Eigen::Vector3d{0.0, 0.0, -2.1}};
+  const rog_map::PointCloud empty_cloud;
+  for (const auto& position : slide_poses) {
+    map.updateMap(empty_cloud, rog_map::Pose{position, Eigen::Quaterniond::Identity()});
+    const auto exported = map.exportPlanningGrid();
+    const Eigen::Vector3i base_max =
+        exported.base_layout.global_min_index + exported.base_layout.dimensions;
+    for (int x = exported.base_layout.global_min_index.x(); x < base_max.x(); ++x) {
+      for (int y = exported.base_layout.global_min_index.y(); y < base_max.y(); ++y) {
+        for (int z = exported.base_layout.global_min_index.z(); z < base_max.z(); ++z) {
+          const Eigen::Vector3i index{x, y, z};
+          const Eigen::Vector3d point = centerOf(exported.base_layout, index);
+          EXPECT_EQ(exported.base_state[offsetOf(exported.base_layout, index)],
+                    static_cast<std::uint8_t>(map.getGridType(point)))
+              << "slide=" << position.transpose() << " index=" << index.transpose();
+        }
+      }
+    }
+    const Eigen::Vector3i inflated_max =
+        exported.inflated.layout.global_min_index + exported.inflated.layout.dimensions;
+    for (int x = exported.inflated.layout.global_min_index.x(); x < inflated_max.x(); ++x) {
+      for (int y = exported.inflated.layout.global_min_index.y(); y < inflated_max.y(); ++y) {
+        for (int z = exported.inflated.layout.global_min_index.z(); z < inflated_max.z(); ++z) {
+          const Eigen::Vector3i index{x, y, z};
+          const Eigen::Vector3d point = centerOf(exported.inflated.layout, index);
+          if (point.z() <= config.virtual_ground_height ||
+              point.z() >= config.virtual_ceil_height) {
+            continue;
+          }
+          EXPECT_EQ(exported.inflated.occupied[offsetOf(exported.inflated.layout, index)] != 0U,
+                    map.isOccupiedInflate(point))
+              << "slide=" << position.transpose() << " index=" << index.transpose();
+        }
+      }
+    }
+  }
 }
