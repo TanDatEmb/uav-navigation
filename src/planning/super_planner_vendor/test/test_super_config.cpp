@@ -92,3 +92,39 @@ TEST(SuperBackupBraking, RejectsNonFiniteState) {
   EXPECT_FALSE(super_planner::makeBackupBrakingSeed(
       0.0, initial, 3.0, 2.0, 8.0, 0.05, 0.05).feasible);
 }
+
+TEST(SuperBackupBraking, PreservesMeasuredOverspeedWithoutIncreasingIt) {
+  super_utils::StatePVAJ initial = super_utils::StatePVAJ::Zero();
+  initial.col(0) << 2.0, -1.0, 3.0;
+  initial.col(1) << 13.0, 0.0, 0.0;
+  initial.col(2).setZero();
+  initial.col(3).setZero();
+
+  const auto seed = super_planner::makeBackupBrakingSeed(
+      0.0, initial, 12.0, 5.0, 12.0, 0.05, 0.0);
+  ASSERT_TRUE(seed.feasible)
+      << "duration=" << seed.duration_s
+      << " peak_v=" << seed.maximum_velocity_mps
+      << " peak_a=" << seed.maximum_acceleration_mps2
+      << " peak_j=" << seed.maximum_jerk_mps3;
+  EXPECT_TRUE(seed.initial_overspeed);
+  EXPECT_DOUBLE_EQ(seed.initial_velocity_mps, 13.0);
+  EXPECT_DOUBLE_EQ(seed.allowed_peak_velocity_mps, 13.0);
+  EXPECT_LE(seed.maximum_velocity_mps, seed.initial_velocity_mps + 1.0e-9);
+  EXPECT_LE(seed.maximum_acceleration_mps2, 5.0);
+  EXPECT_LE(seed.maximum_jerk_mps3, 12.0);
+
+  const auto piece = super_planner::minimumSnapStopPiece(initial, seed.duration_s);
+  EXPECT_TRUE(piece.getState(0.0).isApprox(initial, 1.0e-9));
+  EXPECT_NEAR(piece.getVel(seed.duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getAcc(seed.duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getJer(seed.duration_s).norm(), 0.0, 1.0e-8);
+}
+
+TEST(SuperBackupBraking, RefinementDurationCannotUndercutCertifiedSeed) {
+  EXPECT_TRUE(super_planner::refinementDurationRespectsCertifiedFloor(2.0, 2.0));
+  EXPECT_TRUE(super_planner::refinementDurationRespectsCertifiedFloor(2.5, 2.0));
+  EXPECT_FALSE(super_planner::refinementDurationRespectsCertifiedFloor(1.99, 2.0));
+  EXPECT_FALSE(super_planner::refinementDurationRespectsCertifiedFloor(
+      std::numeric_limits<double>::quiet_NaN(), 2.0));
+}

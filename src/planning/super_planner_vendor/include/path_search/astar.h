@@ -152,12 +152,15 @@ namespace path_search {
                                         const int &flag,
                                         const double &searching_horizon,
                                         rog_map::vec_Vec3f &out_path,
-                                        const double &time_out = -1.0);
+                                        const double &time_out = -1.0,
+                                        const bool prefer_start_goal_altitude = false);
 
         /// @ brief: The escape path only for path search from prob map to inf map. from non-occupied point to
         ///          inf map free (or known freee) point . Aim to find a path from current point to (known) free point
         /// @ param:
-        RET_CODE escapePathSearch(const rog_map::Vec3f &start_pt, const int flag, rog_map::vec_Vec3f &out_path);
+        RET_CODE escapePathSearch(const rog_map::Vec3f &start_pt, const int flag,
+                                  rog_map::vec_Vec3f &out_path,
+                                  const bool prefer_start_altitude = false);
 
 
     };

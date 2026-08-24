@@ -13,9 +13,12 @@ struct BackupBrakingSeed {
   double switch_time_s{0.0};
   double duration_s{0.0};
   super_utils::Vec3f endpoint{super_utils::Vec3f::Zero()};
+  double initial_velocity_mps{std::numeric_limits<double>::infinity()};
+  double allowed_peak_velocity_mps{std::numeric_limits<double>::infinity()};
   double maximum_velocity_mps{std::numeric_limits<double>::infinity()};
   double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
   double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
+  bool initial_overspeed{false};
   bool feasible{false};
 };
 
@@ -41,6 +44,16 @@ inline double jerkLimitedStopDistance(double speed_mps, double max_acc_mps2,
   return std::isfinite(stop_time_s)
              ? 0.5 * speed_mps * stop_time_s
              : std::numeric_limits<double>::infinity();
+}
+
+inline bool refinementDurationRespectsCertifiedFloor(
+    double candidate_duration_s, double certified_duration_s,
+    double tolerance_s = 1.0e-9) {
+  return std::isfinite(candidate_duration_s) &&
+      std::isfinite(certified_duration_s) &&
+      std::isfinite(tolerance_s) && certified_duration_s > 0.0 &&
+      tolerance_s >= 0.0 &&
+      candidate_duration_s + tolerance_s >= certified_duration_s;
 }
 
 inline geometry_utils::Piece minimumSnapStopPiece(
@@ -122,6 +135,12 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   }
 
   const double speed_mps = switch_state.col(1).norm();
+  result.initial_velocity_mps = speed_mps;
+  result.initial_overspeed = speed_mps > max_velocity_mps;
+  // An observed overspeed cannot be removed instantaneously. Certify that the
+  // braking polynomial never accelerates beyond the physically unavoidable
+  // initial speed while retaining the normal mission cap for nominal states.
+  result.allowed_peak_velocity_mps = std::max(speed_mps, max_velocity_mps);
   const double acceleration_mps2 = switch_state.col(2).norm();
   // Conservatively account for removing an arbitrary initial acceleration
   // before the symmetric stopping phase. The polynomial below retains the
@@ -134,7 +153,12 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   duration_s = std::max(4.0 * sample_traj_dt_s, 1.15 * duration_s);
 
   const double gate = 1.0 + feasibility_margin;
-  for (int attempt = 0; attempt < 12; ++attempt) {
+  // With non-zero boundary acceleration/jerk, polynomial extrema are not
+  // monotone in duration. Search a bounded interval around the jerk-limited
+  // estimate instead of repeatedly stretching a candidate that may acquire a
+  // larger velocity overshoot.
+  duration_s = std::max(4.0 * sample_traj_dt_s, duration_s * 0.5);
+  for (int attempt = 0; attempt < 24; ++attempt) {
     const auto piece = minimumSnapStopPiece(switch_state, duration_s);
     result.duration_s = duration_s;
     result.endpoint = piece.getPos(duration_s);
@@ -145,13 +169,13 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
         std::isfinite(result.maximum_velocity_mps) &&
         std::isfinite(result.maximum_acceleration_mps2) &&
         std::isfinite(result.maximum_jerk_mps3) &&
-        result.maximum_velocity_mps <= gate * max_velocity_mps &&
+        result.maximum_velocity_mps <= gate * result.allowed_peak_velocity_mps &&
         result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
         result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
     if (result.feasible) {
       return result;
     }
-    duration_s *= 1.25;
+    duration_s *= 1.15;
   }
   return result;
 }

@@ -75,6 +75,9 @@ namespace traj_opt {
             int piece_num;
             Mat3Df points;
             VecDf times;
+            VecDf minimum_time_floor;
+            Mat3Df feasibility_reference_points;
+            double feasibility_point_weight{0.0};
             VecDf magnitudeBounds, penaltyWeights;
 
             PolyhedraV vPolytopes; // the original sfc and intersecting sfc
@@ -112,6 +115,10 @@ namespace traj_opt {
                                           const PolyhedraH &hPolys,
                                           const Mat3Df &waypoint_attractor,
                                           const VecDf &waypoint_attractor_dead_d,
+                                          const Mat3Df &feasibility_reference_points,
+                                          const double feasibility_reference_head_z,
+                                          const double feasibility_reference_tail_z,
+                                          const double feasibility_point_weight,
                                           const double &smoothFactor,
                                           const int &integralResolution,
                                           const VecDf &magnitudeBounds,

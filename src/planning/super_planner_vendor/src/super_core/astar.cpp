@@ -217,7 +217,8 @@ namespace path_search {
 
     RET_CODE Astar::pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                            const int &flag, const double &searching_horizon,
-                                           rog_map::vec_Vec3f &out_path, const double &time_out) {
+                                           rog_map::vec_Vec3f &out_path, const double &time_out,
+                                           const bool prefer_start_goal_altitude) {
         const double effective_time_out = time_out > 0.0 ? time_out : cfg_.search_time_limit_s;
         RET_CODE setup_ret = setup(start_pt, end_pt, flag, searching_horizon);
         if (setup_ret != SUCCESS) {
@@ -335,6 +336,16 @@ namespace path_search {
             }
             return INIT_ERROR;
         }
+
+        // UAV missions normally prefer a lateral detour over diving toward
+        // unseen ground.  First search the start/goal altitude slab, expanded
+        // by one map cell for discretization.  The caller retries unrestricted
+        // 3-D A* when this preferred search cannot find a route, so vertical
+        // avoidance remains available where it is genuinely required.
+        const double preferred_min_z =
+                std::min(local_start_pt.z(), local_end_pt.z()) - md_.resolution;
+        const double preferred_max_z =
+                std::max(local_start_pt.z(), local_end_pt.z()) + md_.resolution;
 
         // A large open local segment does not need a 3-D graph expansion.
         // ROG-Map checks the complete segment against the same inflated map
@@ -465,6 +476,11 @@ namespace path_search {
                         globalIndexToPos(neighborIdx, neighborPos);
 
                         if (!insideLocalMap(neighborIdx)) {
+                            continue;
+                        }
+                        if (prefer_start_goal_altitude &&
+                            (neighborPos.z() < preferred_min_z ||
+                             neighborPos.z() > preferred_max_z)) {
                             continue;
                         }
 
@@ -599,7 +615,9 @@ namespace path_search {
         return NO_PATH;
     }
 
-    RET_CODE Astar::escapePathSearch(const rog_map::Vec3f &start_pt, const int flag, rog_map::vec_Vec3f &out_path) {
+    RET_CODE Astar::escapePathSearch(const rog_map::Vec3f &start_pt, const int flag,
+                                     rog_map::vec_Vec3f &out_path,
+                                     const bool prefer_start_altitude) {
         // setup() records the goal even though escape search only uses the
         // start-centred horizon. Avoid propagating an indeterminate Eigen
         // vector into mission state.
@@ -622,7 +640,17 @@ namespace path_search {
             return INIT_ERROR;
         }
         rog_map::Vec3f local_start_pt = start_pt;
-//        rog_map::GridType start_type = map_ptr_->getGridType(local_start_pt);
+        const rog_map::GridType exact_start_type = md_.use_inf_map
+                ? map_ptr_->getInfGridType(local_start_pt)
+                : map_ptr_->getGridType(local_start_pt);
+        // UNKNOWN_AS_FREE means an exact non-occupied start already satisfies
+        // the escape contract. Snapping it to a voxel centre can otherwise
+        // introduce an artificial altitude step on every planning cycle.
+        if (md_.unknown_as_free && exact_start_type != OCCUPIED &&
+            exact_start_type != OUT_OF_MAP) {
+            out_path.clear();
+            return NO_NEED;
+        }
         if (!map_ptr_->getNearestCellNot(OCCUPIED, start_pt, local_start_pt,3.0)) {
             cout << rog_map::RED <<
                  " -- [A*] " << RET_CODE_STR[INIT_ERROR]
@@ -702,6 +730,10 @@ namespace path_search {
                         globalIndexToPos(neighborIdx, neighborPos);
                         if (!map_ptr_->insideLocalMap(neighborPos) ||
                             !insideLocalMap(neighborIdx)) {
+                            continue;
+                        }
+                        if (prefer_start_altitude &&
+                            std::abs(neighborPos.z() - local_start_pt.z()) > md_.resolution) {
                             continue;
                         }
 

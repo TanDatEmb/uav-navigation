@@ -59,6 +59,10 @@ namespace traj_opt {
         struct OptimizationVariables {
             bool uniform_time_en{false};
             VecDf gradByTotalT, total_time;
+            // The certified minimum-snap seed defines the shortest admissible
+            // refinement duration. Optimization may add time but never remove
+            // time from that already feasible safety trajectory.
+            VecDf minimum_time_floor;
 
             double rho;
             int iter_num{0};

@@ -38,6 +38,7 @@ DOCUMENTED_DELTA_FILES = frozenset(
         "include/super_core/fov_checker.h",
         "include/super_core/super_planner.h",
         "include/super_core/super_ret_code.hpp",
+        "include/traj_opt/backup_traj_optimizer_s4.h",
         "include/traj_opt/exp_traj_optimizer_s4.h",
         "include/traj_opt/yaw_traj_opt.h",
         "include/utils/geometry/quadrotor_flatness.hpp",

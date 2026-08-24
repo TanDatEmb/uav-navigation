@@ -23,11 +23,25 @@
 
 #include <traj_opt/backup_traj_optimizer_s4.h>
 #include <traj_opt/trajectory_dynamics.hpp>
+#include <super_core/backup_braking.hpp>
 #include <utils/header/color_msg_utils.hpp>
 
 using namespace traj_opt;
 using namespace color_text;
 using namespace super_utils;
+
+namespace {
+constexpr double kDurationSlackInitializationS = 1.0e-3;
+constexpr double kDurationSlackInitializationRatio = 0.05;
+
+void forwardDurationAboveFloor(const Eigen::VectorXd &tau,
+                               const Eigen::VectorXd &floor,
+                               Eigen::VectorXd &duration) {
+    gcopter::forwardMapTauToT(tau, duration);
+    duration += floor;
+}
+
+}  // namespace
 
 //========================================================================
 void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
@@ -270,10 +284,12 @@ double BackupTrajOpt::costFunctional(void *ptr, const Eigen::VectorXd &x, Eigen:
     double gradTaus = g(g.size() - 1);
 
     if (obj.uniform_time_en) {
-        gcopter::forwardMapTauToT(tau, obj.total_time);
+        Eigen::VectorXd total_floor(1);
+        total_floor(0) = obj.minimum_time_floor.sum();
+        forwardDurationAboveFloor(tau, total_floor, obj.total_time);
         obj.times.setConstant(obj.total_time(0) / obj.times.size());
     } else {
-        gcopter::forwardMapTauToT(tau, obj.times);
+        forwardDurationAboveFloor(tau, obj.minimum_time_floor, obj.times);
     }
 
     switch (obj.pos_constraint_type) {
@@ -464,9 +480,21 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     if (opt_vars.uniform_time_en) {
-        gcopter::backwardMapTToTau(opt_vars.total_time, tau);
+        Eigen::VectorXd total_floor(1);
+        total_floor(0) = opt_vars.minimum_time_floor.sum();
+        const Eigen::VectorXd initial_slack =
+                (total_floor * kDurationSlackInitializationRatio)
+                        .cwiseMax(kDurationSlackInitializationS);
+        Eigen::VectorXd slack = (opt_vars.total_time - total_floor)
+                                        .cwiseMax(initial_slack);
+        gcopter::backwardMapTToTau(slack, tau);
     } else {
-        gcopter::backwardMapTToTau(opt_vars.times, tau);
+        const Eigen::VectorXd initial_slack =
+                (opt_vars.minimum_time_floor * kDurationSlackInitializationRatio)
+                        .cwiseMax(kDurationSlackInitializationS);
+        Eigen::VectorXd slack = (opt_vars.times - opt_vars.minimum_time_floor)
+                                        .cwiseMax(initial_slack);
+        gcopter::backwardMapTToTau(slack, tau);
     }
 
     switch (opt_vars.pos_constraint_type) {
@@ -548,10 +576,12 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if (ret >= 0) {
         if (opt_vars.uniform_time_en) {
-            gcopter::forwardMapTauToT(tau, opt_vars.total_time);
+            Eigen::VectorXd total_floor(1);
+            total_floor(0) = opt_vars.minimum_time_floor.sum();
+            forwardDurationAboveFloor(tau, total_floor, opt_vars.total_time);
             opt_vars.times.setConstant(opt_vars.total_time(0) / opt_vars.times.size());
         } else {
-            gcopter::forwardMapTauToT(tau, opt_vars.times);
+            forwardDurationAboveFloor(tau, opt_vars.minimum_time_floor, opt_vars.times);
         }
         switch (opt_vars.pos_constraint_type) {
             case 1: {
@@ -680,6 +710,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     opt_vars.tailPVAJ.col(0) = heu_end_pt;
     opt_vars.times.resize(opt_vars.piece_num);
     opt_vars.times.setConstant(heu_dur / opt_vars.piece_num);
+    opt_vars.minimum_time_floor = opt_vars.times;
     opt_vars.ts = heu_ts;
 
     if (opt_vars.uniform_time_en) {
@@ -708,6 +739,13 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     out_ts = opt_vars.ts;
 
     if (!checkTrajMagnitudeBound(out_traj)) {
+        success = false;
+    }
+    if (success && !super_planner::refinementDurationRespectsCertifiedFloor(
+            out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum())) {
+        ros_ptr_->warn(
+                " -- [BackOpt] refinement duration {} is shorter than certified seed {}",
+                out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum());
         success = false;
     }
 
@@ -764,6 +802,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     opt_vars.times.resize(opt_vars.piece_num);
     const double heu_dur = init_t_vec.sum();
     opt_vars.times.setConstant(heu_dur / opt_vars.piece_num);
+    opt_vars.minimum_time_floor = init_t_vec;
     opt_vars.ts = heu_ts;
     if (opt_vars.uniform_time_en) {
         opt_vars.total_time(0) = heu_dur;
@@ -795,6 +834,13 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     out_ts = opt_vars.ts;
 
     if (!checkTrajMagnitudeBound(out_traj)) {
+        success = false;
+    }
+    if (success && !super_planner::refinementDurationRespectsCertifiedFloor(
+            out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum())) {
+        ros_ptr_->warn(
+                " -- [BackOpt] refinement duration {} is shorter than certified seed {}",
+                out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum());
         success = false;
     }
 

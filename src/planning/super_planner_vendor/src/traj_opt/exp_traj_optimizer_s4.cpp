@@ -49,6 +49,10 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                                        const PolyhedraH &hPolys,
                                        const Mat3Df &waypoint_attractor,
                                        const VecDf &waypoint_attractor_dead_d,
+                                       const Mat3Df &feasibility_reference_points,
+                                       const double feasibility_reference_head_z,
+                                       const double feasibility_reference_tail_z,
+                                       const double feasibility_point_weight,
                                        const double &smoothFactor,
                                        const int &integralResolution,
                                        const VecDf &magnitudeBounds,
@@ -153,6 +157,29 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                         tmp_cost += weightAtt * violaAttPena;
                     }
                 }
+            }
+
+            // Preserve the vertical shape of the collision-checked guide over
+            // the complete polynomial, not only at MINCO junctions. High-order
+            // minimum-snap pieces can otherwise bow far below two perfectly
+            // valid guide points while all waypoint variables remain anchored.
+            // A piecewise-linear z reference still permits deliberate climb
+            // and descent encoded by A* and by the fixed boundary PVAJ.
+            if (feasibility_point_weight > 0.0 &&
+                feasibility_reference_points.cols() == piece_num - 1) {
+                const double reference_start_z = i == 0
+                        ? feasibility_reference_head_z
+                        : feasibility_reference_points(2, i - 1);
+                const double reference_end_z = i == piece_num - 1
+                        ? feasibility_reference_tail_z
+                        : feasibility_reference_points(2, i);
+                const double reference_alpha = j * integralFrac;
+                const double reference_z =
+                        (1.0 - reference_alpha) * reference_start_z +
+                        reference_alpha * reference_end_z;
+                const double vertical_error = pos.z() - reference_z;
+                gradPos.z() += 2.0 * feasibility_point_weight * vertical_error;
+                tmp_cost += feasibility_point_weight * vertical_error * vertical_error;
             }
 
             /* 2.3 For vel cost  */
@@ -284,6 +311,9 @@ double ExpTrajOpt::costFunctional(void *ptr,
     Mat3Df points;
     VecDf times;
     gcopter::forwardMapTauToT(tau, times);
+    if (obj.minimum_time_floor.size() == times.size()) {
+        times += obj.minimum_time_floor;
+    }
     switch (pos_constraint_type) {
         case 1: {
             VecDf xi_e = xi;
@@ -314,6 +344,9 @@ double ExpTrajOpt::costFunctional(void *ptr,
     constraintsFunctional(times, obj.minco.getCoeffs(),
                           hPolyIdx, hPolytopes,
                           waypoint_attractor, waypoint_attractor_dead_d,
+                          obj.feasibility_reference_points,
+                          obj.headPVAJ(2, 0), obj.tailPVAJ(2, 0),
+                          obj.feasibility_point_weight,
                           smooth_eps, integral_res,
                           magnitudeBounds, penaltyWeights,
                           quadrotor_flatness,
@@ -324,6 +357,15 @@ double ExpTrajOpt::costFunctional(void *ptr,
     VecDf gradByTimes;
     obj.minco.propogateGrad(partialGradByCoeffs, partialGradByTimes,
                             gradByPoints, gradByTimes);
+    if (obj.feasibility_point_weight > 0.0 &&
+        obj.feasibility_reference_points.rows() == points.rows() &&
+        obj.feasibility_reference_points.cols() == points.cols()) {
+        const Eigen::RowVectorXd vertical_displacement =
+                points.row(2) - obj.feasibility_reference_points.row(2);
+        cost += obj.feasibility_point_weight * vertical_displacement.squaredNorm();
+        gradByPoints.row(2) +=
+                2.0 * obj.feasibility_point_weight * vertical_displacement;
+    }
     cost += weightT * times.sum();
     gradByTimes.array() += weightT;
 
@@ -418,6 +460,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     opt_vars.waypoint_attractor.resize(3, sizeCorridor);
     opt_vars.hOverlapPolytopes.resize(sizeCorridor);
     opt_vars.waypoint_attractor_dead_d.resize(sizeCorridor);
+    opt_vars.feasibility_reference_points.resize(3, sizeCorridor);
     // * 2) Process the corridor
     for (int i = 0; i < sizeCorridor; i++) {
         // * 2.1) Get current vertex
@@ -501,6 +544,10 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         min_id[j] = nearest_index;
         first_guide_index = nearest_index;
         const Vec3f &guide_point = opt_vars.guide_path[nearest_index];
+        // Keep the collision-checked guide as a distinct reference even when
+        // its nearest sample is not inside the overlap and the MINCO junction
+        // itself must initialize at the overlap interior.
+        opt_vars.feasibility_reference_points.col(j) = guide_point;
         const VecDf guide_plane_values =
                 opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
                 opt_vars.hOverlapPolytopes[j].col(3);
@@ -674,6 +721,21 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     /* 3)  construct the initial guess of the optimization varibles*/
+    opt_vars.minimum_time_floor.resize(0);
+    // Keep the vertical component of the optimized overlap points anchored to
+    // the collision-checked A* guide on every solve, not only after a dynamics
+    // retry.  A wide 3-D SFC can legitimately extend down to the ground; with
+    // no guide cost, minimum-snap may use that volume and produce a large
+    // altitude excursion even though every A* sample remains at mission
+    // altitude.  The weight is derived from the configured hard-corridor cost
+    // rather than introducing another tuning parameter.
+    if (opt_vars.feasibility_reference_points.rows() != opt_vars.points.rows() ||
+        opt_vars.feasibility_reference_points.cols() != opt_vars.points.cols()) {
+        opt_vars.feasibility_reference_points = opt_vars.points;
+    }
+    opt_vars.feasibility_point_weight = std::max({
+            opt_vars.penaltyWeights(0), opt_vars.penaltyWeights(1),
+            opt_vars.penaltyWeights(2)});
     gcopter::backwardMapTToTau(opt_vars.times, tau);
     switch (opt_vars.pos_constraint_type) {
         case 1: {
@@ -696,13 +758,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     lbfgs_params.min_step = 1.0e-32;
     lbfgs_params.g_epsilon = 0.0;
     lbfgs_params.delta = relCostTol;
-    VecDf times_init = opt_vars.times;
-
     opt_vars.init_ts = opt_vars.times;
     opt_vars.init_ps.clear();
     for (int col = 0; col < opt_vars.points.cols(); col++) {
         opt_vars.init_ps.emplace_back(opt_vars.points.col(col));
     }
+    const Mat3Df feasibility_reference_points =
+            opt_vars.feasibility_reference_points;
 
     // keep fixed accuracy for
     for (int i = 0; i < opt_vars.waypoint_attractor_dead_d.size(); i++) {
@@ -713,7 +775,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     cout << std::fixed << std::setprecision(15);
-    auto x0 = x;
     // only for debug
 //    cout << " -- [ExpOpt] Start optimization." << x.transpose() << endl;
 //    cout << " -- [ExpOpt] minCostFunctional: " << minCostFunctional << endl;
@@ -731,43 +792,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     &this->opt_vars,
                                     lbfgs_params);
     // double dt = ttt.stop();
-    gcopter::forwardMapTauToT(tau, opt_vars.times);
-    if (cfg_.print_optimizer_log) {
-        cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
-        cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
-        cout << "\tPos: " << opt_vars.penalty_log(1) << endl;
-        cout << "\tVel: " << opt_vars.penalty_log(2) << endl;
-        cout << "\tAcc: " << opt_vars.penalty_log(3) << endl;
-        cout << "\tJerk: " << opt_vars.penalty_log(4) << endl;
-        cout << "\tAttract: " << opt_vars.penalty_log(5) << endl;
-        cout << "\tOmg: " << opt_vars.penalty_log(6) << endl;
-        cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
-        cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
-    }
-
-    const bool position_violation =
-            cfg_.penna_pos > 0 && opt_vars.penalty_log(POS_IDX) > 0.2;
-    if (position_violation) {
-        if (cfg_.print_optimizer_log) {
-            cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
-            cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
-            cout << "\tPos: " << opt_vars.penalty_log(1) << endl;
-            cout << "\tVel: " << opt_vars.penalty_log(2) << endl;
-            cout << "\tAcc: " << opt_vars.penalty_log(3) << endl;
-            cout << "\tJerk: " << opt_vars.penalty_log(4) << endl;
-            cout << "\tAttract: " << opt_vars.penalty_log(5) << endl;
-            cout << "\tOmg: " << opt_vars.penalty_log(6) << endl;
-            cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
-            cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
-        }
-        ros_ptr_->warn(
-                " -- [ExpOpt] weighted position cost rejected trajectory: cost={} limit=0.2 lbfgs_ret={}",
-                opt_vars.penalty_log(POS_IDX), ret);
-        ret = -1;
-    }
-
-    if (ret >= 0) {
+    const auto rebuild_candidate = [&]() {
         gcopter::forwardMapTauToT(tau, opt_vars.times);
+        if (opt_vars.minimum_time_floor.size() == opt_vars.times.size()) {
+            opt_vars.times += opt_vars.minimum_time_floor;
+        }
         switch (opt_vars.pos_constraint_type) {
             case 1: {
                 VecDf xi_e = xi;
@@ -782,46 +811,215 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         }
 //        opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.temporalDim);
         opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
+        traj.clear();
         opt_vars.minco.getTrajectory(traj);
+    };
+    const auto print_optimizer_result = [&]() {
+        if (!cfg_.print_optimizer_log) return;
+        cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
+        cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
+        cout << "\tPos: " << opt_vars.penalty_log(1) << endl;
+        cout << "\tVel: " << opt_vars.penalty_log(2) << endl;
+        cout << "\tAcc: " << opt_vars.penalty_log(3) << endl;
+        cout << "\tJerk: " << opt_vars.penalty_log(4) << endl;
+        cout << "\tAttract: " << opt_vars.penalty_log(5) << endl;
+        cout << "\tOmg: " << opt_vars.penalty_log(6) << endl;
+        cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
+        cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
+    };
+    const auto position_constraint_satisfied = [&]() {
+        // Corridor planes are a hard safety contract.  The integrated L-BFGS
+        // penalty is only a search aid and must not authorize the historical
+        // 0.2 m excursion outside an SFC.
+        const double corridor_plane_tolerance = std::max(1.0e-5, cfg_.smooth_eps);
+        return cfg_.penna_pos <= 0 ||
+               opt_vars.penalty_log(POS_IDX) <= corridor_plane_tolerance;
+    };
+    const auto vertical_guide_envelope_satisfied = [&]() {
+        if (traj.empty() || feasibility_reference_points.cols() + 1 != traj.getPieceNum()) {
+            return false;
+        }
+        double minimum_reference_z = std::min(opt_vars.headPVAJ(2, 0),
+                                              opt_vars.tailPVAJ(2, 0));
+        double maximum_reference_z = std::max(opt_vars.headPVAJ(2, 0),
+                                              opt_vars.tailPVAJ(2, 0));
+        if (feasibility_reference_points.size() > 0) {
+            minimum_reference_z = std::min(
+                    minimum_reference_z,
+                    feasibility_reference_points.row(2).minCoeff());
+            maximum_reference_z = std::max(
+                    maximum_reference_z,
+                    feasibility_reference_points.row(2).maxCoeff());
+        }
+
+        // The SFC can be much taller than the collision-checked guide.  A
+        // minimum-snap polynomial must not invent a vertical extremum outside
+        // that guide envelope: doing so can recursively pull the next planning
+        // boundary toward unseen ground.  The tolerance is only the existing
+        // optimizer smoothing tolerance, not a new flight-tuning parameter.
+        // Leave only a small numerical transition band around the guide.
+        // Five optimizer smoothing widths (5 cm with the product config) are
+        // enough for fixed measured boundary PVAJ to settle without allowing
+        // the metre-scale artificial extrema this gate is intended to stop.
+        const double tolerance = std::max(1.0e-3, 5.0 * cfg_.smooth_eps);
+        constexpr int kEnvelopeSamplesPerPiece = 20;
+        for (int piece_index = 0; piece_index < traj.getPieceNum(); ++piece_index) {
+            const double duration = traj[piece_index].getDuration();
+            for (int sample = 0; sample <= kEnvelopeSamplesPerPiece; ++sample) {
+                const double time = duration * static_cast<double>(sample) /
+                                    static_cast<double>(kEnvelopeSamplesPerPiece);
+                const double z = traj[piece_index].getPos(time).z();
+                if (!std::isfinite(z) || z < minimum_reference_z - tolerance ||
+                    z > maximum_reference_z + tolerance) {
+                    ros_ptr_->warn(
+                            " -- [ExpOpt] vertical guide hard gate rejected trajectory: "
+                            "piece={} t={} z={} envelope=[{},{}] tolerance={}",
+                            piece_index, time, z, minimum_reference_z,
+                            maximum_reference_z, tolerance);
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    double maximum_velocity = std::numeric_limits<double>::infinity();
+    double maximum_acceleration = std::numeric_limits<double>::infinity();
+    double maximum_jerk = std::numeric_limits<double>::infinity();
+    const auto update_dynamic_extrema = [&]() {
+        maximum_velocity = traj.empty() ? std::numeric_limits<double>::infinity()
+                                        : traj.getMaxVelRate();
+        maximum_acceleration = traj.empty() ? std::numeric_limits<double>::infinity()
+                                            : traj.getMaxAccRate();
+        maximum_jerk = traj.empty() ? std::numeric_limits<double>::infinity()
+                                    : traj.getMaxJerRate();
+    };
+    const auto normalized_dynamic_violation = [&]() {
+        if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
+            !std::isfinite(maximum_jerk)) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return std::max({maximum_velocity / cfg_.max_vel,
+                         maximum_acceleration / cfg_.max_acc,
+                         maximum_jerk / cfg_.max_jerk});
+    };
+
+    if (ret >= 0) {
+        rebuild_candidate();
+        update_dynamic_extrema();
+    }
+    print_optimizer_result();
+
+    if (ret >= 0 && !position_constraint_satisfied()) {
+        ros_ptr_->warn(
+                " -- [ExpOpt] hard corridor gate rejected trajectory: cost={} limit={} lbfgs_ret={}",
+                opt_vars.penalty_log(POS_IDX),
+                std::max(1.0e-5, cfg_.smooth_eps), ret);
+        ret = -1;
+    }
+
+    // A fixed-point MINCO rebuild is not a valid time projection when the
+    // boundary PVAJ is non-zero: increasing time can increase acceleration or
+    // jerk. Re-run the full optimization so both spatial variables and segment
+    // times can move inside the same corridor. The hard gate remains the only
+    // authority and the retry budget is deliberately finite.
+    constexpr int kMaximumFeasibilityRetries = 2;
+    constexpr double kFeasibilityPenaltyGrowth = 10.0;
+    constexpr double kFeasibilityTimeReserve = 1.05;
+    double best_normalized_violation = normalized_dynamic_violation();
+    VecDf best_candidate = x;
+    VecDf best_time_floor = opt_vars.minimum_time_floor;
+    const VecDf nominal_penalty_weights = opt_vars.penaltyWeights;
+    for (int retry = 0;
+         ret >= 0 && best_normalized_violation > 1.0 &&
+         retry < kMaximumFeasibilityRetries; ++retry) {
+        const double velocity_scale = maximum_velocity / cfg_.max_vel;
+        const double acceleration_scale = std::sqrt(maximum_acceleration / cfg_.max_acc);
+        const double jerk_scale = std::cbrt(maximum_jerk / cfg_.max_jerk);
+        const double required_scale = std::max({
+                1.0, velocity_scale, acceleration_scale, jerk_scale});
+        if (!std::isfinite(required_scale)) break;
+        const bool velocity_violated = maximum_velocity > cfg_.max_vel;
+        const bool acceleration_violated = maximum_acceleration > cfg_.max_acc;
+        const bool jerk_violated = maximum_jerk > cfg_.max_jerk;
+
+        opt_vars.minimum_time_floor = opt_vars.times * std::min(
+                4.0, std::max(kFeasibilityTimeReserve, required_scale * 1.05));
+        const VecDf initial_time_slack =
+                (opt_vars.minimum_time_floor * 0.01).cwiseMax(1.0e-3);
+        gcopter::backwardMapTToTau(initial_time_slack, tau);
+        // Continue the soft solve toward the hard-feasible set. Disabled
+        // penalties (notably the EXP jerk objective) remain disabled; only
+        // configured dynamic penalties grow within this bounded retry.
+        // The first retry is primarily a bounded time/point re-optimization.
+        // Preserve the nominal objective so a tiny hard-gate violation does
+        // not immediately turn into a much slower trajectory.  Only the
+        // second and final retry strengthens the violated configured penalty.
+        const double penalty_scale = std::pow(kFeasibilityPenaltyGrowth, retry);
+        const std::array<bool, 3> violated = {
+                velocity_violated, acceleration_violated, jerk_violated};
+        for (int index = 1; index <= 3; ++index) {
+            if (violated[static_cast<std::size_t>(index - 1)] &&
+                nominal_penalty_weights(index) > 0.0) {
+                opt_vars.penaltyWeights(index) =
+                        nominal_penalty_weights(index) * penalty_scale;
+            } else {
+                opt_vars.penaltyWeights(index) = nominal_penalty_weights(index);
+            }
+        }
+        opt_vars.feasibility_reference_points = feasibility_reference_points;
+        opt_vars.feasibility_point_weight = penalty_scale * std::max({
+                nominal_penalty_weights(0), nominal_penalty_weights(1),
+                nominal_penalty_weights(2)});
+        opt_vars.penalty_log.setZero();
+        opt_vars.iter_num = 0;
+        ret = lbfgs::lbfgs_optimize(x,
+                                    minCostFunctional,
+                                    &ExpTrajOpt::costFunctional,
+                                    nullptr,
+                                    nullptr,
+                                    &this->opt_vars,
+                                    lbfgs_params);
+        if (ret < 0) break;
+
+        rebuild_candidate();
+        update_dynamic_extrema();
+        if (!position_constraint_satisfied()) {
+            ros_ptr_->warn(
+                    " -- [ExpOpt] feasibility retry left corridor: attempt={} cost={}",
+                    retry + 1, opt_vars.penalty_log(POS_IDX));
+            ret = -1;
+            break;
+        }
+        const double retry_violation = normalized_dynamic_violation();
+        ros_ptr_->info(
+                " -- [ExpOpt] bounded feasibility retry attempt={} violation={} "
+                "penalty_scale={} vel={} acc={} jerk={}",
+                retry + 1, retry_violation,
+                penalty_scale,
+                maximum_velocity, maximum_acceleration, maximum_jerk);
+        if (!(retry_violation + 1.0e-6 < best_normalized_violation)) {
+            ros_ptr_->warn(
+                    " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
+                    best_normalized_violation, retry_violation);
+            x = best_candidate;
+            opt_vars.minimum_time_floor = best_time_floor;
+            rebuild_candidate();
+            update_dynamic_extrema();
+            break;
+        }
+        best_normalized_violation = retry_violation;
+        best_candidate = x;
+        best_time_floor = opt_vars.minimum_time_floor;
+    }
+    opt_vars.penaltyWeights = nominal_penalty_weights;
+    opt_vars.feasibility_point_weight = 0.0;
+
+    if (ret >= 0) {
         // Mission V/A/J values are command limits, not soft optimizer
         // penalties. penna_margin remains available to body-rate/thrust
         // numerical gates but must never raise the requested flight envelope.
         constexpr double gate_margin = 1.0;
-        double maximum_velocity = traj.getMaxVelRate();
-        double maximum_acceleration = traj.getMaxAccRate();
-        double maximum_jerk = traj.getMaxJerRate();
-        // Project an otherwise valid geometric solution into the vehicle's
-        // dynamic envelope by reallocating segment time and rebuilding MINCO.
-        // This preserves the head/tail PVAJ conditions and all waypoints; the
-        // planner's corridor and collision verifiers still run afterwards.
-        for (int attempt = 0; attempt < 4 &&
-             std::isfinite(maximum_velocity) &&
-             std::isfinite(maximum_acceleration) &&
-             std::isfinite(maximum_jerk); ++attempt) {
-            const double velocity_ratio = maximum_velocity / (cfg_.max_vel * gate_margin);
-            const double acceleration_ratio = std::sqrt(
-                    maximum_acceleration / (cfg_.max_acc * gate_margin));
-            const double jerk_ratio = std::cbrt(
-                    maximum_jerk / (cfg_.max_jerk * gate_margin));
-            const double required_scale = std::max({
-                    1.0, velocity_ratio, acceleration_ratio, jerk_ratio});
-            if (required_scale <= 1.0) {
-                break;
-            }
-            const double bounded_scale = std::min(4.0, required_scale * 1.05);
-            opt_vars.times *= bounded_scale;
-            opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
-            traj.clear();
-            opt_vars.minco.getTrajectory(traj);
-            maximum_velocity = traj.getMaxVelRate();
-            maximum_acceleration = traj.getMaxAccRate();
-            maximum_jerk = traj.getMaxJerRate();
-            ros_ptr_->info(
-                    " -- [ExpOpt] time feasibility projection attempt={} scale={} "
-                    "vel={} acc={} jerk={}",
-                    attempt + 1, bounded_scale,
-                    maximum_velocity, maximum_acceleration, maximum_jerk);
-        }
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
             maximum_velocity > cfg_.max_vel * gate_margin ||
@@ -836,6 +1034,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             traj.clear();
             ret = -1;
             minCostFunctional = INFINITY;
+        }
+        if (ret >= 0) {
+            if (!vertical_guide_envelope_satisfied()) {
+                traj.clear();
+                ret = -1;
+                minCostFunctional = INFINITY;
+            }
         }
         if (ret >= 0) {
             TrajectoryDynamicReport dynamic_report;

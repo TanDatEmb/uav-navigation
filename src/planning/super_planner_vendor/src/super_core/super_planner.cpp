@@ -461,7 +461,9 @@ namespace super_planner {
                 bounded_state.col(column) *= limit / magnitude;
             }
         };
-        clamp_state_column(1, cfg_.back_traj_cfg.max_vel);
+        // Position and velocity are measured and must remain continuous at the
+        // handover. Only the unmeasured command-boundary acceleration and jerk
+        // may be saturated to the mission envelope.
         clamp_state_column(2, cfg_.back_traj_cfg.max_acc);
         clamp_state_column(3, cfg_.back_traj_cfg.max_jerk);
 
@@ -539,9 +541,15 @@ namespace super_planner {
         }
         robot_on_backup_traj_ = true;
         ros_ptr_->warn(
-                " -- [SUPER] committed measured-state emergency brake: duration={} distance={}",
+                " -- [SUPER] committed measured-state emergency brake: "
+                "initial_speed={} speed_limit={} initial_overspeed={} duration={} distance={} "
+                "peak_vel={} peak_acc={} peak_jerk={}",
+                seed.initial_velocity_mps, cfg_.back_traj_cfg.max_vel,
+                seed.initial_overspeed,
                 seed.duration_s,
-                (seed.endpoint - bounded_state.col(0)).norm());
+                (seed.endpoint - bounded_state.col(0)).norm(),
+                seed.maximum_velocity_mps, seed.maximum_acceleration_mps2,
+                seed.maximum_jerk_mps3);
         return true;
     }
 
@@ -1355,11 +1363,20 @@ namespace super_planner {
             // analytic velocity/acceleration/jerk extrema, and full Bezier
             // hull containment. L-BFGS is an optional refinement, not an
             // authority to discard that certified safety trajectory.
+            ++backup_refinement_fallback_count_;
             ros_ptr_->warn(
-                    " -- [SUPER] backup refinement failed; using certified minimum-snap seed");
+                    " -- [SUPER] backup refinement failed; using certified minimum-snap seed "
+                    "backup_refinement_success={} backup_refinement_fallback={}",
+                    backup_refinement_success_count_, backup_refinement_fallback_count_);
             temp_pos_traj.clear();
             temp_pos_traj.emplace_back(braking_piece);
             opt_ts = heu_ts;
+        } else {
+            ++backup_refinement_success_count_;
+            ros_ptr_->info(
+                    " -- [SUPER] backup refinement accepted: "
+                    "backup_refinement_success={} backup_refinement_fallback={}",
+                    backup_refinement_success_count_, backup_refinement_fallback_count_);
         }
         Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
         Vec4f yaw_goal{0, 0, 0, 0};
@@ -1459,7 +1476,16 @@ namespace super_planner {
 
         int flag_es = ON_PROB_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE);
         vec_Vec3f out_path;
-        RET_CODE ret_es = astar_ptr_->escapePathSearch(start_pt, flag_es, out_path);
+        RET_CODE ret_es = astar_ptr_->escapePathSearch(
+                start_pt, flag_es, out_path, true);
+        if (ret_es != NO_NEED && ret_es != REACH_HORIZON &&
+            ret_es != REACH_GOAL && ret_es != INIT_ERROR) {
+            ros_ptr_->warn(
+                    " -- [Astar] Preferred-altitude escape failed with [{}]; "
+                    "retry unrestricted 3-D escape.", RET_CODE_STR[ret_es].c_str());
+            ret_es = astar_ptr_->escapePathSearch(
+                    start_pt, flag_es, out_path, false);
+        }
         if (ret_es != NO_NEED) {
             if (ret_es != REACH_HORIZON && ret_es != REACH_GOAL) {
                 ros_ptr_->error(
@@ -1484,8 +1510,19 @@ namespace super_planner {
 
         int flag = ON_INF_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) | DONT_USE_INF_NEIGHBOR;
 
-        RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(temp_start_point, goal, flag, temp_plannning_horizon,
-                                                               path);
+        RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(
+                temp_start_point, goal, flag, temp_plannning_horizon,
+                path, -1.0, true);
+
+        if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
+            ret_code != INIT_ERROR) {
+            ros_ptr_->warn(
+                    " -- [Astar] Preferred start-goal altitude search failed with [{}]; "
+                    "retry unrestricted 3-D search.", RET_CODE_STR[ret_code].c_str());
+            ret_code = astar_ptr_->pointToPointPathSearch(
+                    temp_start_point, goal, flag, temp_plannning_horizon,
+                    path, -1.0, false);
+        }
 
         if(ret_code == INIT_ERROR){
             gi_.goal_valid = false;
@@ -1498,8 +1535,15 @@ namespace super_planner {
                    USE_INF_NEIGHBOR;
             fmt::print(fg(fmt::color::indian_red) | fmt::emphasis::bold,
                        " -- [Astar] Path search failed on inf map, try again on prob map.\n");
-            ret_code = astar_ptr_->pointToPointPathSearch(temp_start_point, goal, flag, temp_plannning_horizon,
-                                                          path);
+            ret_code = astar_ptr_->pointToPointPathSearch(
+                    temp_start_point, goal, flag, temp_plannning_horizon,
+                    path, -1.0, true);
+            if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
+                ret_code != INIT_ERROR) {
+                ret_code = astar_ptr_->pointToPointPathSearch(
+                        temp_start_point, goal, flag, temp_plannning_horizon,
+                        path, -1.0, false);
+            }
             if (ret_code == SUCCESS || ret_code == REACH_HORIZON || ret_code == REACH_GOAL) {
                 fmt::print(fg(fmt::color::lime_green) | fmt::emphasis::bold,
                            " -- [Astar] Path search on prob map success.\n");
@@ -1512,6 +1556,43 @@ namespace super_planner {
             ros_ptr_->error(
                     " -- [SUPER] Path search failed with [{}], force return.\n", RET_CODE_STR[ret_code].c_str());
             return false;
+        }
+
+        // Prefer a mission-altitude route when the same A* lateral detour is
+        // collision-free at the start-to-goal height profile. With
+        // UNKNOWN_AS_FREE and no raycasting, an unconstrained 3-D graph can
+        // otherwise take a numerically equivalent shortcut toward the unseen
+        // ground; that shortcut becomes OCCUPIED only after the vehicle is too
+        // close for its certified brake. Preserve the original 3-D route when
+        // vertical avoidance is actually required.
+        if (path.size() >= 2) {
+            const Vec3f route_delta = goal - shifted_start_pt;
+            const double horizontal_distance = route_delta.head<2>().norm();
+            if (horizontal_distance > cfg_.resolution) {
+                const Eigen::Vector2d horizontal_direction =
+                        route_delta.head<2>() / horizontal_distance;
+                vec_Vec3f altitude_preserving_path = path;
+                for (auto &point : altitude_preserving_path) {
+                    const double progress = std::clamp(
+                            (point.head<2>() - shifted_start_pt.head<2>())
+                                    .dot(horizontal_direction) / horizontal_distance,
+                            0.0, 1.0);
+                    point.z() = shifted_start_pt.z() + progress * route_delta.z();
+                }
+                bool altitude_projection_free = true;
+                for (std::size_t index = 1;
+                     index < altitude_preserving_path.size(); ++index) {
+                    if (!map_ptr_->isLineFree(altitude_preserving_path[index - 1],
+                                              altitude_preserving_path[index],
+                                              true, false)) {
+                        altitude_projection_free = false;
+                        break;
+                    }
+                }
+                if (altitude_projection_free) {
+                    path = std::move(altitude_preserving_path);
+                }
+            }
         }
         if (!start_point_escape_path.empty()) {
             path.insert(path.begin(), start_point_escape_path.begin(),

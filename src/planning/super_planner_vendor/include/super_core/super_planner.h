@@ -25,6 +25,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <cstdint>
 #include <optional>
 #include "Eigen/Eigen"
 
@@ -103,6 +104,8 @@ namespace super_planner {
         // 5 backup generation/MINCO. Read by the external watchdog.
         std::atomic<int> solve_stage_{0};
         std::atomic_bool solve_cancelled_{false};
+        std::uint64_t backup_refinement_success_count_{0};
+        std::uint64_t backup_refinement_fallback_count_{0};
 
         Vec3f latest_guide_start_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
