@@ -255,6 +255,8 @@ SuperNavigationNode::SuperNavigationNode(
         add_value("world_generation", mapping.world_generation);
         add_value("world_revision", mapping.world_revision);
         add_value("observation_stamp_ns", mapping.observation_stamp_ns);
+        add_value("received_observation_count", lifecycle.received);
+        add_value("accepted_observation_count", lifecycle.accepted_to_inbox);
         add_value("mapping_started_count", lifecycle.mapping_started);
         add_value("mapping_published_count", lifecycle.mapping_published);
         add_value("mapping_failed_count", lifecycle.mapping_failed);
@@ -1352,6 +1354,8 @@ void SuperNavigationNode::publishCommand() {
   double yaw_dot = 0.0;
   bool on_backup_traj = false;
   bool traj_finish = false;
+  std::uint64_t trajectory_generation = 0;
+  double trajectory_time_s = 0.0;
   const bool safety_suffix_active = safety_suffix_active_.load();
   const bool planner_failed = planner_failure_latched_.load();
   if (!planner_command_available_.load() && !planner_failed) return;
@@ -1370,6 +1374,8 @@ void SuperNavigationNode::publishCommand() {
       pvaj = sample.pvaj;
       yaw = sample.yaw;
       yaw_dot = sample.yaw_rate;
+      trajectory_generation = sample.generation;
+      trajectory_time_s = sample.trajectory_time_s;
       on_backup_traj = sample.role == super_planner::SuperPlanner::TrajectoryRole::BACKUP;
       traj_finish = sample.finished;
     }
@@ -1389,6 +1395,8 @@ void SuperNavigationNode::publishCommand() {
   command.header.frame_id = planning_frame_;
   command.header.stamp = rosTimeFromSeconds(now_seconds);
   command.trajectory_id = ++command_id_;
+  command.trajectory_generation = trajectory_generation;
+  command.trajectory_time_s = trajectory_time_s;
   const bool main_trajectory_rejected = planner_failed && !on_backup_traj;
   command.trajectory_status = main_trajectory_rejected
                                   ? mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_STATUS_EMER

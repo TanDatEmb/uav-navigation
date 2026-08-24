@@ -292,6 +292,7 @@ void NavigationMode::onSuperCommand(
   bool accepted = false;
   bool anchor_invalid = false;
   TrackingEnvelopeResult tracking_envelope;
+  Eigen::Vector3d evaluated_measured_position{Eigen::Vector3d::Zero()};
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (super_command_.has_value() &&
@@ -343,6 +344,7 @@ void NavigationMode::onSuperCommand(
           command_tracking_lag_s_);
       anchor_invalid = !tracking_envelope.valid;
       if (anchor_invalid) {
+        evaluated_measured_position = measured;
         ++trajectory_rejected_count_;
       }
     }
@@ -356,15 +358,36 @@ void NavigationMode::onSuperCommand(
     }
   }
   if (anchor_invalid) {
+    const char* role = "UNKNOWN";
+    if (message->trajectory_flag ==
+        mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_BACKUP) {
+      role = "BACKUP";
+    } else if (message->trajectory_flag ==
+               mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_MAIN) {
+      role = "MAIN";
+    }
     RCLCPP_ERROR(node().get_logger(),
                  "SUPER tracking envelope exceeded: longitudinal=%.3f/%.3f m "
-                 "lateral=%.3f/%.3f m speed=%.3f m/s",
+                 "reverse=%.3f/%.3f m lateral=%.3f/%.3f m "
+                 "measured_enu=[%.3f,%.3f,%.3f] command_enu=[%.3f,%.3f,%.3f] "
+                 "command_velocity_enu=[%.3f,%.3f,%.3f] message_id=%u "
+                 "generation=%lu role=%s trajectory_time=%.6f s status=%u "
+                 "stamp=%d.%09u",
                  tracking_envelope.longitudinal_error_m,
                  tracking_envelope.longitudinal_limit_m,
+                 tracking_envelope.reverse_error_m,
+                 command_anchor_max_error_m_,
                  tracking_envelope.lateral_error_m,
                  command_anchor_max_error_m_,
-                 std::hypot(message->velocity.x,
-                            std::hypot(message->velocity.y, message->velocity.z)));
+                 evaluated_measured_position.x(), evaluated_measured_position.y(),
+                 evaluated_measured_position.z(),
+                 message->position.x, message->position.y, message->position.z,
+                 message->velocity.x, message->velocity.y, message->velocity.z,
+                 message->trajectory_id,
+                 static_cast<unsigned long>(message->trajectory_generation), role,
+                 message->trajectory_time_s,
+                 static_cast<unsigned int>(message->trajectory_status),
+                 message->header.stamp.sec, message->header.stamp.nanosec);
     safetyStopNavigation("SUPER PVA command anchor is not near vehicle");
     return;
   }

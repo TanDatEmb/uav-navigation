@@ -24,6 +24,7 @@
 #include <super_core/super_planner.h>
 #include <super_core/absolute_deadline.hpp>
 #include <super_core/backup_braking.hpp>
+#include <super_core/command_time.hpp>
 #include <super_core/guide_endpoint.hpp>
 #include <super_core/trajectory_world_validator.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
@@ -477,8 +478,10 @@ namespace super_planner {
 //        const double &backup_start_TT = cmd_traj_info_.getBackupTrajStartTT();
         const double &total_dur = cmd_traj_info_.getTotalDuration();
 
-        sample.finished = (cur_t - cmd_start_WT) > total_dur;
-        const double eval_t = sample.finished ? total_dur : (cur_t - cmd_start_WT);
+        const auto command_time = commandTrajectoryTime(cur_t, cmd_start_WT, total_dur);
+        sample.finished = command_time.finished;
+        const double eval_t = command_time.trajectory_time_s;
+        sample.trajectory_time_s = eval_t;
         sample.role = cmd_traj_info_.isTTOnBackupTraj(eval_t)
                           ? TrajectoryRole::BACKUP : TrajectoryRole::MAIN;
         sample.pvaj = cmd_traj_info_.posTraj().getState(eval_t);
@@ -487,7 +490,8 @@ namespace super_planner {
         sample.generation = cmd_traj_info_.generation();
         sample.certificate_world = cmd_traj_info_.certificate().validated_world;
         sample.valid = sample.pvaj.allFinite() && std::isfinite(sample.yaw) &&
-                       std::isfinite(sample.yaw_rate);
+                       std::isfinite(sample.yaw_rate) &&
+                       std::isfinite(sample.trajectory_time_s);
 
 //        if (last_round_robot_on_backup_traj != robot_on_backup_traj_) {
 //            if (last_round_robot_on_backup_traj) {

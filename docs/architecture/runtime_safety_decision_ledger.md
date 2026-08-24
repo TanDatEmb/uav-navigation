@@ -621,3 +621,46 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - This closes the exact-ingress 2x AIST throughput repeatability gate only.
   Clean 1x repeatability, PID-aware CPU/RSS, dense vegetation/thin branches,
   recorded-world planning and all Gazebo closed-loop/speed gates remain open.
+
+### 2026-08-25 - 6 m/s reverse-overshoot evidence and command provenance
+
+- Clean closed-loop artifact
+  `.artifacts/runtime/external-mode-check-20260824T222754-258858` requested
+  `long_three_pillars_speed` at 6 m/s and ended BLOCKED. The mission accepted
+  only waypoint zero, entered `PAUSED_SAFETY_STOP`, and handed over to PX4 Hold
+  without collision or PX4 failsafe. This is failure characterization, not a
+  certified 6 m/s result and not authority to attempt or promote 8 m/s.
+- The immediate rejection was the existing External Mode tracking-envelope
+  guard: the UAV had advanced more than the strict 0.75 m reverse/geometric
+  allowance beyond a forward-moving command anchor. The prior log printed only
+  clamped forward and lateral error, which made this valid fail-closed decision
+  appear unexplained. Upstream evidence includes repeated backup optimization
+  failure, `new_ts_TT < committed_ts_TT`, emergency-bundle replacement and a
+  backward command-anchor transition. Estimation remained tracking-valid and
+  the observed minimum clearance was 4.435 m. No guard, jerk limit, backup
+  requirement, deadline or controller threshold is changed here.
+- `PositionCommand` now distinguishes the immutable committed-bundle generation
+  and exact sampled trajectory time from the per-message `trajectory_id`.
+  SUPER reports the exact established trajectory time used for PVA/yaw/role
+  sampling (terminal samples remain pinned to the trajectory duration);
+  runtime forwards generation and time with the final outgoing MAIN/BACKUP
+  role. A rejected command now reports forward, reverse and lateral errors and
+  limits, measured and commanded ENU position, command velocity, message ID,
+  generation, role, trajectory time, status and source stamp from the same
+  message. Synthetic no-command terminal messages use generation/time zero and
+  never reuse stale provenance.
+- The same artifact exposed an independent report merge skew: a planner-owned
+  ingress diagnostic showed received/accepted 304 while the later world-model
+  terminal diagnostic showed started/published/revision 305. World-model
+  publication now emits received and accepted from the same mutex-coherent
+  `ObservationAccounting::Snapshot` as started/published/failure and gauges.
+  Report owner precedence therefore uses a complete producer-owned lifecycle
+  event; no maximum, one-count tolerance or timestamp guess masks a genuinely
+  inconsistent snapshot.
+- Verification: the coherent Release overlay rebuilt all 19 product dependency
+  packages after the ROS message change. Selected runtime, SUPER and PX4
+  packages executed 64 tests with zero errors, failures or skips; the runtime
+  report contract suite passed 86 tests. Focused reverse-error and message-field
+  tests distinguish forward lag, reverse overshoot, sample ID, bundle generation
+  and trajectory time. Gazebo reproduction with the new trace, sanitizer runs
+  for the changed interface, and the full speed/map matrix remain open gates.

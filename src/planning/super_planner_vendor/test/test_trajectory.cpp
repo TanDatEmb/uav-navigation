@@ -9,6 +9,7 @@
 #include "data_structure/base/trajectory.h"
 #include "super_core/super_planner.h"
 #include "super_core/absolute_deadline.hpp"
+#include "super_core/command_time.hpp"
 #include "super_core/guide_endpoint.hpp"
 #include "super_core/solve_stage.hpp"
 #include "super_core/trajectory_world_validator.hpp"
@@ -92,6 +93,24 @@ TEST(SuperTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   EXPECT_NEAR(partial.getVel(0.0).x(), 1.0, 1e-12);
   EXPECT_NEAR(partial.getVel(partial.getTotalDuration()).x(), 1.0, 1e-12);
   EXPECT_TRUE(partial.getPos(0.0).allFinite());
+}
+
+TEST(SuperTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemantics) {
+  const auto before = super_planner::commandTrajectoryTime(9.75, 10.0, 2.0);
+  EXPECT_FALSE(before.finished);
+  EXPECT_DOUBLE_EQ(before.trajectory_time_s, -0.25);
+
+  const auto start = super_planner::commandTrajectoryTime(10.0, 10.0, 2.0);
+  EXPECT_FALSE(start.finished);
+  EXPECT_DOUBLE_EQ(start.trajectory_time_s, 0.0);
+
+  const auto middle = super_planner::commandTrajectoryTime(11.25, 10.0, 2.0);
+  EXPECT_FALSE(middle.finished);
+  EXPECT_DOUBLE_EQ(middle.trajectory_time_s, 1.25);
+
+  const auto finished = super_planner::commandTrajectoryTime(12.1, 10.0, 2.0);
+  EXPECT_TRUE(finished.finished);
+  EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
 }
 
 TEST(SuperTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {

@@ -31,6 +31,23 @@ TEST(TrackingEnvelope, NeverRelaxesLateralOrReverseError) {
       Eigen::Vector3d{5.0, 0.0, 0.0}, 0.75, 0.25).valid);
 }
 
+TEST(TrackingEnvelope, ReportsReverseOvershootSeparatelyFromForwardLag) {
+  const auto reverse = evaluateTrackingEnvelope(
+      Eigen::Vector3d{1.0, 0.0, 0.0}, Eigen::Vector3d::Zero(),
+      Eigen::Vector3d{5.0, 0.0, 0.0}, 0.75, 0.25);
+  EXPECT_FALSE(reverse.valid);
+  EXPECT_DOUBLE_EQ(reverse.longitudinal_error_m, 0.0);
+  EXPECT_DOUBLE_EQ(reverse.reverse_error_m, 1.0);
+  EXPECT_DOUBLE_EQ(reverse.lateral_error_m, 0.0);
+
+  const auto forward = evaluateTrackingEnvelope(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{1.0, 0.0, 0.0},
+      Eigen::Vector3d{5.0, 0.0, 0.0}, 0.75, 0.25);
+  EXPECT_TRUE(forward.valid);
+  EXPECT_DOUBLE_EQ(forward.longitudinal_error_m, 1.0);
+  EXPECT_DOUBLE_EQ(forward.reverse_error_m, 0.0);
+}
+
 TEST(TrackingEnvelope, StationaryCommandUsesStrictGeometricLimit) {
   EXPECT_TRUE(evaluateTrackingEnvelope(
       Eigen::Vector3d::Zero(), Eigen::Vector3d{0.7, 0.0, 0.0},

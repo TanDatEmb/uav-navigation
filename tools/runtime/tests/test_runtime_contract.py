@@ -1502,6 +1502,49 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(mapping["mapping_published_count"], 2)
             self.assertEqual(report._mapping_integrity_reasons(mapping), [])
 
+    def test_navigation_mapping_summary_uses_coherent_world_lifecycle_snapshot(self) -> None:
+        planner = {
+            "name": "super_navigation/super_planner",
+            "values": {
+                "received_observation_count": "304",
+                "accepted_observation_count": "304",
+            },
+        }
+        world = {
+            "name": "navigation_mapping/world_model",
+            "level": 0,
+            "message": "PUBLISHED",
+            "values": {
+                "received_observation_count": "305",
+                "accepted_observation_count": "305",
+                "world_revision": "305",
+                "mapping_started_count": "305",
+                "mapping_published_count": "305",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+            },
+        }
+        snapshot = {
+            "streams": {"mapping_diagnostics": {"received": 2}},
+            "latest": {"mapping_diagnostics": {"statuses": [world]}},
+        }
+        samples = [
+            {"stream": "diagnostics", "payload": {"statuses": [planner]}},
+            {"stream": "mapping_diagnostics", "payload": {"statuses": [world]}},
+        ]
+        mapping = report._navigation_mapping_summary(snapshot, samples)
+        self.assertEqual(mapping["received_observation_count"], 305)
+        self.assertEqual(mapping["accepted_observation_count"], 305)
+        self.assertEqual(mapping["mapping_published_count"], 305)
+        self.assertEqual(report._mapping_integrity_reasons(mapping), [])
+
+        world["values"]["received_observation_count"] = "304"
+        world["values"]["accepted_observation_count"] = "304"
+        inconsistent = report._navigation_mapping_summary(snapshot, samples)
+        self.assertNotEqual(report._mapping_integrity_reasons(inconsistent), [])
+
     def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
         snapshot = {
             "latest": {

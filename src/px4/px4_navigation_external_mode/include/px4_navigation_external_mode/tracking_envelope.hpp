@@ -10,6 +10,7 @@ namespace px4_navigation_external_mode {
 struct TrackingEnvelopeResult {
   bool valid{false};
   double longitudinal_error_m{0.0};
+  double reverse_error_m{0.0};
   double lateral_error_m{0.0};
   double longitudinal_limit_m{0.0};
 };
@@ -46,9 +47,9 @@ inline TrackingEnvelopeResult evaluateTrackingEnvelope(
   const double signed_longitudinal_error = error.dot(tangent);
   result.longitudinal_error_m = std::max(0.0, signed_longitudinal_error);
   result.lateral_error_m = (error - signed_longitudinal_error * tangent).norm();
-  const double reverse_error_m = std::max(0.0, -signed_longitudinal_error);
+  result.reverse_error_m = std::max(0.0, -signed_longitudinal_error);
   result.valid = result.longitudinal_error_m <= result.longitudinal_limit_m &&
-                 reverse_error_m <= geometric_limit_m &&
+                 result.reverse_error_m <= geometric_limit_m &&
                  result.lateral_error_m <= geometric_limit_m;
   return result;
 }

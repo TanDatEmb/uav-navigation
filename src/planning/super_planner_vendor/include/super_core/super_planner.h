@@ -222,6 +222,7 @@ namespace super_planner {
             bool finished{false};
             bool valid{false};
             std::uint64_t generation{0};
+            double trajectory_time_s{0.0};
             navigation_world_model::WorldSnapshotIdentity certificate_world{};
         };
         CommandSample sampleCommand();

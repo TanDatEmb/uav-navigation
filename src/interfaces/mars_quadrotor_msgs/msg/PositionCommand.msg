@@ -14,6 +14,12 @@ float64 acc_norm
 float64[3] kx
 float64[3] kv
 uint32 trajectory_id
+# Immutable SUPER committed-bundle generation. This differs from trajectory_id,
+# which increments for every published command sample.
+uint64 trajectory_generation
+# Exact trajectory time used by SUPER to sample this PVA command. Pre-start
+# samples may be negative; terminal samples are pinned to the duration.
+float64 trajectory_time_s
 uint8 TRAJECTORY_STATUS_EMPTY = 0
 uint8 TRAJECTORY_STATUS_EMER = 2
 uint8 TRAJECTORY_STATUS_READY = 1
