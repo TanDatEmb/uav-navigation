@@ -162,10 +162,11 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
         mission_limits->max_acceleration_mps2,
         mission_limits->max_jerk_mps3);
   }
-  map_ = std::make_shared<rog_map::ROGMapROS>([this] { return now().seconds(); });
+  map_ = std::make_shared<RuntimeRogMap>([this] { return now().seconds(); });
   map_->loadConfigAndInit(super_config_path_);
+  world_model_view_ = std::make_shared<RogWorldModelView>(map_);
   planner_ = std::make_shared<super_planner::SuperPlanner>(
-      super_config_path_, ros_interface_, map_, mission_limits);
+      super_config_path_, ros_interface_, world_model_view_, mission_limits);
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -545,6 +546,7 @@ void SuperNavigationNode::runCycle() {
   const auto map_started = std::chrono::steady_clock::now();
   try {
     map_->updateMap(*cloud, super_pose);
+    world_model_view_->recordSuccessfulUpdate(cloud_stamp_ns);
   } catch (const std::exception& error) {
     ++map_update_exception_count_;
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,

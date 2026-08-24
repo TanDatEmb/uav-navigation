@@ -13,6 +13,8 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(navigation_interfaces REQUIRED)
 find_package(mars_quadrotor_msgs REQUIRED)
+find_package(navigation_world_model REQUIRED)
+find_package(rog_map_vendor REQUIRED)
 find_package(super_planner_vendor REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -31,6 +33,8 @@ target_include_directories(super_navigation_node PRIVATE
 )
 target_link_libraries(super_navigation_node PRIVATE
   super_planner_vendor::super_planner_vendor
+  navigation_world_model::navigation_world_model
+  rog_map_vendor::rog_map_vendor
   yaml-cpp::yaml-cpp)
 ament_target_dependencies(super_navigation_node PUBLIC
   ament_index_cpp
@@ -49,7 +53,8 @@ install(TARGETS super_navigation_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
-ament_export_dependencies(navigation_interfaces mars_quadrotor_msgs super_planner_vendor)
+ament_export_dependencies(navigation_interfaces mars_quadrotor_msgs navigation_world_model
+  rog_map_vendor super_planner_vendor)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -61,6 +66,13 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_timestamp_freshness test/test_timestamp_freshness.cpp)
   target_include_directories(test_timestamp_freshness PRIVATE include)
+  ament_add_gtest(test_rog_world_model_adapter test/test_rog_world_model_adapter.cpp)
+  target_include_directories(test_rog_world_model_adapter PRIVATE include)
+  target_compile_definitions(test_rog_world_model_adapter PRIVATE
+    SUPER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/super_planner.yaml")
+  target_link_libraries(test_rog_world_model_adapter
+    navigation_world_model::navigation_world_model
+    rog_map_vendor::rog_map_vendor)
   ament_target_dependencies(test_input_pairing nav_msgs)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)

@@ -27,6 +27,7 @@
 #include <fstream>
 #include <cstdint>
 #include <optional>
+#include <fmt/color.h>
 #include "Eigen/Eigen"
 
 
@@ -41,7 +42,7 @@
 #include "traj_opt/exp_traj_optimizer_s4.h"
 #include "traj_opt/backup_traj_optimizer_s4.h"
 #include "path_search/astar.h"
-#include "rog_map/rog_map.h"
+#include <navigation_world_model/world_model_view.hpp>
 #include "super_core/corridor_generator.h"
 #include "super_core/fov_checker.h"
 
@@ -62,7 +63,7 @@ namespace super_planner {
     class SuperPlanner {
         LogOneReplan latest_replan;
         super_planner::Config cfg_;
-        rog_map::ROGMapROS::Ptr map_ptr_;
+        navigation_world_model::WorldModelViewPtr map_ptr_;
         CorridorGenerator::Ptr cg_ptr_;
         path_search::Astar::Ptr astar_ptr_;
         ros_interface::RosInterface::Ptr ros_ptr_;
@@ -117,7 +118,7 @@ namespace super_planner {
 
         explicit SuperPlanner(const std::string &cfg_path,
                               const ros_interface::RosInterface::Ptr &ros_ptr,
-                              const rog_map::ROGMapROS::Ptr &map_ptr,
+                              navigation_world_model::WorldModelViewPtr map_ptr,
                               const std::optional<DynamicLimits> &mission_limits = std::nullopt);
 
         ~SuperPlanner() = default;
@@ -238,15 +239,11 @@ namespace super_planner {
 
 
     public:
-        void getRobotState(rog_map::RobotState &out);
+        void getRobotState(super_utils::RobotState &out);
 
-        bool setPlannerExecutionState(const rog_map::RobotState &state);
+        bool setPlannerExecutionState(const super_utils::RobotState &state);
 
         bool isEasyGoal(const Vec3f &goal_position);
-
-        rog_map::ROGMapROS::Ptr &getMap() {
-            return map_ptr_;
-        }
 
         double ft{0}, bt{0};
         int ft_cnt{0}, bt_cnt{0};
@@ -265,10 +262,6 @@ namespace super_planner {
             bt = 0;
             bt_cnt = 0;
             return ave_t;
-        }
-
-        void updateROGMap(const rog_map::PointCloud &cloud, const super_utils::Pose &pose) const {
-            map_ptr_->updateMap(cloud, pose);
         }
 
         LogOneReplan getLatestReplanLog() {

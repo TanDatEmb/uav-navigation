@@ -39,18 +39,17 @@ namespace super_planner {
     SuperPlanner::SuperPlanner
             (const std::string &cfg_path,
              const ros_interface::RosInterface::Ptr &ros_ptr,
-             const rog_map::ROGMapROS::Ptr &map_ptr,
+             navigation_world_model::WorldModelViewPtr map_ptr,
              const std::optional<DynamicLimits> &mission_limits
-            ) : cfg_(Config(cfg_path, mission_limits)), ros_ptr_(ros_ptr), map_ptr_(map_ptr) {
+            ) : cfg_(Config(cfg_path, mission_limits)), ros_ptr_(ros_ptr), map_ptr_(std::move(map_ptr)) {
 
         ros_ptr_->setResolution(cfg_.resolution);
         ros_ptr_->setVisualizationEn(cfg_.visualization_en);
         exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, ros_ptr_);
         back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, ros_ptr_);
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max);
-        const auto &rog_map_cfg = map_ptr_->getMapConfig();
-        const double occupied_inflation_radius =
-                rog_map_cfg.inflation_resolution * rog_map_cfg.inflation_step;
+        const auto world_geometry = map_ptr_->geometry();
+        const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;
         if (occupied_inflation_radius + 1.0e-9 < cfg_.robot_r) {
             throw std::invalid_argument(
                     "ROG-Map occupied inflation radius is smaller than SUPER robot_r");
@@ -58,8 +57,9 @@ namespace super_planner {
         astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
         cg_ptr_ = std::make_shared<CorridorGenerator>(ros_ptr_, map_ptr_, cfg_.corridor_bound_dis,
                                                       cfg_.corridor_line_max_length,
-                                                      cfg_.resolution, rog_map_cfg.virtual_ground_height,
-                                                      rog_map_cfg.virtual_ceil_height,
+                                                      cfg_.resolution,
+                                                      world_geometry.effective_virtual_ground_m,
+                                                      world_geometry.effective_virtual_ceiling_m,
                                                       cfg_.robot_r,
                                                       cfg_.obs_skip_num,
                                                       cfg_.iris_iter_num);
@@ -108,13 +108,15 @@ namespace super_planner {
 
 
         /// 1) First, shift the start_point to free space.
-        Vec3f local_star_pt;
-        if (!map_ptr_->getNearestCellNot(GridType::OCCUPIED, robot_state_.p, local_star_pt, 3.0)) {
+        const auto nearest_start = map_ptr_->nearestNotOccupied(
+                robot_state_.p, navigation_world_model::GridLayer::kEvidence, 3.0);
+        if (!nearest_start) {
             ros_ptr_->error(
                     " -- [SUPER] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_NO_START_POINT);
             return FAILED;
         }
+        Vec3f local_star_pt = *nearest_start;
         latest_replan.setLocalStartP(local_star_pt);
 
         /// 2) Generate Exp traj
@@ -540,11 +542,12 @@ namespace super_planner {
                     static_cast<double>(sample_index) /
                     static_cast<double>(intervals);
             const Vec3f sample_position = position_trajectory.getPos(sample_time);
-            const rog_map::GridType grid = sample_position.allFinite()
-                    ? map_ptr_->getInfGridType(sample_position)
-                    : rog_map::GridType::OUT_OF_MAP;
-            if (grid == rog_map::GridType::OCCUPIED ||
-                grid == rog_map::GridType::OUT_OF_MAP) {
+            const auto grid = sample_position.allFinite()
+                    ? map_ptr_->classify(sample_position,
+                                         navigation_world_model::GridLayer::kInflated)
+                    : navigation_world_model::CellState::kOutOfMap;
+            if (grid == navigation_world_model::CellState::kOccupied ||
+                grid == navigation_world_model::CellState::kOutOfMap) {
                 ros_ptr_->error(
                         " -- [SUPER] emergency brake map gate failed at t={} p={} grid={}",
                         sample_time, sample_position.transpose(),
@@ -722,9 +725,11 @@ namespace super_planner {
                     continue;
                 }
 
-                rog_map::GridType temp_grid = map_ptr_->getInfGridType(temp_pt);
+                const auto temp_grid = map_ptr_->classify(
+                        temp_pt, navigation_world_model::GridLayer::kInflated);
 
-                if (temp_grid == rog_map::GridType::OCCUPIED || temp_grid == rog_map::GridType::OUT_OF_MAP) {
+                if (temp_grid == navigation_world_model::CellState::kOccupied ||
+                    temp_grid == navigation_world_model::CellState::kOutOfMap) {
                     last_exp_traj_info.setWholeTrajKnownFreeFlag(false);
                     break;
                 }
@@ -768,7 +773,8 @@ namespace super_planner {
             } else {
                 temp_pt = last_exp_traj_time_pos.back().second;
                 // * 8) Pop all evaluated pts after the sampled point.
-                while (map_ptr_->isOccupiedInflate(temp_pt) ||
+                while (map_ptr_->classify(temp_pt, navigation_world_model::GridLayer::kInflated) ==
+                           navigation_world_model::CellState::kOccupied ||
                        (temp_pt - pos_init_state.col(0)).norm() > split_dis) {
                     last_exp_traj_time_pos.pop_back();
                     last_exp_traj_vel.pop_back();
@@ -821,32 +827,6 @@ namespace super_planner {
                 // NO NEED
             } else {
                 vec_Vec3f new_path;
-                // project goal within the planning horizon
-//                const Vec3f dir = (gi_.goal_p - robot_state_.p).normalized();
-//                const double dis2goal = (gi_.goal_p - robot_state_.p).norm();
-//                Vec3f cadi_p = gi_.goal_p;
-//                if(dis2goal > cfg_.planning_horizon) {
-//                    double proj_l = cfg_.planning_horizon;
-//                    Vec3f cadi_p = robot_state_.p + dir * proj_l;
-//                    int max_iter = 100;
-//                    while(map_ptr_->isOccupiedInflate(cadi_p) && max_iter-- > 0) {
-//                        if(map_ptr_->getNearestInfCellNot(OCCUPIED, cadi_p, cadi_p, 1.0)) {
-//                            break;
-//                        }
-//                        proj_l -= 2.0;
-//                        if(proj_l < 1){
-//                            ros_ptr_->warn(" -- [SUPER] Project goal failed");
-//                            gi_.goal_valid = false;
-//                            return FAILED;
-//                        }
-//                        cadi_p = robot_state_.p + dir * proj_l;
-//                    }
-//                    if(max_iter <= 0) {
-//                        ros_ptr_->warn(" -- [SUPER] Project goal failed");
-//                        gi_.goal_valid = false;
-//                        return FAILED;
-//                    }
-//                }
                 solve_stage_.store(2);
                 if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon,
                                 new_path, solve_deadline)) {
@@ -1156,7 +1136,10 @@ namespace super_planner {
             // obstacle-free sensor tube, not a persisted probabilistic FREE
             // label.  The inflated layer supplies the robot-radius tube in one
             // lookup and preserves the upstream unknown-as-visible semantics.
-            return map_ptr_->isLineFree(visibility_origin, endpoint, true, false);
+            return map_ptr_->isSegmentTraversable(
+                    visibility_origin, endpoint,
+                    navigation_world_model::GridLayer::kInflated,
+                    navigation_world_model::UnknownPolicy::kAllowUnknown);
         };
         if (shared_visibility_ray &&
             inflated_line_visible(candidate_ps.back().second)) {
@@ -1217,12 +1200,15 @@ namespace super_planner {
         Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
 
         Vec3f shifted_robot_p = shifted_sfc_start_pt_.norm()> 999?robot_state_.p:shifted_sfc_start_pt_;
-        if (!map_ptr_->getNearestCellNot(GridType::OCCUPIED, shifted_robot_p, shifted_robot_p, 3.0)) {
+        const auto nearest_start = map_ptr_->nearestNotOccupied(
+                shifted_robot_p, navigation_world_model::GridLayer::kEvidence, 3.0);
+        if (!nearest_start) {
             ros_ptr_->error(
                     " -- [SUPER] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_NO_START_POINT);
             return FAILED;
         }
+        shifted_robot_p = *nearest_start;
 
         Line line{shifted_robot_p, seed_point};
         Polytope temp_poly;
@@ -1500,12 +1486,12 @@ namespace super_planner {
 
         // 1) check and shift pts
         // 		For start point, must be collision free
-        rog_map::GridType start_type;
-        start_type = map_ptr_->getGridType(start_pt);
+        const auto start_type = map_ptr_->classify(
+                start_pt, navigation_world_model::GridLayer::kEvidence);
 
         /// If the start_pt is obstacle in prob map, just shift it to the nearest free point.
-        if (start_type == rog_map::GridType::OCCUPIED ||
-            start_type == rog_map::GridType::OUT_OF_MAP) {
+        if (start_type == navigation_world_model::CellState::kOccupied ||
+            start_type == navigation_world_model::CellState::kOutOfMap) {
             ros_ptr_->warn(
                     " -- [SUPER] The start point in obstacle, this should not happen since the start point should be shift before pathsearch.");
             return false;
@@ -1640,9 +1626,11 @@ namespace super_planner {
                 bool altitude_projection_free = true;
                 for (std::size_t index = 1;
                      index < altitude_preserving_path.size(); ++index) {
-                    if (!map_ptr_->isLineFree(altitude_preserving_path[index - 1],
-                                              altitude_preserving_path[index],
-                                              true, false)) {
+                    if (!map_ptr_->isSegmentTraversable(
+                            altitude_preserving_path[index - 1],
+                            altitude_preserving_path[index],
+                            navigation_world_model::GridLayer::kInflated,
+                            navigation_world_model::UnknownPolicy::kAllowUnknown)) {
                         altitude_projection_free = false;
                         break;
                     }
@@ -1661,9 +1649,11 @@ namespace super_planner {
         // generation. ROG's circular-buffer insideLocalMap predicate is index
         // based and can accept a point beyond this box near a sliding edge,
         // which leaves MINCO's tail outside every generated polytope.
-        const Vec3f corridor_center = map_ptr_->getLocalMapOrigin();
-        const Vec3f corridor_half_size = 0.5 * map_ptr_->getLocalMapSize();
-        const Vec3f corridor_margin = Vec3f::Constant(2.0 * map_ptr_->getInfResolution());
+        const auto world_geometry = map_ptr_->geometry();
+        const Vec3f corridor_center = world_geometry.local_center_m;
+        const Vec3f corridor_half_size = 0.5 * world_geometry.local_size_m;
+        const Vec3f corridor_margin = Vec3f::Constant(
+                2.0 * world_geometry.inflated_resolution_m);
         const Vec3f corridor_min = corridor_center - corridor_half_size + corridor_margin;
         const Vec3f corridor_max = corridor_center + corridor_half_size - corridor_margin;
         const auto inside_corridor_map = [&](const Vec3f &point) {
@@ -1690,11 +1680,11 @@ namespace super_planner {
     }
 
 
-    void SuperPlanner::getRobotState(rog_map::RobotState &out) {
+    void SuperPlanner::getRobotState(super_utils::RobotState &out) {
         out = robot_state_;
     }
 
-    bool SuperPlanner::setPlannerExecutionState(const rog_map::RobotState &state) {
+    bool SuperPlanner::setPlannerExecutionState(const super_utils::RobotState &state) {
         if (!state.rcv || !state.p.allFinite() || !state.v.allFinite() ||
             !state.a.allFinite() || !state.j.allFinite() ||
             !state.q.coeffs().allFinite() || state.q.norm() <= 1.0e-6 ||

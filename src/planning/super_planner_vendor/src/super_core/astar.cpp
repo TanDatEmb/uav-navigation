@@ -22,27 +22,37 @@
 */
 
 #include <path_search/astar.h>
+#include <fmt/color.h>
+#include <rog_map/rog_map_core/common_lib.hpp>
 
 using namespace color_text;
 using namespace super_utils;
 
 namespace path_search {
     using namespace rog_map;
+    using navigation_world_model::CellState;
+    using navigation_world_model::GridLayer;
+    using navigation_world_model::UnknownPolicy;
+    constexpr CellState OCCUPIED_CELL = CellState::kOccupied;
+    constexpr CellState KNOWN_FREE_CELL = CellState::kKnownFree;
+    constexpr CellState UNKNOWN_CELL = CellState::kUnknown;
+    constexpr CellState UNDEFINED_CELL = CellState::kUndefined;
 
 
     Astar::Astar(const std::string &cfg_path,
                  const ros_interface::RosInterface::Ptr &ros_ptr,
-                 rog_map::ROGMapROS::Ptr rm) : map_ptr_(rm), ros_ptr_(ros_ptr) {
+                 navigation_world_model::WorldModelViewPtr rm)
+        : map_ptr_(std::move(rm)), ros_ptr_(ros_ptr) {
         cfg_ = PathSearchConfig(cfg_path);
-        cout << rog_map::GREEN << " -- [RM] Init Astar-map." << rog_map::RESET << endl;
+        cout << GREEN << " -- [RM] Init Astar-map." << RESET << endl;
         int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
         grid_node_buffer_.resize(map_buffer_size);
         for (auto &i: grid_node_buffer_) {
             i = new GridNode;
             i->rounds = 0;
         }
-        cout << rog_map::BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << rog_map::RESET << endl;
-        cout << rog_map::BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << rog_map::RESET << endl;
+        cout << BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << RESET << endl;
+        cout << BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << RESET << endl;
     }
 
     RET_CODE
@@ -71,9 +81,9 @@ namespace path_search {
             return INIT_ERROR;
         }
         if (md_.use_prob_map) {
-            md_.resolution = map_ptr_->getResolution();
+            md_.resolution = map_ptr_->geometry().evidence_resolution_m;
         } else {
-            md_.resolution = map_ptr_->getInfResolution();
+            md_.resolution = map_ptr_->geometry().inflated_resolution_m;
         }
         if (searching_horizon > 0) {
             md_.local_map_center_d = start_pt;
@@ -141,9 +151,9 @@ namespace path_search {
 
     void Astar::posToGlobalIndex(const rog_map::Vec3f &pos, rog_map::Vec3i &id_g) const {
         if (md_.use_inf_map) {
-            map_ptr_->infMapPosToGlobalIndex(pos, id_g);
+            id_g = map_ptr_->positionToIndex(pos, GridLayer::kInflated);
         } else if (md_.use_prob_map) {
-            map_ptr_->probMapPosToGlobalIndex(pos, id_g);
+            id_g = map_ptr_->positionToIndex(pos, GridLayer::kEvidence);
         } else {
             throw std::runtime_error(" -- [A*] Map type not defined.");
         }
@@ -151,9 +161,9 @@ namespace path_search {
 
     void Astar::globalIndexToPos(const rog_map::Vec3i &id_g, rog_map::Vec3f &pos) const {
         if (md_.use_inf_map) {
-            map_ptr_->infMapGlobalIndexToPos(id_g, pos);
+            pos = map_ptr_->indexToPosition(id_g, GridLayer::kInflated);
         } else if (md_.use_prob_map) {
-            map_ptr_->probMapGlobalIndexToPos(id_g, pos);
+            pos = map_ptr_->indexToPosition(id_g, GridLayer::kEvidence);
         } else {
             throw std::runtime_error(" -- [A*] Map type not defined.");
         }
@@ -246,18 +256,20 @@ namespace path_search {
                 double dis = (hit_pt - start_pt).norm();
                 local_start_pt = start_pt + dir * (dis + md_.resolution * 2);
                 start_pt_out_local_map = true;
-                if (!map_ptr_->getNearestInfCellNot(OCCUPIED, local_start_pt,
-                                                    local_start_pt, 3.0)) {
+                const auto nearest = map_ptr_->nearestNotOccupied(
+                        local_start_pt, GridLayer::kInflated, 3.0);
+                if (!nearest) {
                     if (cfg_.visual_process || cfg_.debug_visualization_en) {
                         ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(),
                                                  "local_start_pt",
                                                  0.3, 1);
                     }
-                    cout << rog_map::RED <<
+                    cout << RED <<
                          " -- [A*] " << RET_CODE_STR[INIT_ERROR]
-                         << " : start point deeply occupied, cannot find feasible path.\n" << rog_map::RESET << endl;
+                         << " : start point deeply occupied, cannot find feasible path.\n" << RESET << endl;
                     return INIT_ERROR;
                 }
+                local_start_pt = *nearest;
             }
         }
 
@@ -270,7 +282,9 @@ namespace path_search {
                 local_end_pt = end_pt + dir * (dis + 2.5);
                 end_pt_out_local_map = true;
 
-                if (!map_ptr_->getNearestInfCellNot(OCCUPIED, local_end_pt, local_end_pt, 2.0)) {
+                const auto nearest = map_ptr_->nearestNotOccupied(
+                        local_end_pt, GridLayer::kInflated, 2.0);
+                if (!nearest) {
                     ros_ptr_->error(
                             " -- [A*] Error with: {}, Goal point [{}] deeply occupied, cannot find feasible path.",
                             RET_CODE_STR[INIT_ERROR],
@@ -282,6 +296,7 @@ namespace path_search {
                     }
                     return INIT_ERROR;
                 }
+                local_end_pt = *nearest;
             }
         }
 
@@ -290,9 +305,10 @@ namespace path_search {
         // scratch-grid boundary lets the direct-line fast path return points
         // that mapping/corridor generation cannot represent.  Intersect the
         // endpoint with the actual ROG map as the authoritative bound.
-        if (!map_ptr_->insideLocalMap(local_end_pt)) {
-            const Vec3f map_center = map_ptr_->getLocalMapOrigin();
-            const Vec3f map_half_size = 0.5 * map_ptr_->getLocalMapSize();
+        if (!map_ptr_->contains(local_end_pt)) {
+            const auto geometry = map_ptr_->geometry();
+            const Vec3f map_center = geometry.local_center_m;
+            const Vec3f map_half_size = 0.5 * geometry.local_size_m;
             const Vec3f map_margin = Vec3f::Constant(2.0 * md_.resolution);
             const Vec3f map_min = map_center - map_half_size + map_margin;
             const Vec3f map_max = map_center + map_half_size - map_margin;
@@ -323,8 +339,8 @@ namespace path_search {
             ros_ptr_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
         }
         if (!insideLocalMap(start_idx) || !insideLocalMap(end_idx)) {
-            cout << rog_map::RED << " -- [RM] Start or end point is out of local map, which should not happen." <<
-                 rog_map::RESET
+            cout << RED << " -- [RM] Start or end point is out of local map, which should not happen." <<
+                 RESET
                  << endl;
             ros_ptr_->error(" -- [RM] Start [{}] or end point [{}] is out of local map, which should not happen.",
                             local_start_pt.transpose(),
@@ -352,10 +368,13 @@ namespace path_search {
         // and unknown-space policy used below. Preserve a resolution-dense
         // path so corridor generation still validates and bounds every seed
         // segment instead of receiving one long unchecked edge.
-        if (map_ptr_->insideLocalMap(local_start_pt) &&
-            map_ptr_->insideLocalMap(local_end_pt) &&
-            map_ptr_->isLineFree(local_start_pt, local_end_pt,
-                                 md_.use_inf_map, md_.unknown_as_occ)) {
+        if (map_ptr_->contains(local_start_pt) &&
+            map_ptr_->contains(local_end_pt) &&
+            map_ptr_->isSegmentTraversable(
+                    local_start_pt, local_end_pt,
+                    md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
+                    md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
+                                       : UnknownPolicy::kAllowUnknown)) {
             const Vec3f delta = local_end_pt - local_start_pt;
             const int sample_count = std::max(
                     1, static_cast<int>(std::ceil(delta.norm() / md_.resolution)));
@@ -492,39 +511,42 @@ namespace path_search {
                         if (std::abs(dx) + std::abs(dy) + std::abs(dz) > 1) {
                             rog_map::Vec3f current_pos;
                             globalIndexToPos(current->id_g, current_pos);
-                            if (!map_ptr_->isLineFree(current_pos, neighborPos,
-                                                      md_.use_inf_map,
-                                                      md_.unknown_as_occ)) {
+                            if (!map_ptr_->isSegmentTraversable(
+                                    current_pos, neighborPos,
+                                    md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
+                                    md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
+                                                       : UnknownPolicy::kAllowUnknown)) {
                                 continue;
                             }
                         }
 
-                        rog_map::GridType neighbor_type;
+                        CellState neighbor_type;
 
                         if (md_.use_inf_map) {
-                            neighbor_type = map_ptr_->getInfGridType(neighborPos);
+                            neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kInflated);
                         } else {
                             if (!md_.use_inf_neighbor) {
-                                neighbor_type = map_ptr_->getGridType(neighborPos);
+                                neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kEvidence);
                             } else {
                                 // use prob map, but query all neighbors of the current node
                                 // if there is one neighbor is occupied, then the neighbor is occupied.
-                                neighbor_type = neighborHaveOne(OCCUPIED, neighborIdx) ? OCCUPIED : UNDEFINED;
+                                neighbor_type = neighborHaveOne(OCCUPIED_CELL, neighborIdx) ? OCCUPIED_CELL : UNDEFINED_CELL;
                                 // if there is one known free neighbor, then the neighbor is known free.
-                                if (md_.unknown_as_occ && neighbor_type != OCCUPIED) {
-                                    neighbor_type = neighborHaveOne(KNOWN_FREE, neighborIdx) ? KNOWN_FREE : UNKNOWN;
+                                if (md_.unknown_as_occ && neighbor_type != OCCUPIED_CELL) {
+                                    neighbor_type = neighborHaveOne(KNOWN_FREE_CELL, neighborIdx) ? KNOWN_FREE_CELL : UNKNOWN_CELL;
                                 }
                             }
                         }
 
-                        if (neighbor_type == OCCUPIED || neighbor_type == OUT_OF_MAP) {
+                        if (neighbor_type == CellState::kOccupied ||
+                            neighbor_type == CellState::kOutOfMap) {
                             continue;
                         }
 
                         neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)];
                         if (neighborPtr == nullptr) {
-                            cout << rog_map::RED << " -- [RM] neighborPtr is null, which should not happen." <<
-                                 rog_map::RESET
+                            cout << RED << " -- [RM] neighborPtr is null, which should not happen." <<
+                                 RESET
                                  << endl;
                             continue;
                         }
@@ -536,7 +558,7 @@ namespace path_search {
                             continue; //in closed set.
                         }
 
-                        if (md_.unknown_as_occ && neighbor_type == UNKNOWN && neighborPtr) {
+                        if (md_.unknown_as_occ && neighbor_type == CellState::kUnknown && neighborPtr) {
                             // the frontier is recorded but not expand.
                             neighborPtr->father_ptr = current;
                             rog_map::Vec3f pos;
@@ -599,8 +621,8 @@ namespace path_search {
                 break;
             }
             if (local_goal == nullptr) {
-                cout << rog_map::RED << " -- [A*] No frontier farther than 1 m, return."
-                     << rog_map::RESET << endl;
+                cout << RED << " -- [A*] No frontier farther than 1 m, return."
+                     << RESET << endl;
                 return NO_PATH;
             }
             retrievePath(local_goal, node_path);
@@ -608,7 +630,7 @@ namespace path_search {
                 node_path.push_back(startPtr);
             }
             ConvertNodePathToPointPath(node_path, out_path);
-            cout << rog_map::BLUE << "Frontier queue: " << frontier_queue.size() << endl;
+            cout << BLUE << "Frontier queue: " << frontier_queue.size() << endl;
             return REACH_HORIZON;
         }
         ros_ptr_->error(" -- [A*] Point to point path cannot find path with iter num: {}, return.", num_iter);
@@ -634,29 +656,31 @@ namespace path_search {
         /// 2) Check start point
 
         if (!insideLocalMap(start_pt) ||
-            !map_ptr_->insideLocalMap(start_pt)) {
+            !map_ptr_->contains(start_pt)) {
             fmt::print(fg(fmt::color::indian_red), " -- [A*] {}: escape start point is not inside local map.\n",
                        RET_CODE_STR[INIT_ERROR].c_str());
             return INIT_ERROR;
         }
         rog_map::Vec3f local_start_pt = start_pt;
-        const rog_map::GridType exact_start_type = md_.use_inf_map
-                ? map_ptr_->getInfGridType(local_start_pt)
-                : map_ptr_->getGridType(local_start_pt);
+        const CellState exact_start_type = map_ptr_->classify(
+                local_start_pt, md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence);
         // UNKNOWN_AS_FREE means an exact non-occupied start already satisfies
         // the escape contract. Snapping it to a voxel centre can otherwise
         // introduce an artificial altitude step on every planning cycle.
-        if (md_.unknown_as_free && exact_start_type != OCCUPIED &&
-            exact_start_type != OUT_OF_MAP) {
+        if (md_.unknown_as_free && exact_start_type != CellState::kOccupied &&
+            exact_start_type != CellState::kOutOfMap) {
             out_path.clear();
             return NO_NEED;
         }
-        if (!map_ptr_->getNearestCellNot(OCCUPIED, start_pt, local_start_pt,3.0)) {
-            cout << rog_map::RED <<
+        const auto nearest_start = map_ptr_->nearestNotOccupied(
+                start_pt, GridLayer::kEvidence, 3.0);
+        if (!nearest_start) {
+            cout << RED <<
                  " -- [A*] " << RET_CODE_STR[INIT_ERROR]
-                 << " : escape start point deeply occupied, cannot find feasible path.\n" << rog_map::RESET << endl;
+                 << " : escape start point deeply occupied, cannot find feasible path.\n" << RESET << endl;
             return INIT_ERROR;
         }
+        local_start_pt = *nearest_start;
 
         rog_map::Vec3i start_idx;
         posToGlobalIndex(local_start_pt, start_idx);
@@ -697,8 +721,9 @@ namespace path_search {
             }
             rog_map::Vec3f cur_pos;
             globalIndexToPos(current->id_g, cur_pos);
-            rog_map::GridType cur_inf_type = map_ptr_->getInfGridType(cur_pos);
-            if (md_.unknown_as_occ && cur_inf_type != OCCUPIED && cur_inf_type != UNKNOWN) {
+            const CellState cur_inf_type = map_ptr_->classify(cur_pos, GridLayer::kInflated);
+            if (md_.unknown_as_occ && cur_inf_type != CellState::kOccupied &&
+                cur_inf_type != CellState::kUnknown) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
 //                double time_2 = ros_ptr_->getSimTime();
@@ -706,7 +731,7 @@ namespace path_search {
                 return REACH_HORIZON;
             }
 
-            if (md_.unknown_as_free && cur_inf_type != OCCUPIED) {
+            if (md_.unknown_as_free && cur_inf_type != CellState::kOccupied) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
 //                double time_2 = ros_ptr_->getSimTime();
@@ -728,7 +753,7 @@ namespace path_search {
                         neighborIdx(1) = (current->id_g)(1) + dy;
                         neighborIdx(2) = (current->id_g)(2) + dz;
                         globalIndexToPos(neighborIdx, neighborPos);
-                        if (!map_ptr_->insideLocalMap(neighborPos) ||
+                        if (!map_ptr_->contains(neighborPos) ||
                             !insideLocalMap(neighborIdx)) {
                             continue;
                         }
@@ -737,25 +762,26 @@ namespace path_search {
                             continue;
                         }
 
-                        rog_map::GridType neighbor_type;
+                        CellState neighbor_type;
                         if (md_.use_inf_map) {
-                            neighbor_type = map_ptr_->getInfGridType(neighborPos);
+                            neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kInflated);
                         } else {
-                            neighbor_type = map_ptr_->getGridType(neighborPos);
+                            neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kEvidence);
                         }
 
-                        if (neighbor_type == OCCUPIED || neighbor_type == OUT_OF_MAP) {
+                        if (neighbor_type == CellState::kOccupied ||
+                            neighbor_type == CellState::kOutOfMap) {
                             continue;
                         }
 
-                        if (md_.unknown_as_occ && neighbor_type == UNKNOWN) {
+                        if (md_.unknown_as_occ && neighbor_type == CellState::kUnknown) {
                             continue;
                         }
 
                         neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)];
                         if (neighborPtr == nullptr) {
-                            cout << rog_map::RED << " -- [RM] neighborPtr is null, which should not happen" <<
-                                 rog_map::RESET << endl;
+                            cout << RED << " -- [RM] neighborPtr is null, which should not happen" <<
+                                 RESET << endl;
                             continue;
                         }
                         neighborPtr->id_g = neighborIdx;
@@ -798,11 +824,11 @@ namespace path_search {
                        (time_2 - time_1),
                        num_iter);
         }
-        cout << rog_map::RED << " -- [A*] Escape path searcher, cannot find path, return." << rog_map::RESET << endl;
+        cout << RED << " -- [A*] Escape path searcher, cannot find path, return." << RESET << endl;
         return NO_PATH;
     }
 
-    bool Astar::neighborHaveOne(const rog_map::GridType& type, const rog_map::Vec3i& src_id) {
+    bool Astar::neighborHaveOne(const CellState& type, const rog_map::Vec3i& src_id) {
         for (const auto& nei : neighbor_list) {
             rog_map::Vec3i nei_id = src_id + nei;
             if (!insideLocalMap(nei_id)) {
@@ -810,12 +836,12 @@ namespace path_search {
             }
             rog_map::Vec3f nei_pos;
             globalIndexToPos(nei_id, nei_pos);
-            rog_map::GridType nei_type;
+            CellState nei_type;
             if (md_.use_inf_map) {
-                nei_type = map_ptr_->getInfGridType(nei_pos);
+                nei_type = map_ptr_->classify(nei_pos, GridLayer::kInflated);
             }
             else {
-                nei_type = map_ptr_->getGridType(nei_pos);
+                nei_type = map_ptr_->classify(nei_pos, GridLayer::kEvidence);
             }
             if (nei_type == type) {
                 return true;

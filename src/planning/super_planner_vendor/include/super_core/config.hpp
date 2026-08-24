@@ -25,7 +25,6 @@
 #ifndef SUPER_PLANNER_CONFIG_HPP
 #define SUPER_PLANNER_CONFIG_HPP
 
-#include <rog_map/rog_map_core/config.hpp>
 #include <super_core/backup_braking.hpp>
 #include <traj_opt/config.hpp>
 #include <utils/header/yaml_loader.hpp>
@@ -93,7 +92,7 @@ namespace super_planner {
         // Yaw mode: 1 heading to velocity, 2 heading to goal
         int yaw_mode = YAW_TO_VEL;
 
-        rog_map::vec_E<rog_map::Vec3i> seed_line_neighbour;
+        super_utils::vec_E<super_utils::Vec3i> seed_line_neighbour;
 
 
         Config() = default;

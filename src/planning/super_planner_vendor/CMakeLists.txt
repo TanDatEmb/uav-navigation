@@ -12,6 +12,7 @@ find_package(ament_cmake_gtest REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(fmt REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
+find_package(navigation_world_model REQUIRED)
 find_package(rog_map_vendor REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -56,6 +57,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
   Eigen3::Eigen
   fmt::fmt
+  navigation_world_model::navigation_world_model
   rog_map_vendor::rog_map_vendor
   yaml-cpp::yaml-cpp
 )
@@ -76,7 +78,7 @@ install(EXPORT ${PROJECT_NAME}Targets
 )
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 fmt rog_map_vendor std_msgs yaml-cpp)
+ament_export_dependencies(Eigen3 fmt navigation_world_model rog_map_vendor std_msgs yaml-cpp)
 ament_export_include_directories(include)
 ament_package()
 

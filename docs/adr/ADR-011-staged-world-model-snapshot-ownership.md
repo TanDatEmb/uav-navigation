@@ -1,6 +1,6 @@
 # ADR-011: Stage WorldModel ownership before concurrent mapping and planning
 
-**Status:** accepted for staged implementation.
+**Status:** accepted; Batch 1 implemented, runtime parity evidence pending.
 
 ## Context and evidence
 
@@ -42,6 +42,14 @@ This batch remains single-threaded and behavior-preserving. Characterization
 tests compare every adapter query with the current ROG result on identical map
 fixtures. It removes vendor API reach-through without claiming a scheduling
 improvement.
+
+Implementation note (2026-08-25): `navigation_world_model::WorldModelView` is
+an Eigen/STL-only interface. `navigation_runtime::RogWorldModelView` forwards
+the existing ROG classification, coordinate conversion, nearest-cell, ray and
+ordered occupied-point queries. SUPER no longer receives a mutable ROG pointer
+or map-update escape hatch. Execution intentionally remains sequential. The
+adapter currently observes mutable ROG storage, so it is not an immutable
+snapshot and must not be used concurrently with mapping; Batch 3 remains open.
 
 ### Batch 2: explicit mapping owner and revision
 

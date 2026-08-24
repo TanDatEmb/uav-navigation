@@ -28,8 +28,7 @@
 
 #include "Eigen/Dense"
 #include "vector"
-#include "rog_map_ros/rog_map_ros1.hpp"
-#include "rog_map_ros/rog_map_ros2.hpp"
+#include <navigation_world_model/world_model_view.hpp>
 #include "queue"
 #include "path_search/config.hpp"
 #include "utils/header/type_utils.hpp"
@@ -51,7 +50,7 @@ namespace path_search {
         } state{UNDEFINED};
 
         int rounds{0};
-        rog_map::Vec3i id_g;
+        Vec3i id_g;
         double total_score{inf}, distance_score{inf};
         double distance_to_goal{inf};
         GridNodePtr father_ptr{nullptr};
@@ -80,11 +79,11 @@ namespace path_search {
 
     class Astar {
 
-        rog_map::ROGMapROS::Ptr map_ptr_;
+        navigation_world_model::WorldModelViewPtr map_ptr_;
         ros_interface::RosInterface::Ptr ros_ptr_;
 
         PathSearchConfig cfg_;
-        rog_map::vec_Vec3i neighbor_list;
+        vec_Vec3i neighbor_list;
 
         vector<GridNodePtr> grid_node_buffer_;
 
@@ -95,8 +94,8 @@ namespace path_search {
         static constexpr int EUCL = 2;
 
         struct MissionData {
-            rog_map::Vec3f start_pt;
-            rog_map::Vec3f goal_pt;
+            Vec3f start_pt;
+            Vec3f goal_pt;
             double searching_horizon;
             bool use_inf_map{false};
             bool use_prob_map{false};
@@ -104,10 +103,10 @@ namespace path_search {
             bool unknown_as_free{false};
             bool use_inf_neighbor{false};
             double resolution;
-            rog_map::Vec3i local_map_center_id_g;
-            rog_map::Vec3f local_map_center_d;
+            Vec3i local_map_center_id_g;
+            Vec3f local_map_center_d;
             double mission_rcv_WT{0};
-            rog_map::Vec3f local_map_max_d, local_map_min_d;
+            Vec3f local_map_max_d, local_map_min_d;
             std::mutex mission_mtx;
         } md_;
 
@@ -115,30 +114,30 @@ namespace path_search {
 
         double getHeu(GridNodePtr node1, GridNodePtr node2, int type = DIAG) const;
 
-         int getLocalIndexHash(const rog_map::Vec3i &id_in) const;
+         int getLocalIndexHash(const Vec3i &id_in) const;
 
-        void posToGlobalIndex(const rog_map::Vec3f &pos, rog_map::Vec3i &id_g) const ;
+        void posToGlobalIndex(const Vec3f &pos, Vec3i &id_g) const ;
 
-        void globalIndexToPos(const rog_map::Vec3i &id_g, rog_map::Vec3f &pos) const;
+        void globalIndexToPos(const Vec3i &id_g, Vec3f &pos) const;
 
-        bool insideLocalMap(const rog_map::Vec3f &pos) const;
+        bool insideLocalMap(const Vec3f &pos) const;
 
-        bool insideLocalMap(const rog_map::Vec3i &id_g) const;
+        bool insideLocalMap(const Vec3i &id_g) const;
 
-        bool neighborHaveOne(const rog_map::GridType &type, const rog_map::Vec3i &src_id);
+        bool neighborHaveOne(const navigation_world_model::CellState &type, const Vec3i &src_id);
 
-        RET_CODE setup(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &goal_pt, const int &flag,
+        RET_CODE setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag,
                        const double &searching_horizon = 9999);
 
         void retrievePath(GridNodePtr current, vector<GridNodePtr> &path);
 
-        void ConvertNodePathToPointPath(const vector<GridNodePtr> &node_path, rog_map::vec_Vec3f &point_path);
+        void ConvertNodePathToPointPath(const vector<GridNodePtr> &node_path, vec_Vec3f &point_path);
 
     public:
 
         Astar(const std::string & cfg_path,
               const ros_interface::RosInterface::Ptr &ros_ptr,
-              rog_map::ROGMapROS::Ptr rm);
+              navigation_world_model::WorldModelViewPtr rm);
 
         ~Astar() {};
 
@@ -148,18 +147,18 @@ namespace path_search {
 
         void setFineInfNeighbors(const int & neighbor_step);
 
-        RET_CODE pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
+        RET_CODE pointToPointPathSearch(const Vec3f &start_pt, const Vec3f &end_pt,
                                         const int &flag,
                                         const double &searching_horizon,
-                                        rog_map::vec_Vec3f &out_path,
+                                        vec_Vec3f &out_path,
                                         const double &time_out = -1.0,
                                         const bool prefer_start_goal_altitude = false);
 
         /// @ brief: The escape path only for path search from prob map to inf map. from non-occupied point to
         ///          inf map free (or known freee) point . Aim to find a path from current point to (known) free point
         /// @ param:
-        RET_CODE escapePathSearch(const rog_map::Vec3f &start_pt, const int flag,
-                                  rog_map::vec_Vec3f &out_path,
+        RET_CODE escapePathSearch(const Vec3f &start_pt, const int flag,
+                                  vec_Vec3f &out_path,
                                   const bool prefer_start_altitude = false);
 
 

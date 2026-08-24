@@ -32,8 +32,7 @@
 #include <data_structure/base/polytope.h>
 #include <data_structure/base/trajectory.h>
 
-#include <rog_map_ros/rog_map_ros1.hpp>
-#include <rog_map_ros/rog_map_ros2.hpp>
+#include <navigation_world_model/world_model_view.hpp>
 #include <utils/header/fmt_eigen.hpp>
 
 #include <ros_interface/ros_interface.hpp>
@@ -60,7 +59,7 @@ namespace super_planner {
         int iris_iter_num_;
         double virtual_groud_height_ = 0.0;
         double virtual_ceil_height_ = 0.0;
-        rog_map::ROGMapROS::Ptr map_ptr_;
+        navigation_world_model::WorldModelViewPtr map_ptr_;
         vec_E<Vec3i> line_seed_neighbor_list;
         CIRI::Ptr ciri_;
         std::ofstream failed_traj_log;
@@ -82,7 +81,7 @@ namespace super_planner {
         }
 
         CorridorGenerator(const ros_interface::RosInterface::Ptr &ros_ptr,
-                          const rog_map::ROGMapROS::Ptr & map_ptr,
+                          navigation_world_model::WorldModelViewPtr map_ptr,
                           const double bound_dis,
                           const double seed_line_max_dis,
                           const double min_overlap_threshold,

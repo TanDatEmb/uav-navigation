@@ -24,17 +24,18 @@
 #include <super_core/corridor_generator.h>
 
 #include <chrono>
+#include <super_utils/scope_timer.hpp>
 
 using namespace super_utils;
 
 namespace super_planner {
 
     CorridorGenerator::CorridorGenerator(const ros_interface::RosInterface::Ptr &ros_ptr,
-                                         const rog_map::ROGMapROS::Ptr &map_ptr, const double bound_dis,
+                                         navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
                                          const double seed_line_max_dis, const double min_overlap_threshold,
                                          const double virtual_groud_height, const double virtual_ceil_height,
                                          const double robot_r, const int box_search_skip_num, const int iris_iter_num)
-            : ros_ptr_(ros_ptr), map_ptr_(map_ptr) {
+            : ros_ptr_(ros_ptr), map_ptr_(std::move(map_ptr)) {
         ciri_ = std::make_shared<CIRI>(ros_ptr_);
         ciri_->setupParams(robot_r, iris_iter_num);
         bound_dis_ = bound_dis;
@@ -47,9 +48,9 @@ namespace super_planner {
         // inflation grid during initialization.  Corridor constraints must
         // use those effective values; using the raw YAML values gives A*/CIRI
         // different feasible sets near the vertical boundaries.
-        const auto &map_cfg = map_ptr_->getMapConfig();
-        virtual_ceil_height_ = map_cfg.virtual_ceil_height - robot_r;
-        virtual_groud_height_ = map_cfg.virtual_ground_height + robot_r;
+        const auto map_geometry = map_ptr_->geometry();
+        virtual_ceil_height_ = map_geometry.effective_virtual_ceiling_m - robot_r;
+        virtual_groud_height_ = map_geometry.effective_virtual_ground_m + robot_r;
 //        failed_traj_log.open(DEBUG_FILE_DIR("sfc.csv"), std::ios::out | std::ios::trunc);
     }
 
@@ -83,7 +84,9 @@ namespace super_planner {
         int cnt_loop = 0;
         first_id = 0;
 
-        while(first_id < path.size() && map_ptr_->isOccupiedInflate(path[first_id])) {
+        while(first_id < path.size() &&
+              map_ptr_->classify(path[first_id], navigation_world_model::GridLayer::kInflated) ==
+                  navigation_world_model::CellState::kOccupied) {
             first_id++;
         }
 
@@ -113,7 +116,9 @@ namespace super_planner {
                 // over the base-grid spherical neighbour list is redundant
                 // and can stall for seconds around an obstacle boundary.
                 const bool line_free = seed_length <= seed_line_max_length_ &&
-                    map_ptr_->isLineFree(path[first_id], path[j], true, false);
+                    map_ptr_->isSegmentTraversable(
+                        path[first_id], path[j], navigation_world_model::GridLayer::kInflated,
+                        navigation_world_model::UnknownPolicy::kAllowUnknown);
                 if (!line_free) {
                     reach_segment = true;
                 }
@@ -245,11 +250,13 @@ namespace super_planner {
         Eigen::Vector3d box_max, box_min;
         vec_E<Vec3f> pc;
         getSeedBBox(pt, pt, box_min, box_max);
-        map_ptr_->boundBoxByLocalMap(box_min, box_max);
+        const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
+        box_min = bounded_box.minimum;
+        box_max = bounded_box.maximum;
         box_min.z() = std::max(box_min.z(), virtual_groud_height_);
         box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
         solve_stage_.store(5);
-        map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
+        pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
         solve_point_count_.store(pc.size());
         // Virtual floor and ceiling are deterministic planes, not sampled
         // obstacles. Account for the vehicle radius directly in the boundary
@@ -354,11 +361,13 @@ namespace super_planner {
         Eigen::Vector3d box_max, box_min;
         vec_E<Vec3f> pc, pts{line.first, line.second};
         getSeedBBox(line.first, line.second, box_min, box_max);
-        map_ptr_->boundBoxByLocalMap(box_min, box_max);
+        const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
+        box_min = bounded_box.minimum;
+        box_max = bounded_box.maximum;
         box_min.z() = std::max(box_min.z(), virtual_groud_height_);
         box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
         solve_stage_.store(2);
-        map_ptr_->boxSearchObservedOccupied(box_min, box_max, pc);
+        pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
         solve_point_count_.store(pc.size());
         MatD4f planes;
         Eigen::Vector3d a = line.first, b = line.second;

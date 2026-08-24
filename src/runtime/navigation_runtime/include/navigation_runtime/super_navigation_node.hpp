@@ -21,9 +21,9 @@
 #include "navigation_runtime/input_pairing.hpp"
 #include "navigation_runtime/observation_accounting.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/rog_world_model_adapter.hpp"
 #include "navigation_runtime/runtime_state.hpp"
 #include <ros_interface/ros_interface.hpp>
-#include <rog_map_ros/rog_map_ros2.hpp>
 #include <super_core/super_planner.h>
 
 namespace navigation_runtime {
@@ -142,7 +142,8 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::vector<double> end_to_end_samples_ms_;
 
   ros_interface::RosInterface::Ptr ros_interface_;
-  rog_map::ROGMapROS::Ptr map_;
+  std::shared_ptr<RuntimeRogMap> map_;
+  std::shared_ptr<RogWorldModelView> world_model_view_;
   super_planner::SuperPlanner::Ptr planner_;
 };
 

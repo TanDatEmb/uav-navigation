@@ -127,6 +127,30 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-1 product-owned query boundary without behavior tuning
+
+- Added the Eigen/STL-only `navigation_world_model::WorldModelView` contract
+  and a runtime-owned ROG adapter. A*, corridor construction and SUPER now use
+  named evidence/inflated layers and UNKNOWN policies rather than mutable
+  `ROGMapROS` pointers, ROG config objects and ambiguous line-query booleans.
+- The adapter delegates ROG ray traversal, coordinate quantization,
+  nearest-cell tie breaking and occupied-point iteration order exactly. No
+  threshold, UNKNOWN policy, OUT_OF_MAP behavior, A*/CIRI/MINCO mathematics or
+  callback scheduling changed in this batch.
+- Map mutation remains exclusively in `navigation_runtime`; the dead planner
+  `getMap()` and `updateROGMap()` escape hatches were removed. Successful
+  integration advances adapter revision metadata, but the backing ROG storage
+  remains mutable and sequential. This is explicitly not an immutable
+  snapshot and creates no authority for concurrent map update and planning.
+- Compile and adapter parity tests cover product geometry/identity,
+  classification, both coordinate layers, all layer/UNKNOWN-policy segment
+  combinations, local-box clamping and exact occupied-point ordering. Dense
+  fixture, map-slide, algorithm-level and SITL parity remain required before
+  Batch 1 is certified and before WM-2/WM-3 concurrency work starts.
+- No bypass or hard-gate value was added or changed. The remaining direct
+  `rog_map_vendor` build dependency supplies legacy neutral utility types and
+  geometric helpers; removing that baggage belongs after behavioral freeze.
+
 ### 2026-08-25 - WM-0 coherent observation lifecycle accounting
 
 - Added a mutex-coherent lifecycle state machine for the single-latest mapping

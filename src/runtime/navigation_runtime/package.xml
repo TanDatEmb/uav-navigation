@@ -12,6 +12,8 @@
   <depend>nav_msgs</depend>
   <depend>navigation_interfaces</depend>
   <depend>mars_quadrotor_msgs</depend>
+  <depend>navigation_world_model</depend>
+  <depend>rog_map_vendor</depend>
   <depend>super_planner_vendor</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
