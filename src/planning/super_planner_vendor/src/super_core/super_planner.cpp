@@ -24,6 +24,7 @@
 #include <super_core/super_planner.h>
 #include <super_core/absolute_deadline.hpp>
 #include <super_core/backup_braking.hpp>
+#include <super_core/guide_endpoint.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
@@ -907,7 +908,13 @@ namespace super_planner {
             }
         }
 
-        const bool connected_goal = (guide_path.back() - gi_.goal_p).norm() < cfg_.resolution * 2;
+        // Resolve the terminal point before corridor construction. Snapping
+        // only the MINCO tail after CIRI has certified the unsnapped guide can
+        // place the fixed endpoint outside every generated polytope.
+        const GuideEndpoint resolved_endpoint = resolveGuideEndpoint(
+                guide_path.back(), gi_.goal_p, cfg_.resolution * 2.0);
+        guide_path.back() = resolved_endpoint.position;
+        const bool connected_goal = resolved_endpoint.goal_connected;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
         latest_guide_start_ = guide_path.front();
@@ -947,9 +954,8 @@ namespace super_planner {
         if (cfg_.goal_vel_en && (gi_.goal_p - robot_state_.p).norm() > cfg_.planning_horizon / 2) {
             pos_fina_state.col(1) = (gi_.goal_p - robot_state_.p).normalized() * cfg_.exp_traj_cfg.max_vel / 2;
         }
-        if ((pos_fina_state.col(0) - gi_.goal_p).norm() < cfg_.resolution * 2) {
+        if (connected_goal) {
             pos_fina_state.col(1).setZero();
-            pos_fina_state.col(0) = gi_.goal_p;
         }
 
         // optimize and update exp traj

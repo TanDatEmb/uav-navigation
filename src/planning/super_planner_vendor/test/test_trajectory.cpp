@@ -9,6 +9,7 @@
 #include "data_structure/base/trajectory.h"
 #include "super_core/super_planner.h"
 #include "super_core/absolute_deadline.hpp"
+#include "super_core/guide_endpoint.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 
@@ -245,4 +246,29 @@ TEST(SuperTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
   EXPECT_TRUE(deadline.expired(100.05));
   EXPECT_DOUBLE_EQ(deadline.remaining(std::numeric_limits<double>::quiet_NaN()), 0.0);
   EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, 0.0}), std::invalid_argument);
+}
+
+TEST(SuperTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {
+  const super_utils::Vec3f guide_endpoint(1.0, 2.0, 3.0);
+  const super_utils::Vec3f goal(1.1, 2.0, 3.0);
+  const auto result = super_planner::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.4);
+  EXPECT_TRUE(result.goal_connected);
+  EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(SuperTrajectory, UnconnectedOrInvalidGoalDoesNotMoveGuideEndpoint) {
+  const super_utils::Vec3f guide_endpoint(1.0, 2.0, 3.0);
+  const super_utils::Vec3f goal(2.0, 2.0, 3.0);
+  const auto unconnected = super_planner::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.4);
+  EXPECT_FALSE(unconnected.goal_connected);
+  EXPECT_TRUE(unconnected.position.isApprox(guide_endpoint));
+
+  super_utils::Vec3f invalid_goal = goal;
+  invalid_goal.x() = std::numeric_limits<double>::quiet_NaN();
+  const auto invalid = super_planner::resolveGuideEndpoint(
+      guide_endpoint, invalid_goal, 0.4);
+  EXPECT_FALSE(invalid.goal_connected);
+  EXPECT_TRUE(invalid.position.isApprox(guide_endpoint));
 }
