@@ -563,6 +563,13 @@ void SuperNavigationNode::runCycle() {
     item.value = std::to_string(value);
     status.values.push_back(std::move(item));
   };
+  const auto add_duration = [&status](const std::string& key, std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(std::max<std::int64_t>(0, value));
+    status.values.push_back(std::move(item));
+  };
+  const auto& map_diagnostics = map_->lastDiagnostics();
   add_value("received_observation_count", received_cloud_count_);
   add_value("accepted_observation_count", accepted_cloud_count_);
   add_value("cycle_count", cycle_count_);
@@ -572,6 +579,18 @@ void SuperNavigationNode::runCycle() {
   add_value("corrected_pair_mismatch_count", corrected_pair_mismatch_count_);
   add_value("invalid_execution_state_count", invalid_execution_state_count_);
   add_value("processing_exception_count", map_update_exception_count_);
+  add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
+  add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
+  add_duration("ros_pointcloud_decode_us", input_conversion_us);
+  add_duration("rog_raycast_us", map_diagnostics.rog_raycast_us);
+  add_duration("rog_probability_update_us", map_diagnostics.rog_probability_update_us);
+  add_duration("rog_inflation_us", map_diagnostics.rog_inflation_us);
+  add_duration("rog_slide_us", map_diagnostics.rog_slide_us);
+  add_duration("rog_total_update_us", map_diagnostics.rog_total_update_us);
+  add_duration(
+      "mapping_callback_total_us",
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - cycle_started).count());
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
 

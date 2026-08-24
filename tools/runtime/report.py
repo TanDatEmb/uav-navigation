@@ -1497,6 +1497,10 @@ def _navigation_mapping_summary(
         "invalid_frame_count",
         "invalid_pose_count",
         "invalid_cloud_count",
+        "dropped_cloud_count",
+        "stale_input_count",
+        "corrected_pair_mismatch_count",
+        "invalid_execution_state_count",
         "nonfinite_point_count",
         "post_filter_nonfinite_point_count",
         "transform_nonfinite_point_count",
@@ -1546,6 +1550,28 @@ def _navigation_mapping_summary(
     return result
 
 
+def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
+    labels = {
+        "dropped_cloud_count": "mapping replaced an unconsumed cloud",
+        "stale_input_count": "mapping rejected stale input",
+        "corrected_pair_mismatch_count": "mapping rejected a corrected-pose pair",
+        "invalid_execution_state_count": "planner execution state was invalid",
+        "processing_exception_count": "mapping processing raised an exception",
+    }
+    reasons: list[str] = []
+    for field, label in labels.items():
+        count = int(_number(mapping.get(field), 0.0))
+        if count > 0:
+            reasons.append(f"{label}: {count}")
+    received = int(_number(mapping.get("received_observation_count"), 0.0))
+    accepted = int(_number(mapping.get("accepted_observation_count"), 0.0))
+    if received > 0 and accepted != received:
+        reasons.append(
+            f"mapping observation accounting mismatch: accepted {accepted} of {received}"
+        )
+    return reasons
+
+
 def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
     streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry")}
@@ -1579,6 +1605,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         reasons.append("input queue did not drain")
     if int(diagnostics.get("imu_drop_count", 0) or 0) or int(diagnostics.get("lidar_drop_count", 0) or 0):
         reasons.append("runtime drop count is non-zero")
+    reasons.extend(_mapping_integrity_reasons(navigation_mapping))
     reasons.extend(failures)
     verdict = "PASS" if not reasons else "FAIL"
     if not any(streams[name]["sample_count"] for name in streams):

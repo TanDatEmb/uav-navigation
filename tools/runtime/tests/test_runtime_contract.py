@@ -131,7 +131,9 @@ class RuntimeContractTest(unittest.TestCase):
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
         navigation = runner.load_config("mapping.yaml")["super_navigation_node"]["ros__parameters"]["super_navigation"]
         self.assertEqual(navigation["cloud_topic"], "/lio/registered_points")
-        self.assertEqual(navigation["odometry_topic"], "/lio/odometry_propagated")
+        self.assertEqual(navigation["corrected_odometry_topic"], "/lio/odometry_corrected")
+        self.assertEqual(navigation["propagated_odometry_topic"], "/lio/odometry_propagated")
+        self.assertNotIn("odometry_topic", navigation)
         self.assertEqual(navigation["command_topic"], "/navigation/super_command")
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("/lio/registered_points", rviz)
@@ -500,6 +502,47 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("-p", command)
         self.assertIn("use_sim_time:=true", command)
         self.assertNotIn("/livox/lidar:=/lidar/points", command)
+
+    def test_dataset_replay_uses_recorded_time_as_ros_clock(self) -> None:
+        context = {
+            "bag": Path("/data/lio"),
+            "input": {
+                "lidar_topic": "/livox/lidar",
+                "imu_topic": "/livox/imu",
+            },
+        }
+        command = runner._dataset_replay_command(context, 1.0)
+        self.assertIn("--clock", command)
+        self.assertIn("/livox/lidar:=/lidar/points", command)
+        self.assertIn("/livox/imu:=/lidar/imu", command)
+
+        source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
+        dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
+        self.assertEqual(dataset_body.count('"use_sim_time:=true"'), 2)
+        self.assertNotIn('"use_sim_time:=false"', dataset_body)
+
+    def test_dataset_mapping_integrity_rejects_replaced_observations(self) -> None:
+        reasons = report._mapping_integrity_reasons({
+            "received_observation_count": 100,
+            "accepted_observation_count": 100,
+            "dropped_cloud_count": 49,
+            "stale_input_count": 0,
+            "corrected_pair_mismatch_count": 0,
+            "invalid_execution_state_count": 0,
+            "processing_exception_count": 0,
+        })
+        self.assertEqual(reasons, ["mapping replaced an unconsumed cloud: 49"])
+
+    def test_dataset_mapping_integrity_accepts_exact_once_consumption(self) -> None:
+        self.assertEqual(report._mapping_integrity_reasons({
+            "received_observation_count": 100,
+            "accepted_observation_count": 100,
+            "dropped_cloud_count": 0,
+            "stale_input_count": 0,
+            "corrected_pair_mismatch_count": 0,
+            "invalid_execution_state_count": 0,
+            "processing_exception_count": 0,
+        }), [])
 
     def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
         command = runner._external_mode_launch_command(

@@ -146,3 +146,32 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   FAST-LIO and ROG but publishes no goals, so it does not execute A*/CIRI/MINCO.
   Dataset planner claims require a deterministic shadow-planning harness over
   immutable recorded WorldSnapshots.
+
+### 2026-08-25 - Make recorded time authoritative during dataset replay
+
+- The first full `aist-mid360-drive` replay processed all 2,772 lidar scans and
+  55,435 IMU messages in FAST-LIO with no estimator input drops, but produced no
+  ROG update. Every navigation snapshot was correctly rejected as roughly
+  74 million seconds stale because the 2024 sensor headers were compared with
+  the 2026 host wall clock.
+- Fixed the harness time-domain contract: dataset nodes use ROS simulated time
+  and rosbag publishes `/clock`. The live 0.5 s freshness gate is unchanged;
+  no dataset-only freshness bypass or threshold relaxation was introduced.
+- Artifact before the fix:
+  `.artifacts/runtime/dataset-20260824T165921-59007`. This artifact is a valid
+  estimator/load baseline and a harness FAIL, not mapping/planning evidence.
+- The corrected 1x replay artifact
+  `.artifacts/runtime/dataset-20260824T170750-60656` passed observation
+  ownership (2,756 received and accepted, zero drop/mismatch/stale/exception),
+  but exposed a telemetry defect: ROG timings existed internally and were not
+  published. Mapping diagnostics now export aggregate per-update timing and
+  scale counters; the PASS artifact remains insufficient for CIRI/MINCO because
+  the dataset workflow published no goals.
+- A subsequent 2x replay was incorrectly reported PASS while the single-slot
+  observation owner replaced 1,378 of 2,756 accepted clouds before mapping.
+  Artifact: `.artifacts/runtime/dataset-20260824T171418-61902`. Dataset
+  acceptance now fails on any mapping replacement, stale/mismatched pair,
+  invalid execution state, processing exception, or received/accepted
+  accounting mismatch. This is an overload characterization, not authority to
+  add a queue or discard input silently; mapping/planning ownership separation
+  remains the architectural closure.

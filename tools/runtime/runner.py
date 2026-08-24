@@ -1038,6 +1038,19 @@ def _dataset_context(dataset: str) -> tuple[dict[str, Any], dict[str, int]]:
     return context, data.bag_topic_counts(context)
 
 
+def _dataset_replay_command(context: dict[str, Any], rate: float) -> list[str]:
+    """Replay recorded sensor time as the authoritative ROS clock.
+
+    Dataset headers retain their acquisition epoch.  Navigation freshness must
+    therefore compare them with bag time, never with the host wall clock.
+    """
+    return [
+        "ros2", "bag", "play", str(context["bag"]), "--rate", str(rate), "--clock",
+        "--remap", f"{context['input']['lidar_topic']}:=/lidar/points",
+        f"{context['input']['imu_topic']}:=/lidar/imu",
+    ]
+
+
 def run_dataset(
     dataset: str,
     rate: float,
@@ -1089,7 +1102,7 @@ def run_dataset(
             "mapping",
             _ros_shell([
                 "ros2", "launch", "navigation_bringup", "navigation_runtime.launch.py",
-                f"config_file:={mapping_config}", "use_sim_time:=false",
+                f"config_file:={mapping_config}", "use_sim_time:=true",
             ], enable_rviz=enable_rviz),
             cwd=ROOT,
         )
@@ -1098,7 +1111,7 @@ def run_dataset(
             _ros_shell([
                 "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
                 f"config_file:={ros_config}",
-                "use_sim_time:=false", "enable_external_odometry:=false",
+                "use_sim_time:=true", "enable_external_odometry:=false",
                 "publish_sensor_frames:=true", "livox_mount_xyz:=0 0 0",
                 "livox_mount_rpy:=0 0 0",
                 f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
@@ -1112,11 +1125,7 @@ def run_dataset(
         _wait_until(session, lambda snapshot: _stream_count(session, "diagnostics") > 0, timeout_s, "LIO diagnostics")
         replay = session.start(
             "replay",
-            _ros_shell([
-                "ros2", "bag", "play", str(context["bag"]), "--rate", str(rate),
-                "--remap", f"{context['input']['lidar_topic']}:=/lidar/points",
-                f"{context['input']['imu_topic']}:=/lidar/imu",
-            ], enable_rviz=enable_rviz),
+            _ros_shell(_dataset_replay_command(context, rate), enable_rviz=enable_rviz),
             cwd=ROOT,
         )
         replay_code = _wait_process(replay, float(config["runtime"]["timeouts"]["replay_s"]), "dataset replay")
