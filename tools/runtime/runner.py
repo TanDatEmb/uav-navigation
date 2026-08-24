@@ -1081,6 +1081,31 @@ def _dataset_outputs_drained(session: Session, expected: dict[str, int]) -> bool
     )
 
 
+_SPEED_CERTIFICATION_PROFILES = {
+    "long_three_pillars_speed",
+    "long_open_featured_speed",
+}
+
+
+def _required_measured_speed_mps(
+    map_profile: str,
+    mission_max_velocity_mps: float | None,
+    speed_cap_mps: float | None,
+) -> float | None:
+    """Return the requested cruise target for a long speed benchmark."""
+    if map_profile not in _SPEED_CERTIFICATION_PROFILES:
+        return None
+    requested = speed_cap_mps if speed_cap_mps is not None else mission_max_velocity_mps
+    if (
+        requested is None
+        or not isinstance(requested, (int, float))
+        or isinstance(requested, bool)
+    ):
+        return None
+    requested = float(requested)
+    return requested if math.isfinite(requested) and requested > 0.0 else None
+
+
 def run_dataset(
     dataset: str,
     rate: float,
@@ -1375,14 +1400,15 @@ def _run_sim_unlocked(
         planning = _mission_planning(mission_file)
         if "max_velocity_mps" in planning:
             scenario["expected_max_velocity_mps"] = planning["max_velocity_mps"]
-            if map_profile in {"long_three_pillars_speed", "long_open_featured_speed"}:
-                scenario["required_measured_speed_mps"] = 5.0
         if speed_cap_mps is not None:
-            if not isinstance(speed_cap_mps, (int, float)) or not math.isfinite(speed_cap_mps) or speed_cap_mps <= 0.0:
+            if (
+                not isinstance(speed_cap_mps, (int, float))
+                or isinstance(speed_cap_mps, bool)
+                or not math.isfinite(speed_cap_mps)
+                or speed_cap_mps <= 0.0
+            ):
                 raise ValueError("speed_cap_mps must be finite and positive")
             scenario["expected_max_velocity_mps"] = float(speed_cap_mps)
-            if map_profile in {"long_three_pillars_speed", "long_open_featured_speed"} and speed_cap_mps >= 5.0:
-                scenario["required_measured_speed_mps"] = 5.0
             # Slow detours can spend most of their time in a lateral retiming
             # segment rather than on the straight leg.  Size the harness
             # timeout from route length and requested cap instead of turning a
@@ -1403,6 +1429,11 @@ def _run_sim_unlocked(
                     scenario["mission_timeout_s"] = max(
                         float(scenario.get("mission_timeout_s", 120.0)), timeout_budget
                     )
+        required_speed = _required_measured_speed_mps(
+            map_profile, planning.get("max_velocity_mps"), speed_cap_mps
+        )
+        if required_speed is not None:
+            scenario["required_measured_speed_mps"] = required_speed
         if map_profile in {"no_path", "occlusion_degenerate", "tunnel_smooth"}:
             scenario["expected_outcome"] = "fail_closed"
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)

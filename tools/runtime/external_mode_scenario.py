@@ -48,6 +48,32 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[index]
 
 
+def _speed_contract_failures(
+    expected_max_velocity_mps: float | None,
+    required_measured_speed_mps: float | None,
+    setpoint_speed_samples: list[float],
+    measured_speed_samples: list[float],
+) -> list[str]:
+    failures: list[str] = []
+    setpoint_max = max(setpoint_speed_samples, default=0.0)
+    if expected_max_velocity_mps is not None and (
+        not math.isfinite(float(expected_max_velocity_mps))
+        or setpoint_max > float(expected_max_velocity_mps) + 0.10
+    ):
+        failures.append("PX4 velocity setpoint exceeded mission velocity limit")
+    measured_p95 = _percentile(measured_speed_samples, 0.95)
+    if required_measured_speed_mps is not None and (
+        measured_p95 is None
+        or measured_p95 < float(required_measured_speed_mps) - 0.10
+    ):
+        failures.append(
+            "measured speed p95 did not reach required cruise speed: "
+            f"required {float(required_measured_speed_mps):.2f} m/s, "
+            f"observed {measured_p95} m/s"
+        )
+    return failures
+
+
 _MODE_STATUS_NAMES = {
     0: "ACTIVE",
     1: "BRAKING",
@@ -1419,22 +1445,12 @@ class ExternalModeScenario:
             if bool(self.config.get("require_map_observability", False)):
                 if self.raw_lidar_roi_scan_count < 5 or self.raw_lidar_roi_max_points < 20:
                     failures.append("MAP_OBSERVABILITY_NOT_PROVEN: raw LiDAR wall ROI")
-            expected_velocity = self.config.get("expected_max_velocity_mps")
-            setpoint_max = max(self.setpoint_speed_samples, default=0.0)
-            if expected_velocity is not None and (
-                not math.isfinite(float(expected_velocity)) or
-                setpoint_max > float(expected_velocity) + 0.10
-            ):
-                failures.append("PX4 velocity setpoint exceeded mission velocity limit")
-            required_speed = self.config.get("required_measured_speed_mps")
-            measured_p95 = _percentile(self.measured_speed_samples, 0.95)
-            if required_speed is not None and (
-                measured_p95 is None or measured_p95 < float(required_speed) - 0.10
-            ):
-                failures.append(
-                    "measured speed p95 did not reach required cruise speed: "
-                    f"required {float(required_speed):.2f} m/s, observed {measured_p95} m/s"
-                )
+            failures.extend(_speed_contract_failures(
+                self.config.get("expected_max_velocity_mps"),
+                self.config.get("required_measured_speed_mps"),
+                self.setpoint_speed_samples,
+                self.measured_speed_samples,
+            ))
             if not self.takeoff_observed:
                 failures.append("vehicle did not reach stable takeoff altitude")
             if summary["outcome"] not in {"COMPLETE", "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:

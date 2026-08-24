@@ -664,3 +664,39 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   tests distinguish forward lag, reverse overshoot, sample ID, bundle generation
   and trajectory time. Gazebo reproduction with the new trace, sanitizer runs
   for the changed interface, and the full speed/map matrix remain open gates.
+
+### 2026-08-25 - Speed-ladder target contract and 2 m/s control run
+
+- Clean control artifact
+  `.artifacts/runtime/external-mode-check-20260824T224256-268652` requested the
+  same `long_three_pillars_speed` world at 2 m/s. It traversed almost the full
+  140 m route without collision or PX4 failsafe, but remained BLOCKED: only
+  waypoint zero was accepted and a final MAIN command at generation 419 crossed
+  the forward tracking envelope by approximately 2 mm
+  (`1.055 > 1.053 m`). Reverse and lateral checks passed. The guard correctly
+  handed over to PX4 Hold. This narrow crossing is evidence for commit-anchor/
+  execution-state timing analysis, not authority to raise the 0.75 m geometric
+  allowance or tracking-lag term.
+- The decisive command was sampled at TT 0.128 s from a generation whose
+  execution-state age had reached 196 ms; its candidate began already close to
+  the controller envelope. One stale execution-state rejection was recorded.
+  Mapping was coherent at received/accepted/started/published/revision 1,133
+  with zero replacement, failure or accounting violation. A prior generation
+  406 emergency brake had already recovered to normal committed generations and
+  is not treated as the immediate terminal trigger.
+- The artifact also exposed an independent ladder-harness defect. Both speed
+  profiles previously inherited a fixed 5 m/s measured-speed minimum; explicit
+  caps below 5 could never pass, while 6 or 8 m/s requests could pass after
+  reaching only 5 m/s. For the two dedicated 140 m speed-certification profiles
+  only, an explicit `SPEED_CAP_MPS` is now both the setpoint maximum and the
+  measured p95 target. The existing fixed 0.10 m/s tolerance remains unchanged:
+  caps 2/6/8 therefore require at least 1.9/5.9/7.9 m/s. Default missions without
+  an override retain their declared 5 m/s target. General obstacle missions do
+  not reinterpret a velocity cap as a minimum.
+- The speed checker now has a pure contract test proving the setpoint upper
+  bound and measured attainment gates are independent, including exact
+  tolerance, below-bound, missing-sample and excessive-setpoint cases. The
+  runtime contract suite passed 88 tests. This harness correction does not
+  retroactively change the artifact verdict: its measured p95 was 1.733 m/s,
+  below the corrected 1.9 m/s target, and the safety stop remains independently
+  terminal.

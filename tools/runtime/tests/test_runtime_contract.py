@@ -2,6 +2,7 @@ import importlib.util
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -242,6 +243,28 @@ class RuntimeContractTest(unittest.TestCase):
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
+
+    def test_speed_certification_requirement_tracks_each_requested_sweep_cap(self) -> None:
+        for profile in (
+            "long_three_pillars_speed",
+            "long_open_featured_speed",
+        ):
+            self.assertEqual(
+                runner._required_measured_speed_mps(profile, 5.0, None), 5.0
+            )
+            for cap in (2.0, 3.0, 4.0, 5.0, 6.0, 8.0):
+                self.assertEqual(
+                    runner._required_measured_speed_mps(profile, 5.0, cap), cap
+                )
+        self.assertIsNone(
+            runner._required_measured_speed_mps("long_route", 5.0, 8.0)
+        )
+        for invalid in (True, 0.0, -1.0, math.nan, math.inf):
+            self.assertIsNone(
+                runner._required_measured_speed_mps(
+                    "long_three_pillars_speed", 5.0, invalid
+                )
+            )
 
     def test_allow_unknown_policy_is_forwarded_to_exploration_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -919,6 +942,26 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertNotIn('"/navigation/trajectory_bundle"', source)
         self.assertNotIn('"/navigation/trajectory"', source)
         self.assertNotIn("PlannedTrajectory", source)
+
+    def test_external_mode_speed_contract_keeps_upper_and_attainment_gates_independent(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_speed_contract",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        self.assertEqual(
+            module._speed_contract_failures(2.0, 2.0, [2.1], [1.9]), []
+        )
+        below = module._speed_contract_failures(2.0, 2.0, [2.0], [1.899])
+        self.assertTrue(any("did not reach" in reason for reason in below))
+        missing = module._speed_contract_failures(2.0, 2.0, [2.0], [])
+        self.assertTrue(any("did not reach" in reason for reason in missing))
+        over = module._speed_contract_failures(2.0, 2.0, [2.101], [2.0])
+        self.assertTrue(any("setpoint exceeded" in reason for reason in over))
 
     def test_external_mode_scenario_waits_for_registration_before_retrying_nav_state(self) -> None:
         spec = importlib.util.spec_from_file_location(
