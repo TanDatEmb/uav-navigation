@@ -24,6 +24,9 @@ TEST(SuperProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_GE(visibility_horizon, required_horizon);
   EXPECT_GE(map.inflation_resolution * map.inflation_step, planner.robot_r);
   EXPECT_LE(planner.astar_search_time_limit_s, planner.replan_forward_dt * 0.25);
+  EXPECT_GE(planner.astar_total_time_limit_s, planner.astar_search_time_limit_s);
+  EXPECT_LT(planner.astar_total_time_limit_s, planner.solve_deadline_s);
+  EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt);
 }
 
 TEST(SuperProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {

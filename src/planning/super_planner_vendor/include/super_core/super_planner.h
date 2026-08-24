@@ -31,6 +31,7 @@
 
 
 #include <super_core/config.hpp>
+#include <super_core/absolute_deadline.hpp>
 #include <ros_interface/ros1/ros1_interface.hpp>
 #include <data_structure/base/trajectory.h>
 
@@ -216,7 +217,8 @@ namespace super_planner {
 
     private:
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
-                                 ExpTraj &out_exp_traj_info);
+                                 ExpTraj &out_exp_traj_info,
+                                 const AbsoluteDeadline &solve_deadline);
 
         /* For Backup traj generation */
         RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj, BackupTraj &back_traj_info);
@@ -225,7 +227,8 @@ namespace super_planner {
 
         bool PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                         const double &searching_horizon,
-                        vec_Vec3f &path);
+                        vec_Vec3f &path,
+                        const AbsoluteDeadline &solve_deadline);
 
 
     public:

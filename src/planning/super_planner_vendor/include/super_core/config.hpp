@@ -76,6 +76,8 @@ namespace super_planner {
         double corridor_bound_dis, corridor_line_max_length;
         double replan_forward_dt;
         double astar_search_time_limit_s;
+        double astar_total_time_limit_s;
+        double solve_deadline_s;
         double sample_traj_dt;
         double robot_r;
         double vehicle_radius_m;
@@ -145,6 +147,10 @@ namespace super_planner {
             loader.LoadParam("super_planner/obs_skip_num", obs_skip_num, 1);
             loader.LoadParam("super_planner/replan_forward_dt", replan_forward_dt, 0.3);
             loader.LoadParam("astar/search_time_limit_s", astar_search_time_limit_s, 0.1);
+            loader.LoadParam("astar/total_time_limit_s", astar_total_time_limit_s,
+                             2.0 * astar_search_time_limit_s);
+            loader.LoadParam("super_planner/solve_deadline_s", solve_deadline_s,
+                             0.9 * replan_forward_dt);
             loader.LoadParam("super_planner/corridor_bound_dis", corridor_bound_dis, 3.0);
             loader.LoadParam("super_planner/corridor_line_max_length", corridor_line_max_length, 3.0);
             loader.LoadParam("super_planner/planning_horizon", planning_horizon, 10.0);
@@ -201,9 +207,13 @@ namespace super_planner {
             }
             if (!std::isfinite(replan_forward_dt) || replan_forward_dt <= 0.0 ||
                 !std::isfinite(astar_search_time_limit_s) || astar_search_time_limit_s <= 0.0 ||
-                astar_search_time_limit_s > replan_forward_dt * 0.25 + 1.0e-9) {
+                !std::isfinite(astar_total_time_limit_s) ||
+                astar_total_time_limit_s < astar_search_time_limit_s ||
+                !std::isfinite(solve_deadline_s) || solve_deadline_s <= 0.0 ||
+                astar_total_time_limit_s >= solve_deadline_s ||
+                solve_deadline_s > replan_forward_dt + 1.0e-9) {
                 throw std::invalid_argument(
-                    "SUPER A* search slice must be positive and no more than one quarter of "
+                    "SUPER deadlines require 0 < A* attempt <= A* total < solve <= "
                     "replan_forward_dt");
             }
             if (!std::isfinite(exp_traj_cfg.max_vel) || exp_traj_cfg.max_vel <= 0.0 ||

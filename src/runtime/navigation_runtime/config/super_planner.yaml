@@ -38,6 +38,8 @@ super_planner:
   # Current integrated hot-replan p95 is below 40 ms in SITL; 0.2 s leaves a
   # bounded compute margin while remaining close to SUPER's 0.1 s profiles.
   replan_forward_dt: 0.2
+  # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
+  solve_deadline_s: 0.18
   planning_horizon: 30.0
   # SUPER convention: a non-positive value disables the explicit sensing
   # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
@@ -138,6 +140,10 @@ astar:
   # quarter of the 0.2 s future-state lead so both searches plus CIRI/MINCO fit
   # SUPER's own 0.18 s hot-replan acceptance deadline.
   search_time_limit_s: 0.04
+  # Preferred-altitude and unrestricted fallback share this stage budget.
+  # It preserves a bounded fallback opportunity without multiplying the solve
+  # deadline when either attempt times out.
+  total_time_limit_s: 0.08
   visual_process: false
   allow_diag: true
   heu_type: 2

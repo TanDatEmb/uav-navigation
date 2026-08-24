@@ -83,6 +83,8 @@ namespace super_planner {
                                const double &goal_yaw,
                                const bool &new_goal) {
         std::lock_guard<std::mutex> guard(replan_lock_);
+        const AbsoluteDeadline solve_deadline(
+                ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, robot_state_);
@@ -120,7 +122,8 @@ namespace super_planner {
         last_exp_traj_info_.setEmpty();
         local_start_p_ = local_star_pt;
         ExpTraj previous_exp_snapshot = last_exp_traj_info_;
-        RET_CODE exp_ret_code = generateExpTraj(previous_exp_snapshot, exp_traj_info);
+        RET_CODE exp_ret_code = generateExpTraj(
+                previous_exp_snapshot, exp_traj_info, solve_deadline);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
             ros_ptr_->warn(" -- [SUPER] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
@@ -132,9 +135,18 @@ namespace super_planner {
 
         back_traj_info.setEmpty();
         solve_stage_.store(5);
+        if (solve_deadline.expired(ros_ptr_->getSimTime())) {
+            ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            return FAILED;
+        }
         RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);;
 
-        if (solve_cancelled_.load()) {
+        if (solve_cancelled_.load() ||
+            solve_deadline.expired(ros_ptr_->getSimTime())) {
+            if (!solve_cancelled_.load()) {
+                ros_ptr_->warn(" -- [SUPER] solve deadline exhausted during backup stage");
+            }
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
             return FAILED;
         }
@@ -209,6 +221,8 @@ namespace super_planner {
                              const bool &new_goal) {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
+        const AbsoluteDeadline solve_deadline(
+                ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
 
         gi_.goal_p = goal_p;
@@ -231,7 +245,8 @@ namespace super_planner {
         ExpTraj exp_traj_info;
         TimeConsuming t_exp("t_exp", false);
         ExpTraj previous_exp_snapshot = last_exp_traj_info_;
-        RET_CODE exp_ret_code = generateExpTraj(previous_exp_snapshot, exp_traj_info);
+        RET_CODE exp_ret_code = generateExpTraj(
+                previous_exp_snapshot, exp_traj_info, solve_deadline);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
@@ -265,6 +280,10 @@ namespace super_planner {
         // 2）生成back轨迹
         solve_stage_.store(5);
         TimeConsuming t_back("t_back", false);
+        if (solve_deadline.expired(ros_ptr_->getSimTime())) {
+            ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
+            return FAILED;
+        }
         RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);
         time_consuming_[GENERATE_BACK_TRAJ] = t_back.stop();
 
@@ -276,7 +295,8 @@ namespace super_planner {
         }
 
         double replan_dt = replan_total_t.stop();
-        if (replan_dt > cfg_.replan_forward_dt * 0.9) {
+        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            replan_dt > cfg_.solve_deadline_s) {
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
             return FAILED;
         }
@@ -559,7 +579,9 @@ namespace super_planner {
     }
 
 
-    RET_CODE SuperPlanner::generateExpTraj(ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info) {
+    RET_CODE SuperPlanner::generateExpTraj(
+            ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info,
+            const AbsoluteDeadline &solve_deadline) {
         /* 1) Log the exp traj frontend time*/
         TimeConsuming t_exp_frontend("t_exp_frontend", false);
 
@@ -825,7 +847,8 @@ namespace super_planner {
 //                    }
 //                }
                 solve_stage_.store(2);
-                if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon, new_path)) {
+                if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon,
+                                new_path, solve_deadline)) {
                     ros_ptr_->warn(" -- [SUPER] PathSearch for new path failed");
                     return FAILED;
                 }
@@ -1461,7 +1484,8 @@ namespace super_planner {
     bool
     SuperPlanner::PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                              const double &searching_horizon,
-                             vec_Vec3f &path) {
+                             vec_Vec3f &path,
+                             const AbsoluteDeadline &solve_deadline) {
         using namespace path_search;
         if (searching_horizon <= 0.0) {
             ros_ptr_->error(" -- [SUPER] Goal waypoints empty or searching horizon negative, force return.");
@@ -1517,10 +1541,18 @@ namespace super_planner {
         // Preferred-altitude, unrestricted, and probability-map variants are
         // alternatives within one search stage, not independent solves. Share
         // an absolute budget so a timeout cannot multiply callback latency.
+        const double stage_budget = std::min(
+                cfg_.astar_total_time_limit_s,
+                solve_deadline.remaining(ros_ptr_->getSimTime()));
+        if (stage_budget <= 0.0) {
+            ros_ptr_->warn(" -- [Astar] solve deadline exhausted before path search");
+            return false;
+        }
         const AbsoluteDeadline search_deadline(
-                ros_ptr_->getSimTime(), cfg_.astar_search_time_limit_s);
+                ros_ptr_->getSimTime(), stage_budget);
         const auto remaining_search_budget = [&]() {
-            return search_deadline.remaining(ros_ptr_->getSimTime());
+            return std::min(search_deadline.remaining(ros_ptr_->getSimTime()),
+                            solve_deadline.remaining(ros_ptr_->getSimTime()));
         };
         //            int start_id = getNearestFurtherGoalPoint(goal_waypoints, start_pt);
 
@@ -1528,7 +1560,8 @@ namespace super_planner {
 
         RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(
                 temp_start_point, goal, flag, temp_plannning_horizon,
-                path, remaining_search_budget(), true);
+                path, std::min(cfg_.astar_search_time_limit_s,
+                               remaining_search_budget()), true);
 
         if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
             ret_code != INIT_ERROR &&
