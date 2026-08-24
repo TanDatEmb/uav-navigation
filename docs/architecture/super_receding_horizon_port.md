@@ -1,36 +1,36 @@
-# SUPER-style receding horizon contract
+# SUPER receding-horizon contract
 
-The runtime uses the following contract for a long WP0 to WP1 leg. The
-mission waypoint remains the only terminal goal; a horizon endpoint is an
-intermediate state on the reference route.
+The current runtime uses SUPER's in-process committed trajectory state. The
+ROS adapter must preserve that state rather than inventing a second bundle or
+horizon transport.
 
-1. At each replan tick, evaluate the active trajectory at
-   `now + replan_forward_dt_s`. This is the splice state, not the measured
-   pose with an invented zero acceleration.
-2. Check the active trajectory against the inflated KnownFree map from that
-   state forward. If it is safe, preserve a prefix up to
-   `receding_distance_m` (or the first newly occupied/Unknown sample).
-3. Run the route/A* search from the prefix endpoint state and extend the guide
-   to `planning_horizon.maximum_distance_m`. The endpoint is not terminal and
-   carries a non-zero continuation tangent. Even when WP1 is already inside
-   the map, selector Direct is disabled until measured odometry is inside the
-   WP1 acceptance radius; map visibility alone cannot create a terminal stop.
-4. Publish `common_prefix + nominal_suffix/safety_suffix` in the atomic bundle.
-   `branch_time` is after the prefix; PX4 executes the prefix and then the
-   suffix without restarting at the current pose.
-5. If no suffix is available, keep only the verified KnownFree prefix or issue
-   a braking stop. A temporary `NoUsableSubGoal` is never terminal and must not
-   hand over to POSCTL before WP1.
+At each planning tick:
 
-The safety horizon is bounded by observed KnownFree evidence. A 30 m sensor
-can justify at most a 30 m KnownFree execution suffix (minus stopping margin);
-40 m is a reference/search horizon unless the sliding map already contains
-verified evidence beyond 30 m. Map allocation boundaries are not treated as
-the sensing horizon; selector/A*/corridor verification remains the authority
-for whether a candidate is executable. As the map slides, the next replan
-extends the suffix.
+1. A new waypoint starts `PlanFromRest`; later ticks use `ReplanOnce`.
+2. SUPER replans from a short future state (`replan_forward_dt: 0.2`) and
+   retains a bounded prefix (`receding_dis: 3.0`) so position, velocity, and
+   acceleration remain continuous.
+3. ROG-Map and the planner validate the committed path against the current
+   inflated map. A hot-replan failure may retain a valid backup suffix.
+4. If the committed suffix cannot be anchored to fresh propagated odometry,
+   the runtime may commit an emergency brake using measured position and
+   velocity. Otherwise it removes the command and fails closed.
+5. The active mission waypoint remains the terminal target. A
+   `PASS_THROUGH` goal carries `next_target` as directional metadata; it does
+   not skip the current waypoint.
 
-The port deliberately does not copy SUPER's ROS/FIRI/GCOPTER dependencies.
-It ports the safety-critical state machine: future splice, preserved prefix,
-spatial receding distance, corridor validation, and branchable trajectory
-handover.
+The relevant runtime bounds are:
+
+| Contract | Current value |
+|---|---:|
+| Planning loop | 10 Hz |
+| Command sampling | 50 Hz |
+| Input pair maximum skew | 0.1 s |
+| Input maximum age | 0.5 s |
+| Planner solve timeout | 1.0 s |
+| Replan-forward interval | 0.2 s |
+| Receding distance | 3.0 m |
+
+This contract is implemented by `super_navigation_node`,
+`super_planner.yaml`, and the PX4 External Mode command boundary. It does not
+define `TrajectoryBundle`, `WorldSnapshot`, or a separate controller node.

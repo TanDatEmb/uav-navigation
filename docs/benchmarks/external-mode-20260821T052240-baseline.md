@@ -1,4 +1,9 @@
-# External Mode baseline: long_three_pillars
+# Historical External Mode baseline: long_three_pillars
+
+Status: historical evidence, retained for regression context. This artifact
+does not define the current acceptance contract; use
+`docs/runtime_validation.md` and the generated `report.json`/`REPORT.html`
+for current verdicts.
 
 This benchmark is the current navigation baseline for subsequent optimization.
 

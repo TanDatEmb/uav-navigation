@@ -1,118 +1,43 @@
-# Dual planning for unknown space
+# Unknown-space and backup planning status
 
-Status: nominal/safety candidate generation and dual verification are integrated
-into `navigation_runtime`, but optimistic unknown-space execution is gated by
-`navigation.planner.allow_nominal_unknown`. The real and default simulation
-profiles keep that flag `false`.
+This document records the current SUPER configuration. It is not a proposal
+for a missing mapping/planning package.
 
-## Decision
+## Current behavior
 
-The planner must produce two different products when optimistic navigation is
-eventually enabled:
+`navigation_runtime` constructs one SUPER planner with backup trajectory
+generation enabled (`backup_traj_en: true`). The runtime keeps the main and
+backup trajectory ownership inside SUPER and performs the final command/safety
+checks before publishing. `frontend_in_known_free`, map visualization, and
+debug visualization are disabled in the canonical runtime configuration.
 
-```text
-nominal candidate: may use bounded unknown space to make progress
-safety candidate:  known-free only, dynamically stoppable, always executable
-```
+Mission files may declare an `unknown_policy`, and `DUAL_PLANNING=1` enables a
+simulation experiment. Neither setting by itself proves that a trajectory is
+safe. Acceptance must show a valid command, a usable backup or emergency
+brake when required, fresh propagated odometry, and no collision/failsafe.
 
-The nominal candidate is never accepted merely because A* found a geometric
-route. It needs a bounded commitment horizon, a swept-volume collision check,
-and a valid safety candidate. If any check fails, the runtime publishes the
-safety candidate or fails closed.
+## Safety interpretation
 
-The current implementation provides the safety side as a known-free route, with
-a dynamically stoppable braking trajectory as the last fallback. It integrates
-`TrajectoryVerifier` into the runtime before a trajectory is published. With the
-explicit simulation-only gate enabled, the runtime generates both candidates
-and calls `verifyDual()`; a nominal result is selected only when the safety
-result and both swept-volume checks are valid. A safety route is a valid
-waypoint trajectory; a braking stop is never treated as waypoint progress.
-When the gate is disabled, the runtime remains on the known-free baseline.
+- A geometric route is not mission success.
+- A safety stop is not waypoint acceptance.
+- Unknown cells must not be described as known free in reports.
+- A negative/no-path scenario is expected to fail closed.
+- Real-flight collision geometry remains a configuration and validation
+  prerequisite, not an inference from simulator truth.
 
-The only simulation startup exception is `allow_unknown_start`: it may trust
-the current vehicle footprint when the LiDAR mount leaves the body in a sensor
-shadow. The simulation runner creates a non-persistent `KnownFree` overlay of
-radius `0.37 m` (vehicle radius plus safety margin). It converts only `Unknown`;
-`Occupied` evidence wins and every voxel outside that small footprint remains
-`KnownFree`-only for safety route and braking-stop validation. The exception is
-rejected when the current cell is occupied, the state is stale, or map
-generation/revision is no longer current.
+The simulation-only dual-planning experiment is started explicitly:
 
-Run the experiment explicitly with:
-
-```text
+```bash
 DUAL_PLANNING=1 make external-mode-check
 ```
 
-This flag is not a flight permission. It is a simulation test profile used to
-measure nominal selection, safety fallback, verifier failures, and map-revision
-rejection. It must not be enabled for real flight until the revealed-obstacle
-and stop-distance gates below are satisfied.
+This flag is for measuring main/backup selection, verifier failures, and
+fail-closed behavior. It is not a real-flight permission.
 
-## Reference interpretation
+## Required evidence for future changes
 
-- FASTER is the closest reference for the dual-output safety idea: the planner
-  can optimize through unknown space while retaining a safe backup in
-  free-known space. The backup is a runtime invariant, not a best-effort
-  fallback ([paper](https://arxiv.org/abs/2001.04420)).
-- FIRI is a convex-region/corridor construction method. Its value here is
-  producing manageable convex free-space regions around a seed path; it does
-  not classify unknown voxels as free and must not be applied to already
-  inflated points without an explicit clearance contract
-  ([paper](https://arxiv.org/abs/2403.02977)).
-- Safe Local Exploration supports bounded intermediate goals and conservative
-  replanning when a local planner is stuck ([paper](https://arxiv.org/abs/1710.00604)).
-- No authoritative CIRI paper or implementation is currently identified in
-  this repository or the pinned references. The name must not be treated as an
-  algorithm specification until its exact paper/repository is supplied.
-
-## Proposed runtime architecture
-
-1. Keep the current `navigation_runtime` node and A* known-free planner.
-2. Add a planner result with explicit `NOMINAL` and `SAFETY` roles, map
-   generation/revision, request ID, and a commitment horizon.
-3. Build the safety route first. It must be sampled against inflated
-   `KnownFree` cells and respect velocity/acceleration limits. If no route is
-   available, build a braking stop in the currently known-free swept volume;
-   it must terminate at zero velocity and acceleration.
-4. Build a nominal candidate only for a short horizon. Unknown cells may be
-   considered by this candidate, but occupied and inflated occupied cells are
-   always blocked.
-5. Verify the nominal swept volume and its smoothed trajectory. A verifier
-   failure, stale map revision, planner timeout, or missing safety candidate
-   selects `SAFETY` and never publishes the nominal result.
-6. Use FIRI-like convex regions only after raw obstacle geometry and the
-   vehicle-clearance model are defined. Every generated corridor must retain
-   the seed path and be rechecked against the current map revision.
-7. External Mode continues to consume one correlated trajectory contract. It
-   does not know how the planner was implemented and never chooses between
-   nominal and safety based on a loose parameter.
-
-## Required gates before implementation
-
-- Unit tests for unknown/occupied/known-free classification and map revision
-  invalidation.
-- Regression tests where newly observed occupied evidence intersects the
-  committed prefix or braking tube; the bundle must fail closed. Endpoint-only
-  mapping does not manufacture KNOWN_FREE evidence from absent ray misses.
-- Deterministic tests where nominal planning succeeds but safety planning does
-  not; result must be `FAILED`, not nominal-only flight.
-- Deterministic tests where nominal planning succeeds but the inflated occupied
-  tube or safety stop is infeasible; no nominal-only prefix may be published.
-- Swept-volume tests through a narrow opening and around the pillar scenario.
-- Runtime metrics for commitment length, nominal-to-safety switches, stop
-  distance, verifier latency, stale-map rejects, and trajectory discontinuity.
-- Simulation stages: open textured scene, single pillar, unknown wall revealed
-  at the commitment boundary, then multi-obstacle route. The runner exposes
-  these as `MAP_PROFILE=open|pillar|occlusion`; endpoint-only SUPER profiles
-  declare `unknown_policy: allow_unknown` because probabilistic raycasting is
-  intentionally disabled.
-
-The implementation deliberately stops at the smallest useful experiment: a
-simulation-only nominal candidate producer, dual verifier, and runtime metrics.
-It does not add a full FIRI/MPC port or a general planner plugin framework. The
-data contract is in `navigation_planning/trajectory_verifier.hpp`; map revision
-correlation and inflated-occupied runtime verification remain active in every
-profile. Real/default flight profiles remain fail-closed when an atomic
-main-plus-backup bundle cannot be generated or revalidated against newly
-observed occupied evidence.
+Any change that permits nominal execution through unknown space must add
+tests and runtime evidence for swept-volume clearance, backup availability,
+map/input freshness, stop distance, planner latency, and trajectory
+continuity. The evidence belongs in `report.json`/`REPORT.html`; no second
+Markdown report or visualization topic should be introduced.

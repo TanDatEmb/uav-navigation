@@ -1,570 +1,182 @@
 # Runtime validation
 
-This document is the current runtime source of truth. The repository has one
-runner, one monitor, one report schema, and one owned process-group registry.
+This is the canonical guide for running the current workflows and reading
+their evidence. The runtime has one runner, one monitor, and one public report
+tool.
 
-## Commands
+## Build and tests
 
 ```bash
 make build
 make test
-make replay DATASET=aist-mid360-drive RATE=1.0
-make replay DATASET=aist-mid360-drive RATE=1.0 FRONTIER_DEBUG=1
-make dataset-check DATASET=aist-mid360-drive RATE=1.0
+```
+
+`make test` covers the ROS build/test helpers plus the Python runtime tests.
+It is not an end-to-end flight verdict.
+
+## Workflows
+
+```bash
+make replay DATASET=<name> RATE=1.0
+make dataset-check DATASET=<name> RATE=1.0
 PX4_DIR=$HOME/Dev/Autopilot make sim-check
 PX4_DIR=$HOME/Dev/Autopilot make external-mode-check
 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-# optional: choose another isolated pair when running two local sessions
-UAV_NAV_ROS_DOMAIN_ID=43 UAV_NAV_XRCE_PORT=8893 \
-  PX4_DIR=$HOME/Dev/Autopilot make external-mode-check
-# alias:
-PX4_DIR=$HOME/Dev/Autopilot make external-mode
 PX4_DIR=$HOME/Dev/Autopilot make sim
-make status
-make stop
-make clean
 ```
 
-### Lệnh chạy các mission hiện tại
+`replay` is the dataset-check alias with RViz enabled. `sim-check` is a
+retained headless offboard smoke workflow. `external-mode-check` is the
+product planner acceptance workflow. `external-mode-gui` runs the same
+mission with Gazebo and RViz; `external-mode` is its Make alias. `sim` starts
+an interactive manual-control session and does not run an automatic mission.
 
-Đây là các lệnh headless SITL dùng để nghiệm thu pipeline SUPER + FAST-LIO +
-ROG-Map + PX4 External Mode. Chạy từ thư mục workspace:
+The product launch entrypoint is:
 
 ```bash
-cd /home/letandat/Dev/uav-navigation
-PX4_DIR=/home/letandat/Dev/Autopilot make build
-
-# Mission rộng, 2 waypoint, tốc độ mục tiêu 5 m/s
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=long_open_featured_speed SPEED_CAP_MPS=5
-
-# Mission map 3 cột, 2 waypoint, tốc độ mục tiêu 5 m/s
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
+ros2 launch navigation_bringup avoidance_mission.launch.py \
+  config_file:=$PWD/config/runtime/mapping.yaml \
+  mission_file:=$PWD/config/runtime/missions/long_three_pillars.yaml \
+  use_sim_time:=true
 ```
 
-Các bài kiểm tra obstacle và checkpoint hiện có:
+## Scenarios
 
-```bash
-# Một cột trên map 3 cột; dùng để cô lập lỗi né ngang
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=single_pillar_speed SPEED_CAP_MPS=2
+`external-mode-check` accepts the following current selectors:
 
-# Chặng thẳng 60 m trên map rộng, không có ablation controller
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=long_open_featured_core_60 SPEED_CAP_MPS=2
-
-# Đối chứng PV của checkpoint 60 m
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=long_open_featured_core_60_pv SPEED_CAP_MPS=1
-
-# Obstacle/corridor/tunnel/clutter
-PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=pillar
-PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=corridor
-PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=tunnel_irregular
-PX4_DIR=/home/letandat/Dev/Autopilot make external-mode-check MAP_PROFILE=forest_clutter MAP_SEED=11
-
-# Negative test: phải fail-closed, không được coi là mission thành công
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=no_path TEST_CASE=no_path
-```
-
-Liệt kê profile được runner chấp nhận:
-
-```bash
-python3 tools/runtime/runner.py external-mode-check --help
-```
-
-Có thể chạy bằng GUI để quan sát Gazebo/RViz:
-
-```bash
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-gui MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
-
-# GUI nhưng takeoff/arm thủ công qua QGC
-MANUAL_TAKEOFF=1 PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-gui MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
-```
-
-Nếu cần tách session khi một SITL khác đang chạy, dùng đồng thời ROS domain và
-XRCE port mới:
-
-```bash
-UAV_NAV_ROS_DOMAIN_ID=77 UAV_NAV_XRCE_PORT=8897 \
-PX4_DIR=/home/letandat/Dev/Autopilot \
-  make external-mode-check MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5
-```
-
-Không khởi động session thứ hai khi session trước chưa dừng. Kiểm tra và dừng
-session do workspace sở hữu bằng:
-
-```bash
-make status
-make stop
-```
-
-Mỗi lần chạy tạo artifact tại
-`.artifacts/runtime/external-mode-check-<timestamp>-<pid>/`. Xem verdict và các
-waypoint đã nhận của lần chạy gần nhất:
-
-```bash
-latest_artifact=$(find .artifacts/runtime -maxdepth 1 -type d \
-  -name 'external-mode-check-*' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
-echo "$latest_artifact"
-python3 - "$latest_artifact/report.json" <<'PY'
-import json
-import sys
-
-report = json.load(open(sys.argv[1], encoding="utf-8"))
-acceptance = report.get("acceptance", {})
-external = report.get("external_mode", {})
-lio = report.get("lio", {})
-print("verdict:", report.get("verdict"))
-print("outcome:", external.get("outcome"))
-print("mission_complete:", acceptance.get("mission_complete_observed"))
-print("waypoints:", acceptance.get("waypoint_acceptance_indices"))
-print("measured_speed_p95_mps:", external.get("speed_metrics", {}).get("measured_mps", {}).get("p95"))
-print("collision_count:", external.get("collision_count"))
-print("minimum_clearance_m:", external.get("actual_min_clearance_m"))
-print("failsafe_seen:", external.get("failsafe_seen"))
-print("lio:", lio.get("state"), "navigation_valid=", lio.get("navigation_valid"))
-PY
-```
-
-Một mission chỉ được ghi nhận PASS khi `report.json` có `verdict=PASS`, đủ
-waypoint, có `mission_complete=true`, không collision, không PX4 failsafe,
-LIO ở `TRACKING` với `navigation_valid=true`, và các ngưỡng tốc độ/clearance
-của profile đều đạt. `no_path` là bài kiểm tra fail-closed nên kết quả đúng
-là dừng an toàn, không phải `PASS` mission.
-
-Tình trạng nghiệm thu đã biết tại thời điểm cập nhật tài liệu:
-
-| Profile | Kết quả | Artifact |
+| Variable | Values | Meaning |
 |---|---|---|
-| `long_open_featured_speed`, 5 m/s | PASS; đủ 2 waypoint, 0 collision, không failsafe, measured-speed p95 khoảng 5.01 m/s | `.artifacts/runtime/external-mode-check-20260822T111010-1212232` |
-| `long_three_pillars_speed`, 5 m/s | FAIL/INTERRUPTED; mới nhận waypoint 0, chưa có `mission_complete` | `.artifacts/runtime/external-mode-check-20260822T112649-1227169` |
+| `MAP_SCENE` | `sanity_open`, `structured_obstacle`, `long_route`, `tunnel`, `clutter`, `planner_negative` | world/mission family |
+| `TEST_CASE` | `positive`, `degenerate`, `detour`, `no_path` | expected behavior |
+| `MOTION_PRESET` | `nominal`, `slow`, `fast` | motion limits |
+| `MAP_SEED` | integer | deterministic clutter variation |
+| `SPEED_CAP_MPS` | number | temporary per-run cap |
+| `DUAL_PLANNING` | `0`/`1` | simulation experiment switch |
 
-Artifact 3 cột ở trên chưa phải nghiệm thu thành công và không được dùng làm
-bằng chứng “đã chạy ổn định”.
-
-`dataset-check` requires a prepared ROS 2 bag. `RATE` changes rosbag replay
-speed inside the same workflow; it does not select a profile. The dataset
-workflow starts FAST-LIO with `config/runtime/dataset.yaml`, remaps the
-prepared input to `/lidar/points` and `/lidar/imu`, waits for TRACKING, drains
-the queues, and writes its report automatically. `make replay` is the same
-workflow entrypoint and always launches RViz; `dataset-check` remains the
-headless dataset contract.
-
-Standard replay keeps frontier extraction and publication off, even when RViz
-is running. To inspect
-`/navigation_mapping/visualization/frontier` in RViz, use the explicit debug
-profile shown above; `mapping.visualization.publish_frontier` is the single
-frontier-debug switch for that session.
-
-`sim-check` starts PX4 SITL, Gazebo, the Micro XRCE-DDS agent, the bridge,
-FAST-LIO with `config/runtime/sim.yaml`, and the retained legacy scenario from
-`config/runtime/offboard.yaml`. This workflow is odometry smoke coverage, not
-the target navigation control interface.
-
-`external-mode-check` starts the same SITL/LIO/mapping stack, publishes a
-bounded goal to `/navigation/goal`, requires a successful trajectory from
-`navigation_runtime`, then validates the PX4-native External Mode handover and
-the resulting `/fmu/in/trajectory_setpoint` stream. It uses
-`config/runtime/external_mode_scenario.yaml` and the simulation-only collision
-envelope. The default goal targets the LiDAR-observed free sensor cell, and the
-scenario replans while External Mode is active so the adapter never consumes a
-stale one-shot trajectory. The M1 External Mode node is launched with
-`navigation_bringup/px4_external_mode.launch.py` and
-`config/runtime/external_mode.yaml`; it registers through `px4_ros2_cpp` and
-hands setpoints to PX4 internal controllers. For mission execution, the mode
-publishes `/navigation/mission_complete` and hands control to PX4 native Hold
-(`AUTO_LOITER`). Neither
-the External Mode node nor the mission harness issues LAND, RTL, or disarm. The
-multisensor PX4 profile fuses normal GNSS/barometer/range/magnetometer inputs
-alongside propagated LIO external vision, so Hold's local/global-position health
-contract remains available. Completion remains a supervisor boundary. `sim`
-starts the same stack with
-the Gazebo GUI and RViz, but no automatic flight controller;
-stopping it produces `OBSERVATION_COMPLETE`, never a flight `PASS`.
-
-### SITL network isolation
-
-Every simulation session is isolated by default on ROS 2 domain `42` and a
-dedicated Micro XRCE-DDS UDP agent port `8892`. The runner propagates
-`ROS_DOMAIN_ID` to PX4's `UXRCE_DDS_DOM_ID` and to every ROS process, while
-`PX4_UXRCE_DDS_PORT` selects the matching local agent. This is the boundary
-that prevents another vehicle's absolute `/fmu/*` topics and External Mode
-registration (`M40`) requests from entering the test; a ROS namespace alone
-would not protect this stack because the PX4 contract uses absolute names.
-
-Override both values with `UAV_NAV_ROS_DOMAIN_ID` and `UAV_NAV_XRCE_PORT`, or
-pass `--ros-domain-id` and `--xrce-port` to `tools/runtime/runner.py`. The
-chosen values are recorded in each session's `runtime.json`, so a benchmark
-can be audited and reproduced. Do not reuse an XRCE port while another local
-PX4 SITL is running.
-
-## GUI External Mode
-
-`make external-mode-gui` is the GUI version of the automated mission workflow.
-It starts the same PX4 SITL, Gazebo GUI, RViz, FAST-LIO, mapping, and PX4
-External Mode node, then runs the same automated scenario as
-`make external-mode-check`. The shorter `make external-mode` command is an
-alias. Select a built-in map and its matching static mission with
-the canonical scene knobs:
-
-With `MANUAL_TAKEOFF=1`, the harness sends neither ARM nor TAKEOFF. Select
-Takeoff and arm manually in PX4/QGC; after the vehicle is airborne, stable,
-and LIO odometry is fresh, the harness activates External Mode and continues
-the configured mission automatically.
+Examples:
 
 ```bash
-make build
-PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-MAP_SCENE=structured_obstacle TEST_CASE=detour PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=nominal MAP_SEED=0 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-MANUAL_TAKEOFF=1 MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=nominal MAP_SEED=0 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-MAP_SCENE=tunnel TEST_CASE=degenerate PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
-MAP_SCENE=clutter MAP_SEED=11 PX4_DIR=$HOME/Dev/Autopilot make external-mode-gui
+MAP_SCENE=sanity_open make external-mode-check
+MAP_SCENE=structured_obstacle TEST_CASE=detour make external-mode-check
+MAP_SCENE=long_route MOTION_PRESET=slow make external-mode-check
+MAP_SCENE=clutter MAP_SEED=11 make external-mode-check
+MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
+DUAL_PLANNING=1 make external-mode-check
 ```
 
-The runner passes the selected mission file to the External Mode node. The
-default `sanity_open` scene and each variant resolve to a matching mission
-through `config/runtime/map_profiles.yaml`; legacy `MAP_PROFILE` names remain
-accepted for compatibility. Mission YAML is loaded once at node startup and
-is immutable during the flight.
+`MAP_PROFILE` is a legacy compatibility alias. A `no_path` run is expected to
+fail closed and is not a mission `PASS`.
 
-The GUI runner automatically performs this sequence after the processes are
-ready:
+## Current runtime graph
 
 ```text
-arm in PX4 ground-safe mode
-  -> takeoff and settle
-  -> require 1 s of fresh propagated LIO odometry
-  -> activate External Mode once
-  -> execute the selected mission
-  -> brake safety stops and hand over to PX4 POSCTL
+/lidar/points + /lidar/imu
+  -> FAST-LIO
+  -> /lio/odometry_corrected
+  -> /lio/odometry_propagated
+  -> /lio/registered_points
+  -> super_navigation_node
+  -> /navigation/super_command
+  -> px4_navigation_external_mode
+  -> /fmu/in/trajectory_setpoint
 ```
 
-The report distinguishes `COMPLETE`, `PAUSED_SAFETY_STOP`,
-`ABORTED_OPERATOR`, `FAILED_COMPONENT`, and PX4 `failsafe_seen`. A safety stop
-is a verified brake followed by POSCTL, not a mode failure and not a landing
-request. The pre-takeoff throw-away External Mode activation was removed so a
-rejected disarmed activation cannot contaminate the airborne mission cycle.
-The harness retries ARM only every 5 s and records PX4's authoritative ACK.
-It does not gate the retry on `VehicleStatus.pre_flight_checks_pass`, because
-that aggregate bit can remain false until the successful arm in this
-external-vision configuration; the slow cadence avoids a command flood while
-EKF heading/health converges.
+The planner node also consumes `/navigation/goal` and
+`/navigation/mode_status`, and publishes `/navigation/diagnostics`. ROG-Map
+and SUPER are constructed directly in `super_navigation_node`; no separate
+mapping process or snapshot/bundle transport exists.
 
-The harness owns only arm/takeoff for this simulation workflow. The product
-External Mode node executes navigation and requests the POSCTL handover; no
-component sends LAND or disarm.
+## Topics and frames
 
-Useful inspection commands from another terminal:
+| Class | Topic | Type | Role |
+|---|---|---|---|
+| sensor | `/lidar/points` | `sensor_msgs/msg/PointCloud2` | LiDAR input |
+| sensor | `/lidar/imu` | `sensor_msgs/msg/Imu` | IMU input |
+| LIO | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | corrected estimator output |
+| LIO/planner | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | active navigation state |
+| planner input | `/lio/registered_points` | `sensor_msgs/msg/PointCloud2` | current SUPER cloud input |
+| LIO health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | estimator state/health |
+| navigation goal | `/navigation/goal` | `navigation_interfaces/msg/NavigationGoal` | waypoint request |
+| navigation status | `/navigation/mode_status` | `navigation_interfaces/msg/NavigationModeStatus` | mission/mode evidence |
+| planner output | `/navigation/super_command` | `mars_quadrotor_msgs/msg/PositionCommand` | PVA command stream |
+| planner health | `/navigation/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | SUPER counters/status |
+| mission event | `/navigation/mission_complete` | `std_msgs/msg/Bool` | completion notification |
+| PX4 input | `/fmu/in/vehicle_visual_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation EV input |
+| PX4 setpoint | `/fmu/in/trajectory_setpoint` | `px4_msgs/msg/TrajectorySetpoint` | PX4 boundary |
+| evaluation | `/sim/ground_truth/odometry` | `nav_msgs/msg/Odometry` | truth only; never control input |
+
+The planner frame is `lio_odom`; the LIO/PX4 state pair is
+`lio_odom -> base_link`. The external bridge performs the ENU/FLU to NED/FRD
+conversion at the PX4 boundary.
+
+## RViz
+
+The project profile is `src/navigation_bringup/rviz/fast_lio.rviz`. It uses
+fixed frame `lio_odom` and shows:
+
+- TF and a grid;
+- `/lio/registered_points` enabled;
+- `/lio/odometry_propagated` enabled;
+- `/lio/odometry_corrected` disabled for optional comparison.
+
+The profile does not reference `/navigation_mapping/visualization/*`,
+`/navigation/visualization/*`, local-map debug clouds, or planned paths.
+Those old topics are not part of the current runtime contract.
+
+## Reports and artifacts
+
+Sessions live under `.artifacts/runtime/<workflow>-<timestamp>-<pid>/` and are
+local evidence. Typical files are `scenario.json`, `scenario_config.yaml`,
+`samples.jsonl`, `monitor.json`, `runtime.json`, `processes.json`,
+`report.json`, and `REPORT.html`.
+
+The only public report tool is `tools/runtime/report.py`; the runner calls it
+at session finalization. For a manual rebuild:
+
+```bash
+python3 tools/runtime/report.py \
+  --session .artifacts/runtime/<workflow>-<timestamp>-<pid> \
+  --workflow external-mode \
+  --config config/runtime/sim.yaml \
+  --workspace "$PWD" \
+  --px4-dir "$HOME/Dev/Autopilot"
+```
+
+The report writes only `report.json` and `REPORT.html`. There is no
+`REPORT.md` artifact.
+
+## Acceptance gates
+
+The report separates the scenario's observed outcome from quality gates. For
+a positive mission, `COMPLETE` requires an observed mission-complete event and
+complete waypoint-acceptance evidence. It is still rejected if the report
+finds invalid/stale streams, a cross-track threshold breach, collision,
+failsafe, missing required samples, or failed cleanup.
+
+For `fail_closed` scenarios, non-completion is expected. The report must show
+the intended fail-closed outcome, verified safety behavior, and no physical
+collision; it must not label the scenario as a successful mission.
+
+Useful report fields include stream counts/rates, source timestamp gaps,
+freshness and validity failures, waypoint indices, mission completion, truth
+clearance/collisions, PX4 failsafe state, planner counters, and timing
+distributions when diagnostics provide them. Current SUPER logs/diagnostics
+can provide input conversion, ROG-Map update, planner solve, command publish,
+input-lock, planner-cycle, and end-to-end samples. Missing timing fields are
+`NOT_AVAILABLE`, never zero-filled.
+
+## Inspection commands
 
 ```bash
 make status
 ros2 topic echo /lio/diagnostics
+ros2 topic echo /navigation/diagnostics
 ros2 topic echo /navigation/super_command
 ros2 topic echo /navigation/mission_complete
-ros2 topic echo /navigation_mapping/visualization/occupied
 ros2 topic echo /fmu/in/trajectory_setpoint
 ```
 
-Stop the entire workspace-owned GUI session with:
-
-```bash
-make stop
-```
-
-Use `make external-mode-check MAP_PROFILE=<profile>` for the same automated
-acceptance verdict without GUI rendering. The headless workflow remains
-unchanged; the GUI workflow only adds Gazebo/RViz visibility.
-
-The manual-control policy is deliberately different between these workflows:
-
-| Workflow | `COM_RC_IN_MODE` | Manual input |
-|---|---:|---|
-| `sim-check` | `4` | disabled; legacy smoke scenario only |
-| `external-mode-check` | `4` | automated planner-backed External Mode scenario |
-| `sim` | `1` | MAVLink joystick from QGC virtual joystick or a physical joystick |
-
-The direct PX4 launcher defaults to mode `4`. For a manually controlled direct
-session, set `PX4_PARAM_COM_RC_IN_MODE=1` explicitly before launching it.
-
-### Long mission with three route columns
-
-The deterministic `long_three_pillars_speed` profile is the high-speed stress
-benchmark. It contains many non-route texture features and exactly three
-cylinders (`long_three_speed_pillar_01..03`) on the 140 m WP0→WP1 leg. The
-mission currently has two waypoints at the same altitude; the planner first
-searches in the horizontal plane to preserve altitude precision. If a future
-waypoint has a different Z, it opens a bounded vertical phase after the XY
-phase and still validates the final X/Y/Z waypoint error.
-
-```bash
-source /opt/ros/jazzy/setup.bash
-export UAV_NAV_ROS_DOMAIN_ID=77 UAV_NAV_XRCE_PORT=8897
-PX4_DIR=$HOME/Dev/Autopilot python3 tools/runtime/runner.py \
-  external-mode-check --map-profile long_three_pillars_speed \
-  --speed-cap-mps 5 --ros-domain-id 77 --xrce-port 8897
-```
-
-The session directory printed by the runner contains `scenario.json`,
-`benchmark_metrics.json`, `samples.jsonl`, `report.json`, and the
-self-contained `REPORT.html`. The report distinguishes route columns from
-texture-only objects and records mission completion, waypoint indices, speed,
-LIO residual, collision count, failsafe state, and minimum vehicle clearance.
-
-## Configuration
-
-| File | Owner | Purpose |
-|---|---|---|
-| `config/runtime/common.yaml` | monitor/report | stream rates, freshness thresholds, and workflow timeouts |
-| `config/runtime/dataset.yaml` | dataset runner | real AIST timing, frames, extrinsic, input QoS |
-| `config/runtime/mapping.yaml` | navigation runtime | world-model, visualization, collision, and planner parameters |
-| `config/runtime/sim.yaml` | simulation runner | Gazebo timing, frames, extrinsic, external odometry enablement |
-| `config/runtime/external_mode.yaml` | PX4 External Mode node | trajectory, mission-complete, and freshness contract |
-| `config/runtime/offboard.yaml` | headless simulation | one deterministic legacy offboard trajectory |
-| `config/runtime/external_mode_scenario.yaml` | external-mode-check | planner-backed bounded goal and handover timing |
-
-The runner passes only explicit ROS node parameter trees (`fast_lio` and, for
-simulation, the two PX4 bridge nodes). Workflow metadata stays in the session,
-so ROS diagnostics do not expose config or Git SHA fields. The static
-`livox_frame -> livox_imu_frame` transform is derived by inverting the same
-`extrinsic` value used by FAST-LIO; it is not maintained as a second calibration.
-
-## Required runtime topics
-
-| Class | Topic | Type | Decision |
-|---|---|---|---|
-| sensor | `/lidar/points` | `sensor_msgs/msg/PointCloud2` | required |
-| sensor | `/lidar/imu` | `sensor_msgs/msg/Imu` | required |
-| product | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | required |
-| product | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | required |
-| transform | `/tf`, `/tf_static` | `tf2_msgs/msg/TFMessage` | required |
-| health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | single surface |
-| simulator truth | `/sim/ground_truth/odometry` | `nav_msgs/msg/Odometry` | evaluation-only ENU/FLU reference; never an LIO/PX4 input |
-| PX4 input | `/fmu/in/vehicle_visual_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation only |
-| PX4 output | `/fmu/out/vehicle_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation observation |
-| PX4 output | `/fmu/out/vehicle_status_v1` | `px4_msgs/msg/VehicleStatus` | simulation observation |
-| PX4 estimator telemetry | `/fmu/out/estimator_status_flags` | `px4_msgs/msg/EstimatorStatusFlags` | observed control status only; not per-sample fusion proof |
-
-The monitor measures sample count, rate, maximum source-timestamp gap,
-callback stalls, timestamp duplicates/regressions, finite values, quaternion
-validity, covariance validity, and frame IDs. A callback stall is retained in
-the artifact, but only a matching source-timestamp gap is a freshness failure:
-the monitor's own delayed callback dispatch must not masquerade as dropped
-sensor or PX4 data. Topic discovery alone is never readiness evidence.
-For dataset replay, the report allows the configured 0.5 s tail grace after
-rosbag EOF so queued messages can drain; the raw monitor counters remain in the
-artifact, while only active stale events affect the verdict.
-
-The compact `/lio/diagnostics` surface contains the estimator state and health
-gate fields: `state`, `navigation_valid`, `last_failure_code`,
-`last_failure_reason`, output timestamps, input/output counters, drops,
-timestamp regressions, queue maximum, correction counts, map point count, and
-covariance availability. Detailed investigation belongs in session logs and
-source-level tests, not in a second runtime topic.
-
-## External odometry gate
-
-The PX4 external publisher is enabled only in simulation. It publishes only
-when the node and subscriber transport are ready, timestamps and covariance
-are valid, LIO is TRACKING and navigation-valid, the estimator diagnostics are
-fresh, the propagated odometry callback is current, the public frame generation
-is valid, and the frame has no geometric jump latch. The propagated diagnostics
-heartbeat is observed separately and does not override a current high-rate
-odometry callback during a transient correction-replay warning. It fails
-closed on stale, invalid, non-finite, regressed, or LOST data. No odometry
-supervisor process is part of the canonical workflows.
-
-Its sole odometry input is `/lio/odometry_propagated` with the exact
-`lio_odom -> base_link` frame pair. `/sim/ground_truth/odometry` is not
-subscribed by LIO or the PX4 external bridge. The PX4 launcher also sets
-`SIM_GZ_EN_ODOM=0` before boot, which disables PX4's built-in Gazebo path that
-would otherwise publish the same simulator truth as internal visual odometry.
-
-The propagated output accepts a corrected-LIO age of at most 250 ms. At the
-10 Hz correction rate this permits one delayed correction, but a sustained
-estimator or host stall stops publication fail-closed. Its recovery history is
-validated with the invariant
-
-```text
-imu_history_duration > maximum_correction_age
-```
-
-so replay can retain a timestamp bracket for every accepted correction age.
-The retained one-second IMU history remains recovery-only; no simulator truth
-is ever substituted for a missing correction.
-
-## Verdicts and artifacts
-
-Each session is under `.artifacts/runtime/<workflow>-<timestamp>-<pid>/` and
-contains process logs, `processes.json`, `state.json`, `monitor.json`,
-`samples.jsonl`, `report.json`, and `REPORT.html`. The latest session is exposed
-through `.artifacts/runtime/latest`.
-
-The report verdict is one of `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN`, or
-`OBSERVATION_COMPLETE`. Dataset PASS requires valid/fresh sensor and LIO
-streams, TRACKING, no drops, and complete cleanup. Simulation smoke PASS
-requires the selected scenario's real PX4 output/status streams and
-the LIO-to-PX4 frame/timestamp contract. No unsupported aid-source topic is
-used. PX4 status flags are observational telemetry, while accuracy is
-calculated against the separate simulator truth.
-
-## External mission planning status
-
-The validated mission lifecycle is:
-
-```text
-takeoff/airborne supervisor
-  -> activate External Mode
-  -> static mission YAML -> correlated goals -> PVA/PV/V setpoints
-  -> mission_complete event
-  -> PX4 native Hold/AUTO_LOITER handover (mission checkpoint retained for reactivation)
-```
-
-The mission event is a notification boundary, not a flight action. Runtime
-acceptance requires PX4 to confirm the transition to native Hold; publishing
-mission completion alone is not sufficient.
-
-The current planning execution contract is the sampled SUPER PVA path:
-
-```text
-PointCloud2 + Odometry
-  -> ROG-Map update
-  -> A* / corridor / SUPER optimizer
-  -> mars_quadrotor_msgs/PositionCommand
-  -> /navigation/super_command
-  -> PX4 External Mode ENU/FLU -> NED/FRD conversion
-```
-
-There is no `TrajectoryBundle`, `WorldSnapshot`, old B-spline contract, or
-separate backup/rollback transport branch in this runtime contract. Main and
-backup selection stays inside the planner FSM. A stale, invalid, emergency,
-non-finite, or non-monotonic PVA command is rejected
-fail-closed. The node does not silently reuse an expired trajectory; it stops
-publishing the invalid trajectory and reports the failure for the harness.
-
-The planner is known-free by default. `DUAL_PLANNING=1` remains an explicit
-simulation-only experiment and is not an acceptance configuration.
-
-The simulation `allow_unknown_start` exception creates a virtual `KnownFree`
-overlay over the current vehicle footprint to handle the LiDAR body shadow.
-Its radius is exactly the simulation collision envelope (`0.32 + 0.05 = 0.37
-m`). It converts only `Unknown`; `Occupied` evidence always wins, cells outside
-the footprint remain fail-closed, and the overlay is never written into the
-persistent ROG-Map.
-
-The replan timer remains bounded at 5 Hz. A new trajectory has a monotonically
-increasing `trajectory_id` and is published with depth-one QoS. Map and input
-updates are coalesced while planning is busy; they do not create an unbounded
-queue. The SUPER message keeps `piece_num_pos`, `order_pos`, `time_pos`,
-coefficients, and `start_wt_pos` as the sole planner-to-PX4 contract.
-
-Mission waypoints have an explicit `behavior`: `pass_through` for intermediate
-points and `stop` for terminal/inspection points. A pass-through goal carries
-the next waypoint in `NavigationGoal`; the planner uses it to seed a bounded
-terminal tangent and the mission controller advances as soon as the acceptance
-radius is crossed. Legacy `hold_s > 0` entries remain stop points for backward
-compatibility, while new missions should declare the behavior explicitly.
-
-The runtime also applies a one-dimensional visibility governor before planning:
-for a measured motion direction, let `d_free` be the known-free inflated
-horizon. The commanded speed cap is the largest `v` satisfying
-
-`v²/(2 a_decel) + v t_latency + d_margin <= d_free`.
-
-This does not replace A* or collision verification; it reduces speed early
-when sensing gives only a short stopping envelope. The cap and measured
-free-horizon are published in planner diagnostics for benchmark comparison.
-
-## Mission stress profiles
-
-The External Mode runner keeps one scenario harness and varies only the world
-and static mission file. The high-speed acceptance profiles are:
-
-| Profile | Purpose | Expected result |
-|---|---|---|
-| `long_open_featured_speed` | map rộng, 2 waypoint, tốc độ mục tiêu 5 m/s | mission complete, speed gate đạt, không collision/failsafe |
-| `long_three_pillars_speed` | map rộng có 3 cột trên tuyến, 2 waypoint, tốc độ mục tiêu 5 m/s | né ngang an toàn rồi hoàn tất waypoint 1 |
-| `single_pillar_speed` | cô lập một cột trên cùng map 3 cột | mission complete; dùng để debug né ngang |
-| `long_open_featured_core_60` | checkpoint 60 m cho đường thẳng và LIO | mission complete |
-| `long_open_featured_core_60_pv` | ablation PV của checkpoint 60 m | mission complete ở giới hạn tốc độ thấp hơn |
-| `pillar`, `corridor`, `tunnel_irregular`, `forest_clutter` | regression obstacle/geometry | mission complete theo profile |
-| `no_path` | tường kín, không có đường tới goal | fail-closed và dừng an toàn; không phải mission PASS |
-
-“Texture” means LiDAR geometric structure (edges, corners, depth variation),
-not SDF visual colour. The speed profiles keep the current waypoints at z=3 m.
-Vertical avoidance is available for a future waypoint with different Z, but
-the current 3-column phase is deliberately horizontal first so X/Y/Z waypoint
-accuracy is not sacrificed by an unnecessary altitude change.
-
-`no_path` is not a successful mission. The acceptance contract is planner
-failure plus structured `PAUSED/SAFETY_STOP` status, verified braking, and
-POSCTL handover. LAND/disarm and generic `ModeCompleted(result=100)` are not
-part of this path. A mission timeout or continued nominal setpoint publication
-is a test failure.
-
-Every stress profile also subscribes to simulator ground-truth odometry. The
-harness expands each SDF obstacle by the configured UAV collision radius and
-records `minimum_collision_clearance_m`, `collision_count`, and
-`collision_event_count` in `scenario.json`. The configured minimum clearance
-margin is 0.10 m after subtracting the vehicle collision radius; a breach of
-that margin or a collision fails the scenario, independent of LIO state, so an
-estimator failure cannot hide a physical collision. The latest known evidence
-is recorded in the command section above: the wide 5 m/s profile has a PASS
-artifact, while the latest three-column 5 m/s attempt was interrupted after
-waypoint 0 and remains a failed acceptance gate until rerun to completion.
-
-## Localization root-cause evidence
-
-FAST-LIO reports a normalized translational information matrix derived from
-accepted point-to-plane normals. A correction is usable only when
-`lambda_min / lambda_max` is finite and meets
-`registration.minimum_translation_observability_ratio` (0.01 in the
-canonical profiles). An invalid correction is rejected, excluded from the
-registration map, and propagated as an unhealthy navigation state; External
-Mode then fails closed and does not issue flight actions from stale data.
-
-The `no_path` profile is accepted only after its sealed wall is observed in
-both raw LiDAR and occupied-voxel evidence. The simulation watchdog aligns
-ground truth only inside the test harness and terminates on a sustained
-position residual above 0.5 m or velocity residual above 1.0 m/s. This keeps a
-planner result from being treated as safe when the localization frame has
-already diverged.
-
-## RViz products
-
-`make sim` and `make replay DATASET=<name>` start RViz with the project config.
-It uses `lio_odom` as fixed frame and shows the canonical TF tree plus
-`/lio/odometry_corrected`. Product profiles do not publish registered-point or
-local-map debug clouds; those serializers must stay in an explicit debug-only
-workflow if reintroduced.
-
-`make stop` signals only process groups recorded for the latest session. It
-does not use global name-based termination and does not affect unrelated ROS,
-Gazebo, or PX4 processes.
-
-`make clean` removes stale profiling/sanitizer `build-*`, `install-*`, and
-`log-*` variants, runtime artifacts, pytest/Python caches, the mapper's
-generated vendor log, the colcon symlink manifest, and VS Code browse indexes.
-It preserves the current canonical Release `build/` and `install/` trees, the
-Python virtual environment, and project editor settings.
-
-## Feature inventory
-
-| Feature | Canonical consumer | Decision |
-|---|---|---|
-| LiDAR/IMU ingestion and synchronization | dataset-check, sim-check | keep |
-| deskew and initialization | dataset-check, sim-check | keep |
-| LiDAR correction and registration map | LIO product pipeline | keep; no product debug-cloud serialization |
-| corrected and propagated odometry | all runtime workflows | keep |
-| covariance and TF | all runtime workflows | keep |
-| PX4 ingress, time/frame conversion | sim-check, sim | keep |
-| external odometry safety gate | sim-check, sim | simplify to bridge-local health gate |
-| supervisor lifecycle/residual framework | none | delete |
-| offboard controller | sim-check only | retained legacy smoke scenario; not product control |
-| duplicate observers/reports/profiles | none | delete |
-| cleanup | all workflows | keep in process-group runner |
+`make stop` stops only process groups recorded for the workspace session.
+`make clean` removes stale runtime/build variants, logs, caches, and runtime
+artifacts while preserving the canonical Release `build/` and `install/`
+trees.

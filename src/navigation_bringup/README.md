@@ -1,50 +1,62 @@
 # navigation_bringup
 
-This package owns the ROS 2 launch composition for the single product path:
-FAST-LIO inputs, native SUPER navigation, and PX4 External Mode.
+This package owns the launch files and the project RViz profile for the
+current FAST-LIO, SUPER, and PX4 External Mode path.
 
-`fast_lio.launch.py` composes:
+## Launch composition
 
-- the canonical `uav_description` sensor-frame publisher;
-- the `fast_lio_ros` estimator node;
-- the optional PX4 external-odometry bridge;
+- `fast_lio.launch.py` starts the sensor description, FAST-LIO, and the
+  optional PX4 external-odometry bridge;
+- `navigation_runtime.launch.py` starts one
+  `navigation_runtime/super_navigation_node`;
+- `px4_external_mode.launch.py` starts
+  `px4_navigation_external_mode_node`;
+- `avoidance_mission.launch.py` starts the last two components and passes the
+  same mission file to both.
 
-`navigation_runtime.launch.py` starts only `super_navigation_node`. The planner
-consumes the newest `PointCloud2` and `Odometry` frames, owns the ROG-Map update,
-and publishes sampled PVA commands as `mars_quadrotor_msgs/PositionCommand` on
-`/navigation/super_command`.
+The navigation node subscribes to `/lio/registered_points`,
+`/lio/odometry_propagated`, `/navigation/goal`, and
+`/navigation/mode_status`. It publishes PVA commands on
+`/navigation/super_command` and diagnostics on `/navigation/diagnostics`.
+ROG-Map and SUPER are constructed in this process; there is no separate
+mapping ROS node in the current product path.
 
-`px4_external_mode.launch.py` launches the PX4 v1.17 ROS 2 Control Interface
-node. The node registers `NavigationMode` and its `NavigationModeExecutor`,
-then consumes the PVA command contract on `/navigation/super_command`.
-Its config is `config/runtime/external_mode.yaml`. It is the PX4 control
-boundary; do not replace it with direct `OffboardControlMode` publishers.
+## Mission entrypoint
 
-avoidance_mission.launch.py is the product mission entrypoint. It passes one
-mission file to both native SUPER and the PX4 External Mode node, so velocity,
-acceleration and jerk limits are applied before optimizer construction and
-cannot diverge from the mission controller contract:
+```bash
+ros2 launch navigation_bringup avoidance_mission.launch.py \
+  config_file:=$PWD/config/runtime/mapping.yaml \
+  mission_file:=$PWD/config/runtime/missions/long_three_pillars.yaml \
+  use_sim_time:=true
+```
 
-    ros2 launch navigation_bringup avoidance_mission.launch.py \
-      config_file:=$PWD/config/runtime/mapping.yaml \
-      mission_file:=$PWD/config/runtime/missions/long_three_pillars.yaml
+`mission_file` supplies the mission controller's waypoint behavior and the
+dynamic limits used before SUPER optimizer construction. PX4 External Mode
+remains the control boundary; do not replace it with direct
+`OffboardControlMode` publishers.
 
-Interactive workflows use the project-owned RViz profile in `rviz/`. The
-profile shows the LIO registered scan, bounded local map, TF tree, corrected
-LIO odometry, and the last successful navigation plan on
-`/navigation/visualization/planned_path`. Vendor Livox RViz files remain with the external
-driver and are not used as the navigation stack's runtime profile.
+## RViz profile
 
-Send a stamped goal for one planning attempt, or repeat it for timing samples:
+`rviz/fast_lio.rviz` is intentionally small and matches live topics:
+
+- fixed frame `lio_odom`;
+- TF and a grid;
+- enabled `/lio/registered_points`;
+- enabled `/lio/odometry_propagated`;
+- disabled `/lio/odometry_corrected` for optional estimator comparison.
+
+There are no current displays for `/navigation_mapping/visualization/*`,
+`/navigation/visualization/*`, or a planned-path topic. SUPER's map and
+trajectory visualization serializers are disabled in the runtime config.
+
+## Goal and observability
 
 ```bash
 python3 tools/runtime/send_goal.py 5.0 0.0 1.0
 python3 tools/runtime/send_goal.py 5.0 0.0 1.0 --repeat 20 --period 1.0
+ros2 topic echo /navigation/diagnostics
+ros2 topic echo /navigation/super_command
 ```
 
-The native PVA command stream is published on `/navigation/super_command`.
-The RViz path is visualization-only.
-
-Runtime behavior and parameter ownership remain in `config/runtime/` and
-`tools/runtime/`. The launch file is intentionally a single declarative
-`generate_launch_description()` entrypoint.
+Runtime validation and report generation are owned by `tools/runtime/`; this
+package does not contain a second report or monitoring tool.

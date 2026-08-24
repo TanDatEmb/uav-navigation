@@ -51,6 +51,13 @@ already ROS ENU/FLU despite the PX4-origin frame name.
 The bridge anchors the continuous `px4_odom` position at its first valid sample
 and retains reset compensation for later PX4 resets.
 
+## RViz profile
+
+The project profile `src/navigation_bringup/rviz/fast_lio.rviz` uses
+`lio_odom` as its fixed frame. It shows TF, `/lio/registered_points`, and
+`/lio/odometry_propagated`; `/lio/odometry_corrected` is disabled by default
+for optional comparison. It contains no map/planner visualization topics.
+
 The external-odometry bridge converts position, velocity, and attitude using
 `C_ned_enu`; it converts only angular velocity using `C_frd_flu`. Thus
 `x_px4=y_lio`, `y_px4=x_lio`, and `z_px4=-z_lio`. A PX4 `POSE_FRAME_FRD` sample

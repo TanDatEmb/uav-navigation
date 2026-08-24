@@ -1,16 +1,17 @@
 # navigation_interfaces
 
-This is a contract-only package. It contains generic navigation services and
-validity/covariance masks shared across package boundaries.
+This is a contract-only ROS 2 package. It contains the generic goal, mode
+status, and odometry sampling interfaces shared across package boundaries.
 
-It deliberately does not contain sensor drivers or estimator implementation.
-The current `SampleOdometryAtTime` service is implemented by
-`px4_odometry_bridge` for sampling buffered PX4 odometry across a valid
-generation boundary.
+Current navigation messages include:
 
-`LidarMappingObservation` is the atomic geometric LiDAR observation contract
-between `fast_lio_ros` (producer) and `navigation_mapping` (consumer). It
-carries a deskewed, common-filtered point cloud and the corrected sensor pose
-for the same estimator epoch, plus the active `LioPublicFrameGeneration`
-value. It contains no ROG-Map, occupancy, or planner concept; see
+- `NavigationGoal`: mission identity, waypoint index/request ID, target,
+  acceptance radius, behavior, and optional next target;
+- `NavigationModeStatus`: mode state/reason and explicit waypoint acceptance
+  evidence;
+- `SampleOdometryAtTime`: service used by the PX4 odometry bridge.
+
+The package does not own LiDAR drivers, FAST-LIO, ROG-Map, SUPER, or a mapping
+observation stream. In particular, `LidarMappingObservation` is not a current
+message in this repository. Runtime topic and ownership details are in
 `docs/architecture/navigation_layers.md`.
