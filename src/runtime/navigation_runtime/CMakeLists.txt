@@ -20,24 +20,25 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-add_executable(super_navigation_node
+add_library(navigation_runtime_node
   src/mission_dynamics.cpp
-  src/super_navigation_main.cpp
+  src/mapping_fail_stop.cpp
   src/super_navigation_node.cpp
 )
-target_compile_features(super_navigation_node PUBLIC cxx_std_20)
-target_compile_options(super_navigation_node PRIVATE -Wall -Wextra -O3)
-target_include_directories(super_navigation_node PRIVATE
+target_compile_features(navigation_runtime_node PUBLIC cxx_std_20)
+target_compile_options(navigation_runtime_node PRIVATE -Wall -Wextra -O3)
+target_include_directories(navigation_runtime_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(super_navigation_node PRIVATE
+target_link_libraries(navigation_runtime_node PUBLIC
   super_planner_vendor::super_planner_vendor
   navigation_world_model::navigation_world_model
   rog_map_vendor::rog_map_vendor
   yaml-cpp::yaml-cpp)
-ament_target_dependencies(super_navigation_node PUBLIC
+ament_target_dependencies(navigation_runtime_node PUBLIC
   ament_index_cpp
+  builtin_interfaces
   diagnostic_msgs
   mars_quadrotor_msgs
   nav_msgs
@@ -46,15 +47,36 @@ ament_target_dependencies(super_navigation_node PUBLIC
   sensor_msgs
 )
 
+add_executable(super_navigation_node src/super_navigation_main.cpp)
+target_compile_features(super_navigation_node PUBLIC cxx_std_20)
+target_compile_options(super_navigation_node PRIVATE -Wall -Wextra -O3)
+target_link_libraries(super_navigation_node PRIVATE navigation_runtime_node)
+
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS super_navigation_node
+install(TARGETS navigation_runtime_node
+  EXPORT navigation_runtimeTargets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
+)
+install(TARGETS super_navigation_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
-ament_export_dependencies(navigation_interfaces mars_quadrotor_msgs navigation_world_model
-  rog_map_vendor super_planner_vendor)
+ament_export_dependencies(
+  ament_index_cpp
+  builtin_interfaces
+  diagnostic_msgs
+  mars_quadrotor_msgs
+  nav_msgs
+  navigation_interfaces
+  navigation_world_model
+  rclcpp
+  rog_map_vendor
+  sensor_msgs
+  super_planner_vendor
+  yaml-cpp
+)
+ament_export_targets(navigation_runtimeTargets HAS_LIBRARY_TARGET)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)

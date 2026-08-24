@@ -1,5 +1,6 @@
 #include "navigation_runtime/super_navigation_node.hpp"
 #include "navigation_runtime/mission_dynamics.hpp"
+#include "navigation_runtime/mapping_fail_stop.hpp"
 
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/timestamp_freshness.hpp"
@@ -10,8 +11,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <cstdlib>
-#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -220,20 +219,7 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   };
   mapping_worker_ = std::make_unique<MappingWorker<MappingObservation>>(
       observation_accounting_, std::move(process_mapping),
-      [](std::exception_ptr failure) {
-        try {
-          if (failure) std::rethrow_exception(failure);
-        } catch (const std::exception& error) {
-          std::fprintf(stderr,
-              "FATAL: MappingWorker failed after mutable ROG processing began: %s\n",
-              error.what());
-        } catch (...) {
-          std::fprintf(stderr,
-              "FATAL: MappingWorker failed with a non-standard exception\n");
-        }
-        std::fflush(stderr);
-        std::abort();
-      }, std::move(validate_mapping),
+      mappingFailStop, std::move(validate_mapping),
       [publisher = diagnostics_publisher_, ros_clock,
        telemetry = mapping_telemetry_, accounting = &observation_accounting_]() {
         const auto mapping = telemetry->snapshot();
