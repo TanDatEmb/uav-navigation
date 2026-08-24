@@ -9,6 +9,7 @@
 #include "data_structure/base/trajectory.h"
 #include "super_core/super_planner.h"
 #include "traj_opt/trajectory_dynamics.hpp"
+#include "traj_opt/yaw_traj_opt.h"
 
 TEST(SuperTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   std::vector<double> durations{1.0, 1.0};
@@ -199,4 +200,38 @@ TEST(SuperTrajectory, ConcurrentCommitAndSnapshotNeverMixGenerations) {
   writer.join();
   reader.join();
   EXPECT_FALSE(failed.load());
+}
+
+TEST(SuperTrajectory, FreeYawIsProjectedIntoRateEnvelopeWithoutChangingDuration) {
+  std::vector<double> durations{0.8, 0.8, 0.8};
+  std::vector<Eigen::MatrixXd> coefficients;
+  const std::vector<Eigen::Vector3d> starts{
+      {0.0, 0.0, 3.0}, {0.8, 0.0, 3.0}, {0.8, 0.8, 3.0}};
+  const std::vector<Eigen::Vector3d> velocities{
+      {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {-1.0, 0.0, 0.0}};
+  for (std::size_t index = 0; index < durations.size(); ++index) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix.col(4) = velocities[index];
+    matrix.col(5) = starts[index];
+    coefficients.push_back(matrix);
+  }
+  geometry_utils::Trajectory position(durations, coefficients);
+  const super_utils::Vec4f initial_yaw{0.0, 0.0, 0.0, 0.0};
+  const super_utils::Vec4f free_goal_yaw{0.0, 0.0, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimize(initial_yaw, free_goal_yaw, position, yaw,
+                                 3, false, true));
+  EXPECT_NEAR(yaw.getTotalDuration(), position.getTotalDuration(), 1.0e-12);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_TRUE(yaw.getState(0.0).allFinite());
+  EXPECT_TRUE(yaw.getState(yaw.getTotalDuration()).allFinite());
+
+  // A commanded terminal attitude is a hard contract and must never be
+  // weakened by the free-yaw projection.
+  const super_utils::Vec4f fixed_goal_yaw{M_PI, 0.0, 0.0, 0.0};
+  geometry_utils::Trajectory rejected_fixed_yaw;
+  EXPECT_FALSE(optimizer.optimize(initial_yaw, fixed_goal_yaw, position,
+                                  rejected_fixed_yaw, 3, false, false));
 }

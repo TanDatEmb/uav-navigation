@@ -140,38 +140,42 @@ namespace traj_opt {
         getYawTimeAllocation(pos_traj_dur, times);
         VecDf way_pts;
         getYawWaypointAllocation(init_state, goal_state, way_pts, times, pos_traj);
-        Trajectory yaw_traj;
-        switch (order) {
+        const auto interpolate = [&](const Vec4f &candidate_goal,
+                                     const VecDf &candidate_waypoints) {
+            Trajectory candidate;
+            switch (order) {
             case 3: {
                 const super_utils::Vec2f init_state3 = init_state.head(2);
-                const super_utils::Vec2f goal_state3 = goal_state.head(2);
-                yaw_traj = poly_interpo::minimumAccInterpolation<1>(init_state3,
-                                                                    goal_state3,
-                                                                    way_pts,
-                                                                    times);
+                const super_utils::Vec2f goal_state3 = candidate_goal.head(2);
+                candidate = poly_interpo::minimumAccInterpolation<1>(
+                    init_state3, goal_state3, candidate_waypoints, times);
                 break;
             }
             case 5: {
                 Vec3f init_state3 = init_state.head(3);
-                Vec3f goal_state3 = goal_state.head(3);
-                yaw_traj = poly_interpo::minimumJerkInterpolation<1>(init_state3,
-                                                                     goal_state3,
-                                                                     way_pts,
-                                                                     times);
+                Vec3f goal_state3 = candidate_goal.head(3);
+                candidate = poly_interpo::minimumJerkInterpolation<1>(
+                    init_state3, goal_state3, candidate_waypoints, times);
                 break;
             }
             case 7: {
-                yaw_traj = poly_interpo::minimumSnapInterpolation<1>(init_state,
-                                                                     goal_state,
-                                                                     way_pts,
-                                                                     times);
+                candidate = poly_interpo::minimumSnapInterpolation<1>(
+                    init_state, candidate_goal, candidate_waypoints, times);
                 break;
             }
             default: {
-                cout << "Unsupported order for yaw trajectory optimization." << endl;
-                return false;
+                break;
             }
+            }
+            return candidate;
+        };
+
+        if (order != 3 && order != 5 && order != 7) {
+            cout << "Unsupported order for yaw trajectory optimization." << endl;
+            return false;
         }
+
+        Trajectory yaw_traj = interpolate(goal_state, way_pts);
 
 //            for (double eval_t = 0; eval_t < yaw_traj.getTotalDuration(); eval_t += 0.01) {
 //                cout << yaw_traj.getPos(eval_t)[0] << " ";
@@ -184,6 +188,45 @@ namespace traj_opt {
 //
 //            yaw_traj.printProfile();
         double max_yaw_rate = yaw_traj.getMaxVelRate();
+        // A free-yaw trajectory is guidance, not a terminal attitude contract.
+        // Project its angular excursion onto the configured rate envelope while
+        // preserving the position trajectory duration and the initial yaw/rate.
+        // This avoids rejecting a position-feasible candidate merely because a
+        // sharp guide-path corner asks the unconstrained interpolant to rotate
+        // faster than the vehicle contract. Fixed terminal yaw remains fail-closed.
+        if (free_goal_ && std::isfinite(max_yaw_rate) &&
+            max_yaw_rate > yaw_dot_max_ + 1.0e-6 &&
+            std::abs(init_state(1)) <= yaw_dot_max_ + 1.0e-6) {
+            const VecDf requested_waypoints = way_pts;
+            const double requested_goal_yaw = goal_state(0);
+            double feasible_scale = 0.0;
+            double infeasible_scale = 1.0;
+            Trajectory feasible_traj;
+            for (int iteration = 0; iteration < 24; ++iteration) {
+                const double scale = 0.5 * (feasible_scale + infeasible_scale);
+                VecDf projected_waypoints = requested_waypoints;
+                projected_waypoints.array() = init_state(0) +
+                    scale * (requested_waypoints.array() - init_state(0));
+                Vec4f projected_goal = goal_state;
+                projected_goal(0) = init_state(0) +
+                    scale * (requested_goal_yaw - init_state(0));
+                Trajectory projected = interpolate(projected_goal, projected_waypoints);
+                const double projected_rate = projected.getMaxVelRate();
+                if (std::isfinite(projected_rate) &&
+                    projected_rate <= yaw_dot_max_ + 1.0e-6) {
+                    feasible_scale = scale;
+                    feasible_traj = std::move(projected);
+                } else {
+                    infeasible_scale = scale;
+                }
+            }
+            if (!feasible_traj.empty()) {
+                yaw_traj = std::move(feasible_traj);
+                max_yaw_rate = yaw_traj.getMaxVelRate();
+                cout << YELLOW << " Projected free yaw by scale " << feasible_scale
+                     << ", max rate " << max_yaw_rate << RESET << endl;
+            }
+        }
         if (!std::isfinite(max_yaw_rate) || max_yaw_rate > yaw_dot_max_ + 1.0e-6) {
             cout << YELLOW << " Yaw rate too large, " << max_yaw_rate << RESET << endl;
             return false;
