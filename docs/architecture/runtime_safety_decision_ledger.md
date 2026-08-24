@@ -548,3 +548,22 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   narrow `mutex:libOpenNI2.so` constructor suppression; no product stack was
   suppressed. Full package TSan and fail-stop subprocess certification remain
   separate gates.
+
+### 2026-08-25 - WM-3 mapping fail-stop subprocess certificate
+
+- The default `mappingFailStop` production symbol is exercised directly in a
+  standalone subprocess death test. A standard exception must emit the stable
+  post-mutation FATAL prefix plus its injected reason and terminate by
+  `SIGABRT`; a non-standard exception must emit the catch-all FATAL reason and
+  terminate by the same signal. Normal return, a different signal or missing
+  reason fails the test.
+- GoogleTest's thread-safe death-test mode re-executes the child instead of
+  relying on a fork from sanitizer runtime helper threads. No production fatal
+  handler, environment gate or nonfatal test policy was added. The runtime node
+  continues to pass this exact symbol directly to `MappingWorker`.
+- Release, ASan with `detect_leaks=1`, and UBSan with halt-on-error each executed
+  both branches and passed 2/2 without sanitizer findings or option changes.
+  This certifies the default termination and reason contract. Deterministic
+  exception injection through every real map update/export/publication stage
+  and the package-wide TSan gate remain separate work; this subprocess result
+  does not promote WM-3 or closed-loop flight to complete.

@@ -118,6 +118,8 @@ if(BUILD_TESTING)
   target_compile_definitions(test_super_navigation_shutdown PRIVATE
     SUPER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/super_planner.yaml")
   target_link_libraries(test_super_navigation_shutdown navigation_runtime_node)
+  ament_add_gtest(test_mapping_fail_stop test/test_mapping_fail_stop.cpp)
+  target_link_libraries(test_mapping_fail_stop navigation_runtime_node)
 endif()
 
 ament_package()
