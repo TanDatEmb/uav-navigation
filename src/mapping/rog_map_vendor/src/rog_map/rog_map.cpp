@@ -33,6 +33,41 @@
 
 using namespace rog_map;
 using namespace super_utils;
+
+PlanningGridExport ROGMap::exportPlanningGrid() const {
+  PlanningGridExport output;
+  output.base_layout.resolution_m = sc_.resolution;
+  output.base_layout.global_min_index = local_map_origin_i_ - sc_.half_map_size_i;
+  output.base_layout.dimensions = sc_.map_size_i;
+  output.base_layout.local_center_m = local_map_origin_d_;
+  output.base_layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+  output.base_state.resize(static_cast<std::size_t>(sc_.map_vox_num));
+
+  std::size_t logical_offset = 0;
+  const Vec3i global_max = output.base_layout.global_min_index + sc_.map_size_i;
+  for (int x = output.base_layout.global_min_index.x(); x < global_max.x(); ++x) {
+    for (int y = output.base_layout.global_min_index.y(); y < global_max.y(); ++y) {
+      for (int z = output.base_layout.global_min_index.z(); z < global_max.z(); ++z) {
+        const float probability = occupancy_buffer_[getHashIndexFromGlobalIndex(Vec3i{x, y, z})];
+        const GridType state = isOccupied(probability)
+                                   ? GridType::OCCUPIED
+                                   : (isKnownFree(probability) ? GridType::KNOWN_FREE
+                                                               : GridType::UNKNOWN);
+        output.base_state[logical_offset++] = static_cast<std::uint8_t>(state);
+      }
+    }
+  }
+
+  output.inflated = inf_map_->exportPlanningGrid();
+  output.nearest_offsets = cfg_.spherical_neighbor;
+  output.unknown_inflation_enabled = cfg_.unk_inflation_en;
+  output.virtual_ground_m = cfg_.virtual_ground_height;
+  output.virtual_ceiling_m = cfg_.virtual_ceil_height;
+  output.occupied_inflation_radius_m =
+      cfg_.inflation_resolution * static_cast<double>(cfg_.inflation_step);
+  return output;
+}
+
 void ROGMap::init() {
   initProbMap();
 

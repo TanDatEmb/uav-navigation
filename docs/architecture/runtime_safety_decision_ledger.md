@@ -127,6 +127,26 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-2A detached compact planning-grid export
+
+- Rejected copying `ROGMap`: mutex/queue state is not cloneable, submaps are
+  shared pointers, and a shallow copy would falsely label mutable aliases as a
+  snapshot. Raw probability/counter cloning was also rejected because it
+  retains roughly five times the storage the planner consumes.
+- Added one owner-only vendor export that materializes base semantic state,
+  inflated occupancy and optional inflated UNKNOWN into detached byte arrays
+  in logical global x/y/z order. It preserves circular-index resolution and
+  nearest-neighbor offset order while exposing no mutable buffer to the
+  product contract.
+- The small fixture exports 969,710 bytes in 1,432 us in one characterization
+  run. This is not a performance threshold or certification. Product config is
+  expected to produce about 3.24 MB per snapshot; repeated dataset p50/p95/p99
+  and RSS slope are required before publication is enabled as runtime policy.
+- Export tests exhaustively compare base/inflated semantics away from virtual
+  planes (which remain explicit snapshot metadata) and prove an earlier value
+  does not alias a later update. No map update, query threshold, planner
+  behavior or callback scheduling changed in this batch.
+
 ### 2026-08-25 - WM-1 product-owned query boundary without behavior tuning
 
 - Added the Eigen/STL-only `navigation_world_model::WorldModelView` contract

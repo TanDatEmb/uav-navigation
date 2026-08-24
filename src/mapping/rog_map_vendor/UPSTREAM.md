@@ -244,6 +244,20 @@ sliding-enabled `mapSliding()` call. The upstream order left the origin index
 uninitialized and made fresh-map state nondeterministic; this was found by the
 deterministic digest benchmark.
 
+### 11. Detached planning-grid export
+
+Added `ROGMap::exportPlanningGrid()` and the corresponding inflated-layer
+export. The mapping owner converts circular mutable probability/counter
+storage into compact semantic byte arrays in logical global-index order. The
+returned value owns all storage and preserves the configured nearest-neighbor
+offset order; it exposes neither probability values nor mutable buffers.
+
+This is the staging boundary for a genuinely immutable product WorldSnapshot.
+It does not change mapping updates or query thresholds, and it is never called
+by SUPER. Exhaustive fixture tests compare exported base/inflated cells with
+the live map away from separately represented virtual planes and prove an
+earlier export does not alias a later update.
+
 ## License metadata inconsistency found upstream
 
 Upstream `rog_map/package.xml` (ROS 2/ament) declares `<license>BSD</license>`,

@@ -25,6 +25,7 @@
 
 #include <fmt/color.h>
 #include <rog_map/prob_map.h>
+#include <rog_map/planning_grid_export.hpp>
 
 #include <rog_map/rog_map_core/common_lib.hpp>
 #include <super_utils/type_utils.hpp>
@@ -106,6 +107,8 @@ class ROGMap : public ProbMap {
   void updateMap(const PointCloud& cloud, const Pose& pose);
 
   RobotState getRobotState() const;
+
+  [[nodiscard]] PlanningGridExport exportPlanningGrid() const;
 
  protected:
   std::ofstream time_log_file_, map_info_log_file_;

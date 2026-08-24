@@ -24,6 +24,7 @@
 #pragma once
 
 #include <rog_map/rog_map_core/counter_map.h>
+#include <rog_map/planning_grid_export.hpp>
 
 namespace rog_map {
 
@@ -67,6 +68,8 @@ namespace rog_map {
         // This is distinct from getGridType(), which reports inflated
         // occupancy/unknown counters.
         GridType getBaseGridType(const Vec3i &id_g) const;
+
+        [[nodiscard]] InflatedPlanningGridExport exportPlanningGrid() const;
 
     private:
         struct InfMapData {

@@ -26,6 +26,35 @@ using namespace color_text;
 using namespace super_utils;
 
 namespace rog_map {
+    InflatedPlanningGridExport InfMap::exportPlanningGrid() const {
+        InflatedPlanningGridExport output;
+        output.layout.resolution_m = sc_.resolution;
+        output.layout.global_min_index = local_map_origin_i_ - sc_.half_map_size_i;
+        output.layout.dimensions = sc_.map_size_i;
+        output.layout.local_center_m = local_map_origin_d_;
+        output.layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+        output.occupied.resize(static_cast<std::size_t>(sc_.map_vox_num));
+        if (cfg_.unk_inflation_en) {
+            output.unknown.resize(static_cast<std::size_t>(sc_.map_vox_num));
+        }
+
+        std::size_t logical_offset = 0;
+        const Vec3i global_max = output.layout.global_min_index + sc_.map_size_i;
+        for (int x = output.layout.global_min_index.x(); x < global_max.x(); ++x) {
+            for (int y = output.layout.global_min_index.y(); y < global_max.y(); ++y) {
+                for (int z = output.layout.global_min_index.z(); z < global_max.z(); ++z) {
+                    const int hash = getHashIndexFromGlobalIndex(Vec3i{x, y, z});
+                    output.occupied[logical_offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    if (cfg_.unk_inflation_en) {
+                        output.unknown[logical_offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    }
+                    ++logical_offset;
+                }
+            }
+        }
+        return output;
+    }
+
     // Public Query Function ========================================================================
     bool InfMap::isOccupiedInflate(const Vec3f& pos) const {
         if (!insideLocalMap(pos)) return false;
