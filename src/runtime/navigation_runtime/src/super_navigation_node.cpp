@@ -2,6 +2,7 @@
 #include "navigation_runtime/mission_dynamics.hpp"
 
 #include "navigation_runtime/planner_fsm.hpp"
+#include "super_core/solve_stage.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -887,10 +888,17 @@ void SuperNavigationNode::runCycle() {
                                                  ? (nearest_occupied - planner_state.p).norm()
                                                  : std::numeric_limits<double>::infinity();
     const auto committed_generation = planner_->getCommittedGeneration();
+    const int solve_stage = planner_->solveStage();
+    const int replan_return_code = planner_->latestReplanReturnCode();
+    const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;
+    const bool solve_deadline_exceeded =
+        planner_elapsed_ms > planner_->solveDeadlineSeconds() * 1000.0;
     RCLCPP_INFO(get_logger(),
                 "SUPER decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
                 "cloud_stamp_ns=%ld corrected_stamp_ns=%ld propagated_stamp_ns=%ld "
-                "state_age_ms=%.3f mode=%s result=%d target=(%.2f,%.2f,%.2f) "
+                "state_age_ms=%.3f mode=%s result=%d replan_code=%d "
+                "solve_stage=%d solve_stage_name=%s solve_elapsed_ms=%.3f "
+                "solve_deadline_exceeded=%d target=(%.2f,%.2f,%.2f) "
                 "committed_end=(%.2f,%.2f,%.2f) endpoint_error=%.3f command=%d failure=%d "
                 "exp_frontend_ms=%.3f exp_opt_ms=%.3f backup_frontend_ms=%.3f "
                 "backup_opt_ms=%.3f robot_grid=%d robot_inf_grid=%d nearest_free_m=%.3f "
@@ -901,7 +909,10 @@ void SuperNavigationNode::runCycle() {
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
                 static_cast<double>(execution_age_ns) * 1e-6,
-                plan_from_rest ? "PlanFromRest" : "ReplanOnce", result, target.x(), target.y(),
+                plan_from_rest ? "PlanFromRest" : "ReplanOnce", result,
+                replan_return_code, solve_stage,
+                super_planner::solveStageName(solve_stage).data(), planner_elapsed_ms,
+                solve_deadline_exceeded, target.x(), target.y(),
                 target.z(), committed_end.x(), committed_end.y(), committed_end.z(),
                 endpoint_error, planner_command_available_.load(), planner_failure_latched_.load(),
                 module_times.size() > super_planner::EPX_TRAJ_FRONTEND

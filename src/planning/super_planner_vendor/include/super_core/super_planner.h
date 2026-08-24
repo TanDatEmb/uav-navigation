@@ -165,6 +165,12 @@ namespace super_planner {
             const int stage = solve_stage_.load();
             return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;
         }
+        int latestReplanReturnCode() const noexcept {
+            return latest_replan.getRetCode();
+        }
+        double solveDeadlineSeconds() const noexcept {
+            return cfg_.solve_deadline_s;
+        }
         void resetSolveCancellation() noexcept {
             solve_cancelled_.store(false);
         }

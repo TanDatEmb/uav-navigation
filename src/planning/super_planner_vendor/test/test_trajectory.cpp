@@ -10,6 +10,7 @@
 #include "super_core/super_planner.h"
 #include "super_core/absolute_deadline.hpp"
 #include "super_core/guide_endpoint.hpp"
+#include "super_core/solve_stage.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 
@@ -271,4 +272,13 @@ TEST(SuperTrajectory, UnconnectedOrInvalidGoalDoesNotMoveGuideEndpoint) {
       guide_endpoint, invalid_goal, 0.4);
   EXPECT_FALSE(invalid.goal_connected);
   EXPECT_TRUE(invalid.position.isApprox(guide_endpoint));
+}
+
+TEST(SuperTrajectory, SolveStagesHaveStableDecisionTraceNames) {
+  EXPECT_EQ(super_planner::solveStageName(0), "idle");
+  EXPECT_EQ(super_planner::solveStageName(2), "astar");
+  EXPECT_EQ(super_planner::solveStageName(4), "main_minco");
+  EXPECT_EQ(super_planner::solveStageName(5), "backup");
+  EXPECT_EQ(super_planner::solveStageName(33), "corridor_iris");
+  EXPECT_EQ(super_planner::solveStageName(999), "unknown");
 }
