@@ -22,6 +22,7 @@
 */
 
 #include <super_core/super_planner.h>
+#include <super_core/absolute_deadline.hpp>
 #include <super_core/backup_braking.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
@@ -1513,22 +1514,31 @@ namespace super_planner {
         Vec3f temp_goal_point, temp_start_point;
         temp_start_point = shifted_start_pt;
         double temp_plannning_horizon = searching_horizon;
+        // Preferred-altitude, unrestricted, and probability-map variants are
+        // alternatives within one search stage, not independent solves. Share
+        // an absolute budget so a timeout cannot multiply callback latency.
+        const AbsoluteDeadline search_deadline(
+                ros_ptr_->getSimTime(), cfg_.astar_search_time_limit_s);
+        const auto remaining_search_budget = [&]() {
+            return search_deadline.remaining(ros_ptr_->getSimTime());
+        };
         //            int start_id = getNearestFurtherGoalPoint(goal_waypoints, start_pt);
 
         int flag = ON_INF_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) | DONT_USE_INF_NEIGHBOR;
 
         RET_CODE ret_code = astar_ptr_->pointToPointPathSearch(
                 temp_start_point, goal, flag, temp_plannning_horizon,
-                path, -1.0, true);
+                path, remaining_search_budget(), true);
 
         if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
-            ret_code != INIT_ERROR) {
+            ret_code != INIT_ERROR &&
+            !search_deadline.expired(ros_ptr_->getSimTime())) {
             ros_ptr_->warn(
                     " -- [Astar] Preferred start-goal altitude search failed with [{}]; "
                     "retry unrestricted 3-D search.", RET_CODE_STR[ret_code].c_str());
             ret_code = astar_ptr_->pointToPointPathSearch(
                     temp_start_point, goal, flag, temp_plannning_horizon,
-                    path, -1.0, false);
+                    path, remaining_search_budget(), false);
         }
 
         if(ret_code == INIT_ERROR){
@@ -1537,19 +1547,21 @@ namespace super_planner {
         }
         //add may23, if failed on inf map, use prob map try again
 
-        if (ret_code == NO_PATH) {
+        if (ret_code == NO_PATH &&
+            !search_deadline.expired(ros_ptr_->getSimTime())) {
             flag = ON_PROB_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) |
                    USE_INF_NEIGHBOR;
             fmt::print(fg(fmt::color::indian_red) | fmt::emphasis::bold,
                        " -- [Astar] Path search failed on inf map, try again on prob map.\n");
             ret_code = astar_ptr_->pointToPointPathSearch(
                     temp_start_point, goal, flag, temp_plannning_horizon,
-                    path, -1.0, true);
+                    path, remaining_search_budget(), true);
             if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
-                ret_code != INIT_ERROR) {
+                ret_code != INIT_ERROR &&
+                !search_deadline.expired(ros_ptr_->getSimTime())) {
                 ret_code = astar_ptr_->pointToPointPathSearch(
                         temp_start_point, goal, flag, temp_plannning_horizon,
-                        path, -1.0, false);
+                        path, remaining_search_budget(), false);
             }
             if (ret_code == SUCCESS || ret_code == REACH_HORIZON || ret_code == REACH_GOAL) {
                 fmt::print(fg(fmt::color::lime_green) | fmt::emphasis::bold,

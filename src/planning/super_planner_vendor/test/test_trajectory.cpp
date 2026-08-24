@@ -8,6 +8,7 @@
 
 #include "data_structure/base/trajectory.h"
 #include "super_core/super_planner.h"
+#include "super_core/absolute_deadline.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 
@@ -234,4 +235,14 @@ TEST(SuperTrajectory, FreeYawIsProjectedIntoRateEnvelopeWithoutChangingDuration)
   geometry_utils::Trajectory rejected_fixed_yaw;
   EXPECT_FALSE(optimizer.optimize(initial_yaw, fixed_goal_yaw, position,
                                   rejected_fixed_yaw, 3, false, false));
+}
+
+TEST(SuperTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
+  const super_planner::AbsoluteDeadline deadline(100.0, 0.04);
+  EXPECT_NEAR(deadline.remaining(100.01), 0.03, 1.0e-12);
+  EXPECT_NEAR(deadline.remaining(100.039), 0.001, 1.0e-12);
+  EXPECT_DOUBLE_EQ(deadline.remaining(100.04), 0.0);
+  EXPECT_TRUE(deadline.expired(100.05));
+  EXPECT_DOUBLE_EQ(deadline.remaining(std::numeric_limits<double>::quiet_NaN()), 0.0);
+  EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, 0.0}), std::invalid_argument);
 }
