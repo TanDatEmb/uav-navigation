@@ -71,6 +71,9 @@ class PlannerTraceTest(unittest.TestCase):
                                     "planning_cycle_id": "42",
                                     "bundle_id": "17",
                                     "solve_generation": "23",
+                                    "pinned_world_generation": "2",
+                                    "pinned_world_revision": "91",
+                                    "pinned_world_stamp_ns": "123456789",
                                     "candidate_result": "0",
                                     "replan_code": "-3",
                                     "solve_stage": "5",
@@ -89,6 +92,9 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertTrue(records[0]["complete"])
         self.assertEqual(records[0]["solve_generation"], 23)
+        self.assertEqual(records[0]["pinned_world_generation"], 2)
+        self.assertEqual(records[0]["pinned_world_revision"], 91)
+        self.assertEqual(records[0]["pinned_world_stamp_ns"], 123456789)
         self.assertEqual(records[0]["solve_stage_name"], "backup")
         self.assertEqual(records[0]["replan_code"], "-3")
         self.assertFalse(records[0]["solve_deadline_exceeded"])

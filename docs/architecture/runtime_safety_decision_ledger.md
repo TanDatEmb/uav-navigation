@@ -127,6 +127,35 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-3A revisioned snapshot store and solve-local pin staging
+
+- Added a product-owned `WorldSnapshotStore` with acquire/release publication,
+  monotonic generation/revision enforcement and a short authorization gate.
+  Mapping publication and a future final trajectory commit can be linearized
+  without holding a map lock during A*/CIRI/MINCO or candidate revalidation.
+- Each sequential solve now loads one coherent `PinnedWorldSnapshot`, propagates
+  that immutable pointer to SUPER/A*/corridor on the planning thread and emits
+  pinned generation/revision/observation timestamp in its decision trace.
+  Mapping no longer pushes three planner pointers as part of publication.
+- Deterministic tests prove null/invalid/non-monotonic publication rejection,
+  immutable pin lifetime, stale-identity authorization rejection and that a
+  publication cannot interleave the authorized commit callback. The store is
+  deliberately non-copyable.
+- This batch does not yet authorize SUPER's internal trajectory swaps; WM-3B
+  must revalidate candidates on a newer revision and route every internal
+  commit site through the store gate. Strict `pinned == latest` rejection and
+  cancel-on-every-map-update were explicitly rejected because a 10 Hz map can
+  permanently starve a non-trivial solve.
+- Sequential dataset artifact
+  `.artifacts/runtime/dataset-20260824T185157-96889` remains FAIL with nine
+  pending-cloud replacements: 2,747/2,756 observations published, no mapping
+  failure/exception/accounting violation, export p99 8.793 ms and callback p99
+  18.461 ms. This confirms the store did not add a latency tail but also proves
+  the timer-phase/inbox scheduling defect is nondeterministic and still open.
+  No queue, gate relaxation or threshold change was introduced to alter the
+  verdict.
+
+
 ### 2026-08-25 - WM-2B immutable revisioned WorldModel snapshot
 
 - Runtime now exports and publishes a detached `RogWorldSnapshot` after each

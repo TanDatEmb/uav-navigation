@@ -66,6 +66,10 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_timestamp_freshness test/test_timestamp_freshness.cpp)
   target_include_directories(test_timestamp_freshness PRIVATE include)
+  ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
+  target_include_directories(test_world_snapshot_store PRIVATE include)
+  target_link_libraries(test_world_snapshot_store
+    navigation_world_model::navigation_world_model)
   ament_add_gtest(test_rog_world_model_adapter test/test_rog_world_model_adapter.cpp)
   target_include_directories(test_rog_world_model_adapter PRIVATE include)
   target_compile_definitions(test_rog_world_model_adapter PRIVATE

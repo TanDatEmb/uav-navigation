@@ -24,6 +24,7 @@
 #include "navigation_runtime/rog_world_model_adapter.hpp"
 #include "navigation_runtime/rog_world_snapshot.hpp"
 #include "navigation_runtime/runtime_state.hpp"
+#include "navigation_runtime/world_snapshot_store.hpp"
 #include <ros_interface/ros_interface.hpp>
 #include <super_core/super_planner.h>
 
@@ -149,6 +150,7 @@ class SuperNavigationNode final : public rclcpp::Node {
   ros_interface::RosInterface::Ptr ros_interface_;
   std::shared_ptr<RuntimeRogMap> map_;
   navigation_world_model::WorldModelViewPtr world_model_view_;
+  WorldSnapshotStore world_snapshot_store_;
   std::uint64_t world_generation_{1};
   std::uint64_t world_revision_{0};
   super_planner::SuperPlanner::Ptr planner_;

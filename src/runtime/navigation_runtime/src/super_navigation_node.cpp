@@ -164,9 +164,11 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
   }
   map_ = std::make_shared<RuntimeRogMap>([this] { return now().seconds(); });
   map_->loadConfigAndInit(super_config_path_);
-  world_model_view_ = std::make_shared<RogWorldSnapshot>(
+  auto initial_world_view = std::make_shared<RogWorldSnapshot>(
       map_->exportPlanningGrid(), navigation_world_model::WorldSnapshotIdentity{
                                       world_generation_, world_revision_, 0});
+  world_snapshot_store_.publish(initial_world_view);
+  world_model_view_ = world_snapshot_store_.load().view;
   planner_ = std::make_shared<super_planner::SuperPlanner>(
       super_config_path_, ros_interface_, world_model_view_, mission_limits);
 
@@ -566,9 +568,9 @@ void SuperNavigationNode::runCycle() {
     last_snapshot_bytes_ = next_world_view->byteSize();
     last_snapshot_owned_bytes_ = next_world_view->ownedByteSize();
     last_snapshot_shared_metadata_bytes_ = next_world_view->sharedMetadataByteSize();
-    world_model_view_ = std::move(next_world_view);
+    world_snapshot_store_.publish(next_world_view);
+    world_model_view_ = world_snapshot_store_.load().view;
     ++world_revision_;
-    planner_->setWorldModelView(world_model_view_);
   } catch (const std::exception& error) {
     ++map_update_exception_count_;
     RCLCPP_FATAL(get_logger(),
@@ -777,6 +779,12 @@ void SuperNavigationNode::runCycle() {
   }
   super_utils::RET_CODE result = super_utils::FAILED;
   const std::uint64_t solve_generation = ++planner_solve_generation_;
+  const auto pinned_world = world_snapshot_store_.load();
+  if (!pinned_world) {
+    RCLCPP_ERROR(get_logger(), "SUPER cannot solve without a published WorldModel snapshot");
+    return;
+  }
+  planner_->setWorldModelView(pinned_world.view);
   planner_solve_started_steady_ns_.store(steadyNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
@@ -1054,6 +1062,8 @@ void SuperNavigationNode::runCycle() {
         planner_elapsed_ms > planner_->solveDeadlineSeconds() * 1000.0;
     RCLCPP_INFO(get_logger(),
                 "SUPER decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
+                "pinned_world_generation=%lu pinned_world_revision=%lu "
+                "pinned_world_stamp_ns=%ld "
                 "cloud_stamp_ns=%ld corrected_stamp_ns=%ld propagated_stamp_ns=%ld "
                 "state_age_ms=%.3f mode=%s result=%d replan_code=%d "
                 "solve_stage=%d solve_stage_name=%s solve_elapsed_ms=%.3f "
@@ -1065,6 +1075,9 @@ void SuperNavigationNode::runCycle() {
                 static_cast<unsigned long>(cycle_count_),
                 static_cast<unsigned long>(solve_generation),
                 static_cast<unsigned long>(committed_generation),
+                static_cast<unsigned long>(pinned_world.identity.generation),
+                static_cast<unsigned long>(pinned_world.identity.revision),
+                static_cast<long>(pinned_world.identity.observation_stamp_ns),
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
                 static_cast<double>(execution_age_ns) * 1e-6,
@@ -1104,6 +1117,9 @@ void SuperNavigationNode::runCycle() {
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
+    add_trace_value("pinned_world_generation", pinned_world.identity.generation);
+    add_trace_value("pinned_world_revision", pinned_world.identity.revision);
+    add_trace_value("pinned_world_stamp_ns", pinned_world.identity.observation_stamp_ns);
     add_trace_value("candidate_result", static_cast<int>(result));
     add_trace_value("replan_code", replan_return_code);
     add_trace_value("solve_stage", solve_stage);
