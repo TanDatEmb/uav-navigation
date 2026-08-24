@@ -17,6 +17,7 @@ RUNTIME = Path(__file__).resolve().parents[1]
 ROOT = RUNTIME.parents[1]
 sys.path.insert(0, str(RUNTIME))
 
+import monitor
 from monitor import StreamStats
 import report
 import runner
@@ -534,6 +535,115 @@ class RuntimeContractTest(unittest.TestCase):
         dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
         self.assertEqual(dataset_body.count('"use_sim_time:=true"'), 2)
         self.assertNotIn('"use_sim_time:=false"', dataset_body)
+
+    def test_dataset_raw_observers_use_reliable_product_capacity(self) -> None:
+        config = runner.load_config("dataset.yaml")
+        self.assertEqual(
+            monitor._observer_qos_contract("dataset", config, "imu"),
+            ("reliable", 4096),
+        )
+        self.assertEqual(
+            monitor._observer_qos_contract("dataset", config, "lidar"),
+            ("reliable", 16),
+        )
+        self.assertEqual(
+            monitor._observer_qos_contract("dataset", config, "corrected_odometry"),
+            ("best_effort", 100),
+        )
+        self.assertEqual(
+            monitor._observer_qos_contract("sim", config, "imu"),
+            ("best_effort", 100),
+        )
+        broken = runner.load_config("dataset.yaml")
+        broken["fast_lio"]["ros__parameters"]["runtime"]["lidar_queue_capacity"] = 0
+        with self.assertRaisesRegex(ValueError, "positive lidar_queue_capacity"):
+            monitor._observer_qos_contract("dataset", broken, "lidar")
+
+    def test_dataset_source_counts_are_exact_and_fail_closed(self) -> None:
+        streams = {"imu": {"sample_count": 55435}, "lidar": {"sample_count": 2772}}
+        runtime = {"dataset_context": {"expected_stream_counts": {
+            "imu": 55435, "lidar": 2772,
+        }}}
+        self.assertEqual(report._dataset_source_count_reasons(streams, runtime), [])
+        self.assertTrue(streams["imu"]["source_count_complete"])
+        self.assertTrue(streams["lidar"]["source_count_complete"])
+
+        short = {"imu": {"sample_count": 55435}, "lidar": {"sample_count": 2759}}
+        self.assertEqual(
+            report._dataset_source_count_reasons(short, runtime),
+            ["lidar source count mismatch: observed 2759, expected 2772"],
+        )
+        duplicate = {"imu": {"sample_count": 55436}, "lidar": {"sample_count": 2772}}
+        self.assertEqual(
+            report._dataset_source_count_reasons(duplicate, runtime),
+            ["imu source count mismatch: observed 55436, expected 55435"],
+        )
+
+        missing = {"imu": {"sample_count": 55435}, "lidar": {"sample_count": 2772}}
+        reasons = report._dataset_source_count_reasons(missing, {})
+        self.assertIn("dataset expected source counts are missing", reasons)
+        self.assertIn("imu expected source count is invalid or missing", reasons)
+        self.assertIn("lidar expected source count is invalid or missing", reasons)
+
+    def test_dataset_report_verdict_fails_for_short_raw_source_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            (session / "runtime.json").write_text(json.dumps({
+                "failures": [],
+                "dataset_context": {"expected_stream_counts": {
+                    "imu": 55435, "lidar": 2772,
+                }},
+            }), encoding="utf-8")
+            snapshot = {
+                "streams": {
+                    "imu": {"received": 55435, "mean_rate_hz": 200.0},
+                    "lidar": {"received": 2759, "mean_rate_hz": 10.0},
+                    "corrected_odometry": {"received": 1, "mean_rate_hz": 10.0},
+                    "propagated_odometry": {"received": 1, "mean_rate_hz": 50.0},
+                },
+                "diagnostics": {
+                    "state": "TRACKING",
+                    "navigation_valid": True,
+                    "values": {
+                        "state": "TRACKING",
+                        "current_queue_depth": 0,
+                        "imu_drop_count": 0,
+                        "lidar_drop_count": 0,
+                    },
+                },
+            }
+            config = runner.load_config("dataset.yaml")
+            result = report._dataset_report(session, config, snapshot, ROOT)
+            self.assertEqual(result["verdict"], "FAIL")
+            self.assertIn(
+                "lidar source count mismatch: observed 2759, expected 2772",
+                result["reasons"],
+            )
+
+    def test_dataset_runner_normalizes_topics_and_waits_for_exact_drain(self) -> None:
+        context = {"input": {"imu_topic": "/custom/gyro", "lidar_topic": "/custom/cloud"}}
+        expected = runner._expected_dataset_stream_counts(
+            context, {"/custom/gyro": 7, "/custom/cloud": 3}
+        )
+        self.assertEqual(expected, {"imu": 7, "lidar": 3})
+        counts = {"imu": 7, "lidar": 2, "corrected_odometry": 1,
+                  "propagated_odometry": 1}
+        with mock.patch.object(runner, "_stream_count", side_effect=lambda _, name: counts[name]):
+            self.assertFalse(runner._dataset_outputs_drained(mock.Mock(), expected))
+        counts["lidar"] = 3
+        with mock.patch.object(runner, "_stream_count", side_effect=lambda _, name: counts[name]):
+            self.assertTrue(runner._dataset_outputs_drained(mock.Mock(), expected))
+
+    def test_dataset_playback_summary_exposes_actual_requested_rate_fraction(self) -> None:
+        runtime = {
+            "replay_started_wall_ns": 10_000_000_000,
+            "replay_finished_wall_ns": 20_000_000_000,
+            "dataset_context": {"source_duration_ns": 20_000_000_000},
+        }
+        playback = report._dataset_playback_summary(runtime, 2.0)
+        self.assertTrue(playback["available"])
+        self.assertEqual(playback["achieved_rate"], 2.0)
+        self.assertEqual(playback["requested_rate_fraction"], 1.0)
 
     def test_dataset_mapping_integrity_rejects_replaced_observations(self) -> None:
         reasons = report._mapping_integrity_reasons({

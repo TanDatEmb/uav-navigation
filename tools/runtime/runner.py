@@ -1051,6 +1051,36 @@ def _dataset_replay_command(context: dict[str, Any], rate: float) -> list[str]:
     ]
 
 
+def _expected_dataset_stream_counts(
+    context: dict[str, Any], counts: dict[str, int]
+) -> dict[str, int]:
+    return {
+        "imu": counts[context["input"]["imu_topic"]],
+        "lidar": counts[context["input"]["lidar_topic"]],
+    }
+
+
+def _dataset_source_duration_ns(context: dict[str, Any]) -> int:
+    metadata = yaml.safe_load((Path(context["bag"]) / "metadata.yaml").read_text(
+        encoding="utf-8"
+    ))
+    duration = metadata.get("rosbag2_bagfile_information", {}).get("duration", {}).get(
+        "nanoseconds"
+    )
+    if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
+        raise RuntimeError("dataset bag duration is missing or invalid")
+    return duration
+
+
+def _dataset_outputs_drained(session: Session, expected: dict[str, int]) -> bool:
+    return (
+        _stream_count(session, "imu") == expected["imu"]
+        and _stream_count(session, "lidar") == expected["lidar"]
+        and _stream_count(session, "corrected_odometry") > 0
+        and _stream_count(session, "propagated_odometry") > 0
+    )
+
+
 def run_dataset(
     dataset: str,
     rate: float,
@@ -1081,7 +1111,14 @@ def run_dataset(
             failures=[],
         )
         context, counts = _dataset_context(dataset)
-        _write_runtime(session, dataset_context={"id": context["id"], "bag": str(context["bag"]), "counts": counts})
+        expected_stream_counts = _expected_dataset_stream_counts(context, counts)
+        _write_runtime(session, dataset_context={
+            "id": context["id"],
+            "bag": str(context["bag"]),
+            "counts": counts,
+            "expected_stream_counts": expected_stream_counts,
+            "source_duration_ns": _dataset_source_duration_ns(context),
+        })
         ros_config = _ros_params(session, RUNTIME_CONFIG / "dataset.yaml")
         mapping_config = _mapping_params(
             session,
@@ -1123,6 +1160,7 @@ def run_dataset(
             _start_rviz(session)
         timeout_s = float(config["runtime"]["timeouts"]["startup_s"])
         _wait_until(session, lambda snapshot: _stream_count(session, "diagnostics") > 0, timeout_s, "LIO diagnostics")
+        _write_runtime(session, replay_started_wall_ns=time.time_ns())
         replay = session.start(
             "replay",
             _ros_shell(_dataset_replay_command(context, rate), enable_rviz=enable_rviz),
@@ -1134,10 +1172,7 @@ def run_dataset(
             raise RuntimeError(f"dataset replay exited with {replay_code}")
         _wait_until(
             session,
-            lambda snapshot: _stream_count(session, "imu") >= int(counts[context["input"]["imu_topic"]] * float(config["runtime"]["thresholds"].get("minimum_rate_fraction", 0.90)))
-            and _stream_count(session, "lidar") >= int(counts[context["input"]["lidar_topic"]] * float(config["runtime"]["thresholds"].get("minimum_rate_fraction", 0.90)))
-            and _stream_count(session, "corrected_odometry") > 0
-            and _stream_count(session, "propagated_odometry") > 0,
+            lambda snapshot: _dataset_outputs_drained(session, expected_stream_counts),
             float(config["runtime"]["timeouts"]["drain_s"]),
             "dataset outputs and queue drain",
         )

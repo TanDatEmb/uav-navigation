@@ -567,3 +567,41 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   exception injection through every real map update/export/publication stage
   and the package-wide TSan gate remain separate work; this subprocess result
   does not promote WM-3 or closed-loop flight to complete.
+
+### 2026-08-25 - Dataset ingress count contract and 2x screening
+
+- Closed a dataset-report false-PASS path: the runner previously drained after
+  only 90 percent of expected raw messages and the monitor observed every topic
+  with BEST_EFFORT QoS. Artifact
+  `.artifacts/runtime/dataset-20260824T220548-252204` therefore reported PASS
+  while its monitor saw only 2,759 of 2,772 LiDAR messages. Product mapping was
+  exact in that run, but raw-ingress evidence was incomplete.
+- Only the dataset monitor's raw IMU and LiDAR subscriptions now use RELIABLE
+  QoS, with bounded depths taken from the configured product ingress capacities
+  (4,096 and 16). Derived odometry, diagnostics, mapping, SITL and PX4 monitor
+  streams remain BEST_EFFORT. The runner persists normalized expected counts
+  from validated bag metadata and waits for exact raw counts within the existing
+  drain timeout. The final report rejects missing, short, duplicate, zero or
+  malformed source-count evidence. The existing 90-percent expected-rate
+  verdict gate remains unchanged for stream-rate health; exact metadata counts
+  are additionally authoritative for raw dataset ingress.
+- Runner provenance now includes bag source duration and replay-process wall
+  start/end. Reported achieved rate is a conservative process-envelope metric
+  because it includes process startup; it is characterization and does not add
+  or relax a hard threshold.
+- Dirty screening artifact
+  `.artifacts/runtime/dataset-20260824T221409-255299` requested 2x and passed:
+  IMU 55,435/55,435, LiDAR 2,772/2,772, mapping received/accepted/started/
+  published/revision 2,756, and zero replacement, failure, pending, in-flight or
+  accounting violation. Source duration 277.167 seconds replayed in 141.807
+  seconds, achieved rate 1.955x (97.73 percent of requested). Mapping callback
+  p50/p95/p99 was 3.134/5.286/16.984 ms and snapshot export was
+  3.035/4.435/4.741 ms; each distribution had exactly 2,756 samples. This is a
+  harness screening result because source provenance records a dirty worktree,
+  not the required clean 3/3 throughput certificate.
+- The prepared catalog still contains only `aist-mid360-drive`; it is not
+  identified as dense vegetation and has no ground truth. Dense vegetation and
+  thin-branch mapping evidence remain BLOCKED pending a prepared bag with
+  mounting/extrinsic/timestamp/source checksum provenance. Dataset replay also
+  has no goals, so it does not certify A*, CIRI or MINCO; recorded-world shadow
+  planning or closed-loop scenarios remain necessary.

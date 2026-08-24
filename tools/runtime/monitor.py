@@ -305,6 +305,22 @@ class TopicSpec:
     formatter: Callable[[Any], dict[str, Any]]
 
 
+def _observer_qos_contract(
+    workflow: str, config: dict[str, Any], stream_name: str
+) -> tuple[str, int]:
+    default_depth = int(config.get("runtime", {}).get("monitor_queue_depth", 100))
+    if workflow != "dataset" or stream_name not in {"imu", "lidar"}:
+        return "best_effort", default_depth
+    product_runtime = (
+        config.get("fast_lio", {}).get("ros__parameters", {}).get("runtime", {})
+    )
+    capacity_key = "imu_queue_capacity" if stream_name == "imu" else "lidar_queue_capacity"
+    depth = int(product_runtime.get(capacity_key, 0))
+    if depth <= 0:
+        raise ValueError(f"dataset observer requires positive {capacity_key}")
+    return "reliable", depth
+
+
 class RuntimeMonitor:
     """ROS node used by all runtime workflows."""
 
@@ -322,8 +338,6 @@ class RuntimeMonitor:
         self._sample_stream = self.samples_path.open("a", encoding="utf-8")
         self._rclpy = rclpy
         self.node = Node("uav_navigation_runtime_monitor")
-        depth = int(config.get("runtime", {}).get("monitor_queue_depth", 100))
-        qos = QoSProfile(depth=depth, reliability=ReliabilityPolicy.BEST_EFFORT)
         thresholds = config.get("runtime", {}).get("thresholds", {})
         self.streams: dict[str, StreamStats] = {}
         self.latest: dict[str, dict[str, Any]] = {}
@@ -344,6 +358,15 @@ class RuntimeMonitor:
                 ),
             )
             try:
+                reliability, depth = _observer_qos_contract(
+                    self.workflow, self.config, spec.name
+                )
+                qos = QoSProfile(
+                    depth=depth,
+                    reliability=(ReliabilityPolicy.RELIABLE
+                                 if reliability == "reliable"
+                                 else ReliabilityPolicy.BEST_EFFORT),
+                )
                 self.node.create_subscription(
                     spec.message_type,
                     spec.topic,

@@ -1673,6 +1673,53 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
     return reasons
 
 
+def _dataset_source_count_reasons(
+    streams: dict[str, dict[str, Any]], runtime: dict[str, Any]
+) -> list[str]:
+    reasons: list[str] = []
+    expected_stream_counts = runtime.get("dataset_context", {}).get(
+        "expected_stream_counts"
+    )
+    if not isinstance(expected_stream_counts, dict):
+        reasons.append("dataset expected source counts are missing")
+        expected_stream_counts = {}
+    for name in ("imu", "lidar"):
+        expected = expected_stream_counts.get(name)
+        observed = streams[name]["sample_count"]
+        valid_expected = isinstance(expected, int) and not isinstance(expected, bool) and expected > 0
+        streams[name]["expected_source_count"] = expected if valid_expected else None
+        streams[name]["observed_source_count"] = observed
+        streams[name]["source_count_complete"] = bool(valid_expected and observed == expected)
+        if not valid_expected:
+            reasons.append(f"{name} expected source count is invalid or missing")
+        elif observed != expected:
+            reasons.append(
+                f"{name} source count mismatch: observed {observed}, expected {expected}"
+            )
+    return reasons
+
+
+def _dataset_playback_summary(runtime: dict[str, Any], requested_rate: float) -> dict[str, Any]:
+    started = runtime.get("replay_started_wall_ns")
+    finished = runtime.get("replay_finished_wall_ns")
+    source_duration = runtime.get("dataset_context", {}).get("source_duration_ns")
+    valid = all(
+        isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for value in (started, finished, source_duration)
+    ) and finished > started
+    wall_duration_s = (finished - started) / 1e9 if valid else None
+    achieved_rate = (source_duration / 1e9) / wall_duration_s if valid else None
+    return {
+        "requested_rate": requested_rate,
+        "source_duration_s": source_duration / 1e9 if valid else None,
+        "wall_duration_s": wall_duration_s,
+        "achieved_rate": achieved_rate,
+        "requested_rate_fraction": achieved_rate / requested_rate
+        if valid and requested_rate > 0 else None,
+        "available": valid,
+    }
+
+
 def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
     streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry")}
@@ -1689,6 +1736,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     planning["execution"] = _planning_execution_summary(snapshot)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     reasons: list[str] = []
+    reasons.extend(_dataset_source_count_reasons(streams, runtime))
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
         if row["sample_count"] <= 0:
@@ -1711,12 +1759,14 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     verdict = "PASS" if not reasons else "FAIL"
     if not any(streams[name]["sample_count"] for name in streams):
         verdict = "BLOCKED"
+    requested_rate = config.get("runtime", {}).get("replay_rate", 1.0)
     return {
         "workflow": "dataset",
         "verdict": verdict,
         "reasons": reasons,
         "dataset": config.get("runtime", {}).get("dataset", ""),
-        "rate": config.get("runtime", {}).get("replay_rate", 1.0),
+        "rate": requested_rate,
+        "playback": _dataset_playback_summary(runtime, float(requested_rate)),
         "streams": streams,
         "lio": {
             "state": diagnostics.get("state", "NOT_AVAILABLE"),
