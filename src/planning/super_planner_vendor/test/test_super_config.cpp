@@ -27,6 +27,9 @@ TEST(SuperProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_GE(planner.astar_total_time_limit_s, planner.astar_search_time_limit_s);
   EXPECT_LT(planner.astar_total_time_limit_s, planner.solve_deadline_s);
   EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.corridor_plane_tolerance_m, 0.01);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.vertical_guide_tolerance_m, 0.05);
+  EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
 
 TEST(SuperProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {

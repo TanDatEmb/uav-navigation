@@ -831,7 +831,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         // Corridor planes are a hard safety contract.  The integrated L-BFGS
         // penalty is only a search aid and must not authorize the historical
         // 0.2 m excursion outside an SFC.
-        const double corridor_plane_tolerance = std::max(1.0e-5, cfg_.smooth_eps);
+        const double corridor_plane_tolerance = cfg_.corridor_plane_tolerance_m;
         return cfg_.penna_pos <= 0 ||
                opt_vars.penalty_log(POS_IDX) <= corridor_plane_tolerance;
     };
@@ -861,7 +861,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         // Five optimizer smoothing widths (5 cm with the product config) are
         // enough for fixed measured boundary PVAJ to settle without allowing
         // the metre-scale artificial extrema this gate is intended to stop.
-        const double tolerance = std::max(1.0e-3, 5.0 * cfg_.smooth_eps);
+        const double tolerance = cfg_.vertical_guide_tolerance_m;
         constexpr int kEnvelopeSamplesPerPiece = 20;
         for (int piece_index = 0; piece_index < traj.getPieceNum(); ++piece_index) {
             const double duration = traj[piece_index].getDuration();
@@ -914,7 +914,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         ros_ptr_->warn(
                 " -- [ExpOpt] hard corridor gate rejected trajectory: cost={} limit={} lbfgs_ret={}",
                 opt_vars.penalty_log(POS_IDX),
-                std::max(1.0e-5, cfg_.smooth_eps), ret);
+                cfg_.corridor_plane_tolerance_m, ret);
         ret = -1;
     }
 

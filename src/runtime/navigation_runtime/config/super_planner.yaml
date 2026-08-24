@@ -29,8 +29,9 @@ super_planner:
   # requires more visibility, up to the product cap above.
   safe_corridor_line_nominal_length: 14.0
   # One CIRI pass already separates every occupied point from the seed line.
-  # Additional passes only enlarge the inscribed volume and create an
-  # unbounded latency tail near dense obstacle surfaces.
+    # Additional passes only enlarge the inscribed volume and create an
+    # unbounded latency tail near dense obstacle surfaces.
+    # Temporary performance policy TB-003; dataset snapshot A/B is required.
   iris_iter_num: 1
   obs_skip_num: 2
   # Replan from a short future state to preserve PVA continuity without
@@ -84,6 +85,13 @@ traj_opt:
     scale_factor: 1.0
     integral_reso: 15
     smooth_eps: 0.01
+    # HG-002 NUMERICAL_TOLERANCE: normalized corridor-plane violation in metres.
+    # Kept separate from L-BFGS smoothing so optimizer tuning cannot relax the
+    # geometric certificate. This provisional value requires dataset/SITL A/B.
+    corridor_plane_tolerance_m: 0.01
+    # HG-003 NUMERICAL_TOLERANCE: provisional vertical deviation around the
+    # collision-checked guide. It remains a sampled gate pending analytic extrema.
+    vertical_guide_tolerance_m: 0.05
     # X500 smooth-flight profile (derived from SUPER click_smooth), not the
     # static_high_speed research time pressure that drives short segments into
     # L-BFGS line-search failure.
@@ -91,13 +99,14 @@ traj_opt:
     penna_pos: 5.0e+8
     # X500-scaled dynamic penalties. Jerk remains outside the objective because
     # its high-order gradient destabilizes hot replans; the analytic hard gate
-    # below is authoritative for both main and backup trajectories.
+    # below is authoritative for both main and backup trajectories (TB-001).
     penna_vel: 5.0e+5
     penna_acc: 5.0e+5
     penna_jerk: -1.0
     # SUPER baseline: a negative weight disables the corridor-center attractor.
     # Enabling it here caused competing waypoint pulls, open-space slalom and
     # flatness/position infeasibility around obstacle corridor overlaps.
+    # This temporary mechanism substitution is tracked as TB-002.
     penna_attract: -1.0e+7
     penna_omg: 1.0e+5
     penna_thr: 1.0e+5
@@ -111,6 +120,8 @@ traj_opt:
     scale_factor: 1.0
     integral_reso: 12
     smooth_eps: 0.01
+    corridor_plane_tolerance_m: 0.01
+    vertical_guide_tolerance_m: 0.05
     penna_t: 1200.0
     penna_ts: 1.0e+5
     penna_pos: 1.0e+10

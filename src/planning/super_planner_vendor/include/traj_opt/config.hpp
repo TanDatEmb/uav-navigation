@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <cmath>
+#include <stdexcept>
 #include <string>
 #include <utils/geometry/quadrotor_flatness.hpp>
 #include <utils/header/yaml_loader.hpp>
@@ -68,6 +70,10 @@ namespace traj_opt {
         double penna_margin{0.05};
 
         double smooth_eps{0};
+        // Numerical smoothing and geometric certificates have independent
+        // ownership. Changing one must never silently relax the other.
+        double corridor_plane_tolerance_m{0};
+        double vertical_guide_tolerance_m{0};
         int integral_reso{0};
         double opt_accuracy{0};
 
@@ -99,6 +105,10 @@ namespace traj_opt {
             loader.LoadParam("traj_opt" + ns + "opt_accuracy", opt_accuracy, 1.0e-5);
             loader.LoadParam("traj_opt" + ns + "integral_reso", integral_reso, 10);
             loader.LoadParam("traj_opt" + ns + "smooth_eps", smooth_eps, 0.01);
+            loader.LoadParam("traj_opt" + ns + "corridor_plane_tolerance_m",
+                             corridor_plane_tolerance_m, 0.01);
+            loader.LoadParam("traj_opt" + ns + "vertical_guide_tolerance_m",
+                             vertical_guide_tolerance_m, 0.05);
             loader.LoadParam("traj_opt/boundary/max_vel", max_vel, -1.0);
             loader.LoadParam("traj_opt/boundary/max_acc", max_acc, -1.0);
             loader.LoadParam("traj_opt/boundary/max_jerk", max_jerk, -1.0);
@@ -128,6 +138,16 @@ namespace traj_opt {
                 penna_attract = penna_attract * penna_scale;
                 penna_omg = penna_omg * penna_scale;
                 penna_thr = penna_thr * penna_scale;
+            }
+
+            if (!std::isfinite(smooth_eps) || smooth_eps <= 0.0 ||
+                !std::isfinite(corridor_plane_tolerance_m) ||
+                corridor_plane_tolerance_m < 0.0 ||
+                !std::isfinite(vertical_guide_tolerance_m) ||
+                vertical_guide_tolerance_m < 0.0) {
+                throw std::invalid_argument(
+                    "trajectory smoothing and geometric tolerances must be finite; "
+                    "smoothing must be positive and certificate tolerances non-negative");
             }
 
             quadrotot_flatness.reset(mass, grav, dh, dv, cp, v_eps);
