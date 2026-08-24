@@ -8,17 +8,25 @@
 #include <string_view>
 
 #include <coordinate_conventions/frame_conventions.hpp>
+#include <navigation_interfaces/execution_state_freshness.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
 #include <px4_ros2/utils/frame_conversion.hpp>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
+#include "px4_navigation_external_mode/command_acceptance_gate.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
 
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
+
+std::int64_t steadyNowNanoseconds() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
   return coordinate_conventions::enuToNed(value_enu).cast<float>();
@@ -292,12 +300,25 @@ void NavigationMode::onSuperCommand(
 
   bool accepted = false;
   bool anchor_invalid = false;
+  bool odometry_stale = false;
+  navigation_interfaces::ExecutionStateFreshness odometry_freshness;
   TrackingEnvelopeResult tracking_envelope;
   std::optional<RejectProvenance> reject_provenance;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (super_command_.has_value() &&
-        message->trajectory_id <= super_command_->trajectory_id) {
+    const auto odometry_source_ns = odometry_
+        ? rclcpp::Time(odometry_->header.stamp).nanoseconds() : 0;
+    odometry_freshness = navigation_interfaces::evaluateExecutionStateFreshness(
+        node().get_clock()->now().nanoseconds(), odometry_source_ns,
+        steadyNowNanoseconds(), last_odometry_receive_steady_ns_, state_stale_after_s_);
+    const auto acceptance_gate = classifyCommandAcceptance(
+        odometry_freshness, message->trajectory_id,
+        super_command_ ? super_command_->trajectory_id : 0U);
+    odometry_stale = acceptance_gate == CommandAcceptanceGate::kOdometryStale;
+    if (odometry_stale) {
+      ++trajectory_rejected_count_;
+      if (!failure_reported_) ++stale_state_failure_count_;
+    } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
       ++trajectory_rejected_count_;
       return;
     }
@@ -333,7 +354,8 @@ void NavigationMode::onSuperCommand(
           (measured - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m &&
           (command_position - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m;
     }
-    if (!terminal_failure && !terminal_hold_inside_acceptance && odometry_.has_value()) {
+    if (!odometry_stale && !terminal_failure && !terminal_hold_inside_acceptance &&
+        odometry_.has_value()) {
       const auto& point = odometry_->pose.pose.position;
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{message->position.x, message->position.y,
@@ -351,7 +373,7 @@ void NavigationMode::onSuperCommand(
         ++trajectory_rejected_count_;
       }
     }
-    if (!anchor_invalid) {
+    if (!anchor_invalid && !odometry_stale) {
       super_command_ = *message;
       ++trajectory_received_count_;
       ++trajectory_accepted_count_;
@@ -359,6 +381,19 @@ void NavigationMode::onSuperCommand(
       failure_reported_ = false;
       accepted = true;
     }
+  }
+  if (odometry_stale) {
+    RCLCPP_ERROR(node().get_logger(),
+                 "Rejecting SUPER command because navigation odometry lease is stale: "
+                 "reason=%s source_age_ms=%.3f receive_age_ms=%.3f generation=%lu "
+                 "trajectory_time=%.6f",
+                 navigation_interfaces::executionStateFreshnessReasonName(
+                     odometry_freshness.reason),
+                 odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms,
+                 static_cast<unsigned long>(message->trajectory_generation),
+                 message->trajectory_time_s);
+    failNavigation("navigation odometry stale at command acceptance");
+    return;
   }
   if (anchor_invalid) {
     const char* role = "UNKNOWN";
@@ -561,6 +596,7 @@ void NavigationMode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& m
         (receive_ns - last_odometry_receive_ns_) / 1000);
   }
   last_odometry_receive_ns_ = receive_ns;
+  last_odometry_receive_steady_ns_ = steadyNowNanoseconds();
   ++odometry_callback_count_;
   odometry_ = *message;
 }
@@ -689,11 +725,13 @@ void NavigationMode::failNavigation(const char* reason) {
 void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::optional<mars_quadrotor_msgs::msg::PositionCommand> super_command;
   std::optional<nav_msgs::msg::Odometry> odometry;
+  std::int64_t odometry_receive_steady_ns = 0;
   const auto now = node().get_clock()->now();
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     super_command = super_command_;
     odometry = odometry_;
+    odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
   }
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
@@ -756,6 +794,27 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   if (mission_controller_ && mission_controller_->waitingForAirborne()) {
     publishStationary(std::nullopt);
     return;
+  }
+  {
+    const auto odometry_source_ns = odometry
+        ? rclcpp::Time(odometry->header.stamp).nanoseconds() : 0;
+    const auto odometry_freshness = navigation_interfaces::evaluateExecutionStateFreshness(
+        now.nanoseconds(), odometry_source_ns, steadyNowNanoseconds(),
+        odometry_receive_steady_ns, state_stale_after_s_);
+    if (!odometry_freshness.valid()) {
+      {
+        std::lock_guard<std::mutex> lock(trajectory_mutex_);
+        if (!failure_reported_) ++stale_state_failure_count_;
+      }
+      RCLCPP_ERROR(node().get_logger(),
+                   "Navigation odometry lease failed before setpoint update: reason=%s "
+                   "source_age_ms=%.3f receive_age_ms=%.3f",
+                   navigation_interfaces::executionStateFreshnessReasonName(
+                       odometry_freshness.reason),
+                   odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms);
+      failNavigation("navigation odometry stale before setpoint update");
+      return;
+    }
   }
   if (mission_controller_ && mission_controller_->holding()) {
     const auto waypoint = mission_controller_->activeWaypoint();

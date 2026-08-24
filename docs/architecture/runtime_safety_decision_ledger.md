@@ -751,3 +751,60 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   External Mode. This batch does not duplicate the current `0.75/0.25` values,
   does not call the raw splice residual a safety margin, and does not use any
   new diagnostic in commit authorization.
+
+### 2026-08-25 - Dual-clock execution-state lease at command ownership boundaries
+
+- Coherent-overlay artifact
+  `.artifacts/runtime/external-mode-check-20260824T231559-283215` separated the
+  high-speed symptom from trajectory stitching. Generation 351 to 352 had zero
+  P/V/A/J/yaw/yaw-rate splice residual, but propagated odometry and world
+  revision then stopped advancing for about 0.7 s while command trajectory time
+  advanced by 0.404 s. External Mode correctly rejected the resulting forward
+  envelope error. This batch addresses stale execution ownership; it does not
+  tune SUPER, the tracking envelope, deadlines, QoS or executor thread count.
+- The runtime and controller now classify an execution-state lease with two
+  independent clocks: the source header is aged against ROS time, while receipt
+  is aged against steady time. Frozen or delayed `/clock` therefore cannot hide
+  callback/DDS/executor starvation. The existing configured freshness limits
+  are reused (currently 0.5 s in the product profiles); this batch does not
+  certify or relax those values. Missing, future, source-stale and
+  receive-stale states fail closed. Propagated odometry is also rejected before
+  ownership when its P/V/quaternion is non-finite or degenerate.
+- Immediately before command sampling, runtime snapshots the propagated lease,
+  validates both ages, and serializes that decision with final solve exposure.
+  A stale transition cancels the solve once, clears nominal/safety-suffix
+  availability unconditionally and latches the logical goal. The explicit EMER
+  terminal command remains repeatable until External Mode acknowledges the
+  failure; later fresh odometry cannot resurrect the same goal. Only a new
+  logical goal resets the latch. The transition mutex also covers the sample
+  and publication decision, preventing a solve completion from racing a stale
+  callback into a nominal PVA publication. It is the owner of executable
+  availability/failure/suffix transitions for execution-lease failure,
+  hot-failure fallback, watchdog timeout, new-goal reset, terminal mode status
+  and final solve exposure. The lock order is `input -> transition`; no code
+  holds transition while acquiring input or while running a planner solve.
+  A monotonic goal epoch is captured by each solve and stored with executable
+  command ownership. Final exposure revalidates that epoch, while non-hot goal
+  changes and terminal status clear it atomically; an old solve or delayed
+  command callback therefore cannot republish a prior goal's committed bundle.
+  Epoch mismatch is discard-only: it cannot clear or fail a valid command that
+  PASS_THROUGH deliberately transferred to the newer goal.
+- External Mode owns a separate odometry lease. Staleness takes precedence over
+  duplicate command IDs and the tracking envelope, and the same check runs
+  before active hold or cached-command setpoint output. The deliberate
+  `waitingForAirborne()` stationary warm-up remains the only active-mode
+  exception because navigation has not started and no trajectory is executed.
+  Failure provenance reports source and steady receive ages and hands over to
+  PX4 Hold through the existing fail-closed path.
+- Verification on the dirty source: navigation runtime and PX4 External Mode
+  rebuilt successfully. All 13 focused runtime/PX4 test binaries passed. The
+  dual-clock/failure-gate suite passed 9/9, including exact freshness boundaries,
+  frozen ROS time, invalid/future inputs, one-shot latch/reset and both
+  serialized solve-exposure/stale-invalidation orderings and atomic new-goal
+  reset/old-command clearing, hot-failure/watchdog exposure rejection and
+  cross-goal epoch rejection;
+  controller contract
+  tests passed 7/7 and tracking-envelope tests 5/5. `git diff --check` passed.
+  Sanitizers, real executor starvation injection and the clean 2 m/s Gazebo
+  3/3 gate remain open. No dataset, speed-ladder or full-map acceptance is
+  claimed by this checkpoint.

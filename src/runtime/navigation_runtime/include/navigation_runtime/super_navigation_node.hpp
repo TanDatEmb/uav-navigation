@@ -23,6 +23,7 @@
 #include "navigation_runtime/observation_accounting.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/rog_world_model_adapter.hpp"
+#include "navigation_runtime/execution_state_gate.hpp"
 #include "navigation_runtime/rog_world_snapshot.hpp"
 #include "navigation_runtime/runtime_state.hpp"
 #include "navigation_runtime/world_snapshot_store.hpp"
@@ -146,7 +147,10 @@ class SuperNavigationNode final : public rclcpp::Node {
       latest_cloud_;
   std::deque<nav_msgs::msg::Odometry> corrected_odometry_history_;
   std::optional<nav_msgs::msg::Odometry> latest_propagated_odometry_;
+  std::int64_t latest_propagated_receive_steady_ns_{0};
+  std::uint64_t latest_propagated_sequence_{0};
   std::optional<navigation_interfaces::msg::NavigationGoal> active_goal_;
+  std::atomic_uint64_t active_goal_epoch_{0};
   bool new_goal_{false};
   // PASS_THROUGH waypoint transitions retarget SUPER through ReplanOnce so the
   // committed polynomial supplies the future PVA initial state.
@@ -169,11 +173,18 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::atomic_uint64_t invalid_corrected_pose_count_{0};
   std::atomic_uint64_t corrected_pair_mismatch_count_{0};
   std::atomic_uint64_t invalid_execution_state_count_{0};
+  std::atomic_uint64_t command_execution_lease_rejection_count_{0};
+  std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
+  ExecutionStateFailureLatch command_execution_lease_failure_latch_;
+  std::atomic_int command_execution_lease_reason_{0};
+  std::atomic_int64_t command_execution_source_age_us_{0};
+  std::atomic_int64_t command_execution_receive_age_us_{0};
   std::atomic_uint64_t map_update_exception_count_{0};
   std::atomic_int64_t last_input_conversion_us_{0};
   std::int64_t pending_cloud_received_steady_ns_{0};
   std::atomic_int64_t last_pair_wait_us_{0};
   std::atomic_uint32_t command_id_{0};
+  std::atomic_uint64_t command_goal_epoch_{0};
   std::atomic_bool accepting_observations_{true};
   std::atomic_bool planner_command_available_{false};
   std::atomic_bool planner_failure_latched_{false};

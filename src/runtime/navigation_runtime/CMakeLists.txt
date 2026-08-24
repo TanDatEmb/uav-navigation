@@ -31,6 +31,8 @@ target_include_directories(navigation_runtime_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_include_directories(navigation_runtime_node PRIVATE
+  ${navigation_interfaces_INCLUDE_DIRS})
 target_link_libraries(navigation_runtime_node PUBLIC
   super_planner_vendor::super_planner_vendor
   navigation_world_model::navigation_world_model
@@ -87,7 +89,9 @@ if(BUILD_TESTING)
   target_include_directories(test_observation_accounting PRIVATE include)
 
   ament_add_gtest(test_timestamp_freshness test/test_timestamp_freshness.cpp)
-  target_include_directories(test_timestamp_freshness PRIVATE include)
+  target_include_directories(test_timestamp_freshness PRIVATE
+    include ${navigation_interfaces_INCLUDE_DIRS})
+  ament_target_dependencies(test_timestamp_freshness navigation_interfaces)
   ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
   target_include_directories(test_world_snapshot_store PRIVATE include)
   target_link_libraries(test_world_snapshot_store

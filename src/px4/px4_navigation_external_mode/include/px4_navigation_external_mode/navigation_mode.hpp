@@ -101,6 +101,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t setpoint_update_count_{0U};
   std::uint64_t stale_state_failure_count_{0U};
   std::int64_t last_odometry_receive_ns_{0};
+  std::int64_t last_odometry_receive_steady_ns_{0};
   std::int64_t last_goal_publish_ns_{0};
   std::int64_t last_command_receive_ns_{0};
   std::int64_t maximum_odometry_callback_gap_us_{0};

@@ -5,6 +5,7 @@
 
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/timestamp_freshness.hpp"
+#include <navigation_interfaces/execution_state_freshness.hpp>
 #include "super_core/solve_stage.hpp"
 #include "super_core/trajectory_world_validator.hpp"
 
@@ -23,6 +24,18 @@
 
 namespace navigation_runtime {
 namespace {
+
+bool propagatedOdometryFinite(const nav_msgs::msg::Odometry& odometry) {
+  const auto& position = odometry.pose.pose.position;
+  const auto& orientation = odometry.pose.pose.orientation;
+  const auto& velocity = odometry.twist.twist.linear;
+  const Eigen::Quaterniond quaternion{
+      orientation.w, orientation.x, orientation.y, orientation.z};
+  return std::isfinite(position.x) && std::isfinite(position.y) &&
+         std::isfinite(position.z) && std::isfinite(velocity.x) &&
+         std::isfinite(velocity.y) && std::isfinite(velocity.z) &&
+         quaternion.coeffs().allFinite() && quaternion.norm() > 1.0e-6;
+}
 
 bool hasFloatField(const sensor_msgs::msg::PointCloud2& message, const std::string& name) {
   return std::any_of(message.fields.begin(), message.fields.end(), [&](const auto& field) {
@@ -528,13 +541,18 @@ void SuperNavigationNode::onPropagatedOdometry(
     return;
   }
   const auto stamp_ns = stampNanoseconds(message->header.stamp);
-  if (stamp_ns <= 0) return;
+  if (stamp_ns <= 0 || !propagatedOdometryFinite(*message)) {
+    ++invalid_execution_state_count_;
+    return;
+  }
   std::lock_guard<std::mutex> lock(input_mutex_);
   if (latest_propagated_odometry_ &&
       stamp_ns < stampNanoseconds(latest_propagated_odometry_->header.stamp)) {
     return;
   }
   latest_propagated_odometry_ = *message;
+  latest_propagated_receive_steady_ns_ = steadyNowNanoseconds();
+  ++latest_propagated_sequence_;
 }
 
 void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoal::ConstSharedPtr& message) {
@@ -565,6 +583,7 @@ void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoa
     // CmdTraj after this callback has invalidated it. The already committed
     // atomic bundle remains available for smooth hot-retarget continuity.
     planner_->cancelActiveSolve();
+    ++active_goal_epoch_;
   }
   active_goal_ = *message;
   if (reuse_completed_stop) {
@@ -578,18 +597,33 @@ void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoa
     restart_from_rest_ = false;
     skip_replan_once_ = false;
     trajectory_finished_.store(true);
+    {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      command_goal_epoch_.store(active_goal_epoch_.load());
+    }
     return;
   }
   if (!same_logical_goal) {
-    planner_failure_latched_.store(false);
-    safety_suffix_active_.store(false);
+    {
+      // Global order is input_mutex_ -> execution transition. Command sampling
+      // snapshots input and releases it before taking the transition lock.
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
+      planner_failure_latched_.store(false);
+      safety_suffix_active_.store(false);
+      if (can_hot_retarget) {
+        command_goal_epoch_.store(active_goal_epoch_.load());
+      } else {
+        planner_command_available_.store(false);
+        command_goal_epoch_.store(0U);
+      }
+    }
     plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
     hot_goal_transition_ = can_hot_retarget;
     new_goal_ = !can_hot_retarget;
-    if (!can_hot_retarget) {
-      planner_command_available_.store(false);
-    }
     restart_from_rest_ = false;
     skip_replan_once_ = false;
     trajectory_finished_.store(false);
@@ -615,14 +649,20 @@ void SuperNavigationNode::onModeStatus(
               message->state, message->reason, message->mission_id.c_str(),
               message->waypoint_index, static_cast<unsigned long>(message->request_id));
   planner_->cancelActiveSolve();
+  ++active_goal_epoch_;
   active_goal_.reset();
   new_goal_ = false;
   hot_goal_transition_ = false;
   restart_from_rest_ = false;
   skip_replan_once_ = false;
-  planner_command_available_.store(false);
-  planner_failure_latched_.store(false);
-  safety_suffix_active_.store(false);
+  {
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(false);
+    safety_suffix_active_.store(false);
+    command_goal_epoch_.store(0U);
+  }
   plan_from_rest_failure_budget_.reset();
   plan_from_rest_first_failure_steady_ns_ = 0;
   trajectory_finished_.store(false);
@@ -645,6 +685,7 @@ void SuperNavigationNode::runCycle() {
   bool new_goal = false;
   bool hot_goal_transition = false;
   bool restart_from_rest = false;
+  std::uint64_t goal_epoch = 0;
   std::int64_t input_conversion_us = 0;
   const auto input_lock_started = std::chrono::steady_clock::now();
   {
@@ -672,6 +713,7 @@ void SuperNavigationNode::runCycle() {
     new_goal = new_goal_;
     hot_goal_transition = hot_goal_transition_;
     restart_from_rest = restart_from_rest_;
+    goal_epoch = active_goal_epoch_.load();
     input_conversion_us = last_input_conversion_us_;
   }
   const auto now_ns = now().nanoseconds();
@@ -719,6 +761,17 @@ void SuperNavigationNode::runCycle() {
             invalid_corrected_pose_count_.load() + mapping.discarded_invalid);
   add_value("corrected_pair_mismatch_count", corrected_pair_mismatch_count_);
   add_value("invalid_execution_state_count", invalid_execution_state_count_);
+  add_value("command_execution_lease_rejection_count",
+            command_execution_lease_rejection_count_);
+  add_value("command_execution_lease_terminal_latch_count",
+            command_execution_lease_terminal_latch_count_);
+  add_value("command_execution_lease_failed",
+            command_execution_lease_failure_latch_.latched() ? 1U : 0U);
+  add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
+  add_value("command_execution_source_age_us",
+            command_execution_source_age_us_.load());
+  add_value("command_execution_receive_age_us",
+            command_execution_receive_age_us_.load());
   add_value("processing_exception_count", map_update_exception_count_);
   add_value("observation_rejected_before_inbox_count", accounting.rejected_before_inbox);
   add_value("observation_replaced_pending_count", accounting.replaced_pending);
@@ -867,6 +920,8 @@ void SuperNavigationNode::runCycle() {
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
     planner_command_available_.store(false);
     planner_failure_latched_.store(false);
     trajectory_reaches_goal_.store(false);
@@ -1072,12 +1127,32 @@ void SuperNavigationNode::runCycle() {
     }
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
-    safety_suffix_active_.store(
-        use_safety_suffix && (backup_available || emergency_brake_committed));
-    planner_failure_latched_.store(!use_safety_suffix);
-    if (emergency_brake_committed) {
-      planner_command_available_.store(true);
-      trajectory_finished_.store(false);
+    {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (active_goal_epoch_.load() != goal_epoch) {
+        // A newer goal owns command state now. This old solve is discard-only:
+        // never invalidate a deliberately transferred hot-retarget command.
+      } else if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        planner_command_available_.store(false);
+        planner_failure_latched_.store(true);
+        safety_suffix_active_.store(false);
+      } else {
+        safety_suffix_active_.store(
+            use_safety_suffix && (backup_available || emergency_brake_committed));
+        planner_failure_latched_.store(!use_safety_suffix);
+        if (!use_safety_suffix) {
+          planner_command_available_.store(false);
+          command_goal_epoch_.store(0U);
+        } else if (emergency_brake_committed) {
+          planner_command_available_.store(true);
+          command_goal_epoch_.store(goal_epoch);
+          trajectory_finished_.store(false);
+        }
+      }
+    }
+    if (emergency_brake_committed &&
+        command_execution_lease_failure_latch_.allowsCommandExposure()) {
       RCLCPP_WARN(get_logger(),
                   "SUPER replaced unusable committed suffix with a measured-state "
                   "emergency backup trajectory");
@@ -1089,7 +1164,6 @@ void SuperNavigationNode::runCycle() {
                   result, backup_available, elapsed_s, safety_transition_s,
                   total_duration_s, anchor_error_m);
     } else {
-      planner_command_available_.store(false);
       RCLCPP_ERROR(get_logger(),
                    "SUPER hot replan failed without a valid safety suffix: backup=%d "
                    "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f "
@@ -1104,10 +1178,30 @@ void SuperNavigationNode::runCycle() {
     }
   }
   if (disposition == PlannerResultDisposition::CommandReady) {
-    planner_command_available_.store(true);
-    planner_failure_latched_.store(false);
-    safety_suffix_active_.store(false);
-    trajectory_finished_.store(false);
+    {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (active_goal_epoch_.load() != goal_epoch) {
+        return;
+      }
+      if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        planner_command_available_.store(false);
+        planner_failure_latched_.store(true);
+        safety_suffix_active_.store(false);
+        return;
+      }
+      if (timed_out_planner_solve_generation_.load() == solve_generation) {
+        planner_command_available_.store(false);
+        planner_failure_latched_.store(true);
+        safety_suffix_active_.store(false);
+        return;
+      }
+      planner_command_available_.store(true);
+      command_goal_epoch_.store(goal_epoch);
+      planner_failure_latched_.store(false);
+      safety_suffix_active_.store(false);
+      trajectory_finished_.store(false);
+    }
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
     planner_->unlockCommittedTraj();
@@ -1427,7 +1521,8 @@ void SuperNavigationNode::runCycle() {
 }
 
 void SuperNavigationNode::publishCommand() {
-  const double now_seconds = now().seconds();
+  const auto command_ros_time = now();
+  const double now_seconds = command_ros_time.seconds();
   if (!std::isfinite(now_seconds)) return;
 
   const std::uint64_t active_solve = active_planner_solve_generation_.load();
@@ -1439,9 +1534,13 @@ void SuperNavigationNode::publishCommand() {
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
         planner_->cancelActiveSolve();
-        planner_command_available_.store(false);
-        planner_failure_latched_.store(true);
-        safety_suffix_active_.store(false);
+        {
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          planner_command_available_.store(false);
+          planner_failure_latched_.store(true);
+          safety_suffix_active_.store(false);
+        }
         RCLCPP_ERROR(get_logger(),
                      "SUPER planner watchdog timed out generation=%lu age=%.3f s stage=%d points=%zu; "
                      "invalidating committed main trajectory",
@@ -1460,9 +1559,74 @@ void SuperNavigationNode::publishCommand() {
   bool traj_finish = false;
   std::uint64_t trajectory_generation = 0;
   double trajectory_time_s = 0.0;
-  const bool safety_suffix_active = safety_suffix_active_.load();
-  const bool planner_failed = planner_failure_latched_.load();
-  if (!planner_command_available_.load() && !planner_failed) return;
+  bool safety_suffix_active = safety_suffix_active_.load();
+  bool planner_failed = planner_failure_latched_.load();
+  if (!planner_command_available_.load() && !planner_failed &&
+      command_execution_lease_failure_latch_.allowsCommandExposure()) return;
+  std::optional<nav_msgs::msg::Odometry> execution_odometry;
+  std::int64_t execution_receive_steady_ns = 0;
+  std::uint64_t execution_sequence = 0;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    execution_odometry = latest_propagated_odometry_;
+    execution_receive_steady_ns = latest_propagated_receive_steady_ns_;
+    execution_sequence = latest_propagated_sequence_;
+  }
+  const auto execution_source_ns = execution_odometry
+      ? stampNanoseconds(execution_odometry->header.stamp) : 0;
+  const auto execution_freshness = navigation_interfaces::evaluateExecutionStateFreshness(
+      command_ros_time.nanoseconds(), execution_source_ns,
+      steadyNowNanoseconds(), execution_receive_steady_ns, input_max_age_s_);
+  command_execution_lease_reason_.store(static_cast<int>(execution_freshness.reason));
+  command_execution_source_age_us_.store(static_cast<std::int64_t>(
+      execution_freshness.source_age_ms * 1000.0));
+  command_execution_receive_age_us_.store(static_cast<std::int64_t>(
+      execution_freshness.receive_age_ms * 1000.0));
+  std::unique_lock<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  const bool lease_already_failed =
+      !command_execution_lease_failure_latch_.allowsCommandExposure();
+  if (!execution_freshness.valid() || lease_already_failed) {
+    ++command_execution_lease_rejection_count_;
+    const bool first_failure = !execution_freshness.valid() &&
+        command_execution_lease_failure_latch_.tryLatch();
+    if (first_failure) {
+      ++command_execution_lease_terminal_latch_count_;
+    }
+    // Clearing executable command state is unconditional. The latch owns
+    // one-time cancellation/logging only; a solve that races past cancellation
+    // must never resurrect a nominal command for this failed goal.
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    safety_suffix_active_.store(false);
+    planner_failed = true;
+    safety_suffix_active = false;
+    if (first_failure) {
+      command_lock.unlock();
+      planner_->cancelActiveSolve();
+      RCLCPP_ERROR(
+          get_logger(),
+          "SUPER execution-state lease failed reason=%s source_age_ms=%.3f "
+          "receive_age_ms=%.3f sequence=%lu active_solve=%lu; publishing terminal EMER",
+          navigation_interfaces::executionStateFreshnessReasonName(execution_freshness.reason),
+          execution_freshness.source_age_ms, execution_freshness.receive_age_ms,
+          static_cast<unsigned long>(execution_sequence),
+          static_cast<unsigned long>(active_solve));
+      command_lock.lock();
+      planner_command_available_.store(false);
+      planner_failure_latched_.store(true);
+      safety_suffix_active_.store(false);
+    }
+  } else {
+    // These three flags form one executable command decision. Reload them
+    // only after acquiring the same serialization lock used by solve exposure.
+    planner_failed = planner_failure_latched_.load();
+    safety_suffix_active = safety_suffix_active_.load();
+  }
+  if (planner_command_available_.load() &&
+      command_goal_epoch_.load() != active_goal_epoch_.load()) {
+    return;
+  }
   if (planner_command_available_.load()) {
     const auto sample = planner_->sampleCommand();
     if (!sample.valid) {

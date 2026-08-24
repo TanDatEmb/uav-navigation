@@ -4,6 +4,21 @@
 #include <mars_quadrotor_msgs/msg/position_command.hpp>
 #include <px4_ros2/utils/frame_conversion.hpp>
 #include "px4_navigation_external_mode/reject_provenance.hpp"
+#include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+
+TEST(PositionCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) {
+  navigation_interfaces::ExecutionStateFreshness stale;
+  stale.reason = navigation_interfaces::ExecutionStateFreshnessReason::kReceiveStale;
+  EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(stale, 10U, 10U),
+            px4_navigation_external_mode::CommandAcceptanceGate::kOdometryStale);
+
+  navigation_interfaces::ExecutionStateFreshness fresh;
+  fresh.reason = navigation_interfaces::ExecutionStateFreshnessReason::kValid;
+  EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 10U, 10U),
+            px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
+  EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 11U, 10U),
+            px4_navigation_external_mode::CommandAcceptanceGate::kAccept);
+}
 
 TEST(PositionCommandContract, UsesDistinctMainAndBackupFlags) {
   mars_quadrotor_msgs::msg::PositionCommand command;
