@@ -54,7 +54,12 @@ std::int64_t steadyNowNanoseconds() {
 }  // namespace
 
 SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
-    : rclcpp::Node("super_navigation_node", options) {
+    : SuperNavigationNode(options, SuperNavigationDependencies{}) {}
+
+SuperNavigationNode::SuperNavigationNode(
+    const rclcpp::NodeOptions& options, SuperNavigationDependencies dependencies)
+    : rclcpp::Node("super_navigation_node", options),
+      mapping_lifecycle_observer_(std::move(dependencies.lifecycle_observer)) {
   cloud_topic_ = declare_parameter("super_navigation.cloud_topic", std::string("/lio/registered_points"));
   const auto legacy_odometry_topic = declare_parameter(
       "super_navigation.odometry_topic", std::string("/lio/odometry_propagated"));
@@ -161,6 +166,7 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
       initial_world_view->sharedMetadataByteSize();
   mapping_telemetry_->update(initial_telemetry);
   auto process_mapping = [mapping_map, telemetry = mapping_telemetry_,
+                          lifecycle_observer = mapping_lifecycle_observer_,
                           store = &world_snapshot_store_, revision = std::uint64_t{0}]
       (MappingObservation&& observation) mutable {
     const auto& pose = observation.corrected_odometry.pose.pose;
@@ -173,6 +179,9 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
                            normalized_q.y(), normalized_q.z()}};
     const auto map_started = std::chrono::steady_clock::now();
     mapping_map->updateMap(*observation.cloud, super_pose);
+    if (lifecycle_observer) {
+      lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
+    }
     const auto export_started = std::chrono::steady_clock::now();
     auto snapshot = std::make_shared<RogWorldSnapshot>(
         mapping_map->exportPlanningGrid(),
@@ -348,6 +357,9 @@ SuperNavigationNode::~SuperNavigationNode() {
     }
   }
   if (mapping_worker_) mapping_worker_->shutdown();
+  if (mapping_lifecycle_observer_) {
+    mapping_lifecycle_observer_->onShutdownComplete(observation_accounting_.snapshot());
+  }
 }
 
 bool SuperNavigationNode::decodeCloud(const sensor_msgs::msg::PointCloud2& message,

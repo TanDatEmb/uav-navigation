@@ -113,6 +113,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_mission_dynamics
     super_planner_vendor::super_planner_vendor
     yaml-cpp::yaml-cpp)
+  ament_add_gtest(test_super_navigation_shutdown
+    test/test_super_navigation_shutdown.cpp)
+  target_compile_definitions(test_super_navigation_shutdown PRIVATE
+    SUPER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/super_planner.yaml")
+  target_link_libraries(test_super_navigation_shutdown navigation_runtime_node)
 endif()
 
 ament_package()

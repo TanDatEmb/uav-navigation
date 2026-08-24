@@ -520,3 +520,31 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   one. Contiguous/lazy storage and smaller search-domain representations require
   separate behavior-parity and benchmark work; no map-size reduction,
   downsampling or test-only bypass was used to close this ownership defect.
+
+### 2026-08-25 - WM-3 real-node mapping shutdown certificate
+
+- Added a notification-only `MappingLifecycleObserver` dependency seam. It has
+  no mutable map, store, worker or node handle, returns no decision, and its
+  callbacks are `noexcept`. The production constructor delegates with no
+  observer, so mapping validation, update, export, publication, fatal handling,
+  planner behavior and configured gates are unchanged.
+- The integration test runs the real node library, product SUPER/ROG config and
+  a two-thread ROS executor. An exact corrected-odometry/cloud pair reaches the
+  real mutable ROG update; the observer blocks after `updateMap` and before
+  detached export. After executor quiescence and node removal, destruction is
+  proven to wait for the in-flight worker. Releasing the barrier permits one
+  publication and shutdown completes with received, accepted, started and
+  published all equal to one; failure and WAITING/READY/IN_FLIGHT/pending/
+  violation gauges are zero.
+- Topics and the driver node use a per-process suffix so concurrent sanitizer
+  jobs cannot satisfy discovery or lifecycle assertions for one another.
+  Executor cancellation and observer release both have unconditional RAII
+  cleanup paths; the test does not sleep in place of mapping or expose a test
+  handler that can bypass production behavior.
+- Evidence: Release passed five consecutive repetitions. The coherent ASan
+  overlay passed with leak detection enabled after the separately recorded
+  Astar ownership correction; UBSan passed with halt-on-error. Focused TSan
+  passed under ASLR-disabled execution with `halt_on_error=1` and the existing
+  narrow `mutex:libOpenNI2.so` constructor suppression; no product stack was
+  suppressed. Full package TSan and fail-stop subprocess certification remain
+  separate gates.

@@ -72,12 +72,26 @@ class MappingTelemetry {
   MappingTelemetrySnapshot state_;
 };
 
+class MappingLifecycleObserver {
+ public:
+  virtual ~MappingLifecycleObserver() = default;
+  virtual void onMutableMapUpdated(std::int64_t observation_stamp_ns) noexcept = 0;
+  virtual void onShutdownComplete(
+      ObservationAccounting::Snapshot lifecycle) noexcept = 0;
+};
+
+struct SuperNavigationDependencies {
+  std::shared_ptr<MappingLifecycleObserver> lifecycle_observer;
+};
+
 // Product ROS boundary for the imported SUPER core. The cloud is retained as
 // one pending observation and odometry is retained as a short timestamped
 // history; planning consumes only a compatible cloud/odometry pair.
 class SuperNavigationNode final : public rclcpp::Node {
  public:
   explicit SuperNavigationNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions{});
+  SuperNavigationNode(const rclcpp::NodeOptions& options,
+                      SuperNavigationDependencies dependencies);
   ~SuperNavigationNode() override;
 
  private:
@@ -189,6 +203,7 @@ class SuperNavigationNode final : public rclcpp::Node {
   ros_interface::RosInterface::Ptr ros_interface_;
   WorldSnapshotStore world_snapshot_store_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
+  std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
   std::unique_ptr<MappingWorker<MappingObservation>> mapping_worker_;
   super_planner::SuperPlanner::Ptr planner_;
 };
