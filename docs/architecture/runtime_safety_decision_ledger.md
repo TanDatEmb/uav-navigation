@@ -605,3 +605,19 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   mounting/extrinsic/timestamp/source checksum provenance. Dataset replay also
   has no goals, so it does not certify A*, CIRI or MINCO; recorded-world shadow
   planning or closed-loop scenarios remain necessary.
+- Clean post-checkpoint 2x throughput evidence passed 3/3 at commit `89dfb60`:
+  `.artifacts/runtime/dataset-20260824T221835-256982`,
+  `.artifacts/runtime/dataset-20260824T222102-257362`, and
+  `.artifacts/runtime/dataset-20260824T222328-257732`. Every run observed exact
+  IMU 55,435/55,435 and LiDAR 2,772/2,772, published exactly 2,756 mapping
+  revisions, and ended with zero replacement, failure, pending, in-flight,
+  rejection or accounting violation. LIO ended TRACKING/navigation-valid with
+  zero rejected corrections. Achieved process-envelope rates were
+  1.95458/1.95454/1.95454x. Mapping callback p99 was
+  16.794/17.084/17.071 ms and snapshot-export p99 was
+  4.679/4.763/4.783 ms. Host load and pre-existing swap residency were recorded
+  around the sequential run; no concurrent product runtime, RViz, build,
+  downsampling, queue, threshold or deadline change was used.
+- This closes the exact-ingress 2x AIST throughput repeatability gate only.
+  Clean 1x repeatability, PID-aware CPU/RSS, dense vegetation/thin branches,
+  recorded-world planning and all Gazebo closed-loop/speed gates remain open.
