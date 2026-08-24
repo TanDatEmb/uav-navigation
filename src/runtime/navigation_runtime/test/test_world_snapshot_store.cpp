@@ -3,7 +3,10 @@
 #include <super_core/trajectory_world_validator.hpp>
 
 #include <atomic>
+#include <cmath>
 #include <future>
+#include <latch>
+#include <thread>
 #include <type_traits>
 
 #include <gtest/gtest.h>
@@ -65,6 +68,17 @@ navigation_world_model::WorldModelViewPtr world(std::uint64_t generation,
                                                  std::int64_t stamp) {
   return std::make_shared<IdentityOnlyWorld>(
       navigation_world_model::WorldSnapshotIdentity{generation, revision, stamp});
+}
+
+std::optional<super_planner::CandidateCommandBundle> commandForRevision(
+    std::uint64_t revision) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 7) = static_cast<double>(revision);
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({0.1}, {coefficients});
+  geometry_utils::Trajectory yaw({0.1}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 10.0;
+  return super_planner::CmdTraj::buildEmergencyCandidate(position, yaw);
 }
 
 static_assert(!std::is_copy_constructible_v<navigation_runtime::WorldSnapshotStore>);
@@ -172,6 +186,145 @@ TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle)
   EXPECT_FALSE(commit_invoked);
   EXPECT_TRUE(command.empty());
   EXPECT_EQ(command.generation(), 0U);
+}
+
+TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent) {
+  constexpr std::uint64_t kIterations = 10000;
+  navigation_runtime::WorldSnapshotStore store;
+  store.publish(world(1, 1, 100));
+  super_planner::CmdTraj command;
+  auto initial = commandForRevision(1);
+  ASSERT_TRUE(initial);
+  ASSERT_TRUE(command.commitCandidate(
+      std::move(*initial), {{1, 1, 100}, {1, 1, 100}, 0.0}));
+
+  std::atomic_bool publisher_done{false};
+  std::atomic_bool authorizer_done{false};
+  std::atomic_bool publisher_active{false};
+  std::atomic_bool authorizer_active{false};
+  std::atomic_bool incoherent{false};
+  std::atomic_uint64_t committed{0};
+  std::atomic_uint64_t world_advanced{0};
+  std::atomic_uint64_t overlap_samples{0};
+  std::atomic_uint64_t observed_generation_changes{0};
+  std::atomic_bool first_authorization_committed{false};
+  std::latch sampler_ready{1};
+  std::latch writers_ready{2};
+  std::latch start_writers{1};
+  std::latch first_authorization_done{1};
+  std::latch sampler_observed_change{1};
+
+  std::thread publisher([&] {
+    publisher_active.store(true, std::memory_order_release);
+    writers_ready.count_down();
+    start_writers.wait();
+    sampler_observed_change.wait();
+    for (std::uint64_t revision = 2; revision <= kIterations; ++revision) {
+      store.publish(world(1, revision, static_cast<std::int64_t>(revision * 100)));
+      if ((revision & 31U) == 0U) std::this_thread::yield();
+    }
+    publisher_active.store(false, std::memory_order_release);
+    publisher_done.store(true, std::memory_order_release);
+  });
+  std::thread authorizer([&] {
+    authorizer_active.store(true, std::memory_order_release);
+    writers_ready.count_down();
+    start_writers.wait();
+    auto authorize_once = [&] {
+      const auto lease = store.latest();
+      auto candidate = commandForRevision(lease.identity.revision);
+      if (!candidate) {
+        incoherent.store(true);
+        return false;
+      }
+      const super_planner::CommandCertificate certificate{
+          lease.identity, lease.identity, 0.0};
+      const auto decision = store.commitIfCurrent(lease.identity, [&] {
+        return command.commitCandidate(std::move(*candidate), certificate);
+      });
+      if (decision == navigation_world_model::WorldCommitDecision::kCommitted) {
+        committed.fetch_add(1);
+        return true;
+      } else if (decision ==
+                 navigation_world_model::WorldCommitDecision::kWorldAdvanced) {
+        world_advanced.fetch_add(1);
+      } else {
+        incoherent.store(true);
+      }
+      return false;
+    };
+    first_authorization_committed.store(
+        authorize_once(), std::memory_order_release);
+    first_authorization_done.count_down();
+    sampler_observed_change.wait();
+    for (std::uint64_t index = 1; index < kIterations; ++index) {
+      authorize_once();
+      if ((index & 31U) == 0U) std::this_thread::yield();
+    }
+    authorizer_active.store(false, std::memory_order_release);
+    authorizer_done.store(true, std::memory_order_release);
+  });
+  std::thread sampler([&] {
+    std::uint64_t previous_generation = command.generation();
+    bool change_signaled = false;
+    sampler_ready.count_down();
+    start_writers.wait();
+    first_authorization_done.wait();
+    if (!first_authorization_committed.load(std::memory_order_acquire)) {
+      incoherent.store(true);
+      sampler_observed_change.count_down();
+      change_signaled = true;
+    }
+    do {
+      std::uint64_t generation = 0;
+      navigation_world_model::WorldSnapshotIdentity pinned{};
+      navigation_world_model::WorldSnapshotIdentity validated{};
+      super_utils::Vec3f position = super_utils::Vec3f::Zero();
+      super_utils::Vec3f yaw = super_utils::Vec3f::Zero();
+      bool backup = false;
+      command.lock();
+      generation = command.generation();
+      pinned = command.certificate().pinned_world;
+      validated = command.certificate().validated_world;
+      position = command.getPos(0.0);
+      yaw = command.getYaw(0.0);
+      backup = command.isTTOnBackupTraj(0.0);
+      command.unlock();
+
+      if (publisher_active.load(std::memory_order_acquire) ||
+          authorizer_active.load(std::memory_order_acquire)) {
+        overlap_samples.fetch_add(1);
+      }
+      if (generation != previous_generation) {
+        observed_generation_changes.fetch_add(1);
+        if (!change_signaled) {
+          sampler_observed_change.count_down();
+          change_signaled = true;
+        }
+      }
+      if (generation < previous_generation || !position.allFinite() ||
+          !yaw.allFinite() || !backup ||
+          !navigation_runtime::WorldSnapshotStore::sameIdentity(pinned, validated) ||
+          position.x() != static_cast<double>(validated.revision)) {
+        incoherent.store(true);
+      }
+      previous_generation = generation;
+    } while (!publisher_done.load(std::memory_order_acquire) ||
+             !authorizer_done.load(std::memory_order_acquire));
+  });
+
+  sampler_ready.wait();
+  writers_ready.wait();
+  start_writers.count_down();
+  publisher.join();
+  authorizer.join();
+  sampler.join();
+
+  EXPECT_FALSE(incoherent.load());
+  EXPECT_GT(committed.load(), 0U);
+  EXPECT_GT(overlap_samples.load(), 0U);
+  EXPECT_GT(observed_generation_changes.load(), 0U);
+  EXPECT_EQ(store.load().identity.revision, kIterations);
 }
 
 }  // namespace

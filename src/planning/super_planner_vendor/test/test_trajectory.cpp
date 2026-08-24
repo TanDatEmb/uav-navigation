@@ -467,3 +467,8 @@ TEST(SuperTrajectory, SolveStagesHaveStableDecisionTraceNames) {
   EXPECT_EQ(super_planner::solveStageName(33), "corridor_iris");
   EXPECT_EQ(super_planner::solveStageName(999), "unknown");
 }
+
+TEST(SuperTrajectory, UnknownReturnCodeHasDeterministicDiagnostic) {
+  EXPECT_EQ(super_planner::SUPER_RET_CODE_STR(42),
+            "Unknown SUPER return code (42)");
+}

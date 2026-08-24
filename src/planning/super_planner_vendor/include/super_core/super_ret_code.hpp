@@ -25,6 +25,7 @@
 #define SUPER_RET_CODE_HPP
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace super_planner {
@@ -56,6 +57,7 @@ namespace super_planner {
         case SUPER_BACKUP_FAILED:
             return "Backup trajectory required but generation failed";
         }
+        return "Unknown SUPER return code (" + std::to_string(ret) + ")";
     };
 }
 #endif

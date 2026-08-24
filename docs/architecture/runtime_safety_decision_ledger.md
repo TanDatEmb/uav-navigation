@@ -453,3 +453,44 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   `ament_cmake_test`; direct binaries are the source evidence until the ROS
   Python harness environment is repaired. TSan/ASan, 2x/dense vegetation and
   closed-loop SITL remain required before WM-3 is certified complete.
+
+### 2026-08-25 - WM-3 sanitizer screening and concurrency stress
+
+- Full, mutually isolated ASan, UBSan and TSan overlays were built from the
+  product dependency closure. Sanitizer binaries were not linked against a
+  Release workspace. `ldd` confirms the focused TSan binaries load
+  `libtsan.so.2`.
+- ASan exposed a real 6,912-byte leak in the yaw interpolation path:
+  stack-local `BandedSystem` buffers allocated by `create()` had no destructor.
+  `BandedSystem` now owns destruction through RAII, initializes its dimensions,
+  and rejects copying so the raw allocation cannot be double-owned. The ASan
+  package gate then ran ten CTest entries with zero error, failure or skip.
+- A compiler-detected undefined return path in `SUPER_RET_CODE_STR()` now
+  returns a deterministic diagnostic containing the unknown numeric code. It
+  is not coerced to SUCCESS or an existing planner disposition. The UBSan
+  package gate ran the same ten entries with zero error, failure or skip.
+- Added deterministic concurrency stress for MappingWorker producer admission,
+  READY replacement, one IN_FLIGHT observation and two simultaneous shutdown
+  callers. It passed 50 ASan repeats, 50 UBSan repeats and 200 focused TSan
+  repeats with exact lifecycle conservation and no sanitizer report.
+- Added cross-component stress for immutable world publication, latest-world
+  authorization, atomic `CmdTraj` commit and concurrent command-bundle reads.
+  Each execution performs 10,000 publish/authorize/sample iterations and checks
+  that trajectory marker, certificate identity, role and generation never mix.
+  The final rendezvous-enforced form passed one ASan, one UBSan and one focused TSan
+  execution. The existing CmdTraj commit/read stress additionally passed 20
+  focused TSan repeats of 500 writer and 500 reader operations.
+- The package-wide TSan command remains BLOCKED, not PASS: other test entries
+  completed their assertions, but the system `libOpenNI2.so` constructor reports
+  an unlock-of-unlocked-mutex warning, while the 10,000-iteration
+  cross-component test did not complete before the default 60-second CTest
+  timeout under TSan. Focused runs use
+  `halt_on_error=1` plus a temporary `mutex:libOpenNI2.so` suppression only for
+  the externally attributed constructor warning; no product stack or race is
+  suppressed.
+- This evidence closes the focused MappingWorker/WorldSnapshotStore/CmdTraj
+  race screen only. A ROS `MultiThreadedExecutor` node-destruction test with an
+  in-flight mapping barrier, fail-stop subprocess coverage, dataset 2x/dense
+  vegetation, and closed-loop SITL remain required before WM-3 is certified.
+  No queue, timeout/freshness relaxation, input downsampling or scheduling
+  bypass was introduced to make the sanitizer runs pass.

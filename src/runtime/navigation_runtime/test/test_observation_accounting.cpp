@@ -3,9 +3,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <future>
+#include <latch>
+#include <mutex>
+#include <vector>
 
 namespace navigation_runtime {
 namespace {
@@ -179,6 +184,118 @@ TEST(MappingWorker, ShutdownFinishesInflightAndDiscardsReady) {
   EXPECT_EQ(state.ready, 0U);
   EXPECT_EQ(state.in_flight, 0U);
   EXPECT_TRUE(state.allInvariantsHold());
+}
+
+TEST(MappingWorker, ConcurrentProducersAndShutdownPreserveExactLifecycle) {
+  using namespace std::chrono_literals;
+  ObservationAccounting accounting;
+  std::promise<void> first_started;
+  std::promise<void> release_first;
+  auto released = release_first.get_future().share();
+  std::mutex admission_mutex;
+  std::mutex processed_mutex;
+  std::vector<int> processed;
+  std::atomic_int next_sequence{1};
+  std::atomic_uint32_t admitted_before_stop{0};
+  std::atomic_uint32_t rejected_after_stop{0};
+  std::latch producers_admitted{2};
+  std::latch release_producers{1};
+
+  MappingWorker<int> worker(accounting, [&](int&& value) {
+    if (value == 1) {
+      first_started.set_value();
+      released.wait();
+    }
+    std::lock_guard lock(processed_mutex);
+    processed.push_back(value);
+  });
+  worker.setStrictlyIncreasingOrderKey(
+      [](const int& value) { return static_cast<std::int64_t>(value); });
+  worker.start();
+
+  {
+    std::lock_guard lock(admission_mutex);
+    accounting.recordAcceptedToInbox();
+    ASSERT_TRUE(worker.submitFromWaiting(next_sequence.fetch_add(1)));
+  }
+  auto first_started_future = first_started.get_future();
+  if (first_started_future.wait_for(2s) != std::future_status::ready) {
+    release_first.set_value();
+    worker.shutdown();
+    FAIL() << "worker did not enter deterministic IN_FLIGHT state";
+  }
+
+  // Guarantee an IN_FLIGHT item plus a replaced READY item before amplifying
+  // the producer/shutdown race.
+  for (int index = 0; index < 2; ++index) {
+    std::lock_guard lock(admission_mutex);
+    accounting.recordAcceptedToInbox();
+    if (!worker.submitFromWaiting(next_sequence.fetch_add(1))) {
+      release_first.set_value();
+      worker.shutdown();
+      FAIL() << "worker rejected deterministic READY setup";
+    }
+  }
+  ASSERT_GT(accounting.snapshot().replaced_ready, 0U);
+
+  auto producer = [&] {
+    {
+      std::lock_guard lock(admission_mutex);
+      accounting.recordAcceptedToInbox();
+      if (worker.submitFromWaiting(next_sequence.fetch_add(1))) {
+        admitted_before_stop.fetch_add(1);
+      }
+    }
+    producers_admitted.count_down();
+    release_producers.wait();
+    for (int index = 0; index < 999; ++index) {
+      std::lock_guard lock(admission_mutex);
+      accounting.recordAcceptedToInbox();
+      if (!worker.submitFromWaiting(next_sequence.fetch_add(1))) {
+        rejected_after_stop.fetch_add(1);
+      }
+    }
+  };
+  std::thread producer_a(producer);
+  std::thread producer_b(producer);
+  producers_admitted.wait();
+  if (admitted_before_stop.load() != 2U) {
+    release_producers.count_down();
+    release_first.set_value();
+    worker.shutdown();
+    producer_a.join();
+    producer_b.join();
+    FAIL() << "both producers must overlap the accepting worker";
+  }
+
+  auto shutdown_a = std::async(std::launch::async, [&] { worker.shutdown(); });
+  auto shutdown_b = std::async(std::launch::async, [&] { worker.shutdown(); });
+  while (!worker.stopping()) std::this_thread::yield();
+  release_producers.count_down();
+  release_first.set_value();
+  producer_a.join();
+  producer_b.join();
+  ASSERT_EQ(shutdown_a.wait_for(2s), std::future_status::ready);
+  ASSERT_EQ(shutdown_b.wait_for(2s), std::future_status::ready);
+  shutdown_a.get();
+  shutdown_b.get();
+
+  const auto state = accounting.snapshot();
+  EXPECT_EQ(state.waiting, 0U);
+  EXPECT_EQ(state.ready, 0U);
+  EXPECT_EQ(state.in_flight, 0U);
+  EXPECT_EQ(state.mapping_started, state.mapping_published);
+  EXPECT_EQ(state.mapping_failed, 0U);
+  EXPECT_GT(state.replaced_ready, 0U);
+  EXPECT_LE(state.discarded_shutdown_ready, 1U);
+  EXPECT_EQ(admitted_before_stop.load(), 2U);
+  EXPECT_GT(rejected_after_stop.load(), 0U);
+  EXPECT_TRUE(state.allInvariantsHold());
+
+  std::lock_guard lock(processed_mutex);
+  EXPECT_FALSE(processed.empty());
+  EXPECT_TRUE(std::is_sorted(processed.begin(), processed.end()));
+  EXPECT_EQ(std::adjacent_find(processed.begin(), processed.end()), processed.end());
 }
 
 TEST(MappingWorker, ValidationDiscardDoesNotStartMapping) {

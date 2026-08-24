@@ -38,6 +38,12 @@ namespace geometry_utils {
 // Banded LU factorization has O(N) time complexity.
     class BandedSystem {
     public:
+        BandedSystem() = default;
+        ~BandedSystem() { destroy(); }
+
+        BandedSystem(const BandedSystem &) = delete;
+        BandedSystem &operator=(const BandedSystem &) = delete;
+
         // The size of A, as well as the lower/upper
         // banded width p/q are needed
         void create(const int &n, const int &p, const int &q);
@@ -45,9 +51,9 @@ namespace geometry_utils {
         void destroy();
 
     private:
-        int N;
-        int lowerBw;
-        int upperBw;
+        int N = 0;
+        int lowerBw = 0;
+        int upperBw = 0;
         // Compulsory nullptr initialization here
         double *ptrData = nullptr;
 
@@ -81,4 +87,3 @@ namespace geometry_utils {
         void solveAdj(EIGENMAT &b) const;
     };
 }
-
