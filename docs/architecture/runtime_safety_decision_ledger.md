@@ -700,3 +700,54 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   retroactively change the artifact verdict: its measured p95 was 1.733 m/s,
   below the corrected 1.9 m/s target, and the safety stop remains independently
   terminal.
+
+### 2026-08-25 - Atomic commit-splice and controller-reject provenance
+
+- The 2 m/s terminal crossing could not be attributed safely from the previous
+  trace because the solve input, candidate start, prior committed sample and
+  controller's prior accepted command were owned by different threads and were
+  not captured at their respective atomic boundaries. This batch adds
+  observability only; it does not change A*, CIRI, MINCO, command sampling,
+  authorization, the tracking envelope, freshness limits or any deadline.
+- `CmdTraj` now records one `CommitDiagnostics` object under the same mutex as
+  the immutable trajectory/certificate swap. It contains the new and prior
+  generations, candidate start wall time and PVAJ/yaw state, the prior command
+  evaluated at the candidate start wall time, and position/velocity/
+  acceleration/jerk/yaw/yaw-rate splice residuals. Prior trajectory time is
+  clipped only to its executable bounds; yaw residual is wrapped to
+  `[-pi, pi]`. Failed candidate construction or authorization cannot mutate
+  these diagnostics. A lock-owning lightweight generation accessor avoids
+  copying trajectory polynomials before every solve; the full coherent snapshot
+  is copied only after solve where endpoint, certificate and diagnostics are
+  actually consumed.
+- Runtime records the propagated execution position, world-frame velocity and
+  source stamp used by SUPER. `state_age_at_solve_ms` is sampled with the ROS
+  clock immediately before `PlanFromRest`/`ReplanOnce`; trace age is sampled
+  separately after the solve. Commit diagnostics are emitted only when the
+  committed generation changed during that solve cycle and diagnostics match
+  the resulting generation, so a failed solve cannot inherit a prior commit's
+  splice evidence. Diagnostic vectors are serialized with 17 significant
+  digits and the report adapter parses them fail-closed.
+- On tracking-envelope rejection, External Mode copies the exact evaluated
+  odometry stamp/receive time, measured position/velocity and previous accepted
+  `PositionCommand` under `trajectory_mutex_`, then logs outside the lock. The
+  trace distinguishes header and receive age, reports current and previous
+  generation/TT/PVAJ, an explicit previous-valid bit, saturated signed
+  generation delta and P/V/A/J command deltas. A rejected command never becomes
+  previous accepted history. These values remain diagnostics and do not affect
+  the fail-closed decision.
+- Verification on the final dirty source: SUPER, navigation runtime and PX4
+  External Mode targets rebuilt successfully. `test_trajectory` passed 23/23,
+  planner attribution tests passed 13/13, PositionCommand/reject provenance
+  tests passed 6/6, tracking-envelope tests passed 5/5, and the runtime Python
+  contract suite passed 101/101 including structured PVAJ vector round-trip and
+  malformed vector rejection. The C++ trajectory suite includes the yaw-wrap
+  boundary case. Gazebo reproduction, sanitizer coverage and full ROS
+  callback interleaving tests remain evidence gates before diagnosing or
+  changing the high-dynamics behavior.
+- A candidate-start tracking-envelope margin is intentionally deferred. A
+  truthful margin requires moving the pure envelope contract and its launch-
+  owned geometric/lag profile to a product-owned package shared by runtime and
+  External Mode. This batch does not duplicate the current `0.75/0.25` values,
+  does not call the raw splice residual a safety margin, and does not use any
+  new diagnostic in commit authorization.

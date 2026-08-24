@@ -8,6 +8,7 @@ telemetry as partial rather than inventing a trace.
 from __future__ import annotations
 
 import math
+import json
 from typing import Any, Iterable
 
 
@@ -43,6 +44,9 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "splice_position_residual_m": ("splice_position_residual_m",),
     "splice_velocity_residual_mps": ("splice_velocity_residual_mps",),
     "splice_acceleration_residual_mps2": ("splice_acceleration_residual_mps2",),
+    "splice_jerk_residual_mps3": ("splice_jerk_residual_mps3",),
+    "splice_yaw_residual_rad": ("splice_yaw_residual_rad",),
+    "splice_yaw_rate_residual_radps": ("splice_yaw_rate_residual_radps",),
     "route_candidate_count": ("route_candidate_count",),
     "corridor_region_count": ("corridor_region_count",),
     "world_generation": ("world_generation",),
@@ -51,6 +55,18 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "pinned_world_revision": ("pinned_world_revision",),
     "pinned_world_stamp_ns": ("pinned_world_stamp_ns",),
     "solve_generation": ("solve_generation",),
+    "commit_observed_this_cycle": ("commit_observed_this_cycle",),
+    "execution_stamp_ns": ("execution_stamp_ns",),
+    "state_age_at_solve_ms": ("state_age_at_solve_ms",),
+    "state_age_at_trace_ms": ("state_age_at_trace_ms",),
+    "candidate_start_position": ("candidate_start_position",),
+    "candidate_start_velocity": ("candidate_start_velocity",),
+    "candidate_start_acceleration": ("candidate_start_acceleration",),
+    "candidate_start_jerk": ("candidate_start_jerk",),
+    "candidate_start_wall_time_s": ("candidate_start_wall_time_s",),
+    "commit_previous_generation": ("commit_previous_generation",),
+    "splice_previous_valid": ("splice_previous_valid",),
+    "splice_previous_sample_tt_s": ("splice_previous_sample_tt_s",),
     "candidate_result": ("candidate_result",),
     "replan_code": ("replan_code",),
     "solve_stage": ("solve_stage",),
@@ -113,6 +129,11 @@ def _branch(value: Any) -> str | int | None:
 
 
 def _point(value: Any) -> list[float] | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
     if isinstance(value, dict):
         value = [value.get("x"), value.get("y"), value.get("z")]
     elif all(hasattr(value, name) for name in ("x", "y", "z")):
@@ -160,6 +181,9 @@ def normalize_planner_trace_record(
         "splice_position_residual_m": _float(values["splice_position_residual_m"]),
         "splice_velocity_residual_mps": _float(values["splice_velocity_residual_mps"]),
         "splice_acceleration_residual_mps2": _float(values["splice_acceleration_residual_mps2"]),
+        "splice_jerk_residual_mps3": _float(values["splice_jerk_residual_mps3"]),
+        "splice_yaw_residual_rad": _float(values["splice_yaw_residual_rad"]),
+        "splice_yaw_rate_residual_radps": _float(values["splice_yaw_rate_residual_radps"]),
         "route_candidate_count": _int(values["route_candidate_count"]),
         "corridor_region_count": _int(values["corridor_region_count"]),
         "world_generation": _int(values["world_generation"]),
@@ -167,6 +191,18 @@ def normalize_planner_trace_record(
         "pinned_world_generation": _int(values["pinned_world_generation"]),
         "pinned_world_revision": _int(values["pinned_world_revision"]),
         "pinned_world_stamp_ns": _int(values["pinned_world_stamp_ns"]),
+        "commit_observed_this_cycle": _bool(values["commit_observed_this_cycle"]),
+        "execution_stamp_ns": _int(values["execution_stamp_ns"]),
+        "state_age_at_solve_ms": _float(values["state_age_at_solve_ms"]),
+        "state_age_at_trace_ms": _float(values["state_age_at_trace_ms"]),
+        "candidate_start_position": _point(values["candidate_start_position"]),
+        "candidate_start_velocity": _point(values["candidate_start_velocity"]),
+        "candidate_start_acceleration": _point(values["candidate_start_acceleration"]),
+        "candidate_start_jerk": _point(values["candidate_start_jerk"]),
+        "candidate_start_wall_time_s": _float(values["candidate_start_wall_time_s"]),
+        "commit_previous_generation": _int(values["commit_previous_generation"]),
+        "splice_previous_valid": _bool(values["splice_previous_valid"]),
+        "splice_previous_sample_tt_s": _float(values["splice_previous_sample_tt_s"]),
         "solve_generation": _int(values["solve_generation"]),
         "candidate_result": str(values["candidate_result"])
         if values["candidate_result"] is not None else None,

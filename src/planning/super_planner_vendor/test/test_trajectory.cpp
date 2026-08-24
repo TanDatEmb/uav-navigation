@@ -206,11 +206,85 @@ TEST(SuperTrajectory, FailedCandidateLeavesEmergencyBundleUnchanged) {
   super_planner::CmdTraj command;
   ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
   const auto generation = command.generation();
+  const auto diagnostics_before = command.snapshot().diagnostics;
   const auto before = command.getPos(0.5);
   geometry_utils::Trajectory invalid_yaw;
   EXPECT_FALSE(command.setEmergencyBackup(position, invalid_yaw));
   EXPECT_EQ(command.generation(), generation);
   EXPECT_TRUE(command.getPos(0.5).isApprox(before));
+  const auto diagnostics_after = command.snapshot().diagnostics;
+  EXPECT_EQ(diagnostics_after.generation, diagnostics_before.generation);
+  EXPECT_TRUE(diagnostics_after.candidate_start_pvaj.isApprox(
+      diagnostics_before.candidate_start_pvaj));
+}
+
+TEST(SuperTrajectory, CommitDiagnosticsDescribeExactOldToNewSplice) {
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
+  auto first = command.snapshot();
+  EXPECT_EQ(first.generation, 1U);
+  EXPECT_EQ(first.diagnostics.generation, first.generation);
+  EXPECT_EQ(first.diagnostics.previous_generation, 0U);
+  EXPECT_FALSE(first.diagnostics.previous_valid);
+  EXPECT_TRUE(first.diagnostics.candidate_start_pvaj.isApprox(
+      first_position.getState(0.0)));
+
+  auto second_position = linearTrajectory(1.0, 10.5);
+  auto second_yaw = linearTrajectory(1.0, 10.5);
+  ASSERT_TRUE(command.setEmergencyBackup(second_position, second_yaw));
+  const auto second = command.snapshot();
+  ASSERT_EQ(second.generation, 2U);
+  EXPECT_EQ(second.diagnostics.generation, second.generation);
+  EXPECT_EQ(second.diagnostics.previous_generation, first.generation);
+  EXPECT_TRUE(second.diagnostics.previous_valid);
+  EXPECT_DOUBLE_EQ(second.diagnostics.previous_sample_tt, 0.5);
+  EXPECT_TRUE(second.diagnostics.previous_pvaj.isApprox(
+      first_position.getState(0.5)));
+  EXPECT_TRUE(second.diagnostics.position_residual.isApprox(
+      second_position.getPos(0.0) - first_position.getPos(0.5)));
+  EXPECT_TRUE(second.diagnostics.velocity_residual.isApprox(
+      second_position.getVel(0.0) - first_position.getVel(0.5)));
+  EXPECT_TRUE(second.diagnostics.acceleration_residual.isApprox(
+      second_position.getAcc(0.0) - first_position.getAcc(0.5)));
+  EXPECT_TRUE(second.diagnostics.jerk_residual.isApprox(
+      second_position.getJer(0.0) - first_position.getJer(0.5)));
+  EXPECT_NEAR(second.diagnostics.yaw_residual, -0.5, 1.0e-12);
+}
+
+TEST(SuperTrajectory, CommitDiagnosticsClampPriorSampleToExecutableBounds) {
+  super_planner::CmdTraj command;
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
+
+  auto before_position = linearTrajectory(1.0, 9.5);
+  auto before_yaw = linearTrajectory(1.0, 9.5);
+  ASSERT_TRUE(command.setEmergencyBackup(before_position, before_yaw));
+  EXPECT_DOUBLE_EQ(command.snapshot().diagnostics.previous_sample_tt, 0.0);
+
+  auto after_position = linearTrajectory(1.0, 20.0);
+  auto after_yaw = linearTrajectory(1.0, 20.0);
+  ASSERT_TRUE(command.setEmergencyBackup(after_position, after_yaw));
+  EXPECT_DOUBLE_EQ(command.snapshot().diagnostics.previous_sample_tt, 1.0);
+}
+
+TEST(SuperTrajectory, CommitDiagnosticsWrapYawResidualAcrossPiBoundary) {
+  auto position = linearTrajectory(1.0, 10.0);
+  Eigen::MatrixXd first_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  first_yaw_coefficients(0, 7) = std::acos(-1.0) - 0.1;
+  geometry_utils::Trajectory first_yaw({1.0}, {first_yaw_coefficients});
+  first_yaw.start_WT = 10.0;
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, first_yaw));
+
+  Eigen::MatrixXd second_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  second_yaw_coefficients(0, 7) = -std::acos(-1.0) + 0.1;
+  geometry_utils::Trajectory second_yaw({1.0}, {second_yaw_coefficients});
+  second_yaw.start_WT = 10.0;
+  ASSERT_TRUE(command.setEmergencyBackup(position, second_yaw));
+  EXPECT_NEAR(command.snapshot().diagnostics.yaw_residual, 0.2, 1.0e-12);
 }
 
 TEST(SuperTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
@@ -393,15 +467,14 @@ TEST(SuperTrajectory, ConcurrentCommitAndSnapshotNeverMixGenerations) {
   std::thread reader([&] {
     std::uint64_t previous_generation = 0;
     for (int index = 0; index < 500; ++index) {
-      command.lock();
-      const auto generation = command.generation();
-      const auto state = command.getPos(0.5);
-      const bool backup = command.isTTOnBackupTraj(0.5);
-      command.unlock();
-      if (generation < previous_generation || !state.allFinite() || !backup) {
+      const auto snapshot = command.snapshot();
+      const auto state = snapshot.position.getPos(0.5);
+      if (snapshot.generation < previous_generation || !state.allFinite() ||
+          snapshot.diagnostics.generation != snapshot.generation ||
+          snapshot.diagnostics.previous_generation + 1U != snapshot.generation) {
         failed.store(true);
       }
-      previous_generation = generation;
+      previous_generation = snapshot.generation;
     }
   });
   writer.join();

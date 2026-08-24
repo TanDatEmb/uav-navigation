@@ -3,6 +3,7 @@
 #include <coordinate_conventions/frame_conventions.hpp>
 #include <mars_quadrotor_msgs/msg/position_command.hpp>
 #include <px4_ros2/utils/frame_conversion.hpp>
+#include "px4_navigation_external_mode/reject_provenance.hpp"
 
 TEST(PositionCommandContract, UsesDistinctMainAndBackupFlags) {
   mars_quadrotor_msgs::msg::PositionCommand command;
@@ -48,4 +49,53 @@ TEST(PositionCommandContract, ConvertsPvaWithTheSharedEnuNedMatrix) {
       Eigen::Vector3d{5.0, -4.0, 6.0}));
   EXPECT_TRUE((coordinate_conventions::c_enu_ned() *
                coordinate_conventions::c_enu_ned()).isApprox(Eigen::Matrix3d::Identity()));
+}
+
+TEST(PositionCommandContract, RejectProvenanceIsExactWithoutPreviousCommand) {
+  nav_msgs::msg::Odometry odometry;
+  odometry.header.stamp.sec = 1;
+  odometry.header.stamp.nanosec = 100'000'000U;
+  odometry.pose.pose.position.x = 1.0;
+  odometry.twist.twist.linear.y = 2.0;
+  mars_quadrotor_msgs::msg::PositionCommand command;
+  const auto result = px4_navigation_external_mode::buildRejectProvenance(
+      1'300'000'000LL, 1'250'000'000LL, odometry, command, std::nullopt);
+  EXPECT_DOUBLE_EQ(result.odometry_header_age_ms, 200.0);
+  EXPECT_DOUBLE_EQ(result.odometry_receive_age_ms, 50.0);
+  EXPECT_FALSE(result.previous_valid);
+  EXPECT_TRUE(result.measured_position.isApprox(Eigen::Vector3d{1.0, 0.0, 0.0}));
+  EXPECT_TRUE(result.measured_velocity.isApprox(Eigen::Vector3d{0.0, 2.0, 0.0}));
+  EXPECT_TRUE(std::isnan(result.command_delta_position_m));
+}
+
+TEST(PositionCommandContract, RejectProvenancePreservesPreviousPvajAndSignedDelta) {
+  nav_msgs::msg::Odometry odometry;
+  mars_quadrotor_msgs::msg::PositionCommand previous;
+  previous.trajectory_generation = 9U;
+  previous.trajectory_time_s = 1.5;
+  previous.position.x = 1.0;
+  previous.velocity.y = 2.0;
+  previous.acceleration.z = 3.0;
+  previous.jerk.x = 4.0;
+  mars_quadrotor_msgs::msg::PositionCommand command;
+  command.trajectory_generation = 7U;
+  command.position.x = 2.0;
+  command.velocity.y = 4.0;
+  command.acceleration.z = 6.0;
+  command.jerk.x = 8.0;
+  auto result = px4_navigation_external_mode::buildRejectProvenance(
+      0, 0, odometry, command, previous);
+  EXPECT_TRUE(result.previous_valid);
+  EXPECT_TRUE(result.generation_changed);
+  EXPECT_EQ(result.generation_delta, -2);
+  EXPECT_DOUBLE_EQ(result.command_delta_position_m, 1.0);
+  EXPECT_DOUBLE_EQ(result.command_delta_velocity_mps, 2.0);
+  EXPECT_DOUBLE_EQ(result.command_delta_acceleration_mps2, 3.0);
+  EXPECT_DOUBLE_EQ(result.command_delta_jerk_mps3, 4.0);
+
+  command.trajectory_generation = 9U;
+  result = px4_navigation_external_mode::buildRejectProvenance(
+      0, 0, odometry, command, previous);
+  EXPECT_FALSE(result.generation_changed);
+  EXPECT_EQ(result.generation_delta, 0);
 }

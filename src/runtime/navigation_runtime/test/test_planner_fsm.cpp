@@ -1,4 +1,5 @@
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/commit_trace.hpp"
 
 #include <gtest/gtest.h>
 
@@ -12,6 +13,18 @@ TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
             PlannerResultDisposition::CommandReady);
   EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, false, true),
             PlannerResultDisposition::CommandReady);
+}
+
+TEST(PlannerFsm, AttributesOnlyTheCommitProducedByThisSolveCycle) {
+  EXPECT_FALSE(commitObservedThisCycle(4U, 4U, 4U));
+  EXPECT_TRUE(commitObservedThisCycle(4U, 5U, 5U));
+  EXPECT_FALSE(commitObservedThisCycle(4U, 5U, 4U));
+  EXPECT_FALSE(commitObservedThisCycle(5U, 4U, 4U));
+}
+
+TEST(PlannerFsm, ExecutionAgeUsesDeclaredSolveStartInstant) {
+  EXPECT_DOUBLE_EQ(executionStateAgeMs(1'250'000'000LL, 1'000'000'000LL), 250.0);
+  EXPECT_DOUBLE_EQ(executionStateAgeMs(900'000'000LL, 1'000'000'000LL), -100.0);
 }
 
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {

@@ -1,6 +1,7 @@
 #include "navigation_runtime/super_navigation_node.hpp"
 #include "navigation_runtime/mission_dynamics.hpp"
 #include "navigation_runtime/mapping_fail_stop.hpp"
+#include "navigation_runtime/commit_trace.hpp"
 
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/timestamp_freshness.hpp"
@@ -12,7 +13,9 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -874,6 +877,8 @@ void SuperNavigationNode::runCycle() {
   }
   super_utils::RET_CODE result = super_utils::FAILED;
   const std::uint64_t solve_generation = ++planner_solve_generation_;
+  const std::uint64_t committed_generation_before_solve =
+      planner_->committedGenerationSnapshot();
   const auto pinned_world = world_snapshot_store_.load();
   if (!pinned_world) {
     RCLCPP_ERROR(get_logger(), "SUPER cannot solve without a published WorldModel snapshot");
@@ -883,6 +888,9 @@ void SuperNavigationNode::runCycle() {
   planner_solve_started_steady_ns_.store(steadyNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
+  const auto solve_started_ros_ns = now().nanoseconds();
+  const double execution_age_at_solve_ms =
+      executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
   try {
     result = plan_from_rest
                  ? planner_->PlanFromRest(target, 0.0, true)
@@ -1129,11 +1137,14 @@ void SuperNavigationNode::runCycle() {
   // replans are as important as failures for latency distributions and for
   // proving that sampled commands came from one committed generation.
   {
-    planner_->lockCommittedTraj();
-    const auto committed = planner_->getCommittedPositionTrajectory();
-    const auto committed_generation = planner_->getCommittedGeneration();
-    const auto committed_certificate = planner_->getCommittedCertificate();
-    planner_->unlockCommittedTraj();
+    const auto committed_snapshot = planner_->committedTrajectorySnapshot();
+    const auto& committed = committed_snapshot.position;
+    const auto committed_generation = committed_snapshot.generation;
+    const auto& committed_certificate = committed_snapshot.certificate;
+    const auto& commit_diagnostics = committed_snapshot.diagnostics;
+    const bool commit_observed_this_cycle = commitObservedThisCycle(
+        committed_generation_before_solve, committed_generation,
+        commit_diagnostics.generation);
     const auto committed_end = committed.empty()
                                    ? super_utils::Vec3f{}
                                    : committed.getPos(committed.getTotalDuration());
@@ -1159,6 +1170,9 @@ void SuperNavigationNode::runCycle() {
     const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;
     const bool solve_deadline_exceeded =
         planner_elapsed_ms > planner_->solveDeadlineSeconds() * 1000.0;
+    const auto trace_now_ns = now().nanoseconds();
+    const double execution_age_at_trace_ms =
+        static_cast<double>(trace_now_ns - execution_stamp_ns) * 1.0e-6;
     RCLCPP_INFO(get_logger(),
                 "SUPER decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
                 "pinned_world_generation=%lu pinned_world_revision=%lu "
@@ -1203,6 +1217,50 @@ void SuperNavigationNode::runCycle() {
                 nearest_known_free_distance, nearest_occupied_distance,
                 nearest_occupied.x(), nearest_occupied.y(), nearest_occupied.z());
 
+    if (commit_observed_this_cycle) {
+      RCLCPP_INFO(get_logger(),
+                  "SUPER commit_trace generation=%lu previous_generation=%lu "
+                  "start_wall_time=%.9f execution_stamp_ns=%ld "
+                  "execution_age_at_solve_ms=%.3f execution_age_at_trace_ms=%.3f "
+                  "execution_p=[%.6f,%.6f,%.6f] execution_v=[%.6f,%.6f,%.6f] "
+                  "candidate_start_p=[%.6f,%.6f,%.6f] "
+                  "candidate_start_v=[%.6f,%.6f,%.6f] previous_valid=%d "
+                  "candidate_start_a=[%.6f,%.6f,%.6f] "
+                  "candidate_start_j=[%.6f,%.6f,%.6f] "
+                  "previous_sample_tt=%.6f splice_p=%.6f splice_v=%.6f "
+                  "splice_a=%.6f splice_j=%.6f splice_yaw=%.6f "
+                  "splice_yaw_rate=%.6f",
+                  static_cast<unsigned long>(commit_diagnostics.generation),
+                  static_cast<unsigned long>(commit_diagnostics.previous_generation),
+                  commit_diagnostics.candidate_start_wall_time,
+                  static_cast<long>(execution_stamp_ns),
+                  execution_age_at_solve_ms,
+                  execution_age_at_trace_ms,
+                  execution_state.position.x(), execution_state.position.y(),
+                  execution_state.position.z(), execution_state.velocity.x(),
+                  execution_state.velocity.y(), execution_state.velocity.z(),
+                  commit_diagnostics.candidate_start_pvaj(0, 0),
+                  commit_diagnostics.candidate_start_pvaj(1, 0),
+                  commit_diagnostics.candidate_start_pvaj(2, 0),
+                  commit_diagnostics.candidate_start_pvaj(0, 1),
+                  commit_diagnostics.candidate_start_pvaj(1, 1),
+                  commit_diagnostics.candidate_start_pvaj(2, 1),
+                  commit_diagnostics.previous_valid ? 1 : 0,
+                  commit_diagnostics.candidate_start_pvaj(0, 2),
+                  commit_diagnostics.candidate_start_pvaj(1, 2),
+                  commit_diagnostics.candidate_start_pvaj(2, 2),
+                  commit_diagnostics.candidate_start_pvaj(0, 3),
+                  commit_diagnostics.candidate_start_pvaj(1, 3),
+                  commit_diagnostics.candidate_start_pvaj(2, 3),
+                  commit_diagnostics.previous_sample_tt,
+                  commit_diagnostics.position_residual.norm(),
+                  commit_diagnostics.velocity_residual.norm(),
+                  commit_diagnostics.acceleration_residual.norm(),
+                  commit_diagnostics.jerk_residual.norm(),
+                  commit_diagnostics.yaw_residual,
+                  commit_diagnostics.yaw_rate_residual);
+    }
+
     diagnostic_msgs::msg::DiagnosticArray trace_diagnostics;
     trace_diagnostics.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus trace_status;
@@ -1218,9 +1276,55 @@ void SuperNavigationNode::runCycle() {
       item.value = std::to_string(value);
       trace_status.values.push_back(std::move(item));
     };
+    const auto add_trace_vector = [&trace_status](const std::string& key,
+                                                   const auto& value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      std::ostringstream stream;
+      stream << std::setprecision(17) << '[' << value.x() << ',' << value.y()
+             << ',' << value.z() << ']';
+      item.value = stream.str();
+      trace_status.values.push_back(std::move(item));
+    };
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
+    add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
+    add_trace_value("execution_stamp_ns", execution_stamp_ns);
+    add_trace_value("state_age_at_solve_ms",
+                    execution_age_at_solve_ms);
+    add_trace_value("state_age_at_trace_ms", execution_age_at_trace_ms);
+    add_trace_vector("planning_state_position", execution_state.position);
+    add_trace_vector("planning_state_velocity", execution_state.velocity);
+    if (commit_observed_this_cycle) {
+      add_trace_value("commit_previous_generation",
+                      commit_diagnostics.previous_generation);
+      add_trace_value("candidate_start_wall_time_s",
+                      commit_diagnostics.candidate_start_wall_time);
+      add_trace_vector("candidate_start_position",
+                       commit_diagnostics.candidate_start_pvaj.col(0));
+      add_trace_vector("candidate_start_velocity",
+                       commit_diagnostics.candidate_start_pvaj.col(1));
+      add_trace_vector("candidate_start_acceleration",
+                       commit_diagnostics.candidate_start_pvaj.col(2));
+      add_trace_vector("candidate_start_jerk",
+                       commit_diagnostics.candidate_start_pvaj.col(3));
+      add_trace_value("splice_previous_valid",
+                      commit_diagnostics.previous_valid ? 1 : 0);
+      add_trace_value("splice_previous_sample_tt_s",
+                      commit_diagnostics.previous_sample_tt);
+      add_trace_value("splice_position_residual_m",
+                      commit_diagnostics.position_residual.norm());
+      add_trace_value("splice_velocity_residual_mps",
+                      commit_diagnostics.velocity_residual.norm());
+      add_trace_value("splice_acceleration_residual_mps2",
+                      commit_diagnostics.acceleration_residual.norm());
+      add_trace_value("splice_jerk_residual_mps3",
+                      commit_diagnostics.jerk_residual.norm());
+      add_trace_value("splice_yaw_residual_rad", commit_diagnostics.yaw_residual);
+      add_trace_value("splice_yaw_rate_residual_radps",
+                      commit_diagnostics.yaw_rate_residual);
+    }
     add_trace_value("pinned_world_generation", pinned_world.identity.generation);
     add_trace_value("pinned_world_revision", pinned_world.identity.revision);
     add_trace_value("pinned_world_stamp_ns", pinned_world.identity.observation_stamp_ns);

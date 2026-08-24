@@ -30,6 +30,9 @@
 #include <data_structure/base/trajectory.h>
 #include <navigation_world_model/world_model_view.hpp>
 #include <algorithm>
+#include <cstdint>
+#include <cmath>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -65,6 +68,37 @@ namespace super_planner {
         double validation_begin_tt{0.0};
     };
 
+    struct CommitDiagnostics {
+        std::uint64_t generation{0};
+        std::uint64_t previous_generation{0};
+        double candidate_start_wall_time{0.0};
+        StatePVAJ candidate_start_pvaj{StatePVAJ::Zero()};
+        double candidate_start_yaw{0.0};
+        double candidate_start_yaw_rate{0.0};
+        bool previous_valid{false};
+        double previous_sample_tt{0.0};
+        StatePVAJ previous_pvaj{StatePVAJ::Zero()};
+        double previous_yaw{0.0};
+        double previous_yaw_rate{0.0};
+        Vec3f position_residual{Vec3f::Zero()};
+        Vec3f velocity_residual{Vec3f::Zero()};
+        Vec3f acceleration_residual{Vec3f::Zero()};
+        Vec3f jerk_residual{Vec3f::Zero()};
+        double yaw_residual{0.0};
+        double yaw_rate_residual{0.0};
+    };
+
+    struct CommittedTrajectorySnapshot {
+        Trajectory position{};
+        Trajectory yaw{};
+        std::uint64_t generation{0};
+        CommandCertificate certificate{};
+        CommitDiagnostics diagnostics{};
+        bool empty{true};
+        bool backup_available{false};
+        double backup_start_tt{0.0};
+    };
+
 #define LOCK_G std::lock_guard<std::mutex> lock(mtx_);
 
     class CmdTraj{
@@ -90,6 +124,7 @@ namespace super_planner {
         std::uint64_t generation_{0};
         std::vector<CandidateRoleInterval> role_intervals_{};
         CommandCertificate certificate_{};
+        CommitDiagnostics commit_diagnostics_{};
 
         static bool trajectoryFinite(const Trajectory &trajectory) {
             if (trajectory.empty() || !std::isfinite(trajectory.start_WT) ||
@@ -240,6 +275,47 @@ namespace super_planner {
         bool commitCandidate(CandidateCommandBundle&& candidate,
                              const CommandCertificate& certificate) {
             LOCK_G
+            CommitDiagnostics diagnostics;
+            diagnostics.generation = generation_ + 1U;
+            diagnostics.previous_generation = generation_;
+            diagnostics.candidate_start_wall_time = candidate.start_wall_time;
+            diagnostics.candidate_start_pvaj = candidate.position.getState(0.0);
+            const auto candidate_yaw_state = candidate.yaw.getState(0.0);
+            diagnostics.candidate_start_yaw = candidate_yaw_state(0, 0);
+            diagnostics.candidate_start_yaw_rate = candidate_yaw_state(0, 1);
+            if (!flag_empty_ && !pos_traj_.empty() && !yaw_traj_.empty()) {
+                const double previous_duration = pos_traj_.getTotalDuration();
+                diagnostics.previous_sample_tt = std::clamp(
+                    candidate.start_wall_time - start_WT_, 0.0, previous_duration);
+                diagnostics.previous_pvaj = pos_traj_.getState(
+                    diagnostics.previous_sample_tt);
+                const auto previous_yaw_state = yaw_traj_.getState(
+                    diagnostics.previous_sample_tt);
+                diagnostics.previous_yaw = previous_yaw_state(0, 0);
+                diagnostics.previous_yaw_rate = previous_yaw_state(0, 1);
+                diagnostics.previous_valid = diagnostics.previous_pvaj.allFinite() &&
+                    previous_yaw_state.allFinite();
+                if (diagnostics.previous_valid) {
+                    diagnostics.position_residual =
+                        diagnostics.candidate_start_pvaj.col(0) -
+                        diagnostics.previous_pvaj.col(0);
+                    diagnostics.velocity_residual =
+                        diagnostics.candidate_start_pvaj.col(1) -
+                        diagnostics.previous_pvaj.col(1);
+                    diagnostics.acceleration_residual =
+                        diagnostics.candidate_start_pvaj.col(2) -
+                        diagnostics.previous_pvaj.col(2);
+                    diagnostics.jerk_residual =
+                        diagnostics.candidate_start_pvaj.col(3) -
+                        diagnostics.previous_pvaj.col(3);
+                    diagnostics.yaw_residual =
+                        std::remainder(
+                            diagnostics.candidate_start_yaw - diagnostics.previous_yaw,
+                            2.0 * std::acos(-1.0));
+                    diagnostics.yaw_rate_residual =
+                        diagnostics.candidate_start_yaw_rate - diagnostics.previous_yaw_rate;
+                }
+            }
             pos_traj_ = std::move(candidate.position);
             yaw_traj_ = std::move(candidate.yaw);
             start_WT_ = pos_traj_.start_WT;
@@ -261,7 +337,27 @@ namespace super_planner {
                 }
             }
             ++generation_;
+            commit_diagnostics_ = diagnostics;
             return true;
+        }
+
+        CommittedTrajectorySnapshot snapshot() const {
+            LOCK_G
+            CommittedTrajectorySnapshot snapshot;
+            snapshot.position = pos_traj_;
+            snapshot.yaw = yaw_traj_;
+            snapshot.generation = generation_;
+            snapshot.certificate = certificate_;
+            snapshot.diagnostics = commit_diagnostics_;
+            snapshot.empty = flag_empty_;
+            snapshot.backup_available = flag_backup_traj_avilibale_;
+            snapshot.backup_start_tt = backup_traj_start_TT_;
+            return snapshot;
+        }
+
+        std::uint64_t generationSnapshot() const {
+            LOCK_G
+            return generation_;
         }
 
         bool setTrajectory(const ExpTraj&exp_traj,

@@ -39,6 +39,52 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["selected_branch"], 0)
         self.assertEqual(records[0]["route_id"], 4)
 
+    def test_diagnostic_json_vectors_preserve_exact_execution_state(self) -> None:
+        record = normalize_planner_trace_record(
+            {
+                "planning_cycle_id": "8",
+                "bundle_id": "12",
+                "planning_state_position": "[1.25,-2.5,3.75]",
+                "planning_state_velocity": "[4.0,5.0,-6.0]",
+                "commit_observed_this_cycle": "1",
+                "candidate_start_position": "[1.5,-2.0,3.8]",
+                "candidate_start_velocity": "[3.9,4.8,-5.9]",
+                "candidate_start_acceleration": "[0.1,0.2,0.3]",
+                "candidate_start_jerk": "[0.01,0.02,0.03]",
+                "commit_previous_generation": "11",
+                "splice_jerk_residual_mps3": "0.04",
+                "splice_yaw_residual_rad": "-0.05",
+                "splice_yaw_rate_residual_radps": "0.06",
+            },
+            source="diagnostics",
+        )
+        self.assertIsNotNone(record)
+        self.assertEqual(record["planning_state_position"], [1.25, -2.5, 3.75])
+        self.assertEqual(record["planning_state_velocity"], [4.0, 5.0, -6.0])
+        self.assertTrue(record["commit_observed_this_cycle"])
+        self.assertEqual(record["candidate_start_position"], [1.5, -2.0, 3.8])
+        self.assertEqual(record["candidate_start_acceleration"], [0.1, 0.2, 0.3])
+        self.assertEqual(record["candidate_start_jerk"], [0.01, 0.02, 0.03])
+        self.assertEqual(record["commit_previous_generation"], 11)
+        self.assertEqual(record["splice_jerk_residual_mps3"], 0.04)
+        self.assertEqual(record["splice_yaw_residual_rad"], -0.05)
+        self.assertEqual(record["splice_yaw_rate_residual_radps"], 0.06)
+
+    def test_malformed_diagnostic_vector_is_fail_closed(self) -> None:
+        record = normalize_planner_trace_record(
+            {
+                "planning_cycle_id": "9",
+                "bundle_id": "13",
+                "planning_state_position": "[1.0,NaN,3.0]",
+                "commit_observed_this_cycle": "0",
+            },
+            source="diagnostics",
+        )
+        self.assertIsNotNone(record)
+        self.assertIsNone(record["planning_state_position"])
+        self.assertFalse(record["commit_observed_this_cycle"])
+        self.assertIsNone(record["candidate_start_position"])
+
     def test_diagnostics_without_pair_do_not_create_fake_bundle_records(self) -> None:
         records = collect_planner_trace_records(
             samples=[

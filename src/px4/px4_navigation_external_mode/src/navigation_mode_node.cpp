@@ -12,6 +12,7 @@
 #include <px4_ros2/utils/frame_conversion.hpp>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
+#include "px4_navigation_external_mode/reject_provenance.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
@@ -292,7 +293,7 @@ void NavigationMode::onSuperCommand(
   bool accepted = false;
   bool anchor_invalid = false;
   TrackingEnvelopeResult tracking_envelope;
-  Eigen::Vector3d evaluated_measured_position{Eigen::Vector3d::Zero()};
+  std::optional<RejectProvenance> reject_provenance;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (super_command_.has_value() &&
@@ -344,7 +345,9 @@ void NavigationMode::onSuperCommand(
           command_tracking_lag_s_);
       anchor_invalid = !tracking_envelope.valid;
       if (anchor_invalid) {
-        evaluated_measured_position = measured;
+        reject_provenance = buildRejectProvenance(
+            node().get_clock()->now().nanoseconds(), last_odometry_receive_ns_,
+            *odometry_, *message, super_command_);
         ++trajectory_rejected_count_;
       }
     }
@@ -366,28 +369,62 @@ void NavigationMode::onSuperCommand(
                mars_quadrotor_msgs::msg::PositionCommand::TRAJECTORY_FLAG_MAIN) {
       role = "MAIN";
     }
+    const auto& provenance = *reject_provenance;
     RCLCPP_ERROR(node().get_logger(),
                  "SUPER tracking envelope exceeded: longitudinal=%.3f/%.3f m "
                  "reverse=%.3f/%.3f m lateral=%.3f/%.3f m "
                  "measured_enu=[%.3f,%.3f,%.3f] command_enu=[%.3f,%.3f,%.3f] "
-                 "command_velocity_enu=[%.3f,%.3f,%.3f] message_id=%u "
+                 "measured_velocity_enu=[%.3f,%.3f,%.3f] "
+                 "command_velocity_enu=[%.3f,%.3f,%.3f] "
+                 "command_acceleration_enu=[%.3f,%.3f,%.3f] "
+                 "command_jerk_enu=[%.3f,%.3f,%.3f] "
+                 "odom_header_age_ms=%.3f odom_receive_age_ms=%.3f message_id=%u "
                  "generation=%lu role=%s trajectory_time=%.6f s status=%u "
-                 "stamp=%d.%09u",
+                 "stamp=%d.%09u previous_message_id=%u previous_generation=%lu "
+                 "previous_trajectory_time=%.6f generation_changed=%d "
+                 "generation_delta=%ld previous_valid=%d "
+                 "previous_p=[%.3f,%.3f,%.3f] "
+                 "previous_v=[%.3f,%.3f,%.3f] command_delta_p=%.6f "
+                 "previous_a=[%.3f,%.3f,%.3f] previous_j=[%.3f,%.3f,%.3f] "
+                 "command_delta_v=%.6f command_delta_a=%.6f command_delta_j=%.6f",
                  tracking_envelope.longitudinal_error_m,
                  tracking_envelope.longitudinal_limit_m,
                  tracking_envelope.reverse_error_m,
                  command_anchor_max_error_m_,
                  tracking_envelope.lateral_error_m,
                  command_anchor_max_error_m_,
-                 evaluated_measured_position.x(), evaluated_measured_position.y(),
-                 evaluated_measured_position.z(),
+                 provenance.measured_position.x(), provenance.measured_position.y(),
+                 provenance.measured_position.z(),
                  message->position.x, message->position.y, message->position.z,
+                 provenance.measured_velocity.x(), provenance.measured_velocity.y(),
+                 provenance.measured_velocity.z(),
                  message->velocity.x, message->velocity.y, message->velocity.z,
+                 message->acceleration.x, message->acceleration.y,
+                 message->acceleration.z,
+                 message->jerk.x, message->jerk.y, message->jerk.z,
+                 provenance.odometry_header_age_ms, provenance.odometry_receive_age_ms,
                  message->trajectory_id,
                  static_cast<unsigned long>(message->trajectory_generation), role,
                  message->trajectory_time_s,
                  static_cast<unsigned int>(message->trajectory_status),
-                 message->header.stamp.sec, message->header.stamp.nanosec);
+                 message->header.stamp.sec, message->header.stamp.nanosec,
+                 provenance.previous_valid ? provenance.previous.trajectory_id : 0U,
+                 static_cast<unsigned long>(provenance.previous_valid
+                     ? provenance.previous.trajectory_generation : 0U),
+                 provenance.previous_valid ? provenance.previous.trajectory_time_s : 0.0,
+                 provenance.generation_changed ? 1 : 0,
+                 static_cast<long>(provenance.generation_delta),
+                 provenance.previous_valid ? 1 : 0,
+                 provenance.previous_position.x(), provenance.previous_position.y(),
+                 provenance.previous_position.z(), provenance.previous_velocity.x(),
+                 provenance.previous_velocity.y(), provenance.previous_velocity.z(),
+                 provenance.command_delta_position_m,
+                 provenance.previous_acceleration.x(), provenance.previous_acceleration.y(),
+                 provenance.previous_acceleration.z(), provenance.previous_jerk.x(),
+                 provenance.previous_jerk.y(), provenance.previous_jerk.z(),
+                 provenance.command_delta_velocity_mps,
+                 provenance.command_delta_acceleration_mps2,
+                 provenance.command_delta_jerk_mps3);
     safetyStopNavigation("SUPER PVA command anchor is not near vehicle");
     return;
   }
