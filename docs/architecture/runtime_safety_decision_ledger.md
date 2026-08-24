@@ -127,6 +127,35 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-25 - WM-0 coherent observation lifecycle accounting
+
+- Added a mutex-coherent lifecycle state machine for the single-latest mapping
+  inbox. Ingress accept/reject, pending replacement/discard, mapping
+  start/publish/failure, pending/in-flight gauges and illegal-transition
+  violations are captured as one consistent diagnostic snapshot.
+- Added steady-clock observation pair wait, input-lock wait and planning
+  scheduling-gap distributions. Source timestamp pairing/freshness remains in
+  ROS time; durations never use bag/simulation time.
+- Dataset acceptance now verifies the lifecycle conservation equation and
+  compatibility between `dropped_cloud_count` and the explicit replacement
+  counter. Accepted input without a terminal disposition can no longer PASS.
+- Independent review found a separate behavior defect: mapping currently occurs
+  after planner execution-state and completed-mission early returns. This WM-0
+  batch accounts those paths as failures but does not reorder behavior; the
+  following P0 mapping-owner batch must make corrected observation integration
+  independent of propagated-state/mission availability.
+- The same review found freshness uses absolute ROS-time difference, which
+  conflates future timestamps with stale past timestamps. HG-006 remains
+  PROVISIONAL; future, rewind and generation handling must be split before its
+  value is certified. No freshness value changed in WM-0.
+- Canonical 1x evidence:
+  `.artifacts/runtime/dataset-20260824T172807-65510` PASS with 2,756 accepted,
+  started and published observations; zero replacement/discard/failure,
+  pending/in-flight or accounting violation. All mapping timing distributions
+  contain 2,756 samples. Pair-wait p99 is 65.128 ms; mapping callback p99 is
+  17.144 ms (45.440 ms maximum), and map-slide p99 is 17.057 ms. These are
+  characterization values, not new acceptance thresholds.
+
 ### 2026-08-25 - Stage immutable WorldModel ownership before concurrency
 
 - Accepted ADR-011 after the 2x dataset overload evidence. ROG-Map is mutable

@@ -530,6 +530,13 @@ class RuntimeContractTest(unittest.TestCase):
             "corrected_pair_mismatch_count": 0,
             "invalid_execution_state_count": 0,
             "processing_exception_count": 0,
+            "observation_accounting_valid": 1,
+            "observation_replaced_pending_count": 49,
+            "observation_discarded_pending_count": 0,
+            "mapping_published_count": 51,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
         })
         self.assertEqual(reasons, ["mapping replaced an unconsumed cloud: 49"])
 
@@ -542,7 +549,30 @@ class RuntimeContractTest(unittest.TestCase):
             "corrected_pair_mismatch_count": 0,
             "invalid_execution_state_count": 0,
             "processing_exception_count": 0,
+            "observation_accounting_valid": 1,
+            "observation_replaced_pending_count": 0,
+            "observation_discarded_pending_count": 0,
+            "mapping_published_count": 100,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
         }), [])
+
+    def test_dataset_mapping_integrity_rejects_unterminalized_observation(self) -> None:
+        reasons = report._mapping_integrity_reasons({
+            "received_observation_count": 100,
+            "accepted_observation_count": 100,
+            "dropped_cloud_count": 0,
+            "observation_replaced_pending_count": 0,
+            "observation_discarded_pending_count": 0,
+            "mapping_published_count": 99,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
+            "observation_accounting_valid": 0,
+        })
+        self.assertIn("mapping observation accounting invariant failed", reasons)
+        self.assertIn("mapping accepted-observation conservation equation failed", reasons)
 
     def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
         command = runner._external_mode_launch_command(

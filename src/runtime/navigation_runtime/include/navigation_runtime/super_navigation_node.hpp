@@ -19,6 +19,7 @@
 #include <mars_quadrotor_msgs/msg/position_command.hpp>
 
 #include "navigation_runtime/input_pairing.hpp"
+#include "navigation_runtime/observation_accounting.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/runtime_state.hpp"
 #include <ros_interface/ros_interface.hpp>
@@ -106,6 +107,8 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint64_t invalid_execution_state_count_{0};
   std::uint64_t map_update_exception_count_{0};
   std::int64_t last_input_conversion_us_{0};
+  std::int64_t pending_cloud_received_steady_ns_{0};
+  std::int64_t last_pair_wait_us_{0};
   std::atomic_uint32_t command_id_{0};
   std::atomic_bool planner_command_available_{false};
   std::atomic_bool planner_failure_latched_{false};
@@ -126,6 +129,10 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};
   std::int64_t last_input_lock_wait_us_{0};
+  std::int64_t last_cycle_started_steady_ns_{0};
+  std::int64_t planning_period_us_{0};
+  std::int64_t last_planning_scheduling_gap_us_{0};
+  ObservationAccounting observation_accounting_;
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;
 

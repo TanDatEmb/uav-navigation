@@ -1501,6 +1501,16 @@ def _navigation_mapping_summary(
         "stale_input_count",
         "corrected_pair_mismatch_count",
         "invalid_execution_state_count",
+        "observation_rejected_before_inbox_count",
+        "observation_replaced_pending_count",
+        "observation_discarded_pending_count",
+        "mapping_started_count",
+        "mapping_published_count",
+        "mapping_failed_count",
+        "mapping_pending_count",
+        "mapping_in_flight_count",
+        "observation_accounting_valid",
+        "observation_accounting_violation_count",
         "nonfinite_point_count",
         "post_filter_nonfinite_point_count",
         "transform_nonfinite_point_count",
@@ -1535,6 +1545,9 @@ def _navigation_mapping_summary(
         ("navigation_mapping/world_model", "super_navigation/super_planner"),
         (
             "ros_pointcloud_decode_us",
+            "observation_pair_wait_us",
+            "mapping_input_lock_wait_us",
+            "planning_scheduling_gap_us",
             "mapping_filter_us",
             "transform_to_odom_us",
             "rog_raycast_us",
@@ -1563,12 +1576,50 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
         count = int(_number(mapping.get(field), 0.0))
         if count > 0:
             reasons.append(f"{label}: {count}")
+    if "observation_accounting_valid" in mapping and int(
+        _number(mapping.get("observation_accounting_valid"), 0.0)
+    ) != 1:
+        reasons.append("mapping observation accounting invariant failed")
+    violation_count = int(
+        _number(mapping.get("observation_accounting_violation_count"), 0.0)
+    )
+    if violation_count > 0:
+        reasons.append(f"mapping observation accounting violation: {violation_count}")
+    for field, label in (
+        ("mapping_pending_count", "mapping observation remained pending"),
+        ("mapping_in_flight_count", "mapping observation remained in flight"),
+        ("mapping_failed_count", "mapping observation failed after pairing"),
+    ):
+        count = int(_number(mapping.get(field), 0.0))
+        if count > 0:
+            reasons.append(f"{label}: {count}")
     received = int(_number(mapping.get("received_observation_count"), 0.0))
     accepted = int(_number(mapping.get("accepted_observation_count"), 0.0))
     if received > 0 and accepted != received:
         reasons.append(
             f"mapping observation accounting mismatch: accepted {accepted} of {received}"
         )
+    if "mapping_published_count" in mapping:
+        published = int(_number(mapping.get("mapping_published_count"), 0.0))
+        terminal_pending = int(
+            _number(mapping.get("observation_discarded_pending_count"), 0.0)
+        )
+        replaced = int(_number(mapping.get("observation_replaced_pending_count"), 0.0))
+        failed = int(_number(mapping.get("mapping_failed_count"), 0.0))
+        pending = int(_number(mapping.get("mapping_pending_count"), 0.0))
+        in_flight = int(_number(mapping.get("mapping_in_flight_count"), 0.0))
+        if accepted != published + terminal_pending + replaced + failed + pending + in_flight:
+            reasons.append(
+                "mapping accepted-observation conservation equation failed"
+            )
+    if "observation_replaced_pending_count" in mapping:
+        replaced = int(_number(mapping.get("observation_replaced_pending_count"), 0.0))
+        legacy_dropped = int(_number(mapping.get("dropped_cloud_count"), 0.0))
+        if replaced != legacy_dropped:
+            reasons.append(
+                "mapping replacement compatibility counter mismatch: "
+                f"lifecycle {replaced}, legacy {legacy_dropped}"
+            )
     return reasons
 
 
