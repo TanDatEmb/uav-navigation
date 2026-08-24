@@ -138,6 +138,18 @@ class RuntimeContractTest(unittest.TestCase):
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("/lio/registered_points", rviz)
 
+    def test_corrected_mapping_precedes_propagated_planner_gates(self) -> None:
+        source = (
+            ROOT / "src/runtime/navigation_runtime/src/super_navigation_node.cpp"
+        ).read_text(encoding="utf-8")
+        cycle = source[source.index("void SuperNavigationNode::runCycle()"):
+                       source.index("void SuperNavigationNode::publishCommand()")]
+        map_update = cycle.index("map_->updateMap(*cloud, super_pose)")
+        propagated_gate = cycle.index("if (!propagated_odometry) return;")
+        completed_gate = cycle.index("const bool completed_trajectory")
+        self.assertLess(map_update, propagated_gate)
+        self.assertLess(map_update, completed_gate)
+
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
@@ -573,6 +585,17 @@ class RuntimeContractTest(unittest.TestCase):
         })
         self.assertIn("mapping observation accounting invariant failed", reasons)
         self.assertIn("mapping accepted-observation conservation equation failed", reasons)
+
+    def test_sim_and_dataset_share_mapping_integrity_gate(self) -> None:
+        source = (ROOT / "tools/runtime/report.py").read_text(encoding="utf-8")
+        dataset_body = source[source.index("def _dataset_report("):
+                              source.index("def _sim_report(")]
+        sim_body = source[source.index("def _sim_report("):
+                          source.index("def build(")]
+        self.assertIn("reasons.extend(_mapping_integrity_reasons(navigation_mapping))",
+                      dataset_body)
+        self.assertIn("reasons.extend(_mapping_integrity_reasons(navigation_mapping))",
+                      sim_body)
 
     def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
         command = runner._external_mode_launch_command(

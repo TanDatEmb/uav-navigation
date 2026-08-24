@@ -156,6 +156,25 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   17.144 ms (45.440 ms maximum), and map-slide p99 is 17.057 ms. These are
   characterization values, not new acceptance thresholds.
 
+### 2026-08-25 - P0-A corrected mapping is independent of planner state
+
+- Reordered the existing single-threaded cycle so a valid cloud plus corrected
+  pose is integrated and accounted before propagated-state and mission-FSM
+  gates. Missing/stale/invalid propagated state or a completed trajectory can
+  no longer suppress the current corrected mapping observation.
+- Corrected mapping pose now requires finite position/quaternion and normalizes
+  the quaternion before ROG. Signed freshness classifies INVALID, STALE and
+  FUTURE without changing the existing 0.5 s magnitude.
+- Closed-loop artifact
+  `.artifacts/runtime/external-mode-check-20260824T173726-67414` completed its
+  mission with 74/74 complete solve records and no mapping failure,
+  in-flight/pending, stale, future or invalid-state counters. It replaced 133
+  of 380 accepted clouds because mapping and planning remain one 10 Hz
+  callback. After applying the same mapping-integrity gate to dataset and
+  closed-loop reports, its authoritative verdict is FAIL with reason
+  `mapping replaced an unconsumed cloud: 133`; it does not close the independent
+  scheduling/snapshot gate.
+
 ### 2026-08-25 - Stage immutable WorldModel ownership before concurrency
 
 - Accepted ADR-011 after the 2x dataset overload evidence. ROG-Map is mutable

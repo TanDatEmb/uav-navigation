@@ -1499,6 +1499,11 @@ def _navigation_mapping_summary(
         "invalid_cloud_count",
         "dropped_cloud_count",
         "stale_input_count",
+        "stale_mapping_input_count",
+        "future_mapping_input_count",
+        "stale_execution_state_count",
+        "future_execution_state_count",
+        "invalid_corrected_pose_count",
         "corrected_pair_mismatch_count",
         "invalid_execution_state_count",
         "observation_rejected_before_inbox_count",
@@ -1566,8 +1571,12 @@ def _navigation_mapping_summary(
 def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
     labels = {
         "dropped_cloud_count": "mapping replaced an unconsumed cloud",
-        "stale_input_count": "mapping rejected stale input",
+        "stale_mapping_input_count": "mapping rejected stale input",
+        "future_mapping_input_count": "mapping rejected future-dated input",
         "corrected_pair_mismatch_count": "mapping rejected a corrected-pose pair",
+        "invalid_corrected_pose_count": "mapping rejected invalid corrected pose",
+        "stale_execution_state_count": "planner rejected stale execution state",
+        "future_execution_state_count": "planner rejected future-dated execution state",
         "invalid_execution_state_count": "planner execution state was invalid",
         "processing_exception_count": "mapping processing raised an exception",
     }
@@ -1762,6 +1771,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     ground_truth_residuals = _ground_truth_residuals(
         samples, _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0)
     )
+    reasons.extend(_mapping_integrity_reasons(navigation_mapping))
     scenario_reasons = list(scenario.get("failures", []))
     reasons.extend(str(item) for item in scenario_reasons)
     reasons.extend(failures)

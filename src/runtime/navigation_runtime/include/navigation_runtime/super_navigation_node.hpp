@@ -103,6 +103,11 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint64_t received_cloud_count_{0};
   std::uint64_t accepted_cloud_count_{0};
   std::uint64_t stale_input_count_{0};
+  std::uint64_t stale_mapping_input_count_{0};
+  std::uint64_t future_mapping_input_count_{0};
+  std::uint64_t stale_execution_state_count_{0};
+  std::uint64_t future_execution_state_count_{0};
+  std::uint64_t invalid_corrected_pose_count_{0};
   std::uint64_t corrected_pair_mismatch_count_{0};
   std::uint64_t invalid_execution_state_count_{0};
   std::uint64_t map_update_exception_count_{0};

@@ -58,6 +58,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_observation_accounting test/test_observation_accounting.cpp)
   target_include_directories(test_observation_accounting PRIVATE include)
+
+  ament_add_gtest(test_timestamp_freshness test/test_timestamp_freshness.cpp)
+  target_include_directories(test_timestamp_freshness PRIVATE include)
   ament_target_dependencies(test_input_pairing nav_msgs)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)

@@ -2,6 +2,7 @@
 #include "navigation_runtime/mission_dynamics.hpp"
 
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/timestamp_freshness.hpp"
 #include "super_core/solve_stage.hpp"
 
 #include <algorithm>
@@ -463,9 +464,21 @@ void SuperNavigationNode::runCycle() {
           latest_cloud_.reset();
           pending_cloud_received_steady_ns_ = 0;
           observation_accounting_.discardedPending();
-        } else if (std::llabs(now().nanoseconds() - pending_stamp_ns) >
-                   static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
+        } else if (classifyTimestampFreshness(
+                       now().nanoseconds(), pending_stamp_ns,
+                       static_cast<std::int64_t>(input_max_age_s_ * 1e9)) ==
+                   TimestampFreshness::STALE) {
           ++stale_input_count_;
+          ++stale_mapping_input_count_;
+          latest_cloud_.reset();
+          pending_cloud_received_steady_ns_ = 0;
+          observation_accounting_.discardedPending();
+        } else if (classifyTimestampFreshness(
+                       now().nanoseconds(), pending_stamp_ns,
+                       static_cast<std::int64_t>(input_max_age_s_ * 1e9)) ==
+                   TimestampFreshness::FUTURE) {
+          ++stale_input_count_;
+          ++future_mapping_input_count_;
           latest_cloud_.reset();
           pending_cloud_received_steady_ns_ = 0;
           observation_accounting_.discardedPending();
@@ -482,110 +495,53 @@ void SuperNavigationNode::runCycle() {
   }
   MappingDispositionGuard mapping_disposition{
       mapping_observation ? &observation_accounting_ : nullptr};
-  if (!mapping_observation || !propagated_odometry) return;
+  if (!mapping_observation) return;
   const auto& cloud = mapping_observation->cloud;
   const auto cloud_stamp_ns = mapping_observation->stamp_ns;
   const auto& corrected_odometry = mapping_observation->corrected_odometry;
-  const auto& execution_odometry = *propagated_odometry;
   const auto now_ns = now().nanoseconds();
   const auto corrected_stamp_ns = stampNanoseconds(corrected_odometry.header.stamp);
-  const auto execution_stamp_ns = stampNanoseconds(execution_odometry.header.stamp);
-  const auto cloud_age_ns = std::llabs(now_ns - cloud_stamp_ns);
-  const auto corrected_age_ns = std::llabs(now_ns - corrected_stamp_ns);
-  const auto execution_age_ns = std::llabs(now_ns - execution_stamp_ns);
-  if (cloud_stamp_ns <= 0 || corrected_stamp_ns != cloud_stamp_ns || execution_stamp_ns <= 0 ||
-      cloud_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9) ||
-      corrected_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9) ||
-      execution_age_ns > static_cast<std::int64_t>(input_max_age_s_ * 1e9)) {
+  const auto cloud_age_ns = now_ns - cloud_stamp_ns;
+  const auto corrected_age_ns = now_ns - corrected_stamp_ns;
+  const auto maximum_age_ns = static_cast<std::int64_t>(input_max_age_s_ * 1e9);
+  const auto cloud_freshness =
+      classifyTimestampFreshness(now_ns, cloud_stamp_ns, maximum_age_ns);
+  const auto corrected_freshness =
+      classifyTimestampFreshness(now_ns, corrected_stamp_ns, maximum_age_ns);
+  const bool mapping_stale = cloud_freshness == TimestampFreshness::STALE ||
+                             corrected_freshness == TimestampFreshness::STALE;
+  const bool mapping_future = cloud_freshness == TimestampFreshness::FUTURE ||
+                              corrected_freshness == TimestampFreshness::FUTURE;
+  if (cloud_freshness == TimestampFreshness::INVALID ||
+      corrected_freshness == TimestampFreshness::INVALID ||
+      corrected_stamp_ns != cloud_stamp_ns ||
+      mapping_stale || mapping_future) {
     ++stale_input_count_;
+    if (mapping_stale) ++stale_mapping_input_count_;
+    if (mapping_future) ++future_mapping_input_count_;
     RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
-        "SUPER rejecting stale snapshot cloud_age=%.3f corrected_age=%.3f "
-        "execution_age=%.3f limit=%.3f",
+        "SUPER rejecting mapping observation cloud_age=%.3f corrected_age=%.3f "
+        "limit=%.3f reason=%s",
         static_cast<double>(cloud_age_ns) * 1e-9,
         static_cast<double>(corrected_age_ns) * 1e-9,
-        static_cast<double>(execution_age_ns) * 1e-9, input_max_age_s_);
+        input_max_age_s_, mapping_future ? "future" : "stale_or_mismatch");
     return;
   }
-  if (!std::isfinite(corrected_odometry.pose.pose.position.x) ||
-      !std::isfinite(corrected_odometry.pose.pose.position.y) ||
-      !std::isfinite(corrected_odometry.pose.pose.position.z)) {
-    return;
-  }
-
-  const Eigen::Quaterniond execution_q{
-      execution_odometry.pose.pose.orientation.w,
-      execution_odometry.pose.pose.orientation.x,
-      execution_odometry.pose.pose.orientation.y,
-      execution_odometry.pose.pose.orientation.z};
-  const Eigen::Vector3d velocity_body{
-      execution_odometry.twist.twist.linear.x,
-      execution_odometry.twist.twist.linear.y,
-      execution_odometry.twist.twist.linear.z};
-  PlannerExecutionState execution_state;
-  if (execution_q.coeffs().allFinite() && execution_q.norm() > 1.0e-6 &&
-      velocity_body.allFinite()) {
-    const Eigen::Quaterniond normalized = execution_q.normalized();
-    const auto velocity_world = normalized * velocity_body;
-    execution_state.position = super_utils::Vec3f{
-        execution_odometry.pose.pose.position.x, execution_odometry.pose.pose.position.y,
-        execution_odometry.pose.pose.position.z};
-    execution_state.velocity = velocity_world;
-    execution_state.orientation = super_utils::Quatf{
-        normalized.w(), normalized.x(), normalized.y(), normalized.z()};
-    const auto rotation = normalized.toRotationMatrix();
-    execution_state.yaw = std::atan2(rotation(1, 0), rotation(0, 0));
-    execution_state.stamp_s = static_cast<double>(execution_stamp_ns) * 1e-9;
-    execution_state.valid = true;
-  }
-  if (!execution_state.finite() ||
-      !planner_->setPlannerExecutionState(execution_state.toRobotState())) {
-    ++invalid_execution_state_count_;
-    return;
-  }
-
-  // SUPER may produce a successful local trajectory ending at the current
-  // sensing frontier rather than at the mission goal. Once it finishes,
-  // restart PlanFromRest for the same logical goal so newly observed map
-  // cells can extend the route. Waypoint progression remains owned by the
-  // mission controller; this only retries the planner-local FSM.
-  const bool completed_trajectory = trajectory_finished_.exchange(false);
-  if (completed_trajectory && goal && trajectory_reaches_goal_.load()) {
-    // Keep publishing the terminal PVA. External Mode converts COMPLETED MAIN
-    // into native PX4 position hold while the mission controller performs its
-    // measured low-speed/hold-time confirmation.
-    return;
-  }
-  if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
-    const auto& target_message = plannerTarget(*goal);
-    const double dx = pointFromMessage(target_message, 0) - execution_state.position.x();
-    const double dy = pointFromMessage(target_message, 1) - execution_state.position.y();
-    const double dz = pointFromMessage(target_message, 2) - execution_state.position.z();
-    constexpr double kGoalReachedDistanceM = 0.20;
-    if (std::sqrt(dx * dx + dy * dy + dz * dz) > kGoalReachedDistanceM) {
-      std::lock_guard<std::mutex> lock(input_mutex_);
-      if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
-          active_goal_->waypoint_index == goal->waypoint_index &&
-          active_goal_->request_id == goal->request_id) {
-        restart_from_rest_ = true;
-        hot_goal_transition_ = false;
-        restart_from_rest = true;
-        skip_replan_once_ = false;
-      }
-      RCLCPP_INFO(get_logger(),
-                  "SUPER local trajectory finished before goal; restarting PlanFromRest "
-                  "goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
-                  pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
-                  pointFromMessage(target_message, 2), execution_state.position.x(),
-                  execution_state.position.y(), execution_state.position.z());
-    }
-  }
-
   const auto& pose = corrected_odometry.pose.pose;
+  const Eigen::Quaterniond corrected_q{
+      pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+  if (!std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
+      !std::isfinite(pose.position.z) || !corrected_q.coeffs().allFinite() ||
+      corrected_q.norm() <= 1.0e-6) {
+    ++invalid_corrected_pose_count_;
+    return;
+  }
+  const auto normalized_corrected_q = corrected_q.normalized();
   const super_utils::Pose super_pose{
       super_utils::Vec3f{pose.position.x, pose.position.y, pose.position.z},
-      super_utils::Quatf{pose.orientation.w, pose.orientation.x, pose.orientation.y,
-                         pose.orientation.z}};
+      super_utils::Quatf{normalized_corrected_q.w(), normalized_corrected_q.x(),
+                         normalized_corrected_q.y(), normalized_corrected_q.z()}};
   const auto map_started = std::chrono::steady_clock::now();
   try {
     map_->updateMap(*cloud, super_pose);
@@ -625,6 +581,11 @@ void SuperNavigationNode::runCycle() {
   add_value("trajectory_publish_count", cycle_success_count_);
   add_value("dropped_cloud_count", dropped_cloud_count);
   add_value("stale_input_count", stale_input_count_);
+  add_value("stale_mapping_input_count", stale_mapping_input_count_);
+  add_value("future_mapping_input_count", future_mapping_input_count_);
+  add_value("stale_execution_state_count", stale_execution_state_count_);
+  add_value("future_execution_state_count", future_execution_state_count_);
+  add_value("invalid_corrected_pose_count", invalid_corrected_pose_count_);
   add_value("corrected_pair_mismatch_count", corrected_pair_mismatch_count_);
   add_value("invalid_execution_state_count", invalid_execution_state_count_);
   add_value("processing_exception_count", map_update_exception_count_);
@@ -655,6 +616,84 @@ void SuperNavigationNode::runCycle() {
           std::chrono::steady_clock::now() - cycle_started).count());
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
+
+  // Mapping ownership ends above. Planner execution state is independently
+  // sourced from the latest propagated odometry and may be unavailable or
+  // invalid without suppressing a corrected observation from ROG-Map.
+  if (!propagated_odometry) return;
+  const auto& execution_odometry = *propagated_odometry;
+  const auto execution_stamp_ns = stampNanoseconds(execution_odometry.header.stamp);
+  const auto execution_age_ns = now_ns - execution_stamp_ns;
+  const auto execution_freshness =
+      classifyTimestampFreshness(now_ns, execution_stamp_ns, maximum_age_ns);
+  if (execution_freshness != TimestampFreshness::VALID) {
+    ++stale_input_count_;
+    if (execution_freshness == TimestampFreshness::STALE) ++stale_execution_state_count_;
+    if (execution_freshness == TimestampFreshness::FUTURE) ++future_execution_state_count_;
+    if (execution_freshness == TimestampFreshness::INVALID) ++invalid_execution_state_count_;
+    return;
+  }
+  const Eigen::Quaterniond execution_q{
+      execution_odometry.pose.pose.orientation.w,
+      execution_odometry.pose.pose.orientation.x,
+      execution_odometry.pose.pose.orientation.y,
+      execution_odometry.pose.pose.orientation.z};
+  const Eigen::Vector3d velocity_body{
+      execution_odometry.twist.twist.linear.x,
+      execution_odometry.twist.twist.linear.y,
+      execution_odometry.twist.twist.linear.z};
+  PlannerExecutionState execution_state;
+  if (execution_q.coeffs().allFinite() && execution_q.norm() > 1.0e-6 &&
+      velocity_body.allFinite()) {
+    const Eigen::Quaterniond normalized = execution_q.normalized();
+    const auto velocity_world = normalized * velocity_body;
+    execution_state.position = super_utils::Vec3f{
+        execution_odometry.pose.pose.position.x, execution_odometry.pose.pose.position.y,
+        execution_odometry.pose.pose.position.z};
+    execution_state.velocity = velocity_world;
+    execution_state.orientation = super_utils::Quatf{
+        normalized.w(), normalized.x(), normalized.y(), normalized.z()};
+    const auto rotation = normalized.toRotationMatrix();
+    execution_state.yaw = std::atan2(rotation(1, 0), rotation(0, 0));
+    execution_state.stamp_s = static_cast<double>(execution_stamp_ns) * 1e-9;
+    execution_state.valid = true;
+  }
+  if (!execution_state.finite() ||
+      !planner_->setPlannerExecutionState(execution_state.toRobotState())) {
+    ++invalid_execution_state_count_;
+    return;
+  }
+
+  // SUPER may produce a successful local trajectory ending at the current
+  // sensing frontier rather than at the mission goal. Once it finishes,
+  // restart PlanFromRest for the same logical goal so newly observed map
+  // cells can extend the route. Mapping has already published this cycle.
+  const bool completed_trajectory = trajectory_finished_.exchange(false);
+  if (completed_trajectory && goal && trajectory_reaches_goal_.load()) return;
+  if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
+    const auto& target_message = plannerTarget(*goal);
+    const double dx = pointFromMessage(target_message, 0) - execution_state.position.x();
+    const double dy = pointFromMessage(target_message, 1) - execution_state.position.y();
+    const double dz = pointFromMessage(target_message, 2) - execution_state.position.z();
+    constexpr double kGoalReachedDistanceM = 0.20;
+    if (std::sqrt(dx * dx + dy * dy + dz * dz) > kGoalReachedDistanceM) {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
+          active_goal_->waypoint_index == goal->waypoint_index &&
+          active_goal_->request_id == goal->request_id) {
+        restart_from_rest_ = true;
+        hot_goal_transition_ = false;
+        restart_from_rest = true;
+        skip_replan_once_ = false;
+      }
+      RCLCPP_INFO(get_logger(),
+                  "SUPER local trajectory finished before goal; restarting PlanFromRest "
+                  "goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
+                  pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
+                  pointFromMessage(target_message, 2), execution_state.position.x(),
+                  execution_state.position.y(), execution_state.position.z());
+    }
+  }
 
   if (!goal) return;
   // A terminal planner failure remains terminal for this request until the
