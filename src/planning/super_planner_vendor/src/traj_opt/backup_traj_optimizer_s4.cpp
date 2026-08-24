@@ -613,13 +613,13 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const ros_interface::R
 
 bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
     const double maximum_jerk = out_traj.getMaxJerRate();
-    const double jerk_gate = cfg_.max_jerk * (1.0 + cfg_.penna_margin);
+    const double jerk_gate = cfg_.max_jerk;
     if (!std::isfinite(maximum_jerk) || maximum_jerk > jerk_gate) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup hard jerk gate failed: "
                   << maximum_jerk << " > " << jerk_gate << RESET << std::endl;
         return false;
     }
-    const double gate_margin = 1.0 + cfg_.penna_margin;
+    constexpr double gate_margin = 1.0;
     if (out_traj.getMaxVelRate() > gate_margin * cfg_.max_vel) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max vel:\t" << out_traj.getMaxVelRate() << " m/s" << RESET

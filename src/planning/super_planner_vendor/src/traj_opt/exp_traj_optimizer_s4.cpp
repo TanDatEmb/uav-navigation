@@ -783,7 +783,10 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //        opt_vars.minco.setConditions(opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.temporalDim);
         opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
         opt_vars.minco.getTrajectory(traj);
-        const double gate_margin = 1.0 + cfg_.penna_margin;
+        // Mission V/A/J values are command limits, not soft optimizer
+        // penalties. penna_margin remains available to body-rate/thrust
+        // numerical gates but must never raise the requested flight envelope.
+        constexpr double gate_margin = 1.0;
         double maximum_velocity = traj.getMaxVelRate();
         double maximum_acceleration = traj.getMaxAccRate();
         double maximum_jerk = traj.getMaxJerRate();

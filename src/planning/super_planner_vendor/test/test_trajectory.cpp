@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "data_structure/base/trajectory.h"
+#include "super_core/super_planner.h"
 #include "traj_opt/trajectory_dynamics.hpp"
 
 TEST(SuperTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
@@ -80,4 +81,26 @@ TEST(SuperTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
   EXPECT_FALSE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
       hover, config, &yaw_report, 0.01, &fast_yaw));
   EXPECT_GT(yaw_report.maximum_body_rate_rad_s, config.max_omg);
+}
+
+TEST(SuperTrajectory, EmergencyBundleIsAtomicallyOwnedByBackup) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 1.0;
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  position.start_WT = 42.0;
+
+  Eigen::MatrixXd yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  yaw_coefficients(0, 7) = 0.4;
+  geometry_utils::Trajectory yaw({1.0}, {yaw_coefficients});
+  yaw.start_WT = 42.0;
+
+  super_planner::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  EXPECT_FALSE(command.empty());
+  EXPECT_TRUE(command.backupTrajAvilibale());
+  EXPECT_DOUBLE_EQ(command.getBackupTrajStartTT(), 0.0);
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.01));
+  EXPECT_NEAR(command.getPos(0.5).x(), 0.5, 1.0e-12);
+  EXPECT_NEAR(command.getYaw(0.5).x(), 0.4, 1.0e-12);
 }

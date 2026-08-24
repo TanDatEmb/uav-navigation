@@ -258,10 +258,15 @@ void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoa
   // continuation point is only look-ahead metadata; treating it as the
   // current goal makes a repeated waypoint publication look like a new
   // request (or, conversely, hides the actual waypoint transition).
-  const bool same_logical_goal = active_goal_.has_value() &&
+  const bool same_checkpoint = active_goal_.has_value() &&
       active_goal_->mission_id == message->mission_id &&
-      active_goal_->waypoint_index == message->waypoint_index &&
+      active_goal_->waypoint_index == message->waypoint_index;
+  const bool same_logical_goal = same_checkpoint &&
       active_goal_->request_id == message->request_id;
+  const bool reuse_completed_stop = same_checkpoint && !same_logical_goal &&
+      message->behavior == navigation_interfaces::msg::NavigationGoal::BEHAVIOR_STOP &&
+      planner_command_available_.load() && trajectory_reaches_goal_.load() &&
+      !planner_failure_latched_.load() && !safety_suffix_active_.load();
   const bool can_hot_retarget = canHotRetargetAtWaypointTransition(
       same_logical_goal,
       active_goal_.has_value() &&
@@ -277,6 +282,19 @@ void SuperNavigationNode::onGoal(const navigation_interfaces::msg::NavigationGoa
     planner_->cancelActiveSolve();
   }
   active_goal_ = *message;
+  if (reuse_completed_stop) {
+    // The mission controller may republish a STOP checkpoint when one noisy
+    // velocity sample temporarily breaks its hold confirmation. The completed
+    // SUPER command already terminates at this same checkpoint and PX4 is
+    // actively holding it; replacing it with a zero-distance PlanFromRest
+    // creates a singular yaw problem and unnecessarily drops position hold.
+    new_goal_ = false;
+    hot_goal_transition_ = false;
+    restart_from_rest_ = false;
+    skip_replan_once_ = false;
+    trajectory_finished_.store(true);
+    return;
+  }
   if (!same_logical_goal) {
     planner_failure_latched_.store(false);
     safety_suffix_active_.store(false);
@@ -389,7 +407,14 @@ void SuperNavigationNode::runCycle() {
   // restart PlanFromRest for the same logical goal so newly observed map
   // cells can extend the route. Waypoint progression remains owned by the
   // mission controller; this only retries the planner-local FSM.
-  if (trajectory_finished_.exchange(false) && goal && !trajectory_reaches_goal_.load()) {
+  const bool completed_trajectory = trajectory_finished_.exchange(false);
+  if (completed_trajectory && goal && trajectory_reaches_goal_.load()) {
+    // Keep publishing the terminal PVA. External Mode converts COMPLETED MAIN
+    // into native PX4 position hold while the mission controller performs its
+    // measured low-speed/hold-time confirmation.
+    return;
+  }
+  if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
     const auto& target_message = plannerTarget(*goal);
     const double dx = pointFromMessage(target_message, 0) - odometry->pose.pose.position.x;
     const double dy = pointFromMessage(target_message, 1) - odometry->pose.pose.position.y;
@@ -594,6 +619,7 @@ void SuperNavigationNode::runCycle() {
   if (disposition == PlannerResultDisposition::RetainCommittedCommand) {
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
+    const auto committed_yaw = planner_->getCommittedYawTrajectory();
     const bool backup_available = planner_->committedBackupTrajectoryAvailable();
     const double backup_start_s = planner_->getCommittedBackupStartTrajectoryTime();
     planner_->unlockCommittedTraj();
@@ -612,6 +638,8 @@ void SuperNavigationNode::runCycle() {
     // that solve is therefore stale by construction. Validate against the
     // freshest propagated odometry available after the solve.
     super_utils::Vec3f current_vehicle_position = planner_state.p;
+    super_utils::Vec3f current_vehicle_velocity = planner_state.v;
+    double current_vehicle_yaw = planner_state.yaw;
     bool fresh_vehicle_state = false;
     double latest_vehicle_state_age_s = std::numeric_limits<double>::infinity();
     {
@@ -630,6 +658,21 @@ void SuperNavigationNode::runCycle() {
         current_vehicle_position = super_utils::Vec3f{
             latest.pose.pose.position.x, latest.pose.pose.position.y,
             latest.pose.pose.position.z};
+        const Eigen::Quaterniond world_from_body{
+            latest.pose.pose.orientation.w, latest.pose.pose.orientation.x,
+            latest.pose.pose.orientation.y, latest.pose.pose.orientation.z};
+        const Eigen::Vector3d velocity_body{
+            latest.twist.twist.linear.x, latest.twist.twist.linear.y,
+            latest.twist.twist.linear.z};
+        if (world_from_body.coeffs().allFinite() &&
+            world_from_body.norm() > 1.0e-6 && velocity_body.allFinite()) {
+          const Eigen::Quaterniond normalized = world_from_body.normalized();
+          current_vehicle_velocity = normalized * velocity_body;
+          const Eigen::Matrix3d rotation = normalized.toRotationMatrix();
+          current_vehicle_yaw = std::atan2(rotation(1, 0), rotation(0, 0));
+        } else {
+          fresh_vehicle_state = false;
+        }
       }
     }
     const double anchor_error_m = committed.empty() || !fresh_vehicle_state
@@ -663,14 +706,37 @@ void SuperNavigationNode::runCycle() {
     const double safety_transition_s = backup_available
                                            ? std::max(backup_start_s, clamped_elapsed_s)
                                            : clamped_elapsed_s;
-    const bool use_safety_suffix = committedSafetySuffixIsUsable(
+    bool use_safety_suffix = committedSafetySuffixIsUsable(
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
         anchor_error_m, max_safety_suffix_anchor_error_m_, sampled_path_clear);
+    bool emergency_brake_committed = false;
+    if (!use_safety_suffix && fresh_vehicle_state && !committed.empty() &&
+        !committed_yaw.empty()) {
+      // Position and velocity are measured at the newest propagated odometry
+      // sample. Acceleration/jerk and yaw-rate are not measured by the LIO
+      // interface, so retain their continuous values from the command that
+      // PX4 was tracking at the same command-clock instant.
+      super_utils::StatePVAJ emergency_state = committed.getState(clamped_elapsed_s);
+      emergency_state.col(0) = current_vehicle_position;
+      emergency_state.col(1) = current_vehicle_velocity;
+      const double emergency_yaw_dot = committed_yaw.getVel(clamped_elapsed_s).x();
+      emergency_brake_committed = planner_->commitEmergencyBrake(
+          emergency_state, current_vehicle_yaw, emergency_yaw_dot, now().seconds());
+      use_safety_suffix = emergency_brake_committed;
+    }
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
-    safety_suffix_active_.store(use_safety_suffix && backup_available);
+    safety_suffix_active_.store(
+        use_safety_suffix && (backup_available || emergency_brake_committed));
     planner_failure_latched_.store(!use_safety_suffix);
+    if (emergency_brake_committed) {
+      planner_command_available_.store(true);
+      trajectory_finished_.store(false);
+      RCLCPP_WARN(get_logger(),
+                  "SUPER replaced unusable committed suffix with a measured-state "
+                  "emergency backup trajectory");
+    }
     if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
                   "SUPER hot replan failed (%d); retaining visible committed trajectory "

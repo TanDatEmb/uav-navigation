@@ -443,6 +443,108 @@ namespace super_planner {
         cmd_traj_info_.unlock();
     }
 
+    bool SuperPlanner::commitEmergencyBrake(const StatePVAJ &measured_state,
+                                            const double measured_yaw,
+                                            const double measured_yaw_dot,
+                                            const double start_WT) {
+        if (!measured_state.allFinite() || !std::isfinite(measured_yaw) ||
+            !std::isfinite(measured_yaw_dot) || !std::isfinite(start_WT)) {
+            ros_ptr_->error(" -- [SUPER] emergency brake rejected: non-finite initial state");
+            return false;
+        }
+
+        StatePVAJ bounded_state = measured_state;
+        const auto clamp_state_column = [&bounded_state](const int column,
+                                                        const double limit) {
+            const double magnitude = bounded_state.col(column).norm();
+            if (std::isfinite(magnitude) && magnitude > limit) {
+                bounded_state.col(column) *= limit / magnitude;
+            }
+        };
+        clamp_state_column(1, cfg_.back_traj_cfg.max_vel);
+        clamp_state_column(2, cfg_.back_traj_cfg.max_acc);
+        clamp_state_column(3, cfg_.back_traj_cfg.max_jerk);
+
+        const auto seed = makeBackupBrakingSeed(
+                0.0, bounded_state,
+                cfg_.back_traj_cfg.max_vel,
+                cfg_.back_traj_cfg.max_acc,
+                cfg_.back_traj_cfg.max_jerk,
+                cfg_.sample_traj_dt,
+                0.0);
+        if (!seed.feasible || !std::isfinite(seed.duration_s) ||
+            seed.duration_s <= 0.0) {
+            ros_ptr_->error(" -- [SUPER] emergency brake rejected: no feasible PVAJ stop seed");
+            return false;
+        }
+
+        Trajectory position_trajectory;
+        position_trajectory.emplace_back(
+                minimumSnapStopPiece(bounded_state, seed.duration_s));
+        position_trajectory.start_WT = start_WT;
+
+        StatePVAJ yaw_state = StatePVAJ::Zero();
+        yaw_state(0, 0) = measured_yaw;
+        yaw_state(0, 1) = measured_yaw_dot;
+        Trajectory yaw_trajectory;
+        yaw_trajectory.emplace_back(
+                minimumSnapStopPiece(yaw_state, seed.duration_s));
+        yaw_trajectory.start_WT = start_WT;
+
+        traj_opt::TrajectoryDynamicReport dynamic_report;
+        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                position_trajectory, cfg_.back_traj_cfg, &dynamic_report,
+                0.005, &yaw_trajectory)) {
+            ros_ptr_->error(
+                    " -- [SUPER] emergency brake dynamic gate failed: body_rate={} thrust=[{},{}]",
+                    dynamic_report.maximum_body_rate_rad_s,
+                    dynamic_report.minimum_thrust_n,
+                    dynamic_report.maximum_thrust_n);
+            return false;
+        }
+
+        // ROG-Map is already inflated by the configured vehicle envelope. A
+        // 5 ms sweep keeps adjacent samples below 6 cm even at the x500
+        // product cap of 12 m/s. UNKNOWN remains traversable, matching the
+        // no-raycasting SUPER policy; OCCUPIED and OUT_OF_MAP fail closed.
+        constexpr double kMapSamplePeriodS = 0.005;
+        const std::size_t intervals = std::max<std::size_t>(
+                1U, static_cast<std::size_t>(
+                        std::ceil(seed.duration_s / kMapSamplePeriodS)));
+        for (std::size_t sample_index = 0; sample_index <= intervals;
+             ++sample_index) {
+            const double sample_time = seed.duration_s *
+                    static_cast<double>(sample_index) /
+                    static_cast<double>(intervals);
+            const Vec3f sample_position = position_trajectory.getPos(sample_time);
+            const rog_map::GridType grid = sample_position.allFinite()
+                    ? map_ptr_->getInfGridType(sample_position)
+                    : rog_map::GridType::OUT_OF_MAP;
+            if (grid == rog_map::GridType::OCCUPIED ||
+                grid == rog_map::GridType::OUT_OF_MAP) {
+                ros_ptr_->error(
+                        " -- [SUPER] emergency brake map gate failed at t={} p={} grid={}",
+                        sample_time, sample_position.transpose(),
+                        static_cast<int>(grid));
+                return false;
+            }
+        }
+
+        std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+        if (solve_cancelled_.load() ||
+            !cmd_traj_info_.setEmergencyBackup(
+                    position_trajectory, yaw_trajectory)) {
+            ros_ptr_->error(" -- [SUPER] emergency brake atomic commit rejected");
+            return false;
+        }
+        robot_on_backup_traj_ = true;
+        ros_ptr_->warn(
+                " -- [SUPER] committed measured-state emergency brake: duration={} distance={}",
+                seed.duration_s,
+                (seed.endpoint - bounded_state.col(0)).norm());
+        return true;
+    }
+
 
     void SuperPlanner::getModuleTimeConsuming(vector<double> &time) {
         time = time_consuming_;
@@ -1177,7 +1279,7 @@ namespace super_planner {
                     candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt,
-                    cfg_.back_traj_cfg.penna_margin);
+                    0.0);
             braking_seed_inside_sfc = braking_seed.feasible &&
                     braking_seed.duration_s > cfg_.sample_traj_dt;
             if (braking_seed_inside_sfc) {

@@ -24,12 +24,19 @@ fall into these categories:
   realtime replan deadline.
 - Atomic main-plus-backup publication, cancellation propagation, and explicit
   planner return codes required by the runtime safety FSM.
+- SUPER-owned measured-state emergency braking when a previously committed
+  suffix is no longer trackable. Position/velocity are refreshed from LIO,
+  unmeasured acceleration/jerk retain the command boundary and are saturated
+  to mission limits, and the new BACKUP-only bundle is committed atomically
+  only after dense inflated-map and V/A/J/body-rate/thrust checks.
 - Backup visibility checks against the inflated occupied tube, while retaining
   upstream optimistic UNKNOWN-space semantics when raycasting is disabled.
 - Configuration validation for inflation radius, braking visibility horizon,
   and planner deadline relationships.
 - Optimizer finite-value, dynamic-limit, and cancellation post-checks used to
   prevent an invalid trajectory from reaching the PX4 command boundary.
+  Mission velocity, acceleration, and jerk are strict command limits;
+  optimizer penalty margin cannot raise them.
 - Analytic velocity, acceleration, and jerk extrema for polynomial pieces,
   main-trajectory time feasibility projection, and the product-only
   `include/super_core/backup_braking.hpp` helper. The backup seed uses the full

@@ -119,6 +119,33 @@ namespace super_planner {
             checkFirstPartBackupTraj(exp_traj);
         }
 
+        // Commit a safety-only trajectory generated from the current measured
+        // vehicle state.  Build and validate both polynomials before entering
+        // this method; the lock makes the position/yaw pair and its BACKUP
+        // ownership visible to the command thread as one atomic bundle.
+        bool setEmergencyBackup(const Trajectory &pos_traj,
+                                const Trajectory &yaw_traj) {
+            if (pos_traj.empty() || yaw_traj.empty() ||
+                !std::isfinite(pos_traj.start_WT) ||
+                !std::isfinite(yaw_traj.start_WT) ||
+                std::abs(pos_traj.start_WT - yaw_traj.start_WT) > 1.0e-6 ||
+                yaw_traj.getTotalDuration() + 1.0e-6 <
+                    pos_traj.getTotalDuration()) {
+                return false;
+            }
+            LOCK_G
+            pos_traj_ = pos_traj;
+            yaw_traj_ = yaw_traj;
+            start_WT_ = pos_traj_.start_WT;
+            backup_traj_start_TT_ = 0.0;
+            on_backup_start_TT_ = -1.0;
+            on_backup_end_TT_ = -1.0;
+            first_part_exp_has_backup_traj_ = false;
+            flag_empty_ = false;
+            flag_backup_traj_avilibale_ = true;
+            return true;
+        }
+
         bool isTTOnBackupTraj(const double & checkTT) const {
             if(!backupTrajAvilibale()) {
                 return false;

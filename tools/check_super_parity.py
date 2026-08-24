@@ -29,6 +29,7 @@ DOCUMENTED_DELTA_FILES = frozenset(
         "include/data_structure/base/polytope.h",
         "include/data_structure/base/piece.h",
         "include/data_structure/base/trajectory.h",
+        "include/data_structure/cmd_traj.h",
         "include/path_search/astar.h",
         "include/path_search/config.hpp",
         "include/super_core/ciri.h",
