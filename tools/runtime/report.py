@@ -1381,6 +1381,8 @@ def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[st
             "planning_corridor_us",
             "planning_trajectory_optimization_us",
             "planning_total_us",
+            "mapping_input_lock_wait_us",
+            "planning_scheduling_gap_us",
         ),
         stream_names=("planning_diagnostics", "mapping_diagnostics", "diagnostics"),
     )
@@ -1473,19 +1475,42 @@ def _navigation_mapping_summary(
     stream = snapshot.get("streams", {}).get("mapping_diagnostics", {})
     latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
     statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
+    latest_by_owner: dict[str, dict[str, Any]] = {}
+    for stream_name in ("mapping_diagnostics", "diagnostics"):
+        for item in _series(samples or [], stream_name):
+            for status in item.get("payload", {}).get("statuses", []):
+                if not isinstance(status, dict):
+                    continue
+                status_name = str(status.get("name", ""))
+                if status_name.endswith("/world_model"):
+                    latest_by_owner["world_model"] = status
+                elif status_name == "super_navigation/super_planner":
+                    latest_by_owner["planner"] = status
+    # The monitor's final snapshot contains only the last diagnostic message,
+    # so retain it as a fallback for workflows without a sample stream.
+    for status in statuses:
+        if not isinstance(status, dict):
+            continue
+        status_name = str(status.get("name", ""))
+        if status_name.endswith("/world_model"):
+            latest_by_owner.setdefault("world_model", status)
+        elif status_name == "super_navigation/super_planner":
+            latest_by_owner.setdefault("planner", status)
     values: dict[str, Any] = {}
     level = "NOT_AVAILABLE"
     message = "NOT_AVAILABLE"
-    for status in statuses:
-        status_name = str(status.get("name", ""))
-        if not (status_name.endswith("/world_model") or status_name == "super_navigation/super_planner"):
+    # Planner owns ingress/execution counters. The dedicated world-model event
+    # owns revision, terminal mapping lifecycle and per-publication telemetry;
+    # it deterministically overrides overlapping legacy compatibility fields.
+    for owner in ("planner", "world_model"):
+        status = latest_by_owner.get(owner)
+        if not status:
             continue
         candidate = status.get("values", {})
         if isinstance(candidate, dict):
-            values = candidate
+            values.update(candidate)
         level = status.get("level", "NOT_AVAILABLE")
         message = status.get("message", "NOT_AVAILABLE")
-        break
     integer_fields = (
         "received_observation_count",
         "accepted_observation_count",
@@ -1517,7 +1542,15 @@ def _navigation_mapping_summary(
         "invalid_execution_state_count",
         "observation_rejected_before_inbox_count",
         "observation_replaced_pending_count",
+        "observation_replaced_waiting_count",
+        "observation_replaced_ready_count",
         "observation_discarded_pending_count",
+        "observation_discarded_ready_count",
+        "observation_discarded_shutdown_ready_count",
+        "observation_discarded_nonmonotonic_count",
+        "worker_discarded_stale_count",
+        "worker_discarded_future_count",
+        "worker_discarded_invalid_count",
         "mapping_started_count",
         "mapping_published_count",
         "mapping_failed_count",
@@ -1560,8 +1593,6 @@ def _navigation_mapping_summary(
         (
             "ros_pointcloud_decode_us",
             "observation_pair_wait_us",
-            "mapping_input_lock_wait_us",
-            "planning_scheduling_gap_us",
             "mapping_filter_us",
             "transform_to_odom_us",
             "rog_raycast_us",

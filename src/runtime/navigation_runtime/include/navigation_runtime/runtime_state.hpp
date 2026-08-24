@@ -13,6 +13,8 @@ struct MappingObservation {
   std::shared_ptr<rog_map::PointCloud> cloud;
   nav_msgs::msg::Odometry corrected_odometry;
   std::int64_t stamp_ns{0};
+  std::int64_t pointcloud_decode_us{0};
+  std::int64_t pair_wait_us{0};
 };
 
 struct PlannerExecutionState {

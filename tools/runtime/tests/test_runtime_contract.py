@@ -144,11 +144,13 @@ class RuntimeContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         cycle = source[source.index("void SuperNavigationNode::runCycle()"):
                        source.index("void SuperNavigationNode::publishCommand()")]
-        map_update = cycle.index("map_->updateMap(*cloud, super_pose)")
-        propagated_gate = cycle.index("if (!propagated_odometry) return;")
-        completed_gate = cycle.index("const bool completed_trajectory")
-        self.assertLess(map_update, propagated_gate)
-        self.assertLess(map_update, completed_gate)
+        constructor = source[:source.index("void SuperNavigationNode::runCycle()")]
+        self.assertIn("mapping_map->updateMap(*observation.cloud, super_pose)", constructor)
+        self.assertIn("mapping_worker_->start()", constructor)
+        self.assertNotIn("updateMap(", cycle)
+        self.assertNotIn("map_->", cycle)
+        self.assertIn("if (!propagated_odometry) return;", cycle)
+        self.assertIn("const bool completed_trajectory", cycle)
 
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1348,6 +1350,47 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(mapping["world_snapshot_peak_live_count"], 2)
         self.assertEqual(
             mapping["timing_distributions"]["world_snapshot_export_us"]["p50"], 15018.0)
+
+    def test_navigation_mapping_summary_merges_status_owners_in_either_final_order(self) -> None:
+        planner = {
+            "name": "super_navigation/super_planner",
+            "level": 0,
+            "message": "MAP_READY",
+            "values": {
+                "received_observation_count": "2",
+                "accepted_observation_count": "2",
+                "dropped_cloud_count": "0",
+            },
+        }
+        world = {
+            "name": "navigation_mapping/world_model",
+            "level": 0,
+            "message": "PUBLISHED",
+            "values": {
+                "world_revision": "2",
+                "mapping_started_count": "2",
+                "mapping_published_count": "2",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+            },
+        }
+        for final, earlier in ((world, planner), (planner, world)):
+            snapshot = {
+                "streams": {"mapping_diagnostics": {"received": 2}},
+                "latest": {"mapping_diagnostics": {"statuses": [final]}},
+            }
+            samples = [
+                {"stream": "diagnostics", "payload": {"statuses": [earlier]}},
+                {"stream": "diagnostics", "payload": {"statuses": [final]}},
+            ]
+            mapping = report._navigation_mapping_summary(snapshot, samples)
+            self.assertEqual(mapping["received_observation_count"], 2)
+            self.assertEqual(mapping["accepted_observation_count"], 2)
+            self.assertEqual(mapping["world_revision"], 2)
+            self.assertEqual(mapping["mapping_published_count"], 2)
+            self.assertEqual(report._mapping_integrity_reasons(mapping), [])
 
     def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
         snapshot = {

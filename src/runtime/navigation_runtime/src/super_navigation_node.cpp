@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -50,26 +51,6 @@ std::int64_t steadyNowNanoseconds() {
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
-
-class MappingDispositionGuard {
- public:
-  explicit MappingDispositionGuard(ObservationAccounting* accounting)
-      : accounting_(accounting) {}
-  MappingDispositionGuard(const MappingDispositionGuard&) = delete;
-  MappingDispositionGuard& operator=(const MappingDispositionGuard&) = delete;
-  ~MappingDispositionGuard() {
-    if (accounting_ != nullptr) accounting_->mappingFailed();
-  }
-
-  void publish() {
-    if (accounting_ == nullptr) return;
-    accounting_->mappingPublished();
-    accounting_ = nullptr;
-  }
-
- private:
-  ObservationAccounting* accounting_;
-};
 
 }  // namespace
 
@@ -152,6 +133,8 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
 
   ros_interface_ = std::make_shared<ros_interface::RosInterface>(
       [this]() { return now().seconds(); });
+  diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
   std::optional<super_planner::DynamicLimits> mission_limits;
   if (!mission_file.empty()) {
     mission_limits = loadMissionDynamicLimits(mission_file);
@@ -163,16 +146,157 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
         mission_limits->max_acceleration_mps2,
         mission_limits->max_jerk_mps3);
   }
-  map_ = std::make_shared<RuntimeRogMap>([this] { return now().seconds(); });
-  map_->loadConfigAndInit(super_config_path_);
+  const auto ros_clock = get_clock();
+  auto mapping_map = std::make_shared<RuntimeRogMap>(
+      [ros_clock] { return ros_clock->now().seconds(); });
+  mapping_map->loadConfigAndInit(super_config_path_);
   auto initial_world_view = std::make_shared<RogWorldSnapshot>(
-      map_->exportPlanningGrid(), navigation_world_model::WorldSnapshotIdentity{
-                                      world_generation_, world_revision_, 0});
+      mapping_map->exportPlanningGrid(),
+      navigation_world_model::WorldSnapshotIdentity{1, 0, 0});
   world_snapshot_store_.publish(initial_world_view);
-  world_model_view_ = world_snapshot_store_.load().view;
+  mapping_telemetry_ = std::make_shared<MappingTelemetry>();
+  MappingTelemetrySnapshot initial_telemetry;
+  initial_telemetry.snapshot_bytes = initial_world_view->byteSize();
+  initial_telemetry.snapshot_owned_bytes = initial_world_view->ownedByteSize();
+  initial_telemetry.snapshot_shared_metadata_bytes =
+      initial_world_view->sharedMetadataByteSize();
+  mapping_telemetry_->update(initial_telemetry);
+  auto process_mapping = [mapping_map, telemetry = mapping_telemetry_,
+                          store = &world_snapshot_store_, revision = std::uint64_t{0}]
+      (MappingObservation&& observation) mutable {
+    const auto& pose = observation.corrected_odometry.pose.pose;
+    const Eigen::Quaterniond corrected_q{
+        pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+    const auto normalized_q = corrected_q.normalized();
+    const super_utils::Pose super_pose{
+        super_utils::Vec3f{pose.position.x, pose.position.y, pose.position.z},
+        super_utils::Quatf{normalized_q.w(), normalized_q.x(),
+                           normalized_q.y(), normalized_q.z()}};
+    const auto map_started = std::chrono::steady_clock::now();
+    mapping_map->updateMap(*observation.cloud, super_pose);
+    const auto export_started = std::chrono::steady_clock::now();
+    auto snapshot = std::make_shared<RogWorldSnapshot>(
+        mapping_map->exportPlanningGrid(),
+        navigation_world_model::WorldSnapshotIdentity{
+            1, revision + 1, observation.stamp_ns});
+    const auto export_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - export_started).count();
+    store->publish(snapshot);
+    ++revision;
+    MappingTelemetrySnapshot next;
+    next.map = mapping_map->lastDiagnostics();
+    next.world_revision = revision;
+    next.observation_stamp_ns = observation.stamp_ns;
+    next.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - map_started).count();
+    next.snapshot_export_us = export_us;
+    next.pointcloud_decode_us = observation.pointcloud_decode_us;
+    next.pair_wait_us = observation.pair_wait_us;
+    next.snapshot_bytes = snapshot->byteSize();
+    next.snapshot_owned_bytes = snapshot->ownedByteSize();
+    next.snapshot_shared_metadata_bytes = snapshot->sharedMetadataByteSize();
+    telemetry->update(std::move(next));
+  };
+  auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
+                           maximum_age_ns = static_cast<std::int64_t>(
+                                      input_max_age_s_ * 1e9)](
+      const MappingObservation& observation) {
+    const auto& pose = observation.corrected_odometry.pose.pose;
+    const Eigen::Quaterniond q{
+        pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+    const auto freshness = classifyTimestampFreshness(
+        ros_clock->now().nanoseconds(), observation.stamp_ns, maximum_age_ns);
+    const bool invalid = !observation.cloud || observation.cloud->empty() ||
+        observation.stamp_ns <= 0 ||
+        stampNanoseconds(observation.corrected_odometry.header.stamp) !=
+            observation.stamp_ns ||
+        !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
+        !std::isfinite(pose.position.z) || !q.coeffs().allFinite() ||
+        q.norm() <= 1.0e-6 || freshness == TimestampFreshness::INVALID;
+    const bool stale = freshness == TimestampFreshness::STALE;
+    const bool future = freshness == TimestampFreshness::FUTURE;
+    if (invalid || stale || future) telemetry->recordDiscard(stale, future, invalid);
+    return !invalid && !stale && !future;
+  };
+  mapping_worker_ = std::make_unique<MappingWorker<MappingObservation>>(
+      observation_accounting_, std::move(process_mapping),
+      [](std::exception_ptr failure) {
+        try {
+          if (failure) std::rethrow_exception(failure);
+        } catch (const std::exception& error) {
+          std::fprintf(stderr,
+              "FATAL: MappingWorker failed after mutable ROG processing began: %s\n",
+              error.what());
+        } catch (...) {
+          std::fprintf(stderr,
+              "FATAL: MappingWorker failed with a non-standard exception\n");
+        }
+        std::fflush(stderr);
+        std::abort();
+      }, std::move(validate_mapping),
+      [publisher = diagnostics_publisher_, ros_clock,
+       telemetry = mapping_telemetry_, accounting = &observation_accounting_]() {
+        const auto mapping = telemetry->snapshot();
+        const auto lifecycle = accounting->snapshot();
+        diagnostic_msgs::msg::DiagnosticArray diagnostics;
+        diagnostics.header.stamp = ros_clock->now();
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_mapping/world_model";
+        status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+        status.message = "PUBLISHED";
+        const auto add_value = [&status](const std::string& key, std::uint64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
+        const auto add_duration = [&status](const std::string& key, std::int64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(std::max<std::int64_t>(0, value));
+          status.values.push_back(std::move(item));
+        };
+        const auto& map = mapping.map;
+        add_value("world_generation", mapping.world_generation);
+        add_value("world_revision", mapping.world_revision);
+        add_value("observation_stamp_ns", mapping.observation_stamp_ns);
+        add_value("mapping_started_count", lifecycle.mapping_started);
+        add_value("mapping_published_count", lifecycle.mapping_published);
+        add_value("mapping_failed_count", lifecycle.mapping_failed);
+        add_value("mapping_pending_count", lifecycle.pending);
+        add_value("mapping_in_flight_count", lifecycle.in_flight);
+        add_value("observation_accounting_valid",
+                  lifecycle.allInvariantsHold() ? 1U : 0U);
+        add_value("observation_accounting_violation_count", lifecycle.violation_count);
+        add_value("mapping_input_point_count", map.endpoint_count);
+        add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
+        add_value("world_snapshot_bytes", mapping.snapshot_bytes);
+        add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
+        add_value("world_snapshot_shared_metadata_bytes",
+                  mapping.snapshot_shared_metadata_bytes);
+        add_value("world_snapshot_live_count", RogWorldSnapshot::liveCount());
+        add_value("world_snapshot_peak_live_count", RogWorldSnapshot::peakLiveCount());
+        add_value("world_snapshot_live_owned_bytes", RogWorldSnapshot::liveOwnedBytes());
+        add_value("world_snapshot_peak_live_owned_bytes",
+                  RogWorldSnapshot::peakLiveOwnedBytes());
+        add_duration("ros_pointcloud_decode_us", mapping.pointcloud_decode_us);
+        add_duration("observation_pair_wait_us", mapping.pair_wait_us);
+        add_duration("rog_raycast_us", map.rog_raycast_us);
+        add_duration("rog_probability_update_us", map.rog_probability_update_us);
+        add_duration("rog_inflation_us", map.rog_inflation_us);
+        add_duration("rog_slide_us", map.rog_slide_us);
+        add_duration("rog_total_update_us", map.rog_total_update_us);
+        add_duration("world_snapshot_export_us", mapping.snapshot_export_us);
+        add_duration("mapping_callback_total_us", mapping.map_update_us);
+        diagnostics.status.push_back(std::move(status));
+        publisher->publish(diagnostics);
+      });
   planner_ = std::make_shared<super_planner::SuperPlanner>(
-      super_config_path_, ros_interface_, world_model_view_, mission_limits,
+      super_config_path_, ros_interface_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_);
+  mapping_worker_->setStrictlyIncreasingOrderKey(
+      [](const MappingObservation& observation) { return observation.stamp_ns; });
+  mapping_worker_->start();
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -193,8 +317,6 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
           std::bind(&SuperNavigationNode::onModeStatus, this, std::placeholders::_1));
   command_publisher_ = create_publisher<mars_quadrotor_msgs::msg::PositionCommand>(
       command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
-  diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-      "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
   end_to_end_samples_ms_.reserve(256);
 
   // SUPER's planner state (last_exp_traj_, robot_state_ and CmdTraj) is not
@@ -219,6 +341,27 @@ SuperNavigationNode::SuperNavigationNode(const rclcpp::NodeOptions& options)
               cloud_topic_.c_str(), corrected_odometry_topic_.c_str(),
               propagated_odometry_topic_.c_str(), goal_topic_.c_str(),
               command_topic_.c_str(), planner_rate_hz_, command_rate_hz_);
+}
+
+SuperNavigationNode::~SuperNavigationNode() {
+  accepting_observations_.store(false);
+  if (planning_timer_) planning_timer_->cancel();
+  if (command_timer_) command_timer_->cancel();
+  if (planner_) planner_->cancelActiveSolve();
+  cloud_subscription_.reset();
+  corrected_odometry_subscription_.reset();
+  propagated_odometry_subscription_.reset();
+  goal_subscription_.reset();
+  status_subscription_.reset();
+  {
+    std::lock_guard lock(input_mutex_);
+    if (latest_cloud_) {
+      latest_cloud_.reset();
+      pending_cloud_received_steady_ns_ = 0;
+      observation_accounting_.discardedPending();
+    }
+  }
+  if (mapping_worker_) mapping_worker_->shutdown();
 }
 
 bool SuperNavigationNode::decodeCloud(const sensor_msgs::msg::PointCloud2& message,
@@ -261,8 +404,49 @@ std::int64_t SuperNavigationNode::stampNanoseconds(
   return input_pairing::stampNanoseconds(stamp);
 }
 
+std::optional<MappingObservation> SuperNavigationNode::tryPromotePairLocked() {
+  if (!latest_cloud_) return std::nullopt;
+  auto pair = input_pairing::tryTakeExactPair(
+      latest_cloud_, corrected_odometry_history_);
+  if (pair) {
+    last_pair_wait_us_ = pending_cloud_received_steady_ns_ > 0
+        ? std::max<std::int64_t>(
+              0, (steadyNowNanoseconds() - pending_cloud_received_steady_ns_) / 1000)
+        : 0;
+    pending_cloud_received_steady_ns_ = 0;
+    return MappingObservation{
+        std::move(pair->payload), std::move(pair->corrected_odometry), pair->stamp_ns,
+        last_input_conversion_us_.load(), last_pair_wait_us_.load()};
+  }
+  const auto pending_stamp_ns = latest_cloud_->stamp_ns;
+  const auto newest_corrected_stamp_ns = corrected_odometry_history_.empty()
+      ? 0 : stampNanoseconds(corrected_odometry_history_.back().header.stamp);
+  const auto freshness = classifyTimestampFreshness(
+      now().nanoseconds(), pending_stamp_ns,
+      static_cast<std::int64_t>(input_max_age_s_ * 1e9));
+  if (newest_corrected_stamp_ns > pending_stamp_ns) {
+    ++corrected_pair_mismatch_count_;
+  } else if (freshness == TimestampFreshness::STALE) {
+    ++stale_input_count_;
+    ++stale_mapping_input_count_;
+  } else if (freshness == TimestampFreshness::FUTURE) {
+    ++stale_input_count_;
+    ++future_mapping_input_count_;
+  } else {
+    return std::nullopt;
+  }
+  latest_cloud_.reset();
+  pending_cloud_received_steady_ns_ = 0;
+  observation_accounting_.discardedPending();
+  return std::nullopt;
+}
+
 void SuperNavigationNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
   ++received_cloud_count_;
+  if (!accepting_observations_.load()) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
   if (message->header.frame_id != planning_frame_) {
     observation_accounting_.recordRejectedBeforeInbox();
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -284,15 +468,19 @@ void SuperNavigationNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstShar
                          "Dropping cloud without a valid timestamp");
     return;
   }
-  std::lock_guard<std::mutex> lock(input_mutex_);
-  last_input_conversion_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
-      std::chrono::steady_clock::now() - decode_started).count();
-  if (latest_cloud_) ++dropped_cloud_count_;
-  observation_accounting_.recordAcceptedToInbox();
-  latest_cloud_ = input_pairing::StampedObservation<
-      std::shared_ptr<rog_map::PointCloud>>{std::move(decoded), stamp_ns};
-  pending_cloud_received_steady_ns_ = steadyNowNanoseconds();
-  ++accepted_cloud_count_;
+  std::optional<MappingObservation> ready;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    last_input_conversion_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - decode_started).count();
+    observation_accounting_.recordAcceptedToInbox();
+    latest_cloud_ = input_pairing::StampedObservation<
+        std::shared_ptr<rog_map::PointCloud>>{std::move(decoded), stamp_ns};
+    pending_cloud_received_steady_ns_ = steadyNowNanoseconds();
+    ++accepted_cloud_count_;
+    ready = tryPromotePairLocked();
+    if (ready) (void)mapping_worker_->submitFromWaiting(std::move(*ready));
+  }
 }
 
 void SuperNavigationNode::onCorrectedOdometry(
@@ -305,15 +493,27 @@ void SuperNavigationNode::onCorrectedOdometry(
   }
   const auto stamp_ns = stampNanoseconds(message->header.stamp);
   if (stamp_ns <= 0) return;
-  std::lock_guard<std::mutex> lock(input_mutex_);
-  if (!corrected_odometry_history_.empty() &&
-      stamp_ns < stampNanoseconds(corrected_odometry_history_.back().header.stamp)) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                         "Dropping out-of-order odometry timestamp");
-    return;
+  if (!accepting_observations_.load()) return;
+  std::optional<MappingObservation> ready;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    if (!corrected_odometry_history_.empty() &&
+        stamp_ns < stampNanoseconds(corrected_odometry_history_.back().header.stamp)) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                           "Dropping out-of-order odometry timestamp");
+      return;
+    }
+    corrected_odometry_history_.push_back(*message);
+    while (corrected_odometry_history_.size() > 64U) corrected_odometry_history_.pop_front();
+    const auto horizon_ns = static_cast<std::int64_t>(2.0 * input_max_age_s_ * 1e9);
+    while (!corrected_odometry_history_.empty() &&
+           stamp_ns - stampNanoseconds(
+                          corrected_odometry_history_.front().header.stamp) > horizon_ns) {
+      corrected_odometry_history_.pop_front();
+    }
+    ready = tryPromotePairLocked();
+    if (ready) (void)mapping_worker_->submitFromWaiting(std::move(*ready));
   }
-  corrected_odometry_history_.push_back(*message);
-  while (corrected_odometry_history_.size() > 64U) corrected_odometry_history_.pop_front();
 }
 
 void SuperNavigationNode::onPropagatedOdometry(
@@ -437,59 +637,31 @@ void SuperNavigationNode::runCycle() {
   }
   last_cycle_started_steady_ns_ = cycle_started_ns;
   ++cycle_count_;
-  std::optional<MappingObservation> mapping_observation;
   std::optional<nav_msgs::msg::Odometry> propagated_odometry;
   std::optional<navigation_interfaces::msg::NavigationGoal> goal;
   bool new_goal = false;
   bool hot_goal_transition = false;
   bool restart_from_rest = false;
   std::int64_t input_conversion_us = 0;
-  std::uint64_t dropped_cloud_count = 0;
   const auto input_lock_started = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     last_input_lock_wait_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - input_lock_started).count();
+    // Housekeeping only: valid pairs are promoted immediately by either input
+    // callback. Expire an unmatched WAITING_PAIR if no later callback arrives.
     if (latest_cloud_) {
-      auto pair = input_pairing::tryTakeExactPair(
-          latest_cloud_, corrected_odometry_history_);
-      if (pair) {
-        mapping_observation = MappingObservation{
-            std::move(pair->payload), std::move(pair->corrected_odometry), pair->stamp_ns};
-        last_pair_wait_us_ = pending_cloud_received_steady_ns_ > 0
-            ? std::max<std::int64_t>(
-                  0, (steadyNowNanoseconds() - pending_cloud_received_steady_ns_) / 1000)
-            : 0;
+      const auto freshness = classifyTimestampFreshness(
+          now().nanoseconds(), latest_cloud_->stamp_ns,
+          static_cast<std::int64_t>(input_max_age_s_ * 1e9));
+      if (freshness == TimestampFreshness::STALE ||
+          freshness == TimestampFreshness::FUTURE) {
+        if (freshness == TimestampFreshness::STALE) ++stale_mapping_input_count_;
+        if (freshness == TimestampFreshness::FUTURE) ++future_mapping_input_count_;
+        ++stale_input_count_;
+        latest_cloud_.reset();
         pending_cloud_received_steady_ns_ = 0;
-        observation_accounting_.mappingStarted();
-      } else {
-        const auto pending_stamp_ns = latest_cloud_->stamp_ns;
-        const auto newest_corrected_stamp_ns = corrected_odometry_history_.empty()
-            ? 0 : stampNanoseconds(corrected_odometry_history_.back().header.stamp);
-        if (newest_corrected_stamp_ns > pending_stamp_ns) {
-          ++corrected_pair_mismatch_count_;
-          latest_cloud_.reset();
-          pending_cloud_received_steady_ns_ = 0;
-          observation_accounting_.discardedPending();
-        } else if (classifyTimestampFreshness(
-                       now().nanoseconds(), pending_stamp_ns,
-                       static_cast<std::int64_t>(input_max_age_s_ * 1e9)) ==
-                   TimestampFreshness::STALE) {
-          ++stale_input_count_;
-          ++stale_mapping_input_count_;
-          latest_cloud_.reset();
-          pending_cloud_received_steady_ns_ = 0;
-          observation_accounting_.discardedPending();
-        } else if (classifyTimestampFreshness(
-                       now().nanoseconds(), pending_stamp_ns,
-                       static_cast<std::int64_t>(input_max_age_s_ * 1e9)) ==
-                   TimestampFreshness::FUTURE) {
-          ++stale_input_count_;
-          ++future_mapping_input_count_;
-          latest_cloud_.reset();
-          pending_cloud_received_steady_ns_ = 0;
-          observation_accounting_.discardedPending();
-        }
+        observation_accounting_.discardedPending();
       }
     }
     propagated_odometry = latest_propagated_odometry_;
@@ -498,92 +670,12 @@ void SuperNavigationNode::runCycle() {
     hot_goal_transition = hot_goal_transition_;
     restart_from_rest = restart_from_rest_;
     input_conversion_us = last_input_conversion_us_;
-    dropped_cloud_count = dropped_cloud_count_;
   }
-  MappingDispositionGuard mapping_disposition{
-      mapping_observation ? &observation_accounting_ : nullptr};
-  if (!mapping_observation) return;
-  const auto& cloud = mapping_observation->cloud;
-  const auto cloud_stamp_ns = mapping_observation->stamp_ns;
-  const auto& corrected_odometry = mapping_observation->corrected_odometry;
   const auto now_ns = now().nanoseconds();
-  const auto corrected_stamp_ns = stampNanoseconds(corrected_odometry.header.stamp);
-  const auto cloud_age_ns = now_ns - cloud_stamp_ns;
-  const auto corrected_age_ns = now_ns - corrected_stamp_ns;
   const auto maximum_age_ns = static_cast<std::int64_t>(input_max_age_s_ * 1e9);
-  const auto cloud_freshness =
-      classifyTimestampFreshness(now_ns, cloud_stamp_ns, maximum_age_ns);
-  const auto corrected_freshness =
-      classifyTimestampFreshness(now_ns, corrected_stamp_ns, maximum_age_ns);
-  const bool mapping_stale = cloud_freshness == TimestampFreshness::STALE ||
-                             corrected_freshness == TimestampFreshness::STALE;
-  const bool mapping_future = cloud_freshness == TimestampFreshness::FUTURE ||
-                              corrected_freshness == TimestampFreshness::FUTURE;
-  if (cloud_freshness == TimestampFreshness::INVALID ||
-      corrected_freshness == TimestampFreshness::INVALID ||
-      corrected_stamp_ns != cloud_stamp_ns ||
-      mapping_stale || mapping_future) {
-    ++stale_input_count_;
-    if (mapping_stale) ++stale_mapping_input_count_;
-    if (mapping_future) ++future_mapping_input_count_;
-    RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "SUPER rejecting mapping observation cloud_age=%.3f corrected_age=%.3f "
-        "limit=%.3f reason=%s",
-        static_cast<double>(cloud_age_ns) * 1e-9,
-        static_cast<double>(corrected_age_ns) * 1e-9,
-        input_max_age_s_, mapping_future ? "future" : "stale_or_mismatch");
-    return;
-  }
-  const auto& pose = corrected_odometry.pose.pose;
-  const Eigen::Quaterniond corrected_q{
-      pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
-  if (!std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
-      !std::isfinite(pose.position.z) || !corrected_q.coeffs().allFinite() ||
-      corrected_q.norm() <= 1.0e-6) {
-    ++invalid_corrected_pose_count_;
-    return;
-  }
-  const auto normalized_corrected_q = corrected_q.normalized();
-  const super_utils::Pose super_pose{
-      super_utils::Vec3f{pose.position.x, pose.position.y, pose.position.z},
-      super_utils::Quatf{normalized_corrected_q.w(), normalized_corrected_q.x(),
-                         normalized_corrected_q.y(), normalized_corrected_q.z()}};
-  const auto map_started = std::chrono::steady_clock::now();
-  try {
-    map_->updateMap(*cloud, super_pose);
-  } catch (const std::exception& error) {
-    ++map_update_exception_count_;
-    RCLCPP_FATAL(get_logger(),
-                 "ROG-Map update threw after mutation may have begun; terminating to prevent "
-                 "publication of a partial world generation: %s",
-                 error.what());
-    throw;
-  }
-  const auto snapshot_started = std::chrono::steady_clock::now();
-  try {
-    auto next_world_view = std::make_shared<RogWorldSnapshot>(
-        map_->exportPlanningGrid(), navigation_world_model::WorldSnapshotIdentity{
-                                        world_generation_, world_revision_ + 1, cloud_stamp_ns});
-    last_snapshot_export_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - snapshot_started).count();
-    last_snapshot_bytes_ = next_world_view->byteSize();
-    last_snapshot_owned_bytes_ = next_world_view->ownedByteSize();
-    last_snapshot_shared_metadata_bytes_ = next_world_view->sharedMetadataByteSize();
-    world_snapshot_store_.publish(next_world_view);
-    world_model_view_ = world_snapshot_store_.load().view;
-    ++world_revision_;
-  } catch (const std::exception& error) {
-    ++map_update_exception_count_;
-    RCLCPP_FATAL(get_logger(),
-                 "World snapshot publication failed after mutable map update; terminating "
-                 "instead of planning against an unpublishable world revision: %s",
-                 error.what());
-    throw;
-  }
-  last_map_update_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
-      std::chrono::steady_clock::now() - map_started).count();
-  mapping_disposition.publish();
+  const auto mapping = mapping_telemetry_->snapshot();
+  const auto cloud_stamp_ns = mapping.observation_stamp_ns;
+  const auto corrected_stamp_ns = mapping.observation_stamp_ns;
 
   diagnostic_msgs::msg::DiagnosticArray diagnostics;
   diagnostics.header.stamp = now();
@@ -603,25 +695,38 @@ void SuperNavigationNode::runCycle() {
     item.value = std::to_string(std::max<std::int64_t>(0, value));
     status.values.push_back(std::move(item));
   };
-  const auto& map_diagnostics = map_->lastDiagnostics();
+  const auto& map_diagnostics = mapping.map;
   const auto accounting = observation_accounting_.snapshot();
   add_value("received_observation_count", received_cloud_count_);
   add_value("accepted_observation_count", accepted_cloud_count_);
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
-  add_value("dropped_cloud_count", dropped_cloud_count);
+  add_value("dropped_cloud_count", accounting.replaced_waiting + accounting.replaced_ready);
   add_value("stale_input_count", stale_input_count_);
-  add_value("stale_mapping_input_count", stale_mapping_input_count_);
-  add_value("future_mapping_input_count", future_mapping_input_count_);
+  add_value("stale_mapping_input_count",
+            stale_mapping_input_count_.load() + mapping.discarded_stale);
+  add_value("future_mapping_input_count",
+            future_mapping_input_count_.load() + mapping.discarded_future);
+  add_value("worker_discarded_stale_count", mapping.discarded_stale);
+  add_value("worker_discarded_future_count", mapping.discarded_future);
+  add_value("worker_discarded_invalid_count", mapping.discarded_invalid);
   add_value("stale_execution_state_count", stale_execution_state_count_);
   add_value("future_execution_state_count", future_execution_state_count_);
-  add_value("invalid_corrected_pose_count", invalid_corrected_pose_count_);
+  add_value("invalid_corrected_pose_count",
+            invalid_corrected_pose_count_.load() + mapping.discarded_invalid);
   add_value("corrected_pair_mismatch_count", corrected_pair_mismatch_count_);
   add_value("invalid_execution_state_count", invalid_execution_state_count_);
   add_value("processing_exception_count", map_update_exception_count_);
   add_value("observation_rejected_before_inbox_count", accounting.rejected_before_inbox);
   add_value("observation_replaced_pending_count", accounting.replaced_pending);
+  add_value("observation_replaced_waiting_count", accounting.replaced_waiting);
+  add_value("observation_replaced_ready_count", accounting.replaced_ready);
+  add_value("observation_discarded_ready_count", accounting.discarded_ready);
+  add_value("observation_discarded_shutdown_ready_count",
+            accounting.discarded_shutdown_ready);
   add_value("observation_discarded_pending_count", accounting.discarded_pending);
+  add_value("observation_discarded_nonmonotonic_count",
+            accounting.discarded_nonmonotonic);
   add_value("mapping_started_count", accounting.mapping_started);
   add_value("mapping_published_count", accounting.mapping_published);
   add_value("mapping_failed_count", accounting.mapping_failed);
@@ -631,33 +736,21 @@ void SuperNavigationNode::runCycle() {
   add_value("observation_accounting_violation_count", accounting.violation_count);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
-  add_value("world_generation", world_generation_);
-  add_value("world_revision", world_revision_);
-  add_value("world_snapshot_bytes", last_snapshot_bytes_);
-  add_value("world_snapshot_owned_bytes", last_snapshot_owned_bytes_);
-  add_value("world_snapshot_shared_metadata_bytes", last_snapshot_shared_metadata_bytes_);
+  add_value("world_generation", mapping.world_generation);
+  add_value("world_revision", mapping.world_revision);
+  add_value("world_snapshot_bytes", mapping.snapshot_bytes);
+  add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
+  add_value("world_snapshot_shared_metadata_bytes", mapping.snapshot_shared_metadata_bytes);
   add_value("world_snapshot_live_count", RogWorldSnapshot::liveCount());
   add_value("world_snapshot_peak_live_count", RogWorldSnapshot::peakLiveCount());
   add_value("world_snapshot_live_owned_bytes", RogWorldSnapshot::liveOwnedBytes());
   add_value("world_snapshot_peak_live_owned_bytes", RogWorldSnapshot::peakLiveOwnedBytes());
-  add_duration("ros_pointcloud_decode_us", input_conversion_us);
-  add_duration("observation_pair_wait_us", last_pair_wait_us_);
   add_duration("mapping_input_lock_wait_us", last_input_lock_wait_us_);
   add_duration("planning_scheduling_gap_us", last_planning_scheduling_gap_us_);
-  add_duration("rog_raycast_us", map_diagnostics.rog_raycast_us);
-  add_duration("rog_probability_update_us", map_diagnostics.rog_probability_update_us);
-  add_duration("rog_inflation_us", map_diagnostics.rog_inflation_us);
-  add_duration("rog_slide_us", map_diagnostics.rog_slide_us);
-  add_duration("rog_total_update_us", map_diagnostics.rog_total_update_us);
-  add_duration("world_snapshot_export_us", last_snapshot_export_us_);
-  add_duration(
-      "mapping_callback_total_us",
-      std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::steady_clock::now() - cycle_started).count());
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
 
-  // Mapping ownership ends above. Planner execution state is independently
+  // Mapping runs independently in its sole-owner worker. Planner execution state is independently
   // sourced from the latest propagated odometry and may be unavailable or
   // invalid without suppressing a corrected observation from ROG-Map.
   if (!propagated_odometry) return;
@@ -1047,21 +1140,19 @@ void SuperNavigationNode::runCycle() {
     const double endpoint_error = committed.empty()
                                       ? std::numeric_limits<double>::infinity()
                                       : (committed_end - target).norm();
-    const auto robot_grid_type = map_->getGridType(planner_state.p);
-    const auto robot_inflated_grid_type = map_->getInfGridType(planner_state.p);
-    super_utils::Vec3f nearest_known_free;
-    const bool nearest_known_free_found = map_->getNearestCellIs(
-        rog_map::GridType::KNOWN_FREE, planner_state.p, nearest_known_free, 1.0);
-    const double nearest_known_free_distance = nearest_known_free_found
-                                                   ? (nearest_known_free - planner_state.p).norm()
-                                                   : std::numeric_limits<double>::infinity();
+    const auto robot_grid_type = pinned_world.view->classify(
+        planner_state.p, navigation_world_model::GridLayer::kEvidence);
+    const auto robot_inflated_grid_type = pinned_world.view->classify(
+        planner_state.p, navigation_world_model::GridLayer::kInflated);
+    // WorldModel deliberately has no vendor-specific nearest-known-free or
+    // nearest-occupied query. Keep these legacy diagnostics unavailable rather
+    // than reaching back into worker-owned mutable ROG state.
+    const double nearest_known_free_distance =
+        std::numeric_limits<double>::quiet_NaN();
     super_utils::Vec3f nearest_occupied = super_utils::Vec3f::Constant(
         std::numeric_limits<double>::quiet_NaN());
-    const bool nearest_occupied_found = map_->getNearestCellIs(
-        rog_map::GridType::OCCUPIED, planner_state.p, nearest_occupied, 1.5);
-    const double nearest_occupied_distance = nearest_occupied_found
-                                                 ? (nearest_occupied - planner_state.p).norm()
-                                                 : std::numeric_limits<double>::infinity();
+    const double nearest_occupied_distance =
+        std::numeric_limits<double>::quiet_NaN();
     const int solve_stage = planner_->solveStage();
     const int replan_return_code = planner_->latestReplanReturnCode();
     const int commit_decision = planner_->latestCommitDecision();
@@ -1211,10 +1302,11 @@ void SuperNavigationNode::runCycle() {
                 "committed_duration=%.3f",
                 static_cast<unsigned long>(cycle_count_),
                 static_cast<unsigned long>(command_publish_count_.load()),
-                static_cast<unsigned long>(dropped_cloud_count), planner_cycle_ms,
+                static_cast<unsigned long>(accounting.replaced_waiting +
+                                           accounting.replaced_ready), planner_cycle_ms,
                 percentile(0.50), percentile(0.95), percentile(0.99),
                 static_cast<long>(input_conversion_us),
-                static_cast<long>(last_map_update_us_), static_cast<long>(last_planner_us_),
+                static_cast<long>(mapping.map_update_us), static_cast<long>(last_planner_us_),
                 static_cast<long>(last_publish_us_.load()),
                 static_cast<long>(last_input_lock_wait_us_), target.x(), target.y(), target.z(),
                 planner_state.p.x(), planner_state.p.y(), planner_state.p.z(),

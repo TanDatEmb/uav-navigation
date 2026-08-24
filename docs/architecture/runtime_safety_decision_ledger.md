@@ -415,3 +415,41 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   accounting mismatch. This is an overload characterization, not authority to
   add a queue or discard input silently; mapping/planning ownership separation
   remains the architectural closure.
+
+### 2026-08-25 - WM-3C-1 give mutable ROG one mapping worker owner
+
+- Moved mutable ROG update/export out of the planning timer into one explicitly
+  started and joined `MappingWorker`. Cloud plus exact corrected-odometry pairs
+  enter a bounded latest-only READY slot; one WAITING, one READY and one
+  IN_FLIGHT observation are the maximum lifecycle population. SUPER only pins
+  immutable snapshots from `WorldSnapshotStore`.
+- Pair promotion and WAITING-to-READY transfer are linearized under the input
+  mutex. A strictly increasing source-stamp watermark rejects duplicates and
+  reordered observations before mutable map processing. No FIFO, dataset-only
+  bypass, input downsampling, deadline relaxation or freshness-value change was
+  introduced.
+- Mutable update/export/publication exceptions are fail-stop. Shutdown stops
+  acceptance, cancels planning, terminally disposes WAITING/READY observations,
+  allows an already-mutating update to finish, and joins the worker before map,
+  store or planner destruction.
+- Mapping performance diagnostics now originate once, immediately after the
+  observation reaches terminal `PUBLISHED`. They are no longer replayed by the
+  planning timer. Point-cloud decode, pair wait, ROG stages, detached snapshot
+  export and total mapping latency therefore have one sample per published
+  revision.
+- Canonical 1x evidence:
+  `.artifacts/runtime/dataset-20260824T194937-117639` PASS with 2,756 received,
+  accepted, started and published observations; revision sequence 1 through
+  2,756 is unique and strictly increasing; replacement, discard, failure,
+  pending, in-flight, nonmonotonic and accounting-violation counts are zero.
+  Each mapping timing distribution contains exactly 2,756 samples. Mapping
+  callback p50/p95/p99 is 3.271/5.941/17.089 ms (46.477 ms max), and detached
+  snapshot export p50/p95/p99 is 3.158/5.026/5.546 ms (11.128 ms max). These
+  values characterize this dataset/host; they do not create or relax a gate.
+  Planning-timer input-lock wait and scheduling-gap samples remain planning
+  cadence metrics and are not counted as mapping-publication latency.
+- Focused build, eight direct C++ test binaries and 80 runtime-contract tests
+  pass. The current shell's `ctest` wrapper still cannot import
+  `ament_cmake_test`; direct binaries are the source evidence until the ROS
+  Python harness environment is repaired. TSan/ASan, 2x/dense vegetation and
+  closed-loop SITL remain required before WM-3 is certified complete.

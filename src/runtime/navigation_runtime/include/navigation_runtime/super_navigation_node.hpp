@@ -19,6 +19,7 @@
 #include <mars_quadrotor_msgs/msg/position_command.hpp>
 
 #include "navigation_runtime/input_pairing.hpp"
+#include "navigation_runtime/mapping_worker.hpp"
 #include "navigation_runtime/observation_accounting.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/rog_world_model_adapter.hpp"
@@ -30,12 +31,54 @@
 
 namespace navigation_runtime {
 
+struct MappingTelemetrySnapshot {
+  rog_map::ProbMap::RaycastDiagnostics map{};
+  std::uint64_t world_generation{1};
+  std::uint64_t world_revision{0};
+  std::int64_t observation_stamp_ns{0};
+  std::int64_t map_update_us{0};
+  std::int64_t snapshot_export_us{0};
+  std::int64_t pointcloud_decode_us{0};
+  std::int64_t pair_wait_us{0};
+  std::uint64_t snapshot_bytes{0};
+  std::uint64_t snapshot_owned_bytes{0};
+  std::uint64_t snapshot_shared_metadata_bytes{0};
+  std::uint64_t discarded_stale{0};
+  std::uint64_t discarded_future{0};
+  std::uint64_t discarded_invalid{0};
+};
+
+class MappingTelemetry {
+ public:
+  void update(MappingTelemetrySnapshot next) {
+    std::lock_guard lock(mutex_);
+    next.discarded_stale = state_.discarded_stale;
+    next.discarded_future = state_.discarded_future;
+    next.discarded_invalid = state_.discarded_invalid;
+    state_ = std::move(next);
+  }
+  [[nodiscard]] MappingTelemetrySnapshot snapshot() const {
+    std::lock_guard lock(mutex_);
+    return state_;
+  }
+  void recordDiscard(bool stale, bool future, bool invalid) {
+    std::lock_guard lock(mutex_);
+    state_.discarded_stale += stale ? 1U : 0U;
+    state_.discarded_future += future ? 1U : 0U;
+    state_.discarded_invalid += invalid ? 1U : 0U;
+  }
+ private:
+  mutable std::mutex mutex_;
+  MappingTelemetrySnapshot state_;
+};
+
 // Product ROS boundary for the imported SUPER core. The cloud is retained as
 // one pending observation and odometry is retained as a short timestamped
 // history; planning consumes only a compatible cloud/odometry pair.
 class SuperNavigationNode final : public rclcpp::Node {
  public:
   explicit SuperNavigationNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions{});
+  ~SuperNavigationNode() override;
 
  private:
   void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
@@ -46,6 +89,7 @@ class SuperNavigationNode final : public rclcpp::Node {
       const navigation_interfaces::msg::NavigationModeStatus::ConstSharedPtr& message);
   void runCycle();
   void publishCommand();
+  std::optional<MappingObservation> tryPromotePairLocked();
 
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           rog_map::PointCloud& output);
@@ -101,22 +145,22 @@ class SuperNavigationNode final : public rclcpp::Node {
   bool skip_replan_once_{false};
   ConsecutiveFailureBudget plan_from_rest_failure_budget_{3U};
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
-  std::uint64_t dropped_cloud_count_{0};
-  std::uint64_t received_cloud_count_{0};
-  std::uint64_t accepted_cloud_count_{0};
-  std::uint64_t stale_input_count_{0};
-  std::uint64_t stale_mapping_input_count_{0};
-  std::uint64_t future_mapping_input_count_{0};
-  std::uint64_t stale_execution_state_count_{0};
-  std::uint64_t future_execution_state_count_{0};
-  std::uint64_t invalid_corrected_pose_count_{0};
-  std::uint64_t corrected_pair_mismatch_count_{0};
-  std::uint64_t invalid_execution_state_count_{0};
-  std::uint64_t map_update_exception_count_{0};
-  std::int64_t last_input_conversion_us_{0};
+  std::atomic_uint64_t received_cloud_count_{0};
+  std::atomic_uint64_t accepted_cloud_count_{0};
+  std::atomic_uint64_t stale_input_count_{0};
+  std::atomic_uint64_t stale_mapping_input_count_{0};
+  std::atomic_uint64_t future_mapping_input_count_{0};
+  std::atomic_uint64_t stale_execution_state_count_{0};
+  std::atomic_uint64_t future_execution_state_count_{0};
+  std::atomic_uint64_t invalid_corrected_pose_count_{0};
+  std::atomic_uint64_t corrected_pair_mismatch_count_{0};
+  std::atomic_uint64_t invalid_execution_state_count_{0};
+  std::atomic_uint64_t map_update_exception_count_{0};
+  std::atomic_int64_t last_input_conversion_us_{0};
   std::int64_t pending_cloud_received_steady_ns_{0};
-  std::int64_t last_pair_wait_us_{0};
+  std::atomic_int64_t last_pair_wait_us_{0};
   std::atomic_uint32_t command_id_{0};
+  std::atomic_bool accepting_observations_{true};
   std::atomic_bool planner_command_available_{false};
   std::atomic_bool planner_failure_latched_{false};
   std::atomic_bool safety_suffix_active_{false};
@@ -132,11 +176,6 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::uint64_t cycle_count_{0};
   std::atomic_uint64_t cycle_success_count_{0};
   std::atomic_uint64_t command_publish_count_{0};
-  std::int64_t last_map_update_us_{0};
-  std::int64_t last_snapshot_export_us_{0};
-  std::uint64_t last_snapshot_bytes_{0};
-  std::uint64_t last_snapshot_owned_bytes_{0};
-  std::uint64_t last_snapshot_shared_metadata_bytes_{0};
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};
   std::int64_t last_input_lock_wait_us_{0};
@@ -148,11 +187,9 @@ class SuperNavigationNode final : public rclcpp::Node {
   std::vector<double> end_to_end_samples_ms_;
 
   ros_interface::RosInterface::Ptr ros_interface_;
-  std::shared_ptr<RuntimeRogMap> map_;
-  navigation_world_model::WorldModelViewPtr world_model_view_;
   WorldSnapshotStore world_snapshot_store_;
-  std::uint64_t world_generation_{1};
-  std::uint64_t world_revision_{0};
+  std::shared_ptr<MappingTelemetry> mapping_telemetry_;
+  std::unique_ptr<MappingWorker<MappingObservation>> mapping_worker_;
   super_planner::SuperPlanner::Ptr planner_;
 };
 
