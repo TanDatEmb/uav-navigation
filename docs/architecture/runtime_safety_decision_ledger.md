@@ -2127,6 +2127,24 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   tests and ledger evidence.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
 
+### 2026-08-26 - Runtime planner status boundary
+
+- Owner: `navigation_planning::PlannerStatus` and the runtime planner FSM.
+  Scope: move planner-policy classification onto a product-owned enum and keep
+  backend integer return-code mapping in the runtime implementation source.
+  `planner_fsm.hpp` no longer includes the backend planner header.
+- Safety impact: behavior-preserving vocabulary refactor. Success, finish,
+  retained-command, restart, retry, emergency and fail-closed dispositions map
+  one-to-one with the previous policy. No optimizer, deadline, UNKNOWN policy,
+  continuity rule, fallback or safety gate changed.
+- Evidence required: product FSM tests, full Release build/test/check and a
+  clean installed consumer that includes the product status header without a
+  backend header. The planner class itself and runtime node ownership remain a
+  later PImpl phase.
+- Removal condition: none; new backend codes must be translated at this one
+  implementation boundary before entering runtime policy code.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
 ### 2026-08-26 - Package export contract correction
 
 - Owner: `navigation_mapping` and `navigation_runtime` CMake package boundaries.

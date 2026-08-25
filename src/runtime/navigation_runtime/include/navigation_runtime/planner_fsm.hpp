@@ -5,7 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 
-#include <navigation_planning_backend/planner.hpp>
+#include <navigation_planning/planner_status.hpp>
 
 namespace navigation_runtime {
 
@@ -65,28 +65,28 @@ class ConsecutiveFailureBudget {
 };
 
 inline PlannerResultDisposition classifyPlannerResult(
-    navigation_planning_backend::RET_CODE result, bool plan_from_rest, bool command_available,
+    navigation_planning::PlannerStatus result, bool plan_from_rest, bool command_available,
     bool commit_observed) {
-  if ((result == navigation_planning_backend::SUCCESS || result == navigation_planning_backend::FINISH) &&
-      commit_observed) {
+  if ((result == navigation_planning::PlannerStatus::kSuccess ||
+       result == navigation_planning::PlannerStatus::kFinished) && commit_observed) {
     return PlannerResultDisposition::CommandReady;
   }
-  if (result == navigation_planning_backend::NO_NEED && command_available) {
+  if (result == navigation_planning::PlannerStatus::kNoNeed && command_available) {
     return PlannerResultDisposition::ValidateRetainedCommand;
   }
-  if (result == navigation_planning_backend::NEW_TRAJ) {
+  if (result == navigation_planning::PlannerStatus::kRestartFromRest) {
     return PlannerResultDisposition::RestartFromRest;
   }
   // planner backend's native FSM retries a failed rest-to-rest solve.  A single
   // optimizer timeout is not an emergency and no trajectory has been
   // committed yet for this goal.
-  if (result == navigation_planning_backend::FAILED && plan_from_rest) {
+  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
     return PlannerResultDisposition::RetryFromRest;
   }
   // A hot-replan failure leaves CmdTraj untouched.  That committed command
   // contains planner backend's main-to-backup switch and remains the only safe command
   // source while the committed safety suffix is drained.
-  if (result == navigation_planning_backend::FAILED && command_available) {
+  if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
     return PlannerResultDisposition::RetainCommittedCommand;
   }
   return PlannerResultDisposition::FailClosed;

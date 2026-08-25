@@ -117,7 +117,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_input_pairing nav_msgs navigation_common)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)
-  ament_target_dependencies(test_planner_fsm navigation_planning_backend)
+  ament_target_dependencies(test_planner_fsm navigation_planning)
   ament_add_gtest(test_planner_runtime_context test/test_planner_runtime_context.cpp)
   ament_target_dependencies(test_planner_runtime_context navigation_planning_backend)
   ament_add_gtest(test_mission_dynamics

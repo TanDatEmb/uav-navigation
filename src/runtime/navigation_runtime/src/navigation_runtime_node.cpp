@@ -28,6 +28,27 @@
 namespace navigation_runtime {
 namespace {
 
+navigation_planning::PlannerStatus toProductPlannerStatus(
+    navigation_planning_backend::RET_CODE result) noexcept {
+  switch (result) {
+    case navigation_planning_backend::SUCCESS:
+      return navigation_planning::PlannerStatus::kSuccess;
+    case navigation_planning_backend::FINISH:
+      return navigation_planning::PlannerStatus::kFinished;
+    case navigation_planning_backend::NO_NEED:
+      return navigation_planning::PlannerStatus::kNoNeed;
+    case navigation_planning_backend::NEW_TRAJ:
+      return navigation_planning::PlannerStatus::kRestartFromRest;
+    case navigation_planning_backend::EMER:
+      return navigation_planning::PlannerStatus::kEmergency;
+    case navigation_planning_backend::OPT_FAILED:
+      return navigation_planning::PlannerStatus::kOptimizationFailed;
+    case navigation_planning_backend::FAILED:
+    default:
+      return navigation_planning::PlannerStatus::kFailed;
+  }
+}
+
 bool propagatedOdometryFinite(const nav_msgs::msg::Odometry& odometry) {
   const auto& position = odometry.pose.pose.position;
   const auto& orientation = odometry.pose.pose.orientation;
@@ -1213,7 +1234,7 @@ void NavigationRuntimeNode::runCycle() {
       committed_metadata_after_solve.generation,
       committed_metadata_after_solve.diagnostics.generation);
   const auto disposition = classifyPlannerResult(
-      result, plan_from_rest, planner_command_available_.load(),
+      toProductPlannerStatus(result), plan_from_rest, planner_command_available_.load(),
       solve_committed_new_generation);
   if (disposition == PlannerResultDisposition::FailClosed) {
     planner_failure_latched_.store(true);
