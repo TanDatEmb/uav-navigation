@@ -11,6 +11,7 @@
 #include <navigation_common/time.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_planning_backend/planner.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -381,7 +382,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         diagnostics.status.push_back(std::move(status));
         publisher->publish(diagnostics);
       });
-  planner_ = std::make_shared<navigation_planning_backend::Planner>(
+  planner_ = std::make_unique<navigation_planning_backend::Planner>(
       planner_config_path_, planner_context_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_);
   mapping_worker_->setStrictlyIncreasingOrderKey(

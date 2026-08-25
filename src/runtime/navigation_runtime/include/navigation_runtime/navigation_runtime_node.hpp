@@ -34,8 +34,14 @@
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
-#include <planner_runtime_context/planner_runtime_context.hpp>
-#include <navigation_planning_backend/planner.hpp>
+
+namespace navigation_planning_backend {
+class Planner;
+}
+
+namespace navigation_planner_context {
+class PlannerRuntimeContext;
+}
 
 namespace navigation_runtime {
 
@@ -264,14 +270,14 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;
 
-  navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
+  std::shared_ptr<navigation_planner_context::PlannerRuntimeContext> planner_context_;
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
   navigation_execution::CommittedBundleStore command_bundle_store_;
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
   std::unique_ptr<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>> mapping_worker_;
-  navigation_planning_backend::Planner::Ptr planner_;
+  std::unique_ptr<navigation_planning_backend::Planner> planner_;
 };
 
 }  // namespace navigation_runtime

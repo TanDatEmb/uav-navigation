@@ -2268,3 +2268,51 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   as fixed on this checkpoint, but repeated dataset evidence and a preflight-
   clean SITL run remain required for end-to-end closure.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
+### 2026-08-26 - Planner implementation isolation from runtime public header
+
+- Owner: `navigation_runtime::NavigationRuntimeNode` and the
+  `navigation_planning_backend` implementation boundary. Scope: remove planner
+  implementation headers from the installed runtime node header, forward
+  declare the private planner/context types, and retain ownership in the
+  out-of-line runtime implementation. The planner remains behaviorally
+  unchanged; this is the first compile/include fence before a complete product
+  planner facade.
+- Safety impact: no planner result, candidate validity, world identity,
+  timestamp, frame, dynamic-limit, deadline, unknown-cell, fallback, or PX4
+  gate changed. No bypass or relaxed validation was added. The change reduces
+  accidental coupling but does not yet close direct backend use in the runtime
+  implementation or vendor header installation.
+- Evidence: `python3 tools/runtime/build.py --mode release build
+  --packages navigation_runtime` completed; the package test selector passed
+  `8/8`; an installed external consumer including product mapping/planning
+  headers and linking `navigation_runtime::navigation_runtime_core` configured
+  and linked successfully from a clean CMake build directory
+  `/tmp/uav-navigation-public-consumer-hS52j8`.
+- Removal condition: none. The temporary compatibility boundary is complete
+  only when runtime implementation code consumes a product planner facade and
+  the backend install has an explicit private/public allowlist; until then the
+  remaining direct backend calls are an open refactor item.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build --packages navigation_runtime && python3 tools/runtime/build.py --mode release test --packages navigation_runtime && source /home/letandat/Dev/uav-navigation/install/setup.bash && cmake -S /tmp/uav-navigation-arch-kmPKjc/consumer -B /tmp/uav-navigation-public-consumer-hS52j8 -DCMAKE_BUILD_TYPE=Release && cmake --build /tmp/uav-navigation-public-consumer-hS52j8 --parallel 1`.
+
+### 2026-08-26 - Planner-status checkpoint validation
+
+- Checkpoint `b3c94b6edd1ae462d01c9611376c1773e0006d00` had an authoritative
+  Release manifest before validation; the only source-tree item was the
+  pre-existing untracked `test-results-asan/` directory. The dataset artifact
+  `.artifacts/runtime/dataset-20260825T231828-526332/report.json` reported
+  `PASS` for recorded-data health: full IMU/LiDAR source coverage, LIO
+  tracking coverage `1.0`, mapping `2756/2756` with zero accounting
+  violations, propagated odometry near `50 Hz`, and shadow planning
+  `51 READY/0 EMER` on generation `1`. Its `flight_acceptance=false` and
+  synthetic operator-takeover teardown remain explicit; no end-to-end flight
+  claim is made.
+- The parallel SITL artifact was `BLOCKED_ENVIRONMENT` before launch because
+  the dataset runner held the canonical `.build-runtime.lock`; PX4, planner
+  trajectory, odometry continuity, and mission evidence were not collected.
+  The dataset agent was closed after its report, the recorded owner PID was
+  verified dead, the stale lock was removed, and the main checkout was left
+  with one worktree and no runtime runner process.
+- Closure status: this confirms product data-path health only. SITL and planner
+  feasibility remain open and must be rerun after the public-boundary phase
+  reaches a stable checkpoint.
