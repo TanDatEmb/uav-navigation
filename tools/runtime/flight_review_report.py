@@ -441,8 +441,15 @@ def _evaluation(
     px4_keys = ("estimator_initialized", "local_position_valid", "local_velocity_valid")
     px4_values = [_bool_value(px4.get(key)) for key in px4_keys]
     px4_condition = None if any(value is None for value in px4_values) else all(px4_values)
+    telemetry_verdict = str(report.get("verdict") or "").upper()
+    runtime_contract_condition = (
+        True if telemetry_verdict in {"PASS", "OBSERVATION_COMPLETE"}
+        else False if telemetry_verdict == "FAIL"
+        else None
+    )
 
     gates = {
+        "runtime_contract": _gate_status(runtime_contract_condition),
         "mission": _gate_status(mission_condition),
         "waypoint": _gate_status(waypoint_condition),
         "cross_track": _gate_status(cross_condition),
@@ -458,7 +465,7 @@ def _evaluation(
     gates["temporary_bypass"] = _gate_status(False if bypass_active else True)
     required = list(gates.values())
     overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
-    telemetry_verdict = str(report.get("verdict") or "N/A")
+    telemetry_verdict = telemetry_verdict or "N/A"
     return {"overall": overall, "telemetry_verdict": telemetry_verdict, "gates": gates}
 
 

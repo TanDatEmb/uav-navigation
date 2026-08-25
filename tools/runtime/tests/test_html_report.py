@@ -113,7 +113,7 @@ class HtmlReportEvaluationTest(unittest.TestCase):
             None,
         )
 
-        self.assertEqual(result["overall"], "INCOMPLETE")
+        self.assertEqual(result["overall"], "FAIL")
         self.assertEqual(result["gates"]["mission"], "N/A")
         self.assertEqual(result["gates"]["cross_track"], "N/A")
         self.assertEqual(result["gates"]["collision"], "N/A")
@@ -141,7 +141,29 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         )
 
         self.assertEqual(result["gates"]["waypoint"], "N/A")
-        self.assertEqual(result["overall"], "INCOMPLETE")
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_runtime_contract_verdict_cannot_be_ignored_by_passing_display_gates(self) -> None:
+        result = _evaluation(
+            {"verdict": "FAIL"},
+            {"outcome": "COMPLETE"},
+            {
+                "expected_outcome": "complete",
+                "mission_complete_observed": True,
+                "waypoint_acceptance_complete": True,
+            },
+            {"state": "TRACKING", "navigation_valid": True},
+            {
+                "estimator_initialized": True,
+                "local_position_valid": True,
+                "local_velocity_valid": True,
+            },
+            0.1,
+            0.75,
+            0.0,
+        )
+        self.assertEqual(result["gates"]["runtime_contract"], "FAIL")
+        self.assertEqual(result["overall"], "FAIL")
 
     def test_current_super_navigation_diagnostics_are_parsed_without_fake_planner_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
