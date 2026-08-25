@@ -1118,3 +1118,20 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   2 m/s acceptance result and gives no authority to tune lease, jerk, queue or
   controller limits. External PX4 is still dirty, so this remains causal
   screening rather than clean closed-loop evidence.
+
+### 2026-08-25 - Closed-loop report observability checkpoint
+
+- Commit `ebfc99f` extends the report-only evidence surface with recorded PVA
+  commands, trajectory generation/time/role, LIO/PX4/ground-truth stream
+  coverage, planner/LIO timing and health tables, waypoint/vehicle replay
+  state, and separate main/backup path rendering. It does not change planner,
+  controller, acceptance or safety decisions.
+- Path grouping is generation-aware: samples from different committed
+  generations cannot be joined into a visually continuous trajectory. Legacy
+  messages without generation use message identity instead of silently
+  claiming a shared bundle.
+- Verification: Release build 19 packages PASS; release check 64/64 PASS;
+  runtime/HTML contract tests 136/136 PASS; `git diff --check` PASS. This is
+  static/report evidence only; browser rendering, clean PX4 provenance,
+  repeated SITL, speed ladder, hardware FOV and sanitizer certification remain
+  open.
