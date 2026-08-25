@@ -39,6 +39,9 @@ struct WorldGeometry {
   double effective_virtual_ceiling_m{0.0};
   Point3 local_center_m{Point3::Zero()};
   Point3 local_size_m{Point3::Zero()};
+  // When false, the effective Z values describe the current sliding-map
+  // availability window, not physical occupied floor/ceiling planes.
+  bool virtual_ground_ceiling_enabled{true};
 };
 
 struct WorldSnapshotIdentity {

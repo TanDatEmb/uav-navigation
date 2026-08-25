@@ -156,6 +156,72 @@ namespace geometry_utils {
         vel = v_max - t_dec * a_max;
     }
 
+    struct GuideTimeAllocation {
+        vec_Vec3f points;
+        std::vector<double> elapsed_s;
+        double path_length_m{0.0};
+    };
+
+    static bool allocateGuideElapsedTimes(const double a_max,
+                                          const double v_max,
+                                          const double initial_speed,
+                                          const Vec3f &start,
+                                          const vec_Vec3f &path,
+                                          GuideTimeAllocation &allocation) {
+        allocation = GuideTimeAllocation{};
+        if (!std::isfinite(a_max) || a_max <= 0.0 ||
+            !std::isfinite(v_max) || v_max <= 0.0 ||
+            !std::isfinite(initial_speed) || initial_speed < 0.0 ||
+            !start.allFinite() || path.empty()) {
+            return false;
+        }
+
+        constexpr double duplicate_distance_m = 1.0e-6;
+        Vec3f previous = start;
+        std::vector<double> cumulative_distance_m;
+        cumulative_distance_m.reserve(path.size());
+        allocation.points.reserve(path.size());
+        allocation.elapsed_s.reserve(path.size());
+        for (const auto &point : path) {
+            if (!point.allFinite()) {
+                return false;
+            }
+            const double segment_length_m = (point - previous).norm();
+            if (!std::isfinite(segment_length_m)) {
+                return false;
+            }
+            if (segment_length_m <= duplicate_distance_m) {
+                previous = point;
+                continue;
+            }
+            allocation.path_length_m += segment_length_m;
+            allocation.points.push_back(point);
+            cumulative_distance_m.push_back(allocation.path_length_m);
+            previous = point;
+        }
+        if (allocation.points.empty() ||
+            !std::isfinite(allocation.path_length_m) ||
+            allocation.path_length_m <= duplicate_distance_m) {
+            return false;
+        }
+
+        double previous_elapsed_s = 0.0;
+        for (const double distance_m : cumulative_distance_m) {
+            double elapsed_s = std::numeric_limits<double>::quiet_NaN();
+            double velocity_mps = std::numeric_limits<double>::quiet_NaN();
+            simplePMTimeAllocator(a_max, v_max, initial_speed,
+                                  allocation.path_length_m, distance_m,
+                                  elapsed_s, velocity_mps);
+            if (!std::isfinite(elapsed_s) || !std::isfinite(velocity_mps) ||
+                elapsed_s <= previous_elapsed_s) {
+                return false;
+            }
+            allocation.elapsed_s.push_back(elapsed_s);
+            previous_elapsed_s = elapsed_s;
+        }
+        return allocation.elapsed_s.size() == allocation.points.size();
+    }
+
     ///============ 2023-06-30: add by yunfan ============///
     double DistancePointEllipse(double e0, double e1, double y0, double y1, double& x0, double& x1);
 

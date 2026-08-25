@@ -19,6 +19,11 @@ from typing import Any, Iterable
 
 from html_report import _analyze, _finite_number, _load, _point
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - the report stays usable without PyYAML.
+    yaml = None
+
 
 NAVY = "#18324b"
 BLUE = "#1f6feb"
@@ -54,6 +59,104 @@ def integer(value: Any) -> str:
 def percent(value: Any, digits: int = 1) -> str:
     number = finite(value)
     return "—" if number is None else f"{number * 100:.{digits}f}%"
+
+
+def _yaml_mapping(path: Path) -> dict[str, Any]:
+    if yaml is None or not path.is_file():
+        return {}
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
+    """Load configured envelopes without presenting them as runtime map evidence."""
+    planner_file = session / "super_planner.yaml"
+    planner = _yaml_mapping(planner_file)
+    super_cfg = planner.get("super_planner", {}) if isinstance(planner.get("super_planner"), dict) else {}
+    rog_cfg = planner.get("rog_map", {}) if isinstance(planner.get("rog_map"), dict) else {}
+
+    lio_file = session / "fast_lio_params.yaml"
+    lio_root = _yaml_mapping(lio_file)
+    lio_node = lio_root.get("fast_lio", {}) if isinstance(lio_root.get("fast_lio"), dict) else {}
+    lio_cfg = lio_node.get("ros__parameters", lio_node)
+    lio_cfg = lio_cfg if isinstance(lio_cfg, dict) else {}
+    preprocessing = lio_cfg.get("preprocessing", {}) if isinstance(lio_cfg.get("preprocessing"), dict) else {}
+    mapping = lio_cfg.get("mapping", {}) if isinstance(lio_cfg.get("mapping"), dict) else {}
+    local_map = mapping.get("local_map", {}) if isinstance(mapping.get("local_map"), dict) else {}
+    raycasting = rog_cfg.get("raycasting", {}) if isinstance(rog_cfg.get("raycasting"), dict) else {}
+
+    def number(value: Any) -> float | None:
+        return finite(value)
+
+    def vector_xy(value: Any) -> tuple[float, float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return None
+        x, y = number(value[0]), number(value[1])
+        return (x, y) if x is not None and y is not None and x > 0.0 and y > 0.0 else None
+
+    map_size_xy = vector_xy(rog_cfg.get("map_size"))
+    lio_half_extent_xy = vector_xy(local_map.get("half_extent_m"))
+    inflation_resolution = number(rog_cfg.get("inflation_resolution"))
+    inflation_step = number(rog_cfg.get("inflation_step"))
+    inflation_radius = (
+        inflation_resolution * inflation_step
+        if inflation_resolution is not None and inflation_step is not None
+        and inflation_resolution > 0.0 and inflation_step > 0.0 else None
+    )
+    input_cfg = lio_cfg.get("input", {}) if isinstance(lio_cfg.get("input"), dict) else {}
+    frames_cfg = lio_cfg.get("frames", {}) if isinstance(lio_cfg.get("frames"), dict) else {}
+    def vector_pair(value: Any) -> tuple[float, float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return None
+        x, y = number(value[0]), number(value[1])
+        return (x, y) if x is not None and y is not None else None
+
+    return {
+        "source": [planner_file.name, lio_file.name],
+        "lidar_max_range_m": number(preprocessing.get("maximum_range_m")),
+        "lidar_min_range_m": number(preprocessing.get("minimum_range_m")),
+        "lidar_frame": str(input_cfg.get("lidar_frame") or frames_cfg.get("lidar") or "livox_frame"),
+        "lio_half_extent_xy_m": lio_half_extent_xy,
+        "lio_crop_trigger_m": number(local_map.get("crop_trigger_distance_m")),
+        "planning_map_size_xy_m": map_size_xy,
+        "planning_map_origin_xy_m": vector_pair(rog_cfg.get("fix_map_origin")),
+        "planning_resolution_m": number(rog_cfg.get("resolution")),
+        "inflation_radius_m": inflation_radius,
+        "safe_corridor_nominal_m": number(super_cfg.get("safe_corridor_line_nominal_length")),
+        "safe_corridor_max_m": number(super_cfg.get("safe_corridor_line_max_length")),
+        "sensing_horizon_m": number(super_cfg.get("sensing_horizon")),
+        "robot_radius_m": number(super_cfg.get("robot_r")),
+        "vehicle_radius_m": number(super_cfg.get("vehicle_radius_m")),
+        "planning_margin_m": number(super_cfg.get("planning_margin_m")),
+        "map_sliding_enabled": bool((rog_cfg.get("map_sliding") or {}).get("enable", False)) if isinstance(rog_cfg.get("map_sliding"), dict) else False,
+        "map_sliding_threshold_m": number((rog_cfg.get("map_sliding") or {}).get("threshold")) if isinstance(rog_cfg.get("map_sliding"), dict) else None,
+        "raycasting_enabled": bool(raycasting.get("enable", False)),
+        "ray_range_m": vector_xy(raycasting.get("ray_range")),
+        "parameter_updates_recorded": _parameter_updates_recorded(session),
+    }
+
+
+def _parameter_updates_recorded(session: Path) -> bool:
+    """Detect an explicit parameter-update stream without guessing values."""
+    samples_file = session / "samples.jsonl"
+    if not samples_file.is_file():
+        return False
+    try:
+        with samples_file.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                tokens = [str(event.get(key) or "").lower() for key in ("kind", "stream", "topic")]
+                if any("param" in token for token in tokens):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def _series_values(points: list[tuple[float, float]]) -> list[float]:
@@ -267,17 +370,186 @@ def line_chart(
     return "".join(parts)
 
 
+def _spatial_envelope_inset(envelopes: dict[str, Any]) -> str:
+    """Render configured envelopes in a separate relative-scale inset.
+
+    The main flight map must remain fitted to the observed route. Large
+    configured ranges (40 m LiDAR or a 110 m planning map) would otherwise
+    shrink the route until it becomes unreadable. The inset is explicitly a
+    configuration comparison, not an occupancy/map snapshot.
+    """
+    values = [
+        finite(envelopes.get("lidar_max_range_m")),
+        finite(envelopes.get("safe_corridor_max_m")),
+        finite(envelopes.get("safe_corridor_nominal_m")),
+        finite(envelopes.get("robot_radius_m")),
+    ]
+    lio_half = envelopes.get("lio_half_extent_xy_m")
+    map_size = envelopes.get("planning_map_size_xy_m")
+    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2:
+        values.extend(finite(value) for value in lio_half)
+    if isinstance(map_size, (list, tuple)) and len(map_size) >= 2:
+        values.extend(finite(value) / 2.0 if finite(value) is not None else None for value in map_size)
+    values = [value for value in values if value is not None and value > 0.0]
+    if not values:
+        return ""
+    extent = max(values) * 1.12
+    width, height = 330, 218
+    left, top, right, bottom = 42, 30, 16, 38
+    plot_w, plot_h = width - left - right, height - top - bottom
+    scale = min(plot_w, plot_h) / (2.0 * extent)
+    cx, cy = left + plot_w / 2.0, top + plot_h / 2.0
+
+    def point(x: float, y: float) -> tuple[float, float]:
+        return cx + x * scale, cy - y * scale
+
+    def number(value: Any) -> float | None:
+        return finite(value)
+
+    parts = [
+        '<div class="map-envelope-card"><div class="map-envelope-title">Configured spatial envelopes · relative scale</div>',
+        '<svg class="map-envelope-svg" viewBox="0 0 330 218" role="img" aria-label="Configured spatial envelopes">',
+        '<title>Configured spatial envelopes</title><rect x="0" y="0" width="330" height="218" fill="#fbfdfe"/>',
+        f'<line x1="{left}" y1="{cy:.1f}" x2="{width-right}" y2="{cy:.1f}" stroke="{GRID}"/>',
+        f'<line x1="{cx:.1f}" y1="{top}" x2="{cx:.1f}" y2="{height-bottom}" stroke="{GRID}"/>',
+    ]
+
+    map_x, map_y = map_size if isinstance(map_size, (list, tuple)) and len(map_size) >= 2 else (None, None)
+    if number(map_x) is not None and number(map_y) is not None:
+        top_left = point(-number(map_x) / 2.0, number(map_y) / 2.0)
+        bottom_right = point(number(map_x) / 2.0, -number(map_y) / 2.0)
+        parts.append(
+            f'<rect x="{top_left[0]:.1f}" y="{top_left[1]:.1f}" width="{bottom_right[0]-top_left[0]:.1f}" height="{bottom_right[1]-top_left[1]:.1f}" fill="#7650a8" fill-opacity="0.06" stroke="{PURPLE}" stroke-dasharray="5 4" stroke-width="1.5"><title>Planning map configured size {number(map_x):.1f} × {number(map_y):.1f} m; runtime center unavailable</title></rect>'
+        )
+    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2 and number(lio_half[0]) is not None and number(lio_half[1]) is not None:
+        half_x, half_y = number(lio_half[0]), number(lio_half[1])
+        top_left, bottom_right = point(-half_x, half_y), point(half_x, -half_y)
+        parts.append(
+            f'<rect x="{top_left[0]:.1f}" y="{top_left[1]:.1f}" width="{bottom_right[0]-top_left[0]:.1f}" height="{bottom_right[1]-top_left[1]:.1f}" fill="#1f6feb" fill-opacity="0.04" stroke="{BLUE}" stroke-dasharray="2 3" stroke-width="1.2"><title>FAST-LIO local registration half extent {half_x:.1f} × {half_y:.1f} m</title></rect>'
+        )
+
+    circles = [
+        ("lidar_max_range_m", "LiDAR configured max range", TEAL, "5 4", 0.035),
+        ("safe_corridor_max_m", "Planner safe visibility max", PURPLE, "6 4", 0.025),
+        ("safe_corridor_nominal_m", "Planner safe visibility nominal", PURPLE, "2 3", 0.015),
+        ("robot_radius_m", "Planner robot/safety radius", RED, "", 0.10),
+    ]
+    for key, label, color, dash, opacity in circles:
+        radius = number(envelopes.get(key))
+        if radius is None or radius <= 0.0:
+            continue
+        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+        parts.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{radius*scale:.1f}" fill="{color}" fill-opacity="{opacity}" stroke="{color}" stroke-opacity="0.85" stroke-width="1.5"{dash_attr}><title>{esc(label)}: {radius:.2f} m</title></circle>'
+        )
+    summary = []
+    lidar_min, lidar_max = number(envelopes.get("lidar_min_range_m")), number(envelopes.get("lidar_max_range_m"))
+    if lidar_max is not None:
+        summary.append(f"LiDAR {fmt(lidar_min, 2)}–{fmt(lidar_max, 2)} m")
+    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2 and number(lio_half[0]) is not None and number(lio_half[1]) is not None:
+        summary.append(f"FAST-LIO ±{number(lio_half[0]):.1f} × ±{number(lio_half[1]):.1f} m")
+    if number(map_x) is not None and number(map_y) is not None:
+        summary.append(f"planning map {number(map_x):.1f} × {number(map_y):.1f} m")
+    origin = envelopes.get("planning_map_origin_xy_m")
+    if isinstance(origin, (list, tuple)) and len(origin) >= 2 and number(origin[0]) is not None and number(origin[1]) is not None:
+        summary.append(f"map origin ({number(origin[0]):.1f}, {number(origin[1]):.1f}) m")
+    nominal, maximum = number(envelopes.get("safe_corridor_nominal_m")), number(envelopes.get("safe_corridor_max_m"))
+    if nominal is not None or maximum is not None:
+        summary.append(f"planner visibility {fmt(nominal, 1)} / {fmt(maximum, 1)} m")
+    if number(envelopes.get("inflation_radius_m")) is not None:
+        summary.append(f"inflation {number(envelopes['inflation_radius_m']):.2f} m")
+    if envelopes.get("map_sliding_enabled") and number(envelopes.get("map_sliding_threshold_m")) is not None:
+        summary.append(f"map sliding threshold {number(envelopes['map_sliding_threshold_m']):.2f} m")
+    parameter_note = (
+        "Runtime parameter-update events detected; values shown are the final effective session snapshot."
+        if envelopes.get("parameter_updates_recorded")
+        else "No runtime parameter-update stream recorded; values shown are the final effective session YAML snapshots."
+    )
+    parts.extend([
+        f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="{NAVY}"><title>UAV-relative origin for comparison</title></circle>',
+        f'<text x="{cx:.1f}" y="{height-20}" text-anchor="middle" class="axis-label">x/y relative to UAV · not occupancy evidence</text>',
+        '</svg>',
+        '<div class="map-envelope-legend">'
+        f'<span><i class="envelope-key lidar"></i>LiDAR cap</span>'
+        f'<span><i class="envelope-key planner"></i>planner visibility</span>'
+        f'<span><i class="envelope-key map"></i>planning map bounds</span>'
+        f'<span><i class="envelope-key lio"></i>FAST-LIO local window</span>'
+        '</div>',
+        f'<div class="small"><strong>Loaded values:</strong> {esc(" · ".join(summary))}</div>',
+        f'<div class="small">{esc(parameter_note)} The planning rectangle is centered only for comparison because this artifact does not record the runtime snapshot center. {"ROG raycasting is disabled; configured ray_range is not treated as an active ring." if not envelopes.get("raycasting_enabled") else "ROG raycasting is enabled; ray_range is a map-update filter, not the full LiDAR field of view."}</div></div>',
+    ])
+    return "".join(parts)
+
+
+def _obstacle_footprint_points(obstacle: dict[str, Any]) -> list[tuple[float, float, float]]:
+    center = obstacle.get("center")
+    if not isinstance(center, (list, tuple)) or len(center) < 3:
+        return []
+    xyz = [finite(value) for value in center[:3]]
+    if any(value is None for value in xyz):
+        return []
+    x, y, z = (float(value) for value in xyz)
+    if obstacle.get("type") == "cylinder":
+        radius = finite(obstacle.get("radius_m"))
+        if radius is None or radius < 0.0:
+            return [(x, y, z)]
+        return [(x - radius, y - radius, z), (x - radius, y + radius, z),
+                (x + radius, y - radius, z), (x + radius, y + radius, z)]
+    half = obstacle.get("half_extents")
+    if not isinstance(half, (list, tuple)) or len(half) < 2:
+        return [(x, y, z)]
+    half_x, half_y = finite(half[0]), finite(half[1])
+    if half_x is None or half_y is None or half_x < 0.0 or half_y < 0.0:
+        return [(x, y, z)]
+    return [(x - half_x, y - half_y, z), (x - half_x, y + half_y, z),
+            (x + half_x, y - half_y, z), (x + half_x, y + half_y, z)]
+
+
+def _map_bounds(points: Iterable[tuple[float, float, float]], envelopes: dict[str, Any]) -> dict[str, float]:
+    """Fit either 2D view to the same observed geometry and active safety margin."""
+    valid = [
+        tuple(float(value) for value in point[:3])
+        for point in points
+        if isinstance(point, (list, tuple)) and len(point) >= 3
+        and all(finite(value) is not None for value in point[:3])
+    ]
+    if not valid:
+        valid = [(0.0, 0.0, 0.0)]
+    span_x = max(point[0] for point in valid) - min(point[0] for point in valid)
+    span_y = max(point[1] for point in valid) - min(point[1] for point in valid)
+    span = max(span_x, span_y, 1.0e-6)
+    configured_padding = sum(
+        value for value in (
+            finite(envelopes.get("planning_margin_m")),
+            finite(envelopes.get("robot_radius_m")),
+            finite(envelopes.get("inflation_radius_m")),
+        )
+        if value is not None and value > 0.0
+    )
+    padding = max(configured_padding, span * 0.08)
+    return {
+        "min_x": min(point[0] for point in valid) - padding,
+        "max_x": max(point[0] for point in valid) + padding,
+        "min_y": min(point[1] for point in valid) - padding,
+        "max_y": max(point[1] for point in valid) + padding,
+        "padding_m": padding,
+    }
+
+
 def map_svg(data: dict[str, Any]) -> str:
     actual = [item["position"] for item in data["ground_truth"]]
     waypoints = data["waypoints"]
     obstacles = data["metrics"].get("obstacles", [])
-    all_points = actual + waypoints + [item["center"] for item in obstacles]
+    obstacle_points = [point for obstacle in obstacles for point in _obstacle_footprint_points(obstacle)]
+    all_points = actual + waypoints + obstacle_points
     if not all_points:
         return '<div class="empty-chart">No trajectory samples recorded.</div>'
-    min_x = min(point[0] for point in all_points) - 3.0
-    max_x = max(point[0] for point in all_points) + 3.0
-    min_y = min(point[1] for point in all_points) - 3.0
-    max_y = max(point[1] for point in all_points) + 3.0
+    envelopes = data.get("spatial_envelopes", {})
+    envelopes = envelopes if isinstance(envelopes, dict) else {}
+    bounds = _map_bounds(all_points, envelopes)
+    min_x, max_x = bounds["min_x"], bounds["max_x"]
+    min_y, max_y = bounds["min_y"], bounds["max_y"]
+    padding = bounds["padding_m"]
     width, height = 980, 500
     left, top, right, bottom = 68, 62, 22, 54
     plot_w, plot_h = width - left - right, height - top - bottom
@@ -346,6 +618,13 @@ def map_svg(data: dict[str, Any]) -> str:
             f'<polygon points="{_arrow_polygon(latest_xy, heading)}" fill="{BLUE}" stroke="#ffffff" stroke-width="2">'
             f'<title>UAV heading: {math.degrees(heading):.1f}° ({esc(heading_source)})</title></polygon>'
         )
+    robot_radius = finite(envelopes.get("robot_radius_m"))
+    if robot_radius is not None and data["ground_truth"]:
+        latest_position = data["ground_truth"][-1]["position"]
+        latest_xy = transform(tuple(latest_position))
+        parts.append(
+            f'<circle cx="{latest_xy[0]:.1f}" cy="{latest_xy[1]:.1f}" r="{max(2.0, robot_radius*scale):.1f}" fill="{RED}" fill-opacity="0.10" stroke="{RED}" stroke-opacity="0.75" stroke-width="1.2"><title>Planner robot/safety radius: {robot_radius:.2f} m</title></circle>'
+        )
     trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
     if trajectory_paths:
         for path in trajectory_paths:
@@ -402,7 +681,8 @@ def map_svg(data: dict[str, Any]) -> str:
         f'<circle cx="{left+666}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+679}" y="26" class="legend-label">waypoints</text>',
         f'<polygon points="{left+12},38 {left+32},44 {left+12},50" fill="{BLUE}" stroke="#ffffff"/><text x="{left+39}" y="48" class="legend-label">UAV heading ({esc(heading_source)})</text>',
         '</svg>',
-        f'<div class="map-annotations"><div><strong>Waypoints</strong> {waypoint_tags}</div><div><strong>Obstacles</strong> {obstacle_tags}</div><div class="small">Path role is encoded by line style/color; labels are listed here to keep the map readable.</div></div></div>',
+        _spatial_envelope_inset(envelopes),
+        f'<div class="map-annotations"><div><strong>Waypoints</strong> {waypoint_tags}</div><div><strong>Obstacles</strong> {obstacle_tags}</div><div><strong>Map focus</strong> obstacle footprint + observed path · padding {padding:.2f} m</div><div class="small">Path role is encoded by line style/color; labels are listed here to keep the map readable. Spatial padding uses active planning margin, robot radius and map inflation loaded from this session; it is not a fixed drawing extent.</div></div></div>',
     ])
     return "".join(parts)
 
@@ -704,19 +984,17 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         else:
             half = [finite(value) or 0.0 for value in obstacle.get("half_extents", [0.0, 0.0, 0.0])]
             output["half"] = half
-            bounds_points.extend([
-                [center[0] - half[0], center[1] - half[1], center[2]],
-                [center[0] + half[0], center[1] + half[1], center[2]],
-            ])
+        bounds_points.extend(list(point) for point in _obstacle_footprint_points(obstacle))
         obstacles.append(output)
     for plan in plans:
         bounds_points.extend(plan["points"])
     if not bounds_points:
         bounds_points = [[0.0, 0.0, 0.0]]
-    min_x = min(point[0] for point in bounds_points) - 3.0
-    max_x = max(point[0] for point in bounds_points) + 3.0
-    min_y = min(point[1] for point in bounds_points) - 3.0
-    max_y = max(point[1] for point in bounds_points) + 3.0
+    envelopes = data.get("spatial_envelopes", {})
+    envelopes = envelopes if isinstance(envelopes, dict) else {}
+    bounds = _map_bounds(bounds_points, envelopes)
+    min_x, max_x = bounds["min_x"], bounds["max_x"]
+    min_y, max_y = bounds["min_y"], bounds["max_y"]
     timestamps = [item["t"] for item in ground_truth + plans + planner]
     timestamps.extend(item["t"] for item in data.get("observability", {}).get("waypoint_events", []) if finite(item.get("t")) is not None)
     start = min(timestamps) if timestamps else 0.0
@@ -730,7 +1008,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         "route_obstacles": list(data.get("metrics", {}).get("route_obstacles", [])),
         "waypoint_events": [item for item in data.get("observability", {}).get("waypoint_events", []) if finite(item.get("t")) is not None],
         "vehicle_events": [item for item in data.get("observability", {}).get("vehicle_events", []) if finite(item.get("t")) is not None],
-        "bounds": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y},
+        "bounds": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y, "padding_m": bounds["padding_m"]},
         "start": start,
         "end": end,
     }
@@ -966,7 +1244,7 @@ def replay_section(data: dict[str, Any]) -> str:
     <div class="replay-event-caption"><span>path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal <i class="replay-swatch safety"></i> safety</span></div>
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
-      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div></div>
+      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div>{_spatial_envelope_inset(data.get("spatial_envelopes", {}) if isinstance(data.get("spatial_envelopes", {}), dict) else {})}</div>
       <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active path</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd></dl><p class="small">The replay shows the recorded command path and observed vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
     </div>
     <script>
@@ -1459,6 +1737,7 @@ def _waypoint_event_rows(observability: dict[str, Any]) -> str:
 
 def render(session: Path, output: Path) -> Path:
     data = _analyze(session)
+    data["spatial_envelopes"] = _configured_spatial_envelopes(session)
     report = _load(session / "report.json", {})
     metrics = data["metrics"]
     observability = data.get("observability", {})
@@ -1860,7 +2139,8 @@ def render(session: Path, output: Path) -> Path:
     .map-annotations {{ display:flex; flex-wrap:wrap; gap:6px 16px; padding:7px 4px 5px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; }} .map-annotations > div {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .map-annotations strong {{ color:#29435d; }} .map-tag {{ display:inline-block; padding:2px 6px; border:1px solid #c9d3dc; border-radius:999px; background:#f7fafc; color:#40566b; }} .map-tag.route {{ border-color:#e8897e; background:#fde8e5; color:#8f2e26; }} .map-tag.waypoint {{ border-color:#e2b35a; background:#fff5da; color:#7b4e00; }} .map-tag.muted {{ color:#8795a1; }}
     .state-note {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .state-key {{ display:inline-block; width:18px; height:10px; margin-left:7px; border:1px solid #b8c5ce; border-radius:2px; vertical-align:middle; }} .state-key.normal {{ background:#dff3e8; }} .state-key.safety {{ background:#fde3e0; }}
     .timing-kpis {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:14px 0; }} .timing-kpi {{ min-height:112px; padding:12px 13px; border:1px solid #e3e9ee; border-top:4px solid; border-radius:8px; background:#fbfdfe; }} .timing-kpi-label {{ color:#53677b; font-size:12px; font-weight:800; }} .timing-kpi-value {{ margin-top:6px; color:#102b45; font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }} .timing-kpi-kind,.timing-kpi-detail {{ color:#68778a; font-size:11px; }} .timing-kpi-detail {{ margin-top:5px; font-variant-numeric:tabular-nums; }}
-    .timing-panel-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }} .timing-panel-grid > .timing-legend {{ grid-column:1/-1; }} .timing-panel {{ min-width:0; }} .timing-legend {{ display:flex; flex-wrap:wrap; gap:7px 16px; align-items:center; color:#53677b; font-size:11px; padding:2px 4px; }} .timing-key {{ width:18px; height:8px; display:inline-block; margin-right:5px; vertical-align:middle; border-radius:5px; background:{BLUE}; }} .timing-key.wait {{ background:{ORANGE}; }} .timing-key.total {{ height:10px; border:2px solid {TEAL}; background:#fff; }}
+    .timing-panel-grid {{ display:grid; grid-template-columns:1fr; gap:10px; }} .timing-panel-grid > .timing-legend {{ grid-column:1/-1; }} .timing-panel {{ min-width:0; }} .timing-legend {{ display:flex; flex-wrap:wrap; gap:7px 16px; align-items:center; color:#53677b; font-size:11px; padding:2px 4px; }} .timing-key {{ width:18px; height:8px; display:inline-block; margin-right:5px; vertical-align:middle; border-radius:5px; background:{BLUE}; }} .timing-key.wait {{ background:{ORANGE}; }} .timing-key.total {{ height:10px; border:2px solid {TEAL}; background:#fff; }}
+    .map-envelope-card {{ margin-top:10px; padding:10px; border:1px solid #e3e9ee; border-radius:9px; background:#fbfdfe; }} .map-envelope-title {{ margin:0 0 4px; color:#29435d; font-size:13px; font-weight:800; }} .map-envelope-svg {{ width:100%; max-width:520px; height:auto; display:block; }} .map-envelope-legend {{ display:flex; flex-wrap:wrap; gap:6px 14px; margin:4px 0; color:#53677b; font-size:11px; }} .envelope-key {{ display:inline-block; width:18px; height:8px; margin-right:5px; border:1px solid {BLUE}; vertical-align:middle; background:#e9f2fc; }} .envelope-key.lidar {{ border-color:{TEAL}; background:#dff3f1; border-style:dashed; }} .envelope-key.planner {{ border-color:{PURPLE}; background:#eee8f7; border-style:dashed; }} .envelope-key.map {{ border-color:{PURPLE}; background:#eee8f7; }} .envelope-key.lio {{ border-color:{BLUE}; background:#e9f2fc; border-style:dotted; }}
     .timing-caption {{ margin:2px 5px 8px; }} .timing-timeline {{ margin-top:10px; }} .timing-flow {{ margin-top:10px; padding:10px; border:1px solid #e3e9ee; border-radius:9px; background:#fbfdfe; }} .timing-lane {{ display:grid; grid-template-columns:112px minmax(0,1fr); gap:10px; align-items:center; margin-top:8px; }} .timing-lane-label {{ color:#29435d; font-size:12px; font-weight:800; text-align:right; }} .timing-lane-track {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .timing-box {{ display:inline-block; padding:6px 9px; border:1px solid #9ab5ca; border-radius:6px; background:#eaf4fb; color:#234d70; font-size:11px; font-weight:700; }} .timing-box.wait {{ border-color:#e0b45b; background:#fff5dc; color:#7b4e00; }} .timing-box.total {{ border:2px solid {TEAL}; background:#e4f5f3; color:#126466; }} .timing-box.unavailable {{ border-style:dashed; background:#f2f4f6; color:#7b8996; }} .timing-arrow {{ color:#7c8d9d; font-weight:900; }} .timing-flow-note {{ margin:11px 0 0 122px; color:#68778a; font-size:11px; }}
     .chart-card:first-child {{ grid-column:auto; }}
     .chart-title {{ margin:2px 5px 2px; font-weight:800; font-size:14px; color:#29435d; }}
@@ -1868,7 +2148,7 @@ def render(session: Path, output: Path) -> Path:
     .axis-label {{ fill:#617284; font-size:11px; }} .axis-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .legend-label {{ fill:#53677b; font-size:11px; }} .threshold-label {{ fill:{RED}; font-size:11px; font-weight:700; }} .end-label {{ font-size:11px; font-weight:800; }} .map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }} .bar-value {{ fill:#29435d; font-size:12px; font-weight:800; }} .bar-note {{ fill:#68778a; font-size:10px; }}
     .replay-toolbar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 8px; }} .replay-toolbar button {{ border:1px solid #b9c9d6; border-radius:6px; background:#fff; color:#1f4f78; padding:7px 13px; font-weight:800; cursor:pointer; }} .replay-toolbar button:hover {{ background:#edf5fb; }} .replay-time-control {{ display:flex; align-items:center; gap:10px; flex:1; min-width:280px; color:#53677b; font-size:12px; font-weight:700; }} .replay-time-control input {{ flex:1; accent-color:{BLUE}; }} .replay-time-control output {{ min-width:62px; color:#18324b; font-variant-numeric:tabular-nums; }}
     .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:18px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 65%,#edf2f6 65%,#edf2f6 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:11px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ background:{TEAL}; }} .replay-marker.safety {{ background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
-    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 250px; gap:14px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 8px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:14px; }} .replay-status h3 {{ margin-bottom:10px; }} .replay-status dl {{ margin:0; }} .replay-status dt {{ margin-top:9px; color:#68778a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }} .replay-status dd {{ margin:2px 0 0; color:#1f3c56; font-size:13px; font-weight:700; overflow-wrap:anywhere; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
+    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:12px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:8px 8px 6px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:12px; }} .replay-status h3 {{ margin-bottom:10px; }} .replay-status dl {{ margin:0; }} .replay-status dt {{ margin-top:9px; color:#68778a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }} .replay-status dd {{ margin:2px 0 0; color:#1f3c56; font-size:13px; font-weight:700; overflow-wrap:anywhere; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
     .evidence {{ width:100%; border-collapse:collapse; font-size:13px; }} .evidence th,.evidence td {{ padding:10px 9px; border-bottom:1px solid #e5ebef; text-align:left; vertical-align:middle; }} .evidence th {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }} .evidence .observed {{ font-weight:800; color:#1f3c56; }}
     .two-col {{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; align-items:start; }}
     .callout {{ padding:13px 15px; background:#f7fafc; border-left:4px solid var(--blue); border-radius:6px; }} .callout p {{ color:#385169; font-size:13px; }}
@@ -1905,6 +2185,10 @@ def render(session: Path, output: Path) -> Path:
 
   {replay_html}
 
+  <section><h2>Flight overview</h2><p class="small">Both 2D maps show recorded geometry and a separate relative-scale envelope view. The envelope view is isolated below each map so its large configured ranges do not shrink the observed path and obstacle geometry.</p><div class="charts">{plot_html}</div></section>
+
+  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
+
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 
   <section><h2>Waypoint and command-state timeline</h2><p class="small">The replay cursor exposes the latest vehicle state, active waypoint, acceptance result, and active command path. This table is the durable waypoint evidence behind the replay.</p><table class="evidence"><thead><tr><th>Time</th><th>Waypoint</th><th>State</th><th>Reason</th><th>Accepted</th><th>Position error</th><th>Speed at acceptance</th></tr></thead><tbody>{waypoint_event_rows}</tbody></table><p class="small">{esc(path_observation_note)}</p></section>
@@ -1921,10 +2205,6 @@ def render(session: Path, output: Path) -> Path:
   <section><h2>Measured processing time · raw table</h2><p class="small">Detailed diagnostic values are retained here for audit. The visual summary below is the primary interpretation view.</p><details><summary>Show raw timing statistics</summary><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></details></section>
 
   <section><h2>Timing overview · spread and execution model</h2><p class="small">Read the cards first, then compare phases within each subsystem panel. A thick segment is p50–p95; the thin whisker is p95–max. Totals are not added to their child phases. The timeline uses diagnostic sample timestamps, not invented phase start/end times.</p>{timing_overview_cards}{timing_phase_chart}{timing_timeline_chart}{timing_execution_model}<details><summary>Show timing composition and evidence limits</summary><table class="evidence"><thead><tr><th>Phase group</th><th>Observed/source sequence</th><th>How to read the timing</th><th>Evidence status</th></tr></thead><tbody>{timing_relationship_rows}</tbody></table></details></section>
-
-  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
-
-  <section><h2>Flight overview</h2><p class="small">Plots are sampled for readability. Each plot has its own scale, units, labelled axes and legend; p95/limits remain visible in the cards above and in the gate table.</p><div class="charts">{plot_html}</div></section>
 
   <section><div class="two-col"><div><h2>Interpretation</h2><div class="callout"><p>{esc(interpretation)}</p></div></div><div><h2>Run context</h2><p class="small"><strong>Estimator:</strong> {esc(lio.get('state') or 'N/A')} · residual p95 {fmt(metrics.get('localization', {}).get('p95_position_residual_m'), 3, ' m')}.</p><p class="small"><strong>PX4:</strong> {esc(px4_observed)}; failsafe observed = {esc(external.get('failsafe_seen'))}.</p><p class="small"><strong>Planner:</strong> {integer(planning.get('diagnostic_sample_count'))} diagnostic samples · {integer(continuity.get('endpoint_change_count'))} endpoint changes · {integer(smoothness.get('handover_expired_count'))} expired handovers.</p></div></div></section>
 

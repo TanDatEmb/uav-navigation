@@ -116,6 +116,8 @@ namespace super_planner {
         Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_min_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_max_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        double latest_guide_path_length_m_{std::numeric_limits<double>::quiet_NaN()};
+        double latest_guide_duration_s_{std::numeric_limits<double>::quiet_NaN()};
 
         bool authorizeAndCommit(CandidateCommandBundle&& candidate);
 
@@ -189,6 +191,8 @@ namespace super_planner {
         Vec3f latestGuideEnd() const { return latest_guide_end_; }
         Vec3f latestGuideMin() const { return latest_guide_min_; }
         Vec3f latestGuideMax() const { return latest_guide_max_; }
+        double latestGuidePathLengthMeters() const { return latest_guide_path_length_m_; }
+        double latestGuideDurationSeconds() const { return latest_guide_duration_s_; }
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();
             return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;

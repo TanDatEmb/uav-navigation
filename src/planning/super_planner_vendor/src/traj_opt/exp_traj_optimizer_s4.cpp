@@ -749,6 +749,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             opt_vars.points.col(i) = opt_vars.init_ps[i];
         }
     }
+    diagnostics_.initial_duration_s = opt_vars.times.sum();
 
     /* 3)  construct the initial guess of the optimization varibles*/
     opt_vars.minimum_time_floor.resize(0);
@@ -955,6 +956,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     if (ret >= 0) {
         rebuild_candidate();
         update_dynamic_extrema();
+        diagnostics_.final_duration_s = traj.getTotalDuration();
     }
     print_optimizer_result();
 
@@ -1090,6 +1092,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
     diagnostics_.final_normalized_dynamic_violation =
             normalized_dynamic_violation();
+    diagnostics_.final_duration_s = traj.empty()
+            ? std::numeric_limits<double>::quiet_NaN()
+            : traj.getTotalDuration();
     opt_vars.penaltyWeights = nominal_penalty_weights;
     opt_vars.feasibility_point_weight = 0.0;
 

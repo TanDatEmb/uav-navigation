@@ -40,7 +40,8 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   const rog_map::Pose pose(sensor_origin, Eigen::Quaterniond::Identity());
 
   for (int i = 0; i < 8; ++i) {
-    map.updateMap(singlePointCloud(obstacle), pose);
+    EXPECT_EQ(map.updateMap(singlePointCloud(obstacle), pose),
+              rog_map::MapUpdateOutcome::UPDATED);
   }
 
   EXPECT_FALSE(map.isKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0)));

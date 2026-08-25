@@ -36,12 +36,42 @@
 namespace rog_map {
     using super_utils::Pose;
 
+    enum class MapUpdateOutcome : std::uint8_t {
+        UPDATED = 0,
+        ACCUMULATED,
+        SLIDE_ONLY,
+        EMPTY_CLOUD,
+        CALLBACK_OWNED,
+        BELOW_GROUND,
+        ABOVE_CEILING,
+    };
+
+    [[nodiscard]] constexpr bool mapUpdateAdvancedWorld(MapUpdateOutcome outcome) noexcept {
+        return outcome == MapUpdateOutcome::UPDATED ||
+               outcome == MapUpdateOutcome::SLIDE_ONLY;
+    }
+
+    [[nodiscard]] constexpr const char* mapUpdateOutcomeName(
+        MapUpdateOutcome outcome) noexcept {
+        switch (outcome) {
+            case MapUpdateOutcome::UPDATED: return "UPDATED";
+            case MapUpdateOutcome::ACCUMULATED: return "ACCUMULATED";
+            case MapUpdateOutcome::SLIDE_ONLY: return "SLIDE_ONLY";
+            case MapUpdateOutcome::EMPTY_CLOUD: return "EMPTY_CLOUD";
+            case MapUpdateOutcome::CALLBACK_OWNED: return "CALLBACK_OWNED";
+            case MapUpdateOutcome::BELOW_GROUND: return "BELOW_GROUND";
+            case MapUpdateOutcome::ABOVE_CEILING: return "ABOVE_CEILING";
+        }
+        return "UNKNOWN";
+    }
+
 
     class ProbMap : public SlidingMap {
     public:
         // Aggregate, per-update instrumentation. This is intentionally a
         // snapshot rather than a per-ray log.
         struct RaycastDiagnostics {
+            MapUpdateOutcome update_outcome{MapUpdateOutcome::EMPTY_CLOUD};
             std::uint64_t endpoint_count{0};
             std::uint64_t attempt_count{0};
             std::uint64_t processed_count{0};
@@ -147,7 +177,8 @@ namespace rog_map {
 
         void writeMapInfoToLog(std::ofstream &log_file);
 
-        void updateProbMap(const PointCloud &cloud, const Pose &pose);
+        [[nodiscard]] MapUpdateOutcome updateProbMap(const PointCloud &cloud,
+                                                     const Pose &pose);
 
         [[nodiscard]] const RaycastDiagnostics& lastDiagnostics() const noexcept {
             return last_diagnostics_;

@@ -2091,6 +2091,13 @@ def _navigation_mapping_summary(
         "mapping_failed_count",
         "mapping_pending_count",
         "mapping_in_flight_count",
+        "mapping_outcome_updated_count",
+        "mapping_outcome_accumulated_count",
+        "mapping_outcome_slide_only_count",
+        "mapping_outcome_empty_cloud_count",
+        "mapping_outcome_callback_owned_count",
+        "mapping_outcome_below_ground_count",
+        "mapping_outcome_above_ceiling_count",
         "observation_accounting_valid",
         "observation_accounting_violation_count",
     }
@@ -2106,6 +2113,8 @@ def _navigation_mapping_summary(
         "generation_reset_count",
         "world_generation",
         "world_revision",
+        "observation_stamp_ns",
+        "last_update_attempt_stamp_ns",
         "world_snapshot_bytes",
         "world_snapshot_owned_bytes",
         "world_snapshot_shared_metadata_bytes",
@@ -2143,6 +2152,13 @@ def _navigation_mapping_summary(
         "mapping_failed_count",
         "mapping_pending_count",
         "mapping_in_flight_count",
+        "mapping_outcome_updated_count",
+        "mapping_outcome_accumulated_count",
+        "mapping_outcome_slide_only_count",
+        "mapping_outcome_empty_cloud_count",
+        "mapping_outcome_callback_owned_count",
+        "mapping_outcome_below_ground_count",
+        "mapping_outcome_above_ceiling_count",
         "observation_accounting_valid",
         "observation_accounting_violation_count",
         "nonfinite_point_count",
@@ -2174,6 +2190,8 @@ def _navigation_mapping_summary(
     for field in integer_fields:
         if field in values and values[field] is not None:
             result[field] = int(values[field] or 0)
+    if "mapping_update_outcome" in values:
+        result["mapping_update_outcome"] = str(values["mapping_update_outcome"])
     result["timing_distributions"] = _diagnostic_timing_summary(
         samples or [],
         ("navigation_mapping/world_model", "super_navigation/super_planner"),
@@ -2249,6 +2267,67 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
             reasons.append(
                 "mapping accepted-observation conservation equation failed"
             )
+    outcome_fields = (
+        "mapping_outcome_updated_count",
+        "mapping_outcome_accumulated_count",
+        "mapping_outcome_slide_only_count",
+        "mapping_outcome_empty_cloud_count",
+        "mapping_outcome_callback_owned_count",
+        "mapping_outcome_below_ground_count",
+        "mapping_outcome_above_ceiling_count",
+    )
+    present_outcome_fields = [field for field in outcome_fields if field in mapping]
+    if not present_outcome_fields and "mapping_published_count" in mapping:
+        reasons.append(
+            "mapping update-outcome evidence is unavailable; runtime binary may be stale"
+        )
+    elif present_outcome_fields:
+        missing = [field for field in outcome_fields if field not in mapping]
+        if missing:
+            reasons.append(
+                "mapping update-outcome evidence is incomplete: " + ", ".join(missing)
+            )
+        else:
+            outcomes = {
+                field: int(_number(mapping.get(field), 0.0)) for field in outcome_fields
+            }
+            published = int(_number(mapping.get("mapping_published_count"), 0.0))
+            if sum(outcomes.values()) != published:
+                reasons.append("mapping update-outcome conservation equation failed")
+            advanced = (
+                outcomes["mapping_outcome_updated_count"] +
+                outcomes["mapping_outcome_slide_only_count"]
+            )
+            revision = int(_number(mapping.get("world_revision"), 0.0))
+            if revision != advanced:
+                reasons.append(
+                    "mapping world revision does not equal advancing update outcomes"
+                )
+            if published > 0:
+                observation_stamp = int(_number(
+                    mapping.get("observation_stamp_ns"), 0.0
+                ))
+                if observation_stamp <= 0:
+                    reasons.append(
+                        "mapping published-world observation stamp is unavailable"
+                    )
+                attempt_stamp = int(_number(
+                    mapping.get("last_update_attempt_stamp_ns"), 0.0
+                ))
+                if attempt_stamp > 0 and observation_stamp > attempt_stamp:
+                    reasons.append(
+                        "mapping published-world observation stamp is newer than the last update attempt"
+                    )
+            for field, label in (
+                ("mapping_outcome_accumulated_count", "mapping observations remained accumulated without publication"),
+                ("mapping_outcome_slide_only_count", "mapping observations only slid the local window without applying the cloud"),
+                ("mapping_outcome_empty_cloud_count", "mapping received empty clouds"),
+                ("mapping_outcome_callback_owned_count", "mapping rejected external update ownership"),
+                ("mapping_outcome_below_ground_count", "mapping rejected odometry below virtual ground"),
+                ("mapping_outcome_above_ceiling_count", "mapping rejected odometry above virtual ceiling"),
+            ):
+                if outcomes[field] > 0:
+                    reasons.append(f"{label}: {outcomes[field]}")
     if "observation_replaced_pending_count" in mapping:
         replaced_waiting = int(_number(
             mapping.get(
@@ -2316,6 +2395,59 @@ def _dataset_playback_summary(runtime: dict[str, Any], requested_rate: float) ->
     }
 
 
+def _dataset_shadow_planning_reasons(
+    runtime: dict[str, Any], evidence: dict[str, Any], planning: dict[str, Any]
+) -> list[str]:
+    contract = runtime.get("dataset_shadow_planning", {})
+    if not isinstance(contract, dict) or not bool(contract.get("enabled", False)):
+        return []
+    reasons: list[str] = []
+    if not isinstance(evidence, dict):
+        return ["dataset shadow planning evidence is missing or malformed"]
+    if evidence.get("status") != "PASS":
+        failure = evidence.get("failure")
+        reason = "dataset shadow planning did not complete"
+        if isinstance(failure, str) and failure.strip():
+            reason += f": {failure.strip()}"
+        reasons.append(reason)
+    if evidence.get("goal_published") is not True:
+        reasons.append("dataset shadow planning goal was not published")
+    try:
+        ready_count = int(evidence.get("ready_command_count", 0))
+        generations = [int(value) for value in evidence.get("unique_ready_generations", [])]
+        emergency_count = int(evidence.get("emergency_command_count", 0))
+    except (TypeError, ValueError):
+        return ["dataset shadow planning evidence is malformed"]
+    if ready_count <= 0 or not generations or min(generations) <= 0:
+        reasons.append("dataset shadow planning produced no committed READY command")
+    if emergency_count != 0:
+        reasons.append("dataset shadow planning emitted an emergency command")
+    planning_total = planning.get("planning_total_us", {})
+    planning_timing_count = (
+        int(_number(planning_total.get("sample_count"), 0.0))
+        if isinstance(planning_total, dict)
+        else 0
+    )
+    trace = planning.get("rolling_bundle_trace", {})
+    if planning_timing_count <= 0 and isinstance(trace, dict):
+        records = trace.get("records", [])
+        if isinstance(records, list):
+            planning_timing_count = sum(
+                1
+                for record in records
+                if isinstance(record, dict)
+                and isinstance(record.get("planning_latency_ms"), (int, float))
+                and not isinstance(record.get("planning_latency_ms"), bool)
+                and math.isfinite(float(record["planning_latency_ms"]))
+                and float(record["planning_latency_ms"]) >= 0.0
+            )
+    if planning_timing_count <= 0:
+        reasons.append("dataset shadow planning has no planner timing samples")
+    if not isinstance(trace, dict) or int(trace.get("record_count", 0)) <= 0:
+        reasons.append("dataset shadow planning has no runtime planner trace")
+    return reasons
+
+
 def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path) -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
     streams = {name: _rate_row(snapshot, name) for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry")}
@@ -2331,6 +2463,8 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     planning = _planning_timing_summary(samples)
     planning["execution"] = _planning_execution_summary(snapshot)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
+    shadow_planning = _load_json(session / "dataset_shadow_planning.json", {})
+    planning["shadow_goal"] = shadow_planning
     reasons: list[str] = []
     reasons.extend(_provenance_reasons(runtime))
     reasons.extend(_experimental_bypass_reasons(runtime))
@@ -2353,6 +2487,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     if int(diagnostics.get("imu_drop_count", 0) or 0) or int(diagnostics.get("lidar_drop_count", 0) or 0):
         reasons.append("runtime drop count is non-zero")
     reasons.extend(_mapping_integrity_reasons(navigation_mapping))
+    reasons.extend(_dataset_shadow_planning_reasons(runtime, shadow_planning, planning))
     reasons.extend(failures)
     verdict = "PASS" if not reasons else "FAIL"
     if not any(streams[name]["sample_count"] for name in streams):

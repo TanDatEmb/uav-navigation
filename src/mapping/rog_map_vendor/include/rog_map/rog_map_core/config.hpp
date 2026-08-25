@@ -208,6 +208,8 @@ namespace rog_map {
             local_update_box_d = Vec3f(update_box[0], update_box[1], update_box[2]);
 
 
+            loader.LoadParam(name_space + "/virtual_ground_ceiling_en",
+                             virtual_ground_ceiling_en, true);
             loader.LoadParam(name_space + "/virtual_ground_height", virtual_ground_height, -0.1);
             loader.LoadParam(name_space + "/virtual_ceil_height", virtual_ceil_height, -0.1);
 
@@ -307,6 +309,12 @@ namespace rog_map {
          *  the float type ceil and ground height is remap to the lower and upper bound of
          *  the inflation layer respectively
          */
+        // Legacy ROG virtual planes are absolute in the configured frame. UAV
+        // product frames such as lio_odom are initialized at an arbitrary
+        // takeoff pose and may legitimately descend, so product deployments
+        // can disable the planes and rely on the finite sliding-map boundary
+        // plus observed/inflated occupancy instead.
+        bool virtual_ground_ceiling_en{true};
         double virtual_ceil_height{}, virtual_ground_height{};
         int inf_virtual_ceil_height_id_g{}, inf_virtual_ground_height_id_g{};
 

@@ -171,6 +171,17 @@ SuperNavigationNode::SuperNavigationNode(
   auto mapping_map = std::make_shared<RuntimeRogMap>(
       [ros_clock] { return ros_clock->now().seconds(); });
   mapping_map->loadConfigAndInit(super_config_path_);
+  const auto& mapping_config = mapping_map->getMapConfig();
+  if (mapping_config.ros_callback_en || mapping_config.batch_update_size != 1) {
+    throw std::invalid_argument(
+        "navigation_runtime owns mapping callbacks and requires rog_map/"
+        "raycasting/batch_update_size=1");
+  }
+  if (planning_frame_ == "lio_odom" && mapping_config.virtual_ground_ceiling_en) {
+    throw std::invalid_argument(
+        "absolute ROG virtual ground/ceiling planes are invalid in lio_odom; "
+        "set rog_map/virtual_ground_ceiling_en=false");
+  }
   auto initial_world_view = std::make_shared<RogWorldSnapshot>(
       mapping_map->exportPlanningGrid(),
       navigation_world_model::WorldSnapshotIdentity{1, 0, 0});
@@ -181,7 +192,7 @@ SuperNavigationNode::SuperNavigationNode(
   initial_telemetry.snapshot_owned_bytes = initial_world_view->ownedByteSize();
   initial_telemetry.snapshot_shared_metadata_bytes =
       initial_world_view->sharedMetadataByteSize();
-  mapping_telemetry_->update(initial_telemetry);
+  mapping_telemetry_->initialize(initial_telemetry);
   auto process_mapping = [mapping_map, telemetry = mapping_telemetry_,
                           lifecycle_observer = mapping_lifecycle_observer_,
                           store = &world_snapshot_store_, revision = std::uint64_t{0}]
@@ -195,32 +206,50 @@ SuperNavigationNode::SuperNavigationNode(
         super_utils::Quatf{normalized_q.w(), normalized_q.x(),
                            normalized_q.y(), normalized_q.z()}};
     const auto map_started = std::chrono::steady_clock::now();
-    mapping_map->updateMap(*observation.cloud, super_pose);
-    if (lifecycle_observer) {
+    const auto outcome = mapping_map->updateMap(*observation.cloud, super_pose);
+    const bool world_advanced = rog_map::mapUpdateAdvancedWorld(outcome);
+    if (!world_advanced) {
+      MappingTelemetrySnapshot rejected = telemetry->snapshot();
+      rejected.map = mapping_map->lastDiagnostics();
+      rejected.last_update_attempt_stamp_ns = observation.stamp_ns;
+      rejected.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - map_started).count();
+      rejected.snapshot_export_us = 0;
+      rejected.pointcloud_decode_us = observation.pointcloud_decode_us;
+      rejected.pair_wait_us = observation.pair_wait_us;
+      telemetry->recordUpdate(std::move(rejected));
+      throw std::runtime_error(
+          std::string("ROG-Map observation did not advance the immutable world: ") +
+          rog_map::mapUpdateOutcomeName(outcome));
+    }
+    if (world_advanced && lifecycle_observer) {
       lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
     }
-    const auto export_started = std::chrono::steady_clock::now();
-    auto snapshot = std::make_shared<RogWorldSnapshot>(
-        mapping_map->exportPlanningGrid(),
-        navigation_world_model::WorldSnapshotIdentity{
-            1, revision + 1, observation.stamp_ns});
-    const auto export_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - export_started).count();
-    store->publish(snapshot);
-    ++revision;
-    MappingTelemetrySnapshot next;
+    MappingTelemetrySnapshot next = telemetry->snapshot();
     next.map = mapping_map->lastDiagnostics();
-    next.world_revision = revision;
-    next.observation_stamp_ns = observation.stamp_ns;
-    next.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - map_started).count();
-    next.snapshot_export_us = export_us;
+    next.last_update_attempt_stamp_ns = observation.stamp_ns;
+    next.snapshot_export_us = 0;
     next.pointcloud_decode_us = observation.pointcloud_decode_us;
     next.pair_wait_us = observation.pair_wait_us;
-    next.snapshot_bytes = snapshot->byteSize();
-    next.snapshot_owned_bytes = snapshot->ownedByteSize();
-    next.snapshot_shared_metadata_bytes = snapshot->sharedMetadataByteSize();
-    telemetry->update(std::move(next));
+    if (world_advanced) {
+      const auto export_started = std::chrono::steady_clock::now();
+      auto snapshot = std::make_shared<RogWorldSnapshot>(
+          mapping_map->exportPlanningGrid(),
+          navigation_world_model::WorldSnapshotIdentity{
+              1, revision + 1, observation.stamp_ns});
+      next.snapshot_export_us = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - export_started).count();
+      store->publish(snapshot);
+      ++revision;
+      next.world_revision = revision;
+      next.observation_stamp_ns = observation.stamp_ns;
+      next.snapshot_bytes = snapshot->byteSize();
+      next.snapshot_owned_bytes = snapshot->ownedByteSize();
+      next.snapshot_shared_metadata_bytes = snapshot->sharedMetadataByteSize();
+    }
+    next.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - map_started).count();
+    telemetry->recordUpdate(std::move(next));
   };
   auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
                            maximum_age_ns = static_cast<std::int64_t>(
@@ -255,7 +284,8 @@ SuperNavigationNode::SuperNavigationNode(
         diagnostic_msgs::msg::DiagnosticStatus status;
         status.name = "navigation_mapping/world_model";
         status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
-        status.message = "PUBLISHED";
+        status.message = std::string("PUBLISHED_") +
+            rog_map::mapUpdateOutcomeName(mapping.map.update_outcome);
         const auto add_value = [&status](const std::string& key, std::uint64_t value) {
           diagnostic_msgs::msg::KeyValue item;
           item.key = key;
@@ -268,10 +298,17 @@ SuperNavigationNode::SuperNavigationNode(
           item.value = std::to_string(std::max<std::int64_t>(0, value));
           status.values.push_back(std::move(item));
         };
+        const auto add_text = [&status](const std::string& key, const std::string& value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = value;
+          status.values.push_back(std::move(item));
+        };
         const auto& map = mapping.map;
         add_value("world_generation", mapping.world_generation);
         add_value("world_revision", mapping.world_revision);
         add_value("observation_stamp_ns", mapping.observation_stamp_ns);
+        add_value("last_update_attempt_stamp_ns", mapping.last_update_attempt_stamp_ns);
         add_value("received_observation_count", lifecycle.received);
         add_value("accepted_observation_count", lifecycle.accepted_to_inbox);
         add_value("mapping_started_count", lifecycle.mapping_started);
@@ -279,6 +316,14 @@ SuperNavigationNode::SuperNavigationNode(
         add_value("mapping_failed_count", lifecycle.mapping_failed);
         add_value("mapping_pending_count", lifecycle.pending);
         add_value("mapping_in_flight_count", lifecycle.in_flight);
+        add_text("mapping_update_outcome", rog_map::mapUpdateOutcomeName(map.update_outcome));
+        add_value("mapping_outcome_updated_count", mapping.outcome_updated);
+        add_value("mapping_outcome_accumulated_count", mapping.outcome_accumulated);
+        add_value("mapping_outcome_slide_only_count", mapping.outcome_slide_only);
+        add_value("mapping_outcome_empty_cloud_count", mapping.outcome_empty_cloud);
+        add_value("mapping_outcome_callback_owned_count", mapping.outcome_callback_owned);
+        add_value("mapping_outcome_below_ground_count", mapping.outcome_below_ground);
+        add_value("mapping_outcome_above_ceiling_count", mapping.outcome_above_ceiling);
         add_value("observation_accounting_valid",
                   lifecycle.allInvariantsHold() ? 1U : 0U);
         add_value("observation_accounting_violation_count", lifecycle.violation_count);
@@ -1263,10 +1308,11 @@ void SuperNavigationNode::runCycle() {
     const bool commit_observed_this_cycle = commitObservedThisCycle(
         committed_generation_before_solve, committed_generation,
         commit_diagnostics.generation);
-    const auto committed_end = committed.empty()
+    const bool has_committed_bundle = committed_generation > 0U && !committed.empty();
+    const auto committed_end = !has_committed_bundle
                                    ? super_utils::Vec3f{}
                                    : committed.getPos(committed.getTotalDuration());
-    const double endpoint_error = committed.empty()
+    const double endpoint_error = !has_committed_bundle
                                       ? std::numeric_limits<double>::infinity()
                                       : (committed_end - target).norm();
     const auto robot_grid_type = pinned_world.view->classify(
@@ -1499,6 +1545,10 @@ void SuperNavigationNode::runCycle() {
                     exp_diagnostics.best_normalized_dynamic_violation);
     add_trace_value("exp_final_normalized_dynamic_violation",
                     exp_diagnostics.final_normalized_dynamic_violation);
+    add_trace_value("exp_initial_duration_s", exp_diagnostics.initial_duration_s);
+    add_trace_value("exp_final_duration_s", exp_diagnostics.final_duration_s);
+    add_trace_value("guide_path_length_m", planner_->latestGuidePathLengthMeters());
+    add_trace_value("guide_duration_s", planner_->latestGuideDurationSeconds());
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
     add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);

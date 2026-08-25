@@ -22,6 +22,7 @@ sys.path.insert(0, str(RUNTIME))
 import monitor
 from monitor import StreamStats
 import build_provenance
+import dataset_shadow_planning
 import gazebo_native_observer
 import report
 import runner
@@ -44,6 +45,22 @@ def _valid_captured_provenance() -> dict[str, object]:
         (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     ).hexdigest()
     return {"status": "VALID", "manifest_sha256": manifest_sha, "manifest": manifest}
+
+
+def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
+    values = {
+        "mapping_outcome_updated_count": updated,
+        "mapping_outcome_accumulated_count": 0,
+        "mapping_outcome_slide_only_count": 0,
+        "mapping_outcome_empty_cloud_count": 0,
+        "mapping_outcome_callback_owned_count": 0,
+        "mapping_outcome_below_ground_count": 0,
+        "mapping_outcome_above_ceiling_count": 0,
+        "observation_stamp_ns": 1_000_000_000 + updated,
+        "last_update_attempt_stamp_ns": 1_000_000_000 + updated,
+    }
+    values.update(overrides)
+    return values
 
 
 class RuntimeContractTest(unittest.TestCase):
@@ -456,6 +473,7 @@ class RuntimeContractTest(unittest.TestCase):
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(parameters["planner_rate_hz"], 5.0)
+            self.assertEqual(parameters["mission_file"], str(mission.resolve()))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
@@ -464,6 +482,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertFalse(planner["super_planner"]["frontend_in_known_free"])
             self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
             self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+            self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
             self.assertEqual(planner["rog_map"]["raycasting"]["ray_range"][0], 0.7)
 
             speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
@@ -495,6 +514,64 @@ class RuntimeContractTest(unittest.TestCase):
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
+
+    def test_speed_cap_materializes_one_resolved_mission_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            source = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
+
+            resolved = runner._resolved_mission_file(session, source, 10.0)
+            planning = runner._mission_planning(resolved)
+            self.assertEqual(planning["max_velocity_mps"], 10.0)
+            document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+            self.assertEqual(document["mission"]["planning"]["max_velocity_mps"], 10.0)
+            self.assertEqual(
+                yaml.safe_load(source.read_text(encoding="utf-8"))["mission"]["planning"][
+                    "max_velocity_mps"
+                ],
+                5.0,
+            )
+
+            runtime = json.loads(
+                (session.directory / "runtime.json").read_text(encoding="utf-8")
+            )
+            contract = runtime["mission_contract"]
+            self.assertEqual(contract["source_path"], str(source.resolve()))
+            self.assertEqual(contract["resolved_path"], str(resolved.resolve()))
+            self.assertEqual(contract["speed_cap_mps"], 10.0)
+            self.assertEqual(contract["planning"]["max_velocity_mps"], 10.0)
+
+            mapping = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=resolved,
+            )
+            parameters = yaml.safe_load(mapping.read_text(encoding="utf-8"))[
+                "super_navigation_node"
+            ]["ros__parameters"]["super_navigation"]
+            planner = yaml.safe_load(
+                Path(parameters["config_path"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 10.0)
+            self.assertEqual(parameters["mission_file"], str(resolved.resolve()))
+            launch_command = runner._navigation_runtime_launch_command(mapping, resolved)
+            self.assertIn(f"mission_file:={resolved.resolve()}", launch_command)
+
+    def test_navigation_runtime_launch_omits_only_absent_mission(self) -> None:
+        command = runner._navigation_runtime_launch_command(Path("mapping.yaml"), None)
+        self.assertEqual(
+            [item for item in command if item.startswith("mission_file:=")], []
+        )
+
+    def test_resolved_mission_rejects_invalid_speed_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            source = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
+            for invalid in (True, 0.0, -1.0, float("nan"), float("inf")):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, "finite and positive"):
+                        runner._resolved_mission_file(session, source, invalid)
 
     def test_tb001_exp_jerk_objective_default_remains_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -940,6 +1017,101 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(dataset_body.count('"use_sim_time:=true"'), 2)
         self.assertNotIn('"use_sim_time:=false"', dataset_body)
 
+    def test_dataset_shadow_goal_is_horizontal_finite_and_distance_bounded(self) -> None:
+        goal = dataset_shadow_planning.relative_goal(
+            (1.0, 2.0, 3.0), (3.0, 4.0, 9.0), 5.0
+        )
+        self.assertEqual(goal, (4.0, 6.0, 3.0))
+        with self.assertRaisesRegex(ValueError, "too small"):
+            dataset_shadow_planning.relative_goal((0, 0, 0), (0, 0, 1), 5.0)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            dataset_shadow_planning.relative_goal((0, 0, math.nan), (1, 0, 0), 5.0)
+
+    def test_dataset_shadow_planning_is_product_goal_with_fail_closed_report_evidence(self) -> None:
+        source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
+        dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
+        self.assertIn('"dataset_shadow_planning"', dataset_body)
+        self.assertIn('"tools/runtime/dataset_shadow_planning.py"', dataset_body)
+        self.assertNotIn(
+            'raise RuntimeError(f"dataset shadow planning exited', dataset_body
+        )
+        helper_source = (ROOT / "tools/runtime/dataset_shadow_planning.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("EMER before committing a READY shadow command", helper_source)
+        self.assertIn("publish_teardown(latest_odom)", helper_source)
+        self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", helper_source)
+        runtime = {"dataset_shadow_planning": {"enabled": True, "goal_distance_m": 5.0}}
+        planning = {
+            "planning_total_us": {"sample_count": 4},
+            "rolling_bundle_trace": {"record_count": 4},
+        }
+        valid = {
+            "status": "PASS",
+            "goal_published": True,
+            "ready_command_count": 20,
+            "unique_ready_generations": [1, 2],
+            "emergency_command_count": 0,
+        }
+        self.assertEqual(
+            report._dataset_shadow_planning_reasons(runtime, valid, planning), []
+        )
+        trace_timing = {
+            "planning_total_us": {"sample_count": 0},
+            "rolling_bundle_trace": {
+                "record_count": 2,
+                "records": [
+                    {"planning_latency_ms": 1.25},
+                    {"planning_latency_ms": 0.50},
+                ],
+            },
+        }
+        self.assertEqual(
+            report._dataset_shadow_planning_reasons(
+                runtime, valid, trace_timing
+            ),
+            [],
+        )
+        missing_timing = {
+            "planning_total_us": {"sample_count": 0},
+            "rolling_bundle_trace": {
+                "record_count": 1,
+                "records": [{"planning_latency_ms": None}],
+            },
+        }
+        self.assertIn(
+            "dataset shadow planning has no planner timing samples",
+            report._dataset_shadow_planning_reasons(
+                runtime, valid, missing_timing
+            ),
+        )
+        missing = dict(valid, ready_command_count=0, unique_ready_generations=[])
+        self.assertIn(
+            "dataset shadow planning produced no committed READY command",
+            report._dataset_shadow_planning_reasons(runtime, missing, planning),
+        )
+        emergency = dict(valid, emergency_command_count=1)
+        self.assertIn(
+            "dataset shadow planning emitted an emergency command",
+            report._dataset_shadow_planning_reasons(runtime, emergency, planning),
+        )
+        failed = dict(
+            missing,
+            status="FAIL",
+            failure="SUPER emitted EMER before committing a READY shadow command",
+        )
+        self.assertIn(
+            "dataset shadow planning did not complete: SUPER emitted EMER before "
+            "committing a READY shadow command",
+            report._dataset_shadow_planning_reasons(runtime, failed, planning),
+        )
+        self.assertEqual(
+            report._dataset_shadow_planning_reasons(
+                {"dataset_shadow_planning": {"enabled": False}}, {}, {}
+            ),
+            [],
+        )
+
     def test_dataset_raw_observers_use_reliable_product_capacity(self) -> None:
         config = runner.load_config("dataset.yaml")
         self.assertEqual(
@@ -1065,6 +1237,8 @@ class RuntimeContractTest(unittest.TestCase):
             "mapping_failed_count": 0,
             "mapping_pending_count": 0,
             "mapping_in_flight_count": 0,
+            **_mapping_outcomes(51),
+            "world_revision": 51,
         })
         self.assertEqual(reasons, ["mapping replaced an unconsumed cloud: 49"])
 
@@ -1084,7 +1258,43 @@ class RuntimeContractTest(unittest.TestCase):
             "mapping_failed_count": 0,
             "mapping_pending_count": 0,
             "mapping_in_flight_count": 0,
+            **_mapping_outcomes(100),
+            "world_revision": 100,
         }), [])
+
+    def test_dataset_mapping_integrity_rejects_missing_or_nonadvancing_outcomes(self) -> None:
+        legacy = {
+            "mapping_published_count": 1,
+            "world_revision": 1,
+        }
+        self.assertIn("runtime binary may be stale", " ".join(
+            report._mapping_integrity_reasons(legacy)
+        ))
+        bad = {
+            "received_observation_count": 2,
+            "accepted_observation_count": 2,
+            "mapping_published_count": 2,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
+            "observation_discarded_pending_count": 0,
+            "observation_replaced_pending_count": 0,
+            "world_revision": 1,
+            **_mapping_outcomes(1, mapping_outcome_below_ground_count=1),
+        }
+        reasons = report._mapping_integrity_reasons(bad)
+        self.assertIn("mapping rejected odometry below virtual ground: 1", reasons)
+
+        missing_stamp = {
+            "mapping_published_count": 1,
+            "world_revision": 1,
+            **_mapping_outcomes(1),
+        }
+        missing_stamp.pop("observation_stamp_ns")
+        self.assertIn(
+            "mapping published-world observation stamp is unavailable",
+            report._mapping_integrity_reasons(missing_stamp),
+        )
 
     def test_dataset_mapping_integrity_rejects_unterminalized_observation(self) -> None:
         reasons = report._mapping_integrity_reasons({
@@ -2486,6 +2696,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "mapping_pending_count": "0",
                 "mapping_in_flight_count": "0",
                 "observation_accounting_valid": "1",
+                **{key: str(value) for key, value in _mapping_outcomes(2).items()},
             },
         }
         for final, earlier in ((world, planner), (planner, world)):
@@ -2502,6 +2713,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(mapping["accepted_observation_count"], 2)
             self.assertEqual(mapping["world_revision"], 2)
             self.assertEqual(mapping["mapping_published_count"], 2)
+            self.assertEqual(mapping["observation_stamp_ns"], 1_000_000_002)
             self.assertEqual(report._mapping_integrity_reasons(mapping), [])
 
     def test_navigation_mapping_summary_uses_coherent_world_lifecycle_snapshot(self) -> None:
@@ -2526,6 +2738,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "mapping_pending_count": "0",
                 "mapping_in_flight_count": "0",
                 "observation_accounting_valid": "1",
+                **{key: str(value) for key, value in _mapping_outcomes(305).items()},
             },
         }
         snapshot = {

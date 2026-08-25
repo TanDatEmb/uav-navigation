@@ -120,8 +120,9 @@ bool ProbMap::isOccupied(const Vec3f& pos) const {
     if (!insideLocalMap(pos)) {
         return false;
     }
-    if (pos.z() > cfg_.virtual_ceil_height ||
-        pos.z() < cfg_.virtual_ground_height) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (pos.z() > cfg_.virtual_ceil_height ||
+         pos.z() < cfg_.virtual_ground_height)) {
         return true;
     }
     return isOccupied(occupancy_buffer_[getHashIndexFromPos(pos)]);
@@ -131,8 +132,9 @@ bool ProbMap::isUnknown(const Vec3f& pos) const {
     if (!insideLocalMap(pos)) {
         return true;
     }
-    if (pos.z() > cfg_.virtual_ceil_height ||
-        pos.z() < cfg_.virtual_ground_height) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (pos.z() > cfg_.virtual_ceil_height ||
+         pos.z() < cfg_.virtual_ground_height)) {
         return false;
     }
 
@@ -143,8 +145,9 @@ bool ProbMap::isKnownFree(const Vec3f& pos) const {
     if (!insideLocalMap(pos)) {
         return false;
     }
-    if (pos.z() > cfg_.virtual_ceil_height ||
-        pos.z() < cfg_.virtual_ground_height) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (pos.z() > cfg_.virtual_ceil_height ||
+         pos.z() < cfg_.virtual_ground_height)) {
         return false;
     }
     return isKnownFree(occupancy_buffer_[getHashIndexFromPos(pos)]);
@@ -157,8 +160,9 @@ bool ProbMap::isFrontier(const Vec3f& pos) const {
     }
 
     // 2) Check virtual ceil and ground
-    if (pos.z() > cfg_.virtual_ceil_height ||
-        pos.z() < cfg_.virtual_ground_height) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (pos.z() > cfg_.virtual_ceil_height ||
+         pos.z() < cfg_.virtual_ground_height)) {
         return false;
     }
 
@@ -176,8 +180,9 @@ bool ProbMap::isOccupied(const Vec3i& id_g) const {
     if (!insideLocalMap(id_g)) {
         return false;
     }
-    if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (id_g.z() > sc_.virtual_ceil_height_id_g ||
+         id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i)) {
         return true;
     }
     return isOccupied(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -187,8 +192,9 @@ bool ProbMap::isUnknown(const Vec3i& id_g) const {
     if (!insideLocalMap(id_g)) {
         return true;
     }
-    if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (id_g.z() > sc_.virtual_ceil_height_id_g ||
+         id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i)) {
         return false;
     }
     return isUnknown(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -198,8 +204,9 @@ bool ProbMap::isKnownFree(const Vec3i& id_g) const {
     if (!insideLocalMap(id_g)) {
         return false;
     }
-    if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (id_g.z() > sc_.virtual_ceil_height_id_g ||
+         id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i)) {
         return true;
     }
     return isKnownFree(occupancy_buffer_[getHashIndexFromGlobalIndex(id_g)]);
@@ -210,8 +217,9 @@ bool ProbMap::isFrontier(const Vec3i& id_g) const {
     if (!insideLocalMap(id_g)) {
         return false;
     }
-    if (id_g.z() > sc_.virtual_ceil_height_id_g ||
-        id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (id_g.z() > sc_.virtual_ceil_height_id_g ||
+         id_g.z() < sc_.virtual_ground_height_id_g + sc_.safe_margin_i)) {
         return false;
     }
 
@@ -291,7 +299,8 @@ void ProbMap::updateOccPointCloud(const PointCloud& input_cloud) {
 
         posToGlobalIndex(p, pt_id_g);
 
-        if (p.z() > cfg_.virtual_ceil_height || p.z() < cfg_.virtual_ground_height) {
+        if (cfg_.virtual_ground_ceiling_en &&
+            (p.z() > cfg_.virtual_ceil_height || p.z() < cfg_.virtual_ground_height)) {
             continue;
         }
         if (insideLocalMap(pt_id_g)) {
@@ -334,7 +343,7 @@ void ProbMap::slideAllMap(const rog_map::Vec3f& pos) {
         std::chrono::steady_clock::now() - slide_started).count();
 }
 
-void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
+MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     last_diagnostics_ = RaycastDiagnostics{};
     last_diagnostics_.endpoint_count = cloud.size();
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
@@ -344,25 +353,32 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     if (cfg_.map_sliding_en) {
         last_diagnostics_.map_slide_check_count = 1;
     }
+    if (cfg_.virtual_ground_ceiling_en && pos.z() > cfg_.virtual_ceil_height) {
+        std::cout << YELLOW << " -- [ROGMapCore] Odom above virtual ceil, please check map parameter -- ." << RESET
+            << std::endl;
+        last_diagnostics_.update_outcome = MapUpdateOutcome::ABOVE_CEILING;
+        return last_diagnostics_.update_outcome;
+    }
+    else if (cfg_.virtual_ground_ceiling_en && pos.z() < cfg_.virtual_ground_height) {
+        std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
+            << std::endl;
+        last_diagnostics_.update_outcome = MapUpdateOutcome::BELOW_GROUND;
+        return last_diagnostics_.update_outcome;
+    }
+
+    bool slid_before_update = false;
     if (cfg_.map_sliding_en && !insideLocalMap(pos) && raycast_data_.batch_update_counter == 0) {
         std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << std::endl;
         slideAllMap(pos);
-        return;
+        slid_before_update = true;
+        // The current observation is already expressed in the new local
+        // window.  Continue processing it instead of silently discarding the
+        // first cloud after every slide.
     }
 
-    if (pos.z() > cfg_.virtual_ceil_height) {
-        std::cout << YELLOW << " -- [ROGMapCore] Odom above virtual ceil, please check map parameter -- ." << RESET
-            << std::endl;
-        return;
-    }
-    else if (pos.z() < cfg_.virtual_ground_height) {
-        std::cout << YELLOW << " -- [ROGMapCore] Odom below virtual ground, please check map parameter -- ." << RESET
-            << std::endl;
-        return;
-    }
-
-    if (raycast_data_.batch_update_counter == 0 &&
+    if (!slid_before_update &&
+        raycast_data_.batch_update_counter == 0 &&
         cfg_.map_sliding_en  &&
         (map_empty_ || (pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh)
         ) {
@@ -375,7 +391,9 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
     time_consuming_[1] = t_raycast.stop();
     last_diagnostics_.rog_raycast_us = static_cast<std::int64_t>(time_consuming_[1] * 1e6);
     raycast_data_.batch_update_counter++;
-    if (raycast_data_.batch_update_counter >= cfg_.batch_update_size) {
+    const bool applies_probability_update =
+        raycast_data_.batch_update_counter >= cfg_.batch_update_size;
+    if (applies_probability_update) {
         raycast_data_.batch_update_counter = 0;
         time_consuming_[5] = raycast_data_.update_cache_id_g.size();
         last_diagnostics_.update_cache_entry_count = raycast_data_.update_cache_id_g.size();
@@ -413,11 +431,17 @@ void ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
             }
         }
     }
+    last_diagnostics_.update_outcome = applies_probability_update
+        ? MapUpdateOutcome::UPDATED
+        : (slid_before_update ? MapUpdateOutcome::SLIDE_ONLY
+                              : MapUpdateOutcome::ACCUMULATED);
+    return last_diagnostics_.update_outcome;
 }
 
 GridType ProbMap::getGridType(Vec3i& id_g) const {
-    if (id_g.z() <= sc_.virtual_ground_height_id_g ||
-        id_g.z() >= sc_.virtual_ceil_height_id_g - sc_.safe_margin_i) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (id_g.z() <= sc_.virtual_ground_height_id_g ||
+         id_g.z() >= sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
         return super_utils::OCCUPIED;
     }
     if (!insideLocalMap(id_g)) {
@@ -439,8 +463,9 @@ GridType ProbMap::getGridType(Vec3i& id_g) const {
 }
 
 GridType ProbMap::getGridType(const Vec3f& pos) const {
-    if (pos.z() <= cfg_.virtual_ground_height ||
-        pos.z() >= cfg_.virtual_ceil_height) {
+    if (cfg_.virtual_ground_ceiling_en &&
+        (pos.z() <= cfg_.virtual_ground_height ||
+         pos.z() >= cfg_.virtual_ceil_height)) {
         return OCCUPIED;
     }
     if (!insideLocalMap(pos)) {
@@ -603,8 +628,10 @@ void ProbMap::boundBoxByLocalMap(Vec3f& box_min, Vec3f& box_max) const {
 
     box_min = box_min.cwiseMax(local_map_bound_min_d_);
     box_max = box_max.cwiseMin(local_map_bound_max_d_);
-    box_max.z() = std::min(box_max.z(), cfg_.virtual_ceil_height);
-    box_min.z() = std::max(box_min.z(), cfg_.virtual_ground_height);
+    if (cfg_.virtual_ground_ceiling_en) {
+        box_max.z() = std::min(box_max.z(), cfg_.virtual_ceil_height);
+        box_min.z() = std::max(box_min.z(), cfg_.virtual_ground_height);
+    }
 }
 
 void ProbMap::resetCell(const int& hash_id) {
@@ -828,7 +855,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
         bool update_hit{true};
         bool clipped{false};
         // 1.3) filter for virtual ceil and ground
-        if (p.z() > cfg_.virtual_ceil_height) {
+        if (cfg_.virtual_ground_ceiling_en && p.z() > cfg_.virtual_ceil_height) {
             update_hit = false;
             clipped = true;
             last_diagnostics_.clipped_virtual_ground_or_ceiling++;
@@ -837,7 +864,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             const double pc = cfg_.virtual_ceil_height - cur_odom.z();
             p = cur_odom + (p - cur_odom).normalized() * pc / dz;
         }
-        else if (p.z() < cfg_.virtual_ground_height) {
+        else if (cfg_.virtual_ground_ceiling_en && p.z() < cfg_.virtual_ground_height) {
             update_hit = false;
             clipped = true;
             last_diagnostics_.clipped_virtual_ground_or_ceiling++;

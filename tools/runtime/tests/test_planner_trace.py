@@ -140,6 +140,10 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_initial_normalized_dynamic_violation": "1.25",
                                     "exp_best_normalized_dynamic_violation": "1.01",
                                     "exp_final_normalized_dynamic_violation": "1.01",
+                                    "exp_initial_duration_s": "4.25",
+                                    "exp_final_duration_s": "4.75",
+                                    "guide_path_length_m": "18.5",
+                                    "guide_duration_s": "4.0",
                                     "exp_retry_budget_remaining_us": "42000",
                                     "solve_deadline_exceeded": "0",
                                     "command_available": "1",
@@ -174,6 +178,10 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_lbfgs_last_return_code"], -1)
         self.assertFalse(records[0]["exp_lbfgs_cancelled"])
         self.assertEqual(records[0]["exp_best_normalized_dynamic_violation"], 1.01)
+        self.assertEqual(records[0]["exp_initial_duration_s"], 4.25)
+        self.assertEqual(records[0]["exp_final_duration_s"], 4.75)
+        self.assertEqual(records[0]["guide_path_length_m"], 18.5)
+        self.assertEqual(records[0]["guide_duration_s"], 4.0)
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
 
 

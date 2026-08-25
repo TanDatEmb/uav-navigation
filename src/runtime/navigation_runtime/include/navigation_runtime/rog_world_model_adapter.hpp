@@ -44,14 +44,21 @@ class RogWorldModelView final : public navigation_world_model::WorldModelView {
 
   [[nodiscard]] navigation_world_model::WorldGeometry geometry() const noexcept override {
     const auto& config = map_->getMapConfig();
+    const auto center = map_->getLocalMapOrigin();
+    const auto size = map_->getLocalMapSize();
+    const double effective_ground = config.virtual_ground_ceiling_en
+        ? config.virtual_ground_height : center.z() - 0.5 * size.z();
+    const double effective_ceiling = config.virtual_ground_ceiling_en
+        ? config.virtual_ceil_height : center.z() + 0.5 * size.z();
     return {
         map_->getResolution(),
         map_->getInfResolution(),
         config.inflation_resolution * static_cast<double>(config.inflation_step),
-        config.virtual_ground_height,
-        config.virtual_ceil_height,
-        map_->getLocalMapOrigin(),
-        map_->getLocalMapSize(),
+        effective_ground,
+        effective_ceiling,
+        center,
+        size,
+        config.virtual_ground_ceiling_en,
     };
   }
 

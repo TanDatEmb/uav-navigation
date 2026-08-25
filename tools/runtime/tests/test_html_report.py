@@ -8,7 +8,12 @@ RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from flight_review_report import (
+    _configured_spatial_envelopes,
     _evaluation,
+    _map_bounds,
+    _obstacle_footprint_points,
+    _replay_payload,
+    replay_section,
     _safety_stop_status,
     _timing_distribution_chart,
     _timing_execution_model,
@@ -16,6 +21,7 @@ from flight_review_report import (
     _timing_timeline_chart,
     _timing_rows,
     line_chart,
+    map_svg,
 )
 from html_report import _planning_continuity, _runtime_observability, _safety_timeline, _samples, _trajectory_smoothness
 
@@ -236,6 +242,117 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         )
         self.assertIn('data-state-band="normal"', chart)
         self.assertIn('data-state-band="safety"', chart)
+
+    def test_spatial_envelopes_are_loaded_from_session_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "super_planner.yaml").write_text(
+                """super_planner:
+  safe_corridor_line_nominal_length: 11.0
+  safe_corridor_line_max_length: 19.0
+  sensing_horizon: 17.0
+  robot_r: 0.9
+  vehicle_radius_m: 0.4
+  planning_margin_m: 0.07
+rog_map:
+  resolution: 0.25
+  inflation_resolution: 0.25
+  inflation_step: 3
+  map_size: [80, 20, 6]
+  fix_map_origin: [0, 0, 1.5]
+  raycasting:
+    enable: true
+    ray_range: [0.8, 55.0]
+""",
+                encoding="utf-8",
+            )
+            (session / "fast_lio_params.yaml").write_text(
+                """fast_lio:
+  ros__parameters:
+    frames:
+      lidar: configured_lidar
+    preprocessing:
+      minimum_range_m: 0.2
+      maximum_range_m: 42.0
+    mapping:
+      local_map:
+        half_extent_m: [24, 18, 10]
+        crop_trigger_distance_m: 4.0
+""",
+                encoding="utf-8",
+            )
+            envelopes = _configured_spatial_envelopes(session)
+
+        self.assertEqual(envelopes["lidar_frame"], "configured_lidar")
+        self.assertEqual(envelopes["planning_map_size_xy_m"], (80.0, 20.0))
+        self.assertEqual(envelopes["planning_map_origin_xy_m"], (0.0, 0.0))
+        self.assertEqual(envelopes["lio_half_extent_xy_m"], (24.0, 18.0))
+        self.assertEqual(envelopes["inflation_radius_m"], 0.75)
+        self.assertEqual(envelopes["planning_margin_m"], 0.07)
+        self.assertTrue(envelopes["raycasting_enabled"])
+        self.assertEqual(envelopes["ray_range_m"], (0.8, 55.0))
+
+    def test_map_focus_uses_obstacle_footprint_and_configured_padding(self) -> None:
+        obstacle = {
+            "name": "test_box",
+            "type": "box",
+            "center": [5.0, 2.0, 1.0],
+            "half_extents": [2.0, 0.5, 1.0],
+        }
+        self.assertEqual(len(_obstacle_footprint_points(obstacle)), 4)
+        self.assertIn((3.0, 1.5, 1.0), _obstacle_footprint_points(obstacle))
+        rendered = map_svg({
+            "ground_truth": [{"position": [0.0, 0.0, 0.0]}],
+            "waypoints": [[8.0, 0.0, 0.0]],
+            "metrics": {"obstacles": [obstacle], "route_obstacles": []},
+            "spatial_envelopes": {
+                "planning_margin_m": 0.1,
+                "robot_radius_m": 0.8,
+                "inflation_radius_m": 0.6,
+            },
+        })
+        self.assertIn("Map focus", rendered)
+        self.assertIn("padding 1.50 m", rendered)
+
+    def test_both_2d_maps_share_obstacle_fit_without_shrinking_final_map(self) -> None:
+        obstacle = {
+            "name": "box",
+            "type": "box",
+            "center": [5.0, 2.0, 1.0],
+            "half_extents": [2.0, 0.5, 1.0],
+        }
+        envelopes = {"planning_margin_m": 0.1, "robot_radius_m": 0.8, "inflation_radius_m": 0.6}
+        points = [(0.0, 0.0, 0.0), (8.0, 0.0, 0.0), *_obstacle_footprint_points(obstacle)]
+        bounds = _map_bounds(points, envelopes)
+        payload = _replay_payload({
+            "ground_truth": [
+                {"t": 0.0, "position": [0.0, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0]},
+                {"t": 1.0, "position": [8.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]},
+            ],
+            "waypoints": [],
+            "metrics": {"obstacles": [obstacle], "route_obstacles": []},
+            "observability": {},
+            "spatial_envelopes": envelopes,
+        })
+        self.assertEqual(payload["bounds"]["min_x"], bounds["min_x"])
+        self.assertEqual(payload["bounds"]["max_x"], bounds["max_x"])
+        final_map = map_svg({
+            "ground_truth": [{"position": [0.0, 0.0, 0.0]}],
+            "waypoints": [[8.0, 0.0, 0.0]],
+            "metrics": {"obstacles": [obstacle], "route_obstacles": []},
+            "spatial_envelopes": envelopes,
+        })
+        self.assertIn("Configured spatial envelopes", final_map)
+        self.assertIn("Map focus", final_map)
+        replay = replay_section({
+            "ground_truth": [{"t": 0.0, "position": [0.0, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0]}],
+            "waypoints": [],
+            "metrics": {"obstacles": [obstacle], "route_obstacles": []},
+            "observability": {},
+            "spatial_envelopes": envelopes,
+        })
+        self.assertIn("Configured spatial envelopes", replay)
+        self.assertIn("relative scale", replay)
 
     def test_line_chart_wraps_a_fifth_legend_entry_inside_the_svg(self) -> None:
         chart = line_chart(

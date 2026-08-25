@@ -82,15 +82,15 @@ namespace rog_map {
     // Public Query Function ========================================================================
     bool InfMap::isOccupiedInflate(const Vec3f& pos) const {
         if (!insideLocalMap(pos)) return false;
-        if (pos.z() > cfg_.virtual_ceil_height) return true;
-        if (pos.z() < cfg_.virtual_ground_height) return true;
+        if (cfg_.virtual_ground_ceiling_en && pos.z() > cfg_.virtual_ceil_height) return true;
+        if (cfg_.virtual_ground_ceiling_en && pos.z() < cfg_.virtual_ground_height) return true;
         return imd_.occ_inflate_cnt[getHashIndexFromPos(pos)] > 0;
     }
 
     bool InfMap::isOccupiedInflate(const Vec3i& id_g) const {
         if (!insideLocalMap(id_g)) return false;
-        if (id_g.z() > cfg_.inf_virtual_ceil_height_id_g) return true;
-        if (id_g.z() < cfg_.inf_virtual_ground_height_id_g) return true;
+        if (cfg_.virtual_ground_ceiling_en && id_g.z() > cfg_.inf_virtual_ceil_height_id_g) return true;
+        if (cfg_.virtual_ground_ceiling_en && id_g.z() < cfg_.inf_virtual_ground_height_id_g) return true;
         return imd_.occ_inflate_cnt[getHashIndexFromGlobalIndex(id_g)] > 0;
     }
 
@@ -110,8 +110,9 @@ namespace rog_map {
                 "Unknown inflation is not enabled, but the isUnknownInflate API is called, which should not happen.");
         }
         // 1. check virtual ceil and ground
-        if (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution ||
-            pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution) {
+        if (cfg_.virtual_ground_ceiling_en &&
+            (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution ||
+             pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution)) {
             return false;
         }
         return imd_.unk_inflate_cnt[getHashIndexFromPos(pos)] > 0;
@@ -361,8 +362,9 @@ namespace rog_map {
     GridType InfMap::getGridType(const Vec3f& pos) const {
         Vec3i id_g, id_l;
         // 1. check virtual ceil and ground
-        if (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step) ||
-            pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution * (1 + cfg_.inflation_step)) {
+        if (cfg_.virtual_ground_ceiling_en &&
+            (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step) ||
+             pos.z() <= cfg_.virtual_ground_height + cfg_.inflation_resolution * (1 + cfg_.inflation_step))) {
             return OCCUPIED;
         }
         posToGlobalIndex(pos, id_g);

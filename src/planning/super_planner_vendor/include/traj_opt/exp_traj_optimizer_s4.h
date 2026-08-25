@@ -73,6 +73,8 @@ namespace traj_opt {
             std::numeric_limits<double>::quiet_NaN()};
         double final_normalized_dynamic_violation{
             std::numeric_limits<double>::quiet_NaN()};
+        double initial_duration_s{std::numeric_limits<double>::quiet_NaN()};
+        double final_duration_s{std::numeric_limits<double>::quiet_NaN()};
         std::int64_t retry_budget_remaining_us{-1};
     };
 

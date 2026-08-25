@@ -57,6 +57,10 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_final_normalized_dynamic_violation": (
         "exp_final_normalized_dynamic_violation",
     ),
+    "exp_initial_duration_s": ("exp_initial_duration_s",),
+    "exp_final_duration_s": ("exp_final_duration_s",),
+    "guide_path_length_m": ("guide_path_length_m",),
+    "guide_duration_s": ("guide_duration_s",),
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
     "status": ("status",),
     "failure_code": ("failure_code",),
@@ -229,6 +233,10 @@ def normalize_planner_trace_record(
         "exp_final_normalized_dynamic_violation": _float(
             values["exp_final_normalized_dynamic_violation"]
         ),
+        "exp_initial_duration_s": _float(values["exp_initial_duration_s"]),
+        "exp_final_duration_s": _float(values["exp_final_duration_s"]),
+        "guide_path_length_m": _float(values["guide_path_length_m"]),
+        "guide_duration_s": _float(values["guide_duration_s"]),
         "exp_retry_budget_remaining_us": _float(
             values["exp_retry_budget_remaining_us"]
         ),

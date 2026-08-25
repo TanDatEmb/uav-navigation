@@ -694,6 +694,53 @@ TEST(SuperTrajectory, TimeAllocatorHandlesSwitchingDistanceRoundoff) {
   EXPECT_TRUE(std::isfinite(velocity));
 }
 
+TEST(SuperTrajectory, GuideTimeAllocationUsesPointAlignedTravelledDistance) {
+  const super_utils::Vec3f start(0.0, 0.0, 0.0);
+  const super_utils::vec_E<super_utils::Vec3f> nonuniform_path{
+      start,
+      super_utils::Vec3f(0.3, 0.0, 0.0),
+      super_utils::Vec3f(4.7, 0.0, 0.0),
+      super_utils::Vec3f(30.0, 0.0, 0.0),
+  };
+
+  double previous_total_time = std::numeric_limits<double>::infinity();
+  for (const double maximum_velocity : {2.0, 5.0, 6.0, 10.0}) {
+    geometry_utils::GuideTimeAllocation allocation;
+    ASSERT_TRUE(geometry_utils::allocateGuideElapsedTimes(
+        5.0, maximum_velocity, 0.0, start, nonuniform_path, allocation));
+    ASSERT_EQ(allocation.points.size(), 3U);
+    ASSERT_EQ(allocation.elapsed_s.size(), allocation.points.size());
+    EXPECT_TRUE(allocation.points.front().isApprox(nonuniform_path[1]));
+    EXPECT_TRUE(allocation.points.back().isApprox(nonuniform_path.back()));
+    EXPECT_NEAR(allocation.path_length_m, 30.0, 1.0e-12);
+    EXPECT_GT(allocation.elapsed_s.front(), 0.0);
+    for (std::size_t index = 1; index < allocation.elapsed_s.size(); ++index) {
+      EXPECT_GT(allocation.elapsed_s[index], allocation.elapsed_s[index - 1]);
+    }
+
+    double expected_total_time = std::numeric_limits<double>::quiet_NaN();
+    double terminal_velocity = std::numeric_limits<double>::quiet_NaN();
+    geometry_utils::simplePMTimeAllocator(
+        5.0, maximum_velocity, 0.0, 30.0, 30.0,
+        expected_total_time, terminal_velocity);
+    EXPECT_NEAR(allocation.elapsed_s.back(), expected_total_time, 1.0e-12);
+    EXPECT_LE(allocation.elapsed_s.back(), previous_total_time);
+    previous_total_time = allocation.elapsed_s.back();
+  }
+}
+
+TEST(SuperTrajectory, GuideTimeAllocationRejectsDegenerateOrInvalidInputs) {
+  const super_utils::Vec3f start(0.0, 0.0, 0.0);
+  const super_utils::vec_E<super_utils::Vec3f> duplicate_path{start, start};
+  geometry_utils::GuideTimeAllocation allocation;
+  EXPECT_FALSE(geometry_utils::allocateGuideElapsedTimes(
+      5.0, 10.0, 0.0, start, duplicate_path, allocation));
+  EXPECT_FALSE(geometry_utils::allocateGuideElapsedTimes(
+      0.0, 10.0, 0.0, start,
+      super_utils::vec_E<super_utils::Vec3f>{super_utils::Vec3f(1.0, 0.0, 0.0)},
+      allocation));
+}
+
 TEST(SuperTrajectory, GoalConnectionUsesInclusiveBoundary) {
   const super_utils::Vec3f guide_endpoint(0.0, 0.0, 0.0);
   const super_utils::Vec3f goal(0.2, 0.0, 0.0);

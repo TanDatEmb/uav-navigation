@@ -15,6 +15,22 @@ std::string testConfigPath() {
   return std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) + "/rog_map_test.yaml";
 }
 
+std::string noVirtualPlanesConfigPath() {
+  return std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) +
+      "/rog_map_no_virtual_planes.yaml";
+}
+
+rog_map::PointCloud singlePointCloud(const Eigen::Vector3d& point) {
+  rog_map::PointCloud cloud;
+  pcl::PointXYZI sample;
+  sample.x = static_cast<float>(point.x());
+  sample.y = static_cast<float>(point.y());
+  sample.z = static_cast<float>(point.z());
+  sample.intensity = 0.0F;
+  cloud.push_back(sample);
+  return cloud;
+}
+
 std::size_t offsetOf(const rog_map::PlanningGridLayoutExport& layout,
                      const Eigen::Vector3i& index) {
   const Eigen::Vector3i local = index - layout.global_min_index;
@@ -28,6 +44,20 @@ Eigen::Vector3d centerOf(const rog_map::PlanningGridLayoutExport& layout,
 }
 
 }  // namespace
+
+TEST(RogMapPlanningGridExport, UpdateOutcomeTruthTableIsExplicit) {
+  EXPECT_TRUE(rog_map::mapUpdateAdvancedWorld(rog_map::MapUpdateOutcome::UPDATED));
+  EXPECT_TRUE(rog_map::mapUpdateAdvancedWorld(rog_map::MapUpdateOutcome::SLIDE_ONLY));
+  for (const auto outcome : {
+           rog_map::MapUpdateOutcome::ACCUMULATED,
+           rog_map::MapUpdateOutcome::EMPTY_CLOUD,
+           rog_map::MapUpdateOutcome::CALLBACK_OWNED,
+           rog_map::MapUpdateOutcome::BELOW_GROUND,
+           rog_map::MapUpdateOutcome::ABOVE_CEILING}) {
+    EXPECT_FALSE(rog_map::mapUpdateAdvancedWorld(outcome));
+    EXPECT_STRNE(rog_map::mapUpdateOutcomeName(outcome), "UNKNOWN");
+  }
+}
 
 TEST(RogMapPlanningGridExport, OwnsDetachedLogicalStateWithExactOrdering) {
   TestRogMap map;
@@ -104,7 +134,7 @@ TEST(RogMapPlanningGridExport, EarlierValueDoesNotAliasLaterMapUpdate) {
   cloud.push_back(point);
   const rog_map::Pose pose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
   for (int iteration = 0; iteration < 8; ++iteration) {
-    map.updateMap(cloud, pose);
+    EXPECT_EQ(map.updateMap(cloud, pose), rog_map::MapUpdateOutcome::UPDATED);
   }
   const auto after = map.exportPlanningGrid();
 
@@ -123,9 +153,11 @@ TEST(RogMapPlanningGridExport, CircularLogicalOrderingMatchesAfterSignedAxisSlid
       Eigen::Vector3d{2.1, 0.0, 0.0}, Eigen::Vector3d{-2.1, 0.0, 0.0},
       Eigen::Vector3d{0.0, 2.1, 0.0}, Eigen::Vector3d{0.0, -2.1, 0.0},
       Eigen::Vector3d{0.0, 0.0, 2.1}, Eigen::Vector3d{0.0, 0.0, -2.1}};
-  const rog_map::PointCloud empty_cloud;
   for (const auto& position : slide_poses) {
-    map.updateMap(empty_cloud, rog_map::Pose{position, Eigen::Quaterniond::Identity()});
+    const auto cloud = singlePointCloud(position + Eigen::Vector3d{1.0, 0.0, 0.0});
+    EXPECT_EQ(map.updateMap(
+                  cloud, rog_map::Pose{position, Eigen::Quaterniond::Identity()}),
+              rog_map::MapUpdateOutcome::UPDATED);
     const auto exported = map.exportPlanningGrid();
     const Eigen::Vector3i base_max =
         exported.base_layout.global_min_index + exported.base_layout.dimensions;
@@ -158,4 +190,43 @@ TEST(RogMapPlanningGridExport, CircularLogicalOrderingMatchesAfterSignedAxisSlid
       }
     }
   }
+}
+
+TEST(RogMapPlanningGridExport, EnabledVirtualPlaneRejectsWithoutMutatingMap) {
+  TestRogMap map;
+  map.loadConfigAndInit(testConfigPath());
+  const auto before = map.exportPlanningGrid();
+  const Eigen::Vector3d pose_position{0.0, 0.0, -6.0};
+  const auto outcome = map.updateMap(
+      singlePointCloud(pose_position + Eigen::Vector3d{1.0, 0.0, 0.0}),
+      rog_map::Pose{pose_position, Eigen::Quaterniond::Identity()});
+  const auto after = map.exportPlanningGrid();
+
+  EXPECT_EQ(outcome, rog_map::MapUpdateOutcome::BELOW_GROUND);
+  EXPECT_TRUE(after.virtual_ground_ceiling_enabled);
+  EXPECT_EQ(after.base_layout.global_min_index, before.base_layout.global_min_index);
+  EXPECT_EQ(after.base_state, before.base_state);
+  EXPECT_EQ(after.inflated.occupied, before.inflated.occupied);
+}
+
+TEST(RogMapPlanningGridExport, DisabledVirtualPlanesAllowNegativeZAndMoveLocalWindow) {
+  TestRogMap map;
+  map.loadConfigAndInit(noVirtualPlanesConfigPath());
+  const auto before = map.exportPlanningGrid();
+  const Eigen::Vector3d pose_position{0.0, 0.0, -4.0};
+  const auto outcome = map.updateMap(
+      singlePointCloud(pose_position + Eigen::Vector3d{1.0, 0.0, 0.0}),
+      rog_map::Pose{pose_position, Eigen::Quaterniond::Identity()});
+  const auto after = map.exportPlanningGrid();
+
+  EXPECT_EQ(outcome, rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.lastDiagnostics().map_slide_count, 1U);
+  EXPECT_FALSE(after.virtual_ground_ceiling_enabled);
+  EXPECT_NE(after.base_layout.global_min_index.z(), before.base_layout.global_min_index.z());
+  EXPECT_LT(after.virtual_ground_m, before.virtual_ground_m);
+  EXPECT_LT(after.virtual_ceiling_m, before.virtual_ceiling_m);
+  EXPECT_NE(map.getGridType(pose_position), rog_map::GridType::OCCUPIED);
+  EXPECT_FALSE(map.isOccupiedInflate(pose_position));
+  // The earlier detached value remains immutable after the vertical slide.
+  EXPECT_EQ(before.base_layout.local_center_m, Eigen::Vector3d::Zero());
 }

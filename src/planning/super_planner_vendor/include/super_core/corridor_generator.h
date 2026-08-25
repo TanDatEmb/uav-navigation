@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include "memory"
+#include <stdexcept>
 
 #include <super_core/config.hpp>
 #include <super_core/ciri.h>
@@ -73,6 +74,7 @@ namespace super_planner {
         // 4 overlap LP, 5 point box query, 6 point CIRI.
         std::atomic<int> solve_stage_{0};
         std::atomic<std::size_t> solve_point_count_{0};
+        void refreshVerticalBounds();
     public:
         vec_Vec3f getLatestCloud() {
             vec_Vec3f out = latest_pc;
@@ -100,7 +102,11 @@ namespace super_planner {
         int solveStage() const noexcept { return solve_stage_.load(); }
         std::size_t solvePointCount() const noexcept { return solve_point_count_.load(); }
         void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
+            if (!view) {
+                throw std::invalid_argument("CorridorGenerator requires a world-model view");
+            }
             map_ptr_ = std::move(view);
+            refreshVerticalBounds();
         }
 
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,

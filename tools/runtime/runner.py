@@ -544,6 +544,52 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     return result
 
 
+def _resolved_mission_file(
+    session: Session,
+    source: Path,
+    speed_cap_mps: float | None,
+) -> Path:
+    """Materialize the exact mission contract consumed by every SITL process.
+
+    A speed-cap request is an experiment input, but it must not live only in
+    the generated SUPER YAML. Both SUPER and the PX4 External Mode node load
+    mission dynamics independently, so passing the original mission alongside
+    an overridden planner file silently gave them different velocity
+    contracts. The session-owned copy is the single resolved input for the
+    planner, controller, scenario and report.
+    """
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or not isinstance(document.get("mission"), dict):
+        raise ValueError(f"mission file must contain a mission mapping: {source}")
+    mission = document["mission"]
+    planning = mission.get("planning")
+    if not isinstance(planning, dict):
+        raise ValueError(f"mission file must contain mission.planning: {source}")
+    if speed_cap_mps is not None:
+        if (
+            not isinstance(speed_cap_mps, (int, float))
+            or isinstance(speed_cap_mps, bool)
+            or not math.isfinite(float(speed_cap_mps))
+            or float(speed_cap_mps) <= 0.0
+        ):
+            raise ValueError("speed_cap_mps must be finite and positive")
+        planning["max_velocity_mps"] = float(speed_cap_mps)
+
+    target = session.directory / "resolved_mission.yaml"
+    target.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    resolved_planning = _mission_planning(target)
+    _write_runtime(
+        session,
+        mission_contract={
+            "source_path": str(source.resolve()),
+            "resolved_path": str(target.resolve()),
+            "speed_cap_mps": speed_cap_mps,
+            "planning": resolved_planning,
+        },
+    )
+    return target
+
+
 def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
     """Ground-truth-only collision geometry for simulator acceptance checks."""
     box = lambda name, center, half_extents: {
@@ -880,6 +926,25 @@ def _external_mode_launch_command(config_file: Path, mission_file: Path | None) 
     return command
 
 
+def _navigation_runtime_launch_command(
+    config_file: Path, mission_file: Path | None
+) -> list[str]:
+    command = [
+        "ros2",
+        "launch",
+        "navigation_bringup",
+        "navigation_runtime.launch.py",
+        f"config_file:={config_file}",
+        "use_sim_time:=true",
+    ]
+    if mission_file is not None:
+        # The launch file owns a mission_file override whose empty default
+        # otherwise replaces the value embedded in config_file. Always pass
+        # the session-resolved contract explicitly at this boundary.
+        command.append(f"mission_file:={mission_file.resolve()}")
+    return command
+
+
 def _mapping_params(
     session: Session,
     source: Path,
@@ -912,6 +977,12 @@ def _mapping_params(
     # external velocity/acceleration limiter that would distort the planned
     # trajectory after optimization.
     planning = _mission_planning(mission_file) if mission_file is not None else {}
+    if mission_file is not None:
+        # SuperNavigationNode independently loads mission dynamics before
+        # constructing SUPER. Passing only the generated planner YAML leaves
+        # the controller and planner with different mission identities and
+        # makes runtime provenance unable to prove which limits were active.
+        super_parameters["mission_file"] = str(mission_file.resolve())
     if "replan_rate_hz" in planning:
         super_parameters["planner_rate_hz"] = float(planning["replan_rate_hz"])
     # SUPER's high-rate mapping path is endpoint-only. Keep probabilistic
@@ -1220,11 +1291,17 @@ def run_dataset(
     enable_rviz: bool = False,
     frontier_debug: bool = False,
     tb001_exp_jerk_penalty: float | str | None = None,
+    shadow_planning_goal_distance_m: float = 5.0,
 ) -> int:
     if not dataset:
         raise ValueError("DATASET is required")
     if rate <= 0:
         raise ValueError("RATE must be greater than zero")
+    if (
+        not math.isfinite(shadow_planning_goal_distance_m)
+        or shadow_planning_goal_distance_m < 0.0
+    ):
+        raise ValueError("shadow planning goal distance must be finite and non-negative")
     config = load_config("dataset.yaml")
     config["runtime"]["dataset"] = dataset
     config["runtime"]["replay_rate"] = rate
@@ -1241,6 +1318,11 @@ def run_dataset(
             replay_tail_grace_s=float(
                 config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)
             ),
+            dataset_shadow_planning={
+                "enabled": shadow_planning_goal_distance_m > 0.0,
+                "goal_distance_m": shadow_planning_goal_distance_m,
+                "contract": "planner/runtime benchmark only; recorded odometry does not execute commands",
+            },
             failures=[],
         )
         _capture_build_provenance(session)
@@ -1301,6 +1383,28 @@ def run_dataset(
             _ros_shell(_dataset_replay_command(context, rate), enable_rviz=enable_rviz),
             cwd=ROOT,
         )
+        if shadow_planning_goal_distance_m > 0.0:
+            shadow_planning = session.start(
+                "dataset_shadow_planning",
+                _ros_shell([
+                    str(CANONICAL_PYTHON),
+                    str(ROOT / "tools/runtime/dataset_shadow_planning.py"),
+                    "--output", str(session.directory),
+                    "--goal-distance-m", str(shadow_planning_goal_distance_m),
+                ], enable_rviz=enable_rviz),
+                cwd=ROOT,
+            )
+            shadow_code = _wait_process(
+                shadow_planning,
+                45.0,
+                "dataset bounded shadow planning",
+            )
+            _write_runtime(session, dataset_shadow_planning_returncode=shadow_code)
+            # A planner failure is report evidence, not authority to truncate
+            # the recorded-data replay. Finish the source stream so mapping
+            # conservation and timing remain directly comparable with the
+            # mapping-only baseline; _dataset_report fails closed from the
+            # helper result below.
         replay_code = _wait_process(replay, float(config["runtime"]["timeouts"]["replay_s"]), "dataset replay")
         _write_runtime(session, replay_returncode=replay_code, replay_finished_wall_ns=time.time_ns())
         if replay_code != 0:
@@ -1643,6 +1747,9 @@ def _run_sim_unlocked(
     )
     session = Session.create(ARTIFACT_ROOT, session_name)
     print(f"Session: {session.directory}", flush=True)
+    if mission_file is not None:
+        mission_file = _resolved_mission_file(session, mission_file, speed_cap_mps)
+        scenario_config["scenario"]["mission_file"] = str(mission_file)
     isolated_domain = _resolve_isolation_value(
         ros_domain_id, "UAV_NAV_ROS_DOMAIN_ID", DEFAULT_ROS_DOMAIN_ID, low=0, high=232
     )
@@ -1756,7 +1863,9 @@ def _run_sim_unlocked(
             dual_planning=dual_planning,
             mission_file=mission_file,
             obstacle_evidence=control_interface == "external_mode" and map_profile == "no_path",
-            speed_cap_mps=speed_cap_mps,
+            # The mission file above already owns the resolved speed contract.
+            # Do not create a second planner-only source of truth here.
+            speed_cap_mps=None if mission_file is not None else speed_cap_mps,
             tb001_exp_jerk_penalty=tb001_exp_jerk_penalty,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
@@ -1829,10 +1938,14 @@ def _run_sim_unlocked(
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
             "--params-file", str(ros_config), "-p", "use_sim_time:=true",
         ], enable_rviz=not headless), cwd=ROOT)
-        session.start("mapping", _ros_shell([
-            "ros2", "launch", "navigation_bringup", "navigation_runtime.launch.py",
-            f"config_file:={mapping_config}", "use_sim_time:=true",
-        ], enable_rviz=not headless), cwd=ROOT)
+        session.start(
+            "mapping",
+            _ros_shell(
+                _navigation_runtime_launch_command(mapping_config, mission_file),
+                enable_rviz=not headless,
+            ),
+            cwd=ROOT,
+        )
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
@@ -2269,6 +2382,12 @@ def main() -> int:
         "--tb001-exp-jerk-penalty", type=float, default=None,
         help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
     )
+    dataset.add_argument(
+        "--shadow-planning-goal-distance-m",
+        type=float,
+        default=5.0,
+        help="bounded dataset shadow-planning goal distance; 0 disables planning",
+    )
     sub.add_parser("sim-check")
     external_mode = sub.add_parser("external-mode-check")
     external_mode.add_argument(
@@ -2396,6 +2515,7 @@ def main() -> int:
             enable_rviz=args.rviz,
             frontier_debug=args.frontier_debug,
             tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
+            shadow_planning_goal_distance_m=args.shadow_planning_goal_distance_m,
         )
     if args.command == "sim-check":
         return run_sim(True)

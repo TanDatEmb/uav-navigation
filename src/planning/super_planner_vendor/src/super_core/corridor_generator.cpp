@@ -44,14 +44,21 @@ namespace super_planner {
         robot_r_ = robot_r;
         box_search_skip_num_ = box_search_skip_num;
         iris_iter_num_ = iris_iter_num;
-        // ROG-Map quantizes the configured virtual floor/ceiling to the
-        // inflation grid during initialization.  Corridor constraints must
-        // use those effective values; using the raw YAML values gives A*/CIRI
-        // different feasible sets near the vertical boundaries.
-        const auto map_geometry = map_ptr_->geometry();
-        virtual_ceil_height_ = map_geometry.effective_virtual_ceiling_m - robot_r;
-        virtual_groud_height_ = map_geometry.effective_virtual_ground_m + robot_r;
+        refreshVerticalBounds();
 //        failed_traj_log.open(DEBUG_FILE_DIR("sfc.csv"), std::ios::out | std::ios::trunc);
+    }
+
+    void CorridorGenerator::refreshVerticalBounds() {
+        if (!map_ptr_) {
+            throw std::invalid_argument("CorridorGenerator requires a world-model view");
+        }
+        // These values are physical occupied-plane constraints only when the
+        // geometry flag is true.  Otherwise they are the current immutable
+        // snapshot's sliding-map availability bounds.  Refreshing them on
+        // every view change prevents a frozen absolute Z window after a slide.
+        const auto map_geometry = map_ptr_->geometry();
+        virtual_ceil_height_ = map_geometry.effective_virtual_ceiling_m - robot_r_;
+        virtual_groud_height_ = map_geometry.effective_virtual_ground_m + robot_r_;
     }
 
 

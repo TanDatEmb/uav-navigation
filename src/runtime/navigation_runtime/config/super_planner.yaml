@@ -179,12 +179,14 @@ rog_map:
   map_size: [110, 15, 6]
   fix_map_origin: [0, 0, 1.5]
   frontier_extraction_en: false
-  # These are pre-quantization inputs. With ORIGIN_AT_CORNER and three 0.2 m
-  # inflation steps, ROG-Map moves the effective limits inward by about 0.8 m.
-  # Compensate here so the map actually exposes the intended [-0.4, 5.0] m
-  # flight volume. The former [-0.5, 5.0] inputs became [0.0, 4.2]: mapping
-  # rejected pre-takeoff odometry and a vehicle at z=3.7 had no dynamic margin
-  # inside the robot-radius-tightened corridor.
+  # lio_odom is initialized from the estimator trajectory, so zero is not a
+  # physical ground datum and a valid mission may descend below it.  Keep the
+  # upstream plane feature available, but disable it for this product frame.
+  # Observed/inflated occupancy remains authoritative. Points outside the
+  # finite sliding-map window remain OUT_OF_MAP; UNKNOWN inside that window
+  # still follows the planner's explicit unknown policy. The values below are
+  # legacy defaults only while disabled.
+  virtual_ground_ceiling_en: false
   virtual_ceil_height: 5.8
   virtual_ground_height: -1.1
   load_pcd_en: false

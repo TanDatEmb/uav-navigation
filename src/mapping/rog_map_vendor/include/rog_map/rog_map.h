@@ -104,7 +104,7 @@ class ROGMap : public ProbMap {
     inf_map_->infMapGlobalIndexToPos(id_g, pos);
   }
 
-  void updateMap(const PointCloud& cloud, const Pose& pose);
+  [[nodiscard]] MapUpdateOutcome updateMap(const PointCloud& cloud, const Pose& pose);
 
   RobotState getRobotState() const;
 

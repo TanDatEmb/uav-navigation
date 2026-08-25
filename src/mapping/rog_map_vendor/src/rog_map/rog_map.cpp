@@ -76,8 +76,9 @@ PlanningGridExport ROGMap::exportPlanningGrid() const {
         // Export the public planning semantics, including the index-domain
         // virtual-plane policy, rather than only the underlying probability byte.
         GridType state = GridType::OCCUPIED;
-        if (z > sc_.virtual_ground_height_id_g &&
-            z < sc_.virtual_ceil_height_id_g - sc_.safe_margin_i) {
+        if (!cfg_.virtual_ground_ceiling_en ||
+            (z > sc_.virtual_ground_height_id_g &&
+             z < sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
           const float probability = occupancy_buffer_[
               hash_xy + hash_z[static_cast<std::size_t>(zi)]];
           state = isKnownFree(probability)
@@ -92,12 +93,28 @@ PlanningGridExport ROGMap::exportPlanningGrid() const {
   output.inflated = inf_map_->exportPlanningGrid();
   output.nearest_offsets = planning_nearest_offsets_;
   output.unknown_inflation_enabled = cfg_.unk_inflation_en;
-  output.virtual_ground_m = cfg_.virtual_ground_height;
-  output.virtual_ceiling_m = cfg_.virtual_ceil_height;
-  output.inflated_virtual_ground_m =
-      cfg_.virtual_ground_height + cfg_.inflation_resolution * (1 + cfg_.inflation_step);
-  output.inflated_virtual_ceiling_m =
-      cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step);
+  output.virtual_ground_ceiling_enabled = cfg_.virtual_ground_ceiling_en;
+  if (cfg_.virtual_ground_ceiling_en) {
+    output.virtual_ground_m = cfg_.virtual_ground_height;
+    output.virtual_ceiling_m = cfg_.virtual_ceil_height;
+    output.inflated_virtual_ground_m =
+        cfg_.virtual_ground_height + cfg_.inflation_resolution * (1 + cfg_.inflation_step);
+    output.inflated_virtual_ceiling_m =
+        cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step);
+  } else {
+    // Preserve a finite geometry contract for corridor clamping while making
+    // it relative to the immutable snapshot's sliding-map window, not to an
+    // arbitrary absolute Z origin.
+    output.virtual_ground_m =
+        static_cast<double>(output.base_layout.global_min_index.z()) *
+        output.base_layout.resolution_m;
+    output.virtual_ceiling_m =
+        static_cast<double>(output.base_layout.global_min_index.z() +
+                            output.base_layout.dimensions.z()) *
+        output.base_layout.resolution_m;
+    output.inflated_virtual_ground_m = output.virtual_ground_m;
+    output.inflated_virtual_ceiling_m = output.virtual_ceiling_m;
+  }
   output.occupied_inflation_radius_m =
       cfg_.inflation_resolution * static_cast<double>(cfg_.inflation_step);
   return output;
@@ -331,7 +348,7 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_
   return true;
 }
 
-void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
+MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
   // Product runtime keeps timing in MappingDiagnostics; upstream's
   // per-update console timer is research instrumentation.
   TimeConsuming ssss("updateMap", false);
@@ -341,7 +358,8 @@ void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
   if (cfg_.ros_callback_en) {
     std::cout << YELLOW << "ROS callback is enabled, can not insert map from updateMap API."
               << RESET << std::endl;
-    return;
+    last_diagnostics_.update_outcome = MapUpdateOutcome::CALLBACK_OWNED;
+    return last_diagnostics_.update_outcome;
   }
 
   if (cloud.empty()) {
@@ -350,11 +368,12 @@ void ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
       cout << YELLOW << "No cloud input, please check the input topic." << RESET << endl;
       local_cnt = 0;
     }
-    return;
+    last_diagnostics_.update_outcome = MapUpdateOutcome::EMPTY_CLOUD;
+    return last_diagnostics_.update_outcome;
   }
 
   updateRobotState(pose);
-  updateProbMap(cloud, pose);
+  return updateProbMap(cloud, pose);
 }
 
 RobotState ROGMap::getRobotState() const { return robot_state_; }

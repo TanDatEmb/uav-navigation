@@ -1,6 +1,5 @@
-# Minimal ROG-Map config for rog_map_vendor smoke/lifecycle tests.
-# Values intentionally mirror the P1 baseline (see docs/architecture and
-# config/runtime/mapping.yaml) but keep map size small enough for fast tests.
+# Contract fixture for arbitrary-origin estimator frames. The finite local
+# map still moves with odometry, but absolute Z planes are not obstacles.
 rog_map:
   resolution: 0.2
   inflation_resolution: 0.2
@@ -11,9 +10,9 @@ rog_map:
   point_filt_num: 1
   map_size: [10.0, 10.0, 6.0]
   fix_map_origin: [0.0, 0.0, 0.0]
-  virtual_ground_ceiling_en: true
-  virtual_ground_height: -5.0
-  virtual_ceil_height: 5.0
+  virtual_ground_ceiling_en: false
+  virtual_ground_height: -1.0
+  virtual_ceil_height: 1.0
   map_sliding:
     enable: true
     threshold: -1.0

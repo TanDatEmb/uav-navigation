@@ -1315,3 +1315,170 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   before waypoint 0 is accepted, which is not mission-polyline tracking.
   Repeated speed ladders, dense scenes, sanitizers, and certification remain
   open.
+
+### 2026-08-25 - Point-aligned guide timing and one resolved mission contract
+
+- The earlier remaining-time conversion still associated `dis[i]` with the
+  previous A* point: the terminal point retained the last segment distance and
+  the first nonduplicate point could receive zero elapsed time. EXP/MINCO could
+  therefore receive a badly conditioned initial time vector and commit an
+  abnormally long local bundle. Guide timing now uses cumulative travelled
+  distance from the current guide endpoint, removes consecutive duplicate
+  points, and requires finite strictly increasing elapsed time for every
+  retained point. The endpoint time must equal the complete point-mass profile.
+- A session-owned `resolved_mission.yaml` is now the single mission dynamics
+  input consumed by SUPER, the PX4 External Mode node, the scenario and the
+  report. An explicit speed-cap request changes only that copied contract; the
+  source mission is not modified. This closes the previous split where the
+  generated planner boundary could use the requested cap while the controller
+  loaded the original mission. SUPER also receives the exact resolved mission
+  path through its node parameters.
+- Planner diagnostics now expose guide length/duration and EXP initial/final
+  duration so an abnormal allocation is visible in the runtime artifact. These
+  fields are diagnostic-only. No freshness, jerk, acceleration, envelope,
+  deadline, QoS, queue, fallback, or bypass contract changed.
+- Focused verification: runtime Python contract suite 135/135; SUPER trajectory
+  tests 33/33 including a nonuniform route at 2/5/6/10 m/s; mission-dynamics
+  tests 2/2; planner-FSM tests 17/17. A full authoritative Release rebuild and
+  one bounded low-speed native-Gazebo diagnostic screening are required before
+  using runtime evidence. Repeated 3/3 SITL, the 10 m/s obstacle-avoidance
+  ladder, representative dataset timing, sanitizer overlays and hardware
+  certification remain open and may not be replaced by that screening run.
+
+### 2026-08-25 - Bounded dataset shadow-planning goal
+
+- `make dataset-check` now publishes one synthetic STOP goal 5 m ahead of a
+  fresh propagated state after two seconds of recorded source time. SUPER uses
+  the normal goal subscriber, immutable WorldSnapshot, A*/corridor/optimizer,
+  commit and command publication paths. The helper observes READY commands for
+  two additional source seconds, then publishes an explicit
+  `FAILED/OPERATOR_TAKEOVER` status to remove the synthetic goal. That status
+  is harness teardown, not a mission failure or completion claim; recorded
+  odometry never executes the generated command, so this is planner/runtime
+  evidence only and cannot certify PX4 tracking or obstacle avoidance.
+- A shadow-planning failure cancels the synthetic goal immediately but does
+  not truncate rosbag replay. The report remains FAIL for the planner result
+  while raw-ingress, mapping conservation, and timing evidence continue to the
+  end of the source bag; this prevents a fast planner rejection from being
+  misreported as dataset transport loss or from contaminating the remainder
+  of the run with repeated terminal commands.
+- The teardown publisher uses the same reliable/transient-local durability
+  contract requested by the runtime status subscriber and waits for discovery
+  before sending the terminal identity. A volatile publisher is incompatible
+  with that subscription and would leave the synthetic goal latched, causing
+  repeated EMER publications for the rest of the replay.
+- Owner: runtime validation harness and dataset report. Scope: dataset replay
+  only. Default goal distance is 5 m; mapping-only characterization remains
+  available explicitly with `DATASET_SHADOW_GOAL_M=0`. No planner threshold,
+  optimizer weight, deadline, QoS, queue, fallback or safety gate is changed.
+  Report evidence fails closed when the goal is missing, no committed READY
+  command appears, EMER is emitted, or planner timing/runtime trace is absent.
+- The preceding AIST 1x/2x artifacts exposed a separate invalid benchmark
+  state: only 336/2,756 ROG updates had nonzero update time. The effective ROG
+  virtual ground was -0.4 m and the dataset descended below it; 2,330 updates
+  returned as below-ground and 90 as slide-only. Those artifacts remain useful
+  transport/timing evidence but are not full-route ROG correctness evidence.
+  The synthetic goal is intentionally injected before that boundary and does
+  not waive the need for a dataset-specific vertical-frame/bounds contract.
+- Verification command: `/usr/bin/python3 -m unittest discover -s
+  tools/runtime/tests -p 'test_*.py' -v`, full authoritative Release rebuild,
+  then `make dataset-check DATASET=aist-mid360-drive RATE=2.0`. Compare against
+  `DATASET_SHADOW_GOAL_M=0` using exact raw/mapping counts and per-stage planner
+  timing. Repeated dense snapshot planning, full-route vertical validity,
+  sanitizer and closed-loop SITL gates remain open.
+- Screening artifact `dataset-20260825T092443-180098` completed the full 2x
+  bag after the fail-closed planner result: raw IMU 55,435/55,435, LiDAR
+  2,772/2,772, and mapping received/accepted/started/published/revision all
+  2,756 with no mapping lifecycle failure or discard. Seven PlanFromRest
+  decisions consumed 0.357 ms total (0.171 ms maximum) and never entered EXP
+  or backup optimization. Every attempt classified the execution state as
+  inflated OCCUPIED and reported the corridor entirely inside inflated
+  occupancy; no READY generation was committed.
+- The artifact confirms a dataset/profile contract mismatch rather than a
+  compute timeout: the goal was injected at z=0.063 m while the effective ROG
+  virtual ground was -0.4 m and four 0.2 m inflation steps plus the occupied
+  cell place the inflated virtual-floor envelope near +0.6 m. The same run
+  retained the full-route ROG anomaly (2,330 below-ground early returns and 90
+  slide-only resets). This is not authority to lower a safety plane from one
+  run; the dataset needs an explicit frame/bounds contract before shadow
+  planning can benchmark the optimizer. The result is FAIL evidence, not a
+  planning acceptance or flight certificate.
+
+### 2026-08-25 - Arbitrary-origin vertical map contract and truthful update outcomes
+
+- Owner: ROG-Map vendor boundary, immutable world-model adapter,
+  `navigation_runtime` mapping lifecycle, SUPER corridor geometry and runtime
+  report. Scope: product planning frame `lio_odom` plus the generic upstream
+  ROG configuration surface.
+- `lio_odom.z=0` is an estimator-origin convention, not surveyed terrain or
+  takeoff-relative clearance. The product config therefore sets
+  `rog_map/virtual_ground_ceiling_en: false`; runtime rejects startup if an
+  absolute virtual plane is re-enabled in `lio_odom`. The upstream-compatible
+  default remains `true` for explicitly datum-aligned users. This is a frame
+  semantic correction, not a relaxed altitude threshold or temporary bypass.
+- With planes disabled, base/inflated classification, ray clipping and export
+  no longer synthesize occupied absolute-Z planes. Observed/inflated occupancy
+  remains authoritative and points outside the finite sliding map remain
+  `OUT_OF_MAP`. UNKNOWN inside the local window continues to follow the
+  planner's explicit unknown policy; disabling the synthetic plane alone is
+  not a hardware ground-visibility certificate. Corridor bounds are refreshed
+  from every pinned immutable snapshot, so a vertical map slide cannot retain
+  the initial Z window as a frozen floor/ceiling.
+- `ROGMap::updateMap` now returns a typed outcome. The first valid cloud after
+  a map slide is processed instead of discarded. Runtime requires callback
+  ownership disabled and `batch_update_size=1`, publishes a new immutable
+  revision only for a world-advancing outcome, preserves the revision's source
+  stamp across rejected attempts, and fail-stops any unexpected non-advancing
+  outcome. Diagnostics count every outcome; report validation requires the
+  full contract, exact outcome/lifecycle conservation, and revision equality.
+  Missing fields fail as stale-binary evidence instead of silently accepting
+  an old install.
+- Safety impact: removes a false occupied floor that rejected valid descent
+  and caused 2,330 no-op dataset updates, while retaining finite local-map and
+  measured-obstacle failure semantics. Removal/reversal condition: only after
+  the planning frame is explicitly tied to a certified physical vertical
+  datum and representative dataset, repeated SITL and hardware visibility
+  evidence justify physical planes. No optimizer, deadline, QoS, queue,
+  controller, collision-envelope or UNKNOWN-policy value changed.
+- Focused verification: Release builds of `rog_map_vendor`,
+  `navigation_world_model`, `super_planner_vendor` and `navigation_runtime`;
+  package tests with ROG enabled/disabled plane, nonempty vertical slide,
+  immutable export/adapter and real-node shutdown coverage; runtime Python
+  contract tests including stale/malformed outcome evidence. Final gate is a
+  full authoritative Release rebuild followed by
+  `make dataset-check DATASET=aist-mid360-drive RATE=2.0` with the bounded
+  shadow goal. It must show exact raw counts, all 2,756 mapping observations
+  as advancing `UPDATED`, no plane rejection/slide-only outcome, a committed
+  READY command and planner timing. One replay remains screening only; dense
+  data, sanitizer, closed-loop SITL and hardware certification remain open.
+- Screening artifact `dataset-20260825T100311-203927` was produced after the
+  full 19-package authoritative Release rebuild and rerendered PASS with no
+  report reasons. Raw IMU was 55,435/55,435, LiDAR 2,772/2,772, and mapping
+  received/accepted/started/published/revision were all 2,756. All 2,756 map
+  outcomes were `UPDATED`; accumulated, slide-only, empty, callback-owned,
+  below-ground and above-ceiling were zero. The bounded shadow goal produced
+  51 READY commands across five committed generations, zero EMER commands and
+  ten complete planner trace records; maximum observed solve latency was
+  1.278 ms. The report initially emitted a false failure because its shadow
+  gate required the unused aggregate `planning_total_us` field even though the
+  runtime supplied exact per-cycle `planning_latency_ms` trace values. The
+  gate now accepts finite runtime trace timing while continuing to fail when
+  neither aggregate nor trace timing exists, with a focused regression.
+- This corrected full-map run achieved 1.9306x requested replay rate over
+  143.565 s. Mapping callback mean/p95/p99/max were
+  5.742/10.308/13.509/25.287 ms and immutable export mean/p95/p99/max were
+  4.103/6.176/7.582/14.247 ms. These values are higher at the center of the
+  distribution than the earlier invalid 2x baseline because that baseline
+  skipped most ROG probability/inflation work below its synthetic floor; it
+  is not a valid optimization comparison. The new maximum remains below the
+  50 ms wall-time LiDAR period at 2x in this one run, with zero loss or
+  replacement. This is screening evidence only, not a new latency threshold
+  or repeatability/flight certificate.
+- Final adversarial review also closed two evidence/efficiency defects. The
+  report now preserves the published world's `observation_stamp_ns` separately
+  from `last_update_attempt_stamp_ns` and fails closed if a nonempty published
+  history lacks that source stamp or orders it after the last attempt. ROG's
+  first observation outside an empty/local window no longer invokes
+  `slideAllMap` twice at the same pose; a nonempty vertical-slide regression
+  requires exactly one slide application. Neither correction changes map
+  thresholds, occupancy policy, timing budgets or planner behavior.

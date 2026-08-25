@@ -37,6 +37,7 @@ struct MappingTelemetrySnapshot {
   std::uint64_t world_generation{1};
   std::uint64_t world_revision{0};
   std::int64_t observation_stamp_ns{0};
+  std::int64_t last_update_attempt_stamp_ns{0};
   std::int64_t map_update_us{0};
   std::int64_t snapshot_export_us{0};
   std::int64_t pointcloud_decode_us{0};
@@ -47,15 +48,42 @@ struct MappingTelemetrySnapshot {
   std::uint64_t discarded_stale{0};
   std::uint64_t discarded_future{0};
   std::uint64_t discarded_invalid{0};
+  std::uint64_t outcome_updated{0};
+  std::uint64_t outcome_accumulated{0};
+  std::uint64_t outcome_slide_only{0};
+  std::uint64_t outcome_empty_cloud{0};
+  std::uint64_t outcome_callback_owned{0};
+  std::uint64_t outcome_below_ground{0};
+  std::uint64_t outcome_above_ceiling{0};
 };
 
 class MappingTelemetry {
  public:
-  void update(MappingTelemetrySnapshot next) {
+  void initialize(MappingTelemetrySnapshot next) {
+    std::lock_guard lock(mutex_);
+    state_ = std::move(next);
+  }
+  void recordUpdate(MappingTelemetrySnapshot next) {
     std::lock_guard lock(mutex_);
     next.discarded_stale = state_.discarded_stale;
     next.discarded_future = state_.discarded_future;
     next.discarded_invalid = state_.discarded_invalid;
+    next.outcome_updated = state_.outcome_updated;
+    next.outcome_accumulated = state_.outcome_accumulated;
+    next.outcome_slide_only = state_.outcome_slide_only;
+    next.outcome_empty_cloud = state_.outcome_empty_cloud;
+    next.outcome_callback_owned = state_.outcome_callback_owned;
+    next.outcome_below_ground = state_.outcome_below_ground;
+    next.outcome_above_ceiling = state_.outcome_above_ceiling;
+    switch (next.map.update_outcome) {
+      case rog_map::MapUpdateOutcome::UPDATED: ++next.outcome_updated; break;
+      case rog_map::MapUpdateOutcome::ACCUMULATED: ++next.outcome_accumulated; break;
+      case rog_map::MapUpdateOutcome::SLIDE_ONLY: ++next.outcome_slide_only; break;
+      case rog_map::MapUpdateOutcome::EMPTY_CLOUD: ++next.outcome_empty_cloud; break;
+      case rog_map::MapUpdateOutcome::CALLBACK_OWNED: ++next.outcome_callback_owned; break;
+      case rog_map::MapUpdateOutcome::BELOW_GROUND: ++next.outcome_below_ground; break;
+      case rog_map::MapUpdateOutcome::ABOVE_CEILING: ++next.outcome_above_ceiling; break;
+    }
     state_ = std::move(next);
   }
   [[nodiscard]] MappingTelemetrySnapshot snapshot() const {

@@ -29,6 +29,7 @@ struct PlanningGridExport {
   std::vector<std::uint8_t> base_state;
   std::shared_ptr<const std::vector<super_utils::Vec3i>> nearest_offsets;
   bool unknown_inflation_enabled{false};
+  bool virtual_ground_ceiling_enabled{true};
   double virtual_ground_m{0.0};
   double virtual_ceiling_m{0.0};
   double inflated_virtual_ground_m{0.0};

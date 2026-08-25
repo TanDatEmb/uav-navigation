@@ -36,7 +36,8 @@ TEST(RogMapVendorLifecycle, CanResetAndReinitializeRepeatedlyInSameProcess) {
     p.y = 0.0F;
     p.z = 0.0F;
     cloud.push_back(p);
-    EXPECT_NO_THROW(map->updateMap(cloud, pose)) << "generation " << generation;
+    EXPECT_EQ(map->updateMap(cloud, pose), rog_map::MapUpdateOutcome::UPDATED)
+        << "generation " << generation;
     // Destroyed at end of scope; the next iteration constructs a fresh
     // instance in the same process.
   }

@@ -6,6 +6,7 @@ CANONICAL_PYTHON_ENV = env -u VIRTUAL_ENV -u PYTHONHOME
 
 DATASET ?=
 RATE ?= 1.0
+DATASET_SHADOW_GOAL_M ?= 5.0
 FRONTIER_DEBUG ?= 0
 PX4_DIR ?= $(HOME)/Dev/Autopilot
 BUILD_PX4_ROS2_EXAMPLES ?= 0
@@ -15,6 +16,7 @@ ROS_ENV = $(NO_RVIZ_ENV) source /opt/ros/jazzy/setup.bash; if test -f install/se
 ROS_GUI_ENV = export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RVIZ=0; source /opt/ros/jazzy/setup.bash; if test -f install/setup.bash; then source install/setup.bash; fi;
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" BUILD_PX4_ROS2_EXAMPLES="$${BUILD_PX4_ROS2_EXAMPLES:-$(BUILD_PX4_ROS2_EXAMPLES)}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 FRONTIER_DEBUG_ARG = $(if $(filter 1 true yes,$(FRONTIER_DEBUG)),--frontier-debug,)
+DATASET_SHADOW_GOAL_ARG = --shadow-planning-goal-distance-m $(DATASET_SHADOW_GOAL_M)
 DUAL_PLANNING ?= 0
 DUAL_PLANNING_ARG = $(if $(filter 1 true yes,$(DUAL_PLANNING)),--dual-planning,)
 MAP_PROFILE ?=
@@ -40,7 +42,8 @@ help:
 	@echo "  BUILD_PX4_ROS2_EXAMPLES=1 make build       include upstream PX4 ROS 2 examples (default: off)"
 	@echo "  make test                                  unit/integration tests; not a runtime verdict"
 	@echo "  make replay DATASET=<name> RATE=1.0       dataset replay alias; always launches RViz"
-	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset pipeline; PX4 not required"
+	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset + bounded shadow planning; PX4 not required"
+	@echo "  DATASET_SHADOW_GOAL_M=0 make dataset-check ...  mapping-only replay without a synthetic goal"
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
 	@echo "  make external-mode-check                  headless PX4/Gazebo + PX4 External Mode acceptance"
 	@echo "  make external-mode-gui                   GUI PX4/Gazebo + RViz + External Mode mission"
@@ -70,11 +73,11 @@ test:
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG)
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG) $(DATASET_SHADOW_GOAL_ARG)
 
 dataset-check:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)"
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" $(DATASET_SHADOW_GOAL_ARG)
 
 sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim-check

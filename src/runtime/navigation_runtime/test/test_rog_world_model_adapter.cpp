@@ -48,8 +48,14 @@ TEST_F(RogWorldModelAdapterTest, GeometryAndIdentityAreProductOwned) {
   EXPECT_DOUBLE_EQ(geometry.inflated_resolution_m, map->getInfResolution());
   EXPECT_DOUBLE_EQ(geometry.occupied_inflation_radius_m,
                    config.inflation_resolution * config.inflation_step);
-  EXPECT_DOUBLE_EQ(geometry.effective_virtual_ground_m, config.virtual_ground_height);
-  EXPECT_DOUBLE_EQ(geometry.effective_virtual_ceiling_m, config.virtual_ceil_height);
+  EXPECT_FALSE(geometry.virtual_ground_ceiling_enabled);
+  EXPECT_EQ(geometry.local_center_m, snapshot->geometry().local_center_m);
+  EXPECT_EQ(geometry.local_size_m, snapshot->geometry().local_size_m);
+  EXPECT_DOUBLE_EQ(geometry.effective_virtual_ground_m,
+                   geometry.local_center_m.z() - 0.5 * geometry.local_size_m.z());
+  EXPECT_DOUBLE_EQ(geometry.effective_virtual_ceiling_m,
+                   geometry.local_center_m.z() + 0.5 * geometry.local_size_m.z());
+  EXPECT_FALSE(snapshot->geometry().virtual_ground_ceiling_enabled);
 
   EXPECT_EQ(view->identity().revision, 0U);
   view->recordSuccessfulUpdate(123456789);
@@ -200,7 +206,9 @@ TEST_F(RogWorldModelAdapterTest, SnapshotIdentityAndQueriesStayImmutableAfterMap
   point.intensity = 0.0F;
   cloud.push_back(point);
   const super_utils::Pose pose{Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()};
-  for (int iteration = 0; iteration < 8; ++iteration) map->updateMap(cloud, pose);
+  for (int iteration = 0; iteration < 8; ++iteration) {
+    EXPECT_EQ(map->updateMap(cloud, pose), rog_map::MapUpdateOutcome::UPDATED);
+  }
 
   EXPECT_EQ(snapshot->identity().generation, identity.generation);
   EXPECT_EQ(snapshot->identity().revision, identity.revision);

@@ -51,6 +51,7 @@ class RogWorldSnapshot final : public navigation_world_model::WorldModelView {
         grid_.virtual_ceiling_m,
         grid_.base_layout.local_center_m,
         grid_.base_layout.local_size_m,
+        grid_.virtual_ground_ceiling_enabled,
     };
   }
 
@@ -65,15 +66,17 @@ class RogWorldSnapshot final : public navigation_world_model::WorldModelView {
     using navigation_world_model::GridLayer;
     if (!point.allFinite()) return CellState::kOutOfMap;
     if (layer == GridLayer::kEvidence) {
-      if (point.z() <= grid_.virtual_ground_m || point.z() >= grid_.virtual_ceiling_m) {
+      if (grid_.virtual_ground_ceiling_enabled &&
+          (point.z() <= grid_.virtual_ground_m || point.z() >= grid_.virtual_ceiling_m)) {
         return CellState::kOccupied;
       }
       if (!contains(point)) return CellState::kOutOfMap;
       return productCell(baseState(positionToIndex(point, GridLayer::kEvidence)));
     }
     if (!contains(point)) return CellState::kOutOfMap;
-    if (point.z() <= grid_.inflated_virtual_ground_m ||
-        point.z() >= grid_.inflated_virtual_ceiling_m) {
+    if (grid_.virtual_ground_ceiling_enabled &&
+        (point.z() <= grid_.inflated_virtual_ground_m ||
+         point.z() >= grid_.inflated_virtual_ceiling_m)) {
       return CellState::kOccupied;
     }
     const auto inflated_index = positionToIndex(point, GridLayer::kInflated);
@@ -185,8 +188,10 @@ class RogWorldSnapshot final : public navigation_world_model::WorldModelView {
         navigation_world_model::GridLayer::kEvidence);
     result.minimum = result.minimum.cwiseMax(minimum_center);
     result.maximum = result.maximum.cwiseMin(maximum_center);
-    result.minimum.z() = std::max(result.minimum.z(), grid_.virtual_ground_m);
-    result.maximum.z() = std::min(result.maximum.z(), grid_.virtual_ceiling_m);
+    if (grid_.virtual_ground_ceiling_enabled) {
+      result.minimum.z() = std::max(result.minimum.z(), grid_.virtual_ground_m);
+      result.maximum.z() = std::min(result.maximum.z(), grid_.virtual_ceiling_m);
+    }
     return result;
   }
 
@@ -301,21 +306,30 @@ class RogWorldSnapshot final : public navigation_world_model::WorldModelView {
 
   [[nodiscard]] bool isBaseOccupiedForRay(
       const navigation_world_model::Point3& point) const noexcept {
-    if (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m) return true;
+    if (grid_.virtual_ground_ceiling_enabled &&
+        (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m)) {
+      return true;
+    }
     return baseState(positionToIndex(point, navigation_world_model::GridLayer::kEvidence)) ==
            static_cast<std::uint8_t>(super_utils::GridType::OCCUPIED);
   }
 
   [[nodiscard]] bool isBaseKnownFreeForRay(
       const navigation_world_model::Point3& point) const noexcept {
-    if (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m) return false;
+    if (grid_.virtual_ground_ceiling_enabled &&
+        (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m)) {
+      return false;
+    }
     return baseState(positionToIndex(point, navigation_world_model::GridLayer::kEvidence)) ==
            static_cast<std::uint8_t>(super_utils::GridType::KNOWN_FREE);
   }
 
   [[nodiscard]] bool isInflatedOccupiedForRay(
       const navigation_world_model::Point3& point) const noexcept {
-    if (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m) return true;
+    if (grid_.virtual_ground_ceiling_enabled &&
+        (point.z() > grid_.virtual_ceiling_m || point.z() < grid_.virtual_ground_m)) {
+      return true;
+    }
     const auto cell_offset = offset(
         grid_.inflated.layout,
         positionToIndex(point, navigation_world_model::GridLayer::kInflated));
@@ -325,8 +339,9 @@ class RogWorldSnapshot final : public navigation_world_model::WorldModelView {
   [[nodiscard]] bool isInflatedUnknownForRay(
       const navigation_world_model::Point3& point) const noexcept {
     const double resolution = grid_.inflated.layout.resolution_m;
-    if (point.z() >= grid_.virtual_ceiling_m - resolution ||
-        point.z() <= grid_.virtual_ground_m + resolution) {
+    if (grid_.virtual_ground_ceiling_enabled &&
+        (point.z() >= grid_.virtual_ceiling_m - resolution ||
+         point.z() <= grid_.virtual_ground_m + resolution)) {
       return false;
     }
     const auto cell_offset = offset(

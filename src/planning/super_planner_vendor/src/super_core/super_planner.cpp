@@ -669,6 +669,8 @@ namespace super_planner {
         int reserve_size = cfg_.planning_horizon / cfg_.resolution * 1.2;
         guide_path.reserve(reserve_size);
         guide_stamp.reserve(reserve_size);
+        latest_guide_path_length_m_ = std::numeric_limits<double>::quiet_NaN();
+        latest_guide_duration_s_ = std::numeric_limits<double>::quiet_NaN();
 
         Vec4f init_yaw{robot_state_.yaw, 0, 0, 0};
         Vec4f fina_yaw{0, 0, 0, 0};
@@ -916,73 +918,24 @@ namespace super_planner {
                     return FAILED;
                 }
 
-                // compute total dis
-                // backward compute dis for all points
-                double total_dis{0.0};
-                vector<double> dis(new_path.size());
-                Vec3f last_p = new_path.back();
-                for (int i = new_path.size() - 2; i >= 0; i--) {
-                    auto d = (new_path[i] - last_p).norm();
-                    total_dis += d;
-                    dis[i+1] = total_dis;
-                    last_p = new_path[i];
-                }
-                total_dis += (new_path.front() - guide_path.back()).norm();
-                dis[0] = total_dis;
-//                for (int i = 0; i < dis.size(); i++) {
-//                    cout << dis[i] << " ";
-//                }
-//                cout << endl;
-                vector<double> stamps(new_path.size(), 0);
-                for (int i = dis.size() - 1; i >= 0; i--) {
-                    double vel;
-                    geometry_utils::simplePMTimeAllocator(cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel,
-                                                          guide_path_end_vel,
-                                                          total_dis,
-                                                          dis[i], stamps[i], vel);
-                }
-                // simplePMTimeAllocator returns the time needed to reach each
-                // point measured from the *start* of the whole route's
-                // remaining-distance coordinate.  ``stamps`` therefore
-                // decreases as the A* path moves start -> goal.  The old
-                // subtraction used stamps[i]-stamps[i-1], producing negative
-                // guide times whenever A* returned more than two points;
-                // ExpTraj then rejected an otherwise clear path as
-                // non-monotonic. Convert remaining time to elapsed time
-                // explicitly and validate the contract before MINCO.
-                const double remaining_time_at_start = stamps.front();
-                if (!std::isfinite(remaining_time_at_start) ||
-                    remaining_time_at_start < 0.0) {
+                geometry_utils::GuideTimeAllocation allocation;
+                if (!geometry_utils::allocateGuideElapsedTimes(
+                        cfg_.exp_traj_cfg.max_acc,
+                        cfg_.exp_traj_cfg.max_vel,
+                        guide_path_end_vel,
+                        guide_path.back(), new_path, allocation)) {
                     ros_ptr_->warn(
-                            " -- [SUPER] invalid A* time allocation at route start: "
-                            "path_points={} total_dis={} v0={} a_max={} v_max={} stamp0={}",
-                            new_path.size(), total_dis, guide_path_end_vel,
-                            cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel,
-                            remaining_time_at_start);
+                            " -- [SUPER] invalid A* guide time allocation: "
+                            "path_points={} v0={} a_max={} v_max={}",
+                            new_path.size(), guide_path_end_vel,
+                            cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel);
                     return FAILED;
                 }
-                double time_stamp = guide_stamp.back();
-                double previous_elapsed = 0.0;
-
-//                for (int i = 0; i < stamps.size(); i++) {
-//                    cout << stamps[i] << " ";
-//                }
-//                cout << endl;
-//
-//                cout << endl;
-
-                for (long unsigned int i = 1; i < new_path.size(); i++) {
-                    const double elapsed = remaining_time_at_start - stamps[i];
-                    if (!std::isfinite(elapsed) || elapsed < previous_elapsed) {
-                        ros_ptr_->warn(
-                                " -- [SUPER] A* time allocation is non-monotonic at index {}",
-                                i);
-                        return FAILED;
-                    }
-                    time_stamp = guide_stamp.back() + elapsed;
-                    guide_path.emplace_back(new_path[i]);
-                    guide_stamp.emplace_back(time_stamp);
-                    previous_elapsed = elapsed;
+                const double guide_time_origin_s = guide_stamp.back();
+                for (std::size_t i = 0; i < allocation.points.size(); ++i) {
+                    guide_path.emplace_back(allocation.points[i]);
+                    guide_stamp.emplace_back(
+                            guide_time_origin_s + allocation.elapsed_s[i]);
                 }
             }
         }
@@ -1010,6 +963,10 @@ namespace super_planner {
             latest_guide_min_ = latest_guide_min_.cwiseMin(point);
             latest_guide_max_ = latest_guide_max_.cwiseMax(point);
         }
+        latest_guide_path_length_m_ = geometry_utils::computePathLength(guide_path);
+        latest_guide_duration_s_ = guide_stamp.empty()
+                ? std::numeric_limits<double>::quiet_NaN()
+                : guide_stamp.back() - guide_stamp.front();
 
         sfc.clear();
         {
