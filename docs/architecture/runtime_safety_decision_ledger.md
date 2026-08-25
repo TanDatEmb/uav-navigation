@@ -52,7 +52,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-006 | Runtime input freshness | cloud/corrected/propagated maximum age 0.5 s; pairing skew 0.1 s | PROVISIONAL | Fail-closed works, but 0.5 s is far larger than a 0.2 s planning lead. Recent runs show health exits from scheduling gaps around this boundary. | Express per-stream deadlines from rates and braking envelope; measure dataset and loaded-SITL gap distributions. |
 | HG-007 | Safety suffix anchor | maximum state-to-command anchor error 0.75 m | PROVISIONAL | Prevents retaining a geometrically detached suffix, but value is independent of speed, stopping distance and localization confidence. | Replace with speed/covariance-aware contract or derive a certified worst case. |
 | HG-008 | Planner watchdog | 1.0 s | PROVISIONAL | Protects command publication from a hung solve, but exceeds the internal 0.18 s solve deadline by 5.6x and invalidates all command availability on expiry. | Align watchdog with cancellability and measured worst-case stage latency; test cancellation and immutable commit under load. |
-| HG-009 | Goal connectivity | SUPER uses 2 map voxels; runtime completion uses 0.20 m | PROVISIONAL | Endpoint is now resolved before corridor construction, but two different tolerances remain and can disagree in 3-D. | Introduce one explicit XY/Z goal contract shared by connected_goal, NO_NEED and mission completion. |
+| HG-009 | Goal connectivity | Shared 3-D completion/connectivity tolerance 0.20 m | PROVISIONAL | Planner endpoint resolution and runtime completion now use one product-owned value; scale/provenance and mission distributions remain provisional. | Validate goal acceptance/rejection across map resolutions and 3-D endpoint cases; retain one shared owner. |
 | HG-010 | Retained-suffix swept validation | spatial step 0.5 inflated-map resolution, time step clamped 2-50 ms | PROVISIONAL | Adaptive segment checks fail closed for OCCUPIED and OUT_OF_MAP. Maximum step and map revision stability are not yet recorded in the certificate. | Attach map revision/generation and segment certificate to the committed bundle; test obstacle between legacy 50 ms samples. |
 | HG-011 | Hardware Mid-360 visibility | hardware blocked unless explicit certificate flag is true | CERTIFIED | Fail-closed deployment gate exists. No real-flight visibility certificate exists yet. | Keep hardware blocked until mounting, FOV/blind zones, accumulated observations and motion envelope are certified. |
 | HG-012 | CIRI overlap/seed tolerances (`NUMERICAL_TOLERANCE`) | overlap threshold plus hard-coded 0.01 m and 0.25 ratio; seed clearance `robot_r - 0.01 m` | PROVISIONAL | Different meanings currently share unnamed constants and can reject dense geometry inconsistently. | Name each quantity, record units/reason codes and test resolution scaling before changing values. |
@@ -1194,3 +1194,24 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   acceptance. No temporary bypass was enabled.
 - Verification: Release package build and existing SUPER tests; ASan/UBSan/TSan
   plus repeated SITL and RSS measurements remain open.
+
+### 2026-08-25 - Explicit solve failure provenance and goal contract
+
+- Planner timeout/cancellation now use distinct return codes from genuine backup
+  generation failure. Safety remains fail-closed and committed CmdTraj is not
+  changed; this only prevents timeout diagnostics from being mislabeled as a
+  backup-geometry failure.
+- The unused `ExpTraj::flag_whole_known_free_` API and the unused legacy
+  `min_stop_dis` braking calculation were removed. No caller consumed either
+  value, so no planning decision changed.
+- Planner endpoint connectivity, planner NO_NEED/goal shortcuts, and runtime
+  mission completion now share the inclusive
+  `navigation_world_model::kGoalCompletionToleranceM = 0.20 m`. This is an
+  intentional behavior correction from the former resolution-scaled planner
+  heuristics, not a claim that 0.20 m is certified; scale sensitivity and
+  end-to-end mission evidence remain required.
+- Verification required: current SUPER/runtime build and focused tests,
+  runtime contract tests, and `git diff --check`. No bypass was enabled, but the
+  goal-contract correction must be revalidated on repeated open-map SITL before
+  acceptance; sanitizer, hardware and full goal-distribution evidence remain
+  open.

@@ -46,7 +46,6 @@ namespace super_planner {
         /* some flags */
         bool flag_connected_goal_{false};
         bool flag_empty_{true};
-        bool flag_whole_known_free_{false};
 
         /* some part of exp traj may belong to last backup, record this */
         double on_backup_start_TT{-1}, on_backup_end_TT{-1};
@@ -118,14 +117,6 @@ namespace super_planner {
 
         void setGoalConnectedFlag(const bool & _in) {
             flag_connected_goal_ = _in;
-        }
-
-        void setWholeTrajKnownFreeFlag(const bool & _in) {
-            flag_whole_known_free_ = _in;
-        }
-
-        bool wholeTrajKnownFree() const {
-            return flag_whole_known_free_;
         }
 
         const Trajectory & posTraj() const {

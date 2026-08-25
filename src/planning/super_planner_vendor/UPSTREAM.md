@@ -72,6 +72,15 @@ fall into these categories:
   Refinement can only preserve or increase certified seed duration; failure
   returns the seed unchanged and is reported through success/fallback counters.
 
+- The product removes the unused `ExpTraj::flag_whole_known_free_` storage and
+  accessors. The flag had no live writer or reader in the product runtime; this
+  is an API cleanup, not a change to trajectory feasibility or known-free
+  policy.
+
+- `GuideEndpoint` uses an inclusive connection boundary so the planner and
+  runtime agree when the three-dimensional goal error is exactly the shared
+  completion tolerance.
+
 Run the audit against the pinned checkout from the repository root:
 
 ```bash

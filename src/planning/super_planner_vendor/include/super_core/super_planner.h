@@ -119,6 +119,10 @@ namespace super_planner {
 
         bool authorizeAndCommit(CandidateCommandBundle&& candidate);
 
+        SUPER_RET_CODE classifySolveFailure(
+            const AbsoluteDeadline &solve_deadline,
+            bool elapsed_budget_exceeded = false) const;
+
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

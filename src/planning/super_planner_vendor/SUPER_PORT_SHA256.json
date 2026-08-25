@@ -1,5 +1,6 @@
 {
   "files": {
+    "include/data_structure/exp_traj.h": "29de47acd111c93a2866bc1bbbde3d1a2426ed20c05c467a532d967dc756598f",
     "include/data_structure/cmd_traj.h": "cbfe05f50df00c1e091f94afcd304f91b76de5e9144327f3cb279e56be285139",
     "include/data_structure/base/piece.h": "fb5a27d5cf78455b346934a63c31cf2beae084abddf1cee818539b9ecc5fb306",
     "include/data_structure/base/polytope.h": "32cb6d255ed043ab1248dae1c63ad74726dc59367c8c2db7b0f347d73ab1ee7a",
@@ -11,8 +12,9 @@
     "include/super_core/config.hpp": "ba9170765fc527eaa0f7e470a66830562d25dd5d2c8db9d98f89183eaaa69d21",
     "include/super_core/corridor_generator.h": "f004bc71176125b16b8738dde37960cfb213e0b3c4497955bf84e25bd0577efa",
     "include/super_core/fov_checker.h": "060a8d7bd4c3bfbb0c78067b2fc9a38a5dd406b06aa0a1ee297a57f5f7329a12",
-    "include/super_core/super_planner.h": "88a57f42687279cdf3f5cf68c2a4d74c97598ff14aaf8aa3419586bb8c09b1ca",
-    "include/super_core/super_ret_code.hpp": "3739a583a58f04d56c2d74596537f1b8db83cd536a905ab357b6ee0f3a08894e",
+    "include/super_core/guide_endpoint.hpp": "4bf01bb37962810abf3cdcb4555a837d69b36a0f136c219869b08097115ce3d4",
+    "include/super_core/super_planner.h": "b25ae592cac0b4e991df37b243ac4fed4cdb15429a09e9c0c2ac88dfc4770193",
+    "include/super_core/super_ret_code.hpp": "e8e8377e3b28c1239616d6b55d4e5440bce99e2b4b9a5cfd20b3e49699fcfbd4",
     "include/traj_opt/backup_traj_optimizer_s4.h": "20e597c64e97dae01eb2887e209fcc281b9436f2085f768b01e086eb08dc2d2a",
     "include/traj_opt/exp_traj_optimizer_s4.h": "5cee88ae1a0f938fab415096d30ae738dd7abdbd66a8a2353dc2263a423ffe6b",
     "include/traj_opt/trajectory_dynamics.hpp": "c1a41f35754b5f226a4ebf1a546a178bc966cb73f8aa5bd36e94728fd0dcfec3",
@@ -30,7 +32,7 @@
     "include/utils/optimization/sdlp.h": "fa0e222b27955026c28415b2cdeb89e7992cc99cb5aa152bcdbfe2f8cb5c5a02",
     "src/super_core/astar.cpp": "336d7d3bbcd0e7cbbd3dcaaea895b4aa576f4ba7098c13e016bf3bd2d498a204",
     "src/super_core/corridor_generator.cpp": "65007b7815e8ddcfde78c6075b5f053b1e2b1392dc1f72eda19fd7611121b833",
-    "src/super_core/super_planner.cpp": "54fc56b07b4e4ad05e8493711675b80932d8a163d301a4f2303b1be19cdd0b33",
+    "src/super_core/super_planner.cpp": "d0aef49d0a81efd69b03e6864dc581ffd0516c14340593f3a174aabdcc502f4c",
     "src/traj_opt/backup_traj_optimizer_s4.cpp": "da3376cad9b2b4adbfdb85d6a4edd660f6337d0caa9dbcf66860f6aaa7e740ef",
     "src/traj_opt/exp_traj_optimizer_s4.cpp": "0e160cfaff3b5e794ececffaadb2c7cbaee5be9ddb7809f047604e700a4e9242",
     "src/traj_opt/yaw_traj_opt.cpp": "599e0d319fdf4adc55d486e30bd0081b192450c3df4e70d3ea78377f33daf7da",

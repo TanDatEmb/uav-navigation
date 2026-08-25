@@ -656,6 +656,28 @@ TEST(SuperTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {
   EXPECT_TRUE(result.position.isApprox(goal));
 }
 
+TEST(SuperTrajectory, GoalConnectionUsesInclusiveBoundary) {
+  const super_utils::Vec3f guide_endpoint(0.0, 0.0, 0.0);
+  const super_utils::Vec3f goal(0.2, 0.0, 0.0);
+  const auto result = super_planner::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.2);
+  EXPECT_TRUE(result.goal_connected);
+  EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(SuperTrajectory, SolveFailureCodesRemainDistinct) {
+  EXPECT_EQ(super_planner::SUPER_RET_CODE_STR(
+                super_planner::SUPER_SOLVE_TIMEOUT),
+            "Solve deadline exhausted before a candidate could be committed");
+  EXPECT_EQ(super_planner::SUPER_RET_CODE_STR(
+                super_planner::SUPER_SOLVE_CANCELLED),
+            "Solve was cancelled before a candidate could be committed");
+  EXPECT_NE(super_planner::SUPER_SOLVE_TIMEOUT,
+            super_planner::SUPER_BACKUP_FAILED);
+  EXPECT_NE(super_planner::SUPER_SOLVE_CANCELLED,
+            super_planner::SUPER_BACKUP_FAILED);
+}
+
 TEST(SuperTrajectory, UnconnectedOrInvalidGoalDoesNotMoveGuideEndpoint) {
   const super_utils::Vec3f guide_endpoint(1.0, 2.0, 3.0);
   const super_utils::Vec3f goal(2.0, 2.0, 3.0);

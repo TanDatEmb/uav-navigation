@@ -37,6 +37,8 @@ namespace super_planner {
         SUPER_NO_ODOM = -1,
         SUPER_NO_START_POINT = -2,
         SUPER_BACKUP_FAILED = -3,
+        SUPER_SOLVE_TIMEOUT = -4,
+        SUPER_SOLVE_CANCELLED = -5,
 
     };
 
@@ -56,6 +58,10 @@ namespace super_planner {
             return "Cannot find a start point in the local map";
         case SUPER_BACKUP_FAILED:
             return "Backup trajectory required but generation failed";
+        case SUPER_SOLVE_TIMEOUT:
+            return "Solve deadline exhausted before a candidate could be committed";
+        case SUPER_SOLVE_CANCELLED:
+            return "Solve was cancelled before a candidate could be committed";
         }
         return "Unknown SUPER return code (" + std::to_string(ret) + ")";
     };

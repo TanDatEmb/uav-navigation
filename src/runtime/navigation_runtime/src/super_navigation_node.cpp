@@ -6,6 +6,7 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/timestamp_freshness.hpp"
 #include <navigation_interfaces/execution_state_freshness.hpp>
+#include <navigation_world_model/goal_contract.hpp>
 #include "super_core/solve_stage.hpp"
 #include "super_core/trajectory_world_validator.hpp"
 
@@ -864,8 +865,8 @@ void SuperNavigationNode::runCycle() {
     const double dx = pointFromMessage(target_message, 0) - execution_state.position.x();
     const double dy = pointFromMessage(target_message, 1) - execution_state.position.y();
     const double dz = pointFromMessage(target_message, 2) - execution_state.position.z();
-    constexpr double kGoalReachedDistanceM = 0.20;
-    if (std::sqrt(dx * dx + dy * dy + dz * dz) > kGoalReachedDistanceM) {
+    if (std::sqrt(dx * dx + dy * dy + dz * dz) >
+        navigation_world_model::kGoalCompletionToleranceM) {
       std::lock_guard<std::mutex> lock(input_mutex_);
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
           active_goal_->waypoint_index == goal->waypoint_index &&
@@ -1226,7 +1227,9 @@ void SuperNavigationNode::runCycle() {
                                    ? super_utils::Vec3f{}
                                    : committed.getPos(committed.getTotalDuration());
     trajectory_reaches_goal_.store(
-        !committed.empty() && (committed_end - target).norm() <= 0.20);
+        !committed.empty() &&
+        (committed_end - target).norm() <=
+            navigation_world_model::kGoalCompletionToleranceM);
     if (plan_from_rest) skip_replan_once_ = true;
     std::lock_guard<std::mutex> lock(input_mutex_);
     plan_from_rest_failure_budget_.reset();

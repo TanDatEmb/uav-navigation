@@ -19,7 +19,9 @@ inline GuideEndpoint resolveGuideEndpoint(const super_utils::Vec3f &guide_endpoi
         !std::isfinite(connection_tolerance_m) || connection_tolerance_m < 0.0) {
         return result;
     }
-    if ((guide_endpoint - goal).norm() < connection_tolerance_m) {
+    // The goal contract is inclusive: a point exactly at the allowed
+    // completion radius is connected everywhere in the planner/runtime.
+    if ((guide_endpoint - goal).norm() <= connection_tolerance_m) {
         result.position = goal;
         result.goal_connected = true;
     }

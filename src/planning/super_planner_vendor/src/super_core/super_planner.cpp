@@ -28,6 +28,7 @@
 #include <super_core/guide_endpoint.hpp>
 #include <super_core/replan_contract.hpp>
 #include <super_core/trajectory_world_validator.hpp>
+#include <navigation_world_model/goal_contract.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
@@ -39,6 +40,20 @@ using namespace super_utils;
 using std::isnan;
 
 namespace super_planner {
+
+    SUPER_RET_CODE SuperPlanner::classifySolveFailure(
+            const AbsoluteDeadline &solve_deadline,
+            const bool elapsed_budget_exceeded) const {
+        if (solve_cancelled_.load(std::memory_order_relaxed)) {
+            return SUPER_SOLVE_CANCELLED;
+        }
+        if (elapsed_budget_exceeded ||
+            solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.steadyExpired()) {
+            return SUPER_SOLVE_TIMEOUT;
+        }
+        return SUPER_BACKUP_FAILED;
+    }
     SuperPlanner::SuperPlanner
             (const std::string &cfg_path,
              const ros_interface::RosInterface::Ptr &ros_ptr,
@@ -183,7 +198,7 @@ namespace super_planner {
         if (exp_ret_code == FAILED) {
             if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
                 solve_deadline.steadyExpired()) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             }
             ros_ptr_->warn(" -- [SUPER] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
                            RET_CODE_STR[exp_ret_code].c_str());
@@ -197,7 +212,7 @@ namespace super_planner {
         if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
             ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
         RET_CODE back_ret_code = generateBackupTrajectory(
@@ -209,7 +224,7 @@ namespace super_planner {
             if (!solve_cancelled_.load()) {
                 ros_ptr_->warn(" -- [SUPER] solve deadline exhausted during backup stage");
             }
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
 
@@ -229,7 +244,7 @@ namespace super_planner {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
             if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
                 return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
@@ -253,7 +268,7 @@ namespace super_planner {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, disposition);
             if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
                 return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
@@ -319,7 +334,7 @@ namespace super_planner {
         if (exp_ret_code == FAILED) {
             if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
                 solve_deadline.steadyExpired()) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             }
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: GenerateExpTrajectory failed, force return");
             return FAILED;
@@ -364,7 +379,7 @@ namespace super_planner {
         if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
             ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
         RET_CODE back_ret_code = generateBackupTrajectory(
@@ -383,12 +398,13 @@ namespace super_planner {
             solve_deadline.steadyExpired() ||
             replan_dt > cfg_.solve_deadline_s) {
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            latest_replan.setRetCode(classifySolveFailure(
+                solve_deadline, replan_dt > cfg_.solve_deadline_s));
             return FAILED;
         }
 
         if (solve_cancelled_.load()) {
-            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
 
@@ -404,7 +420,7 @@ namespace super_planner {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
             if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
                 return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
@@ -426,7 +442,7 @@ namespace super_planner {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED);
             if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
                 return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
@@ -449,7 +465,7 @@ namespace super_planner {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH);
             if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+                latest_replan.setRetCode(classifySolveFailure(solve_deadline));
                 return FAILED;
             }
             last_exp_traj_info_ = exp_traj_info;
@@ -739,7 +755,8 @@ namespace super_planner {
                 }
 
                 if (!gi_.new_goal &&
-                    (gi_.goal_p - last_exp_traj.getPos(replan_state_TT)).norm() < cfg_.resolution * 3) {
+                    (gi_.goal_p - last_exp_traj.getPos(replan_state_TT)).norm() <=
+                        navigation_world_model::kGoalCompletionToleranceM) {
                     // Return if the traj close to goal
                     out_exp_traj_info = last_exp_traj_info;
                     out_exp_traj_info.setGoalConnectedFlag(true);
@@ -768,7 +785,6 @@ namespace super_planner {
 
             Vec3f temp_pt, last_sample_pt;
             last_exp_traj_time_pos.clear();
-            last_exp_traj_info.setWholeTrajKnownFreeFlag(true);
             last_sample_pt = guide_pos_traj.getPos(eval_t);
             eval_t += cfg_.sample_traj_dt;
             // * 4) 记录replan点在evaluated_pts上的id
@@ -784,7 +800,6 @@ namespace super_planner {
 
                 if (temp_grid == navigation_world_model::CellState::kOccupied ||
                     temp_grid == navigation_world_model::CellState::kOutOfMap) {
-                    last_exp_traj_info.setWholeTrajKnownFreeFlag(false);
                     break;
                 }
                 if (eval_t > replan_state_TT && replan_id == -1) {
@@ -874,7 +889,8 @@ namespace super_planner {
             /// start point TT + exp_traj start_WT
 //            double path_search_start_point_WT = guide_stamp.back() + guide_pos_traj.start_WT;
             // if the goal is close to the last point of the guide path, just add the goal to the guide path
-            if ((guide_path.back() - gi_.goal_p).norm() < cfg_.resolution * 5) {
+            if ((guide_path.back() - gi_.goal_p).norm() <=
+                navigation_world_model::kGoalCompletionToleranceM) {
                 guide_stamp.push_back(guide_stamp.back() +
                                       (guide_path.back() - gi_.goal_p).norm() / cfg_.exp_traj_cfg.max_vel);
                 guide_path.push_back(gi_.goal_p);
@@ -946,7 +962,8 @@ namespace super_planner {
         // only the MINCO tail after CIRI has certified the unsnapped guide can
         // place the fixed endpoint outside every generated polytope.
         const GuideEndpoint resolved_endpoint = resolveGuideEndpoint(
-                guide_path.back(), gi_.goal_p, cfg_.resolution * 2.0);
+                guide_path.back(), gi_.goal_p,
+                navigation_world_model::kGoalCompletionToleranceM);
         guide_path.back() = resolved_endpoint.position;
         const bool connected_goal = resolved_endpoint.goal_connected;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
@@ -1128,10 +1145,7 @@ namespace super_planner {
         Vec3f temp_point;
         double out_t;
         bool all_traj_visible{true};
-        // 同时记录每一个点的刹车时间和刹车距离
-        vector<double> min_stop_dis;
         vector<TimePosPair> eval_ps;
-        Vec3f temp_vel;
 
         // Collect geometrically distinct samples first. A nearly straight
         // trajectory shares one sensor ray, so checking every longer prefix
@@ -1216,12 +1230,6 @@ namespace super_planner {
             }
             if (all_traj_visible) out_t = total_dur;
         }
-        for (const auto &sample : eval_ps) {
-            temp_vel = ref_exp_traj.getVel(sample.first);
-            const double v_norm = temp_vel.norm();
-            min_stop_dis.push_back(v_norm * v_norm / 2.0 / cfg_.exp_traj_cfg.max_acc);
-        }
-
         if (all_traj_visible) {
             // No backup trajectory is needed when every remaining EXP sample
             // is visible. The upstream branch generated a long corridor from
@@ -1318,9 +1326,6 @@ namespace super_planner {
                 eval_t += cfg_.sample_traj_dt;
                 continue;
             }
-            temp_vel = ref_exp_traj.getVel(out_t);
-            double v_norm = temp_vel.norm();
-            min_stop_dis.push_back(v_norm * v_norm / 2.0 / cfg_.exp_traj_cfg.max_acc);
             eval_ps.emplace_back(eval_t, cur_pos);
             last_pos = cur_pos;
             eval_t += cfg_.sample_traj_dt;
