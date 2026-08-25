@@ -1883,3 +1883,22 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   and SITL, and confirm genuine replacement/discard evidence is preserved. The
   simultaneous simulator/transport blackout and mission safety-stop remain
   open and are not hidden by this report correction.
+
+### 2026-08-26 - Post-lease validation evidence
+
+- Dataset artifact `.artifacts/runtime/dataset-20260825T192106-320079` on
+  `68879a0` had full source coverage, propagated-odometry max gap `29.804 ms`,
+  mapping accounting valid with zero violations, and shadow planning 100
+  ready/zero emergency commands. This is recorded-data health evidence only;
+  `flight_acceptance=false` remains by contract.
+- SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T192608-321637` remained
+  `BLOCKED`: `main_minco` produced a non-finite objective, no candidate/PVA
+  was published, safety stopped and mission stopped at waypoint `[0]`.
+  Mapping accounting was valid and the previous report conservation
+  false-positive did not recur. IMU and external-odometry arrival gaps reached
+  `398.735 ms` and `404.068 ms`; no freshness gate was relaxed.
+- Cleanup evidence: both validation sessions ended `STOPPED` with
+  `cleanup=PASS`; no runner, ROS, simulator, PX4, agent worktree or temporary
+  agent directory remained. These results do not close MINCO/corridor,
+  transport-gap, repeated SITL, or producer-epoch safety conditions.
