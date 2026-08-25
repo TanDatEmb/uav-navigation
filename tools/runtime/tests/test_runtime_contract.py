@@ -1164,10 +1164,10 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
         self.assertEqual(summary["psi_samples"], 1)
 
-    def test_gazebo_native_observer_requires_both_subscriptions(self) -> None:
-        self.assertTrue(gazebo_native_observer._native_subscriptions_ready(object(), object()))
-        self.assertFalse(gazebo_native_observer._native_subscriptions_ready(object(), None))
-        self.assertFalse(gazebo_native_observer._native_subscriptions_ready(None, object()))
+    def test_gazebo_native_observer_requires_both_delivered_streams(self) -> None:
+        self.assertTrue(gazebo_native_observer._native_streams_observed(1, 1))
+        self.assertFalse(gazebo_native_observer._native_streams_observed(1, 0))
+        self.assertFalse(gazebo_native_observer._native_streams_observed(0, 1))
 
     def test_gazebo_native_summary_reports_process_and_psi_counts(self) -> None:
         samples = [

@@ -1091,8 +1091,10 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   scheduling and does not authorize a code or threshold change.
 - The native observer remains opt-in and diagnostic-only. Its process/PSI
   rows are raw evidence, not liveness certification; the post-run summary now
-  also records process sample/role counts and PSI sample count, and failed
-  native subscriptions fail closed as `UNAVAILABLE` (commit `f1388b5`). The
+  also records process sample/role counts and PSI sample count. Because the
+  Python binding returns no subscription status, the summary is `OK` only
+  after both native callbacks deliver samples; otherwise it is `UNAVAILABLE`
+  (observer fix after `f1388b5`). The
   artifact above predates that summary-field patch, so it is not evidence for
   those new fields.
 - Next gate: rebuild the authoritative Release manifest after all committed

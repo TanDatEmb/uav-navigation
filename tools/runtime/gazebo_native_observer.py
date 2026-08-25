@@ -25,9 +25,9 @@ PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 GAP_EVENT_CAPACITY = 1024
 
 
-def _native_subscriptions_ready(stats_subscription: Any, clock_subscription: Any) -> bool:
-    """Return whether both diagnostic native subscriptions were created."""
-    return bool(stats_subscription) and bool(clock_subscription)
+def _native_streams_observed(stats_count: int, clock_count: int) -> bool:
+    """Return whether both native subscriptions delivered at least one sample."""
+    return stats_count > 0 and clock_count > 0
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -294,19 +294,10 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
 
     stats_topic = f"/world/{args.world}/stats"
     clock_topic = f"/world/{args.world}/clock"
-    stats_subscription = node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
-    clock_subscription = node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
-    if not _native_subscriptions_ready(stats_subscription, clock_subscription):
-        _atomic_json(args.session / "gazebo_native_summary.json", {
-            "schema_version": 2,
-            "status": "UNAVAILABLE",
-            "error": "failed to subscribe to native Gazebo clock/stats topic",
-            "world": args.world,
-            "world_stats_topic": stats_topic,
-            "world_clock_topic": clock_topic,
-            "verdict_owner": "diagnostic_only",
-        })
-        return 1
+    # The Python binding intentionally returns None on successful subscribe;
+    # readiness is therefore proven by delivery of both native streams below.
+    node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
+    node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
     samples_path = args.session / "gazebo_native_samples.jsonl"
     process_role_counts: dict[str, int] = {}
     psi_sample_count = 0
@@ -333,8 +324,11 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     clock_state.finalize(now_ns, gap_budget_ns)
     node.unsubscribe(stats_topic)
     node.unsubscribe(clock_topic)
+    streams_observed = _native_streams_observed(stats_state.count, clock_state.count)
     _atomic_json(args.session / "gazebo_native_summary.json", {
-        "schema_version": 2, "status": "OK", "world": args.world,
+        "schema_version": 2, "status": "OK" if streams_observed else "UNAVAILABLE",
+        "error": None if streams_observed else "native clock/stats streams delivered no samples",
+        "world": args.world,
         "gap_budget_s": args.gap_budget_s,
         "gazebo_native": {"world_stats": stats_state.snapshot(), "world_clock": clock_state.snapshot()},
         "process_sample_count": process_sample_count,
