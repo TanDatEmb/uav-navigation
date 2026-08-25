@@ -4,25 +4,16 @@
 #include <cstdint>
 #include <memory>
 
-#include <nav_msgs/msg/odometry.hpp>
-#include <rog_map/rog_map.h>
+#include <navigation_planning_backend/planner.hpp>
 
 namespace navigation_runtime {
 
-struct MappingObservation {
-  std::shared_ptr<rog_map::PointCloud> cloud;
-  nav_msgs::msg::Odometry corrected_odometry;
-  std::int64_t stamp_ns{0};
-  std::int64_t pointcloud_decode_us{0};
-  std::int64_t pair_wait_us{0};
-};
-
 struct PlannerExecutionState {
-  super_utils::Vec3f position{super_utils::Vec3f::Zero()};
-  super_utils::Vec3f velocity{super_utils::Vec3f::Zero()};
-  super_utils::Vec3f acceleration{super_utils::Vec3f::Zero()};
-  super_utils::Vec3f jerk{super_utils::Vec3f::Zero()};
-  super_utils::Quatf orientation{super_utils::Quatf::Identity()};
+  navigation_planning_backend::math::Vec3f position{navigation_planning_backend::math::Vec3f::Zero()};
+  navigation_planning_backend::math::Vec3f velocity{navigation_planning_backend::math::Vec3f::Zero()};
+  navigation_planning_backend::math::Vec3f acceleration{navigation_planning_backend::math::Vec3f::Zero()};
+  navigation_planning_backend::math::Vec3f jerk{navigation_planning_backend::math::Vec3f::Zero()};
+  navigation_planning_backend::math::Quatf orientation{navigation_planning_backend::math::Quatf::Identity()};
   double yaw{0.0};
   double stamp_s{0.0};
   bool valid{false};
@@ -34,8 +25,8 @@ struct PlannerExecutionState {
            std::isfinite(stamp_s) && stamp_s > 0.0;
   }
 
-  super_utils::RobotState toRobotState() const {
-    super_utils::RobotState result;
+  navigation_planning_backend::math::RobotState toRobotState() const {
+    navigation_planning_backend::math::RobotState result;
     result.p = position;
     result.v = velocity;
     result.a = acceleration;

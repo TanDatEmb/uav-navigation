@@ -8,13 +8,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
-find_package(coordinate_conventions REQUIRED)
-find_package(mars_quadrotor_msgs REQUIRED)
+find_package(navigation_common REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
-find_package(navigation_interfaces REQUIRED)
+find_package(navigation_contracts REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(px4_ros2_cpp REQUIRED)
@@ -29,19 +28,19 @@ target_include_directories(${PROJECT_NAME}_contract PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
 target_link_libraries(${PROJECT_NAME}_contract PUBLIC yaml-cpp::yaml-cpp)
-ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC coordinate_conventions diagnostic_msgs geometry_msgs mars_quadrotor_msgs navigation_interfaces nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC navigation_common diagnostic_msgs geometry_msgs navigation_contracts nav_msgs)
 target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node
   src/navigation_mode_node.cpp)
 target_include_directories(${PROJECT_NAME}_node PRIVATE
-  include ${navigation_interfaces_INCLUDE_DIRS})
+  include ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_node
   ${PROJECT_NAME}_contract
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
-ament_target_dependencies(${PROJECT_NAME}_node coordinate_conventions diagnostic_msgs navigation_interfaces nav_msgs rclcpp std_msgs)
+ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts nav_msgs rclcpp std_msgs)
 target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -58,18 +57,18 @@ install(EXPORT ${PROJECT_NAME}Targets
   DESTINATION share/${PROJECT_NAME}/cmake)
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(coordinate_conventions Eigen3 diagnostic_msgs geometry_msgs mars_quadrotor_msgs navigation_interfaces nav_msgs px4_ros2_cpp rclcpp std_msgs yaml-cpp)
+ament_export_dependencies(navigation_common Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_ros2_cpp rclcpp std_msgs yaml-cpp)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_mission test/test_mission.cpp)
   target_link_libraries(test_mission ${PROJECT_NAME}_contract)
-  ament_target_dependencies(test_mission geometry_msgs navigation_interfaces nav_msgs)
-  ament_add_gtest(test_position_command test/test_position_command.cpp)
-  target_include_directories(test_position_command PRIVATE
-    include ${navigation_interfaces_INCLUDE_DIRS})
-  target_link_libraries(test_position_command Eigen3::Eigen px4_ros2_cpp::px4_ros2_cpp)
-  ament_target_dependencies(test_position_command coordinate_conventions mars_quadrotor_msgs navigation_interfaces nav_msgs)
+  ament_target_dependencies(test_mission geometry_msgs navigation_contracts nav_msgs)
+  ament_add_gtest(test_navigation_command test/test_navigation_command.cpp)
+  target_include_directories(test_navigation_command PRIVATE
+    include ${navigation_contracts_INCLUDE_DIRS})
+  target_link_libraries(test_navigation_command Eigen3::Eigen px4_ros2_cpp::px4_ros2_cpp)
+  ament_target_dependencies(test_navigation_command navigation_common navigation_contracts nav_msgs)
   ament_add_gtest(test_tracking_envelope test/test_tracking_envelope.cpp)
   target_include_directories(test_tracking_envelope PRIVATE include)
   target_link_libraries(test_tracking_envelope Eigen3::Eigen)

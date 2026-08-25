@@ -103,7 +103,7 @@ class PlannerTraceTest(unittest.TestCase):
         )
         self.assertEqual(records, [])
 
-    def test_super_decision_trace_preserves_stage_and_deadline_fields(self) -> None:
+    def test_planner_decision_trace_preserves_stage_and_deadline_fields(self) -> None:
         records = collect_planner_trace_records(
             samples=[
                 {
@@ -112,7 +112,7 @@ class PlannerTraceTest(unittest.TestCase):
                     "payload": {
                         "statuses": [
                             {
-                                "name": "super_navigation/super_planner",
+                                "name": "navigation_runtime/planner",
                                 "values": {
                                     "planning_cycle_id": "42",
                                     "bundle_id": "17",

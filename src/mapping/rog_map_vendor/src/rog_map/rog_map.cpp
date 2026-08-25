@@ -32,7 +32,7 @@
 #include <pcl/io/pcd_io.h>
 
 using namespace rog_map;
-using namespace super_utils;
+using namespace navigation_math;
 
 PlanningGridExport ROGMap::exportPlanningGrid() const {
   PlanningGridExport output;

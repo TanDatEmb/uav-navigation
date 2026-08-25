@@ -160,7 +160,7 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     }
 
     // YAML permits an optional section to be written as `control:` with no
-    // values.  Treat that spelling like an omitted section so legacy SUPER
+    // values.  Treat that spelling like an omitted section so legacy planner backend
     // mission files keep the struct defaults instead of aborting startup.
     const YAML::Node control = node["control"];
     if (control && !control.IsNull()) {

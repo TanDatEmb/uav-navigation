@@ -1,0 +1,237 @@
+planner:
+  backup_traj_en: true
+  detailed_log_en: false
+  visualization_en: false
+  use_fov_cut: false
+  print_log: false
+  visual_process: false
+  frontend_in_known_free: false
+  goal_yaw_en: false
+  goal_vel_en: false
+  # Keep the convex search box local to the collision-checked A* guide. A
+  # 3 m half-width is clipped asymmetrically by the vertical map envelope at
+  # nominal altitude, moving the initialization toward z~=2.1 m and feeding
+  # that drift into the next receding-horizon prefix. 1.5 m still leaves more
+  # than three vehicle radii around the guide while removing unused volume.
+  corridor_bound_dis: 1.5
+  corridor_line_max_length: 3.0
+  # This parameter bounds the visibility horizon before choosing the backup
+  # switch point. Config validation requires it to cover braking distance,
+  # one replan interval and the full safety envelope.
+  # At the 12 m/s product ceiling, jerk-limited stopping needs 8.4 m; two
+  # 0.2 s replan cycles add 4.8 m and the complete safety envelope adds 0.8 m.
+  # The product envelope reaches 12 m/s. With the speed benchmark's lower
+  # 5 m/s^2 acceleration and 12 m/s^3 jerk limits, a fail-closed stop plus two
+  # replan-forward intervals and the 0.8 m body/error tube requires 22.5 m.
+  safe_corridor_line_max_length: 23.0
+  # Preserve the measured-stable local CIRI problem size at ordinary mission
+  # speeds. Config raises it only when the actual mission braking envelope
+  # requires more visibility, up to the product cap above.
+  safe_corridor_line_nominal_length: 14.0
+  # One CIRI pass already separates every occupied point from the seed line.
+    # Additional passes only enlarge the inscribed volume and create an
+    # unbounded latency tail near dense obstacle surfaces.
+    # Temporary performance policy TB-003; dataset snapshot A/B is required.
+  iris_iter_num: 1
+  obs_skip_num: 2
+  # Replan from a short future state to preserve PVA continuity without
+  # committing the vehicle to a one-second blind prefix near obstacles.
+  # Current integrated hot-replan p95 is below 40 ms in SITL; 0.2 s leaves a
+  # bounded compute margin while remaining close to planner backend's 0.1 s profiles.
+  replan_forward_dt: 0.2
+  # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
+  solve_deadline_s: 0.18
+  planning_horizon: 30.0
+  # planner backend convention: a non-positive value disables the explicit sensing
+  # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
+  # limit below and checked against known-free map evidence.
+  sensing_horizon: -1
+  # Preserve a short dynamically continuous prefix, then rebuild the route
+  # from current map evidence. A long/infinite retained prefix recreates the
+  # stale normal-path behaviour seen after contact or optimizer drift.
+  receding_dis: 3.0
+  # Planning envelope is derived from physical vehicle size and independent
+  # tracking/localization/mapping budgets. Keep this equal to their sum; the
+  # planner backend config validator rejects silent safety-radius drift.
+  vehicle_radius_m: 0.35
+  tracking_error_budget_m: 0.25
+  localization_error_budget_m: 0.05
+  mapping_error_budget_m: 0.10
+  planning_margin_m: 0.05
+  robot_r: 0.80
+  yaw_dot_max: 3.0
+  yaw_mode: 1
+  mpc_horizon: 15
+
+traj_opt:
+  switch:
+    save_log_en: false
+    print_optimizer_log: false
+  boundary:
+    # X500 product envelope, intentionally below planner backend's aggressive research
+    # defaults. Missions may lower these values but never raise them.
+    max_vel: 12.0
+    max_acc: 12.0
+    max_jerk: 30.0
+    max_omg: 5.0
+    max_acc_thr: 25.0
+    min_acc_thr: 6.0
+    penna_margin: 0.05
+  exp_traj:
+    pos_constraint_type: 1
+    energy_cost_type: 4
+    block_energy_cost: false
+    opt_accuracy: 5.0e-6
+    scale_factor: 1.0
+    integral_reso: 15
+    smooth_eps: 0.01
+    # HG-002 NUMERICAL_TOLERANCE: normalized corridor-plane violation in metres.
+    # Kept separate from L-BFGS smoothing so optimizer tuning cannot relax the
+    # geometric certificate. This provisional value requires dataset/SITL A/B.
+    corridor_plane_tolerance_m: 0.01
+    # HG-003 NUMERICAL_TOLERANCE: provisional vertical deviation around the
+    # collision-checked guide. It remains a sampled gate pending analytic extrema.
+    vertical_guide_tolerance_m: 0.05
+    # X500 smooth-flight profile (derived from planner backend click_smooth), not the
+    # static_high_speed research time pressure that drives short segments into
+    # L-BFGS line-search failure.
+    penna_t: 12000.0
+    penna_pos: 5.0e+8
+    # X500-scaled dynamic penalties. Jerk remains outside the objective because
+    # its high-order gradient destabilizes hot replans; the analytic hard gate
+    # below is authoritative for both main and backup trajectories (TB-001).
+    penna_vel: 5.0e+5
+    penna_acc: 5.0e+5
+    penna_jerk: -1.0
+    # planner backend baseline: a negative weight disables the corridor-center attractor.
+    # Enabling it here caused competing waypoint pulls, open-space slalom and
+    # flatness/position infeasibility around obstacle corridor overlaps.
+    # This temporary mechanism substitution is tracked as TB-002.
+    penna_attract: -1.0e+7
+    penna_omg: 1.0e+5
+    penna_thr: 1.0e+5
+  backup_traj:
+    uniform_time_en: true
+    pos_constraint_type: 1
+    piece_num: 2
+    energy_cost_type: 4
+    block_energy_cost: true
+    opt_accuracy: 1.0e-6
+    scale_factor: 1.0
+    integral_reso: 12
+    smooth_eps: 0.01
+    corridor_plane_tolerance_m: 0.01
+    vertical_guide_tolerance_m: 0.05
+    penna_t: 1200.0
+    penna_ts: 1.0e+5
+    penna_pos: 1.0e+10
+    penna_vel: 1.0e+5
+    penna_acc: 1.0e+5
+    # Backup has only two pieces and starts from a certified minimum-snap seed;
+    # keep jerk in its objective so L-BFGS cannot shorten a feasible stop into
+    # a trajectory that is rejected only by the post-solve hard gate.
+    penna_jerk: 1.0e+5
+    penna_omg: 1.0e+5
+    penna_thr: 1.0e+5
+  flatness:
+    mass: 1.64
+    dh: 0.35
+    dv: 0.35
+    cp: 0.001
+    v_eps: 0.0001
+    grav: 9.81
+
+astar:
+  map_voxel_num: [500, 500, 100]
+  # Weighted A* bounds obstacle-search latency. Collision checks and corridor
+  # verification are unchanged, so the weight trades geometric optimality for
+  # deterministic real-time search without weakening safety.
+  heuristic_weight: 1.5
+  # PathSearch can retry once on the probabilistic map. Bound each search to a
+  # quarter of the 0.2 s future-state lead so both searches plus CIRI/MINCO fit
+  # planner backend's own 0.18 s hot-replan acceptance deadline.
+  search_time_limit_s: 0.04
+  # Preferred-altitude and unrestricted fallback share this stage budget.
+  # It preserves a bounded fallback opportunity without multiplying the solve
+  # deadline when either attempt times out.
+  total_time_limit_s: 0.08
+  visual_process: false
+  allow_diag: true
+  heu_type: 2
+  debug_visualization_en: false
+
+rog_map:
+  # The registered cloud is voxelized at 0.20 m. Keep measured occupancy at
+  # that evidence resolution; a denser grid creates thousands of duplicate
+  # surface constraints and gives CIRI quadratic work without adding geometry.
+  # ROG-Map requires the inflated grid to be no finer than measured occupancy;
+  # both layers therefore share this evidence resolution.
+  resolution: 0.2
+  inflation_resolution: 0.2
+  # Match the 0.80 m planner envelope in the inflated visibility grid. planner backend's
+  # endpoint-only backup check treats UNKNOWN as visible but must still reject
+  # every occupied voxel inside the complete vehicle/error tube.
+  inflation_step: 4
+  unk_inflation_en: false
+  unk_inflation_step: 1
+  # Route progress is along ENU X; keep the local map long in X and narrow in
+  # Y so planner backend does not hit the longitudinal boundary at 7.45 m.
+  map_size: [110, 15, 6]
+  fix_map_origin: [0, 0, 1.5]
+  frontier_extraction_en: false
+  # lio_odom is initialized from the estimator trajectory, so zero is not a
+  # physical ground datum and a valid mission may descend below it.  Keep the
+  # upstream plane feature available, but disable it for this product frame.
+  # Observed/inflated occupancy remains authoritative. Points outside the
+  # finite sliding-map window remain OUT_OF_MAP; UNKNOWN inside that window
+  # still follows the planner's explicit unknown policy. The values below are
+  # legacy defaults only while disabled.
+  virtual_ground_ceiling_en: false
+  virtual_ceil_height: 5.8
+  virtual_ground_height: -1.1
+  load_pcd_en: false
+  map_sliding:
+    enable: true
+    # Must stay comfortably below the smallest local-map half extent (3 m in
+    # Z).  A 3 m threshold let the vehicle reach the old map ceiling before a
+    # slide, so A* produced seeds outside CIRI's local domain.
+    threshold: 1.5
+  esdf:
+    enable: false
+    resolution: 0.1
+    local_update_box: [5, 5, 3]
+  ros_callback:
+    enable: false
+    cloud_topic: "/lio/registered_points"
+    odom_topic: "/lio/odometry_propagated"
+    odom_timeout: 2.0
+  visualization:
+    enable: false
+    use_dynamic_reconfigure: false
+    time_rate: 0
+    frame_rate: 0
+    range: [15, 15, 4]
+    frame_id: "world"
+    pub_unknown_map_en: false
+  intensity_thresh: -10
+  point_filt_num: 1
+  raycasting:
+    # Keep planner backend's high-speed endpoint-only map update. Unknown remains UNKNOWN
+    # between the sensor and an observed endpoint. The main frontend may explore
+    # it; backup visibility uses the robot-radius inflated occupied tube exactly
+    # as the pinned planner backend implementation does.
+    enable: false
+    batch_update_size: 1
+    local_update_box: [100, 100, 5]
+    # Reject returns from the airframe before occupancy insertion. This only
+    # affects the planning map; the estimator keeps its own registered cloud.
+    # The radius must cover the complete body/landing-gear envelope, not just
+    # the planner collision radius.
+    ray_range: [0.7, 100]
+    p_min: 0.12
+    p_miss: 0.49
+    p_free: 0.499
+    p_occ: 0.85
+    p_hit: 0.9
+    p_max: 0.98
+    unk_thresh: 1.0

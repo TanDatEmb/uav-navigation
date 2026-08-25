@@ -244,7 +244,7 @@ TEST(MissionController, NativeTrajectoryReadySurvivesAirborneTransitionRace) {
             px4_navigation_external_mode::MissionControllerEvent::Type::None);
   ASSERT_EQ(controller.update(0.0, std::nullopt, true).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
-  // The native SUPER callback may arrive immediately after goal publication,
+  // The native planner backend callback may arrive immediately after goal publication,
   // before the next mission timer tick. It must not be ignored because the
   // controller has only just crossed the airborne transition.
   controller.onNativeTrajectoryReady();

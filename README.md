@@ -1,26 +1,27 @@
 # UAV Navigation
 
-ROS 2 Jazzy workspace for FAST-LIO odometry, ROG-Map/SUPER local planning,
+ROS 2 Jazzy workspace for FAST-LIO odometry, local planning,
 PX4 External Mode, Gazebo Harmonic simulation, and runtime evidence reports.
 
 ## Product path
 
-The current navigation runtime is one ROS 2 process, `super_navigation_node`.
-It owns the ROG-Map and SUPER planner directly:
+The current navigation runtime is one ROS 2 process, `navigation_runtime_node`.
+It currently composes the pinned mapping and planning backends directly:
 
 ```text
 LiDAR + IMU
   -> FAST-LIO
   -> /lio/registered_points + /lio/odometry_propagated
-  -> super_navigation_node (ROG-Map + SUPER)
-  -> /navigation/super_command
+  -> navigation_runtime_node (mapping + planning backends)
+  -> /navigation/navigation_command
   -> px4_navigation_external_mode
   -> /fmu/in/trajectory_setpoint
 ```
 
-`/navigation/diagnostics` is the planner/runtime health surface. There is no
-current `MappingWorldNode`, `WorldSnapshot`, `PlanningControllerNode`, or
-`TrajectoryBundle` transport in this repository.
+`/navigation/diagnostics` is the planner/runtime health surface. Mapping
+observation lifecycle accounting is a reusable `navigation_mapping` library;
+the world snapshot and backend composition remain internal to the runtime, with
+no separate mapping or planning ROS transport yet.
 
 ## Common commands
 
@@ -52,7 +53,7 @@ ros2 launch navigation_bringup avoidance_mission.launch.py \
   use_sim_time:=true
 ```
 
-The same mission YAML is passed to SUPER and PX4 External Mode so dynamic
+The same mission YAML is passed to planner backend and PX4 External Mode so dynamic
 limits and waypoint behavior cannot diverge between the two sides.
 
 ## Scenario selection
@@ -112,6 +113,8 @@ planned-path topics.
   and tool ownership;
 - [Frame conventions](docs/architecture/frame_conventions.md): ENU/FLU and
   PX4 NED/FRD conversions;
+- [Product architecture and naming](docs/adr/ADR-012-product-owned-tree-and-naming.md):
+  canonical tree, ownership, and migration sequence;
 - [ADR index](docs/adr/): durable design decisions;
 - [Third-party notices](THIRD_PARTY_NOTICES.md): vendored source and license
   boundaries.

@@ -24,7 +24,7 @@
 #include "rog_map/esdf_map.h"
 
 using namespace color_text;
-using namespace super_utils;
+using namespace navigation_math;
 
 namespace rog_map {
 

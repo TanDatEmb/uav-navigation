@@ -400,23 +400,23 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertFalse((runtime_root / "latest").exists())
 
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
-        navigation = runner.load_config("mapping.yaml")["super_navigation_node"]["ros__parameters"]["super_navigation"]
+        navigation = runner.load_config("mapping.yaml")["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
         self.assertEqual(navigation["cloud_topic"], "/lio/registered_points")
         self.assertEqual(navigation["corrected_odometry_topic"], "/lio/odometry_corrected")
         self.assertEqual(navigation["propagated_odometry_topic"], "/lio/odometry_propagated")
         self.assertNotIn("odometry_topic", navigation)
-        self.assertEqual(navigation["command_topic"], "/navigation/super_command")
+        self.assertEqual(navigation["command_topic"], "/navigation/navigation_command")
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("/lio/registered_points", rviz)
 
     def test_corrected_mapping_precedes_propagated_planner_gates(self) -> None:
         source = (
-            ROOT / "src/runtime/navigation_runtime/src/super_navigation_node.cpp"
+            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
-        cycle = source[source.index("void SuperNavigationNode::runCycle()"):
-                       source.index("void SuperNavigationNode::publishCommand()")]
-        constructor = source[:source.index("void SuperNavigationNode::runCycle()")]
-        self.assertIn("mapping_map->updateMap(*observation.cloud, super_pose)", constructor)
+        cycle = source[source.index("void NavigationRuntimeNode::runCycle()"):
+                       source.index("void NavigationRuntimeNode::publishCommand()")]
+        constructor = source[:source.index("void NavigationRuntimeNode::runCycle()")]
+        self.assertIn("mapping_map->updateMap(*observation.cloud, planner_pose)", constructor)
         self.assertIn("mapping_worker_->start()", constructor)
         self.assertNotIn("updateMap(", cycle)
         self.assertNotIn("map_->", cycle)
@@ -429,7 +429,7 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session, ROOT / "config/runtime/mapping.yaml", interactive=True
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
             debug_target = runner._mapping_params(
@@ -438,7 +438,7 @@ class RuntimeContractTest(unittest.TestCase):
                 interactive=True,
                 frontier_debug=True,
             )
-            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(debug_parameters["config_path"]).is_file())
 
     def test_simulation_mapping_profile_preserves_collision_parameters(self) -> None:
@@ -447,7 +447,7 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session, ROOT / "config/runtime/mapping.yaml", simulation=True
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
             dual_target = runner._mapping_params(
@@ -456,7 +456,7 @@ class RuntimeContractTest(unittest.TestCase):
                 simulation=True,
                 dual_planning=True,
             )
-            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(dual_parameters["config_path"]).is_file())
 
     def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
@@ -470,7 +470,7 @@ class RuntimeContractTest(unittest.TestCase):
                 dual_planning=True,
                 mission_file=mission,
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(parameters["planner_rate_hz"], 5.0)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
@@ -479,7 +479,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
             self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
             self.assertGreater(planner["traj_opt"]["backup_traj"]["penna_jerk"], 0.0)
-            self.assertFalse(planner["super_planner"]["frontend_in_known_free"])
+            self.assertFalse(planner["planner"]["frontend_in_known_free"])
             self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
             self.assertFalse(planner["rog_map"]["unk_inflation_en"])
             self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
@@ -493,7 +493,7 @@ class RuntimeContractTest(unittest.TestCase):
                 dual_planning=True,
                 mission_file=speed_mission,
             )
-            speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             speed_planner = yaml.safe_load(Path(speed_parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 5.0)
 
@@ -504,7 +504,7 @@ class RuntimeContractTest(unittest.TestCase):
                 mission_file=speed_mission,
                 speed_cap_mps=2.0,
             )
-            capped_parameters = yaml.safe_load(capped_target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            capped_parameters = yaml.safe_load(capped_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             capped_planner = yaml.safe_load(Path(capped_parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(capped_planner["traj_opt"]["boundary"]["max_vel"], 2.0)
 
@@ -548,8 +548,8 @@ class RuntimeContractTest(unittest.TestCase):
                 mission_file=resolved,
             )
             parameters = yaml.safe_load(mapping.read_text(encoding="utf-8"))[
-                "super_navigation_node"
-            ]["ros__parameters"]["super_navigation"]
+                "navigation_runtime_node"
+            ]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(
                 Path(parameters["config_path"]).read_text(encoding="utf-8")
             )
@@ -584,7 +584,7 @@ class RuntimeContractTest(unittest.TestCase):
                 mission_file=mission,
             )
 
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
             runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
@@ -601,7 +601,7 @@ class RuntimeContractTest(unittest.TestCase):
                 tb001_exp_jerk_penalty=runner.TB001_EXP_JERK_REFERENCE,
             )
 
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(planner["traj_opt"]["exp_traj"]["penna_jerk"], runner.TB001_EXP_JERK_REFERENCE)
             runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
@@ -621,7 +621,7 @@ class RuntimeContractTest(unittest.TestCase):
                     mission_file=ROOT / "config/runtime/missions/open.yaml",
                 )
 
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
 
@@ -650,13 +650,13 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_tb001_report_rejects_missing_or_malformed_marker_for_positive_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            planner_path = Path(temporary) / "super_planner.yaml"
+            planner_path = Path(temporary) / "planner.yaml"
             planner_path.write_text(
                 "traj_opt:\n  exp_traj:\n    penna_jerk: 500000000.0\n",
                 encoding="utf-8",
             )
             runtime = {
-                "super_planner_config": str(planner_path),
+                "planner_config": str(planner_path),
                 "build_provenance": _valid_captured_provenance(),
             }
             reasons = report._experimental_bypass_reasons(runtime)
@@ -712,11 +712,11 @@ class RuntimeContractTest(unittest.TestCase):
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))
             planner_path = Path(
-                parameters["super_navigation_node"]["ros__parameters"]
-                ["super_navigation"]["config_path"]
+                parameters["navigation_runtime_node"]["ros__parameters"]
+                ["navigation_runtime"]["config_path"]
             )
             planner = yaml.safe_load(planner_path.read_text(encoding="utf-8"))
-            self.assertFalse(planner["super_planner"]["frontend_in_known_free"])
+            self.assertFalse(planner["planner"]["frontend_in_known_free"])
             self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
             self.assertFalse(planner["rog_map"]["unk_inflation_en"])
 
@@ -818,7 +818,7 @@ class RuntimeContractTest(unittest.TestCase):
                 simulation=True,
                 mission_file=ROOT / "config/runtime/missions/long_three_pillars.yaml",
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
     def test_single_pillar_speed_uses_full_sensing_and_receding_horizon(self) -> None:
@@ -830,7 +830,7 @@ class RuntimeContractTest(unittest.TestCase):
                 simulation=True,
                 mission_file=ROOT / "config/runtime/missions/single_pillar_speed_pv.yaml",
             )
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
     def test_long_three_pillars_acceptance_allows_obstacle_detour(self) -> None:
@@ -1098,10 +1098,10 @@ class RuntimeContractTest(unittest.TestCase):
         failed = dict(
             missing,
             status="FAIL",
-            failure="SUPER emitted EMER before committing a READY shadow command",
+            failure="planner backend emitted EMER before committing a READY shadow command",
         )
         self.assertIn(
-            "dataset shadow planning did not complete: SUPER emitted EMER before "
+            "dataset shadow planning did not complete: planner backend emitted EMER before "
             "committing a READY shadow command",
             report._dataset_shadow_planning_reasons(runtime, failed, planning),
         )
@@ -1345,7 +1345,7 @@ class RuntimeContractTest(unittest.TestCase):
             for value in map(float, rpy.split()):
                 self.assertAlmostEqual(value, 0.0, places=12)
 
-    def test_product_rviz_config_shows_current_super_input_and_odometry(self) -> None:
+    def test_product_rviz_config_shows_current_planner_input_and_odometry(self) -> None:
         config = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("Fixed Frame: lio_odom", config)
         self.assertIn("Value: /lio/odometry_corrected", config)
@@ -1778,12 +1778,12 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("kLioPropagatedOdometryTopic", source)
         self.assertNotIn("/sim/ground_truth/odometry", source)
 
-    def test_external_mode_scenario_observes_native_super_pva(self) -> None:
+    def test_external_mode_scenario_observes_native_planner_pva(self) -> None:
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus", source)
-        self.assertIn('"/navigation/super_command"', source)
+        self.assertIn("from navigation_contracts.msg import NavigationGoal, NavigationModeStatus", source)
+        self.assertIn('"/navigation/navigation_command"', source)
         self.assertNotIn('"/navigation/trajectory_bundle"', source)
         self.assertNotIn('"/navigation/trajectory"', source)
         self.assertNotIn("PlannedTrajectory", source)
@@ -2038,7 +2038,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_navigation_replanning_is_correlated_to_goal_and_world_revision(self) -> None:
         source = (
-            ROOT / "src/runtime/navigation_runtime/src/super_navigation_node.cpp"
+            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
         self.assertIn("new_goal_", source)
         self.assertIn("ReplanOnce", source)
@@ -2613,7 +2613,7 @@ class RuntimeContractTest(unittest.TestCase):
                             },
                         },
                         {
-                            "name": "super_navigation/super_planner",
+                            "name": "navigation_runtime/planner",
                             "values": {
                                 "exp_frontend_us": value + 3,
                                 "exp_opt_us": value + 4,
@@ -2655,14 +2655,14 @@ class RuntimeContractTest(unittest.TestCase):
         snapshot = {
             "streams": {"mapping_diagnostics": {"received": 1, "mean_rate_hz": 10.0}},
             "latest": {"mapping_diagnostics": {"statuses": [{
-                "name": "super_navigation/super_planner",
+                "name": "navigation_runtime/planner",
                 "level": 0,
                 "message": "MAP_READY",
                 "values": values,
             }]}},
         }
         samples = [{"stream": "diagnostics", "payload": {"statuses": [{
-            "name": "super_navigation/super_planner", "values": values,
+            "name": "navigation_runtime/planner", "values": values,
         }]}}]
         mapping = report._navigation_mapping_summary(snapshot, samples)
         self.assertEqual(mapping["world_generation"], 3)
@@ -2675,7 +2675,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_navigation_mapping_summary_merges_status_owners_in_either_final_order(self) -> None:
         planner = {
-            "name": "super_navigation/super_planner",
+            "name": "navigation_runtime/planner",
             "level": 0,
             "message": "MAP_READY",
             "values": {
@@ -2718,7 +2718,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_navigation_mapping_summary_uses_coherent_world_lifecycle_snapshot(self) -> None:
         planner = {
-            "name": "super_navigation/super_planner",
+            "name": "navigation_runtime/planner",
             "values": {
                 "received_observation_count": "304",
                 "accepted_observation_count": "304",
@@ -2779,7 +2779,7 @@ class RuntimeContractTest(unittest.TestCase):
             },
         }
         planner = {
-            "name": "super_navigation/super_planner",
+            "name": "navigation_runtime/planner",
             "level": 0,
             "message": "MAP_READY",
             "values": {
@@ -2818,7 +2818,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_navigation_mapping_summary_missing_final_sample_stays_conservative(self) -> None:
         """Do not synthesize lifecycle conservation from snapshot.latest alone."""
         planner = {
-            "name": "super_navigation/super_planner",
+            "name": "navigation_runtime/planner",
             "level": 0,
             "message": "MAP_READY",
             "values": {

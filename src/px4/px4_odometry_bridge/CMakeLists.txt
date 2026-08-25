@@ -6,12 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
-find_package(coordinate_conventions REQUIRED)
+find_package(navigation_common REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rosidl_default_runtime REQUIRED)
-find_package(navigation_interfaces REQUIRED)
+find_package(navigation_contracts REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 
@@ -37,20 +37,20 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>")
 target_link_libraries(${PROJECT_NAME}_core Eigen3::Eigen)
-ament_target_dependencies(${PROJECT_NAME}_core coordinate_conventions nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_core navigation_common nav_msgs)
 target_compile_options(${PROJECT_NAME}_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/px4_odometry_bridge_node.cpp)
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_core)
-target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_interfaces_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_contracts_INCLUDE_DIRS})
 ament_target_dependencies(${PROJECT_NAME}_node
-  diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
+  diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_contracts px4_msgs)
 
 add_executable(${PROJECT_NAME}_external_node src/px4_external_odometry_bridge_node.cpp)
 target_link_libraries(${PROJECT_NAME}_external_node ${PROJECT_NAME}_core)
-target_include_directories(${PROJECT_NAME}_external_node PRIVATE ${navigation_interfaces_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME}_external_node PRIVATE ${navigation_contracts_INCLUDE_DIRS})
 ament_target_dependencies(${PROJECT_NAME}_external_node
-  diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
+  diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_contracts px4_msgs)
 
 install(TARGETS ${PROJECT_NAME}_core
   EXPORT export_${PROJECT_NAME}
@@ -66,7 +66,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_${PROJECT_NAME} test/test_px4_odometry_bridge.cpp)
   target_link_libraries(test_${PROJECT_NAME} ${PROJECT_NAME}_core)
   ament_target_dependencies(test_${PROJECT_NAME}
-    diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_interfaces px4_msgs)
+    diagnostic_msgs nav_msgs rclcpp rosidl_default_runtime navigation_contracts px4_msgs)
   target_include_directories(test_${PROJECT_NAME} PRIVATE test)
   ament_add_gtest(test_external_odometry_conversion
     test/test_external_odometry_conversion.cpp)
@@ -96,5 +96,5 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(coordinate_conventions Eigen3 diagnostic_msgs nav_msgs rclcpp navigation_interfaces px4_msgs)
+ament_export_dependencies(navigation_common Eigen3 diagnostic_msgs nav_msgs rclcpp navigation_contracts px4_msgs)
 ament_package()

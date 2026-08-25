@@ -1,12 +1,14 @@
-super_navigation_node:
+navigation_runtime_node:
   ros__parameters:
-    super_navigation:
+    navigation_runtime:
       cloud_topic: /lio/registered_points
+      registered_scan_topic: /lio/mapping_observation
       corrected_odometry_topic: /lio/odometry_corrected
       propagated_odometry_topic: /lio/odometry_propagated
       goal_topic: /navigation/goal
-      command_topic: /navigation/super_command
+      command_topic: /navigation/navigation_command
       planning_frame: lio_odom
+      body_frame_id: base_link
       deployment_profile: sitl
       hardware_visibility_certified: false
       planner_rate_hz: 10.0

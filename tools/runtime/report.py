@@ -119,7 +119,7 @@ def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
 
 def _experimental_bypass_reasons(runtime: dict[str, Any]) -> list[str]:
     tb001 = runtime.get("tb001_exp_jerk_objective_ab")
-    planner_path = runtime.get("super_planner_config")
+    planner_path = runtime.get("planner_config")
     configured_penalty: float | None = None
     if isinstance(planner_path, str) and planner_path:
         try:
@@ -1901,7 +1901,7 @@ def _diagnostic_timing_summary(
 def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return _diagnostic_timing_summary(
         samples,
-        ("navigation_planning/planner", "super_navigation/super_planner"),
+        ("navigation_planning/planner", "navigation_runtime/planner"),
         (
             "planning_path_search_us",
             "planning_corridor_us",
@@ -1959,13 +1959,13 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     )
     for status in statuses:
         if not isinstance(status, dict) or status.get("name") not in {
-            "navigation_planning/planner", "super_navigation/super_planner"
+            "navigation_planning/planner", "navigation_runtime/planner"
         }:
             continue
         values = status.get("values", {})
         if not isinstance(values, dict):
             continue
-        if status.get("name") == "super_navigation/super_planner":
+        if status.get("name") == "navigation_runtime/planner":
             return {
                 "available": True,
                 "status_name": status.get("name"),
@@ -2037,7 +2037,7 @@ def _navigation_mapping_summary(
             owner: str | None = None
             if status_name.endswith("/world_model"):
                 owner = "world_model"
-            elif status_name == "super_navigation/super_planner":
+            elif status_name == "navigation_runtime/planner":
                 owner = "planner"
             if owner is None:
                 continue
@@ -2053,7 +2053,7 @@ def _navigation_mapping_summary(
         status_name = str(status.get("name", ""))
         if status_name.endswith("/world_model"):
             latest_by_owner.setdefault("world_model", status)
-        elif status_name == "super_navigation/super_planner":
+        elif status_name == "navigation_runtime/planner":
             latest_by_owner.setdefault("planner", status)
 
     if lifecycle_event is None and latest_event_by_owner:
@@ -2194,7 +2194,7 @@ def _navigation_mapping_summary(
         result["mapping_update_outcome"] = str(values["mapping_update_outcome"])
     result["timing_distributions"] = _diagnostic_timing_summary(
         samples or [],
-        ("navigation_mapping/world_model", "super_navigation/super_planner"),
+        ("navigation_mapping/world_model", "navigation_runtime/planner"),
         (
             "ros_pointcloud_decode_us",
             "observation_pair_wait_us",
@@ -2210,7 +2210,7 @@ def _navigation_mapping_summary(
         ),
         stream_names=("mapping_diagnostics", "diagnostics"),
     )
-    result["output_topics"] = ["/navigation/super_command", "/navigation/diagnostics"]
+    result["output_topics"] = ["/navigation/navigation_command", "/navigation/diagnostics"]
     return result
 
 

@@ -21,8 +21,8 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include <navigation_interfaces/odometry_validity.hpp>
-#include <navigation_interfaces/srv/sample_odometry_at_time.hpp>
+#include <navigation_contracts/odometry_validity.hpp>
+#include <navigation_contracts/srv/sample_odometry_at_time.hpp>
 
 #include "px4_odometry_bridge/frame_converter.hpp"
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
@@ -51,7 +51,7 @@ const char *world_convention_name(WorldConvention convention) {
 
 class Px4OdometryBridgeNode final : public rclcpp::Node {
  public:
-  using SampleService = navigation_interfaces::srv::SampleOdometryAtTime;
+  using SampleService = navigation_contracts::srv::SampleOdometryAtTime;
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
   using VehicleLocalPosition = px4_msgs::msg::VehicleLocalPosition;
   using VehicleAttitude = px4_msgs::msg::VehicleAttitude;
@@ -506,13 +506,13 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
 
   static std::uint32_t component_validity_mask(const ConvertedOdometry& sample) {
     std::uint32_t mask = 0;
-    if (sample.position.allFinite()) mask |= navigation_interfaces::kPositionValid;
+    if (sample.position.allFinite()) mask |= navigation_contracts::kPositionValid;
     if (sample.orientation.coeffs().allFinite() && sample.orientation.norm() > 1e-9) {
-      mask |= navigation_interfaces::kOrientationValid;
+      mask |= navigation_contracts::kOrientationValid;
     }
-    if (sample.velocity_body.allFinite()) mask |= navigation_interfaces::kLinearVelocityValid;
+    if (sample.velocity_body.allFinite()) mask |= navigation_contracts::kLinearVelocityValid;
     if (sample.angular_velocity_body.allFinite() && sample.angular_velocity_valid) {
-      mask |= navigation_interfaces::kAngularVelocityValid;
+      mask |= navigation_contracts::kAngularVelocityValid;
     }
     return mask;
   }
@@ -520,13 +520,13 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   static std::uint32_t covariance_availability_mask(const ConvertedOdometry& sample) {
     std::uint32_t mask = 0;
     if (sample.position_covariance_available) {
-      mask |= navigation_interfaces::kPositionCovarianceAvailable;
+      mask |= navigation_contracts::kPositionCovarianceAvailable;
     }
     if (sample.orientation_covariance_available) {
-      mask |= navigation_interfaces::kOrientationCovarianceAvailable;
+      mask |= navigation_contracts::kOrientationCovarianceAvailable;
     }
     if (sample.velocity_covariance_available) {
-      mask |= navigation_interfaces::kLinearVelocityCovarianceAvailable;
+      mask |= navigation_contracts::kLinearVelocityCovarianceAvailable;
     }
     return mask;
   }

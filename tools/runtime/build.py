@@ -58,30 +58,35 @@ PRODUCT_TEST_EXCLUDED_PACKAGES: tuple[str, ...] = (
     "example_rover_velocity_mode_cpp",
 )
 PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
-    "mars_quadrotor_msgs",
     "fast_lio_core",
     "fast_lio_ros",
     "fast_lio_tools",
-    "navigation_interfaces",
+    "navigation_common",
+    "navigation_contracts",
+    "navigation_execution",
     "navigation_runtime",
-    "super_planner_vendor",
+    "navigation_planning",
+    "navigation_planning_backend",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
     "uav_simulation",
 )
 # `make build` is a product build, not a workspace-wide discovery build. The
 # list intentionally excludes simulator/demo packages and lets colcon resolve
-# only the transitive dependencies of the FAST-LIO -> ROG-Map -> SUPER -> PX4
+# only the transitive dependencies of the FAST-LIO -> mapping backend -> planner backend -> PX4
 # path. An explicit `build --packages ...` remains available for development.
 PRODUCT_BUILD_PACKAGES: tuple[str, ...] = (
     "fast_lio_ros",
     "fast_lio_tools",
-    "mars_quadrotor_msgs",
+    "navigation_common",
+    "navigation_contracts",
+    "navigation_execution",
     "navigation_bringup",
     "navigation_runtime",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
-    "super_planner_vendor",
+    "navigation_planning_backend",
+    "navigation_planning",
 )
 MODES = {
     "release": {

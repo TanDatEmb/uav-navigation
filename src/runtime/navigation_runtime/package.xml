@@ -2,7 +2,7 @@
 <package format="3">
   <name>navigation_runtime</name>
   <version>0.1.0</version>
-  <description>Native SUPER PVA navigation runtime for PX4.</description>
+  <description>Native planner backend PVA navigation runtime for PX4.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -10,11 +10,14 @@
   <depend>builtin_interfaces</depend>
   <depend>diagnostic_msgs</depend>
   <depend>nav_msgs</depend>
-  <depend>navigation_interfaces</depend>
-  <depend>mars_quadrotor_msgs</depend>
+  <depend>navigation_common</depend>
+  <depend>navigation_contracts</depend>
+  <depend>navigation_execution</depend>
+  <depend>navigation_planning</depend>
+  <depend>navigation_mapping</depend>
   <depend>navigation_world_model</depend>
   <depend>rog_map_vendor</depend>
-  <depend>super_planner_vendor</depend>
+  <depend>navigation_planning_backend</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>yaml-cpp</depend>

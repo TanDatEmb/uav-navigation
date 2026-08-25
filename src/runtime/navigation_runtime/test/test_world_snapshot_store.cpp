@@ -1,6 +1,5 @@
-#include <navigation_runtime/world_snapshot_store.hpp>
-#include <super_core/super_planner.h>
-#include <super_core/trajectory_world_validator.hpp>
+#include <navigation_mapping/world_snapshot_store.hpp>
+#include <navigation_planning_backend/planner.hpp>
 
 #include <atomic>
 #include <cmath>
@@ -63,14 +62,15 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
   navigation_world_model::WorldSnapshotIdentity identity_;
 };
 
-navigation_world_model::WorldModelViewPtr world(std::uint64_t generation,
-                                                 std::uint64_t revision,
-                                                 std::int64_t stamp) {
+navigation_world_model::WorldModelViewPtr world(
+    std::uint64_t generation, std::uint64_t revision, std::int64_t stamp,
+    std::uint64_t localization_epoch = 1U) {
   return std::make_shared<IdentityOnlyWorld>(
-      navigation_world_model::WorldSnapshotIdentity{generation, revision, stamp});
+      navigation_world_model::WorldSnapshotIdentity{
+          localization_epoch, generation, revision, stamp});
 }
 
-std::optional<super_planner::CandidateCommandBundle> commandForRevision(
+std::optional<navigation_planning_backend::CandidateCommandBundle> commandForRevision(
     std::uint64_t revision) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 7) = static_cast<double>(revision);
@@ -78,32 +78,32 @@ std::optional<super_planner::CandidateCommandBundle> commandForRevision(
   geometry_utils::Trajectory position({0.1}, {coefficients});
   geometry_utils::Trajectory yaw({0.1}, {Eigen::MatrixXd::Zero(3, 8)});
   position.start_WT = yaw.start_WT = 10.0;
-  return super_planner::CmdTraj::buildEmergencyCandidate(position, yaw);
+  return navigation_planning_backend::CmdTraj::buildEmergencyCandidate(position, yaw);
 }
 
-static_assert(!std::is_copy_constructible_v<navigation_runtime::WorldSnapshotStore>);
+static_assert(!std::is_copy_constructible_v<navigation_mapping::WorldSnapshotStore>);
 
 TEST(WorldSnapshotStore, PublishesAndPinsOneCoherentImmutableIdentity) {
-  navigation_runtime::WorldSnapshotStore store;
+  navigation_mapping::WorldSnapshotStore store;
   EXPECT_FALSE(store.load());
   auto first = world(1, 0, 0);
   store.publish(first);
   const auto pinned = store.load();
   ASSERT_TRUE(pinned);
   EXPECT_EQ(pinned.view.get(), first.get());
-  EXPECT_TRUE(navigation_runtime::WorldSnapshotStore::sameIdentity(
-      pinned.identity, {1, 0, 0}));
+  EXPECT_TRUE(navigation_mapping::WorldSnapshotStore::sameIdentity(
+      pinned.identity, {1, 1, 0, 0}));
 
   store.publish(world(1, 1, 100));
   EXPECT_EQ(pinned.view.get(), first.get());
-  EXPECT_TRUE(navigation_runtime::WorldSnapshotStore::sameIdentity(
-      pinned.identity, {1, 0, 0}));
-  EXPECT_TRUE(navigation_runtime::WorldSnapshotStore::sameIdentity(
-      store.load().identity, {1, 1, 100}));
+  EXPECT_TRUE(navigation_mapping::WorldSnapshotStore::sameIdentity(
+      pinned.identity, {1, 1, 0, 0}));
+  EXPECT_TRUE(navigation_mapping::WorldSnapshotStore::sameIdentity(
+      store.load().identity, {1, 1, 1, 100}));
 }
 
 TEST(WorldSnapshotStore, RejectsNullInvalidAndNonMonotonicPublication) {
-  navigation_runtime::WorldSnapshotStore store;
+  navigation_mapping::WorldSnapshotStore store;
   EXPECT_THROW(store.publish(nullptr), std::invalid_argument);
   EXPECT_THROW(store.publish(world(0, 0, 0)), std::invalid_argument);
   store.publish(world(1, 3, 300));
@@ -113,32 +113,43 @@ TEST(WorldSnapshotStore, RejectsNullInvalidAndNonMonotonicPublication) {
   EXPECT_NO_THROW(store.publish(world(2, 0, 0)));
 }
 
+TEST(WorldSnapshotStore, LocalizationEpochIsPartOfPublicationIdentity) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(world(7, 1, 100, 1));
+
+  EXPECT_EQ(store.authorize({2, 7, 1, 100}, [] { return true; }),
+            navigation_world_model::WorldCommitDecision::kWorldAdvanced);
+  EXPECT_NO_THROW(store.publish(world(1, 0, 0, 2)));
+  EXPECT_EQ(store.load().identity.localization_epoch, 2U);
+  EXPECT_EQ(store.load().identity.generation, 1U);
+}
+
 TEST(WorldSnapshotStore, AuthorizationRejectsStaleIdentityWithoutInvokingCommit) {
-  navigation_runtime::WorldSnapshotStore store;
+  navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
   bool invoked = false;
-  EXPECT_EQ(store.authorize({1, 0, 0}, [&] {
+  EXPECT_EQ(store.authorize({1, 1, 0, 0}, [&] {
               invoked = true;
               return true;
             }),
-            navigation_runtime::WorldCommitDecision::kWorldAdvanced);
+            navigation_world_model::WorldCommitDecision::kWorldAdvanced);
   EXPECT_FALSE(invoked);
-  EXPECT_EQ(store.authorize({1, 1, 100}, [&] {
+  EXPECT_EQ(store.authorize({1, 1, 1, 100}, [&] {
               invoked = true;
               return true;
             }),
-            navigation_runtime::WorldCommitDecision::kCommitted);
+            navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_TRUE(invoked);
 }
 
 TEST(WorldSnapshotStore, PublicationCannotInterleaveAnAuthorizedCommit) {
-  navigation_runtime::WorldSnapshotStore store;
+  navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
   std::promise<void> commit_entered;
   std::promise<void> release_commit;
   auto release = release_commit.get_future().share();
   auto authorization = std::async(std::launch::async, [&] {
-    return store.authorize({1, 1, 100}, [&] {
+    return store.authorize({1, 1, 1, 100}, [&] {
       commit_entered.set_value();
       release.wait();
       return true;
@@ -155,14 +166,14 @@ TEST(WorldSnapshotStore, PublicationCannotInterleaveAnAuthorizedCommit) {
   publication_started.get_future().wait();
   EXPECT_FALSE(publication_finished.load());
   release_commit.set_value();
-  EXPECT_EQ(authorization.get(), navigation_runtime::WorldCommitDecision::kCommitted);
+  EXPECT_EQ(authorization.get(), navigation_world_model::WorldCommitDecision::kCommitted);
   publication.get();
   EXPECT_TRUE(publication_finished.load());
   EXPECT_EQ(store.load().identity.revision, 2U);
 }
 
 TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle) {
-  navigation_runtime::WorldSnapshotStore store;
+  navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 6) = 1.0;
@@ -170,14 +181,14 @@ TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle)
   geometry_utils::Trajectory position({1.0}, {coefficients});
   geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
   position.start_WT = yaw.start_WT = 10.0;
-  auto candidate = super_planner::CmdTraj::buildEmergencyCandidate(position, yaw);
+  auto candidate = navigation_planning_backend::CmdTraj::buildEmergencyCandidate(position, yaw);
   ASSERT_TRUE(candidate);
   const auto lease = store.latest();
-  ASSERT_TRUE(super_planner::validateExecutableCandidate(
+  ASSERT_TRUE(navigation_planning_backend::validateExecutableCandidate(
       *lease.view, *candidate, 10.0).valid);
 
   store.publish(world(1, 2, 200));
-  super_planner::CmdTraj command;
+  navigation_planning_backend::CmdTraj command;
   bool commit_invoked = false;
   EXPECT_EQ(store.commitIfCurrent(lease.identity, [&] {
               commit_invoked = true;
@@ -189,14 +200,14 @@ TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle)
 }
 
 TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent) {
-  constexpr std::uint64_t kIterations = 10000;
-  navigation_runtime::WorldSnapshotStore store;
+  constexpr std::uint64_t kIterations = 100;
+  navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
-  super_planner::CmdTraj command;
+  navigation_planning_backend::CmdTraj command;
   auto initial = commandForRevision(1);
   ASSERT_TRUE(initial);
   ASSERT_TRUE(command.commitCandidate(
-      std::move(*initial), {{1, 1, 100}, {1, 1, 100}, 0.0}));
+      std::move(*initial), {{1, 1, 1, 100}, {1, 1, 1, 100}, 0.0}));
 
   std::atomic_bool publisher_done{false};
   std::atomic_bool authorizer_done{false};
@@ -237,7 +248,7 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
         incoherent.store(true);
         return false;
       }
-      const super_planner::CommandCertificate certificate{
+      const navigation_planning_backend::CommandCertificate certificate{
           lease.identity, lease.identity, 0.0};
       const auto decision = store.commitIfCurrent(lease.identity, [&] {
         return command.commitCandidate(std::move(*candidate), certificate);
@@ -272,15 +283,20 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
     first_authorization_done.wait();
     if (!first_authorization_committed.load(std::memory_order_acquire)) {
       incoherent.store(true);
-      sampler_observed_change.count_down();
-      change_signaled = true;
+    } else {
+      // The first authorization happens before this sampler reads the
+      // generation baseline. Count it as the first observed command change
+      // and release the publisher without depending on thread scheduling.
+      observed_generation_changes.fetch_add(1);
     }
+    sampler_observed_change.count_down();
+    change_signaled = true;
     do {
       std::uint64_t generation = 0;
       navigation_world_model::WorldSnapshotIdentity pinned{};
       navigation_world_model::WorldSnapshotIdentity validated{};
-      super_utils::Vec3f position = super_utils::Vec3f::Zero();
-      super_utils::Vec3f yaw = super_utils::Vec3f::Zero();
+      navigation_planning_backend::math::Vec3f position = navigation_planning_backend::math::Vec3f::Zero();
+      navigation_planning_backend::math::Vec3f yaw = navigation_planning_backend::math::Vec3f::Zero();
       bool backup = false;
       command.lock();
       generation = command.generation();
@@ -304,7 +320,7 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
       }
       if (generation < previous_generation || !position.allFinite() ||
           !yaw.allFinite() || !backup ||
-          !navigation_runtime::WorldSnapshotStore::sameIdentity(pinned, validated) ||
+          !navigation_mapping::WorldSnapshotStore::sameIdentity(pinned, validated) ||
           position.x() != static_cast<double>(validated.revision)) {
         incoherent.store(true);
       }

@@ -13,7 +13,7 @@ class TemporaryMission {
  public:
   explicit TemporaryMission(const std::string& contents) {
     path_ = std::filesystem::temp_directory_path() /
-            ("super_mission_" +
+            ("planner_mission_" +
              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
              ".yaml");
     std::ofstream stream(path_);

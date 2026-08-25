@@ -7,7 +7,7 @@ import argparse
 import time
 
 import rclpy
-from navigation_interfaces.msg import NavigationGoal
+from navigation_contracts.msg import NavigationGoal
 from rclpy.node import Node
 
 

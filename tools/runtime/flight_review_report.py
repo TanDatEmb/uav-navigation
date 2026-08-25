@@ -73,9 +73,9 @@ def _yaml_mapping(path: Path) -> dict[str, Any]:
 
 def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
     """Load configured envelopes without presenting them as runtime map evidence."""
-    planner_file = session / "super_planner.yaml"
+    planner_file = session / "planner.yaml"
     planner = _yaml_mapping(planner_file)
-    super_cfg = planner.get("super_planner", {}) if isinstance(planner.get("super_planner"), dict) else {}
+    planner_cfg = planner.get("planner", {}) if isinstance(planner.get("planner"), dict) else {}
     rog_cfg = planner.get("rog_map", {}) if isinstance(planner.get("rog_map"), dict) else {}
 
     lio_file = session / "fast_lio_params.yaml"
@@ -125,12 +125,12 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         "planning_map_origin_xy_m": vector_pair(rog_cfg.get("fix_map_origin")),
         "planning_resolution_m": number(rog_cfg.get("resolution")),
         "inflation_radius_m": inflation_radius,
-        "safe_corridor_nominal_m": number(super_cfg.get("safe_corridor_line_nominal_length")),
-        "safe_corridor_max_m": number(super_cfg.get("safe_corridor_line_max_length")),
-        "sensing_horizon_m": number(super_cfg.get("sensing_horizon")),
-        "robot_radius_m": number(super_cfg.get("robot_r")),
-        "vehicle_radius_m": number(super_cfg.get("vehicle_radius_m")),
-        "planning_margin_m": number(super_cfg.get("planning_margin_m")),
+        "safe_corridor_nominal_m": number(planner_cfg.get("safe_corridor_line_nominal_length")),
+        "safe_corridor_max_m": number(planner_cfg.get("safe_corridor_line_max_length")),
+        "sensing_horizon_m": number(planner_cfg.get("sensing_horizon")),
+        "robot_radius_m": number(planner_cfg.get("robot_r")),
+        "vehicle_radius_m": number(planner_cfg.get("vehicle_radius_m")),
+        "planning_margin_m": number(planner_cfg.get("planning_margin_m")),
         "map_sliding_enabled": bool((rog_cfg.get("map_sliding") or {}).get("enable", False)) if isinstance(rog_cfg.get("map_sliding"), dict) else False,
         "map_sliding_threshold_m": number((rog_cfg.get("map_sliding") or {}).get("threshold")) if isinstance(rog_cfg.get("map_sliding"), dict) else None,
         "raycasting_enabled": bool(raycasting.get("enable", False)),
@@ -2036,7 +2036,7 @@ def render(session: Path, output: Path) -> Path:
     state_intervals = observability.get("state_intervals", [])
     observed_states = {str(item.get("state")) for item in state_intervals}
     state_observation_note = (
-        "Background bands are derived from accepted PositionCommand flags: "
+        "Background bands are derived from accepted NavigationCommand roles: "
         "green = normal/main, red = safety/backup. "
         f"Observed states: {', '.join(sorted(observed_states)) if observed_states else 'none'}; "
         "an absent safety band means no BACKUP command was recorded."
@@ -2197,7 +2197,7 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Telemetry coverage</h2><p class="small">Position and velocity streams below are already normalized to display ENU. PX4 external odometry, PX4 odometry, local position and setpoint events carry an explicit NED→ENU label in the charts. Gaps are based on consecutive accepted recorder samples.</p><table class="evidence"><thead><tr><th>Stream</th><th>Samples</th><th>Mean rate</th><th>Duration</th><th>Gap p95</th><th>Max gap</th></tr></thead><tbody>{stream_rows}</tbody></table><details><summary>Position XYZ and velocity XYZ statistics</summary><table class="evidence"><thead><tr><th>Stream</th><th>Axis</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{axis_rows}</tbody></table></details></section>
 
-  <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO and SUPER/ROG-Map. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
+  <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO and planner backend/ROG-Map. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
 
   {failure_reasons_html}
   {kinematics_html}

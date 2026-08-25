@@ -7,7 +7,7 @@
   at the time of import; also matches the `uav-navigation` HEAD used to start
   this integration).
 - Imported subtree: `rog_map/` (upstream package root). No other SUPER
-  package (`super_planner/`, `mission_planner/`, `mars_uav_sim/`) is imported.
+  package (`navigation_planning_backend/`, `mission_planner/`, `mars_uav_sim/`) is imported.
 
 ## Imported files
 
@@ -24,12 +24,12 @@ include/rog_map/rog_map_core/config.hpp
 include/rog_map/rog_map_core/counter_map.h
 include/rog_map/rog_map_core/raycaster.h
 include/rog_map/rog_map_core/sliding_map.h
-include/super_utils/eigen_alias.hpp
-include/super_utils/fmt_eigen.hpp
-include/super_utils/scope_timer.hpp
-include/super_utils/type_utils.hpp
-include/super_utils/yaml_loader.hpp
-include/super_utils/color_text.hpp
+include/navigation_math/eigen_alias.hpp
+include/navigation_math/fmt_eigen.hpp
+include/navigation_math/scope_timer.hpp
+include/navigation_math/type_utils.hpp
+include/navigation_math/yaml_loader.hpp
+include/navigation_math/color_text.hpp
 src/rog_map/counter_map.cpp
 src/rog_map/esdf_map.cpp
 src/rog_map/inf_map.cpp
@@ -51,12 +51,12 @@ contents are otherwise unmodified.
   subscription path into ROG (`navigation_mapping::NavigationMappingNode`)
   using the manual `ROGMap::updateMap()` API, so the upstream wrapper is not
   vendored and must never become the production integration boundary.
-- `include/super_utils/backward.hpp` (stack-trace pretty-printer) and
-  `include/super_utils/tinycolormap.hpp` (visualization colormap table):
+- `include/navigation_math/backward.hpp` (stack-trace pretty-printer) and
+  `include/navigation_math/tinycolormap.hpp` (visualization colormap table):
   neither is included by any file under `include/rog_map/` or `src/rog_map/`
   (verified by `grep`), so they fall outside the minimum required
   dependency closure.
-- `include/super_utils/color_msg_utils.hpp`: only used by the excluded ROS
+- `include/navigation_math/color_msg_utils.hpp`: only used by the excluded ROS
   wrappers.
 - `include/fmt/*` (bundled fmt 9.x source, ~13 headers): replaced by the
   system `libfmt-dev` package (see "Local modifications").

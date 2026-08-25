@@ -94,7 +94,7 @@ class ExternalModeScenario:
     def __init__(self, output: Path, config: dict[str, Any]) -> None:
         import rclpy
         from nav_msgs.msg import Odometry
-        from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus
+        from navigation_contracts.msg import NavigationGoal, NavigationModeStatus
         from px4_msgs.msg import (
             ModeCompleted,
             TrajectorySetpoint,
@@ -254,10 +254,10 @@ class ExternalModeScenario:
         self.node.create_subscription(ModeCompleted, "/fmu/out/mode_completed", self._mode_completed, px4_qos)
         self.node.create_subscription(VehicleLandDetected, "/fmu/out/vehicle_land_detected", self._land_detected, px4_qos)
         self.node.create_subscription(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", self._setpoint, px4_qos)
-        from mars_quadrotor_msgs.msg import PositionCommand
-        self.PositionCommand = PositionCommand
+        from navigation_contracts.msg import NavigationCommand
+        self.NavigationCommand = NavigationCommand
         self.node.create_subscription(
-            PositionCommand, "/navigation/super_command", self._super_command, reliable_qos
+            NavigationCommand, "/navigation/navigation_command", self._navigation_command, reliable_qos
         )
         self.node.create_subscription(NavigationGoal, "/navigation/goal", self._goal, reliable_qos)
         self.node.create_subscription(Bool, "/navigation/mission_complete", self._mission_complete, reliable_qos)
@@ -558,53 +558,63 @@ class ExternalModeScenario:
             self._record("vehicle_status", self.latest_status)
         self.previous_nav_state = nav_state
 
-    def _super_command(self, message: Any) -> None:
-        """Observe the native SUPER PVA contract used for PX4 setpoints."""
+    def _navigation_command(self, message: Any) -> None:
+        """Observe the native planner backend PVA contract used for PX4 setpoints."""
         finite = lambda value: math.isfinite(float(value))
+        header_ns = _time_ns(message.header.stamp)
+        valid_until_ns = _time_ns(message.valid_until)
+        world_stamp_ns = _time_ns(message.world_observation_stamp)
+        state_stamp_ns = _time_ns(message.state_source_stamp)
         valid = (
-            message.header.frame_id == "lio_odom" and message.trajectory_id > 0 and
-            message.trajectory_status != self.PositionCommand.TRAJECTORY_STATUS_EMPTY and
+            message.header.frame_id == "lio_odom" and message.sample_id > 0 and
+            message.localization_epoch > 0 and message.goal_epoch > 0 and
+            message.world_generation > 0 and message.world_revision > 0 and
+            (message.bundle_generation > 0 or
+             message.status == self.NavigationCommand.STATUS_REJECTED) and header_ns > 0 and
+            valid_until_ns >= header_ns and world_stamp_ns > 0 and state_stamp_ns > 0 and
+            message.status != self.NavigationCommand.STATUS_EMPTY and
             all(finite(value) for value in (
                 message.position.x, message.position.y, message.position.z,
                 message.velocity.x, message.velocity.y, message.velocity.z,
                 message.acceleration.x, message.acceleration.y, message.acceleration.z,
                 message.jerk.x, message.jerk.y, message.jerk.z,
-                message.yaw, message.yaw_dot,
+                message.yaw, message.yaw_rate,
             ))
         )
         self.pva_command_received += 1
         if not valid:
             self.pva_command_failure_count += 1
-            self._record("pva_command_failure", {"trajectory_id": int(message.trajectory_id)})
+            self._record("pva_command_failure", {"sample_id": int(message.sample_id)})
             return
         self.pva_command_success_count += 1
         self.trajectory_received += 1
-        terminal_failure = int(message.trajectory_status) in {
-            int(self.PositionCommand.TRAJECTORY_STATUS_EMER),
-            int(self.PositionCommand.TRAJECTORY_STATUS_ILLEGAL_START),
-            int(self.PositionCommand.TRAJECTORY_STATUS_ILLEGAL_FINAL),
-            int(self.PositionCommand.TRAJECTORY_STATUS_IMPOSSIBLE),
-        }
+        terminal_failure = int(message.status) == int(self.NavigationCommand.STATUS_REJECTED)
         if terminal_failure:
             self.trajectory_failure_count += 1
         else:
             self.trajectory_success_count += 1
         self.latest_pva_command = {
-            "trajectory_id": int(message.trajectory_id),
-            "trajectory_generation": int(getattr(message, "trajectory_generation", 0)),
+            "trajectory_id": int(message.sample_id),
+            "trajectory_generation": int(getattr(message, "bundle_generation", 0)),
             "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
-            "trajectory_status": int(message.trajectory_status),
-            "trajectory_flag": int(message.trajectory_flag),
+            "trajectory_status": int(message.status),
+            "trajectory_flag": int(message.role),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "world_generation": int(message.world_generation),
+            "world_revision": int(message.world_revision),
+            "world_observation_stamp_ns": _time_ns(message.world_observation_stamp),
+            "sample_id": int(message.sample_id),
             "position": [float(message.position.x), float(message.position.y), float(message.position.z)],
             "velocity": [float(message.velocity.x), float(message.velocity.y), float(message.velocity.z)],
             "acceleration": [float(message.acceleration.x), float(message.acceleration.y), float(message.acceleration.z)],
             "jerk": [float(message.jerk.x), float(message.jerk.y), float(message.jerk.z)],
             "yaw": float(message.yaw),
-            "yaw_rate": float(message.yaw_dot),
+            "yaw_rate": float(message.yaw_rate),
             "vel_norm": float(getattr(message, "vel_norm", 0.0)),
         }
         goal = self.latest_goal
-        mission_id = str(goal.get("mission_id", "super"))
+        mission_id = str(goal.get("mission_id", "navigation_mission"))
         waypoint_index = int(goal.get("waypoint_index", -1))
         position = list(self.latest_pva_command["position"])
         record_key = (mission_id, waypoint_index)
@@ -613,11 +623,11 @@ class ExternalModeScenario:
             trajectory = {
                 "mission_id": mission_id,
                 "waypoint_index": waypoint_index,
-                "request_id": int(message.trajectory_id),
-                "trajectory_id": int(message.trajectory_id),
-                "trajectory_flag": int(message.trajectory_flag),
-                "trajectory_status": int(message.trajectory_status),
-                "trajectory_generation": int(getattr(message, "trajectory_generation", 0)),
+                "request_id": int(message.sample_id),
+                "trajectory_id": int(message.sample_id),
+                "trajectory_flag": int(message.role),
+                "trajectory_status": int(message.status),
+                "trajectory_generation": int(getattr(message, "bundle_generation", 0)),
                 "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
                 "first_sim_time_ns": int(self.sim_now_ns),
                 "position_points": [],
@@ -628,9 +638,9 @@ class ExternalModeScenario:
             self.trajectory_records.append(trajectory)
             record_index = len(self.trajectory_records) - 1
         trajectory = self.trajectory_records[record_index]
-        trajectory["trajectory_flag"] = int(message.trajectory_flag)
-        trajectory["trajectory_status"] = int(message.trajectory_status)
-        trajectory["trajectory_generation"] = int(getattr(message, "trajectory_generation", 0))
+        trajectory["trajectory_flag"] = int(message.role)
+        trajectory["trajectory_status"] = int(message.status)
+        trajectory["trajectory_generation"] = int(getattr(message, "bundle_generation", 0))
         trajectory["trajectory_time_s"] = float(getattr(message, "trajectory_time_s", 0.0))
         trajectory["last_sim_time_ns"] = int(self.sim_now_ns)
         if not trajectory["position_points"] or trajectory["position_points"][-1] != position:
@@ -639,7 +649,7 @@ class ExternalModeScenario:
             if len(trajectory["position_points"]) > 4096:
                 del trajectory["position_points"][:-4096]
                 del trajectory["velocity_points"][:-4096]
-        trajectory["trajectory_id"] = int(message.trajectory_id)
+        trajectory["trajectory_id"] = int(message.sample_id)
         pillar = self.config.get("pillar_center_enu", [-4.5, 2.5, 3.0])
         if _finite_vector(pillar):
             distance = math.hypot(position[0] - float(pillar[0]), position[1] - float(pillar[1]))
@@ -1203,7 +1213,7 @@ class ExternalModeScenario:
 
         if getattr(self, "pva_command_success_count", 0) == 0:
             if elapsed > activation_timeout_s:
-                self.failure = "navigation runtime did not publish a valid SUPER PVA command"
+                self.failure = "navigation runtime did not publish a valid planner backend PVA command"
                 self.finish("TRAJECTORY_TIMEOUT")
             return
         if not self.mode_entered:
@@ -1255,7 +1265,7 @@ class ExternalModeScenario:
         if self.external_mode_id is None:
             failures.append("External Mode id was not discovered")
         if expected_outcome == "complete" and self.pva_command_success_count <= 0:
-            failures.append("no valid SUPER PVA command observed")
+            failures.append("no valid planner backend PVA command observed")
         if not self.mode_entered:
             failures.append("External Mode was never entered")
         if self.setpoint_count <= 0:

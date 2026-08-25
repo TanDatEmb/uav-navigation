@@ -57,6 +57,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-011 | Hardware Mid-360 visibility | hardware blocked unless explicit certificate flag is true | CERTIFIED | Fail-closed deployment gate exists. No real-flight visibility certificate exists yet. | Keep hardware blocked until mounting, FOV/blind zones, accumulated observations and motion envelope are certified. |
 | HG-012 | CIRI overlap/seed tolerances (`NUMERICAL_TOLERANCE`) | overlap threshold plus hard-coded 0.01 m and 0.25 ratio; seed clearance `robot_r - 0.01 m` | PROVISIONAL | Different meanings currently share unnamed constants and can reject dense geometry inconsistently. | Name each quantity, record units/reason codes and test resolution scaling before changing values. |
 | HG-013 | Backup corridor certificate (`SAFETY_INVARIANT`) | position penalty violation accepted up to 0.2 | PROVISIONAL | This differs from the 0.01 m EXP certificate and can reduce the margin on the trajectory intended to be safest. | Replace penalty-derived authorization with the same normalized continuous geometric certificate used by EXP; preserve certified seed fallback. |
+| HG-014 | Typed estimator-health control gate (`SAFETY_INVARIANT`) | `TRACKING` plus navigation/covariance/observability/correction/propagation flags all true | PROVISIONAL | PX4 now consumes the typed `/lio/health` contract when present; a false accept could expose External Mode during an invalid estimator or public-frame transition, while a false reject causes a bounded hold/handover. Callback work is constant-time and expected below 1 ms at p99. | Repeat typed-health negative tests, loaded SITL and recorded-data health timing; make typed health mandatory in every launch profile, then remove the DiagnosticArray fallback TB-004. |
 
 ## Temporary-bypass register
 
@@ -65,6 +66,8 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | TB-001 | planning/runtime; intro `1661386` | EXP jerk objective disabled; explicit `--tb001-exp-jerk-penalty 5e8` re-enable candidate; analytic V/A/J hard gate remains authoritative | False-reject and runtime-tail risk; no false accept if hard gate is complete | Disabled vs explicit enabled `external-mode-check` and `dataset-check` A/B; reports are uncertified | Objective-enabled A/B on structured SITL and dense snapshot replay has equal certificates and bounded p99 | TEMPORARY_BYPASS |
 | TB-002 | planning; intro `30ca02c` | `traj_opt.exp_traj.penna_attract`: disabled `-1e7`, enabled reference `5e8`; no implicit runner switch yet | May reduce convergence margin but does not bypass the corridor certificate | Config-patched nominal/structured SITL A/B | Deterministic optimizer A/B proves a replacement improves feasibility without path drift | TEMPORARY_BYPASS |
 | TB-003 | mapping/planning; intro `30ca02c` (`iris_iter_num`), `1661386` (`obs_skip_num`) | `super_planner.iris_iter_num/obs_skip_num`: current `(1,2)`, enabled reference `(2,1)`; no implicit runner switch yet | May reduce corridor volume or omit redundant surfaces; inflation/collision gates remain authoritative | Config-patched dense snapshot and SITL A/B | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration/skip matrix | TEMPORARY_BYPASS |
+| TB-004 | PX4/runtime; intro `2026-08-25` | DiagnosticArray health remains a compatibility fallback only until the first valid typed `/lio/health` message is received | Legacy string health can control safety before typed health arrives; no intentional fail-open behavior, but the old parse path remains a contract risk | PX4 package build and existing health-gate tests; no closed-loop evidence yet | All launch profiles publish typed health before External Mode command exposure; negative epoch/flag tests pass; remove `onLioDiagnostics` safety fallback | TEMPORARY_BYPASS |
+| TB-005 | runtime/mapping; intro `2026-08-25` | Legacy cloud plus corrected-odometry pairing remains a compatibility fallback until the first valid `/lio/mapping_observation` is accepted | Retains the old pairing/skew and duplicate-input risk for legacy-only launches; typed observation path is atomic and fail-closed | Runtime build, world-store tests, shutdown test; no end-to-end typed-stream SITL evidence yet | Every supported launch uses atomic `RegisteredScan`; remove legacy mapping subscriptions and `input_pairing.hpp` after dataset/SITL migration evidence | TEMPORARY_BYPASS |
 
 Register anchors for the remaining rows are explicit, but TB-002 and TB-003
 still have open switch debt rather than supported runner switches. TB-002 was
@@ -1482,3 +1485,209 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   `slideAllMap` twice at the same pose; a nonempty vertical-slide regression
   requires exactly one slide application. Neither correction changes map
   thresholds, occupancy policy, timing budgets or planner behavior.
+
+### 2026-08-25 - Typed observation, health and localization-epoch migration
+
+- Owner: FAST-LIO ROS boundary, navigation runtime and PX4 External Mode.
+  Scope: add `RegisteredScan`, `EstimatorHealth` and `NavigationCommand` message
+  contracts; publish `/lio/mapping_observation` and `/lio/health`; carry
+  `localization_epoch` through immutable world identity and commit authorization.
+- The new safety identity is `{localization_epoch, world_generation, revision,
+  observation_stamp_ns}`. Epoch zero is invalid for publication. A higher epoch
+  causes the sole mapping worker to reset its mutable ROG owner, publish an
+  empty new-epoch snapshot, and then publish revisions from the new map. Old
+  snapshots remain immutable but cannot authorize a commit because identity
+  comparison includes epoch.
+- `RegisteredScan` is atomic: outer and inner cloud frame/timestamp must match,
+  the corrected pose is carried in the same message, and `scan_sequence` must
+  increase within one localization epoch. Runtime accepts typed observations as
+  the product path; old cloud
+  plus corrected-odometry pairing is only the explicitly registered TB-005
+  fallback and is disabled after the first valid typed observation.
+- `EstimatorHealth` is the typed control-plane gate. PX4 requires TRACKING,
+  navigation validity, covariance validity, observability validity, fresh
+  correction and valid propagated state. DiagnosticArray remains only under
+  TB-004 until all launch profiles are migrated. No numeric threshold, map
+  resolution, planner deadline, unknown policy or dynamic limit changed.
+- False-accept risk: stale or cross-epoch estimator state could keep External
+  Mode active or authorize a stale world/command. False-reject risk: a missing
+  typed message or transient invalid flag causes hold/handover. Runtime cost is
+  bounded constant-time message construction/validation; p50/p95/p99 latency
+  evidence and closed-loop epoch-reset evidence are still open.
+- Focused verification completed: navigation interface typed-contract tests
+  3/3; FAST-LIO ROS build and tests 12/12; SUPER trajectory tests 33/33;
+  PX4 External Mode tests 3/3 targets (43 tests); world snapshot store 7/7;
+  runtime epoch/store, shutdown and mapping fail-stop checks 3/3. The first
+  full runtime test pass was blocked by an outdated three-field test identity
+  initializer, which deadlocked the expected commit callback; the initializer
+  was corrected and the isolated concurrent test passed in 0.25 s.
+- Removal/review condition: complete typed command provenance integration,
+  migrate all launch/configuration profiles, run repeated SITL plus dataset
+  shadow evidence, and then remove TB-004/TB-005 only after their exact
+  negative tests and verification commands pass.
+
+### 2026-08-25 - Batch 1B localization reset barrier and epoch-ordered ingress
+
+- Owner: navigation runtime mapping worker and SUPER runtime boundary. Scope:
+  reject stale `RegisteredScan` epochs before worker admission, consume typed
+  estimator-health epoch transitions, make the mapping worker drain READY and
+  finish IN_FLIGHT work before a reset, reset the timestamp order key per
+  localization epoch, and keep planning/legacy command exposure fail-closed
+  until the first new-epoch world snapshot is published.
+- A higher epoch now invalidates pending legacy cloud/pose pairing, resets the
+  per-epoch scan sequence, and marks the planner epoch unavailable. A solve
+  that races with the transition is discarded before command exposure when
+  either its epoch or the new-epoch snapshot readiness no longer matches.
+  `body_frame_id` is an explicit `base_link` contract in the supported runtime
+  configuration.
+- False-accept risk addressed: an old observation or a pre-reset solve can no
+  longer enter the new worker epoch or expose a command after the reset gate.
+  False-reject risk: an observation arriving during the bounded reset barrier
+  is discarded and must be retransmitted by the estimator; no planner or
+  safety threshold is relaxed.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-select navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && ctest --test-dir build/navigation_runtime --output-on-failure`.
+  The new worker reset regression and the full runtime package suite must
+  pass before this checkpoint is treated as stable.
+- Remaining condition: typed command provenance, runtime health epoch
+  subscription/monotonic validation, observed-free backup certification and
+  closed-loop reset evidence remain open; TB-004/TB-005 are not removable.
+
+### 2026-08-25 - Product-owned NavigationCommand command boundary
+
+- Owner: navigation interfaces, navigation runtime and PX4 External Mode.
+  Scope: replace the runtime/PX4 `mars_quadrotor_msgs/PositionCommand` boundary
+  with the product-owned `navigation_interfaces/NavigationCommand` while
+  preserving PVA sampling, main/backup behavior, terminal fail-closed output
+  and the existing topic name `/navigation/super_command`.
+- `NavigationCommand` carries localization epoch, goal epoch and mission
+  identity, world generation/revision/observation stamp, committed bundle
+  generation, per-sample ID, propagated-state source stamp and validity window.
+  PX4 rejects malformed identities/status-role combinations, health-epoch
+  mismatches and regressed world/state provenance before command acceptance.
+  The shared contract lives in `navigation_command_contract.hpp`; runtime
+  validation tools consume the typed message directly. Legacy
+  `PositionCommand` is no longer a product dependency of runtime/PX4.
+- False-accept risk addressed: a command from an older localization/world
+  identity or an untyped legacy producer can no longer become the authoritative
+  PX4 command on this boundary. False-reject risk: malformed/missing typed
+  provenance causes the existing hold/handover path. No planner, mapping,
+  tracking-envelope, freshness or dynamic-limit numeric value changed; the
+  existing command header/receive freshness gate remains authoritative while
+  `valid_until` is currently syntax-validated for forward compatibility.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-select navigation_interfaces navigation_runtime px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && ctest --test-dir build/navigation_interfaces --output-on-failure && ctest --test-dir build/navigation_runtime --output-on-failure && ctest --test-dir build/px4_navigation_external_mode --output-on-failure && python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py'`.
+  Current focused evidence is interface 1/1, runtime 10/10, PX4 3/3 and
+  Python runtime 168/168.
+- Removal/review condition: migrate all remaining report/artifact schemas
+  from compatibility `trajectory_*` names to explicit command provenance,
+  make typed estimator health mandatory in every launch profile, certify the
+  validity-window policy on repeated SITL/recorded data, and remove TB-004/TB-005
+  only after their exact negative tests and migration evidence pass.
+
+### 2026-08-25 - Product-owned tree and shared utility cutover
+
+- Owner: navigation contracts/common utilities, estimator ROS boundary,
+  runtime and PX4 adapters. Scope: rename the active contract package to
+  `navigation_contracts`, move shared frame/time helpers to
+  `navigation_common`, remove the unused legacy command package, and rename
+  the runtime node, configuration namespace, command topic and diagnostics
+  source to product-owned names.
+- The active product path has one contract package and one command type. ROS
+  timestamp conversion now validates malformed fields and range in one helper;
+  ENU/NED and FLU/FRD matrices are also defined once and consumed by both PX4
+  bridges and External Mode. PX4's external ABI and pinned upstream backend
+  namespaces are unchanged at their adapters.
+- Safety impact: no numeric gate, map policy, planner deadline, tracking
+  envelope or dynamic limit changed. The internal ROS package/topic/config
+  names changed atomically, so stale generated overlays are rejected by the
+  runner rather than silently mixed with the active workspace.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to fast_lio_ros navigation_runtime px4_navigation_external_mode px4_odometry_bridge --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_common navigation_contracts fast_lio_ros px4_odometry_bridge --event-handlers console_start_end+ --return-code-on-test-failure`.
+  The cutover build completed; the four selected package test runs completed
+  without package failures. The broader workspace test-result directory still
+  contains unrelated historical upstream results and is not used as evidence.
+- Removal/review condition: extract mutable mapping ownership into a
+  product-owned `navigation_mapping` package, then place the current planner
+  behind a product-owned backend adapter. Do not add compatibility aliases or
+  a second product implementation during that migration.
+
+### 2026-08-25 - Mapping lifecycle primitive extraction and common time boundary
+
+- Owner: `navigation_mapping`, `navigation_common`, runtime and PX4 adapters.
+  Scope: move the bounded latest-only mapping worker, exact observation
+  accounting, and immutable world-snapshot store out of the runtime package;
+  centralize ROS time and PX4
+  microsecond conversion in `navigation_common`; use the ROS helper at the
+  External Mode command/odometry boundary.
+- Safety impact: no planner, mapping, freshness, tracking, or dynamic-limit
+  threshold changed. The extraction preserves the existing single-owner,
+  reset-barrier, monotonic-order, shutdown, and fail-stop behavior. Malformed
+  ROS time and conversion overflow remain rejected.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_mapping navigation_runtime --event-handlers console_start_end+ --return-code-on-test-failure && colcon test-result --test-result-base build/navigation_mapping --verbose && colcon test-result --test-result-base build/navigation_runtime --verbose`.
+  Result: navigation_mapping 57/57 and navigation_runtime 101/101; common
+  time/frame tests 5/5; PX4 odometry bridge 68/68; External Mode 78/78.
+- Remaining condition: mutable backend map ownership and world-snapshot
+  construction/publication,
+  observed-free evidence, and planner commit/execution ownership remain in the
+  runtime/backend boundary. Continue with a product-owned backend adapter only
+  after preserving these invariants and adding adversarial evidence.
+
+### 2026-08-25 - Planner backend package and configuration vocabulary cutover
+
+- Owner: planning backend boundary, runtime, build provenance and report tools.
+  Scope: replace the product-facing planner package, artifact library path,
+  planner configuration root, adapter class/file names, and parity-tool name
+  with neutral product vocabulary. The imported implementation remains behind
+  `navigation_planning_backend/planner.hpp`; its upstream namespaces and
+  provenance files are not reinterpreted as product APIs.
+- Safety impact: no trajectory, freshness, collision, backup, or dynamic-limit
+  value changed. The configuration parser and generated runtime config now use
+  the same `planner` root, preventing a split configuration vocabulary.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_planning_backend navigation_runtime --event-handlers console_start_end+ --return-code-on-test-failure && colcon test-result --test-result-base build/navigation_planning_backend --verbose && colcon test-result --test-result-base build/navigation_runtime --verbose`.
+  Result: planning backend 42/42 and runtime 108/108.
+- Remaining condition: the vendored implementation still contains its
+  upstream namespaces and license/provenance text. Do not rewrite those
+  internals without a separate parity-preserving extraction and audit.
+
+### 2026-08-25 - Pure planning contract and execution commit boundary
+
+- Owner: `navigation_planning` and `navigation_execution`; runtime remains the
+  transitional integration owner. Scope: add C++20-only `PlanningRequest`,
+  `PlanningOutcome`, `PlanningBudget`, typed `KinematicState`, immutable
+  `CandidateBundle`, `CommittedBundleStore` and `CommandSampler`.
+- Safety impact: candidate commit compares localization/world/goal/transaction
+  identity under a narrow critical section; sampling only evaluates an already
+  committed immutable candidate and never calls map/planner code. This is a
+  new fail-closed boundary and does not change any existing planner, map,
+  freshness, collision, backup or dynamic-limit threshold.
+- Removal condition: remove the transitional backend's direct commit/sample
+  path only after runtime is wired to these types and repeated recorded-data,
+  SITL and sanitizer evidence proves equivalent safety behavior.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_execution --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_planning navigation_execution --event-handlers console_start_end+ --return-code-on-test-failure`.
+  Current focused result: planning contract tests 3/3 and execution tests
+  14/14.
+
+### 2026-08-25 - Typed execution state and PX4 command provenance enforcement
+
+- Owner: `navigation_execution`, runtime propagated-state adapter, navigation
+  contracts and PX4 External Mode. Scope: publish propagated state through an
+  epoch-tagged `ExecutionStateStore`, clear it on localization reset, use it
+  for planner freshness and command source provenance, reject commands whose
+  validity window is expired, and bind accepted commands to the active
+  mission/request/waypoint identity.
+- Safety impact: rejects stale command windows, cross-mission late DDS samples,
+  and propagated state surviving a localization epoch transition. The state
+  adapter explicitly converts body-frame velocity into world-frame velocity;
+  no numeric threshold or UNKNOWN policy changed.
+- False-reject risk: a missing child-frame ID, malformed quaternion, missing
+  active mission identity, or epoch transition clears command exposure and
+  enters the existing hold/handover path. This is intentional fail-closed
+  behavior.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_contracts navigation_execution navigation_runtime px4_navigation_external_mode --event-handlers console_start_end+ --return-code-on-test-failure`.
+  Current focused result: contracts 5/5, execution 14/14, runtime 107/107,
+  External Mode 78/78. End-to-end SITL and hardware evidence remain open.

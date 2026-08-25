@@ -14,7 +14,7 @@ inline constexpr double kGoalConnectionToleranceM = kGoalCompletionToleranceM;
 inline constexpr double kNearGoalShortcutToleranceM = kGoalCompletionToleranceM;
 
 // A near-goal shortcut is still a main-trajectory segment.  UNKNOWN remains
-// allowed for SUPER's exploratory path, while the WorldModel implementation
+// allowed for planner backend's exploratory path, while the WorldModel implementation
 // must reject OCCUPIED and OUT_OF_MAP cells.  Backup safety is validated by
 // its own certificate and is not weakened by this helper.
 inline bool isGoalSegmentTraversable(const WorldModelView& world,

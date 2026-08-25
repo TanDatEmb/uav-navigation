@@ -45,10 +45,19 @@ struct WorldGeometry {
 };
 
 struct WorldSnapshotIdentity {
+  std::uint64_t localization_epoch{0};
   std::uint64_t generation{0};
   std::uint64_t revision{0};
   std::int64_t observation_stamp_ns{0};
 };
+
+[[nodiscard]] inline bool sameWorldSnapshotIdentity(
+    const WorldSnapshotIdentity& lhs,
+    const WorldSnapshotIdentity& rhs) noexcept {
+  return lhs.localization_epoch == rhs.localization_epoch &&
+         lhs.generation == rhs.generation && lhs.revision == rhs.revision &&
+         lhs.observation_stamp_ns == rhs.observation_stamp_ns;
+}
 
 // Read-only planning contract. Implementations must preserve their native cell
 // centers, ray traversal, nearest-cell tie breaking, and occupied-point order.

@@ -25,7 +25,7 @@
 #include <chrono>
 #include <cmath>
 using namespace rog_map;
-using namespace super_utils;
+using namespace navigation_math;
 
 void ProbMap::initProbMap() {
     // uav-navigation local patch: per-instance guard instead of upstream's
@@ -442,10 +442,10 @@ GridType ProbMap::getGridType(Vec3i& id_g) const {
     if (cfg_.virtual_ground_ceiling_en &&
         (id_g.z() <= sc_.virtual_ground_height_id_g ||
          id_g.z() >= sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
-        return super_utils::OCCUPIED;
+        return navigation_math::OCCUPIED;
     }
     if (!insideLocalMap(id_g)) {
-        return super_utils::OUT_OF_MAP;
+        return navigation_math::OUT_OF_MAP;
     }
     Vec3i id_l;
     globalIndexToLocalIndex(id_g, id_l);

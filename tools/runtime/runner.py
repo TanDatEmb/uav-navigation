@@ -529,7 +529,7 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     unknown_policy = planning.get("unknown_policy", "allow_unknown")
     if unknown_policy != "allow_unknown":
         raise ValueError(
-            "SUPER endpoint-only mapping requires unknown_policy 'allow_unknown' "
+            "planner backend endpoint-only mapping requires unknown_policy 'allow_unknown' "
             "while probabilistic raycasting is disabled"
         )
     result = {}
@@ -552,7 +552,7 @@ def _resolved_mission_file(
     """Materialize the exact mission contract consumed by every SITL process.
 
     A speed-cap request is an experiment input, but it must not live only in
-    the generated SUPER YAML. Both SUPER and the PX4 External Mode node load
+    the generated planner backend YAML. Both planner backend and the PX4 External Mode node load
     mission dynamics independently, so passing the original mission alongside
     an overridden planner file silently gave them different velocity
     contracts. The session-owned copy is the single resolved input for the
@@ -908,7 +908,7 @@ def _external_mode_params(session: Session, source: Path, mission_file: Path | N
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
         raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
-    # SUPER PVA is the nominal contract.  Limits are injected into SUPER by
+    # planner backend PVA is the nominal contract.  Limits are injected into planner backend by
     # _mapping_params, never into this transport layer.
     del mission_file, speed_cap_mps
     target = session.directory / "external_mode_params.yaml"
@@ -958,38 +958,38 @@ def _mapping_params(
     speed_cap_mps: float | None = None,
     tb001_exp_jerk_penalty: float | None = None,
 ) -> Path:
-    """Create the only ROS parameter file used by native SUPER navigation."""
+    """Create the only ROS parameter file used by native planner backend navigation."""
     del interactive, frontier_debug, simulation, dual_planning, obstacle_evidence
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or "super_navigation_node" not in value:
-        raise ValueError(f"runtime config is missing super_navigation_node: {source}")
-    node_parameters = value["super_navigation_node"].setdefault("ros__parameters", {})
-    super_parameters = node_parameters.setdefault("super_navigation", {})
+    if not isinstance(value, dict) or "navigation_runtime_node" not in value:
+        raise ValueError(f"runtime config is missing navigation_runtime_node: {source}")
+    node_parameters = value["navigation_runtime_node"].setdefault("ros__parameters", {})
+    planner_parameters = node_parameters.setdefault("navigation_runtime", {})
     planner = yaml.safe_load(
-        (ROOT / "src/runtime/navigation_runtime/config/super_planner.yaml").read_text(
+        (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
             encoding="utf-8"
         )
     )
     if not isinstance(planner, dict):
-        raise ValueError("SUPER planner config must be a mapping")
+        raise ValueError("planner backend planner config must be a mapping")
     # PVA is the direct control contract, so mission limits must constrain the
-    # SUPER optimizer itself.  Applying them here avoids reintroducing an
+    # planner backend optimizer itself.  Applying them here avoids reintroducing an
     # external velocity/acceleration limiter that would distort the planned
     # trajectory after optimization.
     planning = _mission_planning(mission_file) if mission_file is not None else {}
     if mission_file is not None:
-        # SuperNavigationNode independently loads mission dynamics before
-        # constructing SUPER. Passing only the generated planner YAML leaves
+        # NavigationRuntimeNode independently loads mission dynamics before
+        # constructing planner backend. Passing only the generated planner YAML leaves
         # the controller and planner with different mission identities and
         # makes runtime provenance unable to prove which limits were active.
-        super_parameters["mission_file"] = str(mission_file.resolve())
+        planner_parameters["mission_file"] = str(mission_file.resolve())
     if "replan_rate_hz" in planning:
-        super_parameters["planner_rate_hz"] = float(planning["replan_rate_hz"])
-    # SUPER's high-rate mapping path is endpoint-only. Keep probabilistic
+        planner_parameters["planner_rate_hz"] = float(planning["replan_rate_hz"])
+    # planner backend's high-rate mapping path is endpoint-only. Keep probabilistic
     # raycasting off and expose its upstream UNKNOWN-as-visible semantics
     # truthfully in every mission contract. Collision safety comes from the
     # inflated occupied tube and the atomic backup trajectory.
-    planner.setdefault("super_planner", {})["frontend_in_known_free"] = False
+    planner.setdefault("planner", {})["frontend_in_known_free"] = False
     raycasting = planner.setdefault("rog_map", {}).setdefault("raycasting", {})
     raycasting["enable"] = False
     target_speed = speed_cap_mps
@@ -1002,17 +1002,17 @@ def _mapping_params(
     if target_speed is not None:
         target_speed = float(target_speed)
         if not math.isfinite(target_speed) or target_speed <= 0.0:
-            raise ValueError("SUPER target speed must be finite and positive")
+            raise ValueError("planner backend target speed must be finite and positive")
         if target_speed > product_max_velocity:
             raise ValueError(
-                f"SUPER target speed exceeds X500 limit {product_max_velocity:g} m/s"
+                f"planner backend target speed exceeds X500 limit {product_max_velocity:g} m/s"
             )
         boundary["max_vel"] = target_speed
     if "max_acceleration_mps2" in planning:
         acceleration_limit = float(planning["max_acceleration_mps2"])
         if acceleration_limit > product_max_acceleration:
             raise ValueError(
-                "SUPER mission acceleration exceeds X500 limit "
+                "planner backend mission acceleration exceeds X500 limit "
                 f"{product_max_acceleration:g} m/s^2"
             )
         boundary["max_acc"] = acceleration_limit
@@ -1023,11 +1023,11 @@ def _mapping_params(
     backup_jerk_penalty = float(backup_traj.get("penna_jerk", 0.0))
     if not math.isfinite(exp_jerk_penalty) or exp_jerk_penalty >= 0.0:
         raise ValueError(
-            "SUPER exp_traj jerk objective must stay disabled by default; TB-001 experiment opt-in is required"
+            "planner backend exp_traj jerk objective must stay disabled by default; TB-001 experiment opt-in is required"
         )
     if not math.isfinite(backup_jerk_penalty) or backup_jerk_penalty <= 0.0:
         raise ValueError(
-            "SUPER backup_traj jerk objective must remain positive"
+            "planner backend backup_traj jerk objective must remain positive"
         )
     if tb001_exp_jerk_penalty is None:
         tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty()
@@ -1051,25 +1051,25 @@ def _mapping_params(
     if "max_jerk_mps3" in planning:
         jerk_limit = float(planning["max_jerk_mps3"])
         if not math.isfinite(jerk_limit) or jerk_limit <= 0.0:
-            raise ValueError("SUPER max jerk must be finite and positive")
+            raise ValueError("planner backend max jerk must be finite and positive")
         if jerk_limit > product_max_jerk:
             raise ValueError(
-                f"SUPER mission jerk exceeds X500 limit {product_max_jerk:g} m/s^3"
+                f"planner backend mission jerk exceeds X500 limit {product_max_jerk:g} m/s^3"
             )
         boundary["max_jerk"] = jerk_limit
         # Main-trajectory jerk remains an analytic hard gate because its larger
         # optimization problem became unstable with a high-order penalty. The
         # two-piece backup starts from a certified minimum-snap seed and must
         # retain a positive jerk objective while L-BFGS adjusts it.
-    planner_target = session.directory / "super_planner.yaml"
+    planner_target = session.directory / "planner.yaml"
     planner_target.write_text(yaml.safe_dump(planner, sort_keys=False), encoding="utf-8")
-    super_parameters["config_path"] = str(planner_target)
-    target = session.directory / "super_navigation_params.yaml"
+    planner_parameters["config_path"] = str(planner_target)
+    target = session.directory / "navigation_runtime_params.yaml"
     target.write_text(
-        yaml.safe_dump({"super_navigation_node": value["super_navigation_node"]}, sort_keys=False),
+        yaml.safe_dump({"navigation_runtime_node": value["navigation_runtime_node"]}, sort_keys=False),
         encoding="utf-8",
     )
-    _write_runtime(session, super_planner_config=str(planner_target), super_target_speed_mps=target_speed)
+    _write_runtime(session, planner_config=str(planner_target), target_speed_mps=target_speed)
     return target
 
 def _mapping_ready(snapshot: dict[str, Any]) -> bool:
@@ -1077,12 +1077,12 @@ def _mapping_ready(snapshot: dict[str, Any]) -> bool:
     latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
     for status in latest.get("statuses", []):
         status_name = str(status.get("name", ""))
-        if not (status_name.endswith("/world_model") or status_name == "super_navigation/super_planner"):
+        if not (status_name.endswith("/world_model") or status_name == "navigation_runtime/planner"):
             continue
         values = status.get("values", {})
         try:
             accepted = int(values.get("accepted_observation_count", 0)) > 0
-            if status_name == "super_navigation/super_planner":
+            if status_name == "navigation_runtime/planner":
                 return accepted and int(values.get("processing_exception_count", 0)) == 0
             return accepted and (
                 int(values.get("visualization_publish_count", 0)) > 0
@@ -1453,7 +1453,7 @@ def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
     stale_interfaces = _stale_navigation_interface_artifacts()
     if stale_interfaces:
         missing.append(
-            "stale navigation_interfaces generated artifacts: "
+            "stale navigation_contracts generated artifacts: "
             + ", ".join(stale_interfaces[:6])
             + (" ..." if len(stale_interfaces) > 6 else "")
             + "; rebuild the canonical workspace before starting SITL"
@@ -1463,20 +1463,32 @@ def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
 
 def _stale_navigation_interface_artifacts() -> list[str]:
     """Detect generated ROS message files left behind after an interface deletion."""
+    stale: list[str] = []
+    for legacy_path in (
+        ROOT / "build/navigation_interfaces",
+        ROOT / "install/navigation_interfaces",
+        ROOT / "build/coordinate_conventions",
+        ROOT / "install/coordinate_conventions",
+        ROOT / "build/mars_quadrotor_msgs",
+        ROOT / "install/mars_quadrotor_msgs",
+    ):
+        if legacy_path.exists():
+            stale.append(str(legacy_path))
     source_names: set[str] = set()
-    for path in (ROOT / "src/navigation_interfaces/msg").glob("*.msg"):
+    for path in (ROOT / "src/contracts/navigation_contracts/msg").glob("*.msg"):
         source_name = path.stem
         source_names.add(source_name.lower())
         source_names.add(re.sub(r"(?<!^)(?=[A-Z])", "_", source_name).lower())
     generated_names: set[str] = set()
-    adapter_dir = ROOT / "build/navigation_interfaces/rosidl_adapter/navigation_interfaces/msg"
+    adapter_dir = ROOT / "build/navigation_contracts/rosidl_adapter/navigation_contracts/msg"
     generated_names.update(path.stem.lower() for path in adapter_dir.glob("*.idl"))
-    python_dir = ROOT / "install/navigation_interfaces/lib"
-    for path in python_dir.glob("python*/site-packages/navigation_interfaces/msg/_*.py"):
+    python_dir = ROOT / "install/navigation_contracts/lib"
+    for path in python_dir.glob("python*/site-packages/navigation_contracts/msg/_*.py"):
         name = path.stem.lower().lstrip("_")
         if name != "init__":
             generated_names.add(name)
-    return sorted(generated_names - source_names)
+    stale.extend(sorted(generated_names - source_names))
+    return stale
 
 
 def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:

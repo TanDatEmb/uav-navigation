@@ -6,12 +6,12 @@
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <depend>coordinate_conventions</depend>
+  <depend>navigation_common</depend>
   <depend>eigen3_cmake_module</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
   <depend>diagnostic_msgs</depend>
-  <depend>navigation_interfaces</depend>
+  <depend>navigation_contracts</depend>
   <depend>px4_msgs</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <export><build_type>ament_cmake</build_type></export>

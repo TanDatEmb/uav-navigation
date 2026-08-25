@@ -31,7 +31,7 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
 
-    # Current FAST-LIO output boundary consumed by SUPER ROG-Map.
+    # Current FAST-LIO output boundary consumed by planner backend ROG-Map.
     - Alpha: 0.8
       Class: rviz_default_plugins/PointCloud2
       Color Transformer: FlatColor

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -8,6 +9,8 @@
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <navigation_contracts/msg/estimator_health.hpp>
+#include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/node.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
@@ -31,7 +34,7 @@ class RosOutputPublisher {
   covarianceProjectionRuntime() const noexcept {
     return covariance_runtime_;
   }
-  void publish(const ProcessResult& result);
+  void publish(const ProcessResult& result, std::uint64_t scan_sequence);
   // Publishes the latest health snapshot at the runtime diagnostic cadence.
   // The estimator path only replaces this latest-only snapshot.
   void publishDiagnosticsSnapshot();
@@ -90,6 +93,9 @@ class RosOutputPublisher {
 
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(
       const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const;
+  void publishTypedHealth(const EstimatorHealthSnapshot& health,
+                          const ProcessResult& result,
+                          const builtin_interfaces::msg::Time& stamp);
   void publishDiagnostics(const EstimatorHealthSnapshot& health,
                           const builtin_interfaces::msg::Time& stamp);
 
@@ -97,11 +103,16 @@ class RosOutputPublisher {
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr registered_points_;
+  rclcpp::Publisher<navigation_contracts::msg::RegisteredScan>::SharedPtr
+      registered_scan_;
+  rclcpp::Publisher<navigation_contracts::msg::EstimatorHealth>::SharedPtr
+      typed_health_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
+  std::atomic_bool propagation_valid_{false};
   mutable std::mutex diagnostics_mutex_;
   std::optional<EstimatorHealthSnapshot> latest_diagnostic_health_;
 };

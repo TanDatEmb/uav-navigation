@@ -33,15 +33,15 @@
 #include <memory>
 #include <vector>
 #include <Eigen/Eigen>
-#include <super_utils/type_utils.hpp>
-#include <super_utils/fmt_eigen.hpp>
+#include <navigation_math/type_utils.hpp>
+#include <navigation_math/fmt_eigen.hpp>
 
 
 namespace rog_map {
-    using super_utils::Vec3f;
-    using super_utils::Vec3i;
-    using super_utils::vec_Vec3f;
-    using super_utils::vec_E;
+    using navigation_math::Vec3f;
+    using navigation_math::Vec3i;
+    using navigation_math::vec_Vec3f;
+    using navigation_math::vec_E;
 
     template <typename Scalar_t>
     static Eigen::Matrix<Scalar_t, 3, 1> quaternion_to_ypr(const Eigen::Quaternion<Scalar_t>& q_) {
@@ -61,7 +61,7 @@ namespace rog_map {
     }
 
 
-    static double computePathLength(const super_utils::vec_E<super_utils::Vec3f>& path) {
+    static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
         if (path.size() < 2) {
             return 0.0;
         }
@@ -72,9 +72,9 @@ namespace rog_map {
         return len;
     }
 
-    static super_utils::Vec3f lineBoxIntersectPoint(const super_utils::Vec3f& pt, const super_utils::Vec3f& pos,
-                                                    const super_utils::Vec3f& box_min,
-                                                    const super_utils::Vec3f& box_max) {
+    static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+                                                    const navigation_math::Vec3f& box_min,
+                                                    const navigation_math::Vec3f& box_max) {
         Eigen::Vector3d diff = pt - pos;
         Eigen::Vector3d max_tc = box_max - pos;
         Eigen::Vector3d min_tc = box_min - pos;
@@ -96,15 +96,15 @@ namespace rog_map {
         return pos + (min_t - 1e-3) * diff;
     }
 
-    static bool GetIntersection(float fDst1, float fDst2, super_utils::Vec3f P1, super_utils::Vec3f P2,
-                                super_utils::Vec3f& Hit) {
+    static bool GetIntersection(float fDst1, float fDst2, navigation_math::Vec3f P1, navigation_math::Vec3f P2,
+                                navigation_math::Vec3f& Hit) {
         if ((fDst1 * fDst2) >= 0.0f) return false;
         if (fDst1 == fDst2) return false;
         Hit = P1 + (P2 - P1) * (-fDst1 / (fDst2 - fDst1));
         return true;
     }
 
-    static bool InBox(super_utils::Vec3f Hit, super_utils::Vec3f B1, super_utils::Vec3f B2, const int Axis) {
+    static bool InBox(navigation_math::Vec3f Hit, navigation_math::Vec3f B1, navigation_math::Vec3f B2, const int Axis) {
         if (Axis == 1 && Hit.z() > B1.z() && Hit.z() < B2.z() && Hit.y() > B1.y() && Hit.y() < B2.y()) return true;
         if (Axis == 2 && Hit.z() > B1.z() && Hit.z() < B2.z() && Hit.x() > B1.x() && Hit.x() < B2.x()) return true;
         if (Axis == 3 && Hit.x() > B1.x() && Hit.x() < B2.x() && Hit.y() > B1.y() && Hit.y() < B2.y()) return true;
@@ -116,8 +116,8 @@ namespace rog_map {
     //        B2 - the largest values of X, Y, Z
     // returns true if line (L1, L2) intersects with the box (B1, B2)
     // returns intersection point in Hit
-    static bool lineIntersectBox(super_utils::Vec3f L1, super_utils::Vec3f L2, super_utils::Vec3f B1,
-                                 super_utils::Vec3f B2, super_utils::Vec3f& Hit) {
+    static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+                                 navigation_math::Vec3f B2, navigation_math::Vec3f& Hit) {
         if (L2.x() < B1.x() && L1.x() < B1.x()) return false;
         if (L2.x() > B2.x() && L1.x() > B2.x()) return false;
         if (L2.y() < B1.y() && L1.y() < B1.y()) return false;

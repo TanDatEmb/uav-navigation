@@ -1,27 +1,20 @@
 #include "px4_odometry_bridge/time_validator.hpp"
 
-#include <limits>
+#include <navigation_common/time.hpp>
 
 namespace px4_odometry_bridge {
 
 std::optional<std::int64_t> checked_microseconds_to_nanoseconds(std::uint64_t timestamp_us) {
-  constexpr auto max = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-  if (timestamp_us > max / 1000U) return std::nullopt;
-  const auto ns = timestamp_us * 1000U;
-  if (ns == 0 || ns > max) return std::nullopt;
-  return static_cast<std::int64_t>(ns);
+  return navigation_common::microsecondsToNanoseconds(timestamp_us);
 }
 
 std::optional<std::int64_t> checked_ros_time_to_nanoseconds(
     std::int32_t sec, std::uint32_t nanosec) {
-  if (sec < 0 || nanosec >= 1'000'000'000U) return std::nullopt;
-  constexpr auto max = std::numeric_limits<std::int64_t>::max();
-  const auto seconds = static_cast<std::int64_t>(sec);
-  if (seconds > (max - static_cast<std::int64_t>(nanosec)) / 1'000'000'000LL) {
-    return std::nullopt;
-  }
-  const auto result = seconds * 1'000'000'000LL + static_cast<std::int64_t>(nanosec);
-  return result > 0 ? std::optional<std::int64_t>(result) : std::nullopt;
+  builtin_interfaces::msg::Time stamp;
+  stamp.sec = sec;
+  stamp.nanosec = nanosec;
+  const auto result = navigation_common::rosTimeToNanoseconds(stamp);
+  return result && *result > 0 ? result : std::nullopt;
 }
 
 TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,

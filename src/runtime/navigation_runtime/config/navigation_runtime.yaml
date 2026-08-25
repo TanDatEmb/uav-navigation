@@ -1,0 +1,32 @@
+navigation_runtime_node:
+  ros__parameters:
+    navigation_runtime:
+      cloud_topic: /lio/registered_points
+      registered_scan_topic: /lio/mapping_observation
+      corrected_odometry_topic: /lio/odometry_corrected
+      propagated_odometry_topic: /lio/odometry_propagated
+      goal_topic: /navigation/goal
+      status_topic: /navigation/mode_status
+      command_topic: /navigation/navigation_command
+      planning_frame: lio_odom
+      body_frame_id: base_link
+      # OMNI endpoint-only visibility is certified for SITL only. A hardware
+      # deployment must provide a reviewed Mid-360 FOV/mounting certificate.
+      deployment_profile: sitl
+      hardware_visibility_certified: false
+      # Keep one mutually-exclusive planning callback at a time. On this SITL
+      # host 15 Hz contends with the 50 Hz map update and made hot replans
+      # slower; 10 Hz is the measured stable scheduling point.
+      planner_rate_hz: 10.0
+      command_rate_hz: 50.0
+      input_pair_max_skew_s: 0.1
+      input_max_age_s: 0.5
+      max_safety_suffix_anchor_error_m: 0.75
+      # Command freshness is not planner freshness: invalidate the committed
+      # main path if a solver generation does not return within this budget.
+      planner_solve_timeout_s: 1.0
+      plan_from_rest_failure_confirmation_s: 0.5
+      # A transient first solve is common while the local map initializes.
+      # Persistent failure is terminal; do not wait until a later frontier
+      # happens to become optimizable for an unreachable waypoint.
+      max_plan_from_rest_failures: 3

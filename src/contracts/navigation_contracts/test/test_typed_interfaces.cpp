@@ -1,0 +1,107 @@
+#include <gtest/gtest.h>
+
+#include <navigation_contracts/msg/estimator_health.hpp>
+#include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/registered_scan.hpp>
+#include <navigation_contracts/navigation_command_contract.hpp>
+
+TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
+  navigation_contracts::msg::RegisteredScan message;
+  message.localization_epoch = 7U;
+  message.scan_sequence = 11U;
+  message.header.frame_id = "lio_odom";
+  message.body_frame_id = "base_link";
+  message.points.header.frame_id = message.header.frame_id;
+  message.points.header.stamp = message.header.stamp;
+
+  EXPECT_EQ(message.localization_epoch, 7U);
+  EXPECT_EQ(message.scan_sequence, 11U);
+  EXPECT_EQ(message.points.header.frame_id, "lio_odom");
+  EXPECT_EQ(message.body_frame_id, "base_link");
+}
+
+TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {
+  navigation_contracts::msg::EstimatorHealth message;
+  message.state = navigation_contracts::msg::EstimatorHealth::TRACKING;
+  message.navigation_valid = true;
+  message.covariance_valid = true;
+  message.observability_valid = false;
+  message.correction_fresh = true;
+  message.propagation_valid = true;
+
+  EXPECT_EQ(message.state,
+            navigation_contracts::msg::EstimatorHealth::TRACKING);
+  EXPECT_TRUE(message.navigation_valid);
+  EXPECT_TRUE(message.covariance_valid);
+  EXPECT_FALSE(message.observability_valid);
+  EXPECT_TRUE(message.correction_fresh);
+  EXPECT_TRUE(message.propagation_valid);
+}
+
+TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
+  navigation_contracts::msg::NavigationCommand message;
+  message.localization_epoch = 3U;
+  message.goal_epoch = 5U;
+  message.request_id = 8U;
+  message.world_generation = 13U;
+  message.world_revision = 21U;
+  message.bundle_generation = 34U;
+  message.sample_id = 55U;
+  message.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  message.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+
+  EXPECT_EQ(message.role,
+            navigation_contracts::msg::NavigationCommand::ROLE_BACKUP);
+  EXPECT_EQ(message.status,
+            navigation_contracts::msg::NavigationCommand::STATUS_READY);
+  EXPECT_EQ(message.localization_epoch, 3U);
+  EXPECT_EQ(message.goal_epoch, 5U);
+  EXPECT_EQ(message.world_generation, 13U);
+  EXPECT_EQ(message.world_revision, 21U);
+  EXPECT_EQ(message.bundle_generation, 34U);
+  EXPECT_EQ(message.sample_id, 55U);
+}
+
+TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedIdentity) {
+  navigation_contracts::msg::NavigationCommand previous;
+  previous.header.frame_id = "lio_odom";
+  previous.header.stamp.sec = 10;
+  previous.valid_until.sec = 11;
+  previous.world_observation_stamp.sec = 9;
+  previous.state_source_stamp.sec = 9;
+  previous.localization_epoch = 3U;
+  previous.goal_epoch = 5U;
+  previous.world_generation = 13U;
+  previous.world_revision = 21U;
+  previous.bundle_generation = 34U;
+  previous.sample_id = 55U;
+  previous.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  previous.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  EXPECT_TRUE(navigation_contracts::commandContractValid(previous, "lio_odom"));
+
+  auto newer = previous;
+  newer.header.stamp.sec = 12;
+  newer.valid_until.sec = 13;
+  newer.world_revision = 22U;
+  newer.state_source_stamp.sec = 10;
+  newer.sample_id = 56U;
+  EXPECT_TRUE(navigation_contracts::commandWorldIdentityNonRegressing(newer, previous));
+
+  auto regressed = newer;
+  regressed.world_revision = previous.world_revision - 1U;
+  EXPECT_FALSE(navigation_contracts::commandWorldIdentityNonRegressing(regressed, previous));
+  regressed = newer;
+  regressed.header.frame_id = "map";
+  EXPECT_FALSE(navigation_contracts::commandContractValid(regressed, "lio_odom"));
+  EXPECT_TRUE(navigation_contracts::commandValidAt(previous, 10'500'000'000LL));
+  EXPECT_FALSE(navigation_contracts::commandValidAt(previous, 11'000'000'001LL));
+  EXPECT_TRUE(navigation_contracts::commandMissionIdentityMatches(
+      previous, "", 0U, 0U) == false);
+  previous.mission_id = "mission-a";
+  previous.waypoint_index = 2U;
+  previous.request_id = 8U;
+  EXPECT_TRUE(navigation_contracts::commandMissionIdentityMatches(
+      previous, "mission-a", 2U, 8U));
+  EXPECT_FALSE(navigation_contracts::commandMissionIdentityMatches(
+      previous, "mission-b", 2U, 8U));
+}

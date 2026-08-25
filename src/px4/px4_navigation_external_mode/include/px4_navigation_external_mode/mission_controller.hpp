@@ -44,7 +44,7 @@ class MissionController final {
   void onTrajectory(bool success, std::uint8_t trajectory_role,
                     std::uint8_t safety_plan_kind, double now_s,
                     double duration_s = 0.0);
-  // Native SUPER trajectories do not use the legacy PlannedTrajectory
+  // Native planner backend trajectories do not use the legacy PlannedTrajectory
   // lifecycle. Latch readiness independently of the airborne transition so a
   // callback that races activate()/update() cannot strand the mission on the
   // first waypoint.

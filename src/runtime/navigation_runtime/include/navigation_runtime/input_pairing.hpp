@@ -10,6 +10,8 @@
 #include <builtin_interfaces/msg/time.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <navigation_common/time.hpp>
+
 namespace navigation_runtime::input_pairing {
 
 template <typename Payload>
@@ -26,8 +28,7 @@ struct CoherentPair {
 };
 
 inline std::int64_t stampNanoseconds(const builtin_interfaces::msg::Time& stamp) {
-  return static_cast<std::int64_t>(stamp.sec) * 1000000000LL +
-         static_cast<std::int64_t>(stamp.nanosec);
+  return navigation_common::rosTimeToNanoseconds(stamp).value_or(0);
 }
 
 inline std::optional<std::size_t> nearestOdometryIndex(

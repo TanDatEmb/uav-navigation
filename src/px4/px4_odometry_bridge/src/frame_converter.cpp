@@ -1,6 +1,6 @@
 #include "px4_odometry_bridge/frame_converter.hpp"
 
-#include <coordinate_conventions/frame_conventions.hpp>
+#include <navigation_common/frame_conventions.hpp>
 
 #include <cmath>
 
@@ -23,13 +23,11 @@ Eigen::Vector3d rotate_variance(const Eigen::Matrix3d &rotation,
 }  // namespace
 
 const Eigen::Matrix3d &FrameConverter::c_enu_ned() {
-  return coordinate_conventions::c_enu_ned();
+  return navigation_common::c_enu_ned();
 }
 
 const Eigen::Matrix3d &FrameConverter::c_flu_frd() {
-  // ROS base_link is FLU; PX4 body fields are FRD.
-  static const Eigen::Matrix3d matrix = Eigen::DiagonalMatrix<double, 3>(1.0, -1.0, -1.0);
-  return matrix;
+  return navigation_common::c_flu_frd();
 }
 
 ConversionResult FrameConverter::convert(const Px4OdometrySample &sample) {

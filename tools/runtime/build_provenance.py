@@ -15,9 +15,9 @@ SCHEMA_VERSION = 1
 MANIFEST_NAME = ".uav_navigation_build_manifest.json"
 CRITICAL_ARTIFACTS = (
     "fast_lio_ros/lib/fast_lio_ros/fast_lio_node",
-    "navigation_runtime/lib/navigation_runtime/super_navigation_node",
-    "navigation_runtime/lib/libnavigation_runtime_node.a",
-    "super_planner_vendor/lib/libsuper_planner_vendor.a",
+    "navigation_runtime/lib/navigation_runtime/navigation_runtime_node",
+    "navigation_runtime/lib/libnavigation_runtime_core.a",
+    "navigation_planning_backend/lib/libnavigation_planning_backend.a",
     "px4_navigation_external_mode/lib/px4_navigation_external_mode/px4_navigation_external_mode_node",
     "px4_navigation_external_mode/lib/libpx4_navigation_external_mode_contract.a",
     "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_node",
@@ -32,13 +32,15 @@ RUNTIME_SCRIPTS = (
 )
 PRODUCT_RUNTIME_PREFIXES = (
     "livox_ros_driver2",
-    "mars_quadrotor_msgs",
-    "navigation_interfaces",
+    "navigation_common",
+    "navigation_contracts",
+    "navigation_execution",
     "px4_msgs",
     "px4_ros2_cpp",
     "fast_lio_ros",
     "navigation_runtime",
-    "super_planner_vendor",
+    "navigation_planning",
+    "navigation_planning_backend",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
     "navigation_bringup",

@@ -7,16 +7,16 @@ namespace navigation_runtime {
 namespace {
 
 TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::SUCCESS, true, false, true),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::SUCCESS, true, false, true),
             PlannerResultDisposition::CommandReady);
-  EXPECT_EQ(classifyPlannerResult(super_utils::NO_NEED, false, true, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::NO_NEED, false, true, false),
             PlannerResultDisposition::ValidateRetainedCommand);
-  EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, false, true, true),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::FINISH, false, true, true),
             PlannerResultDisposition::CommandReady);
 }
 
 TEST(PlannerFsm, NoNeedWithoutCommittedCommandFailsClosed) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::NO_NEED, false, false, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::NO_NEED, false, false, false),
             PlannerResultDisposition::FailClosed);
 }
 
@@ -28,9 +28,9 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
 }
 
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::SUCCESS, false, true, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::SUCCESS, false, true, false),
             PlannerResultDisposition::FailClosed);
-  EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, true, false, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::FINISH, true, false, false),
             PlannerResultDisposition::FailClosed);
 }
 
@@ -47,23 +47,23 @@ TEST(PlannerFsm, ExecutionAgeUsesDeclaredSolveStartInstant) {
 }
 
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::NEW_TRAJ, false, true, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::NEW_TRAJ, false, true, false),
             PlannerResultDisposition::RestartFromRest);
 }
 
 TEST(PlannerFsm, RetriesTransientPlannerFailures) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, true, false, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::FAILED, true, false, false),
             PlannerResultDisposition::RetryFromRest);
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, true, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::FAILED, false, true, false),
             PlannerResultDisposition::RetainCommittedCommand);
 }
 
 TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, false, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::FAILED, false, false, false),
             PlannerResultDisposition::FailClosed);
-  EXPECT_EQ(classifyPlannerResult(super_utils::EMER, false, true, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::EMER, false, true, false),
             PlannerResultDisposition::FailClosed);
-  EXPECT_EQ(classifyPlannerResult(super_utils::OPT_FAILED, true, false, false),
+  EXPECT_EQ(classifyPlannerResult(navigation_planning_backend::OPT_FAILED, true, false, false),
             PlannerResultDisposition::FailClosed);
 }
 
@@ -138,12 +138,12 @@ TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
 
 TEST(PlannerFsm, RepeatedBackupFailuresRetainModeBeforeAnchorInvalidation) {
   // This models the product transition sequence observed in the Phase C
-  // trace: SUPER returns FAILED after backup generation, so the current
+  // trace: planner backend returns FAILED after backup generation, so the current
   // committed generation is not replaced while its certified suffix remains
   // usable. Once the suffix anchor exceeds the hard bound, validation fails
   // closed rather than resurrecting an older bundle or synthesizing a MAIN.
   // The generation value here is an explicit retained-state model; this test
-  // does not claim to invoke SuperPlanner::ReplanOnce or inspect its private
+  // does not claim to invoke Planner::ReplanOnce or inspect its private
   // CmdTraj snapshot.
   constexpr std::uint64_t committed_generation = 8U;
   constexpr double total_duration_s = 2.0;
@@ -151,7 +151,7 @@ TEST(PlannerFsm, RepeatedBackupFailuresRetainModeBeforeAnchorInvalidation) {
 
   for (int failure = 0; failure < 3; ++failure) {
     EXPECT_EQ(classifyPlannerResult(
-                  super_utils::FAILED, false, true, false),
+                  navigation_planning_backend::FAILED, false, true, false),
               PlannerResultDisposition::RetainCommittedCommand);
     EXPECT_TRUE(committedSafetySuffixIsUsable(
         true, elapsed_s + 0.1 * failure, total_duration_s,

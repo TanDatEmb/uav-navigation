@@ -34,7 +34,7 @@
 
 
 namespace rog_map {
-    using super_utils::Pose;
+    using navigation_math::Pose;
 
     enum class MapUpdateOutcome : std::uint8_t {
         UPDATED = 0,

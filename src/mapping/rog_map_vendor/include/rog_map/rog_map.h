@@ -28,12 +28,12 @@
 #include <rog_map/planning_grid_export.hpp>
 
 #include <rog_map/rog_map_core/common_lib.hpp>
-#include <super_utils/type_utils.hpp>
+#include <navigation_math/type_utils.hpp>
 
 namespace rog_map {
 using namespace std;
-using super_utils::RobotState;
-using super_utils::vec_Vec3i;
+using navigation_math::RobotState;
+using navigation_math::vec_Vec3i;
 
 typedef pcl::PointXYZI PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZIN;

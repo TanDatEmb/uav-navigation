@@ -15,13 +15,13 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "config_file",
                 description=(
-                    "ROS parameter file containing super_navigation_node and "
+                    "ROS parameter file containing navigation_runtime_node and "
                     "px4_navigation_external_mode sections."
                 ),
             ),
             DeclareLaunchArgument(
                 "mission_file",
-                description="Mission YAML shared by SUPER and Avoidance Mission.",
+                description="Mission YAML shared by planner backend and Avoidance Mission.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             IncludeLaunchDescription(

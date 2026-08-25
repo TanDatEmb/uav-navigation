@@ -50,7 +50,7 @@ fast_lio:
         absolute_map_point_guard: 250000
     output:
       # FAST-LIO already deskews, filters, and publishes this cloud in the
-      # odometry/world frame for the SUPER ROG-Map input boundary.
+      # odometry/world frame for the planner backend ROG-Map input boundary.
       publish_registered_points: true
     propagated_odometry:
       enabled: true

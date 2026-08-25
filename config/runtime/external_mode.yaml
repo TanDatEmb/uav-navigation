@@ -1,7 +1,7 @@
 px4_navigation_external_mode:
   ros__parameters:
     navigation:
-      super_command_topic: /navigation/super_command
+      navigation_command_topic: /navigation/navigation_command
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
       mission_complete_topic: /navigation/mission_complete

@@ -307,7 +307,7 @@ def _payload_records(samples: Iterable[dict[str, Any]]) -> Iterable[tuple[dict[s
         if isinstance(statuses, list):
             for status in statuses:
                 if not isinstance(status, dict) or status.get("name") not in {
-                    "navigation_planning/planner", "super_navigation/super_planner"
+                    "navigation_planning/planner", "navigation_runtime/planner"
                 }:
                     continue
                 values = status.get("values")

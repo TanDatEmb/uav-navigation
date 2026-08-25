@@ -7,9 +7,10 @@
 #include <optional>
 #include <string>
 
-#include <navigation_interfaces/msg/navigation_goal.hpp>
-#include <navigation_interfaces/msg/navigation_mode_status.hpp>
-#include <mars_quadrotor_msgs/msg/position_command.hpp>
+#include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_contracts/msg/navigation_mode_status.hpp>
+#include <navigation_contracts/msg/estimator_health.hpp>
+#include <navigation_contracts/msg/navigation_command.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <px4_ros2/components/mode.hpp>
@@ -39,11 +40,13 @@ class NavigationMode final : public px4_ros2::ModeBase {
 
  private:
   rclcpp::Node& node_;
-  void onSuperCommand(
-      const mars_quadrotor_msgs::msg::PositionCommand::ConstSharedPtr& message);
+  void onNavigationCommand(
+      const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message);
   void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
   void onLioDiagnostics(
       const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message);
+  void onEstimatorHealth(
+      const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
   void updateMission();
   void handleMissionEvent(const MissionControllerEvent& event, double now_s);
   void safetyStopNavigation(const char* reason);
@@ -54,19 +57,21 @@ class NavigationMode final : public px4_ros2::ModeBase {
 
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
-  rclcpp::Subscription<mars_quadrotor_msgs::msg::PositionCommand>::SharedPtr
-      super_command_subscription_;
+  rclcpp::Subscription<navigation_contracts::msg::NavigationCommand>::SharedPtr
+      navigation_command_subscription_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       lio_diagnostics_subscription_;
-  rclcpp::Publisher<navigation_interfaces::msg::NavigationGoal>::SharedPtr goal_publisher_;
-  rclcpp::Publisher<navigation_interfaces::msg::NavigationModeStatus>::SharedPtr
+  rclcpp::Subscription<navigation_contracts::msg::EstimatorHealth>::SharedPtr
+      estimator_health_subscription_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_publisher_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mission_complete_publisher_;
   rclcpp::TimerBase::SharedPtr mission_timer_;
   std::mutex trajectory_mutex_;
   rclcpp::Time activation_time_;
   rclcpp::Time last_setpoint_time_;
-  std::string super_command_topic_;
+  std::string navigation_command_topic_;
   std::string goal_topic_;
   std::string planning_frame_;
   double stale_after_s_{0.5};
@@ -79,8 +84,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
   // short, bounded burst; a sustained invalid state still fails closed.
   double lio_health_grace_s_{1.0};
   std::optional<nav_msgs::msg::Odometry> odometry_;
-  std::optional<mars_quadrotor_msgs::msg::PositionCommand> super_command_;
+  std::optional<navigation_contracts::msg::NavigationCommand> navigation_command_;
   bool lio_health_valid_{false};
+  bool typed_health_seen_{false};
+  std::uint64_t lio_localization_epoch_{0U};
   std::int64_t last_lio_diagnostics_ns_{0};
   std::int64_t lio_unhealthy_since_ns_{0};
   std::optional<Mission> mission_;
@@ -90,10 +97,12 @@ class NavigationMode final : public px4_ros2::ModeBase {
   bool mode_active_{false};
   bool mission_terminal_{false};
   bool handover_requested_{false};
+  std::uint32_t last_completed_waypoint_index_{0U};
+  std::uint64_t last_completed_request_id_{0U};
   std::optional<Eigen::Vector3d> completion_position_;
   std::optional<Eigen::Vector3d> safety_hold_position_;
   bool mission_complete_published_{false};
-  std::uint8_t last_status_state_{navigation_interfaces::msg::NavigationModeStatus::PAUSED};
+  std::uint8_t last_status_state_{navigation_contracts::msg::NavigationModeStatus::PAUSED};
   std::uint64_t odometry_callback_count_{0U};
   std::uint64_t trajectory_received_count_{0U};
   std::uint64_t trajectory_accepted_count_{0U};
@@ -108,7 +117,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t last_setpoint_update_ns_{0};
   std::int64_t maximum_setpoint_callback_gap_us_{0};
   std::int64_t last_metrics_log_ns_{0};
-  std::int64_t last_super_debug_log_ns_{0};
+  std::int64_t last_planner_debug_log_ns_{0};
   double last_state_age_s_{-1.0};
   Eigen::Vector3d last_velocity_command_enu_{Eigen::Vector3d::Zero()};
   std::uint64_t last_forward_guard_count_{0U};

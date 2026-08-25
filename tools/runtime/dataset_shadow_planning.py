@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise one bounded SUPER goal during recorded-dataset replay.
+"""Exercise one bounded planner backend goal during recorded-dataset replay.
 
 The recorded vehicle does not execute the generated command.  This helper is
 therefore a planner/runtime benchmark only, never a controller or mission
@@ -71,8 +71,7 @@ def main() -> int:
 
     # Keep unit tests independent of ROS installation/import state.
     import rclpy
-    from mars_quadrotor_msgs.msg import PositionCommand
-    from navigation_interfaces.msg import NavigationGoal, NavigationModeStatus
+    from navigation_contracts.msg import NavigationCommand, NavigationGoal, NavigationModeStatus
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -128,9 +127,9 @@ def main() -> int:
         nonlocal ready_started_stamp_ns, ready_command_count, emergency_command_count
         if goal_message is None:
             return
-        if int(message.trajectory_status) == int(PositionCommand.TRAJECTORY_STATUS_READY):
+        if int(message.status) == int(NavigationCommand.STATUS_READY):
             ready_command_count += 1
-            generation = int(message.trajectory_generation)
+            generation = int(message.bundle_generation)
             if generation > 0:
                 ready_generations.add(generation)
             stamp_ns = int(message.header.stamp.sec) * 1_000_000_000 + int(
@@ -138,11 +137,11 @@ def main() -> int:
             )
             if ready_started_stamp_ns is None and stamp_ns > 0:
                 ready_started_stamp_ns = stamp_ns
-        elif int(message.trajectory_status) == int(PositionCommand.TRAJECTORY_STATUS_EMER):
+        elif int(message.status) == int(NavigationCommand.STATUS_REJECTED):
             emergency_command_count += 1
 
     node.create_subscription(Odometry, "/lio/odometry_propagated", on_odometry, best_effort)
-    node.create_subscription(PositionCommand, "/navigation/super_command", on_command, best_effort)
+    node.create_subscription(NavigationCommand, "/navigation/navigation_command", on_command, best_effort)
 
     def publish_teardown(odometry: Any) -> None:
         if goal_message is None:
@@ -235,7 +234,7 @@ def main() -> int:
             if ready_started_stamp_ns is None:
                 if emergency_command_count > 0:
                     result["failure"] = (
-                        "SUPER emitted EMER before committing a READY shadow command"
+                        "planner backend emitted EMER before committing a READY shadow command"
                     )
                     publish_teardown(latest_odom)
                     result["teardown"] = (
@@ -247,7 +246,7 @@ def main() -> int:
                     last_goal_publish_wall = time.monotonic()
                 continue
             if emergency_command_count > 0:
-                result["failure"] = "SUPER emitted EMER during shadow planning window"
+                result["failure"] = "planner backend emitted EMER during shadow planning window"
                 publish_teardown(latest_odom)
                 result["teardown"] = (
                     "FAILED/OPERATOR_TAKEOVER synthetic shadow-goal cancellation"

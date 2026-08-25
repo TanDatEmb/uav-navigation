@@ -11,21 +11,21 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "config_file",
                 default_value=PathJoinSubstitution(
-                    [FindPackageShare("navigation_runtime"), "config", "super_navigation.yaml"]
+                    [FindPackageShare("navigation_runtime"), "config", "navigation_runtime.yaml"]
                 ),
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("mission_file", default_value=""),
             Node(
                 package="navigation_runtime",
-                executable="super_navigation_node",
-                name="super_navigation_node",
+                executable="navigation_runtime_node",
+                name="navigation_runtime_node",
                 output="screen",
                     parameters=[
                         LaunchConfiguration("config_file"),
                         {
                             "use_sim_time": LaunchConfiguration("use_sim_time"),
-                            "super_navigation.mission_file": LaunchConfiguration("mission_file"),
+                            "navigation_runtime.mission_file": LaunchConfiguration("mission_file"),
                         },
                 ],
             ),

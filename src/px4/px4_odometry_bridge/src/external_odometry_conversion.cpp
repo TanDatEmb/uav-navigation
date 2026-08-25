@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include <Eigen/Eigenvalues>
+#include <navigation_common/frame_conventions.hpp>
+#include <navigation_common/time.hpp>
 
 namespace px4_odometry_bridge {
 namespace {
@@ -49,19 +51,11 @@ std::optional<Eigen::Matrix3d> validated_block(
 }  // namespace
 
 const Eigen::Matrix3d& C_ned_from_lio_enu() noexcept {
-  // Exact ENU -> NED basis conversion.  Do not replace this with a yaw-only
-  // rotation: the vertical axis also changes sign.
-  static const Eigen::Matrix3d matrix =
-      (Eigen::Matrix3d() << 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0)
-          .finished();
-  return matrix;
+  return navigation_common::c_enu_ned();
 }
 
 const Eigen::Matrix3d& C_body_frd_from_body_flu() noexcept {
-  static const Eigen::Matrix3d matrix =
-      (Eigen::Matrix3d() << 1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0)
-          .finished();
-  return matrix;
+  return navigation_common::c_flu_frd();
 }
 
 std::optional<Eigen::Vector3d> transformed_covariance_diagonal(
@@ -117,10 +111,8 @@ std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
       message.child_frame_id != "base_link") {
     return std::nullopt;
   }
-  const std::int64_t timestamp_ns =
-      static_cast<std::int64_t>(message.header.stamp.sec) * 1'000'000'000LL +
-      static_cast<std::int64_t>(message.header.stamp.nanosec);
-  if (timestamp_ns <= 0) {
+  const auto timestamp = navigation_common::rosTimeToNanoseconds(message.header.stamp);
+  if (!timestamp || *timestamp <= 0) {
     return std::nullopt;
   }
   const Eigen::Quaterniond orientation_ros(
@@ -149,7 +141,7 @@ std::optional<ExternalOdometryFrame> convert_ros_lio_odometry(
   }
 
   ExternalOdometryFrame result;
-  result.timestamp_ns = timestamp_ns;
+  result.timestamp_ns = *timestamp;
   result.position_ned = c_ned * Eigen::Vector3d(
       message.pose.pose.position.x, message.pose.pose.position.y,
       message.pose.pose.position.z);

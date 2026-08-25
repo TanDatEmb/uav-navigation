@@ -24,7 +24,7 @@ runtime:
     startup_s: 90
     lio_tracking_s: 90
     external_odometry_s: 45
-    # SUPER's upstream A* constructor allocates its fixed grid before the
+    # planner backend's upstream A* constructor allocates its fixed grid before the
     # runtime can publish diagnostics.  Keep this gate separate from the
     # PX4-odometry freshness gate so a slow, valid startup is not mistaken for
     # an LIO or external-odometry failure.

@@ -75,15 +75,15 @@ fail closed and is not a mission `PASS`.
   -> /lio/odometry_corrected
   -> /lio/odometry_propagated
   -> /lio/registered_points
-  -> super_navigation_node
-  -> /navigation/super_command
+  -> navigation_runtime_node
+  -> /navigation/navigation_command
   -> px4_navigation_external_mode
   -> /fmu/in/trajectory_setpoint
 ```
 
 The planner node also consumes `/navigation/goal` and
 `/navigation/mode_status`, and publishes `/navigation/diagnostics`. ROG-Map
-and SUPER are constructed directly in `super_navigation_node`; no separate
+and planner backend are constructed directly in `navigation_runtime_node`; no separate
 mapping process or snapshot/bundle transport exists.
 
 ## Topics and frames
@@ -94,12 +94,12 @@ mapping process or snapshot/bundle transport exists.
 | sensor | `/lidar/imu` | `sensor_msgs/msg/Imu` | IMU input |
 | LIO | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | corrected estimator output |
 | LIO/planner | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | active navigation state |
-| planner input | `/lio/registered_points` | `sensor_msgs/msg/PointCloud2` | current SUPER cloud input |
+| planner input | `/lio/registered_points` | `sensor_msgs/msg/PointCloud2` | current planner backend cloud input |
 | LIO health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | estimator state/health |
-| navigation goal | `/navigation/goal` | `navigation_interfaces/msg/NavigationGoal` | waypoint request |
-| navigation status | `/navigation/mode_status` | `navigation_interfaces/msg/NavigationModeStatus` | mission/mode evidence |
-| planner output | `/navigation/super_command` | `mars_quadrotor_msgs/msg/PositionCommand` | PVA command stream |
-| planner health | `/navigation/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | SUPER counters/status |
+| navigation goal | `/navigation/goal` | `navigation_contracts/msg/NavigationGoal` | waypoint request |
+| navigation status | `/navigation/mode_status` | `navigation_contracts/msg/NavigationModeStatus` | mission/mode evidence |
+| planner output | `/navigation/navigation_command` | `navigation_contracts/msg/NavigationCommand` | PVA command stream plus epoch/world/bundle provenance |
+| planner health | `/navigation/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | planner backend counters/status |
 | mission event | `/navigation/mission_complete` | `std_msgs/msg/Bool` | completion notification |
 | PX4 input | `/fmu/in/vehicle_visual_odometry` | `px4_msgs/msg/VehicleOdometry` | simulation EV input |
 | PX4 setpoint | `/fmu/in/trajectory_setpoint` | `px4_msgs/msg/TrajectorySetpoint` | PX4 boundary |
@@ -160,7 +160,7 @@ collision; it must not label the scenario as a successful mission.
 Useful report fields include stream counts/rates, source timestamp gaps,
 freshness and validity failures, waypoint indices, mission completion, truth
 clearance/collisions, PX4 failsafe state, planner counters, and timing
-distributions when diagnostics provide them. Current SUPER logs/diagnostics
+distributions when diagnostics provide them. Current planner backend logs/diagnostics
 can provide input conversion, ROG-Map update, planner solve, command publish,
 input-lock, planner-cycle, and end-to-end samples. Missing timing fields are
 `NOT_AVAILABLE`, never zero-filled.
@@ -171,7 +171,7 @@ input-lock, planner-cycle, and end-to-end samples. Missing timing fields are
 make status
 ros2 topic echo /lio/diagnostics
 ros2 topic echo /navigation/diagnostics
-ros2 topic echo /navigation/super_command
+ros2 topic echo /navigation/navigation_command
 ros2 topic echo /navigation/mission_complete
 ros2 topic echo /fmu/in/trajectory_setpoint
 ```

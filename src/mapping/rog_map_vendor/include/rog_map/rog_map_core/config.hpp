@@ -24,7 +24,7 @@
 #pragma once
 
 #include <rog_map/rog_map_core/common_lib.hpp>
-#include <super_utils/yaml_loader.hpp>
+#include <navigation_math/yaml_loader.hpp>
 
 #ifndef ORIGIN_AT_CORNER
 #ifndef ORIGIN_AT_CENTER

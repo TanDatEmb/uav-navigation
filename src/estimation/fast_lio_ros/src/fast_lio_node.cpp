@@ -658,7 +658,10 @@ void FastLioNode::publishAvailableResults() {
       std::lock_guard lock(input_mutex_);
       augmented.diagnostics.sensor = ingress_diagnostics_;
     }
-    output_publisher_.publish(augmented);
+    const auto scan_sequence = augmented.hasCorrectedOutput()
+                                    ? ++correction_sequence_
+                                    : correction_sequence_;
+    output_publisher_.publish(augmented, scan_sequence);
     if (augmented.diagnostics.initial_prior.applied) {
       closeInitialStatePriorStream();
     }
@@ -668,9 +671,6 @@ void FastLioNode::publishAvailableResults() {
     }
     if (propagated_odometry_worker_) {
       const bool corrected = augmented.hasCorrectedOutput();
-      if (corrected) {
-        ++correction_sequence_;
-      }
       EstimatorStateUpdate update;
       update.status = augmented.status_after;
       update.navigation_valid = augmented.diagnostics.navigation_valid;

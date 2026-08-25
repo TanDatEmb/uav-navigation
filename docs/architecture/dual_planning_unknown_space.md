@@ -1,13 +1,13 @@
 # Unknown-space and backup planning status
 
-This document records the current SUPER configuration. It is not a proposal
+This document records the current planner backend configuration. It is not a proposal
 for a missing mapping/planning package.
 
 ## Current behavior
 
-`navigation_runtime` constructs one SUPER planner with backup trajectory
+`navigation_runtime` constructs one planner backend planner with backup trajectory
 generation enabled (`backup_traj_en: true`). The runtime keeps the main and
-backup trajectory ownership inside SUPER and performs the final command/safety
+backup trajectory ownership inside planner backend and performs the final command/safety
 checks before publishing. `frontend_in_known_free`, map visualization, and
 debug visualization are disabled in the canonical runtime configuration.
 

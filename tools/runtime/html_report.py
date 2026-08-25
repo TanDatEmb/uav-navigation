@@ -273,7 +273,7 @@ def _samples(session: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
                     for status in payload.get("statuses", []):
                         if isinstance(status, dict) and status.get("name") in {
                             "navigation_planning/planner",
-                            "super_navigation/super_planner",
+                            "navigation_runtime/planner",
                         }:
                             values = status.get("values", {})
                             if isinstance(values, dict):
@@ -524,7 +524,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
     timing: list[dict[str, Any]] = []
     health: list[dict[str, Any]] = []
     for name, entry in diagnostics.items():
-        component = "LIO" if name.startswith("fast_lio/") else "Planner / ROG-Map" if name.startswith("super_navigation/") else name
+        component = "LIO" if name.startswith("fast_lio/") else "Planner / ROG-Map" if name.startswith("navigation_runtime/") else name
         for field, values in sorted(entry["fields"].items()):
             unit = None
             converted = list(values)
@@ -612,8 +612,9 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                 "count": len(records),
             })
 
-    # PositionCommand carries the planner's selected role at every accepted
-    # PVA sample. Convert the event stream into observed time bands for chart
+    # NavigationCommand carries the planner's selected role at every accepted
+    # PVA sample. The artifact schema retains trajectory_* keys for report
+    # compatibility; convert the event stream into observed time bands for chart
     # shading; a missing BACKUP flag remains missing evidence, never a guessed
     # safety interval.
     state_intervals: list[dict[str, Any]] = []

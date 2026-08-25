@@ -181,7 +181,7 @@ class HtmlReportEvaluationTest(unittest.TestCase):
             "timing": [
                 {
                     "component": "Planner / ROG-Map",
-                    "source": "super_navigation/super_planner",
+                    "source": "navigation_runtime/planner",
                     "metric": "planning_latency_ms",
                     "unit": "ms",
                     "count": 3,
@@ -191,7 +191,7 @@ class HtmlReportEvaluationTest(unittest.TestCase):
                 },
                 {
                     "component": "Planner / ROG-Map",
-                    "source": "super_navigation/super_planner",
+                    "source": "navigation_runtime/planner",
                     "metric": "observation_pair_wait_us",
                     "unit": "us",
                     "count": 3,
@@ -246,8 +246,8 @@ class HtmlReportEvaluationTest(unittest.TestCase):
     def test_spatial_envelopes_are_loaded_from_session_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             session = Path(directory)
-            (session / "super_planner.yaml").write_text(
-                """super_planner:
+            (session / "planner.yaml").write_text(
+                """planner:
   safe_corridor_line_nominal_length: 11.0
   safe_corridor_line_max_length: 19.0
   sensing_horizon: 17.0
@@ -541,7 +541,7 @@ rog_map:
         self.assertEqual(result["gates"]["runtime_contract"], "N/A")
         self.assertEqual(result["overall"], "INCOMPLETE")
 
-    def test_current_super_navigation_diagnostics_are_parsed_without_fake_planner_fields(self) -> None:
+    def test_current_navigation_runtime_diagnostics_are_parsed_without_fake_planner_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             session = Path(directory)
             (session / "samples.jsonl").write_text(
@@ -552,7 +552,7 @@ rog_map:
                     "payload": {
                         "stamp_ns": 1_000_000_000,
                         "statuses": [{
-                            "name": "super_navigation/super_planner",
+                            "name": "navigation_runtime/planner",
                             "values": {"cycle_count": 4},
                         }],
                     },
