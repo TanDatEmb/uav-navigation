@@ -426,6 +426,8 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("observation.corrected_odometry.pose.pose", mapping_actor)
         self.assertIn("map_->updateMap(*observation.cloud, map_pose)", mapping_actor)
         self.assertIn("mapping_worker_->start()", constructor)
+        self.assertIn("propagated_state_callback_group_", constructor)
+        self.assertIn("propagated_state_options.callback_group", constructor)
         self.assertNotIn("updateMap(", cycle)
         self.assertNotIn("map_->", cycle)
         self.assertIn("if (!propagated_state) return;", cycle)

@@ -1811,3 +1811,24 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Review condition: retain the post-solve reload and add an executor/transport
   starvation reproduction before adjusting any runtime scheduling or QoS
   policy. Do not claim this local correction closes the SITL regression.
+
+### 2026-08-26 - Isolate propagated-state ingress from bulk sensor callbacks
+
+- Owner: `navigation_runtime` ROS callback ownership. Scope: assign the
+  propagated-odometry subscription to a dedicated reentrant callback group;
+  cloud, registered-scan, corrected-odometry and mission callbacks keep their
+  existing ownership. The node still uses the existing executor and QoS.
+- Safety impact: reduces the chance that synchronous point-cloud decoding or a
+  bulk sensor callback prevents the execution-state lease from being refreshed.
+  This is a scheduling isolation change only: no freshness limit, queue depth,
+  QoS reliability, estimator policy or safety fallback was relaxed. If the
+  producer/bridge still stops delivering samples, the steady receive-age gate
+  continues to fail closed.
+- Evidence: the two advisors identified the default subscription group and
+  synchronous registered-scan/cloud decode as a concrete executor-starvation
+  risk. Release `navigation_runtime` build passed; its 8/8 CTest executables
+  and all 168 runtime Python contract tests passed. A fresh SITL run is required
+  to distinguish executor contention from bridge/clock/propagator gaps.
+- Review condition: retain only with repeated representative SITL evidence
+  showing callback arrival and receive-age distributions; do not increase
+  executor threads or alter QoS as a substitute for that evidence.

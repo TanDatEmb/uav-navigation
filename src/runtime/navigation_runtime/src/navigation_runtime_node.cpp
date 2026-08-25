@@ -343,6 +343,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   mapping_worker_->start();
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+  propagated_state_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  rclcpp::SubscriptionOptions propagated_state_options;
+  propagated_state_options.callback_group = propagated_state_callback_group_;
   cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       cloud_topic_, qos, std::bind(&NavigationRuntimeNode::onCloud, this, std::placeholders::_1));
   registered_scan_subscription_ = create_subscription<
@@ -358,7 +361,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       std::bind(&NavigationRuntimeNode::onCorrectedOdometry, this, std::placeholders::_1));
   propagated_odometry_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
       propagated_odometry_topic_, qos,
-      std::bind(&NavigationRuntimeNode::onPropagatedOdometry, this, std::placeholders::_1));
+      std::bind(&NavigationRuntimeNode::onPropagatedOdometry, this, std::placeholders::_1),
+      propagated_state_options);
   goal_subscription_ = create_subscription<navigation_contracts::msg::NavigationGoal>(
       goal_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
       std::bind(&NavigationRuntimeNode::onGoal, this, std::placeholders::_1));

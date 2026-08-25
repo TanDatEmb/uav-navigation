@@ -191,6 +191,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   rclcpp::TimerBase::SharedPtr command_timer_;
   rclcpp::CallbackGroup::SharedPtr planning_callback_group_;
   rclcpp::CallbackGroup::SharedPtr command_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr propagated_state_callback_group_;
 
   std::mutex input_mutex_;
   std::mutex localization_transition_mutex_;
