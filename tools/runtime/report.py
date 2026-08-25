@@ -1321,16 +1321,25 @@ def _planner_reference_residuals(
 
     This is diagnostic-only.  It deliberately does not classify or reject a
     mission: the planner state is in the LIO planning frame while PX4 reports
-    NED, so both streams are first origin-aligned and matched by the exact
-    execution stamp.  Keeping candidate-vs-PX4 and execution-vs-PX4 separate
-    prevents a frame/fusion disagreement from being mislabelled as a planner
-    timing failure.
+    NED.  Execution state is matched at ``execution_stamp_ns``; a candidate is
+    matched at its own ``candidate_start_wall_time_s``.  Each comparison has
+    its own origin and PX4 reset segment, so a permanent initial offset or a
+    reset cannot be mistaken for planner drift.
     """
     px4 = _series(samples, "px4_odometry")
     timestamped_px4: list[tuple[int, dict[str, Any]]] = []
+    invalid_pose_frame_count = 0
     for item in px4:
         timestamp = _sample_time(item)
-        position = _vector(item.get("payload", {}).get("position"))
+        payload = item.get("payload", {})
+        position = _vector(payload.get("position"))
+        try:
+            pose_frame = int(payload.get("pose_frame"))
+        except (TypeError, ValueError):
+            pose_frame = -1
+        if pose_frame != 1:
+            invalid_pose_frame_count += 1
+            continue
         if timestamp <= 0 or position is None:
             continue
         timestamped_px4.append((timestamp, item))
@@ -1345,66 +1354,131 @@ def _planner_reference_residuals(
         and _vector(record.get("candidate_start_position")) is not None
         and _vector(record.get("planning_state_position")) is not None
     ]
-    matched: list[tuple[dict[str, Any], tuple[float, float, float], float]] = []
     tolerance_ns = int(max(0.0, tolerance_ms) * 1e6)
-    for record in eligible:
-        target = int(record["execution_stamp_ns"])
-        if not px4_times:
-            continue
-        index = bisect_left(px4_times, target)
+
+    def match_at(target_ns: int) -> tuple[tuple[float, float, float], float, Any] | None:
+        if target_ns <= 0 or not px4_times:
+            return None
+        index = bisect_left(px4_times, target_ns)
         candidates = timestamped_px4[max(0, index - 1):min(len(timestamped_px4), index + 1)]
         if not candidates:
-            continue
-        px4_time, px4_item = min(candidates, key=lambda pair: abs(pair[0] - target))
-        delta_ns = target - px4_time
+            return None
+        px4_time, px4_item = min(candidates, key=lambda pair: abs(pair[0] - target_ns))
+        delta_ns = target_ns - px4_time
         if abs(delta_ns) > tolerance_ns:
-            continue
+            return None
         px4_position_ned = _vector(px4_item.get("payload", {}).get("position"))
         if px4_position_ned is None:
-            continue
-        matched.append((record, _matrix_vector(_C_NED_FROM_ENU, px4_position_ned), delta_ns / 1e6))
+            return None
+        return (
+            _matrix_vector(_C_NED_FROM_ENU, px4_position_ned),
+            delta_ns / 1e6,
+            px4_item.get("payload", {}).get("reset_counter"),
+        )
 
-    if not matched:
+    execution_matches: list[tuple[dict[str, Any], tuple[float, float, float], float, Any]] = []
+    candidate_matches: list[tuple[dict[str, Any], tuple[float, float, float], float, Any]] = []
+    for record in eligible:
+        execution_match = match_at(int(record["execution_stamp_ns"]))
+        if execution_match is not None:
+            execution_matches.append((record, *execution_match))
+        candidate_wall_time = record.get("candidate_start_wall_time_s")
+        try:
+            candidate_time_ns = int(float(candidate_wall_time) * 1e9)
+        except (TypeError, ValueError, OverflowError):
+            candidate_time_ns = 0
+        if candidate_time_ns > 0:
+            candidate_match = match_at(candidate_time_ns)
+            if candidate_match is not None:
+                candidate_matches.append((record, *candidate_match))
+
+    if not execution_matches and not candidate_matches:
         return {
             "available": False,
             "source": "planner commit trace vs px4/estimator_odometry",
-            "timestamp_alignment": "absolute execution_stamp_ns vs PX4 timestamp_sample",
+            "timestamp_alignment": "execution_stamp_ns and candidate_start_wall_time_s vs PX4 timestamp_sample",
             "maximum_synchronization_tolerance_ms": tolerance_ms,
             "eligible_commit_count": len(eligible),
-            "matched_commit_count": 0,
+            "execution_matched_commit_count": 0,
+            "candidate_matched_commit_count": 0,
+            "invalid_pose_frame_count": invalid_pose_frame_count,
         }
 
-    first_record, first_px4, _ = matched[0]
-    first_execution = _vector(first_record["planning_state_position"])
-    assert first_execution is not None
-    candidate_errors: list[tuple[float, float, float]] = []
-    execution_errors: list[tuple[float, float, float]] = []
+    def relative_errors(
+        matches: list[tuple[dict[str, Any], tuple[float, float, float], float, Any]],
+        state_key: str,
+    ) -> tuple[list[tuple[float, float, float]], list[float], int]:
+        errors: list[tuple[float, float, float]] = []
+        deltas: list[float] = []
+        reset_segments = 0
+        origin_state: tuple[float, float, float] | None = None
+        origin_px4: tuple[float, float, float] | None = None
+        origin_reset: Any = object()
+        for record, px4_position, timestamp_delta, reset_counter in matches:
+            state = _vector(record.get(state_key))
+            if state is None:
+                continue
+            if origin_state is None or reset_counter != origin_reset:
+                if origin_state is not None:
+                    reset_segments += 1
+                origin_state = state
+                origin_px4 = px4_position
+                origin_reset = reset_counter
+            assert origin_px4 is not None
+            state_delta = tuple(state[index] - origin_state[index] for index in range(3))
+            px4_delta = tuple(px4_position[index] - origin_px4[index] for index in range(3))
+            errors.append(tuple(state_delta[index] - px4_delta[index] for index in range(3)))
+            deltas.append(abs(timestamp_delta))
+        return errors, deltas, reset_segments
+
+    execution_errors, execution_timestamp_deltas, execution_reset_segments = relative_errors(
+        execution_matches, "planning_state_position"
+    )
+    candidate_errors, candidate_timestamp_deltas, candidate_reset_segments = relative_errors(
+        candidate_matches, "candidate_start_position"
+    )
     candidate_execution_errors: list[tuple[float, float, float]] = []
-    timestamp_deltas = [abs(item[2]) for item in matched]
-    for record, px4_position, _ in matched:
-        candidate = _vector(record["candidate_start_position"])
-        execution = _vector(record["planning_state_position"])
-        assert candidate is not None and execution is not None
-        px4_delta = tuple(px4_position[index] - first_px4[index] for index in range(3))
-        execution_delta = tuple(execution[index] - first_execution[index] for index in range(3))
-        candidate_delta = tuple(candidate[index] - first_execution[index] for index in range(3))
-        candidate_errors.append(tuple(candidate_delta[index] - px4_delta[index] for index in range(3)))
-        execution_errors.append(tuple(execution_delta[index] - px4_delta[index] for index in range(3)))
+    candidate_execution_time_deltas: list[float] = []
+    for record in eligible:
+        candidate = _vector(record.get("candidate_start_position"))
+        execution = _vector(record.get("planning_state_position"))
+        if candidate is None or execution is None:
+            continue
         candidate_execution_errors.append(tuple(candidate[index] - execution[index] for index in range(3)))
+        try:
+            candidate_execution_time_deltas.append(
+                abs(float(record.get("candidate_start_wall_time_s")) * 1e3 -
+                    float(record["execution_stamp_ns"]) / 1e6)
+            )
+        except (TypeError, ValueError, OverflowError):
+            continue
+    first_bundle_id = (
+        execution_matches[0][0].get("bundle_id") if execution_matches
+        else candidate_matches[0][0].get("bundle_id")
+    )
+    last_match = execution_matches[-1] if execution_matches else candidate_matches[-1]
     return {
         "available": True,
         "source": "planner commit trace vs px4/estimator_odometry",
-        "timestamp_alignment": "absolute execution_stamp_ns vs PX4 timestamp_sample",
-        "origin_alignment": "first matched execution state and PX4 ENU position removed",
+        "timestamp_alignment": "execution_stamp_ns for execution; candidate_start_wall_time_s for candidate; absolute PX4 timestamp_sample",
+        "origin_alignment": "separate first-state origins per comparison and PX4 reset segment",
         "world_transform": "x_enu=y_ned; y_enu=x_ned; z_enu=-z_ned",
         "maximum_synchronization_tolerance_ms": tolerance_ms,
         "eligible_commit_count": len(eligible),
-        "matched_commit_count": len(matched),
-        "unmatched_commit_count": len(eligible) - len(matched),
-        "mean_timestamp_delta_ms": sum(timestamp_deltas) / len(timestamp_deltas),
-        "maximum_timestamp_delta_ms": max(timestamp_deltas),
-        "first_bundle_id": first_record.get("bundle_id"),
-        "last_bundle_id": matched[-1][0].get("bundle_id"),
+        "execution_matched_commit_count": len(execution_matches),
+        "candidate_matched_commit_count": len(candidate_matches),
+        "execution_unmatched_commit_count": len(eligible) - len(execution_matches),
+        "candidate_unmatched_commit_count": len(eligible) - len(candidate_matches),
+        "execution_mean_timestamp_delta_ms": sum(execution_timestamp_deltas) / len(execution_timestamp_deltas) if execution_timestamp_deltas else None,
+        "execution_maximum_timestamp_delta_ms": max(execution_timestamp_deltas) if execution_timestamp_deltas else None,
+        "candidate_mean_timestamp_delta_ms": sum(candidate_timestamp_deltas) / len(candidate_timestamp_deltas) if candidate_timestamp_deltas else None,
+        "candidate_maximum_timestamp_delta_ms": max(candidate_timestamp_deltas) if candidate_timestamp_deltas else None,
+        "candidate_execution_time_delta_ms": _metric_summary(candidate_execution_time_deltas),
+        "execution_reset_segment_count": execution_reset_segments,
+        "candidate_reset_segment_count": candidate_reset_segments,
+        "invalid_pose_frame_count": invalid_pose_frame_count,
+        "first_bundle_id": first_bundle_id,
+        "last_bundle_id": last_match[0].get("bundle_id"),
         "candidate_vs_px4": _vector_metric_summary(candidate_errors),
         "execution_vs_px4": _vector_metric_summary(execution_errors),
         "candidate_vs_execution": _vector_metric_summary(candidate_execution_errors),

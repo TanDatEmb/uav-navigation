@@ -2078,7 +2078,8 @@ class RuntimeContractTest(unittest.TestCase):
                 "execution_stamp_ns": 1_000_000,
                 "bundle_id": 1,
                 "planning_state_position": [0.0, 0.0, 0.0],
-                "candidate_start_position": [0.0, 0.0, 0.0],
+                "candidate_start_position": [0.5, 0.2, -0.3],
+                "candidate_start_wall_time_s": 0.001,
             },
             {
                 "commit_observed_this_cycle": True,
@@ -2089,10 +2090,19 @@ class RuntimeContractTest(unittest.TestCase):
                 # separate rather than blaming hot-replan timing.
                 "planning_state_position": [1.0, 0.0, 0.0],
                 "candidate_start_position": [2.0, 0.0, 0.0],
+                "candidate_start_wall_time_s": 0.0021,
+            },
+            {
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 3_000_000,
+                "bundle_id": 3,
+                "planning_state_position": [100.0, 0.0, 0.0],
+                "candidate_start_position": [101.0, 0.0, 0.0],
+                "candidate_start_wall_time_s": 0.0031,
             },
         ]
 
-        def px4(stamp_us: int, enu_position: list[float]) -> dict[str, object]:
+        def px4(stamp_us: int, enu_position: list[float], reset_counter: int = 0) -> dict[str, object]:
             # PX4 payload is NED; inverse of C_NED_FROM_ENU is the same
             # permutation/sign matrix used by the product conversion.
             return {
@@ -2102,18 +2112,30 @@ class RuntimeContractTest(unittest.TestCase):
                 "payload": {
                     "timestamp_sample_us": stamp_us,
                     "position": [enu_position[1], enu_position[0], -enu_position[2]],
+                    "pose_frame": 1,
+                    "reset_counter": reset_counter,
                 },
             }
 
         result = report._planner_reference_residuals(
             records,
-            [px4(1_000, [0.0, 0.0, 0.0]), px4(2_000, [2.0, 0.0, 0.0])],
+            [
+                px4(1_000, [0.5, 0.2, -0.3]),
+                px4(2_000, [1.0, 0.0, 0.0]),
+                px4(2_100, [2.0, 0.0, 0.0]),
+                px4(3_000, [100.0, 0.0, 0.0], reset_counter=1),
+                px4(3_100, [101.0, 0.0, 0.0], reset_counter=1),
+            ],
             1.0,
         )
         self.assertTrue(result["available"])
-        self.assertEqual(result["matched_commit_count"], 2)
+        self.assertEqual(result["execution_matched_commit_count"], 3)
+        self.assertEqual(result["candidate_matched_commit_count"], 3)
+        self.assertEqual(result["execution_reset_segment_count"], 1)
+        self.assertEqual(result["candidate_reset_segment_count"], 1)
+        self.assertEqual(result["invalid_pose_frame_count"], 0)
         self.assertAlmostEqual(result["candidate_vs_px4"]["norm"]["maximum"], 0.0, places=9)
-        self.assertAlmostEqual(result["execution_vs_px4"]["norm"]["maximum"], 1.0, places=9)
+        self.assertGreater(result["execution_vs_px4"]["norm"]["maximum"], 0.5)
         self.assertAlmostEqual(result["candidate_vs_execution"]["norm"]["maximum"], 1.0, places=9)
 
     def test_planner_reference_residuals_is_fail_closed_as_diagnostic_when_unmatched(self) -> None:
@@ -2123,13 +2145,65 @@ class RuntimeContractTest(unittest.TestCase):
                 "execution_stamp_ns": 1_000_000,
                 "planning_state_position": [0.0, 0.0, 0.0],
                 "candidate_start_position": [0.0, 0.0, 0.0],
+                "candidate_start_wall_time_s": None,
             }],
             [],
             1.0,
         )
         self.assertFalse(result["available"])
         self.assertEqual(result["eligible_commit_count"], 1)
-        self.assertEqual(result["matched_commit_count"], 0)
+        self.assertEqual(result["execution_matched_commit_count"], 0)
+        self.assertEqual(result["candidate_matched_commit_count"], 0)
+
+    def test_planner_reference_residuals_rejects_wrong_px4_pose_frame(self) -> None:
+        result = report._planner_reference_residuals(
+            [{
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 1_000_000,
+                "planning_state_position": [0.0, 0.0, 0.0],
+                "candidate_start_position": [0.0, 0.0, 0.0],
+                "candidate_start_wall_time_s": 0.001,
+            }],
+            [{
+                "kind": "sample",
+                "stream": "px4_odometry",
+                "timestamp_ns": 1_000_000,
+                "payload": {
+                    "timestamp_sample_us": 1_000,
+                    "pose_frame": 2,
+                    "position": [0.0, 0.0, 0.0],
+                },
+            }],
+            1.0,
+        )
+        self.assertFalse(result["available"])
+        self.assertEqual(result["invalid_pose_frame_count"], 1)
+
+    def test_planner_reference_residuals_tracks_candidate_timestamp_coverage(self) -> None:
+        result = report._planner_reference_residuals(
+            [{
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 1_000_000,
+                "planning_state_position": [0.0, 0.0, 0.0],
+                "candidate_start_position": [0.0, 0.0, 0.0],
+                # Missing candidate time must not silently reuse execution time.
+                "candidate_start_wall_time_s": None,
+            }],
+            [{
+                "kind": "sample",
+                "stream": "px4_odometry",
+                "timestamp_ns": 1_000_000,
+                "payload": {
+                    "timestamp_sample_us": 1_000,
+                    "pose_frame": 1,
+                    "position": [0.0, 0.0, 0.0],
+                },
+            }],
+            1.0,
+        )
+        self.assertTrue(result["available"])
+        self.assertEqual(result["execution_matched_commit_count"], 1)
+        self.assertEqual(result["candidate_matched_commit_count"], 0)
 
     def test_report_verdict_set_is_closed(self) -> None:
         self.assertEqual(report.VERDICTS, {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"})
