@@ -1261,7 +1261,10 @@ def _timing_overview_cards(observability: dict[str, Any]) -> str:
 
 def _timing_distribution_panel(group: str, rows: list[dict[str, Any]]) -> str:
     width = 700
-    left, right, top, bottom = 200, 215, 36, 28
+    # Keep a dedicated bottom row for tick values and another one for the
+    # axis title.  With a shallow margin the title shares the middle tick's
+    # baseline and becomes visually ambiguous in the rendered SVG.
+    left, right, top, bottom = 200, 215, 36, 48
     row_height = 29
     height = top + row_height * len(rows) + bottom
     maximum = max(float(row.get("maximum") or 0.0) for row in rows)
@@ -1283,7 +1286,7 @@ def _timing_distribution_panel(group: str, rows: list[dict[str, Any]]) -> str:
         tx = x(value)
         parts.append(
             f'<line x1="{tx:.1f}" y1="{top-8}" x2="{tx:.1f}" y2="{height-bottom}" stroke="{GRID}"/>'
-            f'<text x="{tx:.1f}" y="{height-bottom+18}" text-anchor="middle" class="axis-label">{esc(_timing_display(value))}</text>'
+            f'<text x="{tx:.1f}" y="{height-bottom+16}" text-anchor="middle" class="axis-label">{esc(_timing_display(value))}</text>'
         )
     for index, row in enumerate(rows):
         y = top + index * row_height + row_height / 2
@@ -1304,7 +1307,7 @@ def _timing_distribution_panel(group: str, rows: list[dict[str, Any]]) -> str:
         ])
     parts.extend([
         f'<line x1="{left}" y1="{top-8}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
-        f'<text x="{left + (width-left-right)/2:.1f}" y="{height-7}" text-anchor="middle" class="axis-title">duration · linear scale</text>',
+        f'<text x="{left + (width-left-right)/2:.1f}" y="{height-10}" text-anchor="middle" class="axis-title">duration · linear scale</text>',
         '</svg></div>',
     ])
     return "".join(parts)
