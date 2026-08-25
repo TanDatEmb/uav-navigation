@@ -17,6 +17,8 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+import yaml
+
 from planner_trace import collect_planner_trace_records, planner_trace_summary
 
 
@@ -113,6 +115,74 @@ def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
     if not _captured_provenance_valid(captured):
         return ["runtime did not capture a validated authoritative Release build manifest"]
     return []
+
+
+def _experimental_bypass_reasons(runtime: dict[str, Any]) -> list[str]:
+    tb001 = runtime.get("tb001_exp_jerk_objective_ab")
+    planner_path = runtime.get("super_planner_config")
+    configured_penalty: float | None = None
+    if isinstance(planner_path, str) and planner_path:
+        try:
+            planner = yaml.safe_load(Path(planner_path).read_text(encoding="utf-8"))
+            configured_penalty = float(
+                planner.get("traj_opt", {}).get("exp_traj", {}).get("penna_jerk")
+            )
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            return ["TB-001 planner configuration is unreadable; bypass provenance is invalid"]
+        if not math.isfinite(configured_penalty):
+            return ["TB-001 planner configuration has a non-finite EXP jerk penalty"]
+
+    if tb001 is None:
+        if configured_penalty is not None and configured_penalty >= 0.0:
+            return ["TB-001 positive EXP jerk penalty is missing its uncertified experiment marker"]
+        return []
+    if not isinstance(tb001, dict):
+        return ["TB-001 experiment marker is malformed and cannot be accepted"]
+    try:
+        marker_penalty = float(tb001.get("exp_traj_penna_jerk"))
+        disabled_penalty = float(tb001.get("disabled_exp_traj_penna_jerk"))
+        reference_penalty = float(tb001.get("reference_value"))
+    except (TypeError, ValueError):
+        marker_penalty = math.nan
+        disabled_penalty = math.nan
+        reference_penalty = math.nan
+    if (
+        str(tb001.get("bypass_id", "")) != "TB-001"
+        or tb001.get("scope") != "harness-only experiment"
+        or tb001.get("certification_status") != "uncertified_experiment"
+        or tb001.get("default_behavior") != "disabled"
+        or not math.isfinite(marker_penalty)
+        or marker_penalty <= 0.0
+        or not math.isfinite(disabled_penalty)
+        or disabled_penalty >= 0.0
+        or not math.isfinite(reference_penalty)
+        or reference_penalty != marker_penalty
+        or (configured_penalty is not None and configured_penalty != marker_penalty)
+    ):
+        return ["TB-001 experiment marker/configuration is incomplete or inconsistent"]
+    return [
+        "TB-001 EXP jerk objective A/B experiment is uncertified and cannot be accepted as flight certification"
+    ]
+
+
+def _experimental_bypass_metadata(runtime: dict[str, Any]) -> dict[str, Any]:
+    """Expose a non-empty marker whenever bypass validation fails.
+
+    FlightReview is intentionally driven by the structured report, so a
+    positive planner config with a missing marker must not look like an empty,
+    legacy report to downstream certification views.
+    """
+    marker = runtime.get("tb001_exp_jerk_objective_ab")
+    if isinstance(marker, dict) and marker:
+        return marker
+    reasons = _experimental_bypass_reasons(runtime)
+    if reasons:
+        return {
+            "bypass_id": "TB-001",
+            "certification_status": "invalid_provenance",
+            "reason": reasons[0],
+        }
+    return {}
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -2022,6 +2092,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     reasons: list[str] = []
     reasons.extend(_provenance_reasons(runtime))
+    reasons.extend(_experimental_bypass_reasons(runtime))
     reasons.extend(_dataset_source_count_reasons(streams, runtime))
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -2088,6 +2159,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         },
         "navigation_mapping": navigation_mapping,
         "planning": planning,
+        "experimental_bypasses": _experimental_bypass_metadata(runtime),
         "accuracy": "NOT_AVAILABLE",
         "provenance": _session_provenance(session, workspace),
     }
@@ -2121,6 +2193,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     )
     reasons: list[str] = []
     reasons.extend(_provenance_reasons(runtime))
+    reasons.extend(_experimental_bypass_reasons(runtime))
     for name in ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
@@ -2216,6 +2289,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
         "acceptance": acceptance,
+        "experimental_bypasses": _experimental_bypass_metadata(runtime),
         "tracking": {
             "reference_vs_lio": "NOT_AVAILABLE",
             "reference_vs_ground_truth": "NOT_AVAILABLE",

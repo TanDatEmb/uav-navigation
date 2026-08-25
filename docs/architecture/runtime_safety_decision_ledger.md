@@ -62,9 +62,21 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 
 | ID | Owner/date | Scope | Safety impact | Evidence | Removal condition | Status |
 |---|---|---|---|---|---|---|
-| TB-001 | planning / 2026-08-24 | EXP jerk objective disabled; analytic V/A/J hard gate remains authoritative | False-reject and runtime-tail risk; no false accept if hard gate is complete | Open-space SITL and trajectory unit tests | Objective-enabled A/B on structured SITL and dense snapshot replay has equal certificates and bounded p99 | TEMPORARY_BYPASS |
-| TB-002 | planning / 2026-08-24 | Corridor-center attractor disabled after slalom/feasibility regression | May reduce convergence margin but does not bypass the corridor certificate | Incident comments and nominal SITL | Deterministic optimizer A/B proves a replacement improves feasibility without path drift | TEMPORARY_BYPASS |
-| TB-003 | mapping/planning / 2026-08-24 | CIRI limited to one iteration and obstacle skip 2 | May reduce corridor volume or omit redundant surfaces; inflation/collision gates remain authoritative | Current SITL only | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration/skip matrix | TEMPORARY_BYPASS |
+| TB-001 | planning/runtime; intro `1661386` | EXP jerk objective disabled; explicit `--tb001-exp-jerk-penalty 5e8` re-enable candidate; analytic V/A/J hard gate remains authoritative | False-reject and runtime-tail risk; no false accept if hard gate is complete | Disabled vs explicit enabled `external-mode-check` and `dataset-check` A/B; reports are uncertified | Objective-enabled A/B on structured SITL and dense snapshot replay has equal certificates and bounded p99 | TEMPORARY_BYPASS |
+| TB-002 | planning; intro `30ca02c` | `traj_opt.exp_traj.penna_attract`: disabled `-1e7`, enabled reference `5e8`; no implicit runner switch yet | May reduce convergence margin but does not bypass the corridor certificate | Config-patched nominal/structured SITL A/B | Deterministic optimizer A/B proves a replacement improves feasibility without path drift | TEMPORARY_BYPASS |
+| TB-003 | mapping/planning; intro `30ca02c` (`iris_iter_num`), `1661386` (`obs_skip_num`) | `super_planner.iris_iter_num/obs_skip_num`: current `(1,2)`, enabled reference `(2,1)`; no implicit runner switch yet | May reduce corridor volume or omit redundant surfaces; inflation/collision gates remain authoritative | Config-patched dense snapshot and SITL A/B | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration/skip matrix | TEMPORARY_BYPASS |
+
+Register anchors for the remaining rows are explicit, but TB-002 and TB-003
+still have open switch debt rather than supported runner switches. TB-002 was
+introduced by the `30ca02c` change from `traj_opt.exp_traj.penna_attract=5e8`
+to `-1e7`; its disabled/enabled A/B must use that exact config key and values
+in the generated planner file. TB-003 has split provenance: `iris_iter_num`
+changed from 2 to 1 in `30ca02c`, while `obs_skip_num=2` entered with the
+initial SUPER integration `1661386`; its A/B must restore
+`(iris_iter_num=2, obs_skip_num=1)` versus the current `(1,2)` in the same
+config. Until explicit switches exist, patch the generated config manually,
+archive enabled/disabled artifacts, and keep both rows open. No implicit
+environment switch exists for either row.
 
 Bypass lifecycle is mandatory. Every `TEMPORARY_BYPASS` must name an owner,
 the introducing commit, the exact configuration/code switch used to re-enable
@@ -1003,3 +1015,42 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   for Gazebo, bridges, FAST-LIO, runtime, monitor and PX4/XRCE. Do not split
   bridges again, tune the 0.5 s lease, add queues, or reinterpret this artifact
   as evidence against SUPER/controller behavior.
+
+### 2026-08-25 - TB-001 EXP jerk objective A/B harness switch
+
+- Owner: planning/runtime harness. Scope: Python runtime runner and report
+  artifacts only; no product C++, default YAML, SUPER safety gate, freshness
+  threshold, deadline, QoS, queue, or acceptance threshold is changed.
+- Default behavior remains fail-closed with `traj_opt.exp_traj.penna_jerk`
+  negative, so the EXP jerk objective stays disabled and the analytic V/A/J
+  hard gate remains authoritative. The only opt-in path is the explicit
+  `--tb001-exp-jerk-penalty` argument on an External Mode or dataset-check
+  harness command; hidden environment activation is deliberately unsupported.
+  The argument rejects missing, nonnumeric, nonpositive and nonfinite values.
+- Provenance: the disabled EXP objective is present from the initial SUPER
+  integration (`1661386`); the repository does not contain an authoritative
+  historical positive EXP value. This checkpoint therefore registers `5e8`
+  only as a provisional characterization candidate, not as recovered upstream
+  behavior. Reproduction is
+  `python3 tools/runtime/runner.py external-mode-check --map-profile
+  long_three_pillars_speed --speed-cap-mps 2 --tb001-exp-jerk-penalty 5e8`,
+  paired with the same command without that argument. Neither run can certify
+  flight while TB-001 remains open. Dense replay A/B commands are explicitly:
+  enabled: `python3 tools/runtime/runner.py dataset-check --dataset
+  aist-mid360-drive --rate 1.0 --tb001-exp-jerk-penalty 5e8`; disabled:
+  `python3 tools/runtime/runner.py dataset-check --dataset aist-mid360-drive
+  --rate 1.0`. Neither run is certification while TB-001 remains open.
+- When enabled, the generated session-local `super_planner.yaml` receives that
+  finite positive EXP jerk penalty and `runtime.json` records bypass ID
+  `TB-001`, the selected value, `harness-only experiment`, and
+  `uncertified_experiment`. The report copies this metadata and adds a reason
+  that prevents an experiment run from being treated as flight certification.
+- Safety impact: this is an A/B observability mechanism for the existing
+  temporary bypass, not a removal or certification of TB-001. It may expose
+  optimizer feasibility/runtime effects, but it cannot authorize flight or
+  close the bypass while the report marks the run uncertified.
+- Removal condition: structured SITL and dense snapshot replay A/B show equal
+  geometric certificates and bounded p99 with the objective enabled, then run
+  the disabled default again and update TB-001 to `REMOVED` in a separate
+  behavior change. Verification command for this harness change:
+  `python3 -m unittest tools.runtime.tests.test_runtime_contract -v`.

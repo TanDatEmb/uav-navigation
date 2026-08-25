@@ -425,6 +425,101 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
 
+    def test_tb001_exp_jerk_objective_default_remains_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            mission = ROOT / "config/runtime/missions/open.yaml"
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=mission,
+            )
+
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
+            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
+            self.assertNotIn("tb001_exp_jerk_objective_ab", runtime)
+
+    def test_tb001_exp_jerk_objective_opt_in_sets_positive_penalty_and_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                simulation=True,
+                mission_file=ROOT / "config/runtime/missions/open.yaml",
+                tb001_exp_jerk_penalty=runner.TB001_EXP_JERK_REFERENCE,
+            )
+
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(planner["traj_opt"]["exp_traj"]["penna_jerk"], runner.TB001_EXP_JERK_REFERENCE)
+            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
+            experiment = runtime["tb001_exp_jerk_objective_ab"]
+            self.assertEqual(experiment["bypass_id"], "TB-001")
+            self.assertEqual(experiment["certification_status"], "uncertified_experiment")
+            self.assertEqual(experiment["exp_traj_penna_jerk"], runner.TB001_EXP_JERK_REFERENCE)
+
+    def test_tb001_exp_jerk_objective_does_not_use_hidden_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            with mock.patch.dict(os.environ, {"UAV_NAV_TB001_EXP_JERK_PENALTY": "42.5"}):
+                target = runner._mapping_params(
+                    session,
+                    ROOT / "config/runtime/mapping.yaml",
+                    simulation=True,
+                    mission_file=ROOT / "config/runtime/missions/open.yaml",
+                )
+
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["super_navigation_node"]["ros__parameters"]["super_navigation"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
+
+    def test_tb001_exp_jerk_objective_rejects_invalid_values(self) -> None:
+        for value in ("abc", 0.0, -1.0, math.nan, math.inf, 42.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    runner._resolve_tb001_exp_jerk_penalty(value)
+
+    def test_tb001_exp_jerk_objective_report_is_not_certification(self) -> None:
+        runtime = {
+            "build_provenance": _valid_captured_provenance(),
+            "tb001_exp_jerk_objective_ab": {
+                "bypass_id": "TB-001",
+                "scope": "harness-only experiment",
+                "certification_status": "uncertified_experiment",
+                "default_behavior": "disabled",
+                "exp_traj_penna_jerk": runner.TB001_EXP_JERK_REFERENCE,
+                "disabled_exp_traj_penna_jerk": -5e8,
+                "reference_value": runner.TB001_EXP_JERK_REFERENCE,
+            },
+        }
+        reasons = report._experimental_bypass_reasons(runtime)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("uncertified", reasons[0])
+
+    def test_tb001_report_rejects_missing_or_malformed_marker_for_positive_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            planner_path = Path(temporary) / "super_planner.yaml"
+            planner_path.write_text(
+                "traj_opt:\n  exp_traj:\n    penna_jerk: 500000000.0\n",
+                encoding="utf-8",
+            )
+            runtime = {
+                "super_planner_config": str(planner_path),
+                "build_provenance": _valid_captured_provenance(),
+            }
+            reasons = report._experimental_bypass_reasons(runtime)
+            self.assertTrue(reasons)
+            self.assertEqual(
+                report._experimental_bypass_metadata(runtime)["certification_status"],
+                "invalid_provenance",
+            )
+            runtime["tb001_exp_jerk_objective_ab"] = {"bypass_id": "TB-001"}
+            self.assertTrue(report._experimental_bypass_reasons(runtime))
+
     def test_speed_certification_requirement_tracks_each_requested_sweep_cap(self) -> None:
         for profile in (
             "long_three_pillars_speed",

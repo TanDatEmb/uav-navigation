@@ -99,6 +99,7 @@ MOTION_PRESETS = ("nominal", "slow", "fast")
 # workspace-owned simulation at a time.
 DEFAULT_ROS_DOMAIN_ID = 42
 DEFAULT_XRCE_PORT = 8892
+TB001_EXP_JERK_REFERENCE = 5e8
 
 
 class RuntimeBusyError(RuntimeError):
@@ -463,6 +464,26 @@ def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, 
         raise ValueError(f"{env_name} must be an integer") from error
     if not low <= resolved <= high:
         raise ValueError(f"{env_name} must be in [{low}, {high}], got {resolved}")
+    return resolved
+
+
+def _resolve_tb001_exp_jerk_penalty(value: float | str | None = None) -> float | None:
+    # Deliberately require an explicit CLI/API value.  A hidden environment
+    # variable could silently re-enable a temporary bypass in a later run.
+    raw = value
+    if raw in (None, ""):
+        return None
+    try:
+        resolved = float(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError("TB-001 EXP jerk penalty must be finite and positive") from error
+    if not math.isfinite(resolved) or resolved <= 0.0:
+        raise ValueError("TB-001 EXP jerk penalty must be finite and positive")
+    if resolved != TB001_EXP_JERK_REFERENCE:
+        raise ValueError(
+            "TB-001 EXP jerk penalty must equal the registered characterization "
+            f"value {TB001_EXP_JERK_REFERENCE:g}"
+        )
     return resolved
 
 
@@ -847,6 +868,7 @@ def _mapping_params(
     mission_file: Path | None = None,
     obstacle_evidence: bool = False,
     speed_cap_mps: float | None = None,
+    tb001_exp_jerk_penalty: float | None = None,
 ) -> Path:
     """Create the only ROS parameter file used by native SUPER navigation."""
     del interactive, frontier_debug, simulation, dual_planning, obstacle_evidence
@@ -900,6 +922,38 @@ def _mapping_params(
                 f"{product_max_acceleration:g} m/s^2"
             )
         boundary["max_acc"] = acceleration_limit
+    traj_opt = planner.setdefault("traj_opt", {})
+    exp_traj = traj_opt.setdefault("exp_traj", {})
+    backup_traj = traj_opt.setdefault("backup_traj", {})
+    exp_jerk_penalty = float(exp_traj.get("penna_jerk", 0.0))
+    backup_jerk_penalty = float(backup_traj.get("penna_jerk", 0.0))
+    if not math.isfinite(exp_jerk_penalty) or exp_jerk_penalty >= 0.0:
+        raise ValueError(
+            "SUPER exp_traj jerk objective must stay disabled by default; TB-001 experiment opt-in is required"
+        )
+    if not math.isfinite(backup_jerk_penalty) or backup_jerk_penalty <= 0.0:
+        raise ValueError(
+            "SUPER backup_traj jerk objective must remain positive"
+        )
+    if tb001_exp_jerk_penalty is None:
+        tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty()
+    if tb001_exp_jerk_penalty is not None:
+        tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty(
+            tb001_exp_jerk_penalty
+        )
+        exp_traj["penna_jerk"] = tb001_exp_jerk_penalty
+        _write_runtime(
+            session,
+            tb001_exp_jerk_objective_ab={
+                "bypass_id": "TB-001",
+                "scope": "harness-only experiment",
+                "certification_status": "uncertified_experiment",
+                "exp_traj_penna_jerk": tb001_exp_jerk_penalty,
+                "disabled_exp_traj_penna_jerk": exp_jerk_penalty,
+                "reference_value": TB001_EXP_JERK_REFERENCE,
+                "default_behavior": "disabled",
+            },
+        )
     if "max_jerk_mps3" in planning:
         jerk_limit = float(planning["max_jerk_mps3"])
         if not math.isfinite(jerk_limit) or jerk_limit <= 0.0:
@@ -913,21 +967,6 @@ def _mapping_params(
         # optimization problem became unstable with a high-order penalty. The
         # two-piece backup starts from a certified minimum-snap seed and must
         # retain a positive jerk objective while L-BFGS adjusts it.
-        traj_opt = planner.setdefault("traj_opt", {})
-        exp_jerk_penalty = float(
-            traj_opt.setdefault("exp_traj", {}).get("penna_jerk", 0.0)
-        )
-        backup_jerk_penalty = float(
-            traj_opt.setdefault("backup_traj", {}).get("penna_jerk", 0.0)
-        )
-        if not math.isfinite(exp_jerk_penalty) or exp_jerk_penalty >= 0.0:
-            raise ValueError(
-                "SUPER exp_traj jerk objective must stay disabled; its analytic hard gate is authoritative"
-            )
-        if not math.isfinite(backup_jerk_penalty) or backup_jerk_penalty <= 0.0:
-            raise ValueError(
-                "SUPER backup_traj jerk objective must remain positive"
-            )
     planner_target = session.directory / "super_planner.yaml"
     planner_target.write_text(yaml.safe_dump(planner, sort_keys=False), encoding="utf-8")
     super_parameters["config_path"] = str(planner_target)
@@ -1144,6 +1183,7 @@ def run_dataset(
     *,
     enable_rviz: bool = False,
     frontier_debug: bool = False,
+    tb001_exp_jerk_penalty: float | str | None = None,
 ) -> int:
     if not dataset:
         raise ValueError("DATASET is required")
@@ -1183,6 +1223,7 @@ def run_dataset(
             RUNTIME_CONFIG / "mapping.yaml",
             interactive=enable_rviz,
             frontier_debug=frontier_debug,
+            tb001_exp_jerk_penalty=_resolve_tb001_exp_jerk_penalty(tb001_exp_jerk_penalty),
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
@@ -1330,9 +1371,11 @@ def _run_sim_unlocked(
     auto_scenario: bool = False,
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
+    tb001_exp_jerk_penalty: float | str | None = None,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty(tb001_exp_jerk_penalty)
     map_profile, scene_descriptor = _resolve_scene_profile(
         map_scene, test_case, motion_preset, map_profile
     )
@@ -1642,6 +1685,7 @@ def _run_sim_unlocked(
             mission_file=mission_file,
             obstacle_evidence=control_interface == "external_mode" and map_profile == "no_path",
             speed_cap_mps=speed_cap_mps,
+            tb001_exp_jerk_penalty=tb001_exp_jerk_penalty,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -2125,6 +2169,10 @@ def main() -> int:
         action="store_true",
         help="enable ROG frontier extraction/publication for RViz debugging",
     )
+    dataset.add_argument(
+        "--tb001-exp-jerk-penalty", type=float, default=None,
+        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
+    )
     sub.add_parser("sim-check")
     external_mode = sub.add_parser("external-mode-check")
     external_mode.add_argument(
@@ -2169,6 +2217,10 @@ def main() -> int:
     external_mode.add_argument(
         "--speed-cap-mps", type=float, default=None,
         help="temporary planner/tracker velocity upper bound for one benchmark run",
+    )
+    external_mode.add_argument(
+        "--tb001-exp-jerk-penalty", type=float, default=None,
+        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
     )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
@@ -2220,6 +2272,10 @@ def main() -> int:
         help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode_gui.add_argument(
+        "--tb001-exp-jerk-penalty", type=float, default=None,
+        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
+    )
+    external_mode_gui.add_argument(
         "--manual-takeoff", action="store_true",
         help="do not send ARM/TAKEOFF; wait for the operator before activating External Mode",
     )
@@ -2235,6 +2291,7 @@ def main() -> int:
             args.rate,
             enable_rviz=args.rviz,
             frontier_debug=args.frontier_debug,
+            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
         )
     if args.command == "sim-check":
         return run_sim(True)
@@ -2251,6 +2308,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
+            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -2267,6 +2325,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
+            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
         )
