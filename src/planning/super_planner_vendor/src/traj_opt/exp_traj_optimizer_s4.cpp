@@ -1204,10 +1204,18 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                           PolytopeVec &sfcs,
                           Trajectory &out_traj) {
     /// Check if hot init is valid
-    if (guide_path.size() != guide_t.size()) {
+    if (guide_path.empty() || guide_path.size() != guide_t.size()) {
         cout << YELLOW << " -- [TrajOpt] Error, the guide trajectory has wrong path and time stamp." << RESET
              << endl;
         return false;
+    }
+    for (std::size_t i = 0; i < guide_path.size(); ++i) {
+        if (!guide_path[i].allFinite() || !std::isfinite(guide_t[i]) ||
+            guide_t[i] < 0.0 || (i > 0 && guide_t[i] < guide_t[i - 1])) {
+            cout << YELLOW << " -- [TrajOpt] Error, the guide trajectory contains non-finite or "
+                 << "non-monotonic samples." << RESET << endl;
+            return false;
+        }
     }
     /// Check if SFC is valid
     if (sfcs.empty()) {

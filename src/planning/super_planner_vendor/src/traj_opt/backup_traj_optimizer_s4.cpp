@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/backup_traj_optimizer_s4.h>
+#include <algorithm>
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <super_core/backup_braking.hpp>
@@ -800,6 +801,20 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
                         const vec_Vec3f &init_ps,
                         Trajectory &out_traj,
                         double & out_ts) {
+    // This path is called from the realtime planner and must fail closed on
+    // malformed warm-start data.  In particular, init_ps.back() used to be
+    // reachable with an empty vector, turning a bad candidate into UB.
+    if (cfg_.piece_num <= 0 || init_t_vec.size() != cfg_.piece_num ||
+        static_cast<int>(init_ps.size()) != cfg_.piece_num ||
+        init_t_vec.size() == 0 || !init_t_vec.allFinite() ||
+        (init_t_vec.array() <= 0.0).any() ||
+        !std::all_of(init_ps.begin(), init_ps.end(),
+                     [](const Vec3f &point) { return point.allFinite(); })) {
+        std::cout << YELLOW << " -- [BackTrajOpt] Invalid warm-start dimensions or values."
+                  << RESET << std::endl;
+        out_traj.clear();
+        return false;
+    }
     opt_vars.hPolytope = sfc.GetPlanes();
     if (std::isnan(opt_vars.hPolytope.sum())) {
         std::cout << YELLOW << " -- [BackTrajOpt] Polytope is nan." << RESET << std::endl;

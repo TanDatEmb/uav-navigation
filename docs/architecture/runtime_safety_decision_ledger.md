@@ -1215,3 +1215,15 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   goal-contract correction must be revalidated on repeated open-map SITL before
   acceptance; sanitizer, hardware and full goal-distribution evidence remain
   open.
+
+### 2026-08-25 - Fail-closed optimizer warm-start validation
+
+- `BackupTrajOpt::optimize` now rejects empty, mismatched, non-finite, or
+  non-positive warm-start durations/points before any `.back()` or MINCO setup.
+  `ExpTrajOpt::optimize` likewise rejects empty, non-finite, negative, or
+  non-monotonic guide timestamps. These are input-integrity checks only; valid
+  trajectories and safety gates are unchanged.
+- This closes an obvious undefined-behavior path that could otherwise surface
+  as a planner crash during a failed/reordered replan. Verification is the
+  current SUPER build and focused tests; sanitizer and repeated SITL evidence
+  remain open.
