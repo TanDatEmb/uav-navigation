@@ -1695,16 +1695,45 @@ def _navigation_mapping_summary(
     latest = snapshot.get("latest", {}).get("mapping_diagnostics", {})
     statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
     latest_by_owner: dict[str, dict[str, Any]] = {}
-    for stream_name in ("mapping_diagnostics", "diagnostics"):
-        for item in _series(samples or [], stream_name):
-            for status in item.get("payload", {}).get("statuses", []):
-                if not isinstance(status, dict):
-                    continue
-                status_name = str(status.get("name", ""))
-                if status_name.endswith("/world_model"):
-                    latest_by_owner["world_model"] = status
-                elif status_name == "super_navigation/super_planner":
-                    latest_by_owner["planner"] = status
+    # A lifecycle snapshot is coherent only when all of its counters come
+    # from the same diagnostic event.  The world-model and planner publishers
+    # are independent: a world PUBLISHED event can be followed by a planner
+    # event that accounts for observations discarded while the worker was
+    # busy.  Keep the event ordering so we do not combine an older world
+    # ingress count with newer planner dispositions.
+    latest_event_by_owner: dict[str, tuple[int, dict[str, Any]]] = {}
+    lifecycle_event: tuple[int, dict[str, Any]] | None = None
+    event_order = 0
+    # Keep the original monitor order across both diagnostic streams.  Do not
+    # group by stream first: that would make an older world event appear newer
+    # merely because ``mapping_diagnostics`` is iterated before ``diagnostics``.
+    for item in samples or []:
+        if item.get("stream") not in {"mapping_diagnostics", "diagnostics"}:
+            continue
+        if not item.get("accepted_by_monitor", True):
+            continue
+        event_order += 1
+        try:
+            event_key = int(item.get("arrival_wall_ns", 0))
+        except (TypeError, ValueError):
+            event_key = 0
+        # Preserve input order when legacy samples have no wall clock.
+        event_key = event_key if event_key > 0 else event_order
+        for status in item.get("payload", {}).get("statuses", []):
+            if not isinstance(status, dict):
+                continue
+            status_name = str(status.get("name", ""))
+            owner: str | None = None
+            if status_name.endswith("/world_model"):
+                owner = "world_model"
+            elif status_name == "super_navigation/super_planner":
+                owner = "planner"
+            if owner is None:
+                continue
+            latest_by_owner[owner] = status
+            latest_event_by_owner[owner] = (event_key, status)
+            if lifecycle_event is None or event_key >= lifecycle_event[0]:
+                lifecycle_event = (event_key, status)
     # The monitor's final snapshot contains only the last diagnostic message,
     # so retain it as a fallback for workflows without a sample stream.
     for status in statuses:
@@ -1715,12 +1744,16 @@ def _navigation_mapping_summary(
             latest_by_owner.setdefault("world_model", status)
         elif status_name == "super_navigation/super_planner":
             latest_by_owner.setdefault("planner", status)
+
+    if lifecycle_event is None and latest_event_by_owner:
+        lifecycle_event = max(latest_event_by_owner.values(), key=lambda item: item[0])
     values: dict[str, Any] = {}
     level = "NOT_AVAILABLE"
     message = "NOT_AVAILABLE"
-    # Planner owns ingress/execution counters. The dedicated world-model event
-    # owns revision, terminal mapping lifecycle and per-publication telemetry;
-    # it deterministically overrides overlapping legacy compatibility fields.
+    # Start with the newest owner-specific diagnostics for world identity and
+    # telemetry, then overlay the *single newest lifecycle event*.  The latter
+    # is essential: independently merging planner ingress counters with an
+    # older world-model terminal event manufactures a conservation failure.
     for owner in ("planner", "world_model"):
         status = latest_by_owner.get(owner)
         if not status:
@@ -1730,6 +1763,30 @@ def _navigation_mapping_summary(
             values.update(candidate)
         level = status.get("level", "NOT_AVAILABLE")
         message = status.get("message", "NOT_AVAILABLE")
+    lifecycle_fields = {
+        "received_observation_count",
+        "accepted_observation_count",
+        "dropped_cloud_count",
+        "observation_rejected_before_inbox_count",
+        "observation_replaced_pending_count",
+        "observation_replaced_waiting_count",
+        "observation_replaced_ready_count",
+        "observation_discarded_ready_count",
+        "observation_discarded_shutdown_ready_count",
+        "observation_discarded_pending_count",
+        "observation_discarded_nonmonotonic_count",
+        "mapping_started_count",
+        "mapping_published_count",
+        "mapping_failed_count",
+        "mapping_pending_count",
+        "mapping_in_flight_count",
+        "observation_accounting_valid",
+        "observation_accounting_violation_count",
+    }
+    if lifecycle_event is not None:
+        candidate = lifecycle_event[1].get("values", {})
+        if isinstance(candidate, dict):
+            values.update({key: candidate[key] for key in lifecycle_fields if key in candidate})
     integer_fields = (
         "received_observation_count",
         "accepted_observation_count",
@@ -1882,12 +1939,21 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
                 "mapping accepted-observation conservation equation failed"
             )
     if "observation_replaced_pending_count" in mapping:
-        replaced = int(_number(mapping.get("observation_replaced_pending_count"), 0.0))
+        replaced_waiting = int(_number(
+            mapping.get(
+                "observation_replaced_waiting_count",
+                mapping.get("observation_replaced_pending_count", 0),
+            ),
+            0.0,
+        ))
+        replaced_ready = int(
+            _number(mapping.get("observation_replaced_ready_count"), 0.0)
+        )
         legacy_dropped = int(_number(mapping.get("dropped_cloud_count"), 0.0))
-        if replaced != legacy_dropped:
+        if replaced_waiting + replaced_ready != legacy_dropped:
             reasons.append(
                 "mapping replacement compatibility counter mismatch: "
-                f"lifecycle {replaced}, legacy {legacy_dropped}"
+                f"lifecycle {replaced_waiting + replaced_ready}, legacy {legacy_dropped}"
             )
     return reasons
 

@@ -2081,6 +2081,61 @@ class RuntimeContractTest(unittest.TestCase):
         inconsistent = report._navigation_mapping_summary(snapshot, samples)
         self.assertNotEqual(report._mapping_integrity_reasons(inconsistent), [])
 
+    def test_navigation_mapping_summary_uses_newer_planner_lifecycle_event(self) -> None:
+        """A later discard event must not be merged with an older PUBLISHED event."""
+        world = {
+            "name": "navigation_mapping/world_model",
+            "level": 0,
+            "message": "PUBLISHED",
+            "values": {
+                "received_observation_count": "248",
+                "accepted_observation_count": "248",
+                "world_revision": "174",
+                "mapping_started_count": "174",
+                "mapping_published_count": "174",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+            },
+        }
+        planner = {
+            "name": "super_navigation/super_planner",
+            "level": 0,
+            "message": "MAP_READY",
+            "values": {
+                "received_observation_count": "251",
+                "accepted_observation_count": "251",
+                "dropped_cloud_count": "2",
+                "observation_replaced_pending_count": "1",
+                "observation_replaced_ready_count": "1",
+                "observation_discarded_pending_count": "76",
+                "observation_discarded_ready_count": "1",
+                "mapping_started_count": "174",
+                "mapping_published_count": "174",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+            },
+        }
+        snapshot = {
+            "streams": {"mapping_diagnostics": {"received": 2}},
+            "latest": {"mapping_diagnostics": {"statuses": [planner]}},
+        }
+        samples = [
+            {"stream": "mapping_diagnostics", "arrival_wall_ns": 100, "payload": {"statuses": [world]}},
+            {"stream": "diagnostics", "arrival_wall_ns": 200, "payload": {"statuses": [planner]}},
+        ]
+        mapping = report._navigation_mapping_summary(snapshot, samples)
+        self.assertEqual(mapping["received_observation_count"], 251)
+        self.assertEqual(mapping["mapping_published_count"], 174)
+        reasons = report._mapping_integrity_reasons(mapping)
+        self.assertNotIn("mapping accepted-observation conservation equation failed", reasons)
+        self.assertNotIn(
+            "mapping replacement compatibility counter mismatch", " ".join(reasons)
+        )
+
     def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
         snapshot = {
             "latest": {

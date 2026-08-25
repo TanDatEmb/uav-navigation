@@ -957,3 +957,38 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   source checkpoint is committed, a new full Release build and manifest
   validation are mandatory because the commit itself changes the authoritative
   source fingerprint.
+
+### 2026-08-25 - Coherent mapping lifecycle report correction and 2 m/s screening
+
+- Clean screening artifact `.artifacts/runtime/external-mode-check-20260825T011353-349116`
+  is valid causal evidence for the clean `8ec2811` build manifest, but it is not
+  acceptance evidence: the PX4 checkout was dirty and the run failed closed on
+  a multi-second common Gazebo/GZ-to-ROS ingress stall. `/clock`, IMU, ground
+  truth and the separately bridged LiDAR all stalled for roughly 3.8--4.6 s,
+  while PX4/XRCE odometry remained continuous. SUPER and External Mode therefore
+  rejected stale execution state as designed; no freshness threshold or safety
+  gate was relaxed.
+- The report had falsely added an accepted-observation conservation reason by
+  merging `received/accepted=248` from an older world-model PUBLISHED event
+  with `discarded/published` counters from a later planner event (`251` was the
+  coherent lifecycle snapshot). `_navigation_mapping_summary()` now selects one
+  newest diagnostic event across both streams for all lifecycle counters, while
+  retaining owner-specific world identity/telemetry. It never synthesizes a
+  lifecycle snapshot by combining timestamps from different events.
+- Compatibility validation now compares the legacy `dropped_cloud_count` with
+  the aggregate replacement lifecycle (`replaced_waiting + replaced_ready`),
+  falling back to the legacy aggregate when phase-specific fields are absent.
+  Real replacements and stale-input counts remain report reasons; this change
+  removes only the false merge/compatibility failure.
+- Regression coverage includes the exact `248` world then `251` planner event
+  ordering and the legacy counter shape. Runtime Python contract tests pass
+  110/110 and `git diff --check` passes. The report was rerendered for the
+  screening artifact and now shows coherent `received=accepted=251`,
+  `published=174`, `discarded_pending=76`, `discarded_ready=1`, with product
+  accounting valid and zero violations. The artifact remains failed for its
+  genuine transport/safety/mission reasons.
+- Next diagnostic is deliberately bounded to one reproduction: capture a
+  Gazebo-native clock/stats stream plus low-rate process scheduler/CPU/PSI data
+  for Gazebo, bridges, FAST-LIO, runtime, monitor and PX4/XRCE. Do not split
+  bridges again, tune the 0.5 s lease, add queues, or reinterpret this artifact
+  as evidence against SUPER/controller behavior.
