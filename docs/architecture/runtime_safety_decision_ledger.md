@@ -2126,3 +2126,32 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   frame/quaternion/covariance conversion is a separate phase with its own
   tests and ledger evidence.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
+### 2026-08-26 - Deferred activation of a committed trajectory
+
+- Owner: `navigation_execution::CommandSampler` and the runtime command
+  publication boundary. Scope: distinguish an immutable candidate that has
+  committed successfully from one whose declared `valid_from_ns` has arrived.
+  A command publication tick before the trajectory start now retains the
+  committed bundle and defers sampling; it does not expose a zero command and
+  does not latch planner failure.
+- Safety impact: closes a false emergency path exposed by the exact dataset
+  artifact: the candidate committed at generation `1`, but its trajectory start
+  was about `10.617 ms` after the publication/source timestamp, so the sampler
+  correctly rejected a pre-start evaluation and runtime incorrectly converted
+  that expected activation lead into terminal `REJECTED/EMER`. The planner's
+  negative pre-start trajectory-time semantics and fail-closed rejection for
+  evaluator failure, expiry, non-finite output, stale execution, and continuity
+  violations remain unchanged. No freshness threshold, activation window,
+  fallback, or bypass was added.
+- Evidence: the exact artifact
+  `.artifacts/runtime/dataset-20260825T222025-461002/report.json` records full
+  IMU/LiDAR coverage, LIO TRACKING, mapping `2756/2756` with zero accounting
+  violations, commit generation `1`, then `READY=0/EMER=1`; the new sampler
+  regression covers before-boundary retention, boundary evaluation, and expiry.
+  Rebuild, full tests, and repeated dataset plus preflight-clean SITL are
+  required before closure.
+- Removal condition: none; this is an explicit execution state distinction.
+  Any future change that holds the trajectory at `t=0` before activation must
+  be a separate motion-contract change with P/V/A/J/yaw continuity evidence.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.

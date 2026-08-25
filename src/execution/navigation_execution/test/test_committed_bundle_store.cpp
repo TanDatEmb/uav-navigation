@@ -62,6 +62,45 @@ TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld)
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50)));
 }
 
+TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  std::size_t evaluations = 0;
+  auto candidate = candidateFor(7, 1);
+  candidate.valid_from_ns = 100;
+  candidate.valid_until_ns = 200;
+  candidate.evaluator = [&evaluations](
+      std::int64_t stamp, navigation_planning::TrajectoryPoint& point) {
+    ++evaluations;
+    point.position_world.x() = static_cast<double>(stamp);
+    return true;
+  };
+  auto committed = std::make_shared<const navigation_planning::CandidateBundle>(candidate);
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, committed),
+            navigation_execution::CommitDecision::kCommitted);
+
+  navigation_execution::CommandSampler sampler(store);
+  const auto before_activation = sampler.sample(99);
+  EXPECT_FALSE(static_cast<bool>(before_activation));
+  ASSERT_TRUE(before_activation.bundle);
+  EXPECT_TRUE(before_activation.awaiting_activation);
+  EXPECT_EQ(evaluations, 0U);
+
+  const auto active = sampler.sample(100);
+  ASSERT_TRUE(static_cast<bool>(active));
+  EXPECT_FALSE(active.awaiting_activation);
+  EXPECT_EQ(evaluations, 1U);
+  EXPECT_DOUBLE_EQ(active.point->position_world.x(), 100.0);
+
+  const auto expired = sampler.sample(201);
+  EXPECT_FALSE(static_cast<bool>(expired));
+  ASSERT_TRUE(expired.bundle);
+  EXPECT_FALSE(expired.awaiting_activation);
+  EXPECT_EQ(evaluations, 1U);
+}
+
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {
   navigation_execution::ExecutionStateStore store;
   navigation_planning::KinematicState state;

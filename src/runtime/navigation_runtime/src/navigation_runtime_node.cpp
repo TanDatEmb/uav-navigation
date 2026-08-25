@@ -2027,6 +2027,13 @@ void NavigationRuntimeNode::publishCommand() {
   if (planner_command_available_.load()) {
     const auto sample = command_sampler_.sample(command_ros_time.nanoseconds());
     if (!sample) {
+      if (sample.awaiting_activation) {
+        // A committed candidate may start a few milliseconds after the
+        // publication tick that committed it. Keep the immutable bundle and
+        // wait for its declared sample-validity boundary; do not turn a
+        // scheduling lead into a planner failure or a synthetic emergency.
+        return;
+      }
       planner_command_available_.store(false);
       planner_failure_latched_.store(true);
       safety_suffix_active_.store(false);

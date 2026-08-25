@@ -10,6 +10,7 @@ namespace navigation_execution {
 struct SampleResult {
   std::shared_ptr<const navigation_planning::CandidateBundle> bundle;
   std::optional<navigation_planning::TrajectoryPoint> point;
+  bool awaiting_activation{false};
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return static_cast<bool>(bundle) && point.has_value();
@@ -25,8 +26,12 @@ class CommandSampler final {
   [[nodiscard]] SampleResult sample(std::int64_t stamp_ns) const noexcept {
     auto bundle = store_.load();
     if (!bundle) return {};
+    if (stamp_ns < bundle->valid_from_ns) {
+      return {std::move(bundle), std::nullopt, true};
+    }
     try {
-      return {bundle, bundle->sample(stamp_ns)};
+      auto point = bundle->sample(stamp_ns);
+      return {std::move(bundle), std::move(point), false};
     } catch (...) {
       return {};
     }
