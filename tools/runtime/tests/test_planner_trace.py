@@ -122,6 +122,7 @@ class PlannerTraceTest(unittest.TestCase):
                                     "pinned_world_stamp_ns": "123456789",
                                     "candidate_result": "0",
                                     "replan_code": "-3",
+                                    "commit_decision": "4",
                                     "solve_stage": "5",
                                     "solve_stage_name": "backup",
                                     "planning_latency_ms": "8.25",
@@ -172,6 +173,7 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["pinned_world_stamp_ns"], 123456789)
         self.assertEqual(records[0]["solve_stage_name"], "backup")
         self.assertEqual(records[0]["replan_code"], "-3")
+        self.assertEqual(records[0]["commit_decision"], 4)
         self.assertFalse(records[0]["solve_deadline_exceeded"])
         self.assertTrue(records[0]["command_available"])
         self.assertEqual(records[0]["exp_frontend_us"], 1200.0)

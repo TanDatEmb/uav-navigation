@@ -1030,10 +1030,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                          maximum_jerk / cfg_.max_jerk});
     };
 
+    struct CandidateSnapshot {
+        VecDf x;
+        VecDf minimum_time_floor;
+        VecDf penalty_weights;
+        VecDf penalty_log;
+        double feasibility_point_weight{0.0};
+        double objective{std::numeric_limits<double>::infinity()};
+        int iteration{0};
+        bool valid{false};
+    };
+
     if (ret >= 0) {
         rebuild_candidate();
         update_dynamic_extrema();
-        diagnostics_.final_duration_s = traj.getTotalDuration();
     }
     print_optimizer_result();
 
@@ -1056,8 +1066,32 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     double best_normalized_violation = normalized_dynamic_violation();
     diagnostics_.initial_normalized_dynamic_violation = best_normalized_violation;
     diagnostics_.best_normalized_dynamic_violation = best_normalized_violation;
-    VecDf best_candidate = x;
-    VecDf best_time_floor = opt_vars.minimum_time_floor;
+    CandidateSnapshot best_candidate;
+    const auto capture_best_candidate = [&]() {
+        best_candidate.x = x;
+        best_candidate.minimum_time_floor = opt_vars.minimum_time_floor;
+        best_candidate.penalty_weights = opt_vars.penaltyWeights;
+        best_candidate.penalty_log = opt_vars.penalty_log;
+        best_candidate.feasibility_point_weight = opt_vars.feasibility_point_weight;
+        best_candidate.objective = minCostFunctional;
+        best_candidate.iteration = opt_vars.iter_num;
+        best_candidate.valid = true;
+    };
+    const auto restore_best_candidate = [&]() {
+        if (!best_candidate.valid) {
+            return;
+        }
+        x = best_candidate.x;
+        opt_vars.minimum_time_floor = best_candidate.minimum_time_floor;
+        opt_vars.penaltyWeights = best_candidate.penalty_weights;
+        opt_vars.penalty_log = best_candidate.penalty_log;
+        opt_vars.feasibility_point_weight = best_candidate.feasibility_point_weight;
+        minCostFunctional = best_candidate.objective;
+        opt_vars.iter_num = best_candidate.iteration;
+        rebuild_candidate();
+        update_dynamic_extrema();
+    };
+    capture_best_candidate();
     const VecDf nominal_penalty_weights = opt_vars.penaltyWeights;
     for (int retry = 0;
          ret >= 0 && best_normalized_violation > 1.0 &&
@@ -1133,11 +1167,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             diagnostics_.retry_stop_reason = 2;
             diagnostics_.final_normalized_dynamic_violation =
                     std::numeric_limits<double>::infinity();
+            restore_best_candidate();
             traj.clear();
             return INFINITY;
         }
         if (ret < 0) {
             diagnostics_.retry_stop_reason = 3;
+            restore_best_candidate();
             break;
         }
 
@@ -1148,6 +1184,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     " -- [ExpOpt] feasibility retry left corridor: attempt={} cost={}",
                     retry + 1, opt_vars.penalty_log(POS_IDX));
             diagnostics_.retry_stop_reason = 4;
+            restore_best_candidate();
             ret = -1;
             break;
         }
@@ -1158,21 +1195,24 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 retry + 1, retry_violation,
                 penalty_scale,
                 maximum_velocity, maximum_acceleration, maximum_jerk);
-        if (!(retry_violation + 1.0e-6 < best_normalized_violation)) {
+        const bool candidate_is_feasible = std::isfinite(retry_violation) &&
+                                            retry_violation <= 1.0;
+        const bool candidate_made_progress = std::isfinite(retry_violation) &&
+                                             retry_violation < best_normalized_violation;
+        if (!candidate_is_feasible && !candidate_made_progress) {
             planner_context_->warn(
                     " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
                     best_normalized_violation, retry_violation);
             diagnostics_.retry_stop_reason = 5;
-            x = best_candidate;
-            opt_vars.minimum_time_floor = best_time_floor;
-            rebuild_candidate();
-            update_dynamic_extrema();
+            restore_best_candidate();
             break;
         }
         best_normalized_violation = retry_violation;
         diagnostics_.best_normalized_dynamic_violation = best_normalized_violation;
-        best_candidate = x;
-        best_time_floor = opt_vars.minimum_time_floor;
+        capture_best_candidate();
+        if (candidate_is_feasible) {
+            break;
+        }
     }
     if (ret >= 0 && best_normalized_violation > 1.0 &&
         diagnostics_.retry_count >= kMaximumFeasibilityRetries &&
@@ -1194,9 +1234,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     diagnostics_.first_nonfinite_cost = opt_vars.first_nonfinite_cost;
     diagnostics_.first_nonfinite_gradient_norm =
             opt_vars.first_nonfinite_gradient_norm;
-    diagnostics_.final_duration_s = traj.empty()
-            ? std::numeric_limits<double>::quiet_NaN()
-            : traj.getTotalDuration();
+    diagnostics_.final_duration_s = std::numeric_limits<double>::quiet_NaN();
     opt_vars.penaltyWeights = nominal_penalty_weights;
     opt_vars.feasibility_point_weight = 0.0;
 
@@ -1244,6 +1282,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 ret = -1;
                 minCostFunctional = INFINITY;
             }
+        }
+        if (ret >= 0 && !traj.empty()) {
+            diagnostics_.final_duration_s = traj.getTotalDuration();
         }
     } else {
         traj.clear();

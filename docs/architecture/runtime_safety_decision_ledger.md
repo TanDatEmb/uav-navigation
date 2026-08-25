@@ -1976,3 +1976,50 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   dataset/SITL distributions. Do not claim this parameterization fixes the
   independent simulator/transport blackout until those runs separate the two
   blockers.
+
+### 2026-08-26 - Feasibility retry candidate transactionality
+
+- Owner: `navigation_planning_backend` EXP trajectory optimizer. Scope: retain
+  every finite strict improvement (or a candidate that already satisfies the
+  dynamic envelope), and snapshot/restore the complete accepted optimizer
+  state when a retry fails, leaves the corridor, or makes no progress. The
+  snapshot covers decision variables, additive duration floor, penalty weights,
+  penalty diagnostics, feasibility-point weight, objective and iteration count;
+  `final_duration_s` is emitted only after all physical, vertical-guide and
+  flatness gates pass. Planner trace now preserves the producer's explicit
+  `commit_decision` separately from `candidate_result`.
+- Safety impact: prevents a rejected retry's mutable objective state or stale
+  duration from being reported as the selected candidate. The world/corridor,
+  V/A/J, flatness, cancellation, execution commit and PX4 freshness gates are
+  unchanged; no fallback, threshold relaxation, bypass or candidate
+  authorization was introduced.
+- Evidence: advisors traced the exact SITL pair
+  `1.024820197132971 -> 1.0248201536822739`; the prior `1e-6` deadband wrongly
+  discarded this finite improvement and the trace reported duration
+  `7.021931 s` with no committed bundle. Focused Release build passed;
+  planning CTest 2/2, runtime CTest 8/8 and Python contracts 147/147 passed.
+  Fresh authoritative build plus repeated dataset/SITL evidence on this change
+  is required before closure.
+- Review condition: add deterministic retry rollback/property coverage where
+  the optimizer test seam permits it, retain analytic hard extrema as the
+  acceptance authority, and do not infer that increasing duration guarantees
+  lower V/A/J with non-zero boundary PVAJ or changing geometry.
+
+### 2026-08-26 - Retry transactionality validation evidence
+
+- Dataset artifact `.artifacts/runtime/dataset-20260825T202030-362330` on
+  `7cea790` completed with `PASS`, full IMU/LiDAR source coverage, LIO
+  tracking, mapping accounting `2756/2756` with zero violations, and planner
+  trace `exp_nonfinite_evaluation_count=0`, `exp_first_nonfinite_value_mask=0`.
+  This remains recorded-data health evidence only; `flight_acceptance=false`.
+- SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T203002-365806` on
+  `7cea790` is `BLOCKED` fail-closed: non-finite count/mask were both zero,
+  but the retry stopped at `no progress` with velocity violation and
+  `initial=1.02482`, no committed candidate/PVA, safety stop at `26.6 s`,
+  only waypoint `[0]`, and cross-track p95 `0.722 m`. The result exposed the
+  deadband and transactionality defects above; no safety gate was relaxed.
+- Validation orchestration first had the SITL agent blocked by a dataset
+  runner lock. The dataset session was stopped safely, state became
+  `STOPPED/cleanup=PASS`, and the SITL rerun was executed only after process
+  and lock cleanup. All agents were closed; only the main worktree remained.

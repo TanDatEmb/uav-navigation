@@ -104,6 +104,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "splice_previous_sample_tt_s": ("splice_previous_sample_tt_s",),
     "candidate_result": ("candidate_result",),
     "replan_code": ("replan_code",),
+    "commit_decision": ("commit_decision",),
     "solve_stage": ("solve_stage",),
     "solve_stage_name": ("solve_stage_name",),
     "solve_deadline_exceeded": ("solve_deadline_exceeded",),
@@ -305,6 +306,7 @@ def normalize_planner_trace_record(
         if values["candidate_result"] is not None else None,
         "replan_code": str(values["replan_code"])
         if values["replan_code"] is not None else None,
+        "commit_decision": _int(values["commit_decision"]),
         "solve_stage": _int(values["solve_stage"]),
         "solve_stage_name": str(values["solve_stage_name"])
         if values["solve_stage_name"] is not None else None,
