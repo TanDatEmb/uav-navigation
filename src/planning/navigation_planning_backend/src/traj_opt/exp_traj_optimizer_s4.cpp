@@ -324,6 +324,29 @@ double ExpTrajOpt::costFunctional(void *ptr,
     Eigen::Map<VecDf> gradTau(g.data(), dimTau);
     Eigen::Map<VecDf> gradXi(g.data() + dimTau, dimXi);
 
+    const auto recordNonFinite = [&](const int stage, const double cost,
+                                     const double gradient_norm,
+                                     const VecDf *durations = nullptr) {
+        ++obj.nonfinite_evaluation_count;
+        if (obj.first_nonfinite_stage != 0) return;
+        obj.first_nonfinite_stage = stage;
+        obj.first_nonfinite_attempt = obj.solver_attempt;
+        obj.first_nonfinite_iteration = obj.iter_num;
+        obj.first_nonfinite_cost = cost;
+        obj.first_nonfinite_gradient_norm = gradient_norm;
+        const VecDf &snapshot = durations != nullptr ? *durations : obj.times;
+        if (snapshot.size() > 0) {
+            obj.first_nonfinite_min_duration_s = snapshot.minCoeff();
+            obj.first_nonfinite_max_duration_s = snapshot.maxCoeff();
+        }
+    };
+
+    if (!x.allFinite()) {
+        recordNonFinite(1, std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::quiet_NaN());
+        return INFINITY;
+    }
+
     /* 2) Reconstruct the optimization varibles */
 
     Mat3Df points;
@@ -331,6 +354,11 @@ double ExpTrajOpt::costFunctional(void *ptr,
     gcopter::forwardMapTauToT(tau, times);
     if (obj.minimum_time_floor.size() == times.size()) {
         times += obj.minimum_time_floor;
+    }
+    if (!times.allFinite() || times.size() == 0 || times.minCoeff() <= 0.0) {
+        recordNonFinite(2, std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::quiet_NaN(), &times);
+        return INFINITY;
     }
     switch (pos_constraint_type) {
         case 1: {
@@ -342,6 +370,11 @@ double ExpTrajOpt::costFunctional(void *ptr,
             gcopter::forwardP(xi, vPolyIdx, vPolytopes, points);
             break;
         }
+    }
+    if (!points.allFinite()) {
+        recordNonFinite(3, std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::quiet_NaN(), &times);
+        return INFINITY;
     }
 
     /* 3) Compute the energy const and gradient */
@@ -357,6 +390,11 @@ double ExpTrajOpt::costFunctional(void *ptr,
         obj.minco.getEnergyPartialGradByTimes(partialGradByTimes);
     }
     obj.penalty_log(0) = cost;
+    if (!std::isfinite(cost) || !partialGradByCoeffs.allFinite() ||
+        !partialGradByTimes.allFinite() || !obj.minco.getCoeffs().allFinite()) {
+        recordNonFinite(4, cost, std::numeric_limits<double>::quiet_NaN(), &times);
+        return INFINITY;
+    }
 
     /* 4) Compute the constrain cost and gradient  */
     constraintsFunctional(times, obj.minco.getCoeffs(),
@@ -369,6 +407,11 @@ double ExpTrajOpt::costFunctional(void *ptr,
                           magnitudeBounds, penaltyWeights,
                           quadrotor_flatness,
                           cost, partialGradByTimes, partialGradByCoeffs, obj.penalty_log);
+    if (!std::isfinite(cost) || !partialGradByCoeffs.allFinite() ||
+        !partialGradByTimes.allFinite() || !obj.penalty_log.allFinite()) {
+        recordNonFinite(5, cost, std::numeric_limits<double>::quiet_NaN(), &times);
+        return INFINITY;
+    }
 
     /* 5) Propagate the gradient from CT to PT */
     Mat3Df gradByPoints;
@@ -400,6 +443,10 @@ double ExpTrajOpt::costFunctional(void *ptr,
             gcopter::normRetrictionLayer(xi, vPolyIdx, vPolytopes, cost, gradXi);
             break;
         }
+    }
+    if (!std::isfinite(cost) || !gradTau.allFinite() || !gradXi.allFinite()) {
+        recordNonFinite(6, cost, g.norm(), &times);
+        return INFINITY;
     }
     return cost;
 }
@@ -731,6 +778,18 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     opt_vars.penalty_log.resize(8);
     opt_vars.penalty_log.setZero();
+    opt_vars.solver_attempt = 0;
+    opt_vars.nonfinite_evaluation_count = 0;
+    opt_vars.first_nonfinite_stage = 0;
+    opt_vars.first_nonfinite_attempt = 0;
+    opt_vars.first_nonfinite_iteration = 0;
+    opt_vars.first_nonfinite_min_duration_s =
+            std::numeric_limits<double>::quiet_NaN();
+    opt_vars.first_nonfinite_max_duration_s =
+            std::numeric_limits<double>::quiet_NaN();
+    opt_vars.first_nonfinite_cost = std::numeric_limits<double>::quiet_NaN();
+    opt_vars.first_nonfinite_gradient_norm =
+            std::numeric_limits<double>::quiet_NaN();
 
     /* 2) check the initial value of the optimization varibles */
     if (opt_vars.times.minCoeff() < 1e-3) {
@@ -808,6 +867,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     const auto run_lbfgs = [&]() {
         ++diagnostics_.lbfgs_attempt_count;
+        opt_vars.solver_attempt = diagnostics_.lbfgs_attempt_count;
         const int result = lbfgs::lbfgs_optimize(x,
                                                   minCostFunctional,
                                                   &ExpTrajOpt::costFunctional,
@@ -1093,6 +1153,17 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
     diagnostics_.final_normalized_dynamic_violation =
             normalized_dynamic_violation();
+    diagnostics_.nonfinite_evaluation_count = opt_vars.nonfinite_evaluation_count;
+    diagnostics_.first_nonfinite_stage = opt_vars.first_nonfinite_stage;
+    diagnostics_.first_nonfinite_attempt = opt_vars.first_nonfinite_attempt;
+    diagnostics_.first_nonfinite_iteration = opt_vars.first_nonfinite_iteration;
+    diagnostics_.first_nonfinite_min_duration_s =
+            opt_vars.first_nonfinite_min_duration_s;
+    diagnostics_.first_nonfinite_max_duration_s =
+            opt_vars.first_nonfinite_max_duration_s;
+    diagnostics_.first_nonfinite_cost = opt_vars.first_nonfinite_cost;
+    diagnostics_.first_nonfinite_gradient_norm =
+            opt_vars.first_nonfinite_gradient_norm;
     diagnostics_.final_duration_s = traj.empty()
             ? std::numeric_limits<double>::quiet_NaN()
             : traj.getTotalDuration();

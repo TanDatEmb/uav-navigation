@@ -1902,3 +1902,30 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   `cleanup=PASS`; no runner, ROS, simulator, PX4, agent worktree or temporary
   agent directory remained. These results do not close MINCO/corridor,
   transport-gap, repeated SITL, or producer-epoch safety conditions.
+
+### 2026-08-26 - Non-finite optimizer evaluation provenance
+
+- Owner: `navigation_planning_backend` EXP trajectory optimizer and the runtime
+  planner trace adapter. Scope: record the first evaluation that becomes
+  non-finite, including the validation stage, solver attempt/iteration and
+  duration range; reject non-finite objective or gradient before returning to
+  L-BFGS. This is diagnostic instrumentation plus fail-closed validation; it
+  does not change hard gates or candidate authorization.
+- Safety impact: invalid MINCO/constraint/gradient state can no longer be
+  silently returned as a usable solver evaluation. The planner remains
+  fail-closed when the retry encounters `LBFGSERR_INVALID_FUNCVAL`; no fallback,
+  threshold relaxation, duration clamp or bypass was introduced.
+- Evidence: Release build of `navigation_planning_backend` and
+  `navigation_runtime` passed; planning CTest 2/2, runtime CTest 8/8 and
+  Python runtime/planner contracts 147/147 passed. The next replay must use
+  the recorded fields to identify the first invalid operand before retry
+  parameterization or numerical solver behavior is changed.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure && ctest
+  --test-dir build/navigation_runtime --output-on-failure && python3 -m
+  unittest tools.runtime.tests.test_planner_trace tools.runtime.tests.test_runtime_contract`.
+- Review condition: preserve the existing fail-closed behavior and keep the
+  SITL artifact `external-mode-check-20260825T192608-321637` as `BLOCKED` until
+  a replay identifies and fixes the actual non-finite source, then repeat
+  dataset/SITL and adversarial review.

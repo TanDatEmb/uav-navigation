@@ -145,6 +145,14 @@ class PlannerTraceTest(unittest.TestCase):
                                     "guide_path_length_m": "18.5",
                                     "guide_duration_s": "4.0",
                                     "exp_retry_budget_remaining_us": "42000",
+                                    "exp_nonfinite_evaluation_count": "2",
+                                    "exp_first_nonfinite_stage": "5",
+                                    "exp_first_nonfinite_attempt": "2",
+                                    "exp_first_nonfinite_iteration": "4",
+                                    "exp_first_nonfinite_min_duration_s": "0.031",
+                                    "exp_first_nonfinite_max_duration_s": "1.24",
+                                    "exp_first_nonfinite_cost": "inf",
+                                    "exp_first_nonfinite_gradient_norm": "nan",
                                     "solve_deadline_exceeded": "0",
                                     "command_available": "1",
                                     "planner_failure_latched": "0",
@@ -183,6 +191,14 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["guide_path_length_m"], 18.5)
         self.assertEqual(records[0]["guide_duration_s"], 4.0)
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
+        self.assertEqual(records[0]["exp_nonfinite_evaluation_count"], 2)
+        self.assertEqual(records[0]["exp_first_nonfinite_stage"], 5)
+        self.assertEqual(records[0]["exp_first_nonfinite_attempt"], 2)
+        self.assertEqual(records[0]["exp_first_nonfinite_iteration"], 4)
+        self.assertEqual(records[0]["exp_first_nonfinite_min_duration_s"], 0.031)
+        self.assertEqual(records[0]["exp_first_nonfinite_max_duration_s"], 1.24)
+        self.assertIsNone(records[0]["exp_first_nonfinite_cost"])
+        self.assertIsNone(records[0]["exp_first_nonfinite_gradient_norm"])
 
 
 if __name__ == "__main__":

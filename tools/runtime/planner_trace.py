@@ -62,6 +62,14 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "guide_path_length_m": ("guide_path_length_m",),
     "guide_duration_s": ("guide_duration_s",),
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
+    "exp_nonfinite_evaluation_count": ("exp_nonfinite_evaluation_count",),
+    "exp_first_nonfinite_stage": ("exp_first_nonfinite_stage",),
+    "exp_first_nonfinite_attempt": ("exp_first_nonfinite_attempt",),
+    "exp_first_nonfinite_iteration": ("exp_first_nonfinite_iteration",),
+    "exp_first_nonfinite_min_duration_s": ("exp_first_nonfinite_min_duration_s",),
+    "exp_first_nonfinite_max_duration_s": ("exp_first_nonfinite_max_duration_s",),
+    "exp_first_nonfinite_cost": ("exp_first_nonfinite_cost",),
+    "exp_first_nonfinite_gradient_norm": ("exp_first_nonfinite_gradient_norm",),
     "status": ("status",),
     "failure_code": ("failure_code",),
     "maximum_velocity_mps": ("maximum_velocity_mps",),
@@ -239,6 +247,24 @@ def normalize_planner_trace_record(
         "guide_duration_s": _float(values["guide_duration_s"]),
         "exp_retry_budget_remaining_us": _float(
             values["exp_retry_budget_remaining_us"]
+        ),
+        "exp_nonfinite_evaluation_count": _int(
+            values["exp_nonfinite_evaluation_count"]
+        ),
+        "exp_first_nonfinite_stage": _int(values["exp_first_nonfinite_stage"]),
+        "exp_first_nonfinite_attempt": _int(values["exp_first_nonfinite_attempt"]),
+        "exp_first_nonfinite_iteration": _int(
+            values["exp_first_nonfinite_iteration"]
+        ),
+        "exp_first_nonfinite_min_duration_s": _float(
+            values["exp_first_nonfinite_min_duration_s"]
+        ),
+        "exp_first_nonfinite_max_duration_s": _float(
+            values["exp_first_nonfinite_max_duration_s"]
+        ),
+        "exp_first_nonfinite_cost": _float(values["exp_first_nonfinite_cost"]),
+        "exp_first_nonfinite_gradient_norm": _float(
+            values["exp_first_nonfinite_gradient_norm"]
         ),
         "status": _int(values["status"]),
         "failure_code": str(values["failure_code"]) if values["failure_code"] is not None else None,

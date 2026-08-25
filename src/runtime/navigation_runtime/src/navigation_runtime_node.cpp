@@ -1789,6 +1789,22 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("guide_duration_s", planner_->latestGuideDurationSeconds());
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
+    add_trace_value("exp_nonfinite_evaluation_count",
+                    exp_diagnostics.nonfinite_evaluation_count);
+    add_trace_value("exp_first_nonfinite_stage",
+                    exp_diagnostics.first_nonfinite_stage);
+    add_trace_value("exp_first_nonfinite_attempt",
+                    exp_diagnostics.first_nonfinite_attempt);
+    add_trace_value("exp_first_nonfinite_iteration",
+                    exp_diagnostics.first_nonfinite_iteration);
+    add_trace_value("exp_first_nonfinite_min_duration_s",
+                    exp_diagnostics.first_nonfinite_min_duration_s);
+    add_trace_value("exp_first_nonfinite_max_duration_s",
+                    exp_diagnostics.first_nonfinite_max_duration_s);
+    add_trace_value("exp_first_nonfinite_cost",
+                    exp_diagnostics.first_nonfinite_cost);
+    add_trace_value("exp_first_nonfinite_gradient_norm",
+                    exp_diagnostics.first_nonfinite_gradient_norm);
     add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);
     add_trace_value("command_available", planner_command_available_.load() ? 1 : 0);
     add_trace_value("planner_failure_latched", planner_failure_latched_.load() ? 1 : 0);

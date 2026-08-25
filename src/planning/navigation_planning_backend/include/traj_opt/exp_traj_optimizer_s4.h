@@ -76,6 +76,17 @@ namespace traj_opt {
         double initial_duration_s{std::numeric_limits<double>::quiet_NaN()};
         double final_duration_s{std::numeric_limits<double>::quiet_NaN()};
         std::int64_t retry_budget_remaining_us{-1};
+        int nonfinite_evaluation_count{0};
+        int first_nonfinite_stage{0}; // 1=input, 2=duration, 3=points, 4=MINCO, 5=objective, 6=gradient
+        int first_nonfinite_attempt{0};
+        int first_nonfinite_iteration{0};
+        double first_nonfinite_min_duration_s{
+            std::numeric_limits<double>::quiet_NaN()};
+        double first_nonfinite_max_duration_s{
+            std::numeric_limits<double>::quiet_NaN()};
+        double first_nonfinite_cost{std::numeric_limits<double>::quiet_NaN()};
+        double first_nonfinite_gradient_norm{
+            std::numeric_limits<double>::quiet_NaN()};
     };
 
 
@@ -135,6 +146,18 @@ namespace traj_opt {
 
             std::atomic_bool* solve_cancelled{nullptr};
             std::int64_t steady_deadline_ns{0};
+            int solver_attempt{0};
+            int nonfinite_evaluation_count{0};
+            int first_nonfinite_stage{0};
+            int first_nonfinite_attempt{0};
+            int first_nonfinite_iteration{0};
+            double first_nonfinite_min_duration_s{
+                std::numeric_limits<double>::quiet_NaN()};
+            double first_nonfinite_max_duration_s{
+                std::numeric_limits<double>::quiet_NaN()};
+            double first_nonfinite_cost{std::numeric_limits<double>::quiet_NaN()};
+            double first_nonfinite_gradient_norm{
+                std::numeric_limits<double>::quiet_NaN()};
         } opt_vars;
 
         static double costFunctional(void *ptr,
