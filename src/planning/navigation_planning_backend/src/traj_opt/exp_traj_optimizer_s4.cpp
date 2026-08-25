@@ -635,8 +635,8 @@ bool ExpTrajOpt::setupProblemAndCheck() {
         opt_vars.times *= 0.8;
     }
 
-    if (std::isnan(opt_vars.times.sum())) {
-        cout << YELLOW << " -- [ExpOpt] Init times and point failed." << RESET << endl;
+    if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() <= 0.0) {
+        cout << YELLOW << " -- [ExpOpt] Init times and point failed: non-positive or non-finite duration." << RESET << endl;
         return false;
     }
 
@@ -1301,7 +1301,20 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
+        if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
+            (norms <= std::numeric_limits<double>::epsilon()).any()) {
+            ros_ptr_->warn(
+                " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
+                i);
+            return false;
+        }
         opt_vars.hPolytopes[i].array().colwise() /= norms;
+        if (!opt_vars.hPolytopes[i].allFinite()) {
+            ros_ptr_->warn(
+                " -- [ExpOpt] corridor {} became non-finite during plane normalization",
+                i);
+            return false;
+        }
     }
 
     if (!setupProblemAndCheck()) {
@@ -1394,7 +1407,20 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
+        if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
+            (norms <= std::numeric_limits<double>::epsilon()).any()) {
+            ros_ptr_->warn(
+                " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
+                i);
+            return false;
+        }
         opt_vars.hPolytopes[i].array().colwise() /= norms;
+        if (!opt_vars.hPolytopes[i].allFinite()) {
+            ros_ptr_->warn(
+                " -- [ExpOpt] corridor {} became non-finite during plane normalization",
+                i);
+            return false;
+        }
     }
 
     if (!setupProblemAndCheck()) {

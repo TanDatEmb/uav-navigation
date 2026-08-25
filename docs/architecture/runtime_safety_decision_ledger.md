@@ -1736,3 +1736,25 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   removal from diagnostics/tests, sanitizer evidence, and repeated
   recorded-data/SITL validation remain open. Do not claim end-to-end
   acceptance from this focused result.
+
+### 2026-08-25 - Finite corridor input gate before trajectory optimization
+
+- Owner: `navigation_planning_backend` trajectory optimizer. Scope: validate
+  corridor half-space coefficients, plane-normal magnitudes and initialized
+  segment durations before normalizing or invoking MINCO; reject the solve when
+  these inputs are non-finite or non-positive and report the exact corridor
+  index.
+- Safety impact: prevents invalid geometry or duration data from entering the
+  optimizer and producing an unexplained `NaN`/`Inf` objective. This is a
+  fail-closed input validation gate; it does not relax collision, UNKNOWN,
+  dynamic-limit or deadline policy and changes no numeric threshold.
+- Evidence: SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T163927-167116` observed
+  `OptimizationExpTrajInPolytopes` ending with a non-finite MINCO objective;
+  focused planning-backend CTest passed 2/2 after the guard.
+- Removal condition: none; retain as a permanent finite-input contract. The
+  SITL open-route failure still needs a new run with the diagnostic path to
+  identify whether the source is generated corridor geometry or optimizer
+  arithmetic.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest --test-dir build/navigation_planning_backend --output-on-failure`.
