@@ -16,6 +16,10 @@ namespace {
 
 using namespace std::chrono_literals;
 
+// The replay tests need enough history to keep a replay observable while
+// allowing sanitizer builds to complete within the test's bounded wait.
+constexpr std::size_t kReplayStressHistorySamples = 1'000U;
+
 ImuSample sample(const std::int64_t time_ns) {
   return ImuSample{Timestamp(time_ns), {0.01, 0.02, -0.01},
                    {0.1, 0.0, 9.80665}};
@@ -403,13 +407,13 @@ TEST(PropagatedOdometryWorkerTest,
   config.propagator.imu_history_duration_ns = 1'000'000'000'000LL;
   PropagatedOdometryWorker worker(config);
   worker.start();
-  constexpr std::size_t kHistorySamples = 10'000U;
-  for (std::size_t index = 0U; index < kHistorySamples; ++index) {
+  for (std::size_t index = 0U; index < kReplayStressHistorySamples; ++index) {
     ASSERT_TRUE(worker.enqueueImu(
         sample(static_cast<std::int64_t>(index) * 1'000'000)));
   }
-  ASSERT_TRUE(waitForDiagnostics(worker, [kHistorySamples](const auto& diagnostics) {
-    return diagnostics.total_imu_samples_drained == kHistorySamples;
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.total_imu_samples_drained ==
+           kReplayStressHistorySamples;
   }));
 
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
@@ -433,13 +437,13 @@ TEST(PropagatedOdometryWorkerTest,
   config.propagator.imu_history_duration_ns = 1'000'000'000'000LL;
   PropagatedOdometryWorker worker(config);
   worker.start();
-  constexpr std::size_t kHistorySamples = 10'000U;
-  for (std::size_t index = 0U; index < kHistorySamples; ++index) {
+  for (std::size_t index = 0U; index < kReplayStressHistorySamples; ++index) {
     ASSERT_TRUE(worker.enqueueImu(
         sample(static_cast<std::int64_t>(index) * 1'000'000)));
   }
-  ASSERT_TRUE(waitForDiagnostics(worker, [kHistorySamples](const auto& diagnostics) {
-    return diagnostics.total_imu_samples_drained == kHistorySamples;
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.total_imu_samples_drained ==
+           kReplayStressHistorySamples;
   }));
 
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
@@ -592,13 +596,13 @@ TEST(PropagatedOdometryWorkerTest,
   config.propagator.imu_history_duration_ns = 1'000'000'000'000LL;
   PropagatedOdometryWorker worker(config);
   worker.start();
-  constexpr std::size_t kHistorySamples = 10'000U;
-  for (std::size_t index = 0U; index < kHistorySamples; ++index) {
+  for (std::size_t index = 0U; index < kReplayStressHistorySamples; ++index) {
     ASSERT_TRUE(worker.enqueueImu(
         sample(static_cast<std::int64_t>(index) * 1'000'000)));
   }
-  ASSERT_TRUE(waitForDiagnostics(worker, [kHistorySamples](const auto& diagnostics) {
-    return diagnostics.total_imu_samples_drained == kHistorySamples;
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.total_imu_samples_drained ==
+           kReplayStressHistorySamples;
   }));
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {

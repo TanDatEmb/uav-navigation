@@ -26,8 +26,8 @@ TEST(QosProfilesTest, LivoxImuMatchesDriverPublisherPolicy) {
 }
 
 TEST(QosProfilesTest, ReliablePointCloudReplayIsExplicit) {
-  const auto& profile =
-      QosProfiles::reliableSensorInput().get_rmw_qos_profile();
+  const auto qos = QosProfiles::reliableSensorInput();
+  const auto& profile = qos.get_rmw_qos_profile();
   EXPECT_EQ(profile.depth, 100U);
   EXPECT_EQ(profile.reliability, RMW_QOS_POLICY_RELIABILITY_RELIABLE);
   EXPECT_EQ(profile.durability, RMW_QOS_POLICY_DURABILITY_VOLATILE);

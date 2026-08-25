@@ -69,7 +69,6 @@ PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
     "navigation_planning_backend",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
-    "uav_simulation",
 )
 # `make build` is a product build, not a workspace-wide discovery build. The
 # list intentionally excludes simulator/demo packages and lets colcon resolve
