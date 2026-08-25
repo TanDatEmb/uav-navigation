@@ -11,6 +11,7 @@ import argparse
 from bisect import bisect_left
 import html
 import json
+import hashlib
 import math
 from pathlib import Path
 import subprocess
@@ -56,6 +57,62 @@ def provenance(workspace: Path, px4_dir: Path | None = None) -> dict[str, Any]:
         "px4_dirty": bool(px4_status),
         "px4_msgs_commit": _git(msgs, "rev-parse", "HEAD") if (msgs / ".git").exists() or (msgs / "package.xml").exists() else "",
     }
+
+
+def _captured_provenance_valid(captured: Any) -> bool:
+    if not isinstance(captured, dict) or captured.get("status") != "VALID":
+        return False
+    manifest = captured.get("manifest")
+    source = manifest.get("source") if isinstance(manifest, dict) else None
+    artifacts = manifest.get("artifacts") if isinstance(manifest, dict) else None
+    if not (
+        isinstance(manifest, dict)
+        and manifest.get("schema_version") == 1
+        and manifest.get("authoritative") is True
+        and manifest.get("build_mode") == "release"
+        and isinstance(source, dict)
+        and isinstance(source.get("sha256"), str)
+        and isinstance(source.get("git_head"), str)
+        and isinstance(artifacts, list) and artifacts
+    ):
+        return False
+    expected_manifest_sha = hashlib.sha256(
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    ).hexdigest()
+    if captured.get("manifest_sha256") != expected_manifest_sha:
+        return False
+    for artifact in artifacts:
+        if not (
+            isinstance(artifact, dict)
+            and isinstance(artifact.get("path"), str) and artifact["path"]
+            and isinstance(artifact.get("resolved_path"), str) and artifact["resolved_path"]
+            and isinstance(artifact.get("size_bytes"), int)
+            and not isinstance(artifact.get("size_bytes"), bool)
+            and artifact["size_bytes"] >= 0
+            and isinstance(artifact.get("sha256"), str)
+            and len(artifact["sha256"]) == 64
+        ):
+            return False
+    return True
+
+
+def _session_provenance(session: Path, workspace: Path, px4_dir: Path | None = None) -> dict[str, Any]:
+    runtime = _load_json(session / "runtime.json", {})
+    captured = runtime.get("build_provenance") if isinstance(runtime, dict) else None
+    if _captured_provenance_valid(captured):
+        return dict(captured)
+    return {
+        "status": "INVALID",
+        "reason": "session has no validated authoritative build provenance",
+        "legacy_git_observation": provenance(workspace, px4_dir),
+    }
+
+
+def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
+    captured = runtime.get("build_provenance") if isinstance(runtime, dict) else None
+    if not _captured_provenance_valid(captured):
+        return ["runtime did not capture a validated authoritative Release build manifest"]
+    return []
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -344,7 +401,7 @@ def _process_failures(session: Path) -> list[str]:
 
 def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     row = _stream(snapshot, name)
-    return {
+    result = {
         "sample_count": int(row.get("received", 0)),
         "mean_rate_hz": _number(row.get("mean_rate_hz")),
         "minimum_window_rate_hz": _number(row.get("minimum_window_rate_hz")),
@@ -359,6 +416,14 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "invalid_quaternion_count": int(row.get("invalid_quaternion_count", 0)),
         "invalid_covariance_count": int(row.get("invalid_covariance_count", 0)),
     }
+    for key in (
+        "arrival_gap_event_count", "arrival_gap_event_record_count",
+        "arrival_gap_event_overflow_count", "arrival_gap_event_times_ns",
+        "arrival_gap_events", "maximum_arrival_gap_ms",
+    ):
+        if key in row:
+            result[key] = row[key]
+    return result
 
 
 def _first_tracking_wall_ns(samples: list[dict[str, Any]]) -> int | None:
@@ -436,6 +501,7 @@ def _active_arrival_gap_summary(
     config: dict[str, Any],
     runtime: dict[str, Any],
     samples: list[dict[str, Any]],
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Measure wall-arrival gaps without depending on the monitor timer.
 
@@ -454,6 +520,93 @@ def _active_arrival_gap_summary(
     if not math.isfinite(stale_after_s) or stale_after_s <= 0.0:
         return {"count": 0, "maximum_gap_ms": None}
     threshold_ns = int(stale_after_s * 1e9)
+    # Schema v2: callback-owned direct gap events survive even when the
+    # high-rate clock stream is intentionally absent from samples.jsonl.
+    v2_keys = {
+        "arrival_gap_event_count", "arrival_gap_event_record_count",
+        "arrival_gap_event_overflow_count", "arrival_gap_event_times_ns",
+        "arrival_gap_events", "maximum_arrival_gap_ms",
+    }
+    if isinstance(row, dict) and any(key in row for key in v2_keys):
+        if not v2_keys.issubset(row) or not isinstance(row.get("arrival_gap_event_times_ns"), list):
+            return {"count": 1, "maximum_gap_ms": None, "evidence_valid": False}
+        direct_times = [
+            int(value) for value in row["arrival_gap_event_times_ns"]
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        ]
+        direct_records = row.get("arrival_gap_events")
+        if (
+            int(row.get("arrival_gap_event_count", -1)) != len(direct_times)
+            or int(row.get("arrival_gap_event_record_count", -1)) != len(direct_times)
+            or int(row.get("arrival_gap_event_overflow_count", -1)) != 0
+            or not isinstance(direct_records, list)
+            or len(direct_records) != len(direct_times)
+        ):
+            return {"count": 1, "maximum_gap_ms": None, "evidence_valid": False}
+        gaps_by_event: dict[int, float] = {}
+        intervals: list[tuple[int, int]] = []
+        try:
+            for expected_time, record in zip(direct_times, direct_records):
+                if not isinstance(record, dict):
+                    raise ValueError
+                event_time = int(record["event_wall_ns"])
+                before = int(record["previous_arrival_wall_ns"])
+                after = int(record["arrival_wall_ns"])
+                gap_ms = float(record["gap_ms"])
+                if (
+                    event_time != expected_time
+                    or before <= 0
+                    or after <= before
+                    or event_time != before + threshold_ns
+                    or not math.isfinite(gap_ms)
+                    or abs(gap_ms - (after - before) / 1e6) > 1e-6
+                ):
+                    raise ValueError
+                gaps_by_event[event_time] = gap_ms
+                intervals.append((before, after))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return {"count": 1, "maximum_gap_ms": None, "evidence_valid": False}
+        first_tracking_ns = _first_tracking_wall_ns(samples)
+        active_until_ns: int | None = None
+        if runtime.get("observation_finished_wall_ns"):
+            active_until_ns = int(runtime["observation_finished_wall_ns"])
+        elif runtime.get("replay_finished_wall_ns"):
+            grace_ns = int(_number(runtime.get("replay_tail_grace_s"), 0.5) * 1e9)
+            active_until_ns = int(runtime["replay_finished_wall_ns"]) - grace_ns
+        active_direct: list[int] = []
+        active_intervals: list[tuple[int, int]] = []
+        active_gap_values: list[float] = []
+        for before, after in intervals:
+            violation_begin = before + threshold_ns
+            active_begin = max(violation_begin, first_tracking_ns or violation_begin)
+            active_end = min(after, active_until_ns or after)
+            if active_end > active_begin:
+                active_direct.append(active_begin)
+                active_intervals.append((active_begin, active_end))
+                active_gap_values.append((after - before) / 1e6)
+        timer_times = row.get("stale_event_times_ns", [])
+        active_timer = _active_stale_times(
+            {"stale_event_count": len(timer_times), "stale_event_times_ns": timer_times},
+            runtime,
+            samples,
+        ) if isinstance(timer_times, list) else []
+        if active_timer is None:
+            active_timer = timer_times
+        # A stale timer and the later direct gap record can describe the same
+        # outage. Keep the callback-owned record and add only terminal timer
+        # events for which no returning callback interval exists.
+        terminal_timer = [
+            event for event in (active_timer or [])
+            if not any(before <= event <= after for before, after in active_intervals)
+        ]
+        events = sorted(set(active_direct) | set(terminal_timer))
+        return {
+            "count": len(events),
+            "maximum_gap_ms": max(active_gap_values, default=None),
+            "evidence_valid": True,
+        }
+
+    # Legacy artifact fallback: derive gaps from raw callback samples.
     arrivals = sorted(
         int(item.get("arrival_wall_ns", 0))
         for item in _series(samples, name)
@@ -478,6 +631,7 @@ def _active_arrival_gap_summary(
     return {
         "count": len(active_gaps),
         "maximum_gap_ms": max(active_gaps, default=None),
+        "evidence_valid": True,
     }
 
 
@@ -570,15 +724,18 @@ def _annotate_stale_classification(
     for name, row in streams.items():
         row.update(_stale_classification(name, row, config, runtime, samples))
         arrival_gaps = _active_arrival_gap_summary(
-            name, config, runtime, samples
+            name, config, runtime, samples, row
         )
         row["active_wall_arrival_gap_count"] = arrival_gaps["count"]
         row["maximum_active_wall_arrival_gap_ms"] = arrival_gaps["maximum_gap_ms"]
+        row["arrival_gap_evidence_valid"] = arrival_gaps.get("evidence_valid", True)
 
 
 def _sim_stream_stale_violation(name: str, row: dict[str, Any]) -> int:
     """Return the authoritative sim freshness count for one stream."""
     if name == "simulation_clock":
+        if row.get("arrival_gap_evidence_valid") is False:
+            return 1
         return int(row.get("active_wall_arrival_gap_count", 0) or 0)
     return int(row.get("source_stale_event_count", 0) or 0)
 
@@ -1798,6 +1955,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     planning["execution"] = _planning_execution_summary(snapshot)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     reasons: list[str] = []
+    reasons.extend(_provenance_reasons(runtime))
     reasons.extend(_dataset_source_count_reasons(streams, runtime))
     minimum_fraction = _number(thresholds.get("minimum_rate_fraction"), 0.90)
     for name, row in streams.items():
@@ -1865,7 +2023,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         "navigation_mapping": navigation_mapping,
         "planning": planning,
         "accuracy": "NOT_AVAILABLE",
-        "provenance": provenance(workspace),
+        "provenance": _session_provenance(session, workspace),
     }
 
 
@@ -1896,6 +2054,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         terminal_outcome == "PAUSED_SAFETY_STOP"
     )
     reasons: list[str] = []
+    reasons.extend(_provenance_reasons(runtime))
     for name in ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
@@ -1999,7 +2158,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         },
         "offboard": scenario,
         "external_mode": scenario if workflow == "external-mode" else {},
-        "provenance": provenance(workspace, px4_dir),
+        "provenance": _session_provenance(session, workspace, px4_dir),
     }
 
 

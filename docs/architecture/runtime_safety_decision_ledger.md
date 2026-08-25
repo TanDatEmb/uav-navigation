@@ -886,3 +886,74 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   the clean 2 m/s Gazebo 3/3 reproduction remain open, followed by the mandatory
   Gazebo scene matrix and speed ladder. This checkpoint does not certify the
   previously unstable 6 m/s point.
+
+### 2026-08-25 - Runtime closure status and evidence-provenance gate
+
+- HEAD `3eb7dcc` is a near-P0 source-correctness checkpoint, not closure of the
+  complete S-01--S-23 review and not flight certification. Focused source and
+  test evidence closes S-01--S-12, S-14 and S-15. S-13, S-16--S-18, S-20 and
+  S-21 remain partial. S-19 (Mid-360 hardware FOV/visibility certificate),
+  S-22 (legacy `flag_whole_known_free_` terminology/API), and S-23 (legacy
+  `min_stop_dis` / `v^2/(2a)` braking path) remain explicitly open. Continuous
+  vertical certification, inter-generation yaw acceleration/jerk continuity,
+  optimizer/backup latency distributions, full current-tree sanitizers,
+  repeated SITL and hardware validation are required before structural refactor
+  or flight authority.
+- The EXP jerk objective disable, corridor-center attractor disable, and bounded
+  CIRI iteration/obstacle-skip changes remain `TEMPORARY_BYPASS`. They are not
+  acceptance mechanisms and must be reviewed again against dataset, dense-scene
+  shadow planning and closed-loop evidence. No bypass may silently become the
+  permanent contract merely because another test passes.
+- Artifact `.artifacts/runtime/external-mode-check-20260825T002714-310960`
+  exposed a provenance false-positive: its report read Git HEAD `3eb7dcc` at
+  render time while the installed runtime executable predated that source.
+  Runtime acceptance therefore requires an authoritative full Release build
+  manifest. The build records a deterministic tracked/untracked source
+  fingerprint plus SHA256 and resolved target identity for launch-critical
+  product executables, libraries and harness scripts. The runner validates the
+  same source and artifacts before starting any process and copies immutable
+  evidence into the session. Missing/partial/stale/tampered builds fail closed;
+  package-select and sanitizer builds cannot overwrite the authoritative
+  manifest.
+- `/clock` freshness remains a hard, direct consecutive-arrival contract, but
+  its evidence owner moves into `StreamStats.update()` before the latest arrival
+  is overwritten. Exact gap count, times, maximum and bracketing source stamps
+  are persisted in `monitor.json`; the high-rate normal clock callbacks are no
+  longer serialized one-by-one into `samples.jsonl`. Timer evidence remains for
+  a terminal outage with no returning callback, and legacy artifacts retain the
+  raw-sample fallback. This removes observer I/O perturbation without changing
+  product QoS, sensor rate, queue, executor, freshness threshold or scheduling.
+  A clock gap is still fail-closed observer-or-transport evidence, not proof of
+  a specific bridge root cause.
+- This harness checkpoint does not close S-13/S-16--S-23, dataset vegetation,
+  CPU/RSS, A*/CIRI/MINCO shadow planning, clean 2 m/s 3/3, the full Gazebo map
+  matrix, the 2--8 m/s speed ladder, or hardware flight. Those gates remain in
+  that order before behavioral freeze and deep refactor.
+- Final focused verification passed 122/122 runtime Python tests and
+  `git diff --check`; the full Release product build completed 19 packages and
+  the product test result contained 64 tests with zero failure/error/skip.
+  The authoritative manifest expands from the explicitly named executables to
+  the installed product runtime closure (workspace shared/static libraries,
+  package executables and installed Python runtime/launch scripts), including
+  ROSIDL/Livox typesupport and `libpx4_ros2_cpp.so`. Clock interval percentile history
+  is intentionally disabled only for the high-rate clock stream to avoid an
+  unbounded list and repeated sort; whole-run mean/source maximum, timestamp
+  regressions and direct wall-gap ownership remain exact. Gap records are
+  bounded to 1024, while total and overflow remain exact and any overflow makes
+  the report fail closed.
+- Active clock freshness uses the stale interval
+  `[previous_arrival + budget, next_arrival)`: any intersection with the
+  TRACKING observation window is a violation, including an outage whose
+  threshold crossing preceded TRACKING. A delayed terminal stale timer records
+  that deterministic threshold crossing rather than its dispatch time, so an
+  executor delay cannot move an active failure past observation shutdown.
+  FlightReview reads commit/dirty identity from the captured manifest source;
+  it does not fall back to the repository state at render time.
+- Preflight-to-exec TOCTOU and exact discovered-artifact-set equality remain
+  P1 provenance work: this checkpoint proves the validated state immediately
+  before launch, not an immutable post-exec identity. A shared build/runtime
+  lock or `/proc/<pid>/exe` capture is required before strengthening that claim.
+  Hash-preflight latency must be characterized across repeated runs. After this
+  source checkpoint is committed, a new full Release build and manifest
+  validation are mandatory because the commit itself changes the authoritative
+  source fingerprint.

@@ -26,6 +26,7 @@ import yaml
 
 from process_group import Session, resolve_latest, update_latest
 import report
+from build_provenance import validate_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -425,6 +426,26 @@ def _write_runtime(session: Session, **values: Any) -> None:
             current = {}
     current.update(values)
     path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> dict[str, Any]:
+    evidence = validate_manifest(ROOT, ROOT / "install")
+    if px4_dir is not None:
+        px4_head = subprocess.run(
+            ["git", "-C", str(px4_dir), "rev-parse", "HEAD"],
+            text=True, capture_output=True, check=False,
+        )
+        px4_status = subprocess.run(
+            ["git", "-C", str(px4_dir), "status", "--porcelain"],
+            text=True, capture_output=True, check=False,
+        )
+        evidence["external_px4"] = {
+            "path": str(px4_dir.resolve()),
+            "git_head": px4_head.stdout.strip() if px4_head.returncode == 0 else "",
+            "git_dirty": bool(px4_status.stdout.strip()) if px4_status.returncode == 0 else None,
+        }
+    _write_runtime(session, build_provenance=evidence)
+    return evidence
 
 
 def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, low: int, high: int) -> int:
@@ -1146,6 +1167,7 @@ def run_dataset(
             ),
             failures=[],
         )
+        _capture_build_provenance(session)
         context, counts = _dataset_context(dataset)
         expected_stream_counts = _expected_dataset_stream_counts(context, counts)
         _write_runtime(session, dataset_context={
@@ -1599,6 +1621,10 @@ def _run_sim_unlocked(
         xrce_port=isolated_xrce_port,
     )
     prereq = _sim_prerequisites(px4_dir, gz_command)
+    try:
+        _capture_build_provenance(session, px4_dir)
+    except Exception as error:
+        prereq.append(f"build provenance: {error}")
     if prereq:
         _write_runtime(session, failures=prereq)
         result = _stop_and_report(session, workflow, RUNTIME_CONFIG / "sim.yaml", px4_dir=px4_dir)

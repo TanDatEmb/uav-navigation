@@ -847,6 +847,18 @@ def render(session: Path, output: Path) -> Path:
     continuity = planning.get("continuity", {})
     safety_stop_ratio = finite(continuity.get("safety_stop_ratio"))
     trace = planning.get("rolling_bundle_trace", {})
+    provenance = report.get("provenance", {}) if isinstance(report, dict) else {}
+    manifest = provenance.get("manifest", {}) if isinstance(provenance, dict) else {}
+    source_identity = manifest.get("source", {}) if isinstance(manifest, dict) else {}
+    navigation_commit = (
+        provenance.get("navigation_commit")
+        if isinstance(provenance, dict) else None
+    ) or source_identity.get("git_head") or "unknown"
+    navigation_dirty = (
+        provenance.get("navigation_dirty")
+        if isinstance(provenance, dict) and "navigation_dirty" in provenance
+        else source_identity.get("git_dirty")
+    )
     trace_records = trace.get("records", []) if isinstance(trace, dict) else []
     zero_trace_fields: list[str] = []
     for field in ("horizon_arc_m", "horizon_start_arc_m", "horizon_end_arc_m", "splice_position_residual_m"):
@@ -1074,7 +1086,7 @@ def render(session: Path, output: Path) -> Path:
 
   <section><div class="two-col"><div><h2>Interpretation</h2><div class="callout"><p>{esc(interpretation)}</p></div></div><div><h2>Run context</h2><p class="small"><strong>Estimator:</strong> {esc(lio.get('state') or 'N/A')} · residual p95 {fmt(metrics.get('localization', {}).get('p95_position_residual_m'), 3, ' m')}.</p><p class="small"><strong>PX4:</strong> {esc(px4_observed)}; failsafe observed = {esc(external.get('failsafe_seen'))}.</p><p class="small"><strong>Planner:</strong> {integer(planning.get('diagnostic_sample_count'))} diagnostic samples · {integer(continuity.get('endpoint_change_count'))} endpoint changes · {integer(smoothness.get('handover_expired_count'))} expired handovers.</p></div></div></section>
 
-  <section><h2>Evidence and raw artifacts</h2><p class="small">{esc(trace_note)}</p><details><summary>Why the old trace table is not in the main report</summary><p class="small">The old table presented runtime fields as if they were meaningful measurements, although several columns were constant 0.000 in every record. That creates false precision and makes a debug trace look like an evaluation result. The raw trace is preserved in the source artifacts below for engineering diagnosis.</p></details><details><summary>Source files</summary><div class="raw-links">{links_html}</div></details><details><summary>Provenance</summary><p class="small">Navigation commit: <code>{esc((report.get('provenance', {}) if isinstance(report, dict) else {}).get('navigation_commit') or 'unknown')}</code> · dirty workspace: <code>{esc((report.get('provenance', {}) if isinstance(report, dict) else {}).get('navigation_dirty'))}</code>.</p></details></section>
+  <section><h2>Evidence and raw artifacts</h2><p class="small">{esc(trace_note)}</p><details><summary>Why the old trace table is not in the main report</summary><p class="small">The old table presented runtime fields as if they were meaningful measurements, although several columns were constant 0.000 in every record. That creates false precision and makes a debug trace look like an evaluation result. The raw trace is preserved in the source artifacts below for engineering diagnosis.</p></details><details><summary>Source files</summary><div class="raw-links">{links_html}</div></details><details><summary>Provenance</summary><p class="small">Navigation commit: <code>{esc(navigation_commit)}</code> · dirty workspace: <code>{esc(navigation_dirty)}</code>.</p></details></section>
 
   <footer>Report purpose: human evaluation of one SITL run. Use the linked raw artifacts for debugging; do not use this page as a substitute for the full recorder output.</footer>
 </main>

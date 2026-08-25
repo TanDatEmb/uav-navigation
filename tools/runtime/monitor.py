@@ -96,11 +96,13 @@ class StreamStats:
     expected_hz: float | None = None
     stale_after_s: float = 1.0
     timestamp_upper_bound_ns: int | None = None
+    interval_history_enabled: bool = True
     received: int = 0
     first_stamp_ns: int = 0
     last_stamp_ns: int = 0
     last_arrival_ns: int = 0
     intervals_ms: list[float] = field(default_factory=list)
+    maximum_source_gap_ms: float = 0.0
     arrival_times_s: deque[float] = field(default_factory=lambda: deque(maxlen=512))
     window_rates_hz: list[float] = field(default_factory=list)
     timestamp_duplicates: int = 0
@@ -108,6 +110,11 @@ class StreamStats:
     timestamp_epoch_discard_count: int = 0
     stale_events: int = 0
     stale_event_times_ns: list[int] = field(default_factory=list)
+    arrival_gap_event_times_ns: list[int] = field(default_factory=list)
+    arrival_gap_events: list[dict[str, int | float]] = field(default_factory=list)
+    maximum_arrival_gap_ms: float = 0.0
+    arrival_gap_event_total: int = 0
+    arrival_gap_event_overflow: int = 0
     nonfinite_messages: int = 0
     invalid_quaternions: int = 0
     invalid_covariances: int = 0
@@ -133,6 +140,30 @@ class StreamStats:
         ):
             self.timestamp_epoch_discard_count += 1
             return False
+        previous_arrival_ns = self.last_arrival_ns
+        previous_stamp_ns = self.last_stamp_ns
+        if previous_arrival_ns > 0:
+            gap_ns = arrival_ns - previous_arrival_ns
+            threshold_ns = int(self.stale_after_s * 1e9)
+            # Exact equality remains valid, matching the freshness contract.
+            if threshold_ns > 0 and gap_ns > threshold_ns:
+                event_ns = previous_arrival_ns + threshold_ns
+                self.arrival_gap_event_total += 1
+                if len(self.arrival_gap_events) < 1024:
+                    self.arrival_gap_event_times_ns.append(event_ns)
+                    self.arrival_gap_events.append({
+                        "event_wall_ns": event_ns,
+                        "previous_arrival_wall_ns": previous_arrival_ns,
+                        "arrival_wall_ns": arrival_ns,
+                        "gap_ms": gap_ns / 1e6,
+                        "previous_source_stamp_ns": previous_stamp_ns,
+                        "source_stamp_ns": stamp_ns,
+                    })
+                else:
+                    self.arrival_gap_event_overflow += 1
+                self.maximum_arrival_gap_ms = max(
+                    self.maximum_arrival_gap_ms, gap_ns / 1e6
+                )
         self.received += 1
         self.last_arrival_ns = arrival_ns
         self.arrival_times_s.append(arrival_ns / 1e9)
@@ -144,7 +175,9 @@ class StreamStats:
                 elif delta_ms < 0:
                     self.timestamp_regressions += 1
                 else:
-                    self.intervals_ms.append(delta_ms)
+                    self.maximum_source_gap_ms = max(self.maximum_source_gap_ms, delta_ms)
+                    if self.interval_history_enabled:
+                        self.intervals_ms.append(delta_ms)
             if not self.first_stamp_ns:
                 self.first_stamp_ns = stamp_ns
             self.last_stamp_ns = stamp_ns
@@ -172,7 +205,12 @@ class StreamStats:
             age_s = (now_ns - self.last_arrival_ns) / 1e9
             if age_s > self.stale_after_s:
                 self.stale_events += 1
-                self.stale_event_times_ns.append(now_ns)
+                # Own the deterministic threshold crossing, not the timer's
+                # possibly delayed dispatch time. Otherwise an executor stall
+                # can move an active outage past the observation boundary.
+                self.stale_event_times_ns.append(
+                    self.last_arrival_ns + int(self.stale_after_s * 1e9)
+                )
                 self._stale_reported = True
 
     def as_dict(self) -> dict[str, Any]:
@@ -184,10 +222,19 @@ class StreamStats:
             "received": self.received,
             "mean_rate_hz": mean_rate,
             "minimum_window_rate_hz": min(self.window_rates_hz, default=0.0),
-            "p95_interval_ms": _percentile(self.intervals_ms, 0.95),
-            "maximum_gap_ms": max(self.intervals_ms, default=0.0),
+            "p95_interval_ms": (
+                _percentile(self.intervals_ms, 0.95)
+                if self.interval_history_enabled else None
+            ),
+            "maximum_gap_ms": self.maximum_source_gap_ms,
             "stale_event_count": self.stale_events,
             "stale_event_times_ns": self.stale_event_times_ns,
+            "arrival_gap_event_count": self.arrival_gap_event_total,
+            "arrival_gap_event_record_count": len(self.arrival_gap_events),
+            "arrival_gap_event_overflow_count": self.arrival_gap_event_overflow,
+            "arrival_gap_event_times_ns": self.arrival_gap_event_times_ns,
+            "arrival_gap_events": self.arrival_gap_events,
+            "maximum_arrival_gap_ms": self.maximum_arrival_gap_ms,
             "timestamp_duplicate_count": self.timestamp_duplicates,
             "timestamp_regression_count": self.timestamp_regressions,
             "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
@@ -356,6 +403,7 @@ class RuntimeMonitor:
                     if self.workflow == "sim" and spec.name in PX4_SIMULATION_STREAMS
                     else None
                 ),
+                interval_history_enabled=spec.name != "simulation_clock",
             )
             try:
                 reliability, depth = _observer_qos_contract(
@@ -527,7 +575,12 @@ class RuntimeMonitor:
                 "payload": payload,
                 "accepted_by_monitor": accepted_by_monitor,
             }
-            self._sample_stream.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
+            # `/clock` is high-rate transport evidence. Its callback-owned
+            # counters and exact consecutive gap events live in monitor.json;
+            # serializing every normal tick would perturb the scheduler being
+            # measured. Other streams retain full sample history.
+            if spec.name != "simulation_clock":
+                self._sample_stream.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
 
         return callback
 

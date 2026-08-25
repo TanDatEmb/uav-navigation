@@ -10,6 +10,8 @@ import shlex
 import subprocess
 import sys
 
+from build_provenance import MANIFEST_NAME, create_manifest, source_fingerprint, write_manifest_atomic
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ROS_SYSTEM_PYTHON_PATH = Path("/usr/lib/python3/dist-packages")
@@ -262,9 +264,34 @@ def main() -> int:
     print("+", shlex.join(command), flush=True)
     if args.action == "build":
         environment["MAKEFLAGS"] = f"-j{MAKE_JOBS}"
+    full_product_build = args.action == "build" and not packages and args.mode == "release"
+    build_started_wall_ns = 0
+    source_before = None
+    if full_product_build:
+        # A failed/interrupted full build must not leave the previous build
+        # certificate looking authoritative.
+        (install / MANIFEST_NAME).unlink(missing_ok=True)
+        build_started_wall_ns = __import__("time").time_ns()
+        source_before = source_fingerprint(ROOT)
     result = subprocess.run(
         command, cwd=ROOT, env=environment, check=False
     ).returncode
+    if result == 0 and full_product_build:
+        try:
+            manifest = create_manifest(
+                ROOT,
+                install,
+                mode=args.mode,
+                authoritative=True,
+                command=command,
+                build_started_wall_ns=build_started_wall_ns,
+                source_before=source_before,
+            )
+            path = write_manifest_atomic(install, manifest)
+            print(f"Wrote authoritative build manifest: {path}", flush=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            print(f"Build provenance failed closed: {error}", file=sys.stderr)
+            result = 1
     if result == 0 and args.action == "check":
         data_check = [sys.executable, str(ROOT / "tools" / "data.py"), "check"]
         print("+", shlex.join(data_check), flush=True)

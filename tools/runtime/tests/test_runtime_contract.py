@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 from contextlib import redirect_stderr
@@ -20,11 +21,162 @@ sys.path.insert(0, str(RUNTIME))
 
 import monitor
 from monitor import StreamStats
+import build_provenance
 import report
 import runner
 
 
+def _valid_captured_provenance() -> dict[str, object]:
+    manifest = {
+        "schema_version": 1,
+        "authoritative": True,
+        "build_mode": "release",
+        "source": {"sha256": "b" * 64, "git_head": "run-head"},
+        "artifacts": [{
+            "path": "install/product/node",
+            "resolved_path": "/workspace/build/product/node",
+            "size_bytes": 123,
+            "sha256": "c" * 64,
+        }],
+    }
+    manifest_sha = hashlib.sha256(
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    ).hexdigest()
+    return {"status": "VALID", "manifest_sha256": manifest_sha, "manifest": manifest}
+
+
 class RuntimeContractTest(unittest.TestCase):
+    def test_build_provenance_rejects_stale_source_and_modified_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            artifact = install / "product/bin/node"
+            source = root / "product.cpp"
+            artifact.parent.mkdir(parents=True)
+            source.write_text("v1\n", encoding="utf-8")
+            artifact.write_bytes(b"binary-v1")
+            (root / ".gitignore").write_text("install/\n", encoding="utf-8")
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            subprocess.run(["git", "add", "product.cpp", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            fingerprint = build_provenance.source_fingerprint(root)
+            record = build_provenance._artifact_record(artifact, root)
+            manifest = {
+                "schema_version": build_provenance.SCHEMA_VERSION,
+                "authoritative": True,
+                "build_mode": "release",
+                "source": fingerprint,
+                "artifacts": [record],
+            }
+            build_provenance.write_manifest_atomic(install, manifest)
+            self.assertEqual(build_provenance.validate_manifest(root, install)["status"], "VALID")
+            source.write_text("v2\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "source fingerprint"):
+                build_provenance.validate_manifest(root, install)
+            source.write_text("v1\n", encoding="utf-8")
+            artifact.write_bytes(b"binary-v2")
+            with self.assertRaisesRegex(RuntimeError, "artifact identity mismatch"):
+                build_provenance.validate_manifest(root, install)
+
+    def test_build_provenance_rejects_missing_partial_and_symlink_swap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            install.mkdir()
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            tracked = root / "source"
+            tracked.write_text("x", encoding="utf-8")
+            (root / ".gitignore").write_text("install/\na\nb\n", encoding="utf-8")
+            subprocess.run(["git", "add", "source", ".gitignore"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            with self.assertRaisesRegex(RuntimeError, "manifest unavailable"):
+                build_provenance.validate_manifest(root, install)
+            target_a = root / "a"
+            target_b = root / "b"
+            target_a.write_text("same", encoding="utf-8")
+            target_b.write_text("same", encoding="utf-8")
+            link = install / "node"
+            link.symlink_to(target_a)
+            manifest = {
+                "schema_version": 1,
+                "authoritative": False,
+                "build_mode": "release",
+                "source": build_provenance.source_fingerprint(root),
+                "artifacts": [build_provenance._artifact_record(link, root)],
+            }
+            build_provenance.write_manifest_atomic(install, manifest)
+            with self.assertRaisesRegex(RuntimeError, "authoritative full Release"):
+                build_provenance.validate_manifest(root, install)
+            manifest["authoritative"] = True
+            build_provenance.write_manifest_atomic(install, manifest)
+            link.unlink()
+            link.symlink_to(target_b)
+            with self.assertRaisesRegex(RuntimeError, "resolved_path"):
+                build_provenance.validate_manifest(root, install)
+
+    def test_source_fingerprint_covers_dirty_submodule_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            child = base / "child"
+            root = base / "root"
+            child.mkdir()
+            root.mkdir()
+            subprocess = __import__("subprocess")
+            for repository in (child, root):
+                subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repository, check=True)
+                subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+            (child / "value.txt").write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "add", "value.txt"], cwd=child, check=True)
+            subprocess.run(["git", "commit", "-qm", "child"], cwd=child, check=True)
+            subprocess.run(
+                ["git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(child), "vendor"],
+                cwd=root, check=True,
+            )
+            subprocess.run(["git", "commit", "-qam", "root"], cwd=root, check=True)
+            vendor = root / "vendor" / "value.txt"
+            vendor.write_text("dirty-one\n", encoding="utf-8")
+            first = build_provenance.source_fingerprint(root)
+            vendor.write_text("dirty-two\n", encoding="utf-8")
+            second = build_provenance.source_fingerprint(root)
+            self.assertTrue(first["git_dirty"])
+            self.assertTrue(second["git_dirty"])
+            self.assertNotEqual(first["sha256"], second["sha256"])
+            self.assertNotEqual(
+                first["submodules"][0]["sha256"], second["submodules"][0]["sha256"]
+            )
+
+    def test_manifest_covers_both_px4_odometry_bridge_executables(self) -> None:
+        self.assertIn(
+            "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_node",
+            build_provenance.CRITICAL_ARTIFACTS,
+        )
+
+    def test_runtime_artifact_discovery_includes_workspace_shared_library(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            library = install / "product" / "lib" / "libdependency.so"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b"dependency")
+            with (
+                mock.patch.object(build_provenance, "PRODUCT_RUNTIME_PREFIXES", ("product",)),
+                mock.patch.object(build_provenance, "CRITICAL_ARTIFACTS", ()),
+                mock.patch.object(build_provenance, "RUNTIME_SCRIPTS", ()),
+            ):
+                paths = build_provenance.runtime_artifact_paths(root, install)
+            self.assertEqual(paths, [library])
+        self.assertIn(
+            "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_external_node",
+            build_provenance.CRITICAL_ARTIFACTS,
+        )
+
     def test_runtime_artifacts_use_git_common_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             checkout = Path(temporary) / "worktree"
@@ -1000,6 +1152,46 @@ class RuntimeContractTest(unittest.TestCase):
             1,
         )
 
+    def test_legacy_rate_row_does_not_invent_partial_gap_schema(self) -> None:
+        row = report._rate_row(
+            {"streams": {"simulation_clock": {"received": 2}}},
+            "simulation_clock",
+        )
+        self.assertNotIn("arrival_gap_event_count", row)
+
+    def test_legacy_sim_report_uses_raw_clock_arrival_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            (session / "runtime.json").write_text(json.dumps({
+                "build_provenance": _valid_captured_provenance(),
+                "failures": [],
+            }), encoding="utf-8")
+            rows = [
+                {"kind": "sample", "stream": "simulation_clock",
+                 "arrival_wall_ns": 1_000_000_000, "timestamp_ns": 10_000_000_000,
+                 "payload": {"stamp_ns": 10_000_000_000}, "accepted_by_monitor": True},
+                {"kind": "sample", "stream": "simulation_clock",
+                 "arrival_wall_ns": 1_700_000_001, "timestamp_ns": 10_020_000_000,
+                 "payload": {"stamp_ns": 10_020_000_000}, "accepted_by_monitor": True},
+            ]
+            (session / "samples.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+            )
+            legacy_clock = {
+                "received": 2, "mean_rate_hz": 100.0,
+                "minimum_window_rate_hz": 100.0, "maximum_gap_ms": 20.0,
+                "stale_event_count": 0, "stale_event_times_ns": [],
+            }
+            result = report._sim_report(
+                session, runner.load_config("sim.yaml"),
+                {"streams": {"simulation_clock": legacy_clock}, "diagnostics": {}},
+                ROOT, None, "external-mode",
+            )
+            self.assertEqual(
+                result["streams"]["simulation_clock"]["active_wall_arrival_gap_count"], 1
+            )
+            self.assertEqual(result["verdict"], "FAIL")
+
     def test_clock_arrival_gap_before_tracking_is_not_an_active_failure(self) -> None:
         config = runner.load_config("common.yaml")
         samples = [
@@ -1354,6 +1546,184 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(snapshot["timestamp_regression_count"], 1)
         self.assertEqual(snapshot["stale_event_count"], 1)
         self.assertEqual(snapshot["frame_ids"], ["livox_imu_frame"])
+
+    def test_stream_stats_records_direct_gap_without_stale_timer(self) -> None:
+        stats = StreamStats("simulation_clock", "/clock", stale_after_s=0.5)
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_020_000_000, 10_500_000_000)  # exact boundary passes
+        stats.update(1_040_000_000, 11_000_000_001)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["arrival_gap_event_count"], 1)
+        self.assertEqual(snapshot["stale_event_count"], 0)
+        self.assertAlmostEqual(snapshot["maximum_arrival_gap_ms"], 500.000001)
+        event = snapshot["arrival_gap_events"][0]
+        self.assertEqual(event["previous_source_stamp_ns"], 1_020_000_000)
+        self.assertEqual(event["source_stamp_ns"], 1_040_000_000)
+
+    def test_clock_gap_snapshot_is_authoritative_without_raw_samples(self) -> None:
+        row = {
+            "arrival_gap_event_count": 1,
+            "arrival_gap_event_record_count": 1,
+            "arrival_gap_event_overflow_count": 0,
+            "arrival_gap_event_times_ns": [2_000_000_000],
+            "arrival_gap_events": [{
+                "event_wall_ns": 2_000_000_000,
+                "previous_arrival_wall_ns": 1_500_000_000,
+                "arrival_wall_ns": 2_200_000_000,
+                "gap_ms": 700.0,
+            }],
+            "maximum_arrival_gap_ms": 700.0,
+            "stale_event_count": 0,
+            "stale_event_times_ns": [],
+        }
+        result = report._active_arrival_gap_summary(
+            "simulation_clock",
+            {"runtime": {"streams": {"simulation_clock": {"stale_after_s": 0.5}}}},
+            {},
+            [],
+            row,
+        )
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["maximum_gap_ms"], 700.0)
+        malformed = dict(row, arrival_gap_event_count=2)
+        self.assertFalse(report._active_arrival_gap_summary(
+            "simulation_clock",
+            {"runtime": {"streams": {"simulation_clock": {"stale_after_s": 0.5}}}},
+            {}, [], malformed,
+        )["evidence_valid"])
+
+    def test_sim_report_blocks_callback_owned_clock_gap_without_raw_clock_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            valid_provenance = _valid_captured_provenance()
+            runtime = {
+                "build_provenance": valid_provenance,
+                "failures": [],
+            }
+            (session / "runtime.json").write_text(json.dumps(runtime), encoding="utf-8")
+            (session / "samples.jsonl").write_text("", encoding="utf-8")
+            clock = StreamStats("simulation_clock", "/clock", expected_hz=100.0, stale_after_s=0.5)
+            clock.update(1_000_000_000, 10_000_000_000)
+            clock.update(1_020_000_000, 10_700_000_000)
+            snapshot = {
+                "streams": {"simulation_clock": clock.as_dict()},
+                "diagnostics": {},
+            }
+            result = report._sim_report(
+                session, runner.load_config("sim.yaml"), snapshot, ROOT, None,
+                "external-mode",
+            )
+            self.assertEqual(result["verdict"], "FAIL")
+            self.assertEqual(
+                result["streams"]["simulation_clock"]["active_wall_arrival_gap_count"], 1
+            )
+            self.assertIn(
+                "simulation_clock timestamp/freshness/validity violation",
+                result["reasons"],
+            )
+
+    def test_clock_gap_is_clipped_against_tracking_window(self) -> None:
+        def clock_row(before_ns: int, after_ns: int) -> dict[str, object]:
+            return {
+                "arrival_gap_event_count": 1,
+                "arrival_gap_event_record_count": 1,
+                "arrival_gap_event_overflow_count": 0,
+                "arrival_gap_event_times_ns": [before_ns + 500_000_000],
+                "arrival_gap_events": [{
+                    "event_wall_ns": before_ns + 500_000_000,
+                    "previous_arrival_wall_ns": before_ns,
+                    "arrival_wall_ns": after_ns,
+                    "gap_ms": (after_ns - before_ns) / 1e6,
+                }],
+                "maximum_arrival_gap_ms": (after_ns - before_ns) / 1e6,
+                "stale_event_count": 0,
+                "stale_event_times_ns": [],
+            }
+
+        samples = [{
+            "kind": "sample",
+            "stream": "diagnostics",
+            "arrival_wall_ns": 1_400_000_000,
+            "timestamp_ns": 1,
+            "accepted_by_monitor": True,
+            "payload": {"values": {"state": "TRACKING"}},
+        }]
+        config = {"runtime": {"streams": {"simulation_clock": {"stale_after_s": 0.5}}}}
+        # The callback gap starts before TRACKING but remains absent for 600 ms
+        # after TRACKING, so it is an active violation.
+        blocked = report._active_arrival_gap_summary(
+            "simulation_clock", config, {}, samples,
+            clock_row(1_000_000_000, 2_000_000_000)
+        )
+        self.assertEqual(blocked["count"], 1)
+        self.assertEqual(blocked["maximum_gap_ms"], 1000.0)
+        # The stale interval ended before TRACKING; startup outage is excluded.
+        allowed = report._active_arrival_gap_summary(
+            "simulation_clock", config, {}, samples,
+            clock_row(500_000_000, 1_300_000_000)
+        )
+        self.assertEqual(allowed["count"], 0)
+
+    def test_monitor_does_not_serialize_normal_clock_samples(self) -> None:
+        runtime_monitor = monitor.RuntimeMonitor.__new__(monitor.RuntimeMonitor)
+        runtime_monitor.streams = {
+            "simulation_clock": StreamStats("simulation_clock", "/clock", stale_after_s=0.5)
+        }
+        runtime_monitor.latest = {}
+        runtime_monitor.diagnostics = {}
+        runtime_monitor._sample_stream = io.StringIO()
+        spec = monitor.TopicSpec(
+            "simulation_clock", "/clock", object,
+            lambda _message: {"stamp_ns": 1_000_000_000},
+        )
+        runtime_monitor._callback(spec)(SimpleNamespace())
+        self.assertEqual(runtime_monitor._sample_stream.getvalue(), "")
+        self.assertEqual(runtime_monitor.streams["simulation_clock"].received, 1)
+
+    def test_clock_interval_history_is_disabled_but_max_and_gap_count_remain_exact(self) -> None:
+        stats = StreamStats(
+            "simulation_clock", "/clock", stale_after_s=0.5,
+            interval_history_enabled=False,
+        )
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_020_000_000, 10_700_000_000)
+        snapshot = stats.as_dict()
+        self.assertIsNone(snapshot["p95_interval_ms"])
+        self.assertEqual(snapshot["maximum_gap_ms"], 20.0)
+        self.assertEqual(snapshot["arrival_gap_event_count"], 1)
+        self.assertEqual(snapshot["arrival_gap_event_overflow_count"], 0)
+
+    def test_report_provenance_is_session_captured_not_rerendered_git(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            captured = _valid_captured_provenance()
+            (session / "runtime.json").write_text(
+                json.dumps({"build_provenance": captured}), encoding="utf-8"
+            )
+            with mock.patch.object(report, "_git", return_value="changed-after-flight"):
+                self.assertEqual(
+                    report._session_provenance(session, ROOT)["manifest_sha256"],
+                    captured["manifest_sha256"],
+                )
+
+    def test_delayed_stale_timer_owns_threshold_crossing_before_observation_end(self) -> None:
+        stats = StreamStats("simulation_clock", "/clock", stale_after_s=0.5)
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_020_000_000, 10_020_000_000)
+        stats.check_stale(11_000_000_000)
+        self.assertEqual(stats.as_dict()["stale_event_times_ns"], [10_520_000_000])
+        active = report._active_stale_times(
+            stats.as_dict(),
+            {"observation_finished_wall_ns": 10_700_000_000},
+            [],
+        )
+        self.assertEqual(active, [10_520_000_000])
+
+    def test_partial_captured_provenance_fails_closed(self) -> None:
+        self.assertEqual(
+            report._provenance_reasons({"build_provenance": {"status": "VALID"}}),
+            ["runtime did not capture a validated authoritative Release build manifest"],
+        )
 
     def test_simulation_stream_discards_wall_epoch_without_regression(self) -> None:
         stats = StreamStats(
