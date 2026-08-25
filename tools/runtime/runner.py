@@ -19,6 +19,7 @@ import subprocess
 from shutil import which
 import sys
 import time
+from functools import wraps
 from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
@@ -27,6 +28,13 @@ import yaml
 from process_group import Session, resolve_latest, update_latest
 import report
 from build_provenance import validate_manifest
+from runtime_environment import (
+    BuildRuntimeBusyError,
+    BuildRuntimeLock,
+    CANONICAL_PYTHON,
+    canonical_python_error,
+    require_canonical_python,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1177,6 +1185,19 @@ def _required_measured_speed_mps(
     return requested if math.isfinite(requested) and requested > 0.0 else None
 
 
+def _locked_dataset_runner(function: Callable[..., int]) -> Callable[..., int]:
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> int:
+        try:
+            with BuildRuntimeLock(ROOT, exclusive=True):
+                return function(*args, **kwargs)
+        except BuildRuntimeBusyError as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 2
+    return wrapped
+
+
+@_locked_dataset_runner
 def run_dataset(
     dataset: str,
     rate: float,
@@ -1229,7 +1250,7 @@ def run_dataset(
         monitor_process = session.start(
             "monitor",
             _ros_shell([
-                sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
+                str(CANONICAL_PYTHON), str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
                 "--workflow", "dataset", "--config", str(RUNTIME_CONFIG / "dataset.yaml"),
             ]),
             cwd=ROOT,
@@ -1290,7 +1311,10 @@ def run_dataset(
 
 def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
     missing: list[str] = []
-    for command in ("ros2", "python3", "MicroXRCEAgent"):
+    python_error = canonical_python_error()
+    if python_error:
+        missing.append(python_error)
+    for command in ("ros2", "MicroXRCEAgent"):
         if not _command_exists(command):
             missing.append(f"missing command: {command}")
     if not gz_command:
@@ -1362,7 +1386,7 @@ def _start_gazebo_native_observer(
     process = session.start(
         "gazebo_native_observer",
         [
-            sys.executable,
+            str(CANONICAL_PYTHON),
             str(ROOT / "tools/runtime/gazebo_native_observer.py"),
             "--session",
             str(session.directory),
@@ -1724,7 +1748,7 @@ def _run_sim_unlocked(
         monitor = session.start(
             "monitor",
             _ros_shell([
-                sys.executable, str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
+                str(CANONICAL_PYTHON), str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
                 "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml"),
             ]),
             cwd=ROOT,
@@ -1841,7 +1865,7 @@ def _run_sim_unlocked(
             scenario = session.start(
                 scenario_role,
                 _ros_shell([
-                    sys.executable, str(ROOT / "tools/runtime" / scenario_name),
+                    str(CANONICAL_PYTHON), str(ROOT / "tools/runtime" / scenario_name),
                     "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path),
                 ]),
                 cwd=ROOT,
@@ -1974,7 +1998,7 @@ def _recover_unfinalized_session(
     print(session.directory, file=sys.stderr)
 
 
-def run_sim(*args: Any, **kwargs: Any) -> int:
+def _run_sim_with_runtime_lock(*args: Any, **kwargs: Any) -> int:
     """Run one simulation under an exclusive lock and cleanup signal guard."""
     requested_port = kwargs.get("xrce_port")
     with RuntimeLock():
@@ -1989,6 +2013,16 @@ def run_sim(*args: Any, **kwargs: Any) -> int:
             except BaseException as error:
                 _recover_unfinalized_session(error, existing_sessions)
                 raise
+
+
+def run_sim(*args: Any, **kwargs: Any) -> int:
+    """Run SITL while excluding both concurrent builds and other replays."""
+    try:
+        with BuildRuntimeLock(ROOT, exclusive=True):
+            return _run_sim_with_runtime_lock(*args, **kwargs)
+    except BuildRuntimeBusyError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
 
 
 def _load_runtime_failures(session: Session) -> list[str]:
@@ -2193,6 +2227,11 @@ def _number(value: Any) -> float:
 
 
 def main() -> int:
+    try:
+        require_canonical_python()
+    except RuntimeError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     dataset = sub.add_parser("dataset-check")

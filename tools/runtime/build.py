@@ -10,7 +10,17 @@ import shlex
 import subprocess
 import sys
 
+RUNTIME_DIR = Path(__file__).resolve().parent
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
+
 from build_provenance import MANIFEST_NAME, create_manifest, source_fingerprint, write_manifest_atomic
+from runtime_environment import (
+    BuildRuntimeBusyError,
+    BuildRuntimeLock,
+    CANONICAL_PYTHON,
+    require_canonical_python,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -120,12 +130,13 @@ def test_result_base(mode: str) -> Path:
 
 
 def ros_environment(install: Path | None = None) -> dict[str, str]:
+    require_canonical_python()
     setup_files = [Path("/opt/ros/jazzy/setup.bash")]
     if install is not None and (install / "setup.bash").is_file():
         setup_files.append(install / "setup.bash")
     command = " && ".join(
         [f"source {shlex.quote(str(path))}" for path in setup_files]
-        + [f"{shlex.quote(sys.executable)} -c 'import os; print(chr(0).join(f\"{{k}}={{v}}\" for k, v in os.environ.items()))'"]
+        + [f"{shlex.quote(str(CANONICAL_PYTHON))} -c 'import os; print(chr(0).join(f\"{{k}}={{v}}\" for k, v in os.environ.items()))'"]
     )
     result = subprocess.run(
         ["bash", "-c", command],
@@ -168,7 +179,7 @@ def sanitizer_environment(mode: str, environment: dict[str, str]) -> None:
         environment.setdefault("TSAN_OPTIONS", "halt_on_error=1")
 
 
-def main() -> int:
+def _main_unlocked() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=sorted(MODES), default="release")
     subparsers = parser.add_subparsers(dest="action", required=True)
@@ -264,13 +275,19 @@ def main() -> int:
     print("+", shlex.join(command), flush=True)
     if args.action == "build":
         environment["MAKEFLAGS"] = f"-j{MAKE_JOBS}"
-    full_product_build = args.action == "build" and not packages and args.mode == "release"
+    # Any Release build can replace files in the canonical install.  A
+    # package-select build is deliberately *not* allowed to leave the old
+    # authoritative certificate valid; only a subsequent full Release build
+    # may recreate it.
+    release_build = args.action == "build" and args.mode == "release"
+    if release_build:
+        (install / MANIFEST_NAME).unlink(missing_ok=True)
+    full_product_build = release_build and not packages
     build_started_wall_ns = 0
     source_before = None
     if full_product_build:
         # A failed/interrupted full build must not leave the previous build
         # certificate looking authoritative.
-        (install / MANIFEST_NAME).unlink(missing_ok=True)
         build_started_wall_ns = __import__("time").time_ns()
         source_before = source_fingerprint(ROOT)
     result = subprocess.run(
@@ -293,12 +310,23 @@ def main() -> int:
             print(f"Build provenance failed closed: {error}", file=sys.stderr)
             result = 1
     if result == 0 and args.action == "check":
-        data_check = [sys.executable, str(ROOT / "tools" / "data.py"), "check"]
+        data_check = [str(CANONICAL_PYTHON), str(ROOT / "tools" / "data.py"), "check"]
         print("+", shlex.join(data_check), flush=True)
         result = subprocess.run(
             data_check, cwd=ROOT, env=environment, check=False
         ).returncode
     return result
+
+
+def main() -> int:
+    """Run one build/test/check operation under the canonical lock."""
+    try:
+        require_canonical_python()
+        with BuildRuntimeLock(ROOT, exclusive=True):
+            return _main_unlocked()
+    except (BuildRuntimeBusyError, RuntimeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

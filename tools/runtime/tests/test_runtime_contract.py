@@ -47,6 +47,53 @@ def _valid_captured_provenance() -> dict[str, object]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_canonical_python_rejects_virtualenv_and_non_system_interpreter(self) -> None:
+        self.assertIsNone(
+            runner.canonical_python_error("/usr/bin/python3", environment={})
+        )
+        self.assertIn(
+            "VIRTUAL_ENV",
+            runner.canonical_python_error(
+                "/usr/bin/python3", environment={"VIRTUAL_ENV": "/tmp/venv"}
+            ) or "",
+        )
+        self.assertIn(
+            "/usr/bin/python3",
+            runner.canonical_python_error("/tmp/venv/bin/python", environment={}) or "",
+        )
+
+    def test_manifest_rejects_an_unrecorded_runtime_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            artifact = install / "product/bin/node"
+            extra = install / "product/lib/libnew.so"
+            artifact.parent.mkdir(parents=True)
+            extra.parent.mkdir(parents=True)
+            artifact.write_bytes(b"node")
+            extra.write_bytes(b"new")
+            (root / ".gitignore").write_text("install/\n", encoding="utf-8")
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            (root / "source").write_text("x\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            manifest = {
+                "schema_version": build_provenance.SCHEMA_VERSION,
+                "authoritative": True,
+                "build_mode": "release",
+                "source": build_provenance.source_fingerprint(root),
+                "artifacts": [build_provenance._artifact_record(artifact, root)],
+            }
+            build_provenance.write_manifest_atomic(install, manifest)
+            with mock.patch.object(
+                build_provenance, "runtime_artifact_paths", return_value=[artifact, extra]
+            ):
+                with self.assertRaisesRegex(RuntimeError, "artifact set mismatch"):
+                    build_provenance.validate_manifest(root, install)
+
     def test_build_provenance_rejects_stale_source_and_modified_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -73,14 +120,17 @@ class RuntimeContractTest(unittest.TestCase):
                 "artifacts": [record],
             }
             build_provenance.write_manifest_atomic(install, manifest)
-            self.assertEqual(build_provenance.validate_manifest(root, install)["status"], "VALID")
+            with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
+                self.assertEqual(build_provenance.validate_manifest(root, install)["status"], "VALID")
             source.write_text("v2\n", encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "source fingerprint"):
-                build_provenance.validate_manifest(root, install)
+            with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
+                with self.assertRaisesRegex(RuntimeError, "source fingerprint"):
+                    build_provenance.validate_manifest(root, install)
             source.write_text("v1\n", encoding="utf-8")
             artifact.write_bytes(b"binary-v2")
-            with self.assertRaisesRegex(RuntimeError, "artifact identity mismatch"):
-                build_provenance.validate_manifest(root, install)
+            with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
+                with self.assertRaisesRegex(RuntimeError, "artifact identity mismatch"):
+                    build_provenance.validate_manifest(root, install)
 
     def test_build_provenance_rejects_missing_partial_and_symlink_swap(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -118,8 +168,9 @@ class RuntimeContractTest(unittest.TestCase):
             build_provenance.write_manifest_atomic(install, manifest)
             link.unlink()
             link.symlink_to(target_b)
-            with self.assertRaisesRegex(RuntimeError, "resolved_path"):
-                build_provenance.validate_manifest(root, install)
+            with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[link]):
+                with self.assertRaisesRegex(RuntimeError, "resolved_path"):
+                    build_provenance.validate_manifest(root, install)
 
     def test_source_fingerprint_covers_dirty_submodule_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

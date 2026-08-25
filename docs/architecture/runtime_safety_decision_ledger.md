@@ -1227,3 +1227,28 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   as a planner crash during a failed/reordered replan. Verification is the
   current SUPER build and focused tests; sanitizer and repeated SITL evidence
   remain open.
+
+### 2026-08-25 - Canonical ROS runtime and stale-install prevention
+
+- The supported build/test/replay environment is the system interpreter
+  `/usr/bin/python3` after sourcing `/opt/ros/jazzy/setup.bash` and the
+  workspace `install/setup.bash`. Make targets explicitly unset `VIRTUAL_ENV`
+  and `PYTHONHOME`; direct use of another interpreter fails closed. A Python
+  virtualenv remains available for unrelated tooling only and must not launch
+  ROS, build, dataset, or SITL workflows.
+- Release `build/`, `install/`, and `log/` are the single canonical product
+  cache. Release package-select builds invalidate the authoritative manifest;
+  only a full Release build recreates it. The manifest now requires exact
+  equality between its recorded runtime artifact set and the currently
+  discovered workspace binaries/libraries/scripts.
+- A repository-shared build/runtime lock prevents a build or test from
+  replacing the canonical install while a dataset/SITL process is running (and
+  prevents a runtime from starting during a build). This is provenance and
+  lifecycle protection only; it does not change planner/controller gates,
+  queues, QoS, thresholds, or bypasses.
+- Verification: canonical Python/manifest/lock contract tests and
+  `git diff --check`. A fresh full Release build is mandatory after this
+  change before any runtime artifact may be used; the current HTML/report
+  working-tree edits remain separate and are not overwritten. Sanitizer,
+  repeated SITL, speed, dense vegetation, hardware FOV, and bypass-removal
+  evidence remain open.

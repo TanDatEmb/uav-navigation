@@ -1,4 +1,8 @@
 SHELL := /bin/bash
+PYTHON := /usr/bin/python3
+# ROS Jazzy's rclpy/ament modules are installed for the system interpreter.
+# Do not let an activated venv or PYTHONHOME silently select another runtime.
+CANONICAL_PYTHON_ENV = env -u VIRTUAL_ENV -u PYTHONHOME
 
 DATASET ?=
 RATE ?= 1.0
@@ -56,41 +60,41 @@ help:
 	@echo "PASS requires samples, freshness, validity, cleanup, and workflow-specific acceptance."
 
 build:
-	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py build
+	@$(ROS_ENV) $(BUILD_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/build.py build
 
 test:
-	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py test
-	@$(ROS_ENV) $(BUILD_ENV) python3 tools/runtime/build.py check
-	@python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
-	@python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
+	@$(ROS_ENV) $(BUILD_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/build.py test
+	@$(ROS_ENV) $(BUILD_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/build.py check
+	@$(CANONICAL_PYTHON_ENV) $(PYTHON) -m unittest discover -s tools/tests -p 'test_*.py' -v
+	@$(CANONICAL_PYTHON_ENV) $(PYTHON) -m unittest discover -s tools/runtime/tests -p 'test_*.py' -v
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) python3 tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG)
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG)
 
 dataset-check:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) python3 tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)"
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)"
 
 sim-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim-check
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim-check
 
 external-mode-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
 
 sim:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py sim
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim
 
 external-mode-gui:
-	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; python3 tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
+	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
 
 external-mode: external-mode-gui
 
 status:
-	@$(ROS_ENV) python3 tools/runtime/runner.py status
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py status
 
 stop:
-	@$(ROS_ENV) python3 tools/runtime/runner.py stop
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py stop
 
 clean:
-	@python3 tools/runtime/runner.py clean
+	@$(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py clean

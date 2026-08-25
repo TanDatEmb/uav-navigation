@@ -24,6 +24,7 @@ CRITICAL_ARTIFACTS = (
     "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_external_node",
 )
 RUNTIME_SCRIPTS = (
+    "tools/runtime/runtime_environment.py",
     "tools/runtime/runner.py",
     "tools/runtime/monitor.py",
     "tools/runtime/report.py",
@@ -216,6 +217,23 @@ def validate_manifest(root: Path, install: Path) -> dict[str, Any]:
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         raise RuntimeError("build manifest has no artifact identities")
+    recorded_paths = {
+        expected.get("path")
+        for expected in artifacts
+        if isinstance(expected, dict) and isinstance(expected.get("path"), str)
+    }
+    discovered_paths = {
+        str(path.relative_to(root)) for path in runtime_artifact_paths(root, install)
+    }
+    if recorded_paths != discovered_paths:
+        missing = sorted(discovered_paths - recorded_paths)
+        stale = sorted(recorded_paths - discovered_paths)
+        details: list[str] = []
+        if missing:
+            details.append("missing from manifest: " + ", ".join(missing[:5]))
+        if stale:
+            details.append("no longer discovered: " + ", ".join(stale[:5]))
+        raise RuntimeError("build manifest artifact set mismatch (" + "; ".join(details) + ")")
     for expected in artifacts:
         if not isinstance(expected, dict) or not isinstance(expected.get("path"), str):
             raise RuntimeError("build manifest contains a malformed artifact record")
