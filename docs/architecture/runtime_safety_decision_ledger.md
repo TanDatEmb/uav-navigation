@@ -981,8 +981,9 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   Real replacements and stale-input counts remain report reasons; this change
   removes only the false merge/compatibility failure.
 - Regression coverage includes the exact `248` world then `251` planner event
-  ordering and the legacy counter shape. Runtime Python contract tests pass
-  110/110 and `git diff --check` passes. The report was rerendered for the
+  ordering, legacy counter shape, and a truncated final-sample case that must
+  fail conservatively. Runtime Python contract tests pass 111/111 and
+  `git diff --check` passes. The report was rerendered for the
   screening artifact and now shows coherent `received=accepted=251`,
   `published=174`, `discarded_pending=76`, `discarded_ready=1`, with product
   accounting valid and zero violations. The artifact remains failed for its
