@@ -20,11 +20,15 @@ struct TrajectoryPoint {
   Eigen::Vector3d jerk_world{Eigen::Vector3d::Zero()};
   double yaw{0.0};
   double yaw_rate{0.0};
+  CandidateRole role{CandidateRole::kMain};
+  bool finished{false};
+  double trajectory_time_s{0.0};
 
   [[nodiscard]] bool finite() const noexcept {
     return position_world.allFinite() && velocity_world.allFinite() &&
            acceleration_world.allFinite() && jerk_world.allFinite() &&
-           std::isfinite(yaw) && std::isfinite(yaw_rate);
+           std::isfinite(yaw) && std::isfinite(yaw_rate) &&
+           std::isfinite(trajectory_time_s);
   }
 };
 
@@ -55,6 +59,7 @@ struct CandidateBundle {
       return std::nullopt;
     }
     TrajectoryPoint point;
+    point.role = role;
     if (!evaluator(stamp_ns, point) || !point.finite()) return std::nullopt;
     return point;
   }

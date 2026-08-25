@@ -1714,3 +1714,25 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   verify repeated recorded-data/SITL behavior and remove the transitional
   path only after equivalent safety evidence exists. Backend compile warnings
   remain a cleanup item and are not treated as acceptance evidence.
+
+### 2026-08-25 - Product execution command authority
+
+- Owner: `navigation_execution`, runtime command publication and the planner
+  adapter. Scope: export the backend's committed trajectory as an immutable
+  `navigation_planning::CandidateBundle`, commit it through
+  `CommittedBundleStore`, and sample only through `CommandSampler`; preserve
+  role, completion, trajectory-time and world certificate metadata.
+- Safety impact: the ROS command timer no longer reads or locks the backend
+  trajectory directly. Candidate export rejects invalid time/provenance and
+  execution-store rejection leaves command exposure disabled. Goal and
+  localization transitions clear or explicitly retain the current bundle for
+  the existing hot-retarget continuity contract. No planner threshold,
+  collision policy, UNKNOWN policy or dynamics value changed.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && ctest --test-dir build/navigation_planning --output-on-failure && ctest --test-dir build/navigation_execution --output-on-failure && ctest --test-dir build/navigation_planning_backend --output-on-failure && ctest --test-dir build/navigation_runtime --output-on-failure`.
+  Current result: build completed; planning 1/1 executable, execution 2/2,
+  backend 2/2, and runtime 8/8 passed.
+- Remaining condition: retained-command revalidation, runtime vendor-type
+  removal from diagnostics/tests, sanitizer evidence, and repeated
+  recorded-data/SITL validation remain open. Do not claim end-to-end
+  acceptance from this focused result.

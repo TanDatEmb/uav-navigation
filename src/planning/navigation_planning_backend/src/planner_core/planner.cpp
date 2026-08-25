@@ -566,6 +566,88 @@ namespace navigation_planning_backend {
         return sample;
     }
 
+    std::optional<navigation_planning::CandidateBundle> Planner::exportCommandCandidate(
+            const std::uint64_t localization_epoch,
+            const std::uint64_t goal_epoch,
+            const std::uint64_t request_id,
+            const std::int64_t valid_from_ns,
+            const std::int64_t valid_until_ns) const {
+        if (localization_epoch == 0U || goal_epoch == 0U || request_id == 0U ||
+            valid_from_ns <= 0 || valid_until_ns < valid_from_ns) {
+            return std::nullopt;
+        }
+
+        const auto committed = cmd_traj_info_.snapshot();
+        if (committed.empty || committed.generation == 0U ||
+            committed.certificate.validated_world.localization_epoch != localization_epoch ||
+            committed.position.empty() || committed.yaw.empty() ||
+            !std::isfinite(committed.position.start_WT) ||
+            !std::isfinite(committed.position.getTotalDuration()) ||
+            committed.position.getTotalDuration() < 0.0) {
+            return std::nullopt;
+        }
+
+        const double start_wall_time_s = committed.position.start_WT;
+        const double end_wall_time_s = start_wall_time_s +
+            committed.position.getTotalDuration();
+        if (!std::isfinite(end_wall_time_s) || end_wall_time_s < start_wall_time_s) {
+            return std::nullopt;
+        }
+        const auto to_nanoseconds = [](const double seconds) -> std::optional<std::int64_t> {
+            if (!std::isfinite(seconds) || seconds <= 0.0 ||
+                seconds > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
+                return std::nullopt;
+            }
+            return static_cast<std::int64_t>(seconds * 1.0e9);
+        };
+        const auto start_ns = to_nanoseconds(start_wall_time_s);
+        const auto end_ns = to_nanoseconds(end_wall_time_s);
+        if (!start_ns || !end_ns || *end_ns < *start_ns) return std::nullopt;
+
+        navigation_planning::CandidateBundle candidate;
+        candidate.world_identity = committed.certificate.validated_world;
+        candidate.localization_epoch = localization_epoch;
+        candidate.goal_epoch = goal_epoch;
+        candidate.request_id = request_id;
+        candidate.bundle_generation = committed.generation;
+        candidate.valid_from_ns = std::max(valid_from_ns, *start_ns);
+        candidate.valid_until_ns = std::max(valid_until_ns, *end_ns);
+        candidate.evaluator = [position = committed.position,
+                               yaw = committed.yaw,
+                               roles = committed.roles,
+                               start_wall_time_s](
+                                  const std::int64_t stamp_ns,
+                                  navigation_planning::TrajectoryPoint& point) {
+            const double wall_time_s = static_cast<double>(stamp_ns) * 1.0e-9;
+            const auto command_time = commandTrajectoryTime(
+                wall_time_s, start_wall_time_s, position.getTotalDuration());
+            if (command_time.trajectory_time_s < 0.0) return false;
+            const auto state = position.getState(command_time.trajectory_time_s);
+            const auto yaw_state = yaw.getState(command_time.trajectory_time_s);
+            if (!state.allFinite() || !yaw_state.allFinite()) return false;
+            point.position_world = state.col(0);
+            point.velocity_world = state.col(1);
+            point.acceleration_world = state.col(2);
+            point.jerk_world = state.col(3);
+            point.yaw = yaw_state(0, 0);
+            point.yaw_rate = yaw_state(0, 1);
+            point.finished = command_time.finished;
+            point.trajectory_time_s = command_time.trajectory_time_s;
+            point.role = navigation_planning::CandidateRole::kMain;
+            for (const auto& interval : roles) {
+                if (command_time.trajectory_time_s >= interval.begin_tt &&
+                    command_time.trajectory_time_s <= interval.end_tt &&
+                    interval.role == CandidateTrajectoryRole::BACKUP) {
+                    point.role = navigation_planning::CandidateRole::kBackup;
+                    break;
+                }
+            }
+            return true;
+        };
+        return candidate.valid() ? std::optional<navigation_planning::CandidateBundle>{
+            std::move(candidate)} : std::nullopt;
+    }
+
     bool Planner::commitEmergencyBrake(const StatePVAJ &measured_state,
                                             const double measured_yaw,
                                             const double measured_yaw_dot,

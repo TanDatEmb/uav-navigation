@@ -30,6 +30,8 @@
 #include <navigation_mapping/mapping_world_model_adapter.hpp>
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
+#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
 #include <ros_interface/ros_interface.hpp>
@@ -141,6 +143,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
   void runCycle();
   void publishCommand();
+  bool commitPlannerCandidate(const navigation_contracts::msg::NavigationGoal& goal,
+                             std::uint64_t goal_epoch,
+                             std::uint64_t localization_epoch,
+                             std::int64_t now_ns);
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
   std::optional<navigation_mapping::MappingObservation> tryPromotePairLocked();
 
@@ -235,6 +241,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::int64_t pending_cloud_received_steady_ns_{0};
   std::atomic_int64_t last_pair_wait_us_{0};
   std::atomic_uint64_t command_id_{0};
+  std::atomic_uint64_t execution_transaction_id_{0};
   std::atomic_uint64_t command_goal_epoch_{0};
   std::atomic_bool accepting_observations_{true};
   std::atomic_bool planner_command_available_{false};
@@ -264,6 +271,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
 
   ros_interface::RosInterface::Ptr ros_interface_;
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
+  navigation_execution::CommittedBundleStore command_bundle_store_;
+  navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
   std::unique_ptr<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>> mapping_worker_;

@@ -56,6 +56,7 @@
 #include <data_structure/exp_traj.h>
 #include <data_structure/cmd_traj.h>
 #include <data_structure/backup_traj.h>
+#include <navigation_planning/candidate_bundle.hpp>
 
 
 namespace navigation_planning_backend {
@@ -255,6 +256,16 @@ namespace navigation_planning_backend {
             navigation_world_model::WorldSnapshotIdentity certificate_world{};
         };
         CommandSample sampleCommand();
+
+        // Export one immutable product candidate for the execution boundary.
+        // The backend retains its private trajectory representation; callers do
+        // not sample or lock CmdTraj directly.
+        std::optional<navigation_planning::CandidateBundle> exportCommandCandidate(
+            std::uint64_t localization_epoch,
+            std::uint64_t goal_epoch,
+            std::uint64_t request_id,
+            std::int64_t valid_from_ns,
+            std::int64_t valid_until_ns) const;
 
         // Last-resort planner-owned braking bundle.  This is intentionally not
         // a main-only adapter trajectory: it is committed as BACKUP only

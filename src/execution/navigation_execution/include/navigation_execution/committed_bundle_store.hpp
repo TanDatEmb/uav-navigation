@@ -34,12 +34,13 @@ class CommittedBundleStore final {
   CommittedBundleStore(const CommittedBundleStore&) = delete;
   CommittedBundleStore& operator=(const CommittedBundleStore&) = delete;
 
-  bool setActiveGoalEpoch(std::uint64_t goal_epoch) noexcept {
+  bool setActiveGoalEpoch(std::uint64_t goal_epoch,
+                          bool retain_committed_bundle = false) noexcept {
     if (goal_epoch == 0) return false;
     std::lock_guard lock(mutex_);
     if (goal_epoch < active_goal_epoch_) return false;
     active_goal_epoch_ = goal_epoch;
-    committed_.reset();
+    if (!retain_committed_bundle) committed_.reset();
     return true;
   }
 

@@ -94,6 +94,7 @@ namespace navigation_planning_backend {
         std::uint64_t generation{0};
         CommandCertificate certificate{};
         CommitDiagnostics diagnostics{};
+        std::vector<CandidateRoleInterval> roles{};
         bool empty{true};
         bool backup_available{false};
         double backup_start_tt{0.0};
@@ -361,6 +362,7 @@ namespace navigation_planning_backend {
             snapshot.generation = generation_;
             snapshot.certificate = certificate_;
             snapshot.diagnostics = commit_diagnostics_;
+            snapshot.roles = role_intervals_;
             snapshot.empty = flag_empty_;
             snapshot.backup_available = flag_backup_traj_avilibale_;
             snapshot.backup_start_tt = backup_traj_start_TT_;

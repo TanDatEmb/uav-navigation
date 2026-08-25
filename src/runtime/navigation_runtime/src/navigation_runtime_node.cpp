@@ -78,6 +78,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
 NavigationRuntimeNode::NavigationRuntimeNode(
     const rclcpp::NodeOptions& options, NavigationRuntimeDependencies dependencies)
     : rclcpp::Node("navigation_runtime_node", options),
+      command_sampler_(command_bundle_store_),
       mapping_lifecycle_observer_(std::move(dependencies.lifecycle_observer)) {
   cloud_topic_ = declare_parameter("navigation_runtime.cloud_topic", std::string("/lio/registered_points"));
   registered_scan_topic_ = declare_parameter(
@@ -201,6 +202,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   auto process_mapping = [mapping_actor, telemetry = mapping_telemetry_,
                           lifecycle_observer = mapping_lifecycle_observer_,
                           store = &world_snapshot_store_,
+                          command_store = &command_bundle_store_,
                           epoch_ready = &localization_epoch_ready_]
       (navigation_mapping::MappingObservation&& observation) mutable {
     const auto result = mapping_actor->process(observation);
@@ -216,6 +218,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     next.pair_wait_us = observation.pair_wait_us;
     if (result.snapshot) {
       store->publish(result.snapshot);
+      (void)command_store->publishWorldIdentity(result.snapshot->identity());
       epoch_ready->store(true, std::memory_order_release);
       next.world_generation = result.world_generation;
       next.world_revision = result.world_revision;
@@ -515,11 +518,14 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
   }
   active_localization_epoch_.store(localization_epoch, std::memory_order_release);
   execution_state_store_.resetForLocalizationEpoch(localization_epoch);
+  command_bundle_store_.invalidate();
   last_registered_scan_epoch_.store(localization_epoch, std::memory_order_release);
   last_registered_scan_sequence_.store(0U, std::memory_order_release);
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     ++active_goal_epoch_;
+    (void)command_bundle_store_.setActiveGoalEpoch(
+        active_goal_epoch_.load(std::memory_order_acquire), false);
     new_goal_ = active_goal_.has_value();
     hot_goal_transition_ = false;
     restart_from_rest_ = false;
@@ -775,6 +781,9 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     // atomic bundle remains available for smooth hot-retarget continuity.
     planner_->cancelActiveSolve();
     ++active_goal_epoch_;
+    (void)command_bundle_store_.setActiveGoalEpoch(
+        active_goal_epoch_.load(std::memory_order_acquire),
+        reuse_completed_stop || can_hot_retarget);
   }
   active_goal_ = *message;
   if (reuse_completed_stop) {
@@ -841,6 +850,8 @@ void NavigationRuntimeNode::onModeStatus(
               message->waypoint_index, static_cast<unsigned long>(message->request_id));
   planner_->cancelActiveSolve();
   ++active_goal_epoch_;
+  (void)command_bundle_store_.setActiveGoalEpoch(
+      active_goal_epoch_.load(std::memory_order_acquire), false);
   active_goal_.reset();
   new_goal_ = false;
   hot_goal_transition_ = false;
@@ -858,6 +869,31 @@ void NavigationRuntimeNode::onModeStatus(
   plan_from_rest_first_failure_steady_ns_ = 0;
   trajectory_finished_.store(false);
   trajectory_reaches_goal_.store(false);
+}
+
+bool NavigationRuntimeNode::commitPlannerCandidate(
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t localization_epoch,
+    const std::int64_t now_ns) {
+  if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||
+      goal.request_id == 0U) {
+    return false;
+  }
+  const auto maximum_age_ns = static_cast<std::int64_t>(input_max_age_s_ * 1.0e9);
+  if (maximum_age_ns <= 0 || now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {
+    return false;
+  }
+  const auto candidate = planner_->exportCommandCandidate(
+      localization_epoch, goal_epoch, goal.request_id, now_ns,
+      now_ns + maximum_age_ns);
+  if (!candidate) return false;
+  const auto candidate_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
+      *candidate);
+  const navigation_execution::CommitToken token{
+      candidate_ptr->world_identity, goal_epoch, ++execution_transaction_id_};
+  return command_bundle_store_.tryCommit(token, candidate_ptr) ==
+      navigation_execution::CommitDecision::kCommitted;
 }
 
 void NavigationRuntimeNode::runCycle() {
@@ -1331,6 +1367,15 @@ void NavigationRuntimeNode::runCycle() {
           emergency_state, current_vehicle_yaw, emergency_yaw_dot, now().seconds());
       use_safety_suffix = emergency_brake_committed;
     }
+    if (emergency_brake_committed &&
+        !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
+                                now().nanoseconds())) {
+      emergency_brake_committed = false;
+      use_safety_suffix = false;
+      RCLCPP_ERROR(get_logger(),
+                   "execution boundary rejected the measured-state emergency candidate; "
+                   "clearing command exposure");
+    }
     const auto retained_transition = retainedValidationTransition(use_safety_suffix);
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
@@ -1414,8 +1459,8 @@ void NavigationRuntimeNode::runCycle() {
         safety_suffix_active_.store(false);
         return;
       }
-      planner_command_available_.store(true);
-      command_goal_epoch_.store(goal_epoch);
+      planner_command_available_.store(false);
+      command_goal_epoch_.store(0U);
       planner_failure_latched_.store(false);
       safety_suffix_active_.store(false);
       trajectory_finished_.store(false);
@@ -1430,6 +1475,34 @@ void NavigationRuntimeNode::runCycle() {
         !committed.empty() &&
         (committed_end - target).norm() <=
             navigation_world_model::kGoalCompletionToleranceM);
+    if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
+                                now().nanoseconds())) {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      planner_command_available_.store(false);
+      command_goal_epoch_.store(0U);
+      safety_suffix_active_.store(false);
+      RCLCPP_WARN(get_logger(),
+                  "execution boundary rejected planner candidate after solve; "
+                  "command remains fail-closed");
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
+          active_localization_epoch_.load(std::memory_order_acquire) !=
+              localization_epoch_at_solve ||
+          active_goal_epoch_.load() != goal_epoch ||
+          !command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        planner_command_available_.store(false);
+        command_goal_epoch_.store(0U);
+        safety_suffix_active_.store(false);
+        return;
+      }
+      planner_command_available_.store(true);
+      command_goal_epoch_.store(goal_epoch);
+    }
     if (plan_from_rest) skip_replan_once_ = true;
     std::lock_guard<std::mutex> lock(input_mutex_);
     plan_from_rest_failure_budget_.reset();
@@ -1819,7 +1892,7 @@ void NavigationRuntimeNode::publishCommand() {
     }
   }
 
-  navigation_planning_backend::math::StatePVAJ pvaj;
+  Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();
   double yaw = 0.0;
   double yaw_dot = 0.0;
   bool on_backup_traj = false;
@@ -1829,6 +1902,7 @@ void NavigationRuntimeNode::publishCommand() {
   navigation_world_model::WorldSnapshotIdentity command_world_identity{};
   bool safety_suffix_active = safety_suffix_active_.load();
   bool planner_failed = planner_failure_latched_.load();
+  bool sampled_command_valid = false;
   if (!planner_command_available_.load() && !planner_failed &&
       command_execution_lease_failure_latch_.allowsCommandExposure()) return;
   std::optional<navigation_contracts::msg::NavigationGoal> command_goal;
@@ -1908,30 +1982,35 @@ void NavigationRuntimeNode::publishCommand() {
     return;
   }
   if (planner_command_available_.load()) {
-    const auto sample = planner_->sampleCommand();
-    if (!sample.valid) {
+    const auto sample = command_sampler_.sample(command_ros_time.nanoseconds());
+    if (!sample) {
       planner_command_available_.store(false);
       planner_failure_latched_.store(true);
       safety_suffix_active_.store(false);
+      planner_failed = true;
+      safety_suffix_active = false;
       RCLCPP_ERROR_THROTTLE(
           get_logger(), *get_clock(), 1000,
-          "planner backend invalidated non-finite committed sample generation=%lu",
-          static_cast<unsigned long>(sample.generation));
-      pvaj.setZero();
+          "execution boundary invalidated the committed command sample");
     } else {
-      pvaj = sample.pvaj;
-      yaw = sample.yaw;
-      yaw_dot = sample.yaw_rate;
-      trajectory_generation = sample.generation;
-      trajectory_time_s = sample.trajectory_time_s;
-      command_world_identity = sample.certificate_world;
-      on_backup_traj = sample.role == navigation_planning_backend::Planner::TrajectoryRole::BACKUP;
-      traj_finish = sample.finished;
+      const auto& point = *sample.point;
+      pvaj.col(0) = point.position_world;
+      pvaj.col(1) = point.velocity_world;
+      pvaj.col(2) = point.acceleration_world;
+      pvaj.col(3) = point.jerk_world;
+      yaw = point.yaw;
+      yaw_dot = point.yaw_rate;
+      trajectory_generation = sample.bundle->bundle_generation;
+      trajectory_time_s = point.trajectory_time_s;
+      command_world_identity = sample.bundle->world_identity;
+      on_backup_traj = point.role != navigation_planning::CandidateRole::kMain;
+      traj_finish = point.finished;
+      sampled_command_valid = true;
     }
     // The safety suffix contains the dynamically continuous main prefix up to
     // planner backend's backup switch plus the braking polynomial. Once frozen by a
     // failed hot replan, the whole suffix is safety-owned.
-    if (sample.valid && safety_suffix_active) on_backup_traj = true;
+    if (sampled_command_valid && safety_suffix_active) on_backup_traj = true;
     if (traj_finish) trajectory_finished_.store(true);
   } else {
     // PlanFromRest can fail before CmdTraj has ever been committed. Emit an
