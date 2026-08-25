@@ -82,6 +82,9 @@ traj_opt:
     energy_cost_type: 4
     block_energy_cost: false
     opt_accuracy: 5.0e-6
+    # Feasibility retries disable relative-cost stopping but remain bounded;
+    # hard V/A/J and flatness gates remain the only acceptance authority.
+    feasibility_retry_max_iterations: 64
     scale_factor: 1.0
     integral_reso: 15
     smooth_eps: 0.01

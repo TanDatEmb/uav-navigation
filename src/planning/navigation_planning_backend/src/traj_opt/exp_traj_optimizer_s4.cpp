@@ -881,16 +881,25 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         truncateToSixDecimals(opt_vars.waypoint_attractor(2, i));
     }
 
-    const auto run_lbfgs = [&]() {
+    const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
         opt_vars.solver_attempt = diagnostics_.lbfgs_attempt_count;
+        auto attempt_params = lbfgs_params;
+        if (feasibility_retry) {
+            // A cost plateau is not a feasibility certificate.  Retry mode
+            // stops only at cancellation, the solve deadline, a line-search
+            // result, or the explicit iteration bound below.
+            attempt_params.past = 0;
+            attempt_params.max_iterations =
+                    cfg_.feasibility_retry_max_iterations;
+        }
         const int result = lbfgs::lbfgs_optimize(x,
                                                   minCostFunctional,
                                                   &ExpTrajOpt::costFunctional,
                                                   nullptr,
                                                   &ExpTrajOpt::monitorProgress,
                                                   &this->opt_vars,
-                                                  lbfgs_params);
+                                                  attempt_params);
         if (diagnostics_.lbfgs_attempt_count == 1) {
             diagnostics_.first_lbfgs_return_code = result;
         }
@@ -909,7 +918,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //    cout << " -- [ExpOpt] waypoint_attractor_dead_d: " << opt_vars.waypoint_attractor_dead_d.transpose() << endl;
     // TimeConsuming ttt(" -- [ExpTrajOpt]", false);
     opt_vars.iter_num = 0;
-    int ret = run_lbfgs();
+    int ret = run_lbfgs(false);
     if (ret == lbfgs::LBFGS_CANCELED) {
         diagnostics_.retry_stop_reason = 2;
         diagnostics_.final_normalized_dynamic_violation =
@@ -1162,8 +1171,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 nominal_penalty_weights(2)});
         opt_vars.penalty_log.setZero();
         opt_vars.iter_num = 0;
-        ret = run_lbfgs();
-        if (ret == lbfgs::LBFGS_CANCELED) {
+        const int retry_result = run_lbfgs(true);
+        if (retry_result == lbfgs::LBFGS_CANCELED) {
             diagnostics_.retry_stop_reason = 2;
             diagnostics_.final_normalized_dynamic_violation =
                     std::numeric_limits<double>::infinity();
@@ -1171,6 +1180,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             traj.clear();
             return INFINITY;
         }
+        // Hitting the explicit iteration bound yields a finite candidate that
+        // still requires every hard gate.  Keep the raw solver result in
+        // diagnostics, but let the validation path inspect that candidate.
+        ret = retry_result == lbfgs::LBFGSERR_MAXIMUMITERATION
+                ? lbfgs::LBFGS_STOP
+                : retry_result;
         if (ret < 0) {
             diagnostics_.retry_stop_reason = 3;
             restore_best_candidate();

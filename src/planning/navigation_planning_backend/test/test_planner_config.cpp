@@ -30,6 +30,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.corridor_plane_tolerance_m, 0.01);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.vertical_guide_tolerance_m, 0.05);
+  EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
 

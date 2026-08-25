@@ -2023,3 +2023,27 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   runner lock. The dataset session was stopped safely, state became
   `STOPPED/cleanup=PASS`, and the SITL rerun was executed only after process
   and lock cleanup. All agents were closed; only the main worktree remained.
+
+### 2026-08-26 - Feasibility solver stopping semantics
+
+- Owner: `navigation_planning_backend` EXP optimizer and trajectory config.
+  Scope: keep the nominal L-BFGS relative-cost stopping rule for the ordinary
+  solve, but disable that rule during bounded feasibility retries because cost
+  plateau is not a dynamic-feasibility certificate. Retry mode uses the named
+  `traj_opt/exp_traj/feasibility_retry_max_iterations` bound and retains the
+  existing steady deadline/cancellation monitor. Reaching the iteration bound
+  exposes a finite candidate to the same corridor, V/A/J, vertical-guide and
+  flatness gates; it does not authorize the candidate.
+- Safety impact: prevents `LBFGS_STOP` from ending a retry while the analytic
+  velocity/acceleration/jerk extrema still violate mission limits, without
+  relaxing any gate. The finite iteration bound limits CPU tail when a solve
+  has no deadline; cancellation and fail-closed transaction restore remain
+  active. No fallback, threshold relaxation or bypass was introduced.
+- Evidence: exact-head `906be2c` SITL showed retries ending with solver return
+  `LBFGS_STOP` while velocity ratio remained `1.024216`, with `177790 us` of
+  budget remaining. Focused and full Release build/test/check passed after the
+  mode/config change; a fresh exact-head SITL and dataset replay is required.
+- Review condition: report raw solver return code, retry iteration/cancel
+  outcome and latency distribution; accept only a candidate that passes every
+  hard gate. Do not increase the iteration bound or infer feasibility from a
+  single replay.

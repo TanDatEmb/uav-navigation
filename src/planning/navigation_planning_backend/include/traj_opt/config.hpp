@@ -76,6 +76,7 @@ namespace traj_opt {
         double vertical_guide_tolerance_m{0};
         int integral_reso{0};
         double opt_accuracy{0};
+        int feasibility_retry_max_iterations{64};
 
         Config() = default;
 
@@ -103,6 +104,8 @@ namespace traj_opt {
             loader.LoadParam("traj_opt" + ns + "uniform_time_en", uniform_time_en, false);
             loader.LoadParam("traj_opt" + ns + "block_energy_cost", block_energy_cost, false);
             loader.LoadParam("traj_opt" + ns + "opt_accuracy", opt_accuracy, 1.0e-5);
+            loader.LoadParam("traj_opt" + ns + "feasibility_retry_max_iterations",
+                             feasibility_retry_max_iterations, 64);
             loader.LoadParam("traj_opt" + ns + "integral_reso", integral_reso, 10);
             loader.LoadParam("traj_opt" + ns + "smooth_eps", smooth_eps, 0.01);
             loader.LoadParam("traj_opt" + ns + "corridor_plane_tolerance_m",
@@ -144,10 +147,12 @@ namespace traj_opt {
                 !std::isfinite(corridor_plane_tolerance_m) ||
                 corridor_plane_tolerance_m < 0.0 ||
                 !std::isfinite(vertical_guide_tolerance_m) ||
-                vertical_guide_tolerance_m < 0.0) {
+                vertical_guide_tolerance_m < 0.0 ||
+                feasibility_retry_max_iterations <= 0) {
                 throw std::invalid_argument(
                     "trajectory smoothing and geometric tolerances must be finite; "
-                    "smoothing must be positive and certificate tolerances non-negative");
+                    "smoothing must be positive, certificate tolerances non-negative "
+                    "and retry iterations positive");
             }
 
             quadrotot_flatness.reset(mass, grav, dh, dv, cp, v_eps);
