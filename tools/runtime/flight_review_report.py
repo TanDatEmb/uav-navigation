@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import statistics
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -53,6 +54,30 @@ def integer(value: Any) -> str:
 def percent(value: Any, digits: int = 1) -> str:
     number = finite(value)
     return "—" if number is None else f"{number * 100:.{digits}f}%"
+
+
+def _series_values(points: list[tuple[float, float]]) -> list[float]:
+    return [value for _, value in points if finite(value) is not None]
+
+
+def _series_percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))
+    return ordered[index]
+
+
+def _series_stats(values: list[float]) -> dict[str, Any]:
+    return {
+        "count": len(values),
+        "mean": statistics.fmean(values) if values else None,
+        "p50": _series_percentile(values, 0.50),
+        "p95": _series_percentile(values, 0.95),
+        "p99": _series_percentile(values, 0.99),
+        "max": max(values) if values else None,
+        "min": min(values) if values else None,
+    }
 
 
 def samples(values: Iterable[tuple[float, float]], limit: int = 280) -> list[tuple[float, float]]:
@@ -425,6 +450,12 @@ def _evaluation(
         "lio": _gate_status(lio_condition),
         "px4": _gate_status(px4_condition),
     }
+    # An explicitly recorded temporary bypass is never a certification result,
+    # even if mission/telemetry gates happen to pass.  Empty metadata preserves
+    # legacy reports; malformed/non-empty metadata fails closed.
+    bypasses = report.get("experimental_bypasses")
+    bypass_active = bypasses not in (None, {})
+    gates["temporary_bypass"] = _gate_status(False if bypass_active else True)
     required = list(gates.values())
     overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
     telemetry_verdict = str(report.get("verdict") or "N/A")
@@ -439,14 +470,14 @@ def _timing_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(value, dict):
             return
         measured = any(
-            value.get(key) is not None
+            finite(value.get(key)) is not None
             for key in ("mean", "p50", "p95", "p99", "max", "maximum", "maximum_maintenance_us")
         )
         if not measured:
             return
         rows.append({
             "component": component,
-            "metric": metric,
+            "metric": metric.replace("_", " "),
             "unit": unit,
             "mean": value.get("mean"),
             "p50": value.get("p50"),
@@ -456,14 +487,18 @@ def _timing_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "count": value.get("sample_count", value.get("count")),
         })
 
+    def add_timing_metrics(component: str, timing_metrics: dict[str, Any]) -> None:
+        for metric, value in sorted(timing_metrics.items()):
+            if not metric.endswith("_us") and not metric.endswith("_ms"):
+                continue
+            add_distribution(component, metric, value, "us" if metric.endswith("_us") else "ms")
+
     lio = report.get("lio", {}) if isinstance(report.get("lio"), dict) else {}
-    add_distribution("LIO", "map maintenance", lio.get("map_maintenance"))
+    add_distribution("LIO", "map maintenance", lio.get("map_maintenance"), "us")
     mapping = report.get("navigation_mapping", {}) if isinstance(report.get("navigation_mapping"), dict) else {}
-    for metric, value in (mapping.get("timing_distributions") or {}).items():
-        add_distribution("ROG-Map", metric.replace("_", " "), value)
+    add_timing_metrics("ROG-Map", mapping.get("timing_distributions") or {})
     planning = report.get("planning", {}) if isinstance(report.get("planning"), dict) else {}
-    for metric in ("planning_path_search_us", "planning_corridor_us", "planning_trajectory_optimization_us", "planning_total_us"):
-        add_distribution("Planner", metric.replace("_us", "").replace("_", " "), planning.get(metric))
+    add_timing_metrics("Planner", planning)
     external = report.get("external_mode", {}) if isinstance(report.get("external_mode"), dict) else {}
     add_distribution("External Mode", "fallback latency", external.get("fallback_latency_ms"), "ms")
     return rows
@@ -865,17 +900,37 @@ def render(session: Path, output: Path) -> Path:
         values = [finite(record.get(field)) for record in trace_records if isinstance(record, dict)]
         if values and all(value == 0.0 for value in values):
             zero_trace_fields.append(field)
+    expected_outcome = str(acceptance.get("expected_outcome") or "complete").lower()
+
+    failure_reasons: list[str] = []
+    for source in (
+        acceptance.get("reasons"),
+        external.get("failures"),
+        report.get("reasons"),
+    ):
+        if isinstance(source, list):
+            for reason in source:
+                text = str(reason).strip()
+                if text and text not in failure_reasons:
+                    failure_reasons.append(text)
 
     evaluation = _evaluation(
         report, safety, acceptance, lio, px4, cross_p95, cross_limit, collision_count
     )
     gates = evaluation["gates"]
     findings = [
-        (gates["mission"], f"Mission outcome: {outcome or 'N/A'}; expected {acceptance.get('expected_outcome') or 'complete'}."),
+        (gates["mission"], f"Mission outcome: {outcome or 'N/A'}; expected {expected_outcome}."),
         (gates["waypoint"], f"Waypoint acceptance: {accepted_count}/{waypoint_count}; only explicit acceptance events are counted."),
         (gates["cross_track"], f"Cross-track p95: {fmt(cross_p95, 2, ' m')} against limit {fmt(cross_limit, 2, ' m')}."),
         (gates["collision"], f"Collision safety: {fmt(collision_count, 0)} collisions; minimum clearance {fmt(min_clearance, 2, ' m')}."),
     ]
+    if gates["mission"] == "PASS" and evaluation["overall"] != "PASS":
+        findings.append((
+            "OBSERVE",
+            f"Mission outcome is PASS, but acceptance is {evaluation['overall']}; check quality gates below.",
+        ))
+    if failure_reasons:
+        findings.append(("OBSERVE", "Failure context: " + "; ".join(failure_reasons[:2]) + ("; ..." if len(failure_reasons) > 2 else "")))
     if zero_trace_fields:
         findings.append(("OBSERVE", f"The rolling trace contains constant zero values for {', '.join(zero_trace_fields)}; those fields are treated as unpopulated, not as measured zero residuals."))
 
@@ -917,6 +972,7 @@ def render(session: Path, output: Path) -> Path:
         for item in data["planning"]
         if (value := finite(item.get("known_free_horizon_m"))) is not None
     ]
+    setpoint_velocity_series = {"vx": [], "vy": [], "vz": []}
     setpoint_speed_series = []
     for item in data["trajectory_records"]:
         publish_time = finite(item.get("_publish_time_s"))
@@ -924,11 +980,23 @@ def render(session: Path, output: Path) -> Path:
         if publish_time is not None and velocities:
             try:
                 velocity = [float(value) for value in velocities[0][:3]]
+                for axis, index in zip(("vx", "vy", "vz"), range(3)):
+                    setpoint_value = finite(velocity[index])
+                    if setpoint_value is not None:
+                        setpoint_velocity_series[axis].append((publish_time, setpoint_value))
                 value = math.sqrt(sum(component * component for component in velocity))
             except (TypeError, ValueError):
                 continue
             if math.isfinite(value):
                 setpoint_speed_series.append((publish_time, value))
+
+    speed_series_stats = _series_stats(_series_values(speed_series))
+    setpoint_speed_stats = _series_stats(_series_values(setpoint_speed_series))
+    axis_stats = {axis: _series_stats([abs(value) for _, value in points]) for axis, points in velocity_series.items()}
+    setpoint_axis_stats = {
+        axis: _series_stats([abs(value) for _, value in points])
+        for axis, points in setpoint_velocity_series.items()
+    }
 
     progress_cells = []
     for index in range(waypoint_count):
@@ -939,18 +1007,66 @@ def render(session: Path, output: Path) -> Path:
     progress_html = '<div class="waypoints">' + "<div class=\"waypoint-line\"></div>" + "".join(progress_cells) + "</div>"
 
     px4_observed = {"PASS": "valid", "FAIL": "not valid"}.get(gates["px4"], "N/A")
+    telemetry_verdict = evaluation["telemetry_verdict"]
+    telemetry_gate = "PASS" if telemetry_verdict == "PASS" else "INFO" if telemetry_verdict else "N/A"
+    expected_outcome_text = f"expected {expected_outcome}"
     status_rows = [
-        ("Mission outcome", outcome or "N/A", "COMPLETE", gates["mission"]),
-        ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", f"{waypoint_count}/{waypoint_count}", gates["waypoint"]),
+        ("Mission outcome", outcome or "N/A", expected_outcome_text, gates["mission"]),
+        ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", "explicit acceptance evidence only", gates["waypoint"]),
         ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", gates["cross_track"]),
-        ("Collision safety", f"{fmt(collision_count, 0)} collisions", "0", gates["collision"]),
-        ("LIO navigation state", str(lio.get("state") or "N/A"), "TRACKING + valid", gates["lio"]),
+        ("Collision safety", f"{fmt(collision_count, 0)} collisions", "0 collisions", gates["collision"]),
+        ("LIO navigation state", str(lio.get("state") or "N/A"), "TRACKING + navigation_valid=true", gates["lio"]),
         ("PX4 estimator / local position", px4_observed, "valid", gates["px4"]),
+        ("Telemetry verdict", telemetry_verdict, "informational", telemetry_gate),
         ("Planner safety-stop selection", percent(safety_stop_ratio), "diagnostic only", "OBSERVE" if safety_stop_ratio is not None else "N/A"),
     ]
     table_rows = "".join(
         f'<tr><td>{esc(label)}</td><td class="observed">{esc(observed)}</td><td>{esc(criterion)}</td><td>{status_chip(status)}</td></tr>'
         for label, observed, criterion, status in status_rows
+    )
+    failure_reasons_html = (
+        f'<section><h2>Failure reasons</h2><ul>{"".join(f"<li>{esc(reason)}</li>" for reason in failure_reasons)}</ul></section>'
+        if failure_reasons else ""
+    )
+
+    measured_axis_rows = "".join(
+        f'<tr><td class="observed">|{axis.upper()}| measured</td>'
+        f'<td>{fmt(stats["mean"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p50"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p95"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p99"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["max"], 2, " m/s")}</td>'
+        f'<td>{integer(stats["count"])}</td></tr>'
+        for axis, stats in (
+            ("vx", axis_stats["vx"]),
+            ("vy", axis_stats["vy"]),
+            ("vz", axis_stats["vz"]),
+        )
+    )
+    setpoint_axis_rows = "".join(
+        f'<tr><td class="observed">|{axis.upper()}| setpoint start</td>'
+        f'<td>{fmt(stats["mean"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p50"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p95"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["p99"], 2, " m/s")}</td>'
+        f'<td>{fmt(stats["max"], 2, " m/s")}</td>'
+        f'<td>{integer(stats["count"])}</td></tr>'
+        for axis, stats in (
+            ("vx", setpoint_axis_stats["vx"]),
+            ("vy", setpoint_axis_stats["vy"]),
+            ("vz", setpoint_axis_stats["vz"]),
+        )
+    )
+    kinematics_rows = (
+        f'{measured_axis_rows}{setpoint_axis_rows}'
+        f'<tr><td class="observed">speed measured</td><td>{fmt(speed_series_stats["mean"], 2, " m/s")}</td>'
+        f'<td>{fmt(speed_series_stats["p50"], 2, " m/s")}</td><td>{fmt(speed_series_stats["p95"], 2, " m/s")}</td>'
+        f'<td>{fmt(speed_series_stats["p99"], 2, " m/s")}</td><td>{fmt(speed_series_stats["max"], 2, " m/s")}</td>'
+        f'<td>{integer(speed_series_stats["count"])}</td></tr>'
+        f'<tr><td class="observed">setpoint speed start</td><td>{fmt(setpoint_speed_stats["mean"], 2, " m/s")}</td>'
+        f'<td>{fmt(setpoint_speed_stats["p50"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["p95"], 2, " m/s")}</td>'
+        f'<td>{fmt(setpoint_speed_stats["p99"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["max"], 2, " m/s")}</td>'
+        f'<td>{integer(setpoint_speed_stats["count"])}</td></tr>'
     )
 
     plot_html = "".join([
@@ -987,14 +1103,19 @@ def render(session: Path, output: Path) -> Path:
     )
     timing_rows = _timing_rows(report)
     timing_html = "".join(
-        f'<tr><td>{esc(row["component"])}</td><td>{esc(row["metric"])} ({esc(row["unit"])})</td>'
-        f'<td>{fmt(row["mean"], 1)}</td><td>{fmt(row["p50"], 1)}</td>'
-        f'<td>{fmt(row["p95"], 1)}</td><td>{fmt(row["max"], 1)}</td>'
+        f'<tr><td>{esc(row["component"])}</td><td>{esc(row["metric"])}</td><td>{esc(row["unit"])}</td>'
+        f'<td>{fmt(row["mean"], 1)}</td><td>{fmt(row["p50"], 1)}</td><td>{fmt(row["p95"], 1)}</td>'
+        f'<td>{fmt(row["p99"], 1)}</td><td>{fmt(row["max"], 1)}</td>'
         f'<td>{integer(row["count"])}</td></tr>'
         for row in timing_rows
     )
     if not timing_rows:
-        timing_html = '<tr><td colspan="7">No processing-time telemetry was recorded.</td></tr>'
+        timing_html = '<tr><td colspan="9">No processing-time telemetry was recorded.</td></tr>'
+    kinematics_html = (
+        '<section><h2>Kinematics summary</h2><p class="small">Velocity axis and speed metrics from measured trajectory and published speed setpoints.</p>'
+        '<table class="evidence"><thead><tr><th>Metric</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th></tr></thead>'
+        f'<tbody>{kinematics_rows}</tbody></table></section>'
+    )
     html_text = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1080,13 +1201,16 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 
-  <section><h2>Measured processing time</h2><p class="small">Only runtime-supplied processing measurements are shown. Values are microseconds unless marked ms; missing telemetry is N/A, never zero.</p><table class="evidence"><thead><tr><th>Component</th><th>Metric</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{timing_html}</tbody></table></section>
+  {failure_reasons_html}
+  {kinematics_html}
+
+  <section><h2>Measured processing time</h2><p class="small">Only runtime-supplied processing measurements are shown. Unit is reported per metric; missing telemetry is N/A, never treated as zero.</p><table class="evidence"><thead><tr><th>Component</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th></tr></thead><tbody>{timing_html}</tbody></table></section>
 
   <section><h2>Flight overview</h2><p class="small">Plots are sampled for readability. Each plot has its own scale, units, labelled axes and legend; p95/limits remain visible in the cards above and in the gate table.</p><div class="charts">{plot_html}</div></section>
 
   <section><div class="two-col"><div><h2>Interpretation</h2><div class="callout"><p>{esc(interpretation)}</p></div></div><div><h2>Run context</h2><p class="small"><strong>Estimator:</strong> {esc(lio.get('state') or 'N/A')} · residual p95 {fmt(metrics.get('localization', {}).get('p95_position_residual_m'), 3, ' m')}.</p><p class="small"><strong>PX4:</strong> {esc(px4_observed)}; failsafe observed = {esc(external.get('failsafe_seen'))}.</p><p class="small"><strong>Planner:</strong> {integer(planning.get('diagnostic_sample_count'))} diagnostic samples · {integer(continuity.get('endpoint_change_count'))} endpoint changes · {integer(smoothness.get('handover_expired_count'))} expired handovers.</p></div></div></section>
 
-  <section><h2>Evidence and raw artifacts</h2><p class="small">{esc(trace_note)}</p><details><summary>Why the old trace table is not in the main report</summary><p class="small">The old table presented runtime fields as if they were meaningful measurements, although several columns were constant 0.000 in every record. That creates false precision and makes a debug trace look like an evaluation result. The raw trace is preserved in the source artifacts below for engineering diagnosis.</p></details><details><summary>Source files</summary><div class="raw-links">{links_html}</div></details><details><summary>Provenance</summary><p class="small">Navigation commit: <code>{esc(navigation_commit)}</code> · dirty workspace: <code>{esc(navigation_dirty)}</code>.</p></details></section>
+  <section><h2>Evidence and raw artifacts</h2><p class="small">{esc(trace_note)}</p><details><summary>Source files</summary><div class="raw-links">{links_html}</div></details><details><summary>Provenance</summary><p class="small">Navigation commit: <code>{esc(navigation_commit)}</code> · dirty workspace: <code>{esc(navigation_dirty)}</code>.</p></details></section>
 
   <footer>Report purpose: human evaluation of one SITL run. Use the linked raw artifacts for debugging; do not use this page as a substitute for the full recorder output.</footer>
 </main>

@@ -65,6 +65,34 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         self.assertEqual(result["overall"], "PASS")
         self.assertTrue(all(status == "PASS" for status in result["gates"].values()))
 
+    def test_temporary_bypass_can_never_render_as_certification_pass(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "experimental_bypasses": {
+                    "bypass_id": "TB-001",
+                    "certification_status": "uncertified_experiment",
+                },
+            },
+            {"outcome": "COMPLETE"},
+            {
+                "expected_outcome": "complete",
+                "mission_complete_observed": True,
+                "waypoint_acceptance_complete": True,
+            },
+            {"state": "TRACKING", "navigation_valid": True},
+            {
+                "estimator_initialized": True,
+                "local_position_valid": True,
+                "local_velocity_valid": True,
+            },
+            0.22,
+            0.75,
+            0.0,
+        )
+        self.assertEqual(result["gates"]["temporary_bypass"], "FAIL")
+        self.assertEqual(result["overall"], "FAIL")
+
     def test_unmeasured_evidence_is_not_scored_as_false_or_zero(self) -> None:
         result = _evaluation(
             {"verdict": "FAIL"},
