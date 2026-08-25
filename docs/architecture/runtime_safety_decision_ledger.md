@@ -2076,3 +2076,31 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   limit, raw solver success or one replay as a feasibility certificate. If
   `-1009` persists, investigate line-search/objective discretization and
   conditioning separately from the duration invariant.
+
+### 2026-08-26 - Lower-bound checkpoint validation evidence
+
+- Authoritative Release checkpoint: commit `c41f3eb` with manifest source HEAD
+  matching the commit; tracked worktree clean except the pre-existing
+  untracked `test-results-asan/` directory. The duration property tests,
+  planning/runtime CTest and Release selector were green before replay.
+- Dataset artifact
+  `.artifacts/runtime/dataset-20260825T214950-436370/report.json` is `FAIL`:
+  the bounded run replayed only `19,435/55,435` IMU and `972/2,772` LiDAR
+  samples (35.06%), propagated odometry remained `49.998 Hz` with a
+  `26.026 ms` maximum gap, but mapping recorded one pending-cloud replacement
+  and one accounting violation. Shadow planning produced no READY/commit and
+  rejected a flatness report with non-finite thrust. This is not a product
+  acceptance result; the incomplete source window and planner finite-output
+  failure must be separated in a longer, complete replay.
+- SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T214922-434888/report.json`
+  is `FAIL` fail-closed: PX4 entered External Mode but arm was rejected by
+  `pre_flight_checks=false`, `ekf2 missing data` and unstable heading. No
+  planner cycle, candidate, PVA, commit or duration trace was observed;
+  IMU/external-odometry gaps reached `391.78/397.91 ms`. This run cannot
+  validate or refute the retry parameterization and does not authorize any
+  freshness/preflight relaxation.
+- Cleanup: both sessions ended `STOPPED/cleanup=PASS`; all validation agents
+  were closed and no ROS, PX4, Gazebo, XRCE, runner or detached agent
+  worktree remained. Repeat a complete dataset replay and a preflight-clean
+  SITL before closing the retry-duration item.
