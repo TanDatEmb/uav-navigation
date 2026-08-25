@@ -1456,6 +1456,26 @@ void SuperNavigationNode::runCycle() {
       trace_status.values.push_back(std::move(item));
     }
     add_trace_value("planning_latency_ms", planner_elapsed_ms);
+    // Keep planner stage timings explicit and unit-labelled in the structured
+    // trace.  The raw SUPER log already exposes these values, but without
+    // publishing them here the report cannot identify which stage causes a
+    // solve deadline overrun.
+    add_trace_value("exp_frontend_us",
+                    module_times.size() > super_planner::EPX_TRAJ_FRONTEND
+                        ? module_times[super_planner::EPX_TRAJ_FRONTEND] * 1.0e6
+                        : 0.0);
+    add_trace_value("exp_opt_us",
+                    module_times.size() > super_planner::EXP_TRAJ_OPT
+                        ? module_times[super_planner::EXP_TRAJ_OPT] * 1.0e6
+                        : 0.0);
+    add_trace_value("backup_frontend_us",
+                    module_times.size() > super_planner::BACK_TRAJ_FRONTEND
+                        ? module_times[super_planner::BACK_TRAJ_FRONTEND] * 1.0e6
+                        : 0.0);
+    add_trace_value("backup_opt_us",
+                    module_times.size() > super_planner::BACK_TRAJ_OPT
+                        ? module_times[super_planner::BACK_TRAJ_OPT] * 1.0e6
+                        : 0.0);
     add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);
     add_trace_value("command_available", planner_command_available_.load() ? 1 : 0);
     add_trace_value("planner_failure_latched", planner_failure_latched_.load() ? 1 : 0);

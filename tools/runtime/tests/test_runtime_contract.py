@@ -2297,7 +2297,16 @@ class RuntimeContractTest(unittest.TestCase):
                                 "mapping_filter_us": value + 1,
                                 "planning_total_us": value + 2,
                             },
-                        }
+                        },
+                        {
+                            "name": "super_navigation/super_planner",
+                            "values": {
+                                "exp_frontend_us": value + 3,
+                                "exp_opt_us": value + 4,
+                                "backup_frontend_us": value + 5,
+                                "backup_opt_us": value + 6,
+                            },
+                        },
                     ]
                 },
             }
@@ -2314,6 +2323,9 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertIn(key, mapping["mapping_filter_us"])
         planning = report._planning_timing_summary(samples)
         self.assertEqual(planning["planning_total_us"]["sample_count"], 0)
+        self.assertEqual(planning["exp_opt_us"]["sample_count"], 3)
+        self.assertEqual(planning["exp_opt_us"]["p50"], 24.0)
+        self.assertEqual(planning["backup_opt_us"]["max"], 36.0)
 
     def test_navigation_mapping_summary_preserves_snapshot_identity_and_cost(self) -> None:
         values = {

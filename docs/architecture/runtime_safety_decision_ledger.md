@@ -1142,3 +1142,22 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   static/report evidence only; browser rendering, clean PX4 provenance,
   repeated SITL, speed ladder, hardware FOV and sanitizer certification remain
   open.
+
+### 2026-08-25 - Planner stage timing instrumentation (observability only)
+
+- The latest open-map benchmark identifies EXP L-BFGS as the dominant planner
+  hot-path cost: `exp_opt_ms` p95 about 117 ms versus total solve p95 about
+  133 ms and a 203 ms maximum against the 180 ms solve budget. Mapping callback
+  p95 is about 24 ms and backup optimization p95 about 17 ms. These values are
+  evidence from one blocked screening artifact, not approval to tune a gate.
+- Runtime decision traces now publish `exp_frontend_us`, `exp_opt_us`,
+  `backup_frontend_us`, and `backup_opt_us` with explicit microsecond units.
+  The report aggregates them as planner timing distributions. No optimizer
+  penalty, deadline, cancellation policy, queue, safety threshold, or speed
+  limit changed. This closes a P1 evidence gap so the next benchmark can
+  distinguish EXP cost from mapping and backup cost.
+- Verification: runtime Python contract suite and planner-trace tests; a fresh
+  Release rebuild is required before using these fields in a new SITL artifact.
+  Algorithmic optimization remains deferred until repeated open-map/dense
+  measurements and SUPER-parity comparison are available. TB-001..003 remain
+  temporary bypasses and must not be enabled implicitly.
