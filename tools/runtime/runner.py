@@ -64,6 +64,7 @@ def _shared_artifact_root(root: Path = ROOT) -> Path:
 
 ARTIFACT_ROOT = _shared_artifact_root()
 RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".runtime-sim.lock"
+BUILD_RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".build-runtime.lock"
 RVIZ_CONFIG = ROOT / "src/navigation_bringup/rviz/fast_lio.rviz"
 NO_RVIZ_ENV = {
     "ENABLE_RVIZ": "0",
@@ -2184,7 +2185,10 @@ def _clean_unlocked(*, clean_workspace_caches: bool = True) -> int:
                     _remove_generated_path(child, removed)
                     continue
                 for runtime_child in child.iterdir():
-                    if runtime_child.resolve() == RUNTIME_LOCK_PATH.resolve():
+                    if runtime_child.resolve() in {
+                        RUNTIME_LOCK_PATH.resolve(),
+                        BUILD_RUNTIME_LOCK_PATH.resolve(),
+                    }:
                         continue
                     _remove_generated_path(runtime_child, removed)
             continue
@@ -2216,7 +2220,11 @@ def _clean_unlocked(*, clean_workspace_caches: bool = True) -> int:
 def clean() -> int:
     """Safely remove generated state while preserving active simulations."""
     with RuntimeLock():
-        return _clean_unlocked()
+        # Keep the build/runtime lock inode alive while traversing the shared
+        # artifact cache; otherwise a concurrent build can recreate the path
+        # and defeat the stale-install exclusion.
+        with BuildRuntimeLock(ROOT, exclusive=True):
+            return _clean_unlocked()
 
 
 def _number(value: Any) -> float:

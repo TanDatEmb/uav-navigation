@@ -277,6 +277,25 @@ class RuntimeContractTest(unittest.TestCase):
             with runner.RuntimeLock(lock_path):
                 pass
 
+    def test_clean_preserves_build_runtime_lock_inode(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            parent = Path(temporary)
+            artifact_root = parent / "runtime"
+            artifact_root.mkdir()
+            runtime_lock = artifact_root / ".runtime-sim.lock"
+            build_lock = artifact_root / ".build-runtime.lock"
+            runtime_lock.touch()
+            build_lock.touch()
+            with (
+                mock.patch.object(runner, "ARTIFACT_ROOT", artifact_root),
+                mock.patch.object(runner, "RUNTIME_LOCK_PATH", runtime_lock),
+                mock.patch.object(runner, "BUILD_RUNTIME_LOCK_PATH", build_lock),
+                mock.patch.object(runner, "GENERATED_CLEAN_PATHS", (parent,)),
+            ):
+                runner._clean_unlocked(clean_workspace_caches=False)
+            self.assertTrue(runtime_lock.exists())
+            self.assertTrue(build_lock.exists())
+
     def test_readiness_fails_immediately_for_an_exited_zombie_process(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             runtime_root = Path(temporary) / "runtime"

@@ -1243,9 +1243,11 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   discovered workspace binaries/libraries/scripts.
 - A repository-shared build/runtime lock prevents a build or test from
   replacing the canonical install while a dataset/SITL process is running (and
-  prevents a runtime from starting during a build). This is provenance and
-  lifecycle protection only; it does not change planner/controller gates,
-  queues, QoS, thresholds, or bypasses.
+  prevents a runtime from starting during a build). `make clean` takes the same
+  lock and preserves both lock inodes while removing generated sessions, so a
+  concurrent operation cannot recreate a lock path and bypass serialization.
+  This is provenance and lifecycle protection only; it does not change
+  planner/controller gates, queues, QoS, thresholds, or bypasses.
 - Verification: canonical Python/manifest/lock contract tests and
   `git diff --check`. A fresh full Release build is mandatory after this
   change before any runtime artifact may be used; the current HTML/report

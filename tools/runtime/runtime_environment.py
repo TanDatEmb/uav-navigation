@@ -90,9 +90,10 @@ class BuildRuntimeBusyError(RuntimeError):
 class BuildRuntimeLock:
     """Shared/exclusive lock for the single canonical Release install.
 
-    Runtime sessions take a shared lock; every build/test/check takes an
-    exclusive lock.  This prevents a package-select build from replacing a
-    library while an already-started session is loading the install overlay.
+    Runtime sessions take an exclusive lock; every build/test/check also takes
+    an exclusive lock.  This prevents concurrent sessions and a package-select
+    build from replacing a library while an already-started session is loading
+    the install overlay.
     """
 
     def __init__(self, root: Path, *, exclusive: bool) -> None:
