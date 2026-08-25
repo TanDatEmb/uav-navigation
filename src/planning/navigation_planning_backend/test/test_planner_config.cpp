@@ -7,6 +7,7 @@
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
+#include <planner_core/corridor_plane_validation.hpp>
 
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   const navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
@@ -45,6 +46,56 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
           PLANNER_PRODUCT_CONFIG_PATH,
           navigation_planning_backend::DynamicLimits{12.1, 5.0, 12.0})),
       std::invalid_argument);
+}
+
+TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {
+  navigation_math::PolyhedronH planes(2, 4);
+  planes << 2.0, 0.0, 0.0, 4.0,
+            0.0, -3.0, 0.0, 6.0;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(planes));
+  EXPECT_DOUBLE_EQ(planes(0, 0), 1.0);
+  EXPECT_DOUBLE_EQ(planes(0, 3), 2.0);
+  EXPECT_DOUBLE_EQ(planes(1, 1), -1.0);
+  EXPECT_DOUBLE_EQ(planes(1, 3), 2.0);
+
+  navigation_math::PolyhedronH small_scale = planes * 1.0e-12;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(small_scale));
+  EXPECT_TRUE(small_scale.isApprox(planes, 1.0e-12));
+
+  navigation_math::PolyhedronH large_scale = planes * 1.0e12;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(large_scale));
+  EXPECT_TRUE(large_scale.isApprox(planes, 1.0e-12));
+
+  for (const double invalid_normal : {
+           std::numeric_limits<double>::quiet_NaN(),
+           std::numeric_limits<double>::infinity(),
+           0.0,
+       }) {
+    navigation_math::PolyhedronH invalid(1, 4);
+    invalid << invalid_normal, 0.0, 0.0, 1.0;
+    EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(invalid));
+  }
+
+  navigation_math::PolyhedronH invalid_offset(1, 4);
+  invalid_offset << 1.0, 0.0, 0.0, std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(invalid_offset));
+  EXPECT_DOUBLE_EQ(invalid_offset(0, 0), 1.0);
+  EXPECT_DOUBLE_EQ(invalid_offset(0, 1), 0.0);
+  EXPECT_DOUBLE_EQ(invalid_offset(0, 2), 0.0);
+  EXPECT_TRUE(std::isnan(invalid_offset(0, 3)));
+
+  navigation_math::PolyhedronH overflow(1, 4);
+  overflow << 1.0e-300, 0.0, 0.0, 1.0e308;
+  const auto overflow_before = overflow;
+  EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(overflow));
+  EXPECT_TRUE(overflow.isApprox(overflow_before));
+
+  navigation_math::PolyhedronH empty;
+  EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(empty));
+
+  navigation_math::MatDf wrong_shape(1, 3);
+  wrong_shape.setOnes();
+  EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(wrong_shape));
 }
 
 TEST(PlannerBackupBraking, UsesJerkLimitedTriangularAndTrapezoidalProfiles) {

@@ -26,6 +26,7 @@
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/backup_braking.hpp>
+#include <planner_core/corridor_plane_validation.hpp>
 #include <utils/header/color_msg_utils.hpp>
 
 using namespace traj_opt;
@@ -440,9 +441,11 @@ bool BackupTrajOpt::processCorridor() {
 }
 
 bool BackupTrajOpt::setupProblemAndCheck() {
-    // 1. Check if the corridor is feasible
-    const Eigen::ArrayXd norms = opt_vars.hPolytope.leftCols<3>().rowwise().norm();
-    opt_vars.hPolytope.array().colwise() /= norms;
+    // 1. Validate and normalize before any corridor geometry or optimizer use.
+    if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytope)) {
+        std::cout << YELLOW << " -- [BackTrajOpt] Invalid corridor planes." << RESET << std::endl;
+        return false;
+    }
 
     if (!processCorridor()) {
         std::cout << YELLOW << " -- [processCorridor] Failed to get Overlap enumerateVs ." << RESET << std::endl;
@@ -711,10 +714,6 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
                         double &out_ts,
                         const bool &debug) {
     opt_vars.hPolytope = sfc.GetPlanes();
-    if (std::isnan(opt_vars.hPolytope.sum())) {
-        std::cout << YELLOW << " -- [BackTrajOpt] Polytope is nan." << RESET << std::endl;
-        return false;
-    }
 
     opt_vars.debug_en = debug;
     /// Setup optimization problems
@@ -740,7 +739,6 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
 
 
     out_traj.clear();
-    PolyhedronH planes = sfc.GetPlanes();
     bool success{true};
 
     if (!setupProblemAndCheck()) {
@@ -816,10 +814,6 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
         return false;
     }
     opt_vars.hPolytope = sfc.GetPlanes();
-    if (std::isnan(opt_vars.hPolytope.sum())) {
-        std::cout << YELLOW << " -- [BackTrajOpt] Polytope is nan." << RESET << std::endl;
-        return false;
-    }
 
     opt_vars.debug_en = false;
     /// Setup optimization problems
@@ -849,7 +843,6 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     opt_vars.given_init_ts = heu_ts;
 
     out_traj.clear();
-    PolyhedronH planes = sfc.GetPlanes();
     bool success{true};
 
     if (!setupProblemAndCheck()) {

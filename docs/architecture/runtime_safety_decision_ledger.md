@@ -1758,3 +1758,30 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   arithmetic.
 - Verification command:
   `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-26 - Shared finite corridor normalization boundary
+
+- Owner: `navigation_planning_backend` trajectory optimizers. Scope: validate
+  every half-space matrix before EXP geometry simplification and before backup
+  MINCO setup; normalize each row with a stable positive normal norm; reject
+  empty, malformed, non-finite, zero-normal, or overflowed normalized matrices.
+  The helper is scalar-generic and does not expose a vendor matrix type in its
+  product API.
+- Physical contract: rows are `[normal_x, normal_y, normal_z, offset]` and the
+  half-space is `normal dot position + offset <= 0`. Division by a positive
+  norm preserves the inequality and its units; no geometric safety threshold
+  or optimizer penalty value changed.
+- Safety impact: prevents malformed corridor coefficients from reaching
+  `SimplifySFC`, geometric queries, or MINCO. Validation is fail-closed and
+  leaves the caller's matrix unchanged when normalization cannot produce a
+  finite result. It does not certify backup geometry; HG-013 remains
+  provisional because the backup terminal check still uses aggregate penalty.
+- Evidence: `python3 tools/runtime/build.py build --packages
+  navigation_planning_backend` and `python3 tools/runtime/build.py test
+  --packages navigation_planning_backend`; focused tests cover finite positive
+  scaling, NaN/Inf/zero normals, invalid offset, normalization overflow,
+  empty/wrong-shape matrices and no-mutation-on-failure. Full product and
+  repeated dataset/SITL evidence remain required.
+- Removal/review condition: retain permanently as the finite-input contract;
+  review the backup geometric certificate separately under HG-013. Exact
+  verification command is the focused build/test command above.

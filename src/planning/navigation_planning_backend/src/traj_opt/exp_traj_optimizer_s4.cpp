@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
+#include <planner_core/corridor_plane_validation.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <planner_runtime_context/planner_runtime_context.hpp>
 
@@ -1282,6 +1283,17 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         return false;
     }
 
+    for (long i = 0; i < sfcs.size(); i++) {
+        auto planes = sfcs[i].GetPlanes();
+        if (!navigation_planning_backend::normalizeCorridorPlanes(planes)) {
+            planner_context_->warn(
+                " -- [ExpOpt] corridor {} has invalid half-space planes; rejecting before geometry",
+                i);
+            return false;
+        }
+        sfcs[i].SetPlanes(std::move(planes));
+    }
+
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
         cout << YELLOW << " -- [TrajOpt] Cannot simplify sfcs." << RESET << endl;
         return false;
@@ -1300,18 +1312,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
-        const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
-        if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
-            (norms <= std::numeric_limits<double>::epsilon()).any()) {
+        if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(
-                " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
-                i);
-            return false;
-        }
-        opt_vars.hPolytopes[i].array().colwise() /= norms;
-        if (!opt_vars.hPolytopes[i].allFinite()) {
-            planner_context_->warn(
-                " -- [ExpOpt] corridor {} became non-finite during plane normalization",
+                " -- [ExpOpt] corridor {} has invalid half-space planes; rejecting before MINCO",
                 i);
             return false;
         }
@@ -1386,6 +1389,17 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         return false;
     }
 
+    for (long i = 0; i < sfcs.size(); i++) {
+        auto planes = sfcs[i].GetPlanes();
+        if (!navigation_planning_backend::normalizeCorridorPlanes(planes)) {
+            planner_context_->warn(
+                " -- [ExpOpt] corridor {} has invalid half-space planes; rejecting before geometry",
+                i);
+            return false;
+        }
+        sfcs[i].SetPlanes(std::move(planes));
+    }
+
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
         cout << YELLOW << " -- [TrajOpt] Cannot simplify sfcs." << RESET << endl;
         return false;
@@ -1406,18 +1420,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
-        const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
-        if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
-            (norms <= std::numeric_limits<double>::epsilon()).any()) {
+        if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(
-                " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
-                i);
-            return false;
-        }
-        opt_vars.hPolytopes[i].array().colwise() /= norms;
-        if (!opt_vars.hPolytopes[i].allFinite()) {
-            planner_context_->warn(
-                " -- [ExpOpt] corridor {} became non-finite during plane normalization",
+                " -- [ExpOpt] corridor {} has invalid half-space planes; rejecting before MINCO",
                 i);
             return false;
         }
