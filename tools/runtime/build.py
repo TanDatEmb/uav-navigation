@@ -63,6 +63,8 @@ PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
     "fast_lio_tools",
     "navigation_common",
     "navigation_contracts",
+    "rog_map_vendor",
+    "navigation_mapping",
     "navigation_execution",
     "navigation_runtime",
     "navigation_planning",
