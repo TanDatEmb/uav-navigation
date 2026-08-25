@@ -133,6 +133,10 @@ def line_chart(
     y_max: float | None = None,
     height: int = 300,
 ) -> str:
+    chart_id = "chart-" + "".join(
+        character.lower() if character.isalnum() else "-"
+        for character in title
+    ).strip("-")
     plotted = [
         (label, samples(points), color, dash)
         for label, points, color, dash in (
@@ -211,22 +215,25 @@ def line_chart(
             f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="{RED}" stroke-width="1.5" stroke-dasharray="7 5"/>'
             f'<text x="{width-right-4}" y="{y-6:.1f}" text-anchor="end" class="threshold-label">{esc(label)}</text>'
         )
-    for label, points, color, dash in plotted:
+    for series_index, (label, points, color, dash) in enumerate(plotted):
         coordinates = " ".join(f"{point_xy(point)[0]:.1f},{point_xy(point)[1]:.1f}" for point in points)
         dash_attr = f' stroke-dasharray="{esc(dash)}"' if dash else ""
+        series_id = f"{chart_id}-series-{series_index}"
         parts.append(
-            f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"{dash_attr}/>'
+            f'<g id="{esc(series_id)}" class="chart-series"><polyline points="{coordinates}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"{dash_attr}/>'
         )
         end_x, end_y = point_xy(points[-1])
         parts.append(
             f'<circle cx="{end_x:.1f}" cy="{end_y:.1f}" r="3.5" fill="{color}"/>'
-            f'<text x="{min(width-right-4, end_x+8):.1f}" y="{max(top+14, end_y-8):.1f}" class="end-label" fill="{color}">{esc(fmt(points[-1][1]))}</text>'
+            f'<text x="{min(width-right-4, end_x+8):.1f}" y="{max(top+14, end_y-8):.1f}" class="end-label" fill="{color}">{esc(fmt(points[-1][1]))}</text></g>'
         )
     legend_x = left
-    for label, _, color, _ in plotted:
+    for index, (label, _, color, _) in enumerate(plotted):
+        series_id = f"{chart_id}-series-{index}"
         parts.append(
+            f'<g class="chart-legend-toggle" data-target="{esc(series_id)}" tabindex="0" role="button" aria-pressed="true">'
             f'<line x1="{legend_x}" y1="22" x2="{legend_x+20}" y2="22" stroke="{color}" stroke-width="3"/>'
-            f'<text x="{legend_x+27}" y="26" class="legend-label">{esc(label)}</text>'
+            f'<text x="{legend_x+27}" y="26" class="legend-label">{esc(label)}</text></g>'
         )
         legend_x += 150 + min(120, len(label) * 4)
     parts.append('</svg></div>')
@@ -307,23 +314,46 @@ def map_svg(data: dict[str, Any]) -> str:
     actual_coords = " ".join(f"{transform((x, y, 0.0))[0]:.1f},{transform((x, y, 0.0))[1]:.1f}" for x, y in actual_sampled)
     if actual_coords:
         parts.append(f'<polyline points="{actual_coords}" fill="none" stroke="{BLUE}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>')
-    records = data.get("trajectory_records", [])
-    record_step = max(1, len(records) // 36)
-    for index, record in enumerate(records):
-        if index % record_step != 0 and index != len(records) - 1:
-            continue
-        points = []
-        for value in record.get("position_points", []):
-            if isinstance(value, (list, tuple)) and len(value) >= 3:
-                try:
-                    point = (float(value[0]), float(value[1]), float(value[2]))
-                except (TypeError, ValueError):
-                    continue
-                if all(math.isfinite(item) for item in point):
-                    points.append(point)
-        if len(points) >= 2:
+    trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
+    if trajectory_paths:
+        for path in trajectory_paths:
+            points = [
+                tuple(float(value) for value in point[:3])
+                for point in path.get("points", [])
+                if isinstance(point, (list, tuple)) and len(point) >= 3
+                and all(finite(value) is not None for value in point[:3])
+            ]
+            if len(points) < 2:
+                continue
             coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
-            parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{TEAL}" stroke-opacity="0.36" stroke-width="1.2" stroke-dasharray="5 4"/>')
+            flag = int(finite(path.get("trajectory_flag")) or 0)
+            color = RED if flag == 2 else TEAL
+            dash = "5 4" if flag == 2 else ""
+            dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+            label = "backup/safety" if flag == 2 else "main/nominal"
+            parts.append(
+                f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-opacity="0.68" stroke-width="2"{dash_attr}/>'
+            )
+            first = transform(points[0])
+            parts.append(f'<text x="{first[0]+8:.1f}" y="{first[1]-8:.1f}" class="map-label">{esc(label)} WP{esc(path.get("waypoint_index", "—"))}</text>')
+    else:
+        records = data.get("trajectory_records", [])
+        record_step = max(1, len(records) // 36)
+        for index, record in enumerate(records):
+            if index % record_step != 0 and index != len(records) - 1:
+                continue
+            points = []
+            for value in record.get("position_points", []):
+                if isinstance(value, (list, tuple)) and len(value) >= 3:
+                    try:
+                        point = (float(value[0]), float(value[1]), float(value[2]))
+                    except (TypeError, ValueError):
+                        continue
+                    if all(math.isfinite(item) for item in point):
+                        points.append(point)
+            if len(points) >= 2:
+                coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
+                parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{TEAL}" stroke-opacity="0.36" stroke-width="1.2" stroke-dasharray="5 4"/>')
     for index, waypoint in enumerate(waypoints):
         x, y = transform(waypoint)
         parts.append(
@@ -332,9 +362,10 @@ def map_svg(data: dict[str, Any]) -> str:
         )
     parts.extend([
         f'<line x1="{left+12}" y1="22" x2="{left+32}" y2="22" stroke="{BLUE}" stroke-width="3"/><text x="{left+39}" y="26" class="legend-label">ground truth</text>',
-        f'<line x1="{left+150}" y1="22" x2="{left+170}" y2="22" stroke="{TEAL}" stroke-opacity="0.6" stroke-width="2" stroke-dasharray="5 4"/><text x="{left+177}" y="26" class="legend-label">published plans</text>',
-        f'<rect x="{left+310}" y="16" width="14" height="12" fill="#e8897e" stroke="{RED}"/><text x="{left+331}" y="26" class="legend-label">route obstacles</text>',
-        f'<circle cx="{left+486}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+499}" y="26" class="legend-label">waypoints</text>',
+        f'<line x1="{left+150}" y1="22" x2="{left+170}" y2="22" stroke="{TEAL}" stroke-width="2"/><text x="{left+177}" y="26" class="legend-label">main / nominal</text>',
+        f'<line x1="{left+310}" y1="22" x2="{left+330}" y2="22" stroke="{RED}" stroke-width="2" stroke-dasharray="5 4"/><text x="{left+337}" y="26" class="legend-label">backup / safety</text>',
+        f'<rect x="{left+490}" y="16" width="14" height="12" fill="#e8897e" stroke="{RED}"/><text x="{left+511}" y="26" class="legend-label">route obstacles</text>',
+        f'<circle cx="{left+666}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+679}" y="26" class="legend-label">waypoints</text>',
         '</svg></div>',
     ])
     return "".join(parts)
@@ -540,33 +571,62 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
     ground_truth = _replay_sampled(ground_truth, 720)
 
     plans: list[dict[str, Any]] = []
-    for item in data.get("trajectory_records", []):
-        publish_time = finite(item.get("_publish_time_s"))
-        if publish_time is None:
-            continue
-        positions = [
-            point
-            for point in (_replay_point(value) for value in item.get("position_points", []))
-            if point is not None
-        ]
-        if not positions:
-            continue
-        positions = [
-            positions[round(index * (len(positions) - 1) / max(1, min(48, len(positions)) - 1))]
-            for index in range(min(48, len(positions)))
-        ]
-        role = int(finite(item.get("trajectory_role")) or 0)
-        safety_kind = int(finite(item.get("safety_plan_kind")) or 0)
-        plans.append({
-            "t": publish_time,
-            "duration": finite(item.get("duration_s")) or 0.0,
-            "role": role,
-            "role_label": "safety" if role == 1 else "nominal",
-            "safety_kind": safety_kind,
-            "waypoint": int(finite(item.get("waypoint_index")) or 0),
-            "world_revision": int(finite(item.get("world_revision")) or 0),
-            "points": positions,
-        })
+    trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
+    if trajectory_paths:
+        for item in trajectory_paths:
+            positions = [
+                point for point in (_replay_point(value) for value in item.get("points", []))
+                if point is not None
+            ]
+            if not positions:
+                continue
+            positions = [
+                positions[round(index * (len(positions) - 1) / max(1, min(96, len(positions)) - 1))]
+                for index in range(min(96, len(positions)))
+            ]
+            role = 1 if int(finite(item.get("trajectory_flag")) or 0) == 2 else 0
+            start_time = finite(item.get("t_start"))
+            end_time = finite(item.get("t_end"))
+            if start_time is None:
+                continue
+            plans.append({
+                "t": start_time,
+                "duration": max(0.01, (end_time - start_time) if end_time is not None else 0.01),
+                "role": role,
+                "role_label": "safety / backup" if role == 1 else "nominal / main",
+                "safety_kind": "recorded trajectory flag",
+                "waypoint": int(finite(item.get("waypoint_index")) or 0),
+                "world_revision": 0,
+                "points": positions,
+            })
+    else:
+        for item in data.get("trajectory_records", []):
+            publish_time = finite(item.get("_publish_time_s"))
+            if publish_time is None:
+                continue
+            positions = [
+                point
+                for point in (_replay_point(value) for value in item.get("position_points", []))
+                if point is not None
+            ]
+            if not positions:
+                continue
+            positions = [
+                positions[round(index * (len(positions) - 1) / max(1, min(48, len(positions)) - 1))]
+                for index in range(min(48, len(positions)))
+            ]
+            role = int(finite(item.get("trajectory_role")) or 0)
+            safety_kind = int(finite(item.get("safety_plan_kind")) or 0)
+            plans.append({
+                "t": publish_time,
+                "duration": finite(item.get("duration_s")) or 0.0,
+                "role": role,
+                "role_label": "safety / backup" if role == 1 else "nominal / main",
+                "safety_kind": safety_kind,
+                "waypoint": int(finite(item.get("waypoint_index")) or 0),
+                "world_revision": int(finite(item.get("world_revision")) or 0),
+                "points": positions,
+            })
     plans.sort(key=lambda item: item["t"])
 
     planner: list[dict[str, Any]] = []
@@ -616,6 +676,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
     min_y = min(point[1] for point in bounds_points) - 3.0
     max_y = max(point[1] for point in bounds_points) + 3.0
     timestamps = [item["t"] for item in ground_truth + plans + planner]
+    timestamps.extend(item["t"] for item in data.get("observability", {}).get("waypoint_events", []) if finite(item.get("t")) is not None)
     start = min(timestamps) if timestamps else 0.0
     end = max(timestamps) if timestamps else 1.0
     return {
@@ -625,6 +686,8 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         "waypoints": [list(point) for point in data.get("waypoints", [])],
         "obstacles": obstacles,
         "route_obstacles": list(data.get("metrics", {}).get("route_obstacles", [])),
+        "waypoint_events": [item for item in data.get("observability", {}).get("waypoint_events", []) if finite(item.get("t")) is not None],
+        "vehicle_events": [item for item in data.get("observability", {}).get("vehicle_events", []) if finite(item.get("t")) is not None],
         "bounds": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y},
         "start": start,
         "end": end,
@@ -746,6 +809,11 @@ _REPLAY_SCRIPT = r"""
     document.getElementById("replay-plan").textContent = plan ? `${plan.role_label} · published ${fmt(plan.t, 2)} s · ${fmt(plan.duration, 2)} s` : "No generated path yet";
     document.getElementById("replay-plan-meta").textContent = plan ? `WP${plan.waypoint} · world revision ${plan.world_revision} · safety kind ${plan.safety_kind}` : "—";
     document.getElementById("replay-planner").textContent = planner ? `${planner.reason} · horizon ${fmt(planner.horizon, 2)} m · known-free ${fmt(planner.known_free, 2)} m` : "No planner diagnostic yet";
+    const waypoint = latestAt(data.waypoint_events, time);
+    const vehicle = latestAt(data.vehicle_events, time);
+    document.getElementById("replay-waypoint").textContent = waypoint ? `WP${waypoint.waypoint_index} · ${waypoint.state_name || "—"} · accepted ${waypoint.waypoint_accepted ? "yes" : "no"}` : "—";
+    document.getElementById("replay-acceptance").textContent = waypoint ? `WP${waypoint.accepted_waypoint_index} · ${fmt(waypoint.acceptance_position_error_m, 2)} m · ${fmt(waypoint.acceptance_speed_mps, 2)} m/s` : "—";
+    document.getElementById("replay-vehicle-state").textContent = vehicle ? `nav=${vehicle.nav_state ?? "—"} · armed=${vehicle.arming_state ?? "—"} · failsafe=${vehicle.failsafe ?? "—"}` : "—";
   }
 
   function update(time) {
@@ -841,19 +909,159 @@ def replay_section(data: dict[str, Any]) -> str:
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
       <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div></div>
-      <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Active path</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd></dl><p class="small">The replay shows the latest published path, not a physics re-simulation. Path publication markers are the recorded planner/executor timeline.</p></aside>
+      <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active path</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd></dl><p class="small">The replay shows the recorded command path and observed vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
     </div>
     <script>
       {script}
     </script>
-  </section>
+    </section>
 """
+
+
+def _obs_points(observability: dict[str, Any], stream: str, vector: str, axis: str) -> list[tuple[float, float]]:
+    rows = observability.get("streams", {}).get(stream, {}).get(f"{vector}_series", [])
+    return [
+        (float(item["t"]), float(item[axis]))
+        for item in rows
+        if isinstance(item, dict) and finite(item.get("t")) is not None and axis in item and finite(item.get(axis)) is not None
+    ]
+
+
+def _pva_points(observability: dict[str, Any], field: str, axis: int) -> list[tuple[float, float]]:
+    result = []
+    for item in observability.get("pva", []):
+        value = item.get(field)
+        if not isinstance(value, (list, tuple)) or len(value) <= axis:
+            continue
+        timestamp = finite(item.get("t"))
+        component = finite(value[axis])
+        if timestamp is not None and component is not None:
+            result.append((timestamp, component))
+    return result
+
+
+def _px4_setpoint_points(observability: dict[str, Any], field: str, axis: int) -> list[tuple[float, float]]:
+    result = []
+    for item in observability.get("setpoints", []):
+        value = item.get(field)
+        timestamp = finite(item.get("t"))
+        if timestamp is None or not isinstance(value, (list, tuple)) or len(value) < 3:
+            continue
+        converted = _point(value)
+        if converted is None:
+            continue
+        # PX4 setpoint events are recorded in NED; the report uses ENU.
+        enu = (converted[1], converted[0], -converted[2])
+        if finite(enu[axis]) is not None:
+            result.append((timestamp, enu[axis]))
+    return result
+
+
+def _stream_rows(observability: dict[str, Any]) -> str:
+    labels = {
+        "ground_truth_odometry": "Ground truth odometry",
+        "propagated_odometry": "LIO propagated odometry",
+        "corrected_odometry": "LIO corrected odometry",
+        "external_odometry": "PX4 external odometry",
+        "px4_odometry": "PX4 odometry",
+        "local_position": "PX4 local position (NED→ENU)",
+    }
+    rows = []
+    for name, item in observability.get("streams", {}).items():
+        label = labels.get(name, name)
+        rows.append(
+            f'<tr><td>{esc(label)}</td><td>{integer(item.get("count"))}</td>'
+            f'<td>{fmt(item.get("mean_rate_hz"), 1, " Hz")}</td>'
+            f'<td>{fmt(item.get("duration_s"), 2, " s")}</td>'
+            f'<td>{fmt(item.get("p95_gap_ms"), 2, " ms")}</td>'
+            f'<td>{fmt(item.get("max_gap_ms"), 2, " ms")}</td></tr>'
+        )
+    return "".join(rows) or '<tr><td colspan="6">No position/velocity telemetry recorded.</td></tr>'
+
+
+def _axis_rows(observability: dict[str, Any]) -> str:
+    labels = {
+        "ground_truth_odometry": "Ground truth",
+        "propagated_odometry": "LIO propagated",
+        "corrected_odometry": "LIO corrected",
+        "external_odometry": "PX4 external",
+        "px4_odometry": "PX4 odometry",
+        "local_position": "PX4 local position",
+    }
+    rows = []
+    for name, item in observability.get("streams", {}).items():
+        for axis in ("x", "y", "z"):
+            stats = item.get("position_stats", {}).get(axis, {})
+            rows.append(
+                f'<tr><td>{esc(labels.get(name, name))}</td><td>position {axis}</td>'
+                f'<td>{fmt(stats.get("mean"), 3, " m")}</td><td>{fmt(stats.get("p50"), 3, " m")}</td>'
+                f'<td>{fmt(stats.get("p95"), 3, " m")}</td><td>{fmt(stats.get("maximum"), 3, " m")}</td>'
+                f'<td>{integer(stats.get("count"))}</td></tr>'
+            )
+        for axis in ("vx", "vy", "vz"):
+            stats = item.get("velocity_stats", {}).get(axis, {})
+            rows.append(
+                f'<tr><td>{esc(labels.get(name, name))}</td><td>{axis}</td>'
+                f'<td>{fmt(stats.get("mean"), 3, " m/s")}</td><td>{fmt(stats.get("p50"), 3, " m/s")}</td>'
+                f'<td>{fmt(stats.get("p95"), 3, " m/s")}</td><td>{fmt(stats.get("maximum"), 3, " m/s")}</td>'
+                f'<td>{integer(stats.get("count"))}</td></tr>'
+            )
+    return "".join(rows) or '<tr><td colspan="7">No position or velocity axes recorded.</td></tr>'
+
+
+def _diagnostic_health_rows(observability: dict[str, Any]) -> str:
+    rows = []
+    for item in observability.get("health", []):
+        value = item.get("value")
+        if isinstance(value, bool):
+            observed = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            observed = fmt(value, 3) if not float(value).is_integer() else integer(value)
+        else:
+            observed = str(value) if value not in (None, "") else "—"
+        rows.append(
+            f'<tr><td>{esc(item.get("component"))}</td><td>{esc(item.get("source"))}</td>'
+            f'<td>{esc(item.get("metric"))}</td><td class="observed">{esc(observed)}</td>'
+            f'<td>{integer(item.get("count"))}</td></tr>'
+        )
+    return "".join(rows) or '<tr><td colspan="5">No LIO/planner diagnostic health fields recorded.</td></tr>'
+
+
+def _diagnostic_timing_rows(observability: dict[str, Any]) -> str:
+    rows = []
+    for item in sorted(observability.get("timing", []), key=lambda row: (str(row.get("component")), str(row.get("metric")))):
+        stats = item.get("stats", {})
+        rows.append(
+            f'<tr><td>{esc(item.get("component"))}</td><td>{esc(item.get("source"))}</td>'
+            f'<td>{esc(item.get("metric"))}</td><td>{esc(item.get("unit"))}</td>'
+            f'<td>{fmt(stats.get("mean"), 1)}</td><td>{fmt(stats.get("p50"), 1)}</td>'
+            f'<td>{fmt(stats.get("p95"), 1)}</td><td>{fmt(stats.get("p99"), 1)}</td>'
+            f'<td>{fmt(stats.get("maximum"), 1)}</td><td>{integer(item.get("count"))}</td>'
+            f'<td>{integer(item.get("nonzero_count"))}</td></tr>'
+        )
+    return "".join(rows) or '<tr><td colspan="11">No LIO/planner processing telemetry recorded.</td></tr>'
+
+
+def _waypoint_event_rows(observability: dict[str, Any]) -> str:
+    rows = []
+    for item in observability.get("waypoint_events", []):
+        if item.get("kind") != "waypoint_accepted":
+            continue
+        rows.append(
+            f'<tr><td>{fmt(item.get("t"), 2, " s")}</td><td>WP{esc(item.get("waypoint_index", "—"))}</td>'
+            f'<td>{esc(item.get("state_name", "—"))}</td><td>{esc(item.get("reason_name", "—"))}</td>'
+            f'<td>{"yes" if item.get("waypoint_accepted") else "no"}</td>'
+            f'<td>{fmt(item.get("acceptance_position_error_m"), 3, " m")}</td>'
+            f'<td>{fmt(item.get("acceptance_speed_mps"), 3, " m/s")}</td></tr>'
+        )
+    return "".join(rows) or '<tr><td colspan="7">No waypoint state transitions recorded.</td></tr>'
 
 
 def render(session: Path, output: Path) -> Path:
     data = _analyze(session)
     report = _load(session / "report.json", {})
     metrics = data["metrics"]
+    observability = data.get("observability", {})
     # Preserve the existing machine-readable companion artifact while making
     # REPORT.html human-readable.  The HTML is a view, not a replacement for
     # the structured metrics contract.
@@ -979,23 +1187,19 @@ def render(session: Path, output: Path) -> Path:
         for item in data["planning"]
         if (value := finite(item.get("known_free_horizon_m"))) is not None
     ]
-    setpoint_velocity_series = {"vx": [], "vy": [], "vz": []}
+    setpoint_velocity_series = {
+        axis: _pva_points(observability, "velocity", index)
+        for index, axis in enumerate(("vx", "vy", "vz"))
+    }
     setpoint_speed_series = []
-    for item in data["trajectory_records"]:
-        publish_time = finite(item.get("_publish_time_s"))
-        velocities = [value for value in item.get("velocity_points", []) if isinstance(value, (list, tuple)) and len(value) >= 3]
-        if publish_time is not None and velocities:
-            try:
-                velocity = [float(value) for value in velocities[0][:3]]
-                for axis, index in zip(("vx", "vy", "vz"), range(3)):
-                    setpoint_value = finite(velocity[index])
-                    if setpoint_value is not None:
-                        setpoint_velocity_series[axis].append((publish_time, setpoint_value))
-                value = math.sqrt(sum(component * component for component in velocity))
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(value):
-                setpoint_speed_series.append((publish_time, value))
+    for item in observability.get("pva", []):
+        velocity = item.get("velocity")
+        timestamp = finite(item.get("t"))
+        if timestamp is None or not isinstance(velocity, (list, tuple)) or len(velocity) < 3:
+            continue
+        values = [finite(value) for value in velocity[:3]]
+        if all(value is not None for value in values):
+            setpoint_speed_series.append((timestamp, math.sqrt(sum(value * value for value in values if value is not None))))
 
     speed_series_stats = _series_stats(_series_values(speed_series))
     setpoint_speed_stats = _series_stats(_series_values(setpoint_speed_series))
@@ -1051,7 +1255,7 @@ def render(session: Path, output: Path) -> Path:
         )
     )
     setpoint_axis_rows = "".join(
-        f'<tr><td class="observed">|{axis.upper()}| setpoint start</td>'
+        f'<tr><td class="observed">|{axis.upper()}| PVA command</td>'
         f'<td>{fmt(stats["mean"], 2, " m/s")}</td>'
         f'<td>{fmt(stats["p50"], 2, " m/s")}</td>'
         f'<td>{fmt(stats["p95"], 2, " m/s")}</td>'
@@ -1070,22 +1274,77 @@ def render(session: Path, output: Path) -> Path:
         f'<td>{fmt(speed_series_stats["p50"], 2, " m/s")}</td><td>{fmt(speed_series_stats["p95"], 2, " m/s")}</td>'
         f'<td>{fmt(speed_series_stats["p99"], 2, " m/s")}</td><td>{fmt(speed_series_stats["max"], 2, " m/s")}</td>'
         f'<td>{integer(speed_series_stats["count"])}</td></tr>'
-        f'<tr><td class="observed">setpoint speed start</td><td>{fmt(setpoint_speed_stats["mean"], 2, " m/s")}</td>'
+        f'<tr><td class="observed">PVA command speed</td><td>{fmt(setpoint_speed_stats["mean"], 2, " m/s")}</td>'
         f'<td>{fmt(setpoint_speed_stats["p50"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["p95"], 2, " m/s")}</td>'
         f'<td>{fmt(setpoint_speed_stats["p99"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["max"], 2, " m/s")}</td>'
         f'<td>{integer(setpoint_speed_stats["count"])}</td></tr>'
+    )
+
+    stream_labels = {
+        "ground_truth_odometry": "ground truth",
+        "propagated_odometry": "LIO propagated",
+        "corrected_odometry": "LIO corrected",
+        "external_odometry": "PX4 external",
+        "px4_odometry": "PX4 odometry",
+        "local_position": "PX4 local position",
+    }
+    stream_colors = {
+        "ground_truth_odometry": BLUE,
+        "propagated_odometry": TEAL,
+        "corrected_odometry": PURPLE,
+        "external_odometry": ORANGE,
+        "px4_odometry": SLATE,
+        "local_position": RED,
+    }
+    observed_streams = [
+        name for name in (
+            "ground_truth_odometry", "propagated_odometry", "corrected_odometry",
+            "external_odometry", "px4_odometry", "local_position",
+        ) if name in observability.get("streams", {})
+    ]
+    position_plot_html = "".join(
+        line_chart(
+            f"Position {axis.upper()} · ENU metres",
+            [
+                *[{"label": stream_labels[name], "points": _obs_points(observability, name, "position", axis), "color": stream_colors[name]}
+                  for name in observed_streams],
+                {"label": "PX4 setpoint event", "points": _px4_setpoint_points(observability, "position_ned", ("x", "y", "z").index(axis)), "color": RED, "dash": "6 4"},
+            ],
+            "position (m)",
+        )
+        for axis in ("x", "y", "z")
+    )
+    velocity_plot_html = "".join(
+        line_chart(
+            f"Velocity {axis} · measured and PVA command",
+            [
+                *[{"label": stream_labels[name], "points": _obs_points(observability, name, "velocity", axis), "color": stream_colors[name]}
+                  for name in observed_streams],
+                {"label": "PVA command", "points": setpoint_velocity_series[axis], "color": RED, "dash": "6 4"},
+                {"label": "PX4 setpoint event", "points": _px4_setpoint_points(observability, "velocity_ned", ("vx", "vy", "vz").index(axis)), "color": PURPLE, "dash": "3 3"},
+            ],
+            "velocity (m/s)",
+        )
+        for axis in ("vx", "vy", "vz")
+    )
+    stream_rows = _stream_rows(observability)
+    axis_rows = _axis_rows(observability)
+    diagnostic_health_rows = _diagnostic_health_rows(observability)
+    diagnostic_timing_rows = _diagnostic_timing_rows(observability)
+    waypoint_event_rows = _waypoint_event_rows(observability)
+    trajectory_paths = observability.get("trajectory_paths", [])
+    main_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 1 for item in trajectory_paths)
+    backup_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 2 for item in trajectory_paths)
+    path_observation_note = (
+        f"Recorded command paths: {main_path_count} main/nominal and {backup_path_count} backup/safety. "
+        "A missing backup path means no backup command was observed in this run; it is not treated as a successful safety-path test."
     )
 
     plot_html = "".join([
         map_svg(data),
         line_chart("Cross-track error", [{"label": "error", "points": error_series, "color": RED}], "distance error (m)", threshold=cross_limit, threshold_label=f"acceptance limit {fmt(cross_limit, 2, ' m')}"),
         line_chart("Velocity components", [{"label": "vx", "points": velocity_series["vx"], "color": BLUE}, {"label": "vy", "points": velocity_series["vy"], "color": TEAL}, {"label": "vz", "points": velocity_series["vz"], "color": ORANGE}], "velocity (m/s)"),
-        line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "setpoint start", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)"),
-        line_chart("Available planning horizon", [{"label": "planning horizon", "points": planning_horizon_series, "color": PURPLE}, {"label": "known-free horizon", "points": known_horizon_series, "color": ORANGE, "dash": "6 4"}], "distance (m)"),
-        comparison_bars([
-            ("longest route leg", finite(mission.get("longest_leg_m")), RED, "route geometry"),
-            ("max known-free horizon", finite(known_free.get("maximum")), ORANGE, "best observed free-space horizon"),
-        ], "Route demand vs observed free-space horizon"),
+        line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "PVA command", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)"),
     ])
     replay_html = replay_section(data)
 
@@ -1168,7 +1427,7 @@ def render(session: Path, output: Path) -> Path:
     .chart-card {{ border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 2px; overflow:hidden; }}
     .chart-card:first-child {{ grid-column:auto; }}
     .chart-title {{ margin:2px 5px 2px; font-weight:800; font-size:14px; color:#29435d; }}
-    .chart {{ width:100%; height:auto; display:block; }}
+    .chart {{ width:100%; height:auto; display:block; }} .chart-legend-toggle {{ cursor:pointer; }} .chart-legend-toggle:focus {{ outline:2px solid {BLUE}; outline-offset:2px; }} .chart-legend-toggle.off {{ opacity:.32; }}
     .axis-label {{ fill:#617284; font-size:11px; }} .axis-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .legend-label {{ fill:#53677b; font-size:11px; }} .threshold-label {{ fill:{RED}; font-size:11px; font-weight:700; }} .end-label {{ font-size:11px; font-weight:800; }} .map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }} .bar-value {{ fill:#29435d; font-size:12px; font-weight:800; }} .bar-note {{ fill:#68778a; font-size:10px; }}
     .replay-toolbar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 8px; }} .replay-toolbar button {{ border:1px solid #b9c9d6; border-radius:6px; background:#fff; color:#1f4f78; padding:7px 13px; font-weight:800; cursor:pointer; }} .replay-toolbar button:hover {{ background:#edf5fb; }} .replay-time-control {{ display:flex; align-items:center; gap:10px; flex:1; min-width:280px; color:#53677b; font-size:12px; font-weight:700; }} .replay-time-control input {{ flex:1; accent-color:{BLUE}; }} .replay-time-control output {{ min-width:62px; color:#18324b; font-variant-numeric:tabular-nums; }}
     .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:18px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 65%,#edf2f6 65%,#edf2f6 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:11px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ background:{TEAL}; }} .replay-marker.safety {{ background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
@@ -1208,10 +1467,18 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
 
+  <section><h2>Waypoint and command-state timeline</h2><p class="small">The replay cursor exposes the latest vehicle state, active waypoint, acceptance result, and active command path. This table is the durable waypoint evidence behind the replay.</p><table class="evidence"><thead><tr><th>Time</th><th>Waypoint</th><th>State</th><th>Reason</th><th>Accepted</th><th>Position error</th><th>Speed at acceptance</th></tr></thead><tbody>{waypoint_event_rows}</tbody></table><p class="small">{esc(path_observation_note)}</p></section>
+
+  <section><h2>Telemetry coverage</h2><p class="small">Position and velocity streams are reported in their recorded frame; PX4 local position is converted from NED to ENU for comparison. Gaps are based on consecutive accepted recorder samples.</p><table class="evidence"><thead><tr><th>Stream</th><th>Samples</th><th>Mean rate</th><th>Duration</th><th>Gap p95</th><th>Max gap</th></tr></thead><tbody>{stream_rows}</tbody></table><details><summary>Position XYZ and velocity XYZ statistics</summary><table class="evidence"><thead><tr><th>Stream</th><th>Axis</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{axis_rows}</tbody></table></details></section>
+
+  <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO and SUPER/ROG-Map. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
+
   {failure_reasons_html}
   {kinematics_html}
 
-  <section><h2>Measured processing time</h2><p class="small">Only runtime-supplied processing measurements are shown. Unit is reported per metric; missing telemetry is N/A, never treated as zero.</p><table class="evidence"><thead><tr><th>Component</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th></tr></thead><tbody>{timing_html}</tbody></table></section>
+  <section><h2>Measured processing time</h2><p class="small">Timing is extracted from LIO and planner diagnostic samples. <strong>Non-zero</strong> counts make zero-valued counters visible instead of silently treating them as missing.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></section>
+
+  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 
   <section><h2>Flight overview</h2><p class="small">Plots are sampled for readability. Each plot has its own scale, units, labelled axes and legend; p95/limits remain visible in the cards above and in the gate table.</p><div class="charts">{plot_html}</div></section>
 
@@ -1221,6 +1488,22 @@ def render(session: Path, output: Path) -> Path:
 
   <footer>Report purpose: human evaluation of one SITL run. Use the linked raw artifacts for debugging; do not use this page as a substitute for the full recorder output.</footer>
 </main>
+<script>
+  document.querySelectorAll('.chart-legend-toggle').forEach(function (legend) {{
+    function toggle() {{
+      const target = document.getElementById(legend.dataset.target);
+      if (!target) return;
+      const hidden = target.style.display === 'none';
+      target.style.display = hidden ? '' : 'none';
+      legend.classList.toggle('off', !hidden);
+      legend.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+    }}
+    legend.addEventListener('click', toggle);
+    legend.addEventListener('keydown', function (event) {{
+      if (event.key === 'Enter' || event.key === ' ') {{ event.preventDefault(); toggle(); }}
+    }});
+  }});
+</script>
 </body>
 </html>
 """

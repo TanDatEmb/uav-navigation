@@ -40,6 +40,7 @@ def _summary(values: list[float]) -> dict[str, float | int | None]:
         "rmse": math.sqrt(statistics.fmean([value * value for value in values])) if values else None,
         "p50": _percentile(values, 0.50),
         "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99),
         "maximum": max(values) if values else None,
     }
 
@@ -305,6 +306,275 @@ def _trajectory_records(session: Path) -> list[dict[str, Any]]:
     return [item for item in records if isinstance(item, dict) and item.get("position_points")]
 
 
+def _sample_time_seconds(item: dict[str, Any], payload: dict[str, Any] | None = None) -> float | None:
+    """Return the recorder timestamp in seconds, preferring message time."""
+    payload = payload if isinstance(payload, dict) else {}
+    for value in (payload.get("stamp_ns"), item.get("timestamp_ns"), item.get("sim_time_ns")):
+        number = _finite_number(value)
+        if number is not None and number > 0.0:
+            return number / 1e9
+    return None
+
+
+def _sampled_dicts(values: list[dict[str, Any]], limit: int = 900) -> list[dict[str, Any]]:
+    if len(values) <= limit:
+        return values
+    step = (len(values) - 1) / max(1, limit - 1)
+    return [values[round(index * step)] for index in range(limit)]
+
+
+def _axis_stats(records: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    values = [_finite_number(record.get(key)) for record in records]
+    values = [value for value in values if value is not None]
+    return _summary(values)
+
+
+def _enu_from_ned(value: Any) -> list[float] | None:
+    """Convert PX4 NED position/velocity to the report's ENU display frame."""
+    point = _point(value)
+    if point is None:
+        return None
+    north, east, down = point
+    return [east, north, -down]
+
+
+def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
+    """Extract system-level telemetry that the acceptance gates do not score.
+
+    This is intentionally a view of explicit recorder fields. Missing streams,
+    missing axes, and missing planner roles remain unavailable; no values are
+    reconstructed from IDs or aggregate counters.
+    """
+    stream_records: dict[str, list[dict[str, Any]]] = {}
+    diagnostics: dict[str, dict[str, Any]] = {}
+    pva: list[dict[str, Any]] = []
+    setpoints: list[dict[str, Any]] = []
+    goals: list[dict[str, Any]] = []
+    waypoint_events: list[dict[str, Any]] = []
+    mode_events: list[dict[str, Any]] = []
+    vehicle_events: list[dict[str, Any]] = []
+    current_goal: dict[str, Any] = {}
+
+    samples_path = session / "samples.jsonl"
+    if samples_path.is_file():
+        with samples_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if item.get("kind") != "sample" or not item.get("accepted_by_monitor", True):
+                    continue
+                stream_name = str(item.get("stream") or "")
+                payload = item.get("payload", {})
+                if not stream_name or not isinstance(payload, dict):
+                    continue
+                timestamp = _sample_time_seconds(item, payload)
+                if timestamp is None:
+                    continue
+                position = _point(payload.get("position"))
+                velocity = _point(payload.get("linear_velocity"))
+                if stream_name == "local_position":
+                    position = _enu_from_ned([
+                        payload.get("x_ned_m"), payload.get("y_ned_m"), payload.get("z_ned_m")
+                    ])
+                    velocity = _enu_from_ned([
+                        payload.get("vx_ned_m_s"), payload.get("vy_ned_m_s"), payload.get("vz_ned_m_s")
+                    ])
+                record: dict[str, Any] = {"t": timestamp}
+                if position is not None:
+                    record["position"] = list(position)
+                if velocity is not None:
+                    record["velocity"] = list(velocity)
+                if stream_name in {"ground_truth_odometry", "propagated_odometry", "corrected_odometry", "external_odometry", "px4_odometry", "local_position"}:
+                    if position is not None or velocity is not None:
+                        stream_records.setdefault(stream_name, []).append(record)
+
+                if stream_name in {"mapping_diagnostics", "diagnostics", "planning_diagnostics"}:
+                    for status in payload.get("statuses", []):
+                        if not isinstance(status, dict):
+                            continue
+                        name = str(status.get("name") or "unknown")
+                        values = status.get("values", {})
+                        if not isinstance(values, dict):
+                            continue
+                        entry = diagnostics.setdefault(name, {"count": 0, "latest": {}, "fields": {}})
+                        entry["count"] += 1
+                        entry["latest"] = dict(values)
+                        for key, value in values.items():
+                            number = _finite_number(value)
+                            if number is not None:
+                                entry["fields"].setdefault(key, []).append(number)
+
+    scenario_path = session / "scenario.jsonl"
+    if scenario_path.is_file():
+        with scenario_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                kind = str(event.get("kind") or "")
+                payload = event.get("payload", {})
+                if not isinstance(payload, dict):
+                    continue
+                timestamp = _finite_number(event.get("sim_time_ns"))
+                timestamp = timestamp / 1e9 if timestamp is not None else None
+                if kind == "goal":
+                    current_goal = dict(payload)
+                    goals.append({"t": timestamp, **payload})
+                elif kind in {"waypoint_accepted", "navigation_mode_status"}:
+                    waypoint_events.append({"t": timestamp, "kind": kind, **payload})
+                elif kind == "event":
+                    mode_events.append({"t": timestamp, **payload})
+                elif kind == "vehicle_status":
+                    vehicle_events.append({"t": timestamp, **payload})
+                elif kind == "setpoint":
+                    setpoints.append({"t": timestamp, **payload})
+                elif kind == "pva_command":
+                    point = _point(payload.get("position"))
+                    velocity = _point(payload.get("velocity"))
+                    acceleration = _point(payload.get("acceleration"))
+                    if timestamp is None or point is None:
+                        continue
+                    pva.append({
+                        "t": timestamp,
+                        "position": list(point),
+                        "velocity": list(velocity) if velocity is not None else None,
+                        "acceleration": list(acceleration) if acceleration is not None else None,
+                        "trajectory_id": payload.get("trajectory_id"),
+                        "trajectory_flag": payload.get("trajectory_flag"),
+                        "trajectory_status": payload.get("trajectory_status"),
+                        "trajectory_generation": payload.get("trajectory_generation"),
+                        "trajectory_time_s": payload.get("trajectory_time_s"),
+                        "waypoint_index": current_goal.get("waypoint_index"),
+                        "mission_id": current_goal.get("mission_id"),
+                    })
+
+    stream_summary: dict[str, Any] = {}
+    for name, records in stream_records.items():
+        records.sort(key=lambda item: item["t"])
+        times = [item["t"] for item in records]
+        gaps = [right - left for left, right in zip(times, times[1:]) if right >= left]
+        stream_summary[name] = {
+            "count": len(records),
+            "first_t": times[0] if times else None,
+            "last_t": times[-1] if times else None,
+            "duration_s": (times[-1] - times[0]) if len(times) >= 2 else None,
+            "mean_rate_hz": (len(records) - 1) / (times[-1] - times[0]) if len(times) >= 2 and times[-1] > times[0] else None,
+            "max_gap_ms": max(gaps, default=None) * 1000.0,
+            "p95_gap_ms": _percentile([gap * 1000.0 for gap in gaps], 0.95),
+            "position_stats": {axis: _axis_stats([{"v": record["position"][index]} for record in records if "position" in record], "v") for index, axis in enumerate(("x", "y", "z"))},
+            "velocity_stats": {axis: _axis_stats([{"v": record["velocity"][index]} for record in records if "velocity" in record], "v") for index, axis in enumerate(("vx", "vy", "vz"))},
+            "position_series": _sampled_dicts([
+                {"t": record["t"], "x": record["position"][0], "y": record["position"][1], "z": record["position"][2]}
+                for record in records if "position" in record
+            ], limit),
+            "velocity_series": _sampled_dicts([
+                {"t": record["t"], "vx": record["velocity"][0], "vy": record["velocity"][1], "vz": record["velocity"][2]}
+                for record in records if "velocity" in record
+            ], limit),
+        }
+
+    timing: list[dict[str, Any]] = []
+    health: list[dict[str, Any]] = []
+    for name, entry in diagnostics.items():
+        component = "LIO" if name.startswith("fast_lio/") else "Planner / ROG-Map" if name.startswith("super_navigation/") else name
+        for field, values in sorted(entry["fields"].items()):
+            unit = None
+            converted = list(values)
+            if field.endswith("_us"):
+                unit = "us"
+            elif field.endswith("_ms"):
+                unit = "ms"
+            elif field.endswith("_ns") and field in {"processing_lag_ns"}:
+                unit = "us"
+                converted = [value / 1000.0 for value in values]
+            if unit is not None:
+                timing.append({
+                    "component": component,
+                    "source": name,
+                    "metric": field,
+                    "unit": unit,
+                    "count": len(converted),
+                    "nonzero_count": sum(abs(value) > 1e-12 for value in converted),
+                    "stats": _summary(converted),
+                })
+        health_fields = {
+            "state", "status", "navigation_valid", "transport_ok", "cycle_count",
+            "received_observation_count", "accepted_observation_count", "dropped_cloud_count",
+            "mapping_failed_count", "processing_exception_count", "command_available",
+            "planner_failure_latched", "solve_deadline_exceeded", "imu_drop_count", "lidar_drop_count",
+            "measurement_callback_count", "observability_rejection_count", "translation_observability_ratio",
+            "publication_count", "publication_skip_count", "queue_depth", "queue_maximum",
+            "planning_latency_ms", "planning_horizon_distance_m", "known_free_horizon_m",
+            "horizon_progress_m", "horizon_forward_projection_m", "replan_code", "solve_stage",
+            "solve_stage_name", "candidate_result", "status_name", "last_failure_code",
+            "last_failure_reason",
+        }
+        for field in sorted(health_fields.intersection(entry["latest"])):
+            health.append({
+                "component": component,
+                "source": name,
+                "metric": field,
+                "value": entry["latest"].get(field),
+                "count": entry["count"],
+            })
+
+    trajectory_paths: list[dict[str, Any]] = []
+    if pva:
+        # A trajectory generation is the committed-bundle identity. Never
+        # join samples from different generations into one visual path: doing
+        # so would manufacture continuity across a replan/emergency handover.
+        # Legacy messages without generation fall back to message identity.
+        grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for index, item in enumerate(pva):
+            generation = _finite_number(item.get("trajectory_generation"))
+            message_id = _finite_number(item.get("trajectory_id"))
+            identity = (
+                "generation", int(generation)
+            ) if generation is not None and generation > 0.0 else (
+                "message", int(message_id)
+            ) if message_id is not None and message_id > 0.0 else (
+                "sample", index
+            )
+            key = (
+                item.get("mission_id"), item.get("waypoint_index"),
+                item.get("trajectory_flag"), identity,
+            )
+            grouped.setdefault(key, []).append(item)
+        for (mission_id, waypoint_index, flag, identity), records in grouped.items():
+            records.sort(key=lambda item: item["t"])
+            trajectory_paths.append({
+                "mission_id": mission_id,
+                "waypoint_index": waypoint_index,
+                "trajectory_flag": flag,
+                "trajectory_identity": identity[0],
+                "trajectory_identity_value": identity[1],
+                "trajectory_generation": records[-1].get("trajectory_generation"),
+                "trajectory_status": records[-1].get("trajectory_status"),
+                "t_start": records[0]["t"],
+                "t_end": records[-1]["t"],
+                "points": [item["position"] for item in records],
+                "velocity_points": [item["velocity"] for item in records if item.get("velocity") is not None],
+                "count": len(records),
+            })
+
+    return {
+        "streams": stream_summary,
+        "diagnostics": diagnostics,
+        "timing": timing,
+        "health": health,
+        "pva": _sampled_dicts(pva, limit),
+        "setpoints": _sampled_dicts(setpoints, limit),
+        "goals": goals,
+        "waypoint_events": waypoint_events,
+        "mode_events": mode_events,
+        "vehicle_events": vehicle_events,
+        "trajectory_paths": trajectory_paths,
+    }
+
+
 def _planning_continuity(planning: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize rolling-horizon behavior from one diagnostic sample per tick."""
     terminal_hold_samples = sum(
@@ -544,6 +814,7 @@ def _analyze(session: Path) -> dict[str, Any]:
     ground_truth, planning = _samples(session)
     obstacles = _obstacles(session, descriptor)
     trajectory_records = _trajectory_records(session)
+    observability = _runtime_observability(session)
     smoothness, plan_series = _trajectory_smoothness(trajectory_records)
     planning_continuity = _planning_continuity(planning)
     planner_trace_records = collect_planner_trace_records(scenario)
@@ -667,5 +938,6 @@ def _analyze(session: Path) -> dict[str, Any]:
         "planning": planning,
         "trajectory_records": trajectory_records,
         "plan_series": plan_series,
+        "observability": observability,
         "descriptor": descriptor,
     }

@@ -7,8 +7,8 @@ from pathlib import Path
 RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
-from flight_review_report import _evaluation, _timing_rows
-from html_report import _planning_continuity, _samples, _trajectory_smoothness
+from flight_review_report import _evaluation, _timing_rows, line_chart
+from html_report import _planning_continuity, _runtime_observability, _samples, _trajectory_smoothness
 
 
 class HtmlReportSmoothnessTest(unittest.TestCase):
@@ -40,8 +40,56 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
         self.assertEqual(len(series["speed"]), 2)
         self.assertEqual(series["speed"][1][0], 10.2)
 
+    def test_observability_does_not_join_different_trajectory_generations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            rows = []
+            for stamp, generation, position in ((1_000_000_000, 4, [0.0, 0.0, 3.0]),
+                                                 (1_100_000_000, 4, [0.1, 0.0, 3.0]),
+                                                 (1_200_000_000, 5, [0.2, 0.0, 3.0])):
+                rows.append(json.dumps({
+                    "kind": "sample",
+                    "stream": "pva_command",
+                    "timestamp_ns": stamp,
+                    "payload": {
+                        "stamp_ns": stamp,
+                        "position": position,
+                        "velocity": [1.0, 0.0, 0.0],
+                        "acceleration": [0.0, 0.0, 0.0],
+                        "trajectory_id": stamp,
+                        "trajectory_generation": generation,
+                        "trajectory_flag": 1,
+                        "trajectory_status": 1,
+                    },
+                }))
+            scenario_rows = [
+                json.dumps({"kind": "pva_command", "sim_time_ns": stamp, "payload": json.loads(row)["payload"]})
+                for row, stamp in zip(rows, (1_000_000_000, 1_100_000_000, 1_200_000_000))
+            ]
+            (session / "scenario.jsonl").write_text("\n".join(scenario_rows) + "\n", encoding="utf-8")
+            observed = _runtime_observability(session)
+
+        paths = observed["trajectory_paths"]
+        self.assertEqual(len(paths), 2)
+        self.assertEqual({item["trajectory_generation"] for item in paths}, {4, 5})
+        self.assertEqual(sorted(item["count"] for item in paths), [1, 2])
+
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_line_chart_has_toggleable_legend_for_every_visible_trace(self) -> None:
+        chart = line_chart(
+            "Velocity components",
+            [
+                {"label": "measured", "points": [(0.0, 0.0), (1.0, 1.0)], "color": "#1f6feb"},
+                {"label": "PVA command", "points": [(0.0, 0.0), (1.0, 0.8)], "color": "#c0392b"},
+            ],
+            "velocity (m/s)",
+        )
+        self.assertIn("chart-legend-toggle", chart)
+        self.assertIn("measured", chart)
+        self.assertIn("PVA command", chart)
+        self.assertIn('aria-pressed="true"', chart)
+
     def test_complete_observation_is_passed_from_explicit_evidence(self) -> None:
         result = _evaluation(
             {"verdict": "PASS"},

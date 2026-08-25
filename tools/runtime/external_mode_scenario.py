@@ -584,11 +584,17 @@ class ExternalModeScenario:
             self.trajectory_success_count += 1
         self.latest_pva_command = {
             "trajectory_id": int(message.trajectory_id),
+            "trajectory_generation": int(getattr(message, "trajectory_generation", 0)),
+            "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
             "trajectory_status": int(message.trajectory_status),
             "trajectory_flag": int(message.trajectory_flag),
             "position": [float(message.position.x), float(message.position.y), float(message.position.z)],
             "velocity": [float(message.velocity.x), float(message.velocity.y), float(message.velocity.z)],
             "acceleration": [float(message.acceleration.x), float(message.acceleration.y), float(message.acceleration.z)],
+            "jerk": [float(message.jerk.x), float(message.jerk.y), float(message.jerk.z)],
+            "yaw": float(message.yaw),
+            "yaw_rate": float(message.yaw_dot),
+            "vel_norm": float(getattr(message, "vel_norm", 0.0)),
         }
         goal = self.latest_goal
         mission_id = str(goal.get("mission_id", "super"))
@@ -602,6 +608,11 @@ class ExternalModeScenario:
                 "waypoint_index": waypoint_index,
                 "request_id": int(message.trajectory_id),
                 "trajectory_id": int(message.trajectory_id),
+                "trajectory_flag": int(message.trajectory_flag),
+                "trajectory_status": int(message.trajectory_status),
+                "trajectory_generation": int(getattr(message, "trajectory_generation", 0)),
+                "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
+                "first_sim_time_ns": int(self.sim_now_ns),
                 "position_points": [],
                 "velocity_points": [],
                 "pillar_min_distance_m": None,
@@ -610,6 +621,11 @@ class ExternalModeScenario:
             self.trajectory_records.append(trajectory)
             record_index = len(self.trajectory_records) - 1
         trajectory = self.trajectory_records[record_index]
+        trajectory["trajectory_flag"] = int(message.trajectory_flag)
+        trajectory["trajectory_status"] = int(message.trajectory_status)
+        trajectory["trajectory_generation"] = int(getattr(message, "trajectory_generation", 0))
+        trajectory["trajectory_time_s"] = float(getattr(message, "trajectory_time_s", 0.0))
+        trajectory["last_sim_time_ns"] = int(self.sim_now_ns)
         if not trajectory["position_points"] or trajectory["position_points"][-1] != position:
             trajectory["position_points"].append(position)
             trajectory["velocity_points"].append(list(self.latest_pva_command["velocity"]))
