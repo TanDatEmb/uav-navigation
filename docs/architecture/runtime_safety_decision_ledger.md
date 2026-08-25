@@ -2127,6 +2127,52 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   tests and ledger evidence.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
 
+### 2026-08-26 - Package export contract correction
+
+- Owner: `navigation_mapping` and `navigation_runtime` CMake package boundaries.
+  Scope: export the targets that are already installed, declare the installed
+  include directory, and make `navigation_mapping` propagate its direct world
+  model and ROS message interface dependencies.
+- Safety impact: packaging/build contract only. No planner, mapper, estimator,
+  timestamp, frame, unknown-cell, deadline, or runtime safety behavior changed;
+  no fallback or bypass was added.
+- Evidence: clean external tree `/tmp/uav-navigation-arch-kmPKjc` configured
+  and built the dependency chain, focused CTest completed `12` tests with
+  `0` errors/failures/skips, and an installed consumer configured and linked
+  through `navigation_mapping::navigation_mapping`,
+  `navigation_planning::navigation_planning`, and
+  `navigation_runtime::navigation_runtime_core`. This does not close the
+  planner facade or vendor quarantine; public headers still require a later
+  boundary phase.
+- Removal condition: none; every installed target must have a corresponding
+  export file and every public header dependency must be represented by a
+  direct target/interface dependency.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
+### 2026-08-26 - Contract checkpoint validation evidence
+
+- Checkpoint `1a4b3f8` had an authoritative Release manifest matching HEAD,
+  with only the pre-existing untracked `test-results-asan/` directory. The
+  vertical contract tests passed; the subsequent parallel validation obeyed
+  the canonical lock and made no bypass or gate change.
+- Dataset validation was `BLOCKED_ENVIRONMENT` before session creation because
+  the SITL runner held `.build-runtime.lock`; no dataset artifact or product
+  claim was made.
+- SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T225925-499882/report.json`
+  is `BLOCKED` fail-closed. PX4 preflight, arm, takeoff and External Mode
+  entry passed, but the planner committed no PVA candidate: the final EXP
+  dynamic violation was `1.008735`, the last retry returned `-1008`, and no
+  valid trajectory/setpoint with finite yaw/rate was observed. Safety stopped
+  at `28.52 s`, PX4 Hold handover followed in `148 ms`, and only waypoint `0`
+  of `0..4` was accepted. Independent timing evidence shows corrected-odom
+  arrival gaps up to `1624.7 ms` and external-odom callback/arrival stalls;
+  this is a simulator/transport blocker distinct from planner feasibility.
+- Cleanup: SITL ended `STOPPED/cleanup=PASS`; both validation agents were
+  closed, stale lock metadata was removed only after verifying its PIDs were
+  dead, and the main checkout has one worktree with no runner/PX4/Gazebo/XRCE
+  process remaining. This evidence does not close the planner or SITL gates.
+
 ### 2026-08-26 - Canonical dynamic-limit product contract
 
 - Owner: `navigation_planning::DynamicLimits` and the runtime mission-file

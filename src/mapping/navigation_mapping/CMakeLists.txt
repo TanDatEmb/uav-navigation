@@ -19,15 +19,23 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(${PROJECT_NAME} INTERFACE rog_map_vendor::rog_map_vendor)
+target_link_libraries(${PROJECT_NAME} INTERFACE
+  navigation_world_model::navigation_world_model
+  rog_map_vendor::rog_map_vendor)
+ament_target_dependencies(${PROJECT_NAME} INTERFACE nav_msgs)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}
   EXPORT ${PROJECT_NAME}Targets
 )
+install(EXPORT ${PROJECT_NAME}Targets
+  FILE ${PROJECT_NAME}Targets.cmake
+  NAMESPACE ${PROJECT_NAME}::
+  DESTINATION share/${PROJECT_NAME}/cmake)
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
 ament_export_dependencies(navigation_world_model rog_map_vendor)
 ament_export_dependencies(nav_msgs)
+ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)

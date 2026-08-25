@@ -67,6 +67,10 @@ install(TARGETS navigation_runtime_core
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
 )
+install(EXPORT navigation_runtimeTargets
+  FILE navigation_runtimeTargets.cmake
+  NAMESPACE navigation_runtime::
+  DESTINATION share/${PROJECT_NAME}/cmake)
 install(TARGETS navigation_runtime_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
@@ -89,6 +93,7 @@ ament_export_dependencies(
   yaml-cpp
 )
 ament_export_targets(navigation_runtimeTargets HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
