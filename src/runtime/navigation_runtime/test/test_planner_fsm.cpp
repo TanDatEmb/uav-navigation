@@ -7,12 +7,31 @@ namespace navigation_runtime {
 namespace {
 
 TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::SUCCESS, true, false),
+  EXPECT_EQ(classifyPlannerResult(super_utils::SUCCESS, true, false, true),
             PlannerResultDisposition::CommandReady);
-  EXPECT_EQ(classifyPlannerResult(super_utils::NO_NEED, false, true),
+  EXPECT_EQ(classifyPlannerResult(super_utils::NO_NEED, false, true, false),
+            PlannerResultDisposition::ValidateRetainedCommand);
+  EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, false, true, true),
             PlannerResultDisposition::CommandReady);
-  EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, false, true),
-            PlannerResultDisposition::CommandReady);
+}
+
+TEST(PlannerFsm, NoNeedWithoutCommittedCommandFailsClosed) {
+  EXPECT_EQ(classifyPlannerResult(super_utils::NO_NEED, false, false, false),
+            PlannerResultDisposition::FailClosed);
+}
+
+TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
+  EXPECT_EQ(retainedValidationTransition(true),
+            RetainedValidationTransition::PreserveExistingState);
+  EXPECT_EQ(retainedValidationTransition(false),
+            RetainedValidationTransition::FailClosed);
+}
+
+TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
+  EXPECT_EQ(classifyPlannerResult(super_utils::SUCCESS, false, true, false),
+            PlannerResultDisposition::FailClosed);
+  EXPECT_EQ(classifyPlannerResult(super_utils::FINISH, true, false, false),
+            PlannerResultDisposition::FailClosed);
 }
 
 TEST(PlannerFsm, AttributesOnlyTheCommitProducedByThisSolveCycle) {
@@ -28,23 +47,23 @@ TEST(PlannerFsm, ExecutionAgeUsesDeclaredSolveStartInstant) {
 }
 
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::NEW_TRAJ, false, true),
+  EXPECT_EQ(classifyPlannerResult(super_utils::NEW_TRAJ, false, true, false),
             PlannerResultDisposition::RestartFromRest);
 }
 
 TEST(PlannerFsm, RetriesTransientPlannerFailures) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, true, false),
+  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, true, false, false),
             PlannerResultDisposition::RetryFromRest);
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, true),
+  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, true, false),
             PlannerResultDisposition::RetainCommittedCommand);
 }
 
 TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
-  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, false),
+  EXPECT_EQ(classifyPlannerResult(super_utils::FAILED, false, false, false),
             PlannerResultDisposition::FailClosed);
-  EXPECT_EQ(classifyPlannerResult(super_utils::EMER, false, true),
+  EXPECT_EQ(classifyPlannerResult(super_utils::EMER, false, true, false),
             PlannerResultDisposition::FailClosed);
-  EXPECT_EQ(classifyPlannerResult(super_utils::OPT_FAILED, true, false),
+  EXPECT_EQ(classifyPlannerResult(super_utils::OPT_FAILED, true, false, false),
             PlannerResultDisposition::FailClosed);
 }
 

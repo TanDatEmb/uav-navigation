@@ -853,3 +853,36 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   simulation asset tests passed 8/8 and `git diff --check` passed. The arrival-
   gap tests cover a 700 ms callback gap with continuous source timestamps and
   no intervening monitor tick, plus exclusion of a pre-TRACKING startup gap.
+
+### 2026-08-25 - SUPER NO_NEED non-commit and monotonic command-time checkpoint
+
+- Screening artifact
+  `.artifacts/runtime/external-mode-check-20260825T000631-304227` later exposed
+  a separate command-ownership defect after the Gazebo transport blackout was
+  removed. Generation 397 replaced generation 396 with candidate start wall
+  time 117.440 s, earlier than the already committed 118.248 s start. The
+  controller consequently sampled the new bundle at trajectory time 0.976 s
+  and observed a 1.222 m cross-generation position jump before correctly
+  failing its tracking envelope. No freshness, envelope, jerk, deadline or
+  dynamic-limit value is changed by this checkpoint.
+- `generateExpTraj()` deliberately returns the historical EXP snapshot on
+  `NO_NEED`; that snapshot is planner history, not a newly solved executable
+  candidate. `ReplanOnce()` now returns `NO_NEED` before visualization, backup
+  generation, authorization or history/command mutation. The runtime assigns
+  this outcome a distinct retained-command validation disposition. A valid
+  latest-world retained bundle keeps its availability, goal epoch, suffix,
+  failure and finished state unchanged; an invalid retained suffix still fails
+  closed. `SUCCESS` and `FINISH` can expose `CommandReady` only when the solve
+  actually advanced the immutable committed generation.
+- `CmdTraj::commitCandidate()` independently rejects a finite candidate whose
+  start wall time is strictly earlier than the current bundle start while
+  holding the command mutex and before diagnostics or any bundle field is
+  modified. Equality is allowed. There is no epsilon, rebasing, truncation or
+  compatibility bypass: rejection leaves position, yaw, role ownership,
+  certificate, diagnostics and generation unchanged.
+- Focused Release verification rebuilt `super_planner_vendor` and
+  `navigation_runtime`; trajectory tests passed 26/26, SUPER configuration and
+  braking tests passed 7/7, and planner FSM tests passed 16/16. Sanitizers and
+  the clean 2 m/s Gazebo 3/3 reproduction remain open, followed by the mandatory
+  Gazebo scene matrix and speed ladder. This checkpoint does not certify the
+  previously unstable 6 m/s point.

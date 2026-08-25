@@ -20,9 +20,20 @@ enum class PlannerResultDisposition {
   CommandReady,
   RestartFromRest,
   RetryFromRest,
+  ValidateRetainedCommand,
   RetainCommittedCommand,
   FailClosed,
 };
+
+enum class RetainedValidationTransition {
+  PreserveExistingState,
+  FailClosed,
+};
+
+inline RetainedValidationTransition retainedValidationTransition(bool usable) noexcept {
+  return usable ? RetainedValidationTransition::PreserveExistingState
+                : RetainedValidationTransition::FailClosed;
+}
 
 // Bounds consecutive rest-to-rest solve failures for one logical waypoint.
 // This state belongs to the mission/planner FSM, not to the optimizer: a
@@ -54,10 +65,14 @@ class ConsecutiveFailureBudget {
 };
 
 inline PlannerResultDisposition classifyPlannerResult(
-    super_utils::RET_CODE result, bool plan_from_rest, bool command_available) {
-  if (result == super_utils::SUCCESS || result == super_utils::NO_NEED ||
-      result == super_utils::FINISH) {
+    super_utils::RET_CODE result, bool plan_from_rest, bool command_available,
+    bool commit_observed) {
+  if ((result == super_utils::SUCCESS || result == super_utils::FINISH) &&
+      commit_observed) {
     return PlannerResultDisposition::CommandReady;
+  }
+  if (result == super_utils::NO_NEED && command_available) {
+    return PlannerResultDisposition::ValidateRetainedCommand;
   }
   if (result == super_utils::NEW_TRAJ) {
     return PlannerResultDisposition::RestartFromRest;

@@ -11,6 +11,7 @@
 #include "super_core/absolute_deadline.hpp"
 #include "super_core/command_time.hpp"
 #include "super_core/guide_endpoint.hpp"
+#include "super_core/replan_contract.hpp"
 #include "super_core/solve_stage.hpp"
 #include "super_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
@@ -111,6 +112,14 @@ TEST(SuperTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemantics
   const auto finished = super_planner::commandTrajectoryTime(12.1, 10.0, 2.0);
   EXPECT_TRUE(finished.finished);
   EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
+}
+
+TEST(SuperTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
+  EXPECT_TRUE(super_planner::expResultMayBuildCommandCandidate(super_utils::SUCCESS));
+  EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::NO_NEED));
+  EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::FAILED));
+  EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::NEW_TRAJ));
+  EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::EMER));
 }
 
 TEST(SuperTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
@@ -253,21 +262,107 @@ TEST(SuperTrajectory, CommitDiagnosticsDescribeExactOldToNewSplice) {
   EXPECT_NEAR(second.diagnostics.yaw_residual, -0.5, 1.0e-12);
 }
 
-TEST(SuperTrajectory, CommitDiagnosticsClampPriorSampleToExecutableBounds) {
+TEST(SuperTrajectory, CommitDiagnosticsClampPriorSampleAtFinishedEnd) {
   super_planner::CmdTraj command;
   auto first_position = linearTrajectory(1.0, 10.0);
   auto first_yaw = linearTrajectory(1.0, 10.0);
   ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
 
-  auto before_position = linearTrajectory(1.0, 9.5);
-  auto before_yaw = linearTrajectory(1.0, 9.5);
-  ASSERT_TRUE(command.setEmergencyBackup(before_position, before_yaw));
-  EXPECT_DOUBLE_EQ(command.snapshot().diagnostics.previous_sample_tt, 0.0);
-
   auto after_position = linearTrajectory(1.0, 20.0);
   auto after_yaw = linearTrajectory(1.0, 20.0);
   ASSERT_TRUE(command.setEmergencyBackup(after_position, after_yaw));
   EXPECT_DOUBLE_EQ(command.snapshot().diagnostics.previous_sample_tt, 1.0);
+}
+
+TEST(SuperTrajectory, RegressedCandidateStartTimeCannotReplaceCommittedBundle) {
+  super_planner::CmdTraj command;
+  auto current_position = linearTrajectory(1.0, 10.0);
+  auto current_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(current_position, current_yaw));
+  const auto before = command.snapshot();
+  const bool before_role_at_start = command.isTTOnBackupTraj(0.0);
+  const bool before_role_at_end = command.isTTOnBackupTraj(1.0);
+
+  auto historical_position = linearTrajectory(1.0, 9.5);
+  auto historical_yaw = linearTrajectory(1.0, 9.5);
+  auto historical = super_planner::CmdTraj::buildEmergencyCandidate(
+      historical_position, historical_yaw);
+  ASSERT_TRUE(historical);
+  EXPECT_FALSE(command.commitCandidate(std::move(*historical), {}));
+
+  const auto after = command.snapshot();
+  EXPECT_EQ(after.generation, before.generation);
+  EXPECT_DOUBLE_EQ(after.position.start_WT, before.position.start_WT);
+  EXPECT_DOUBLE_EQ(after.yaw.start_WT, before.yaw.start_WT);
+  EXPECT_TRUE(after.position.getState(0.25).isApprox(
+      before.position.getState(0.25)));
+  EXPECT_TRUE(after.yaw.getState(0.25).isApprox(before.yaw.getState(0.25)));
+  EXPECT_EQ(after.empty, before.empty);
+  EXPECT_EQ(after.backup_available, before.backup_available);
+  EXPECT_DOUBLE_EQ(after.backup_start_tt, before.backup_start_tt);
+  EXPECT_EQ(command.isTTOnBackupTraj(0.0), before_role_at_start);
+  EXPECT_EQ(command.isTTOnBackupTraj(1.0), before_role_at_end);
+  EXPECT_EQ(after.certificate.pinned_world.generation,
+            before.certificate.pinned_world.generation);
+  EXPECT_EQ(after.certificate.pinned_world.revision,
+            before.certificate.pinned_world.revision);
+  EXPECT_EQ(after.certificate.pinned_world.observation_stamp_ns,
+            before.certificate.pinned_world.observation_stamp_ns);
+  EXPECT_EQ(after.certificate.validated_world.generation,
+            before.certificate.validated_world.generation);
+  EXPECT_EQ(after.certificate.validated_world.revision,
+            before.certificate.validated_world.revision);
+  EXPECT_EQ(after.certificate.validated_world.observation_stamp_ns,
+            before.certificate.validated_world.observation_stamp_ns);
+  EXPECT_DOUBLE_EQ(after.certificate.validation_begin_tt,
+                   before.certificate.validation_begin_tt);
+  EXPECT_EQ(after.diagnostics.generation, before.diagnostics.generation);
+  EXPECT_EQ(after.diagnostics.previous_generation,
+            before.diagnostics.previous_generation);
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_wall_time,
+                   before.diagnostics.candidate_start_wall_time);
+  EXPECT_TRUE(after.diagnostics.candidate_start_pvaj.isApprox(
+      before.diagnostics.candidate_start_pvaj));
+  EXPECT_EQ(after.diagnostics.previous_valid, before.diagnostics.previous_valid);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_sample_tt,
+                   before.diagnostics.previous_sample_tt);
+  EXPECT_TRUE(after.diagnostics.previous_pvaj.isApprox(
+      before.diagnostics.previous_pvaj));
+  EXPECT_TRUE(after.diagnostics.position_residual.isApprox(
+      before.diagnostics.position_residual));
+  EXPECT_TRUE(after.diagnostics.velocity_residual.isApprox(
+      before.diagnostics.velocity_residual));
+  EXPECT_TRUE(after.diagnostics.acceleration_residual.isApprox(
+      before.diagnostics.acceleration_residual));
+  EXPECT_TRUE(after.diagnostics.jerk_residual.isApprox(
+      before.diagnostics.jerk_residual));
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_yaw,
+                   before.diagnostics.candidate_start_yaw);
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_yaw_rate,
+                   before.diagnostics.candidate_start_yaw_rate);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_yaw,
+                   before.diagnostics.previous_yaw);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_yaw_rate,
+                   before.diagnostics.previous_yaw_rate);
+  EXPECT_DOUBLE_EQ(after.diagnostics.yaw_residual,
+                   before.diagnostics.yaw_residual);
+  EXPECT_DOUBLE_EQ(after.diagnostics.yaw_rate_residual,
+                   before.diagnostics.yaw_rate_residual);
+}
+
+TEST(SuperTrajectory, EqualOrNewerCandidateStartTimeCanCommit) {
+  super_planner::CmdTraj command;
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
+
+  auto equal_position = linearTrajectory(1.0, 10.0);
+  auto equal_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(equal_position, equal_yaw));
+  auto newer_position = linearTrajectory(1.0, 10.1);
+  auto newer_yaw = linearTrajectory(1.0, 10.1);
+  ASSERT_TRUE(command.setEmergencyBackup(newer_position, newer_yaw));
+  EXPECT_EQ(command.snapshot().generation, 3U);
 }
 
 TEST(SuperTrajectory, CommitDiagnosticsWrapYawResidualAcrossPiBoundary) {

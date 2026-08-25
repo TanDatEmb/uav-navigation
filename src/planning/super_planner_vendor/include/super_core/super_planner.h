@@ -177,6 +177,10 @@ namespace super_planner {
             return cmd_traj_info_.generationSnapshot();
         }
 
+        CommittedTrajectoryMetadata committedMetadataSnapshot() const {
+            return cmd_traj_info_.metadataSnapshot();
+        }
+
         Vec3f latestGuideStart() const { return latest_guide_start_; }
         Vec3f latestGuideEnd() const { return latest_guide_end_; }
         Vec3f latestGuideMin() const { return latest_guide_min_; }

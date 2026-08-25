@@ -26,6 +26,7 @@
 #include <super_core/backup_braking.hpp>
 #include <super_core/command_time.hpp>
 #include <super_core/guide_endpoint.hpp>
+#include <super_core/replan_contract.hpp>
 #include <super_core/trajectory_world_validator.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
@@ -315,9 +316,19 @@ namespace super_planner {
             if (cfg_.print_log) {
                 ros_ptr_->info(" -- [SUPER] in [ReplanOnce]: Replan a new exp traj success.");
             }
-        } else if (exp_ret_code == NO_NEED) {
-            if (cfg_.print_log)
-                ros_ptr_->info(" -- [SUPER] in [ReplanOnce]: No need to replan a new exp traj, use last one.");
+        } else if (exp_ret_code == NO_NEED &&
+                   !expResultMayBuildCommandCandidate(exp_ret_code)) {
+            // generateExpTraj returns the historical EXP snapshot for NO_NEED.
+            // It is planner history, not a new executable candidate.  Keep the
+            // currently committed immutable command bundle unchanged and let
+            // the runtime revalidate/expose that bundle as the retained command.
+            if (cfg_.print_log) {
+                ros_ptr_->info(
+                    " -- [SUPER] in [ReplanOnce]: No new EXP trajectory is needed; "
+                    "retain the committed command without generating or committing backup.");
+            }
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_SUCCESS);
+            return NO_NEED;
         }
 
         {

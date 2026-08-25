@@ -978,8 +978,15 @@ void SuperNavigationNode::runCycle() {
       return;
     }
   }
+  const auto committed_metadata_after_solve =
+      planner_->committedMetadataSnapshot();
+  const bool solve_committed_new_generation = commitObservedThisCycle(
+      committed_generation_before_solve,
+      committed_metadata_after_solve.generation,
+      committed_metadata_after_solve.diagnostics.generation);
   const auto disposition = classifyPlannerResult(
-      result, plan_from_rest, planner_command_available_.load());
+      result, plan_from_rest, planner_command_available_.load(),
+      solve_committed_new_generation);
   if (disposition == PlannerResultDisposition::FailClosed) {
     planner_failure_latched_.store(true);
     trajectory_reaches_goal_.store(false);
@@ -1033,7 +1040,10 @@ void SuperNavigationNode::runCycle() {
           failure_count, max_plan_from_rest_failures_);
     }
   }
-  if (disposition == PlannerResultDisposition::RetainCommittedCommand) {
+  if (disposition == PlannerResultDisposition::RetainCommittedCommand ||
+      disposition == PlannerResultDisposition::ValidateRetainedCommand) {
+    const bool validate_without_new_commit =
+        disposition == PlannerResultDisposition::ValidateRetainedCommand;
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
     const auto committed_yaw = planner_->getCommittedYawTrajectory();
@@ -1111,7 +1121,8 @@ void SuperNavigationNode::runCycle() {
         safety_transition_s,
         anchor_error_m, max_safety_suffix_anchor_error_m_, sampled_path_clear);
     bool emergency_brake_committed = false;
-    if (!use_safety_suffix && fresh_vehicle_state && !committed.empty() &&
+    if (!validate_without_new_commit && !use_safety_suffix && fresh_vehicle_state &&
+        !committed.empty() &&
         !committed_yaw.empty()) {
       // Position and velocity are measured at the newest propagated odometry
       // sample. Acceleration/jerk and yaw-rate are not measured by the LIO
@@ -1125,6 +1136,7 @@ void SuperNavigationNode::runCycle() {
           emergency_state, current_vehicle_yaw, emergency_yaw_dot, now().seconds());
       use_safety_suffix = emergency_brake_committed;
     }
+    const auto retained_transition = retainedValidationTransition(use_safety_suffix);
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
     {
@@ -1137,7 +1149,8 @@ void SuperNavigationNode::runCycle() {
         planner_command_available_.store(false);
         planner_failure_latched_.store(true);
         safety_suffix_active_.store(false);
-      } else {
+      } else if (!validate_without_new_commit ||
+                 retained_transition == RetainedValidationTransition::FailClosed) {
         safety_suffix_active_.store(
             use_safety_suffix && (backup_available || emergency_brake_committed));
         planner_failure_latched_.store(!use_safety_suffix);
@@ -1157,7 +1170,11 @@ void SuperNavigationNode::runCycle() {
                   "SUPER replaced unusable committed suffix with a measured-state "
                   "emergency backup trajectory");
     }
-    if (use_safety_suffix) {
+    if (use_safety_suffix && validate_without_new_commit) {
+      RCLCPP_DEBUG(get_logger(),
+                   "SUPER reported NO_NEED; retained committed command remains "
+                   "latest-world valid without a new commit");
+    } else if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
                   "SUPER hot replan failed (%d); retaining visible committed trajectory "
                   "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f",

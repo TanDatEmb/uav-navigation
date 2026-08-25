@@ -99,6 +99,11 @@ namespace super_planner {
         double backup_start_tt{0.0};
     };
 
+    struct CommittedTrajectoryMetadata {
+        std::uint64_t generation{0};
+        CommitDiagnostics diagnostics{};
+    };
+
 #define LOCK_G std::lock_guard<std::mutex> lock(mtx_);
 
     class CmdTraj{
@@ -275,6 +280,13 @@ namespace super_planner {
         bool commitCandidate(CandidateCommandBundle&& candidate,
                              const CommandCertificate& certificate) {
             LOCK_G
+            // A candidate that starts before the current bundle would make
+            // command trajectory time jump forward at the generation switch.
+            // Reject transactionally; never rebase historical polynomials or
+            // mutate the current bundle/history to conceal the regression.
+            if (!flag_empty_ && candidate.start_wall_time < start_WT_) {
+                return false;
+            }
             CommitDiagnostics diagnostics;
             diagnostics.generation = generation_ + 1U;
             diagnostics.previous_generation = generation_;
@@ -358,6 +370,11 @@ namespace super_planner {
         std::uint64_t generationSnapshot() const {
             LOCK_G
             return generation_;
+        }
+
+        CommittedTrajectoryMetadata metadataSnapshot() const {
+            LOCK_G
+            return {generation_, commit_diagnostics_};
         }
 
         bool setTrajectory(const ExpTraj&exp_traj,
