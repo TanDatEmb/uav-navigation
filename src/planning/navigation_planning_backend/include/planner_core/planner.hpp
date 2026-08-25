@@ -43,6 +43,7 @@
 #include "traj_opt/backup_traj_optimizer_s4.h"
 #include "path_search/astar.h"
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_planning/kinematic_state.hpp>
 #include <navigation_world_model/world_commit_authorizer.hpp>
 #include "planner_core/corridor_generator.h"
 #include "planner_core/fov_checker.h"
@@ -294,9 +295,7 @@ namespace navigation_planning_backend {
 
 
     public:
-        void getRobotState(navigation_math::RobotState &out);
-
-        bool setPlannerExecutionState(const navigation_math::RobotState &state);
+        bool setState(const navigation_planning::KinematicState &state);
 
         bool isEasyGoal(const Vec3f &goal_position);
 

@@ -93,7 +93,7 @@ class MappingActor final {
           std::chrono::steady_clock::now() - map_started).count();
       throw std::runtime_error(
           std::string("mapping observation did not advance the immutable world: ") +
-          worldUpdateOutcomeName(result.outcome));
+          std::string(worldUpdateOutcomeName(result.outcome)));
     }
 
     const auto export_started = std::chrono::steady_clock::now();

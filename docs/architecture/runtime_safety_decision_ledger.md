@@ -1691,3 +1691,26 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_contracts navigation_execution navigation_runtime px4_navigation_external_mode --event-handlers console_start_end+ --return-code-on-test-failure`.
   Current focused result: contracts 5/5, execution 14/14, runtime 107/107,
   External Mode 78/78. End-to-end SITL and hardware evidence remain open.
+
+### 2026-08-25 - Product kinematic-state boundary for planner input
+
+- Owner: `navigation_planning`, `navigation_planning_backend` adapter and
+  runtime state ingestion. Scope: make `navigation_planning::KinematicState`
+  the planner input contract, calculate yaw once at the propagated-odometry
+  boundary, and remove the runtime's intermediate vendor `RobotState` adapter.
+- Safety impact: source/receive timestamps, localization epoch, world/body
+  frames, quaternion validity and yaw are validated in one typed state. No
+  planner deadline, collision policy, tracking envelope or numeric gate was
+  changed. The backend still converts internally at its private implementation
+  boundary.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && colcon build --packages-up-to navigation_runtime --cmake-args -DBUILD_TESTING=ON && source install/setup.bash && colcon test --packages-select navigation_planning navigation_planning_backend navigation_runtime --event-handlers console_start_end+ --return-code-on-test-failure`.
+  Current result: build completed; CTest passed 1/1 planning test executable
+  (4 cases), 2/2 planner-backend executables (40 cases), and 8/8 runtime test
+  executables. The 85-case XML found in the planning build cache was stale and
+  moved to `.artifacts/test-results-cleanup-20260825/` before recounting.
+- Removal/review condition: replace the backend's remaining trajectory,
+  result-code and map/vendor types in the runtime API with product contracts;
+  verify repeated recorded-data/SITL behavior and remove the transitional
+  path only after equivalent safety evidence exists. Backend compile warnings
+  remain a cleanup item and are not treated as acceptance evidence.

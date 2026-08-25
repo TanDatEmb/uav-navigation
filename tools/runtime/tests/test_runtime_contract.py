@@ -413,14 +413,22 @@ class RuntimeContractTest(unittest.TestCase):
         source = (
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
-        cycle = source[source.index("void NavigationRuntimeNode::runCycle()"):
+        mapping_actor = (
+            ROOT
+            / "src/mapping/navigation_mapping/include/navigation_mapping/mapping_actor.hpp"
+        ).read_text(encoding="utf-8")
+        cycle = source[
+            source.index("void NavigationRuntimeNode::runCycle()"):
                        source.index("void NavigationRuntimeNode::publishCommand()")]
         constructor = source[:source.index("void NavigationRuntimeNode::runCycle()")]
-        self.assertIn("mapping_map->updateMap(*observation.cloud, planner_pose)", constructor)
+        self.assertIn("std::make_shared<navigation_mapping::MappingActor>", constructor)
+        self.assertIn("const auto result = mapping_actor->process(observation);", constructor)
+        self.assertIn("observation.corrected_odometry.pose.pose", mapping_actor)
+        self.assertIn("map_->updateMap(*observation.cloud, map_pose)", mapping_actor)
         self.assertIn("mapping_worker_->start()", constructor)
         self.assertNotIn("updateMap(", cycle)
         self.assertNotIn("map_->", cycle)
-        self.assertIn("if (!propagated_odometry) return;", cycle)
+        self.assertIn("if (!propagated_state) return;", cycle)
         self.assertIn("const bool completed_trajectory", cycle)
 
     def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:

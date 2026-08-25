@@ -1738,20 +1738,21 @@ namespace navigation_planning_backend {
     }
 
 
-    void Planner::getRobotState(navigation_math::RobotState &out) {
-        out = robot_state_;
-    }
-
-    bool Planner::setPlannerExecutionState(const navigation_math::RobotState &state) {
-        if (!state.rcv || !state.p.allFinite() || !state.v.allFinite() ||
-            !state.a.allFinite() || !state.j.allFinite() ||
-            !state.q.coeffs().allFinite() || state.q.norm() <= 1.0e-6 ||
-            !std::isfinite(state.yaw) || !std::isfinite(state.rcv_time) ||
-            state.rcv_time <= 0.0) {
+    bool Planner::setState(const navigation_planning::KinematicState &state) {
+        if (!state.finite()) {
             return false;
         }
+        navigation_math::RobotState internal;
+        internal.p = state.position_world;
+        internal.v = state.velocity_world;
+        internal.a = state.acceleration_world;
+        internal.j = state.jerk_world;
+        internal.q = state.orientation_world_body.normalized();
+        internal.yaw = state.yaw_rad;
+        internal.rcv_time = static_cast<double>(state.source_stamp_ns) * 1.0e-9;
+        internal.rcv = true;
         std::lock_guard<std::mutex> guard(drone_state_mutex_);
-        robot_state_ = state;
+        robot_state_ = internal;
         robot_state_.q.normalize();
         return true;
     }

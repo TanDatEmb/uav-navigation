@@ -31,7 +31,6 @@
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
-#include "navigation_runtime/runtime_state.hpp"
 #include <navigation_mapping/world_snapshot_store.hpp>
 #include <ros_interface/ros_interface.hpp>
 #include <navigation_planning_backend/planner.hpp>

@@ -725,6 +725,8 @@ void NavigationRuntimeNode::onPropagatedOdometry(
       message->pose.pose.position.x, message->pose.pose.position.y,
       message->pose.pose.position.z};
   typed_state.orientation_world_body = orientation.normalized();
+  const auto rotation = typed_state.orientation_world_body.toRotationMatrix();
+  typed_state.yaw_rad = std::atan2(rotation(1, 0), rotation(0, 0));
   typed_state.velocity_world = typed_state.orientation_world_body * Eigen::Vector3d{
       message->twist.twist.linear.x, message->twist.twist.linear.y,
       message->twist.twist.linear.z};
@@ -1025,23 +1027,8 @@ void NavigationRuntimeNode::runCycle() {
     if (execution_freshness == navigation_execution::TimestampFreshness::INVALID) ++invalid_execution_state_count_;
     return;
   }
-  PlannerExecutionState execution_state;
-  if (propagated_state->finite()) {
-    const auto& normalized = propagated_state->orientation_world_body;
-    const auto& velocity_world = propagated_state->velocity_world;
-    execution_state.position = navigation_planning_backend::math::Vec3f{
-        propagated_state->position_world.x(), propagated_state->position_world.y(),
-        propagated_state->position_world.z()};
-    execution_state.velocity = velocity_world;
-    execution_state.orientation = navigation_planning_backend::math::Quatf{
-        normalized.w(), normalized.x(), normalized.y(), normalized.z()};
-    const auto rotation = normalized.toRotationMatrix();
-    execution_state.yaw = std::atan2(rotation(1, 0), rotation(0, 0));
-    execution_state.stamp_s = static_cast<double>(execution_stamp_ns) * 1e-9;
-    execution_state.valid = true;
-  }
-  if (!execution_state.finite() ||
-      !planner_->setPlannerExecutionState(execution_state.toRobotState())) {
+  const auto& execution_state = *propagated_state;
+  if (!execution_state.finite() || !planner_->setState(execution_state)) {
     ++invalid_execution_state_count_;
     return;
   }
@@ -1054,9 +1041,9 @@ void NavigationRuntimeNode::runCycle() {
   if (completed_trajectory && goal && trajectory_reaches_goal_.load()) return;
   if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
     const auto& target_message = plannerTarget(*goal);
-    const double dx = pointFromMessage(target_message, 0) - execution_state.position.x();
-    const double dy = pointFromMessage(target_message, 1) - execution_state.position.y();
-    const double dz = pointFromMessage(target_message, 2) - execution_state.position.z();
+    const double dx = pointFromMessage(target_message, 0) - execution_state.position_world.x();
+    const double dy = pointFromMessage(target_message, 1) - execution_state.position_world.y();
+    const double dz = pointFromMessage(target_message, 2) - execution_state.position_world.z();
     if (std::sqrt(dx * dx + dy * dy + dz * dz) >
         navigation_world_model::kGoalCompletionToleranceM) {
       std::lock_guard<std::mutex> lock(input_mutex_);
@@ -1072,8 +1059,8 @@ void NavigationRuntimeNode::runCycle() {
                   "planner backend local trajectory finished before goal; restarting PlanFromRest "
                   "goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
                   pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
-                  pointFromMessage(target_message, 2), execution_state.position.x(),
-                  execution_state.position.y(), execution_state.position.z());
+                  pointFromMessage(target_message, 2), execution_state.position_world.x(),
+                  execution_state.position_world.y(), execution_state.position_world.z());
     }
   }
 
@@ -1092,9 +1079,6 @@ void NavigationRuntimeNode::runCycle() {
 
   // Planner execution state is independently owned by propagated odometry;
   // ROG-Map's corrected scan-epoch pose is mapping-only.
-  navigation_planning_backend::math::RobotState planner_state;
-  planner_->getRobotState(planner_state);
-
   // Always retain the current mission checkpoint as planner backend's geometric target.
   // PASS_THROUGH is implemented by hot-retargeting while the committed
   // trajectory still carries non-zero PVA, not by skipping to next_target.
@@ -1271,17 +1255,20 @@ void NavigationRuntimeNode::runCycle() {
     // vehicle motion continue concurrently. The planner_state captured before
     // that solve is therefore stale by construction. Validate against the
     // freshest propagated odometry available after the solve.
-    navigation_planning_backend::math::Vec3f current_vehicle_position = planner_state.p;
-    navigation_planning_backend::math::Vec3f current_vehicle_velocity = planner_state.v;
-    double current_vehicle_yaw = planner_state.yaw;
+    navigation_planning_backend::math::Vec3f current_vehicle_position =
+        execution_state.position_world;
+    navigation_planning_backend::math::Vec3f current_vehicle_velocity =
+        execution_state.velocity_world;
+    double current_vehicle_yaw = execution_state.yaw_rad;
     bool fresh_vehicle_state = false;
     double latest_vehicle_state_age_s = std::numeric_limits<double>::infinity();
-    latest_vehicle_state_age_s = now().seconds() - execution_state.stamp_s;
-    fresh_vehicle_state = execution_state.valid && execution_state.finite() &&
+    latest_vehicle_state_age_s = now().seconds() -
+                                 static_cast<double>(execution_state.source_stamp_ns) * 1.0e-9;
+    fresh_vehicle_state = execution_state.finite() &&
                           std::abs(latest_vehicle_state_age_s) <= input_max_age_s_;
-    current_vehicle_position = execution_state.position;
-    current_vehicle_velocity = execution_state.velocity;
-    current_vehicle_yaw = execution_state.yaw;
+    current_vehicle_position = execution_state.position_world;
+    current_vehicle_velocity = execution_state.velocity_world;
+    current_vehicle_yaw = execution_state.yaw_rad;
     const double anchor_error_m = committed.empty() || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();
@@ -1480,9 +1467,9 @@ void NavigationRuntimeNode::runCycle() {
                                       ? std::numeric_limits<double>::infinity()
                                       : (committed_end - target).norm();
     const auto robot_grid_type = pinned_world.view->classify(
-        planner_state.p, navigation_world_model::GridLayer::kEvidence);
+        execution_state.position_world, navigation_world_model::GridLayer::kEvidence);
     const auto robot_inflated_grid_type = pinned_world.view->classify(
-        planner_state.p, navigation_world_model::GridLayer::kInflated);
+        execution_state.position_world, navigation_world_model::GridLayer::kInflated);
     // WorldModel deliberately has no vendor-specific nearest-known-free or
     // nearest-occupied query. Keep these legacy diagnostics unavailable rather
     // than reaching back into worker-owned mutable ROG state.
@@ -1564,9 +1551,9 @@ void NavigationRuntimeNode::runCycle() {
                   static_cast<long>(execution_stamp_ns),
                   execution_age_at_solve_ms,
                   execution_age_at_trace_ms,
-                  execution_state.position.x(), execution_state.position.y(),
-                  execution_state.position.z(), execution_state.velocity.x(),
-                  execution_state.velocity.y(), execution_state.velocity.z(),
+                  execution_state.position_world.x(), execution_state.position_world.y(),
+                  execution_state.position_world.z(), execution_state.velocity_world.x(),
+                  execution_state.velocity_world.y(), execution_state.velocity_world.z(),
                   commit_diagnostics.candidate_start_pvaj(0, 0),
                   commit_diagnostics.candidate_start_pvaj(1, 0),
                   commit_diagnostics.candidate_start_pvaj(2, 0),
@@ -1622,8 +1609,8 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("state_age_at_solve_ms",
                     execution_age_at_solve_ms);
     add_trace_value("state_age_at_trace_ms", execution_age_at_trace_ms);
-    add_trace_vector("planning_state_position", execution_state.position);
-    add_trace_vector("planning_state_velocity", execution_state.velocity);
+    add_trace_vector("planning_state_position", execution_state.position_world);
+    add_trace_vector("planning_state_velocity", execution_state.velocity_world);
     if (commit_observed_this_cycle) {
       add_trace_value("commit_previous_generation",
                       commit_diagnostics.previous_generation);
@@ -1783,7 +1770,8 @@ void NavigationRuntimeNode::runCycle() {
                 static_cast<long>(mapping.map_update_us), static_cast<long>(last_planner_us_),
                 static_cast<long>(last_publish_us_.load()),
                 static_cast<long>(last_input_lock_wait_us_), target.x(), target.y(), target.z(),
-                planner_state.p.x(), planner_state.p.y(), planner_state.p.z(),
+                execution_state.position_world.x(), execution_state.position_world.y(),
+                execution_state.position_world.z(),
                 committed_start.x(), committed_start.y(), committed_start.z(),
                 committed_quarter.x(), committed_quarter.y(), committed_quarter.z(),
                 committed_half.x(), committed_half.y(), committed_half.z(),

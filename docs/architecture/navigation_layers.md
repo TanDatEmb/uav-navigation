@@ -32,8 +32,8 @@ estimator health surface.
 
 `navigation_runtime_node` currently constructs the map/planner implementation
 through the transitional backend boundary. `navigation_planning` now defines the
-ROS/vendor-free C++20 request/outcome/candidate contract, while runtime wiring
-still needs to migrate to it.
+ROS/vendor-free C++20 request/outcome/candidate and kinematic-state contracts;
+runtime sends the typed propagated state directly to the backend adapter.
 It pairs the newest cloud and propagated odometry, rejects wrong-frame/stale
 inputs, updates the world model, and runs the backend's
 `PlanFromRest`/`ReplanOnce` state machine. The configured loop is 10 Hz for
@@ -67,6 +67,6 @@ disarm.
 
 The current source does not implement `MappingWorldNode`,
 `PlanningControllerNode`, or a separate mapping/planning ROS transport.
-`navigation_mapping` owns the mapping observation worker, lifecycle accounting
-and publication store; the runtime still owns mutable map composition, world
-snapshot construction and backend invocation until the next extraction step.
+`navigation_mapping::MappingActor` owns the mutable map and immutable snapshot
+construction; runtime owns worker scheduling, diagnostics publication and the
+planner invocation until the next execution-authority extraction step.

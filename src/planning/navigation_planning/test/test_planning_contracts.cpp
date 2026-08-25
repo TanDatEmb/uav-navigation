@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/planning_request.hpp>
 
@@ -60,6 +61,20 @@ TEST(PlanningBudget, UsesSteadyClockAndCancellation) {
   source.request_stop();
   EXPECT_TRUE(budget.cancelled());
   EXPECT_TRUE(budget.exhausted());
+}
+
+TEST(KinematicState, RequiresTimeFrameAndYawContract) {
+  navigation_planning::KinematicState state;
+  state.source_stamp_ns = 100;
+  state.receive_stamp_ns = 120;
+  state.localization_epoch = 3;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  state.yaw_rad = 0.25;
+  EXPECT_TRUE(state.finite());
+
+  state.receive_stamp_ns = 0;
+  EXPECT_FALSE(state.finite());
 }
 
 }  // namespace

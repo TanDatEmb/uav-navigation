@@ -26,6 +26,7 @@
 #define PLANNER_CONFIG_HPP
 
 #include <planner_core/backup_braking.hpp>
+#include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/config.hpp>
 #include <utils/header/yaml_loader.hpp>
 
@@ -38,11 +39,7 @@ namespace navigation_planning_backend {
     using std::cout;
     using std::endl;
 
-    struct DynamicLimits {
-        double max_velocity_mps;
-        double max_acceleration_mps2;
-        double max_jerk_mps3;
-    };
+    using DynamicLimits = navigation_planning::DynamicLimits;
 
     class Config {
     public:
@@ -111,7 +108,7 @@ namespace navigation_planning_backend {
                     limits.max_acceleration_mps2 <= 0.0 ||
                     limits.max_jerk_mps3 <= 0.0) {
                     throw std::invalid_argument(
-                        "SUPER mission dynamic limits must be finite and positive");
+                        "mission dynamic limits must be finite and positive");
                 }
                 if (limits.max_velocity_mps > exp_traj_cfg.max_vel + 1.0e-9 ||
                     limits.max_acceleration_mps2 > exp_traj_cfg.max_acc + 1.0e-9 ||
@@ -120,7 +117,7 @@ namespace navigation_planning_backend {
                     limits.max_acceleration_mps2 > back_traj_cfg.max_acc + 1.0e-9 ||
                     limits.max_jerk_mps3 > back_traj_cfg.max_jerk + 1.0e-9) {
                     throw std::invalid_argument(
-                        "SUPER mission dynamic limits exceed the product envelope");
+                        "mission dynamic limits exceed the product envelope");
                 }
                 exp_traj_cfg.max_vel = limits.max_velocity_mps;
                 exp_traj_cfg.max_acc = limits.max_acceleration_mps2;
