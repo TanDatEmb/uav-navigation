@@ -207,10 +207,10 @@ namespace navigation_planning_backend {
 //                optimized_polytope_.SetPlanes(hPoly);
 //                optimized_polytope_.SetSeedLine(std::make_pair(a, b));
 //                optimized_polytope_.SetEllipsoid(E);
-//                ros_ptr_->vizCiriSeedLine(a, b,robot_r_);
+//                planner_context_->vizCiriSeedLine(a, b,robot_r_);
 //                cout<<" -- [CIRI] infeasible_pt_w: "<<infeasible_pt_w.transpose()<<endl;
-//                ros_ptr_->vizCiriInfeasiblePoint(infeasible_pt_w);
-//                ros_ptr_->vizCiriEllipsoid(E);
+//                planner_context_->vizCiriInfeasiblePoint(infeasible_pt_w);
+//                planner_context_->vizCiriEllipsoid(E);
 ////                optimized_polytope_.Visualize(debug_pub_, "optimized_polytope");
 //                std::cout << " -- [CIRI] hPoly: " << hPoly << std::endl;
                 return FAILED;
@@ -225,15 +225,15 @@ namespace navigation_planning_backend {
             cout << YELLOW << " -- [CIRI] ERROR! There is nan in generated planes." << RESET << endl;
             cout << a.transpose() << endl;
             cout << b.transpose() << endl;
-            ros_ptr_->vizCiriSeedLine(a, b,robot_r_);
-            ros_ptr_->vizCiriEllipsoid(E);
+            planner_context_->vizCiriSeedLine(a, b,robot_r_);
+            planner_context_->vizCiriEllipsoid(E);
             return FAILED;
         }
         Vec3f inner;
         if (!geometry_utils::findInterior(hPoly, inner)) {
             cout<<RED<<" -- [CIRI] The polytope is empty."<<RESET<<endl;
-            ros_ptr_->vizCiriSeedLine(a, b,robot_r_);
-            ros_ptr_->vizCiriEllipsoid(E);
+            planner_context_->vizCiriSeedLine(a, b,robot_r_);
+            planner_context_->vizCiriEllipsoid(E);
             return FAILED;
         }
         optimized_polytope_.Reset();

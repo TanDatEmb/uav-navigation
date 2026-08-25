@@ -40,9 +40,9 @@ namespace path_search {
 
 
     Astar::Astar(const std::string &cfg_path,
-                 const ros_interface::RosInterface::Ptr &ros_ptr,
+                 const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                  navigation_world_model::WorldModelViewPtr rm)
-        : map_ptr_(std::move(rm)), ros_ptr_(ros_ptr) {
+        : map_ptr_(std::move(rm)), planner_context_(planner_context) {
         cfg_ = PathSearchConfig(cfg_path);
         cout << GREEN << " -- [RM] Init Astar-map." << RESET << endl;
         int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
@@ -57,7 +57,7 @@ namespace path_search {
     Astar::setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag, const double &searching_horizon) {
         md_.start_pt = start_pt;
         md_.goal_pt = goal_pt;
-        md_.mission_rcv_WT = ros_ptr_->getSimTime();
+        md_.mission_rcv_WT = planner_context_->getSimTime();
         md_.searching_horizon = searching_horizon;
         md_.use_inf_map = flag & ON_INF_MAP;
         md_.use_prob_map = flag & ON_PROB_MAP;
@@ -93,7 +93,7 @@ namespace path_search {
         md_.local_map_min_d = md_.local_map_center_d - md_.resolution * cfg_.map_size_i.cast<double>();
         md_.local_map_max_d = md_.local_map_center_d + md_.resolution * cfg_.map_size_i.cast<double>();;
         if (cfg_.visual_process||cfg_.debug_visualization_en) {
-            ros_ptr_->vizAstarBoundingBox(md_.local_map_min_d, md_.local_map_max_d);
+            planner_context_->vizAstarBoundingBox(md_.local_map_min_d, md_.local_map_max_d);
         }
 
         return SUCCESS;
@@ -233,7 +233,7 @@ namespace path_search {
             return setup_ret;
         }
         out_path.clear();
-        double time_1 = ros_ptr_->getSimTime();
+        double time_1 = planner_context_->getSimTime();
         ++rounds_;
         /// 2) Switch both start and end point to local map
 
@@ -246,7 +246,7 @@ namespace path_search {
         local_end_pt = end_pt;
 
         if (!insideLocalMap(start_pt)) {
-            ros_ptr_->warn(" -- [A*] Start point [{}] is out of local map, find a waypoint to the map edge.",
+            planner_context_->warn(" -- [A*] Start point [{}] is out of local map, find a waypoint to the map edge.",
                            start_pt.transpose());
             if (rog_map::lineIntersectBox(start_pt, md_.local_map_center_d, md_.local_map_min_d,
                                           md_.local_map_max_d, hit_pt)) {
@@ -258,7 +258,7 @@ namespace path_search {
                         local_start_pt, GridLayer::kInflated, 3.0);
                 if (!nearest) {
                     if (cfg_.visual_process || cfg_.debug_visualization_en) {
-                        ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(),
+                        planner_context_->vizAstarPoints(local_start_pt, Color::Orange(),
                                                  "local_start_pt",
                                                  0.3, 1);
                     }
@@ -283,12 +283,12 @@ namespace path_search {
                 const auto nearest = map_ptr_->nearestNotOccupied(
                         local_end_pt, GridLayer::kInflated, 2.0);
                 if (!nearest) {
-                    ros_ptr_->error(
+                    planner_context_->error(
                             " -- [A*] Error with: {}, Goal point [{}] deeply occupied, cannot find feasible path.",
                             RET_CODE_STR[INIT_ERROR],
                             local_end_pt.transpose());
                     if (cfg_.visual_process || cfg_.debug_visualization_en) {
-                        ros_ptr_->vizAstarPoints(local_end_pt, Color::Red(), "local_end_pt",
+                        planner_context_->vizAstarPoints(local_end_pt, Color::Red(), "local_end_pt",
                                                  0.5,
                                                  1);
                     }
@@ -312,7 +312,7 @@ namespace path_search {
             const Vec3f map_max = map_center + map_half_size - map_margin;
             if (!rog_map::lineIntersectBox(local_end_pt, local_start_pt,
                                            map_min, map_max, hit_pt)) {
-                ros_ptr_->error(
+                planner_context_->error(
                         " -- [A*] Cannot project endpoint {} into ROG map [{}, {}]",
                         local_end_pt.transpose(), map_min.transpose(), map_max.transpose());
                 return INIT_ERROR;
@@ -323,30 +323,30 @@ namespace path_search {
         }
 
         if (cfg_.visual_process) {
-            ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt",
+            planner_context_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt",
                                      0.3,
                                      1);
-            ros_ptr_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3,
+            planner_context_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3,
                                      1);
         }
         rog_map::Vec3i start_idx, end_idx;
         posToGlobalIndex(local_start_pt, start_idx);
         posToGlobalIndex(local_end_pt, end_idx);
         if (cfg_.visual_process) {
-            ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt", 0.3, 1);
-            ros_ptr_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
+            planner_context_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt", 0.3, 1);
+            planner_context_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
         }
         if (!insideLocalMap(start_idx) || !insideLocalMap(end_idx)) {
             cout << RED << " -- [RM] Start or end point is out of local map, which should not happen." <<
                  RESET
                  << endl;
-            ros_ptr_->error(" -- [RM] Start [{}] or end point [{}] is out of local map, which should not happen.",
+            planner_context_->error(" -- [RM] Start [{}] or end point [{}] is out of local map, which should not happen.",
                             local_start_pt.transpose(),
                             local_end_pt.transpose()
                             );
             if(cfg_.visual_process || cfg_.debug_visualization_en) {
-                ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt", 0.3, 1);
-                ros_ptr_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
+                planner_context_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt", 0.3, 1);
+                planner_context_->vizAstarPoints(local_end_pt, Color::Green(), "local_end_pt", 0.3, 1);
             }
             return INIT_ERROR;
         }
@@ -408,12 +408,12 @@ namespace path_search {
         vector<GridNodePtr> node_path;
 
         if (cfg_.visual_process) {
-            ros_ptr_->vizAstarPoints(
+            planner_context_->vizAstarPoints(
                     start_pt,
                     Color::Green(),
                     "start_pt",
                     0.3, 1);
-            ros_ptr_->vizAstarPoints(
+            planner_context_->vizAstarPoints(
                     end_pt,
                     Color::Blue(),
                     "goal_pt",
@@ -427,7 +427,7 @@ namespace path_search {
             if (cfg_.visual_process) {
                 rog_map::Vec3f local_pt;
                 globalIndexToPos(current->id_g, local_pt);
-                ros_ptr_->vizAstarPoints(
+                planner_context_->vizAstarPoints(
                         local_pt,
                         Color(Color::Pink(), 0.5),
                         "astar_process",
@@ -590,7 +590,7 @@ namespace path_search {
                             neighborPtr->total_score = distance_score + heu_score;
                         }
                     }
-            double time_2 = ros_ptr_->getSimTime();
+            double time_2 = planner_context_->getSimTime();
             if (!cfg_.visual_process && (time_2 - time_1) > effective_time_out) {
                 fmt::print(fg(fmt::color::indian_red),
                            "Failed in A star path searching after {} iterations: "
@@ -599,7 +599,7 @@ namespace path_search {
                 return TIME_OUT;
             }
         }
-        double time_2 = ros_ptr_->getSimTime();
+        double time_2 = planner_context_->getSimTime();
         if ((time_2 - time_1) > effective_time_out) {
             fmt::print(fg(fmt::color::indian_red), "Time consume in A star path finding is {} s, iter={}.\n",
                        (time_2 - time_1),
@@ -633,7 +633,7 @@ namespace path_search {
             cout << BLUE << "Frontier queue: " << frontier_queue.size() << endl;
             return REACH_HORIZON;
         }
-        ros_ptr_->error(" -- [A*] Point to point path cannot find path with iter num: {}, return.", num_iter);
+        planner_context_->error(" -- [A*] Point to point path cannot find path with iter num: {}, return.", num_iter);
         return NO_PATH;
     }
 
@@ -649,7 +649,7 @@ namespace path_search {
             return setup_ret;
         }
 
-        double time_1 = ros_ptr_->getSimTime();
+        double time_1 = planner_context_->getSimTime();
         ++rounds_;
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
@@ -702,7 +702,7 @@ namespace path_search {
         vector<GridNodePtr> node_path;
 
         if (cfg_.visual_process) {
-            ros_ptr_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt",
+            planner_context_->vizAstarPoints(local_start_pt, Color::Orange(), "local_start_pt",
                                      0.05,
                                      1);
         }
@@ -713,7 +713,7 @@ namespace path_search {
             if (cfg_.visual_process) {
                 rog_map::Vec3f local_pt;
                 globalIndexToPos(current->id_g, local_pt);
-                ros_ptr_->vizAstarPoints(local_pt,
+                planner_context_->vizAstarPoints(local_pt,
                                          Color::Pink(),
                                          "astar_process",
                                          0.05);
@@ -726,7 +726,7 @@ namespace path_search {
                 cur_inf_type != CellState::kUnknown) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
-//                double time_2 = ros_ptr_->getSimTime();
+//                double time_2 = planner_context_->getSimTime();
                 //                    printf("\033[34m Escape: A star iter:%d, time:%.3f ms\033[0m\n", num_iter, (time_2 - time_1).toSec() * 1000);
                 return REACH_HORIZON;
             }
@@ -734,7 +734,7 @@ namespace path_search {
             if (md_.unknown_as_free && cur_inf_type != CellState::kOccupied) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
-//                double time_2 = ros_ptr_->getSimTime();
+//                double time_2 = planner_context_->getSimTime();
                 //                    printf("\033[34m Escape: A star iter:%d, time:%.3f ms\033[0m\n", num_iter, (time_2 - time_1).toSec() * 1000);
                 return REACH_HORIZON;
             }
@@ -811,14 +811,14 @@ namespace path_search {
                             neighborPtr->total_score = distance_score + heu_score;
                         }
                     }
-            double time_2 = ros_ptr_->getSimTime();
+            double time_2 = planner_context_->getSimTime();
             if (!cfg_.visual_process && (time_2 - time_1) > 0.2) {
                 fmt::print(fg(fmt::color::indian_red),
                            "Failed in A star path searching !!! 0.2 seconds time limit exceeded.\n");
                 return TIME_OUT;
             }
         }
-        double time_2 = ros_ptr_->getSimTime();
+        double time_2 = planner_context_->getSimTime();
         if ((time_2 - time_1) > 0.1) {
             fmt::print(fg(fmt::color::indian_red), "Time consume in A star path finding is {} s, iter={}.\n",
                        (time_2 - time_1),

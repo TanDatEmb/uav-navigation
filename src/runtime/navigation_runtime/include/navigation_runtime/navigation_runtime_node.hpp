@@ -34,7 +34,7 @@
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 #include <navigation_planning_backend/planner.hpp>
 
 namespace navigation_runtime {
@@ -269,7 +269,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;
 
-  ros_interface::RosInterface::Ptr ros_interface_;
+  navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
   navigation_execution::CommittedBundleStore command_bundle_store_;
   navigation_execution::CommandSampler command_sampler_;

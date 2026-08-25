@@ -57,7 +57,7 @@
 #include <utils/optimization/mvie.h>
 #include <utils/header/type_utils.hpp>
 
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 namespace navigation_planning_backend {
     using navigation_math::RET_CODE;
@@ -65,7 +65,7 @@ namespace navigation_planning_backend {
     using geometry_utils::Polytope;
 
     class CIRI {
-        ros_interface::RosInterface::Ptr ros_ptr_;
+        navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
         double robot_r_{0};
         int iter_num_{1};
         bool debug_en{false};
@@ -123,7 +123,7 @@ namespace navigation_planning_backend {
     public:
         CIRI() = default;
 
-        CIRI(const ros_interface::RosInterface::Ptr & ros_ptr):ros_ptr_(ros_ptr){
+        CIRI(const navigation_planner_context::PlannerRuntimeContext::Ptr & planner_context):planner_context_(planner_context){
             debug_en = true;
             // const std::string failed_log_path = DEBUG_FILE_DIR("ciri_failed_log.csv");
             // failed_log.open(failed_log_path, std::ios::out | std::ios::trunc);

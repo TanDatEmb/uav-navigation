@@ -30,13 +30,13 @@ using namespace navigation_math;
 
 namespace navigation_planning_backend {
 
-    CorridorGenerator::CorridorGenerator(const ros_interface::RosInterface::Ptr &ros_ptr,
+    CorridorGenerator::CorridorGenerator(const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                                          navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
                                          const double seed_line_max_dis, const double min_overlap_threshold,
                                          const double virtual_groud_height, const double virtual_ceil_height,
                                          const double robot_r, const int box_search_skip_num, const int iris_iter_num)
-            : ros_ptr_(ros_ptr), map_ptr_(std::move(map_ptr)) {
-        ciri_ = std::make_shared<CIRI>(ros_ptr_);
+            : planner_context_(planner_context), map_ptr_(std::move(map_ptr)) {
+        ciri_ = std::make_shared<CIRI>(planner_context_);
         ciri_->setupParams(robot_r, iris_iter_num);
         bound_dis_ = bound_dis;
         seed_line_max_length_ = seed_line_max_dis;
@@ -98,7 +98,7 @@ namespace navigation_planning_backend {
         }
 
         if (first_id >= static_cast<int>(path.size())) {
-            ros_ptr_->warn(" -- [planner] Corridor path is entirely inside inflated occupancy");
+            planner_context_->warn(" -- [planner] Corridor path is entirely inside inflated occupancy");
             solve_stage_.store(0);
             return false;
         }
@@ -140,7 +140,7 @@ namespace navigation_planning_backend {
             }
 
             if (second_id == first_id && second_id + 1 < path.size()) {
-                ros_ptr_->warn(
+                planner_context_->warn(
                         " -- [planner] Frontend path contains a blocked adjacent edge at index {}",
                         first_id);
                 solve_stage_.store(0);
@@ -161,7 +161,7 @@ namespace navigation_planning_backend {
             }
 
 // viz for debug
-//            ros_ptr_->vizCiriPolytope(temp_poly, "debug");
+//            planner_context_->vizCiriPolytope(temp_poly, "debug");
 //            usleep(10000);
 
             if (!sfcs.empty()) {
@@ -179,11 +179,11 @@ namespace navigation_planning_backend {
                     overlap = sfcs.back().CrossWith(temp_poly_fix_p);
                     interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                     if (interior_depth <= 0.01) {
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [planner] Cannot find continuous corridor on path, overlap only {}, force return.",
                                 interior_depth);
 // viz for debug
-//                        ros_ptr_->vizCiriPointCloud(latest_pc);
+//                        planner_context_->vizCiriPointCloud(latest_pc);
 //                        usleep(100000);
 //                        exit(-1);
                         solve_stage_.store(0);
@@ -195,11 +195,11 @@ namespace navigation_planning_backend {
                     overlap = sfcs.back().CrossWith(temp_poly);
                     interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                     if (interior_depth <= 0.01) {
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [planner] Cannot find continuous corridor on path, overlap only {}, force return.",
                                 interior_depth);
                         // viz for debug
-//                        ros_ptr_->vizCiriPointCloud(latest_pc);
+//                        planner_context_->vizCiriPointCloud(latest_pc);
 //                        usleep(100000);
 //                        exit(-1);
                         solve_stage_.store(0);
@@ -307,7 +307,7 @@ namespace navigation_planning_backend {
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {
-            ros_ptr_->warn(" -- [CIRI] point seed solve slow points={} wall_ms={} result={}",
+            planner_context_->warn(" -- [CIRI] point seed solve slow points={} wall_ms={} result={}",
                            pc.size(), ciri_wall_ms, static_cast<int>(success));
         }
         double dt = tc.stop();
@@ -416,7 +416,7 @@ namespace navigation_planning_backend {
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {
-            ros_ptr_->warn(" -- [CIRI] line seed solve slow points={} wall_ms={} result={}",
+            planner_context_->warn(" -- [CIRI] line seed solve slow points={} wall_ms={} result={}",
                            pc.size(), ciri_wall_ms, static_cast<int>(success));
         }
         double dt = tc.stop();

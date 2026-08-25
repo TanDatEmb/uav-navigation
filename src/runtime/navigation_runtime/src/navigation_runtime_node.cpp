@@ -161,7 +161,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   plan_from_rest_failure_budget_ =
       ConsecutiveFailureBudget(max_plan_from_rest_failures_);
 
-  ros_interface_ = std::make_shared<ros_interface::RosInterface>(
+  planner_context_ = std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
       [this]() { return now().seconds(); });
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
@@ -336,7 +336,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         publisher->publish(diagnostics);
       });
   planner_ = std::make_shared<navigation_planning_backend::Planner>(
-      planner_config_path_, ros_interface_, world_snapshot_store_.load().view, mission_limits,
+      planner_config_path_, planner_context_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_);
   mapping_worker_->setStrictlyIncreasingOrderKey(
       [](const navigation_mapping::MappingObservation& observation) { return observation.stamp_ns; });

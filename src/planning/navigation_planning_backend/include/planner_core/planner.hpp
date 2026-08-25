@@ -33,7 +33,7 @@
 
 #include <planner_core/config.hpp>
 #include <planner_core/absolute_deadline.hpp>
-#include <ros_interface/ros1/ros1_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 #include <data_structure/base/trajectory.h>
 
 #include <data_structure/base/polytope.h>
@@ -71,7 +71,7 @@ namespace navigation_planning_backend {
         navigation_world_model::WorldCommitAuthorizer* commit_authorizer_{nullptr};
         CorridorGenerator::Ptr cg_ptr_;
         path_search::Astar::Ptr astar_ptr_;
-        ros_interface::RosInterface::Ptr ros_ptr_;
+        navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
         Vec3f shifted_sfc_start_pt_;
 
         traj_opt::ExpTrajOpt::Ptr exp_traj_opt_;
@@ -132,7 +132,7 @@ namespace navigation_planning_backend {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
         explicit Planner(const std::string &cfg_path,
-                              const ros_interface::RosInterface::Ptr &ros_ptr,
+                              const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                               navigation_world_model::WorldModelViewPtr map_ptr,
                               const std::optional<DynamicLimits> &mission_limits,
                               navigation_world_model::WorldCommitAuthorizer& commit_authorizer);

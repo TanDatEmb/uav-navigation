@@ -63,8 +63,13 @@ The first pure product planning boundary is now implemented as
 kinematic-state and immutable candidate contracts with no ROS or backend
 include. `navigation_execution` now contains the corresponding
 `CommittedBundleStore` and `CommandSampler`; both have focused tests. The
-runtime is still transitional until direct backend solve/sample ownership is
-migrated to these types.
+runtime now uses those types as its command authority. The remaining backend
+adapter is limited to solving and exporting an immutable candidate.
+
+The planner's former `ros_interface` name was removed. The actual abstraction
+is now `planner_runtime_context`, which owns planner clock, logging and
+visualization callbacks. This avoids confusing an internal planner context
+with the product ROS contract package or the PX4 ROS adapter.
 
 ## Migration sequence
 
@@ -73,11 +78,12 @@ migrated to these types.
 2. Add observed-free evidence and a product-owned world-health contract.
 3. Introduce `navigation_planning` request/outcome contracts and keep the
    current planner only as a backend adapter that cannot commit execution.
-4. Wire `navigation_execution` into runtime as the only committed-bundle and
-   command-sampling owner; its store and sampler are the first implemented
-   slice of that boundary.
+4. Keep `navigation_execution` as the only committed-bundle and
+   command-sampling owner; remove remaining backend/vendor types from runtime
+   diagnostics and tests after repeated evidence.
 5. Normalize one typed kinematic state across estimator, runtime, and PX4;
-   then remove the remaining legacy backend adapters after repeated evidence.
+   then replace the remaining backend-only implementation details behind the
+   planner adapter after repeated evidence.
 
 Every step has one implementation path. Old names are deleted at cutover;
 aliases are not retained as a second product version.

@@ -36,7 +36,7 @@
 #include <navigation_world_model/world_model_view.hpp>
 #include <utils/header/fmt_eigen.hpp>
 
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 
 
@@ -51,7 +51,7 @@ namespace navigation_planning_backend {
 
     class CorridorGenerator {
     private:
-        ros_interface::RosInterface::Ptr ros_ptr_;
+        navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
         double bound_dis_;
         double seed_line_max_length_;
         double min_overlap_threshold_;
@@ -82,7 +82,7 @@ namespace navigation_planning_backend {
             return out;
         }
 
-        CorridorGenerator(const ros_interface::RosInterface::Ptr &ros_ptr,
+        CorridorGenerator(const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                           navigation_world_model::WorldModelViewPtr map_ptr,
                           const double bound_dis,
                           const double seed_line_max_dis,

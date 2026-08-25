@@ -26,7 +26,7 @@
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <utils/optimization/lbfgs.h>
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 #define POS_IDX 1
 #define VEL_IDX 2
@@ -514,7 +514,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         curIV.resize(3, 0);
         geometry_utils::enumerateVs(curIH, interior, curIV);
         if (curIV.cols() == 0) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [ExpOpt] Corridor overlap {} cannot be vertex-enumerated "
                     "(corridors={}, overlap_depth={})",
                     i, opt_vars.hPolytopes.size(), 2.0 * dis);
@@ -522,7 +522,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         }
         const double test_sum = curIV.sum();
         if (std::isnan(test_sum) || std::isinf(test_sum)) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [ExpOpt] Corridor overlap {} produced non-finite vertices "
                     "(corridors={}, overlap_depth={})",
                     i, opt_vars.hPolytopes.size(), 2.0 * dis);
@@ -585,7 +585,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     }
 
     if (!geometry_utils::enumerateVs(opt_vars.hPolytopes.back(), curIV)) {
-        ros_ptr_->warn(" -- [ExpOpt] Final corridor {} cannot be vertex-enumerated",
+        planner_context_->warn(" -- [ExpOpt] Final corridor {} cannot be vertex-enumerated",
                        opt_vars.hPolytopes.size() - 1);
         return false;
     }
@@ -920,7 +920,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 const double z = traj[piece_index].getPos(time).z();
                 if (!std::isfinite(z) || z < minimum_reference_z - tolerance ||
                     z > maximum_reference_z + tolerance) {
-                    ros_ptr_->warn(
+                    planner_context_->warn(
                             " -- [ExpOpt] vertical guide hard gate rejected trajectory: "
                             "piece={} t={} z={} envelope=[{},{}] tolerance={}",
                             piece_index, time, z, minimum_reference_z,
@@ -961,7 +961,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     print_optimizer_result();
 
     if (ret >= 0 && !position_constraint_satisfied()) {
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [ExpOpt] hard corridor gate rejected trajectory: cost={} limit={} lbfgs_ret={}",
                 opt_vars.penalty_log(POS_IDX),
                 cfg_.corridor_plane_tolerance_m, ret);
@@ -1055,7 +1055,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         rebuild_candidate();
         update_dynamic_extrema();
         if (!position_constraint_satisfied()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [ExpOpt] feasibility retry left corridor: attempt={} cost={}",
                     retry + 1, opt_vars.penalty_log(POS_IDX));
             diagnostics_.retry_stop_reason = 4;
@@ -1063,14 +1063,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
         const double retry_violation = normalized_dynamic_violation();
-        ros_ptr_->info(
+        planner_context_->info(
                 " -- [ExpOpt] bounded feasibility retry attempt={} violation={} "
                 "penalty_scale={} vel={} acc={} jerk={}",
                 retry + 1, retry_violation,
                 penalty_scale,
                 maximum_velocity, maximum_acceleration, maximum_jerk);
         if (!(retry_violation + 1.0e-6 < best_normalized_violation)) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
                     best_normalized_violation, retry_violation);
             diagnostics_.retry_stop_reason = 5;
@@ -1108,7 +1108,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             maximum_velocity > cfg_.max_vel * gate_margin ||
             maximum_acceleration > cfg_.max_acc * gate_margin ||
             maximum_jerk > cfg_.max_jerk * gate_margin) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [ExpOpt] physical hard gate rejected trajectory: "
                     "vel={}/{} acc={}/{} jerk={}/{}",
                     maximum_velocity, cfg_.max_vel * gate_margin,
@@ -1128,7 +1128,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         if (ret >= 0) {
             TrajectoryDynamicReport dynamic_report;
             if (!trajectorySatisfiesFlatnessEnvelope(traj, cfg_, &dynamic_report)) {
-                ros_ptr_->warn(
+                planner_context_->warn(
                         " -- [ExpOpt] flatness hard gate rejected trajectory: "
                         "finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
                         dynamic_report.finite,
@@ -1152,9 +1152,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     return minCostFunctional + ret;
 }
 
-ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const ros_interface::RosInterface::Ptr &ros_ptr) :
+ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context) :
         cfg_(cfg),
-        ros_ptr_(ros_ptr) {
+        planner_context_(planner_context) {
     /// Use time as log file name
     //    auto now = std::chrono::system_clock::now();
     //    std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -1242,7 +1242,7 @@ ExpTrajOpt::~ExpTrajOpt() {
 //    }
 //
 //    if(success){
-//        out_traj.start_WT = ros_ptr_->getSimTime();
+//        out_traj.start_WT = planner_context_->getSimTime();
 //    }
 //
 //    if (!success && cfg_.save_log_en) {
@@ -1303,14 +1303,14 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
         if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
             (norms <= std::numeric_limits<double>::epsilon()).any()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
                 i);
             return false;
         }
         opt_vars.hPolytopes[i].array().colwise() /= norms;
         if (!opt_vars.hPolytopes[i].allFinite()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [ExpOpt] corridor {} became non-finite during plane normalization",
                 i);
             return false;
@@ -1333,7 +1333,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     penalty_log << opt_vars.penalty_log.transpose() << endl;
 
     if (success) {
-        out_traj.start_WT = ros_ptr_->getSimTime();
+        out_traj.start_WT = planner_context_->getSimTime();
     }
 
     if (!success && cfg_.save_log_en) {
@@ -1409,14 +1409,14 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         const Eigen::ArrayXd norms = opt_vars.hPolytopes[i].leftCols<3>().rowwise().norm();
         if (!opt_vars.hPolytopes[i].allFinite() || !norms.allFinite() ||
             (norms <= std::numeric_limits<double>::epsilon()).any()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [ExpOpt] corridor {} has invalid half-space normals; rejecting before MINCO",
                 i);
             return false;
         }
         opt_vars.hPolytopes[i].array().colwise() /= norms;
         if (!opt_vars.hPolytopes[i].allFinite()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [ExpOpt] corridor {} became non-finite during plane normalization",
                 i);
             return false;
@@ -1437,7 +1437,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     penalty_log << opt_vars.penalty_log.transpose() << endl;
 
     if (success) {
-        out_traj.start_WT = ros_ptr_->getSimTime();
+        out_traj.start_WT = planner_context_->getSimTime();
     }
 
 

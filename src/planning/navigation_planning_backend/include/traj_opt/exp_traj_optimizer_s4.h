@@ -42,7 +42,7 @@
 #include <utils/optimization/optimization_utils.h>
 #include <utils/geometry/geometry_utils.h>
 
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 namespace traj_opt {
 
@@ -84,7 +84,7 @@ namespace traj_opt {
         traj_opt::Config cfg_;
         std::ofstream failed_traj_log;
         std::ofstream penalty_log;
-        ros_interface::RosInterface::Ptr ros_ptr_;
+        navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
 
         struct OptimizationVariables {
             double rho;
@@ -370,7 +370,7 @@ namespace traj_opt {
     public:
         typedef std::shared_ptr<ExpTrajOpt> Ptr;
 
-        ExpTrajOpt(const traj_opt::Config &cfg, const ros_interface::RosInterface::Ptr & ros_ptr);
+        ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_context::PlannerRuntimeContext::Ptr & planner_context);
 
         ~ExpTrajOpt();
 

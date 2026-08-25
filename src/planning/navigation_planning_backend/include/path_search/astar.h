@@ -33,7 +33,7 @@
 #include "queue"
 #include "path_search/config.hpp"
 #include "utils/header/type_utils.hpp"
-#include <ros_interface/ros_interface.hpp>
+#include <planner_runtime_context/planner_runtime_context.hpp>
 
 
 namespace path_search {
@@ -81,7 +81,7 @@ namespace path_search {
     class Astar {
 
         navigation_world_model::WorldModelViewPtr map_ptr_;
-        ros_interface::RosInterface::Ptr ros_ptr_;
+        navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
 
         PathSearchConfig cfg_;
         vec_Vec3i neighbor_list;
@@ -145,7 +145,7 @@ namespace path_search {
     public:
 
         Astar(const std::string & cfg_path,
-              const ros_interface::RosInterface::Ptr &ros_ptr,
+              const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
               navigation_world_model::WorldModelViewPtr rm);
 
         ~Astar();

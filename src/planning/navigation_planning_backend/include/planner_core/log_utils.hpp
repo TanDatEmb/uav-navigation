@@ -24,7 +24,7 @@
 #ifndef LOG_UTILS_HPP
 #define LOG_UTILS_HPP
 
-#include "ros_interface/ros_interface.hpp"
+#include "planner_runtime_context/planner_runtime_context.hpp"
 
 namespace navigation_planning_backend {
     enum LogTime {
@@ -105,7 +105,7 @@ namespace navigation_planning_backend {
             return total_t;
         }
 
-        void visualize(ros_interface::RosInterface::Ptr &viz_ptr) {
+        void visualize(navigation_planner_context::PlannerRuntimeContext::Ptr &viz_ptr) {
             viz_ptr->vizReplanLog(exp_traj, backup_traj, exp_yaw_traj, backup_yaw_traj, exp_sfc, backup_sfc, pc_for_sfc,
                                   ret_code);
             viz_ptr->vizFrontendPath(exp_init_ps);

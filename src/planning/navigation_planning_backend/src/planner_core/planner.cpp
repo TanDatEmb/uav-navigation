@@ -48,7 +48,7 @@ namespace navigation_planning_backend {
             return PLANNER_SOLVE_CANCELLED;
         }
         if (elapsed_budget_exceeded ||
-            solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
             return PLANNER_SOLVE_TIMEOUT;
         }
@@ -56,17 +56,17 @@ namespace navigation_planning_backend {
     }
     Planner::Planner
             (const std::string &cfg_path,
-             const ros_interface::RosInterface::Ptr &ros_ptr,
+             const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
              navigation_world_model::WorldModelViewPtr map_ptr,
              const std::optional<DynamicLimits> &mission_limits,
              navigation_world_model::WorldCommitAuthorizer& commit_authorizer
             ) : cfg_(Config(cfg_path, mission_limits)), map_ptr_(std::move(map_ptr)),
-                commit_authorizer_(&commit_authorizer), ros_ptr_(ros_ptr) {
+                commit_authorizer_(&commit_authorizer), planner_context_(planner_context) {
 
-        ros_ptr_->setResolution(cfg_.resolution);
-        ros_ptr_->setVisualizationEn(cfg_.visualization_en);
-        exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, ros_ptr_);
-        back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, ros_ptr_);
+        planner_context_->setResolution(cfg_.resolution);
+        planner_context_->setVisualizationEn(cfg_.visualization_en);
+        exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, planner_context_);
+        back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, planner_context_);
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max);
         const auto world_geometry = map_ptr_->geometry();
         const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;
@@ -74,8 +74,8 @@ namespace navigation_planning_backend {
             throw std::invalid_argument(
                     "mapping inflation radius is smaller than planner robot radius");
         }
-        astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
-        cg_ptr_ = std::make_shared<CorridorGenerator>(ros_ptr_, map_ptr_, cfg_.corridor_bound_dis,
+        astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, planner_context_, map_ptr_);
+        cg_ptr_ = std::make_shared<CorridorGenerator>(planner_context_, map_ptr_, cfg_.corridor_bound_dis,
                                                       cfg_.corridor_line_max_length,
                                                       cfg_.resolution,
                                                       world_geometry.effective_virtual_ground_m,
@@ -89,7 +89,7 @@ namespace navigation_planning_backend {
         time_consuming_.resize(8);
 
         robot_state_.rcv = false;
-        planner_process_start_WT_ = ros_ptr_->getSimTime();
+        planner_process_start_WT_ = planner_context_->getSimTime();
         fov_checker_ = std::make_shared<FOVChecker>(FOVType::OMNI,
                                                     -1.0,
                                                     -35.0,
@@ -103,7 +103,7 @@ namespace navigation_planning_backend {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
-            ros_ptr_->error(" -- [planner] command rejected: no WorldModel commit authorizer");
+            planner_context_->error(" -- [planner] command rejected: no WorldModel commit authorizer");
             return false;
         }
         const auto pinned_identity = map_ptr_->identity();
@@ -113,16 +113,16 @@ namespace navigation_planning_backend {
             latest_commit_decision_.store(static_cast<int>(
                 lease ? navigation_world_model::WorldCommitDecision::kWorldAdvanced
                       : navigation_world_model::WorldCommitDecision::kNoPublishedWorld));
-            ros_ptr_->warn(" -- [planner] command rejected: WorldModel generation changed");
+            planner_context_->warn(" -- [planner] command rejected: WorldModel generation changed");
             return false;
         }
-        const double authorization_wall_time = ros_ptr_->getSimTime();
+        const double authorization_wall_time = planner_context_->getSimTime();
         const auto validation = validateExecutableCandidate(
             *lease.view, candidate, authorization_wall_time);
         if (!validation.valid) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [planner] command rejected by latest WorldModel at trajectory time {}",
                 validation.first_blocked_tt);
             return false;
@@ -138,7 +138,7 @@ namespace navigation_planning_backend {
             });
         latest_commit_decision_.store(static_cast<int>(decision));
         if (decision != navigation_world_model::WorldCommitDecision::kCommitted) {
-            ros_ptr_->warn(" -- [planner] command authorization rejected with reason {}",
+            planner_context_->warn(" -- [planner] command authorization rejected with reason {}",
                            static_cast<int>(decision));
             return false;
         }
@@ -151,14 +151,14 @@ namespace navigation_planning_backend {
                                const bool &new_goal) {
         std::lock_guard<std::mutex> guard(replan_lock_);
         const AbsoluteDeadline solve_deadline(
-                ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
+                planner_context_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, robot_state_);
         if (robot_state_.rcv == false) {
-            ros_ptr_->warn(" -- [planner] in [PlanFromRest]: No odom, force return.");
+            planner_context_->warn(" -- [planner] in [PlanFromRest]: No odom, force return.");
             latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_ODOM);
             return FAILED;
         }
@@ -170,7 +170,7 @@ namespace navigation_planning_backend {
 
         {
             TimeConsuming t_viz("viz goal path", false);
-            ros_ptr_->vizGoalPath(viz_pts);
+            planner_context_->vizGoalPath(viz_pts);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -179,7 +179,7 @@ namespace navigation_planning_backend {
         const auto nearest_start = map_ptr_->nearestNotOccupied(
                 robot_state_.p, navigation_world_model::GridLayer::kEvidence, 3.0);
         if (!nearest_start) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
             latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_START_POINT);
             return FAILED;
@@ -197,22 +197,22 @@ namespace navigation_planning_backend {
                 previous_exp_snapshot, exp_traj_info, solve_deadline);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
-            if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            if (solve_cancelled_.load() || solve_deadline.expired(planner_context_->getSimTime()) ||
                 solve_deadline.steadyExpired()) {
                 latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             }
-            ros_ptr_->warn(" -- [planner] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
+            planner_context_->warn(" -- [planner] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
                            RET_CODE_STR[exp_ret_code].c_str());
             return FAILED;
         } else {
-            ros_ptr_->info(" -- [planner] in [PlanFromRest] GenerateExpTrajectory SUCCESS.");
+            planner_context_->info(" -- [planner] in [PlanFromRest] GenerateExpTrajectory SUCCESS.");
         }
 
         back_traj_info.setEmpty();
         solve_stage_.store(5);
-        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+        if (solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
-            ros_ptr_->warn(" -- [planner] solve deadline exhausted before backup stage");
+            planner_context_->warn(" -- [planner] solve deadline exhausted before backup stage");
             latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
@@ -220,10 +220,10 @@ namespace navigation_planning_backend {
                 exp_traj_info, back_traj_info, solve_deadline);
 
         if (solve_cancelled_.load() ||
-            solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
             if (!solve_cancelled_.load()) {
-                ros_ptr_->warn(" -- [planner] solve deadline exhausted during backup stage");
+                planner_context_->warn(" -- [planner] solve deadline exhausted during backup stage");
             }
             latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
@@ -231,7 +231,7 @@ namespace navigation_planning_backend {
 
         if (!backupResultMayBuildCommandCandidate(back_ret_code)) {
             latest_replan.setRetCode(PlannerResultCode::PLANNER_BACKUP_FAILED);
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [planner] in [PlanFromRest]: backup result is not executable; "
                 "leaving CmdTraj unchanged");
             return FAILED;
@@ -239,7 +239,7 @@ namespace navigation_planning_backend {
 
         if (back_ret_code == SUCCESS) {
             if (cfg_.print_log) {
-                ros_ptr_->info(" -- [planner] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
+                planner_context_->info(" -- [planner] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
             }
 
             auto candidate = CmdTraj::buildCandidate(
@@ -254,7 +254,7 @@ namespace navigation_planning_backend {
             // For visualization
             {
                 TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
-                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
                 time_consuming_[VISUALIZATION] += t_viz.stop();
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS_WITH_BACKUP);
             }
@@ -262,7 +262,7 @@ namespace navigation_planning_backend {
             return SUCCESS;
         } else if (back_ret_code == FINISH || back_ret_code == NO_NEED) {
             if (cfg_.print_log) {
-                ros_ptr_->info(" -- [planner] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
+                planner_context_->info(" -- [planner] in [PlanFromRest] generateBackupTrajectory Finish or NO_NEED.");
             }
             const auto disposition = back_ret_code == FINISH
                 ? BackupDisposition::FINISH : BackupDisposition::NO_NEED;
@@ -278,7 +278,7 @@ namespace navigation_planning_backend {
             // For visualization
             TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
             {
-                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
             latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS_NO_BACKUP);
@@ -287,7 +287,7 @@ namespace navigation_planning_backend {
         // A candidate is not safe to commit without a feasible backup.  Keep
         // the previously committed atomic bundle so the runtime can drain its
         // existing safety suffix or enter its fail-closed handover path.
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [planner] in [PlanFromRest] backup generation returned [{}]; "
                 "rejecting candidate because backup is required",
                 RET_CODE_STR[back_ret_code].c_str());
@@ -303,7 +303,7 @@ namespace navigation_planning_backend {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
         const AbsoluteDeadline solve_deadline(
-                ros_ptr_->getSimTime(), cfg_.solve_deadline_s);
+                planner_context_->getSimTime(), cfg_.solve_deadline_s);
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
@@ -319,7 +319,7 @@ namespace navigation_planning_backend {
 
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizGoalPath(viz_pts);
+            planner_context_->vizGoalPath(viz_pts);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -333,23 +333,23 @@ namespace navigation_planning_backend {
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
-            if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            if (solve_cancelled_.load() || solve_deadline.expired(planner_context_->getSimTime()) ||
                 solve_deadline.steadyExpired()) {
                 latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             }
-            ros_ptr_->warn(" -- [planner] in [ReplanOnce]: GenerateExpTrajectory failed, force return");
+            planner_context_->warn(" -- [planner] in [ReplanOnce]: GenerateExpTrajectory failed, force return");
             return FAILED;
         } else if (exp_ret_code == NEW_TRAJ) {
             if (cfg_.print_log) {
-                ros_ptr_->info(" -- [planner] in [ReplanOnce]: Last epx traj end, switch to new traj.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: Last epx traj end, switch to new traj.");
             }
             return NEW_TRAJ;
         } else if (exp_ret_code == EMER) {
-            ros_ptr_->warn(" -- [planner] in [ReplanOnce]: Replan failed, switch to emer.");
+            planner_context_->warn(" -- [planner] in [ReplanOnce]: Replan failed, switch to emer.");
             return EMER;
         } else if (exp_ret_code == SUCCESS) {
             if (cfg_.print_log) {
-                ros_ptr_->info(" -- [planner] in [ReplanOnce]: Replan a new exp traj success.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: Replan a new exp traj success.");
             }
         } else if (exp_ret_code == NO_NEED &&
                    !expResultMayBuildCommandCandidate(exp_ret_code)) {
@@ -358,7 +358,7 @@ namespace navigation_planning_backend {
             // currently committed immutable command bundle unchanged and let
             // the runtime revalidate/expose that bundle as the retained command.
             if (cfg_.print_log) {
-                ros_ptr_->info(
+                planner_context_->info(
                     " -- [planner] in [ReplanOnce]: No new EXP trajectory is needed; "
                     "retain the committed command without generating or committing backup.");
             }
@@ -368,7 +368,7 @@ namespace navigation_planning_backend {
 
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizYawTraj(exp_traj_info.posTraj(), exp_traj_info.yawTraj());
+            planner_context_->vizYawTraj(exp_traj_info.posTraj(), exp_traj_info.yawTraj());
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -377,9 +377,9 @@ namespace navigation_planning_backend {
         // 2）生成back轨迹
         solve_stage_.store(5);
         TimeConsuming t_back("t_back", false);
-        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+        if (solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
-            ros_ptr_->warn(" -- [planner] solve deadline exhausted before backup stage");
+            planner_context_->warn(" -- [planner] solve deadline exhausted before backup stage");
             latest_replan.setRetCode(classifySolveFailure(solve_deadline));
             return FAILED;
         }
@@ -395,10 +395,10 @@ namespace navigation_planning_backend {
         }
 
         double replan_dt = replan_total_t.stop();
-        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+        if (solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired() ||
             replan_dt > cfg_.solve_deadline_s) {
-            ros_ptr_->warn(" -- [planner] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
+            planner_context_->warn(" -- [planner] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
             latest_replan.setRetCode(classifySolveFailure(
                 solve_deadline, replan_dt > cfg_.solve_deadline_s));
             return FAILED;
@@ -411,7 +411,7 @@ namespace navigation_planning_backend {
 
         if (!backupResultMayBuildCommandCandidate(back_ret_code)) {
             latest_replan.setRetCode(PlannerResultCode::PLANNER_BACKUP_FAILED);
-            ros_ptr_->warn(
+            planner_context_->warn(
                 " -- [planner] in [ReplanOnce]: backup result is not executable; "
                 "leaving CmdTraj unchanged");
             return FAILED;
@@ -430,13 +430,13 @@ namespace navigation_planning_backend {
             {
                 // For visualization
                 TimeConsuming t_viz("tviz", false);
-                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
 
             latest_replan.setRetCode(PLANNER_SUCCESS_WITH_BACKUP);
             if (cfg_.print_log)
-                ros_ptr_->info(" -- [planner] in [ReplanOnce]: Replan a new back traj success, all replan success.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: Replan a new back traj success, all replan success.");
             return SUCCESS;
         } else if (back_ret_code == NO_NEED) {
             // 这次生成backup轨迹的点没有意义,
@@ -452,13 +452,13 @@ namespace navigation_planning_backend {
 
             {
                 TimeConsuming t_viz("tviz", false);
-                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
 
             }
 
             if (cfg_.print_log)
-                ros_ptr_->info(" -- [planner] in [ReplanOnce]: No need back traj success, all replan success.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: No need back traj success, all replan success.");
             latest_replan.setRetCode(PLANNER_SUCCESS_NO_BACKUP);
             return SUCCESS;
         } else if (back_ret_code == FINISH) {
@@ -474,19 +474,19 @@ namespace navigation_planning_backend {
 
             {
                 TimeConsuming t_viz("tviz", false);
-                ros_ptr_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
 
             if (cfg_.print_log)
-                ros_ptr_->info(" -- [planner] in [ReplanOnce]: No need back traj success, all replan success.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: No need back traj success, all replan success.");
             latest_replan.setRetCode(PLANNER_SUCCESS_NO_BACKUP);
             return SUCCESS;
         }
         // Main and backup form one atomic safety bundle.  A failed backup
         // must leave CmdTraj untouched so the runtime can retain/drain the
         // previously committed suffix instead of executing main-only EXP.
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [planner] in [ReplanOnce]: backup generation returned {}; "
                 "rejecting candidate because backup is required",
                 RET_CODE_STR[back_ret_code].c_str());
@@ -496,7 +496,7 @@ namespace navigation_planning_backend {
 
     void Planner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
         cmd_traj_info_.lock();
-        double eval_t = (ros_ptr_->getSimTime() - cmd_traj_info_.getStartWallTime());
+        double eval_t = (planner_context_->getSimTime() - cmd_traj_info_.getStartWallTime());
         traj_finish = false;
         double total_dur = cmd_traj_info_.getTotalDuration();
         if (eval_t > total_dur) {
@@ -532,7 +532,7 @@ namespace navigation_planning_backend {
     Planner::CommandSample Planner::sampleCommand() {
         CommandSample sample;
         cmd_traj_info_.lock();
-        const double &cur_t = ros_ptr_->getSimTime();
+        const double &cur_t = planner_context_->getSimTime();
         const double &cmd_start_WT = cmd_traj_info_.getStartWallTime();
 //        const bool &backup_avilibale = cmd_traj_info_.backupTrajAvilibale();
 //        const double &backup_start_TT = cmd_traj_info_.getBackupTrajStartTT();
@@ -555,9 +555,9 @@ namespace navigation_planning_backend {
 
 //        if (last_round_robot_on_backup_traj != robot_on_backup_traj_) {
 //            if (last_round_robot_on_backup_traj) {
-//                ros_ptr_->info(" -- [CMD] Emergency Stop End ========================");
+//                planner_context_->info(" -- [CMD] Emergency Stop End ========================");
 //            } else {
-//                ros_ptr_->info(" -- [CMD] Emergency Stop Start ========================");
+//                planner_context_->info(" -- [CMD] Emergency Stop Start ========================");
 //            }
 //        }
 
@@ -654,7 +654,7 @@ namespace navigation_planning_backend {
                                             const double start_WT) {
         if (!measured_state.allFinite() || !std::isfinite(measured_yaw) ||
             !std::isfinite(measured_yaw_dot) || !std::isfinite(start_WT)) {
-            ros_ptr_->error(" -- [planner] emergency brake rejected: non-finite initial state");
+            planner_context_->error(" -- [planner] emergency brake rejected: non-finite initial state");
             return false;
         }
 
@@ -681,7 +681,7 @@ namespace navigation_planning_backend {
                 0.0);
         if (!seed.feasible || !std::isfinite(seed.duration_s) ||
             seed.duration_s <= 0.0) {
-            ros_ptr_->error(" -- [planner] emergency brake rejected: no feasible PVAJ stop seed");
+            planner_context_->error(" -- [planner] emergency brake rejected: no feasible PVAJ stop seed");
             return false;
         }
 
@@ -702,7 +702,7 @@ namespace navigation_planning_backend {
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
                 position_trajectory, cfg_.back_traj_cfg, &dynamic_report,
                 0.005, &yaw_trajectory)) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] emergency brake dynamic gate failed: body_rate={} thrust=[{},{}]",
                     dynamic_report.maximum_body_rate_rad_s,
                     dynamic_report.minimum_thrust_n,
@@ -713,10 +713,10 @@ namespace navigation_planning_backend {
         auto candidate = CmdTraj::buildEmergencyCandidate(
             position_trajectory, yaw_trajectory);
         if (!candidate || !authorizeAndCommit(std::move(*candidate))) {
-            ros_ptr_->error(" -- [planner] emergency brake atomic commit rejected");
+            planner_context_->error(" -- [planner] emergency brake atomic commit rejected");
             return false;
         }
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [planner] committed measured-state emergency brake: "
                 "initial_speed={} speed_limit={} initial_overspeed={} duration={} distance={} "
                 "peak_vel={} peak_acc={} peak_jerk={}",
@@ -763,7 +763,7 @@ namespace navigation_planning_backend {
         Trajectory guide_pos_traj, guide_yaw_traj, last_exp_traj;
 
         // record the wall time (WT) and the trajectory time (TT) at the start of the replan.
-        const double replan_process_start_WT = ros_ptr_->getSimTime();
+        const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
 
         /* 2) Check last exp traj */
@@ -793,13 +793,13 @@ namespace navigation_planning_backend {
 
                 if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                     if (cfg_.print_log)
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
                     return FAILED;
                 }
 
                 if (cfg_.print_log) {
-                    ros_ptr_->warn(
+                    planner_context_->warn(
                             " -- [generateExpTraj] replan_state_TT >= cmd_traj_info_.pos_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
                 }
                 return NO_NEED;
@@ -809,11 +809,11 @@ namespace navigation_planning_backend {
                 if (replan_state_TT >= last_exp_traj.getTotalDuration()) {
                     out_exp_traj_info = last_exp_traj_info;
                     if (cfg_.print_log)
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [generateExpTraj] replan_state_TT >= last_exp_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
                     if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                         if (cfg_.print_log)
-                            ros_ptr_->warn(
+                            planner_context_->warn(
                                     " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
                         return FAILED;
                     } else {
@@ -824,14 +824,14 @@ namespace navigation_planning_backend {
                 /// 1) Check a series of early termination conditions.
                 if (!gi_.new_goal && last_exp_traj_info.getSFCSize() == 1 && last_exp_traj_info.connectedToGoal()) {
                     if (cfg_.print_log) {
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [planner] Replan, last exp have only one corridor and connected to goal return NONEED.");
                     }
 
                     out_exp_traj_info = last_exp_traj_info;
                     if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                         if (cfg_.print_log)
-                            ros_ptr_->warn(
+                            planner_context_->warn(
                                     " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
                         return FAILED;
                     } else {
@@ -852,9 +852,9 @@ namespace navigation_planning_backend {
                     out_exp_traj_info = last_exp_traj_info;
                     out_exp_traj_info.setGoalConnectedFlag(true);
 
-                    ros_ptr_->warn(" -- [planner] Replan, close to goal and return NONEED.");
+                    planner_context_->warn(" -- [planner] Replan, close to goal and return NONEED.");
                     if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
-                        ros_ptr_->warn(
+                        planner_context_->warn(
                                 " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
                         return FAILED;
                     } else {
@@ -916,7 +916,7 @@ namespace navigation_planning_backend {
 
             // * 7）Begin replan process, first get the replan state from the committed trajectory.
             if (!guide_pos_traj.getState(replan_state_TT, pos_init_state)) {
-                ros_ptr_->warn(" -- [planner] Invalid traj or eval t");
+                planner_context_->warn(" -- [planner] Invalid traj or eval t");
                 return FAILED;
             }
             // * Generate guide path with time stampe, for hot trajectory initialization
@@ -939,7 +939,7 @@ namespace navigation_planning_backend {
                     last_exp_traj_time_pos.pop_back();
                     last_exp_traj_vel.pop_back();
                     if (last_exp_traj_time_pos.empty()) {
-                        ros_ptr_->warn(" -- [planner] WARN, all traj is collide in INF2");
+                        planner_context_->warn(" -- [planner] WARN, all traj is collide in INF2");
                         break;
                     }
                     temp_pt = last_exp_traj_time_pos.back().second;
@@ -993,11 +993,11 @@ namespace navigation_planning_backend {
                 solve_stage_.store(2);
                 if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon,
                                 new_path, solve_deadline)) {
-                    ros_ptr_->warn(" -- [planner] PathSearch for new path failed");
+                    planner_context_->warn(" -- [planner] PathSearch for new path failed");
                     return FAILED;
                 }
                 if (new_path.size() < 2) {
-                    ros_ptr_->warn(" -- [planner] PathSearch for new path failed");
+                    planner_context_->warn(" -- [planner] PathSearch for new path failed");
                     return FAILED;
                 }
 
@@ -1007,7 +1007,7 @@ namespace navigation_planning_backend {
                         cfg_.exp_traj_cfg.max_vel,
                         guide_path_end_vel,
                         guide_path.back(), new_path, allocation)) {
-                    ros_ptr_->warn(
+                    planner_context_->warn(
                             " -- [planner] invalid A* guide time allocation: "
                             "path_points={} v0={} a_max={} v_max={}",
                             new_path.size(), guide_path_end_vel,
@@ -1054,7 +1054,7 @@ namespace navigation_planning_backend {
         sfc.clear();
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizFrontendPath(guide_path);
+            planner_context_->vizFrontendPath(guide_path);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
         shifted_sfc_start_pt_ = Vec3f(9999,9999,9999);
@@ -1062,12 +1062,12 @@ namespace navigation_planning_backend {
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut);
 
         if (!bool_ret_code) {
-            ros_ptr_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");
+            planner_context_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");
             return FAILED;
         }
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizExpSfc(sfc);
+            planner_context_->vizExpSfc(sfc);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -1105,18 +1105,18 @@ namespace navigation_planning_backend {
             latest_replan.setExpCondition(init_ts, init_ps, pos_init_state, pos_fina_state, sfc);
         }
         if (!temp_ret) {
-            ros_ptr_->warn(" -- [planner] OptimizationExpTrajInPolytopes for new path failed");
+            planner_context_->warn(" -- [planner] OptimizationExpTrajInPolytopes for new path failed");
             return FAILED;
         }
-        double replan_total_t = (ros_ptr_->getSimTime() - replan_process_start_WT);
+        double replan_total_t = (planner_context_->getSimTime() - replan_process_start_WT);
         if (!last_exp_traj_info.empty() && replan_total_t > cfg_.replan_forward_dt) {
-            ros_ptr_->warn(" -- [planner] Replan over time({})!!!! Return FAILED", replan_total_t);
+            planner_context_->warn(" -- [planner] Replan over time({})!!!! Return FAILED", replan_total_t);
             return FAILED;
         }
 
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizExpTraj(out_traj);
+            planner_context_->vizExpTraj(out_traj);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -1125,7 +1125,7 @@ namespace navigation_planning_backend {
         // first PVA sample several metres ahead of the stationary vehicle.
         // Hot replans retain the original future-state stitching timestamp.
         double new_traj_WT = last_exp_traj_info.empty()
-                                 ? ros_ptr_->getSimTime()
+                                 ? planner_context_->getSimTime()
                                  : replan_process_start_WT;
 
         replan_process_start_TT = replan_process_start_WT - guide_pos_traj.start_WT;
@@ -1133,7 +1133,7 @@ namespace navigation_planning_backend {
         if (!last_exp_traj_info_.empty() &&
             !guide_pos_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
                                                        temp_exp_traj)) {
-            ros_ptr_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
+            planner_context_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
             return FAILED;
         }
         out_exp_traj_info.setSFC(sfc);
@@ -1143,7 +1143,7 @@ namespace navigation_planning_backend {
         if (!last_exp_traj_info.empty()) {
             StatePVAJ yaw_replan_state;
             if (!guide_yaw_traj.getState(replan_state_TT, yaw_replan_state)) {
-                ros_ptr_->warn(" -- [planner] Invalid traj or eval t");
+                planner_context_->warn(" -- [planner] Invalid traj or eval t");
                 return FAILED;
             }
             init_yaw = yaw_replan_state.row(0);
@@ -1158,13 +1158,13 @@ namespace navigation_planning_backend {
         Trajectory new_traj, old_traj;
 
         if (!yaw_traj_opt_->optimize(init_yaw, fina_yaw, out_traj, new_traj, 3, false, free_end)) {
-            ros_ptr_->error(" -- [planner] in [generateExpTraj]: YawTrajOpt failed, force return");
+            planner_context_->error(" -- [planner] in [generateExpTraj]: YawTrajOpt failed, force return");
             return FAILED;
         }
         if (!last_exp_traj_info.empty()) {
             if (!guide_yaw_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
                                                            old_traj)) {
-                ros_ptr_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
+                planner_context_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
                 return FAILED;
             }
         }
@@ -1174,7 +1174,7 @@ namespace navigation_planning_backend {
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
                 temp_exp_traj, cfg_.exp_traj_cfg, &exp_dynamic_report,
                 0.01, &temp_yaw_traj)) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] combined EXP position/yaw body-rate or thrust gate failed: "
                     "body_rate={} thrust=[{},{}]",
                     exp_dynamic_report.maximum_body_rate_rad_s,
@@ -1206,12 +1206,12 @@ namespace navigation_planning_backend {
         drone_state_mutex_.unlock();
         TimeConsuming t_back_frontend("t_back_frontend", false);
         double total_dur = ref_exp_traj.getTotalDuration();
-        double start_t = ros_ptr_->getSimTime() - ref_exp_traj.getStartWallTime();
+        double start_t = planner_context_->getSimTime() - ref_exp_traj.getStartWallTime();
 
 
         if (start_t > total_dur - 0.01) {
             if (cfg_.print_log) {
-                ros_ptr_->info(" -- [planner] in [generateBackupTrajectory]: start_t > total_dur, return NO_NEED");
+                planner_context_->info(" -- [planner] in [generateBackupTrajectory]: start_t > total_dur, return NO_NEED");
             }
             return NO_NEED;
         }
@@ -1344,7 +1344,7 @@ namespace navigation_planning_backend {
         const auto nearest_start = map_ptr_->nearestNotOccupied(
                 shifted_robot_p, navigation_world_model::GridLayer::kEvidence, 3.0);
         if (!nearest_start) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
             latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_START_POINT);
             return FAILED;
@@ -1354,13 +1354,13 @@ namespace navigation_planning_backend {
         Line line{shifted_robot_p, seed_point};
         Polytope temp_poly;
         if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly)) {
-            ros_ptr_->warn(" -- [planner] GeneratePolytopeFromLine failed, force return");
+            planner_context_->warn(" -- [planner] GeneratePolytopeFromLine failed, force return");
             return FAILED;
         }
         Eigen::Vector3d inner;
         Eigen::Matrix3Xd vPoly;
         if (!geometry_utils::findInterior(temp_poly.GetPlanes(), inner)) {
-            ros_ptr_->warn(" -- [planner] Cannot generate feasible backup sfc, force return");
+            planner_context_->warn(" -- [planner] Cannot generate feasible backup sfc, force return");
             vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
             return FAILED;
         }
@@ -1368,7 +1368,7 @@ namespace navigation_planning_backend {
         if (cfg_.use_fov_cut) {
             if (!fov_checker_->cutPolyByFov(robot_state_.p, robot_state_.q, seed_point,
                                             temp_poly)) {
-                ros_ptr_->warn(" -- [planner] cutPolyByFov failed, force return");
+                planner_context_->warn(" -- [planner] cutPolyByFov failed, force return");
                 return FAILED;
             }
         }
@@ -1376,7 +1376,7 @@ namespace navigation_planning_backend {
         if (cfg_.sensing_horizon > 0 &&
             !fov_checker_->cutPolyBySensingHorizon(robot_state_.p, seed_point, cfg_.sensing_horizon,
                                                    temp_poly)) {
-            ros_ptr_->warn(" -- [planner] cutPolyBySensingHorizon failed, force return");
+            planner_context_->warn(" -- [planner] cutPolyBySensingHorizon failed, force return");
             vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
             return FAILED;
         }
@@ -1385,7 +1385,7 @@ namespace navigation_planning_backend {
 
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizBackupSfc(temp_poly);
+            planner_context_->vizBackupSfc(temp_poly);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -1405,7 +1405,7 @@ namespace navigation_planning_backend {
             eval_t += cfg_.sample_traj_dt;
         }
         if (eval_ps.size() <= 1U) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [planner] backup visibility produced no certified seed before first invisible sample");
             return FAILED;
         }
@@ -1415,7 +1415,7 @@ namespace navigation_planning_backend {
 
         //        bool use_new{true};
         //        if (use_new) {
-        double t0 = ros_ptr_->getSimTime() -
+        double t0 = planner_context_->getSimTime() -
                     ref_exp_traj.getStartWallTime() + 0.01;
         double te = seed_point_t;
         //            cout << "t0: " << t0 << endl;
@@ -1464,12 +1464,12 @@ namespace navigation_planning_backend {
             candidate_ts = std::max(t0, candidate_ts - cfg_.sample_traj_dt);
         }
         if (!braking_seed_inside_sfc) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [planner] no dynamically feasible minimum-snap backup hull inside SFC");
             return OPT_FAILED;
         }
         if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt * 0.5) {
-            ros_ptr_->info(
+            planner_context_->info(
                     " -- [planner] moved backup switch backward from {} to {} for certified hull",
                     initial_switch_guess, heu_ts);
         }
@@ -1523,7 +1523,7 @@ namespace navigation_planning_backend {
             // hull containment. L-BFGS is an optional refinement, not an
             // authority to discard that certified safety trajectory.
             ++backup_refinement_fallback_count_;
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [planner] backup refinement failed; using certified minimum-snap seed "
                     "backup_refinement_success={} backup_refinement_fallback={}",
                     backup_refinement_success_count_, backup_refinement_fallback_count_);
@@ -1532,7 +1532,7 @@ namespace navigation_planning_backend {
             opt_ts = heu_ts;
         } else {
             ++backup_refinement_success_count_;
-            ros_ptr_->info(
+            planner_context_->info(
                     " -- [planner] backup refinement accepted: "
                     "backup_refinement_success={} backup_refinement_fallback={}",
                     backup_refinement_success_count_, backup_refinement_fallback_count_);
@@ -1549,14 +1549,14 @@ namespace navigation_planning_backend {
         Trajectory temp_yaw_traj;
         if (!yaw_traj_opt_->optimize(yaw_init_vec, yaw_goal, temp_pos_traj,
                                      temp_yaw_traj, 3, false, free_end)) {
-            ros_ptr_->error(" -- [planner] in [generateBackupTrajectory] YawTrajOpt FAILD.");
+            planner_context_->error(" -- [planner] in [generateBackupTrajectory] YawTrajOpt FAILD.");
             return OPT_FAILED;
         }
         traj_opt::TrajectoryDynamicReport backup_dynamic_report;
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
                 temp_pos_traj, cfg_.back_traj_cfg, &backup_dynamic_report,
                 0.01, &temp_yaw_traj)) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] combined backup position/yaw body-rate or thrust gate failed: "
                     "body_rate={} thrust=[{},{}]",
                     backup_dynamic_report.maximum_body_rate_rad_s,
@@ -1567,7 +1567,7 @@ namespace navigation_planning_backend {
 
 
         if (opt_ts < t0) {
-            ros_ptr_->error(" -- [planner] opt_ts {} < t0 {}", opt_ts, t0);
+            planner_context_->error(" -- [planner] opt_ts {} < t0 {}", opt_ts, t0);
             return OPT_FAILED;
         }
         double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
@@ -1576,7 +1576,7 @@ namespace navigation_planning_backend {
         const double committed_ts_TT = cmd_traj_info_.getBackupTrajStartTT();
         if (committed_ts_TT < cmd_traj_info_.getTotalDuration() &&
             new_ts_TT < committed_ts_TT) {
-            ros_ptr_->error(" -- [planner] new_ts_TT {} < committed_ts_TT {}",
+            planner_context_->error(" -- [planner] new_ts_TT {} < committed_ts_TT {}",
                            new_ts_TT, committed_ts_TT);
             return OPT_FAILED;
         }
@@ -1584,7 +1584,7 @@ namespace navigation_planning_backend {
 
         {
             TimeConsuming t_viz("tviz", false);
-            ros_ptr_->vizBackupTraj(temp_pos_traj);
+            planner_context_->vizBackupTraj(temp_pos_traj);
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
@@ -1620,7 +1620,7 @@ namespace navigation_planning_backend {
                              const AbsoluteDeadline &solve_deadline) {
         using namespace path_search;
         if (searching_horizon <= 0.0) {
-            ros_ptr_->error(" -- [planner] Goal waypoints empty or searching horizon negative, force return.");
+            planner_context_->error(" -- [planner] Goal waypoints empty or searching horizon negative, force return.");
             return false;
         }
 
@@ -1632,7 +1632,7 @@ namespace navigation_planning_backend {
         /// If the start_pt is obstacle in prob map, just shift it to the nearest free point.
         if (start_type == navigation_world_model::CellState::kOccupied ||
             start_type == navigation_world_model::CellState::kOutOfMap) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [planner] The start point in obstacle, this should not happen since the start point should be shift before pathsearch.");
             return false;
         }
@@ -1644,7 +1644,7 @@ namespace navigation_planning_backend {
                 start_pt, flag_es, out_path, true);
         if (ret_es != NO_NEED && ret_es != REACH_HORIZON &&
             ret_es != REACH_GOAL && ret_es != INIT_ERROR) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [Astar] Preferred-altitude escape failed with [{}]; "
                     "retry unrestricted 3-D escape.", RET_CODE_STR[ret_es].c_str());
             ret_es = astar_ptr_->escapePathSearch(
@@ -1652,7 +1652,7 @@ namespace navigation_planning_backend {
         }
         if (ret_es != NO_NEED) {
             if (ret_es != REACH_HORIZON && ret_es != REACH_GOAL) {
-                ros_ptr_->error(
+                planner_context_->error(
                         " -- [planner] Escape path search failed with [{}], force return.",
                         RET_CODE_STR[ret_es].c_str());
                 return false;
@@ -1675,16 +1675,16 @@ namespace navigation_planning_backend {
         // an absolute budget so a timeout cannot multiply callback latency.
         const double stage_budget = std::min(
                 cfg_.astar_total_time_limit_s,
-                solve_deadline.conservativeRemaining(ros_ptr_->getSimTime()));
+                solve_deadline.conservativeRemaining(planner_context_->getSimTime()));
         if (stage_budget <= 0.0) {
-            ros_ptr_->warn(" -- [Astar] solve deadline exhausted before path search");
+            planner_context_->warn(" -- [Astar] solve deadline exhausted before path search");
             return false;
         }
         const AbsoluteDeadline search_deadline(
-                ros_ptr_->getSimTime(), stage_budget);
+                planner_context_->getSimTime(), stage_budget);
         const auto remaining_search_budget = [&]() {
-            return std::min(search_deadline.remaining(ros_ptr_->getSimTime()),
-                            solve_deadline.conservativeRemaining(ros_ptr_->getSimTime()));
+            return std::min(search_deadline.remaining(planner_context_->getSimTime()),
+                            solve_deadline.conservativeRemaining(planner_context_->getSimTime()));
         };
         //            int start_id = getNearestFurtherGoalPoint(goal_waypoints, start_pt);
 
@@ -1697,8 +1697,8 @@ namespace navigation_planning_backend {
 
         if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
             ret_code != INIT_ERROR &&
-            !search_deadline.expired(ros_ptr_->getSimTime())) {
-            ros_ptr_->warn(
+            !search_deadline.expired(planner_context_->getSimTime())) {
+            planner_context_->warn(
                     " -- [Astar] Preferred start-goal altitude search failed with [{}]; "
                     "retry unrestricted 3-D search.", RET_CODE_STR[ret_code].c_str());
             ret_code = astar_ptr_->pointToPointPathSearch(
@@ -1713,7 +1713,7 @@ namespace navigation_planning_backend {
         //add may23, if failed on inf map, use prob map try again
 
         if (ret_code == NO_PATH &&
-            !search_deadline.expired(ros_ptr_->getSimTime())) {
+            !search_deadline.expired(planner_context_->getSimTime())) {
             flag = ON_PROB_MAP | (cfg_.frontend_in_known_free ? UNKNOWN_AS_OCCUPIED : UNKNOWN_AS_FREE) |
                    USE_INF_NEIGHBOR;
             fmt::print(fg(fmt::color::indian_red) | fmt::emphasis::bold,
@@ -1723,7 +1723,7 @@ namespace navigation_planning_backend {
                     path, remaining_search_budget(), true);
             if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL &&
                 ret_code != INIT_ERROR &&
-                !search_deadline.expired(ros_ptr_->getSimTime())) {
+                !search_deadline.expired(planner_context_->getSimTime())) {
                 ret_code = astar_ptr_->pointToPointPathSearch(
                         temp_start_point, goal, flag, temp_plannning_horizon,
                         path, remaining_search_budget(), false);
@@ -1737,7 +1737,7 @@ namespace navigation_planning_backend {
             }
         }
         if (ret_code != REACH_HORIZON && ret_code != REACH_GOAL) {
-            ros_ptr_->error(
+            planner_context_->error(
                     " -- [planner] Path search failed with [{}], force return.\n", RET_CODE_STR[ret_code].c_str());
             return false;
         }
@@ -1807,7 +1807,7 @@ namespace navigation_planning_backend {
         }
 
         if (path.empty()) {
-            ros_ptr_->warn(
+            planner_context_->warn(
                     " -- [planner] Path search failed with empty segments, force return.");
             return false;
         }

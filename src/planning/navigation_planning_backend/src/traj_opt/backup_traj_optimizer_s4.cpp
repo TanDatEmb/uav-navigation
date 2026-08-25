@@ -592,7 +592,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
             cout << "\tTs: " << opt_vars.ts << endl;
         }
-        ros_ptr_->warn(" -- [BackOpt] Opt failed, Omg or thr or Pos violation.");
+        planner_context_->warn(" -- [BackOpt] Opt failed, Omg or thr or Pos violation.");
     }
 
     if (ret >= 0) {
@@ -631,8 +631,8 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     return minCostFunctional;
 }
 
-BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const ros_interface::RosInterface::Ptr &ros_ptr)
-        : cfg_(cfg), ros_ptr_(ros_ptr) {
+BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context)
+        : cfg_(cfg), planner_context_(planner_context) {
     using namespace std;
 
     cfg_ = cfg;
@@ -764,7 +764,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     }
     if (success && !navigation_planning_backend::refinementDurationRespectsCertifiedFloor(
             out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum())) {
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [BackOpt] refinement duration {} is shorter than certified seed {}",
                 out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum());
         success = false;
@@ -873,7 +873,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     }
     if (success && !navigation_planning_backend::refinementDurationRespectsCertifiedFloor(
             out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum())) {
-        ros_ptr_->warn(
+        planner_context_->warn(
                 " -- [BackOpt] refinement duration {} is shorter than certified seed {}",
                 out_traj.getTotalDuration(), opt_vars.minimum_time_floor.sum());
         success = false;

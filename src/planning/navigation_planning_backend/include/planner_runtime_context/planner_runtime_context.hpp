@@ -14,14 +14,14 @@
 #include <utils/header/eigen_alias.hpp>
 #include <utils/header/fmt_eigen.hpp>
 
-namespace ros_interface {
+namespace navigation_planner_context {
 
-class RosInterface {
+class PlannerRuntimeContext {
  public:
-  using Ptr = std::shared_ptr<RosInterface>;
-  explicit RosInterface(std::function<double()> clock_seconds = {})
+  using Ptr = std::shared_ptr<PlannerRuntimeContext>;
+  explicit PlannerRuntimeContext(std::function<double()> clock_seconds = {})
       : clock_seconds_(std::move(clock_seconds)) {}
-  virtual ~RosInterface() = default;
+  virtual ~PlannerRuntimeContext() = default;
 
   template <typename... Args>
   void debug(const char* format, Args&&... args) { log("DEBUG", format, std::forward<Args>(args)...); }
@@ -89,4 +89,4 @@ class RosInterface {
   bool visualization_en_{false};
 };
 
-}  // namespace ros_interface
+}  // namespace navigation_planner_context
