@@ -25,6 +25,11 @@ PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 GAP_EVENT_CAPACITY = 1024
 
 
+def _native_subscriptions_ready(stats_subscription: Any, clock_subscription: Any) -> bool:
+    """Return whether both diagnostic native subscriptions were created."""
+    return bool(stats_subscription) and bool(clock_subscription)
+
+
 def _load_json(path: Path, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -289,16 +294,36 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
 
     stats_topic = f"/world/{args.world}/stats"
     clock_topic = f"/world/{args.world}/clock"
-    node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
-    node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
+    stats_subscription = node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
+    clock_subscription = node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
+    if not _native_subscriptions_ready(stats_subscription, clock_subscription):
+        _atomic_json(args.session / "gazebo_native_summary.json", {
+            "schema_version": 2,
+            "status": "UNAVAILABLE",
+            "error": "failed to subscribe to native Gazebo clock/stats topic",
+            "world": args.world,
+            "world_stats_topic": stats_topic,
+            "world_clock_topic": clock_topic,
+            "verdict_owner": "diagnostic_only",
+        })
+        return 1
     samples_path = args.session / "gazebo_native_samples.jsonl"
+    process_role_counts: dict[str, int] = {}
+    psi_sample_count = 0
+    process_sample_count = 0
     deadline = time.monotonic() + args.duration_s if args.duration_s > 0.0 else math.inf
     next_process_sample = 0.0
     with samples_path.open("a", encoding="utf-8") as output:
         while not stop.is_set() and time.monotonic() < deadline:
             now = time.monotonic()
             if now >= next_process_sample:
-                output.write(json.dumps({"kind": "process_sample", "arrival_wall_ns": time.time_ns(), "processes": _process_samples(args.session)}, sort_keys=True) + "\n")
+                process_rows = _process_samples(args.session)
+                process_sample_count += 1
+                for process in process_rows:
+                    role = str(process.get("role", "unknown"))
+                    process_role_counts[role] = process_role_counts.get(role, 0) + 1
+                output.write(json.dumps({"kind": "process_sample", "arrival_wall_ns": time.time_ns(), "processes": process_rows}, sort_keys=True) + "\n")
+                psi_sample_count += 1
                 output.write(json.dumps({"kind": "psi_sample", "arrival_wall_ns": time.time_ns(), "psi": _psi_snapshot()}, sort_keys=True) + "\n")
                 output.flush()
                 next_process_sample = now + args.process_period_s
@@ -312,6 +337,9 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
         "schema_version": 2, "status": "OK", "world": args.world,
         "gap_budget_s": args.gap_budget_s,
         "gazebo_native": {"world_stats": stats_state.snapshot(), "world_clock": clock_state.snapshot()},
+        "process_sample_count": process_sample_count,
+        "process_roles": process_role_counts,
+        "psi_samples": psi_sample_count,
         "verdict_owner": "diagnostic_only",
     })
     return 0

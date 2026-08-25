@@ -1164,6 +1164,20 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
         self.assertEqual(summary["psi_samples"], 1)
 
+    def test_gazebo_native_observer_requires_both_subscriptions(self) -> None:
+        self.assertTrue(gazebo_native_observer._native_subscriptions_ready(object(), object()))
+        self.assertFalse(gazebo_native_observer._native_subscriptions_ready(object(), None))
+        self.assertFalse(gazebo_native_observer._native_subscriptions_ready(None, object()))
+
+    def test_gazebo_native_summary_reports_process_and_psi_counts(self) -> None:
+        samples = [
+            {"kind": "process_sample", "processes": [{"role": "gz"}, {"role": "gz"}]},
+            {"kind": "psi_sample", "psi": {"cpu": "some avg10=0.00"}},
+        ]
+        summary = gazebo_native_observer._summarize(samples)
+        self.assertEqual(summary["process_roles"], {"gz": 2})
+        self.assertEqual(summary["psi_samples"], 1)
+
     def test_gazebo_native_observer_runner_hook_records_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = runner.Session(Path(temporary) / "session")
