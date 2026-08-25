@@ -134,7 +134,7 @@ namespace navigation_planning_backend {
         explicit Planner(const std::string &cfg_path,
                               const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                               navigation_world_model::WorldModelViewPtr map_ptr,
-                              const std::optional<DynamicLimits> &mission_limits,
+                              const std::optional<navigation_planning::DynamicLimits> &mission_limits,
                               navigation_world_model::WorldCommitAuthorizer& commit_authorizer);
 
         ~Planner() = default;

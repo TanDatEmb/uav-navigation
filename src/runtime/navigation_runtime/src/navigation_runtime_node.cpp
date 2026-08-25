@@ -195,7 +195,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       [this]() { return now().seconds(); });
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
-  std::optional<navigation_planning_backend::DynamicLimits> mission_limits;
+  std::optional<navigation_planning::DynamicLimits> mission_limits;
   if (!mission_file.empty()) {
     mission_limits = loadMissionDynamicLimits(mission_file);
     RCLCPP_INFO(

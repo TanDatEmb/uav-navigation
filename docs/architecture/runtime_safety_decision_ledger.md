@@ -2127,6 +2127,26 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   tests and ledger evidence.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
 
+### 2026-08-26 - Canonical dynamic-limit product contract
+
+- Owner: `navigation_planning::DynamicLimits` and the runtime mission-file
+  adapter. Scope: remove the duplicate `DynamicsLimits` contract from
+  `planning_request.hpp`, make `planning_limits.hpp` the single product-owned
+  definition, and keep `mission_dynamics.hpp` independent of the planner
+  implementation header.
+- Safety impact: type/ownership refactor only. Field meanings and positive,
+  finite validation are unchanged; planner optimizer limits, unknown-cell
+  policy, continuity, deadlines, and all safety gates are unchanged. No
+  fallback or bypass was added.
+- Evidence required: planning contract test for valid/invalid limits, focused
+  runtime mission-adapter test, full Release build/test/check, and a clean
+  installed-header compile audit. This phase does not claim the planner PImpl
+  boundary is closed.
+- Removal condition: none; `navigation_planning::DynamicLimits` is the sole
+  product type. Future limit changes must update this contract and its tests,
+  not create another spelling or backend alias.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
 ### 2026-08-26 - Deferred activation of a committed trajectory
 
 - Owner: `navigation_execution::CommandSampler` and the runtime command

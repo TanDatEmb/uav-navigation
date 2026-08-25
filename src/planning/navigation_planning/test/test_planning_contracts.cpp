@@ -6,6 +6,7 @@
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/planning_request.hpp>
+#include <navigation_planning/planning_limits.hpp>
 
 namespace {
 
@@ -75,6 +76,14 @@ TEST(KinematicState, RequiresTimeFrameAndYawContract) {
 
   state.receive_stamp_ns = 0;
   EXPECT_FALSE(state.finite());
+}
+
+TEST(DynamicLimits, HasOneProductOwnedValidationContract) {
+  const navigation_planning::DynamicLimits valid{7.0, 5.0, 12.0};
+  EXPECT_TRUE(valid.valid());
+
+  const navigation_planning::DynamicLimits invalid{7.0, 0.0, 12.0};
+  EXPECT_FALSE(invalid.valid());
 }
 
 }  // namespace

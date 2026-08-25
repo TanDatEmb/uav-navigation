@@ -58,7 +58,7 @@ namespace navigation_planning_backend {
             (const std::string &cfg_path,
              const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
              navigation_world_model::WorldModelViewPtr map_ptr,
-             const std::optional<DynamicLimits> &mission_limits,
+             const std::optional<navigation_planning::DynamicLimits> &mission_limits,
              navigation_world_model::WorldCommitAuthorizer& commit_authorizer
             ) : cfg_(Config(cfg_path, mission_limits)), map_ptr_(std::move(map_ptr)),
                 commit_authorizer_(&commit_authorizer), planner_context_(planner_context) {

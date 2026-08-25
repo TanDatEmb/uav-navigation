@@ -39,8 +39,6 @@ namespace navigation_planning_backend {
     using std::cout;
     using std::endl;
 
-    using DynamicLimits = navigation_planning::DynamicLimits;
-
     class Config {
     public:
         enum YawMode{
@@ -95,7 +93,7 @@ namespace navigation_planning_backend {
         Config() = default;
         explicit Config(
                 const std::string &cfg_path,
-                const std::optional<DynamicLimits> &mission_limits = std::nullopt) {
+                const std::optional<navigation_planning::DynamicLimits> &mission_limits = std::nullopt) {
             yaml_loader::YamlLoader loader(cfg_path);
             exp_traj_cfg = traj_opt::Config(cfg_path, "exp_traj");
             back_traj_cfg = traj_opt::Config(cfg_path, "backup_traj");

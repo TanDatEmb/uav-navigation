@@ -71,7 +71,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
 }
 
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
-  const navigation_planning_backend::DynamicLimits mission{7.0, 5.0, 12.0};
+  const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   const navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 7.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 5.0);
@@ -81,7 +81,7 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   EXPECT_THROW(
       (navigation_planning_backend::Config(
           PLANNER_PRODUCT_CONFIG_PATH,
-          navigation_planning_backend::DynamicLimits{12.1, 5.0, 12.0})),
+          navigation_planning::DynamicLimits{12.1, 5.0, 12.0})),
       std::invalid_argument);
 }
 

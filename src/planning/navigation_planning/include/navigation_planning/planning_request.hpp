@@ -8,6 +8,7 @@
 
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planning_budget.hpp>
+#include <navigation_planning/planning_limits.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_planning {
@@ -26,19 +27,6 @@ struct GoalIdentity {
   }
 };
 
-struct DynamicsLimits {
-  double maximum_velocity_mps{0.0};
-  double maximum_acceleration_mps2{0.0};
-  double maximum_jerk_mps3{0.0};
-
-  [[nodiscard]] bool valid() const noexcept {
-    return std::isfinite(maximum_velocity_mps) &&
-           std::isfinite(maximum_acceleration_mps2) &&
-           std::isfinite(maximum_jerk_mps3) && maximum_velocity_mps > 0.0 &&
-           maximum_acceleration_mps2 > 0.0 && maximum_jerk_mps3 > 0.0;
-  }
-};
-
 struct PlanningHistory {
   std::uint64_t previous_bundle_generation{0};
   Eigen::Vector3d previous_velocity_world{Eigen::Vector3d::Zero()};
@@ -49,7 +37,7 @@ struct PlanningRequest {
   KinematicState start_state;
   PlanningHistory history;
   navigation_world_model::WorldModelViewPtr world;
-  DynamicsLimits dynamics;
+  DynamicLimits dynamics;
   PlanningBudget budget;
 
   [[nodiscard]] bool valid() const noexcept {

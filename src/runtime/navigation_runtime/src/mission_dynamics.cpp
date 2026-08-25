@@ -25,7 +25,7 @@ double positiveScalar(const YAML::Node& node, const char* path, double fallback)
 
 }  // namespace
 
-navigation_planning_backend::DynamicLimits loadMissionDynamicLimits(
+navigation_planning::DynamicLimits loadMissionDynamicLimits(
     const std::filesystem::path& mission_file) {
   if (mission_file.empty()) {
     throw std::invalid_argument("planner backend mission file must not be empty");
@@ -47,7 +47,7 @@ navigation_planning_backend::DynamicLimits loadMissionDynamicLimits(
   }
 
   // Match the External Mode mission contract defaults when a field is absent.
-  return navigation_planning_backend::DynamicLimits{
+  return navigation_planning::DynamicLimits{
       positiveScalar(planning["max_velocity_mps"],
                      "mission.planning.max_velocity_mps", 1.0),
       positiveScalar(planning["max_acceleration_mps2"],
