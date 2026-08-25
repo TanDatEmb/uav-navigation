@@ -1054,3 +1054,22 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   the disabled default again and update TB-001 to `REMOVED` in a separate
   behavior change. Verification command for this harness change:
   `python3 -m unittest tools.runtime.tests.test_runtime_contract -v`.
+
+### 2026-08-25 - Opt-in Gazebo-native ingress diagnostic
+
+- The runner accepts `--gazebo-native-diagnostic` for an explicitly bounded
+  screening session. It is off by default and is not started for the normal
+  SITL matrix. The helper subscribes directly through `gz.transport13` to
+  native `/world/<world>/stats` and `/world/<world>/clock`, records bounded
+  arrival-gap/source/iteration evidence, and samples process-group descendants
+  plus CPU/memory/I/O PSI at low rate.
+- This observer is diagnostic-only: it adds no acceptance reason, safety gate,
+  QoS, bridge, queue, executor, threshold or product scheduling change. A
+  valid result requires both native streams and a completed summary; no result
+  can certify a mission. The first run remains a single 2 m/s reproduction,
+  followed by classification of Gazebo/host scheduling versus GZ transport or
+  bridge delivery. Do not run the TB-001 A/B or speed matrix until that
+  classification is complete.
+- Verification before a live run: runtime/HTML tests, Python compilation, and
+  `git diff --check`. Live native observer evidence is pending and must be
+  archived with the session identity and authoritative Release manifest.

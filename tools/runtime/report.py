@@ -185,6 +185,21 @@ def _experimental_bypass_metadata(runtime: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _gazebo_native_diagnostics(session: Path, runtime: dict[str, Any]) -> dict[str, Any]:
+    summary = _load_json(session / "gazebo_native_summary.json", {})
+    observer = runtime.get("gazebo_native_observer", {})
+    if not isinstance(summary, dict):
+        summary = {}
+    if not isinstance(observer, dict):
+        observer = {}
+    if not summary and not observer:
+        return {}
+    result = dict(summary)
+    result["observer"] = observer
+    result["verdict_owner"] = "diagnostic_only"
+    return result
+
+
 def _load_json(path: Path, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -2290,6 +2305,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "ground_truth_residuals": ground_truth_residuals,
         "acceptance": acceptance,
         "experimental_bypasses": _experimental_bypass_metadata(runtime),
+        "gazebo_native_diagnostics": _gazebo_native_diagnostics(session, runtime),
         "tracking": {
             "reference_vs_lio": "NOT_AVAILABLE",
             "reference_vs_ground_truth": "NOT_AVAILABLE",
@@ -2326,8 +2342,13 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     if descriptor:
         report["map"] = descriptor
     if observation_complete:
-        report["verdict"] = "OBSERVATION_COMPLETE" if not _process_failures(session) else "FAIL"
-        report["reasons"] = _process_failures(session)
+        # Observation completion is a lifecycle fact, not an acceptance
+        # verdict. Preserve the evaluated stream/mission reasons so an
+        # interactive stop cannot erase a genuine FAIL.
+        report["observation_complete"] = True
+        report["observation_status"] = (
+            "FAIL" if _process_failures(session) else "OBSERVATION_COMPLETE"
+        )
     if report["verdict"] not in VERDICTS:
         raise ValueError(f"invalid runtime verdict: {report['verdict']}")
     report["session"] = str(session.resolve())
@@ -2409,7 +2430,7 @@ def main() -> int:
     args = parser.parse_args()
     report = build(args.session.resolve(), args.workflow, args.config.resolve(), args.workspace.resolve(), args.px4_dir, args.observation_complete)
     print(report["verdict"])
-    return 0 if report["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
+    return 0 if report["verdict"] == "PASS" or report.get("observation_status") == "OBSERVATION_COMPLETE" else 1
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ sys.path.insert(0, str(RUNTIME))
 import monitor
 from monitor import StreamStats
 import build_provenance
+import gazebo_native_observer
 import report
 import runner
 
@@ -1122,6 +1123,85 @@ class RuntimeContractTest(unittest.TestCase):
             payload = json.loads((session.directory / "report.json").read_text(encoding="utf-8"))
             self.assertIn("runner setup: setup exploded", payload["reasons"])
 
+    def test_gazebo_native_observer_samples_registered_processes_and_psi(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            process = session.start(
+                "short_lived",
+                [sys.executable, "-c", "import time; time.sleep(1)"],
+                cwd=ROOT,
+            )
+            processes = gazebo_native_observer._process_samples(session.directory)
+            self.assertTrue(any(item["role"] == "short_lived" for item in processes))
+            first = next(item for item in processes if item["role"] == "short_lived")
+            self.assertIn("rss_bytes", first["stat"])
+            self.assertIn("sched_runtime_ns", first["stat"])
+            psi = gazebo_native_observer._psi_snapshot()
+            self.assertTrue(set(psi).issubset({"cpu", "memory", "io"}))
+            session.stop()
+            process.wait(timeout=2.0)
+
+    def test_gazebo_native_observer_summary_is_diagnostic_only(self) -> None:
+        samples = [
+            {
+                "kind": "world_stats",
+                "payload": {
+                    "sim_time": {"sec": 1, "nsec": 500},
+                    "real_time_factor": 0.95,
+                },
+            },
+            {"kind": "world_clock", "payload": {"sim": {"sec": 2, "nsec": 0}}},
+            {
+                "kind": "process_sample",
+                "processes": [{"role": "px4_gazebo"}, {"role": "mapping"}],
+            },
+            {"kind": "psi_sample", "psi": {"cpu": "some avg10=0.00"}},
+        ]
+        summary = gazebo_native_observer._summarize(samples)
+        self.assertEqual(summary["gazebo_native"]["world_stats"]["samples"], 1)
+        self.assertEqual(summary["gazebo_native"]["world_stats"]["first_sim_time_ns"], 1_000_000_500)
+        self.assertEqual(summary["gazebo_native"]["world_clock"]["last_sim_time_ns"], 2_000_000_000)
+        self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
+        self.assertEqual(summary["psi_samples"], 1)
+
+    def test_gazebo_native_observer_runner_hook_records_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            process = SimpleNamespace()
+            with mock.patch.object(runner.Session, "start", return_value=process) as start:
+                result = runner._start_gazebo_native_observer(session, "test_world", "gz")
+
+            self.assertIs(result, process)
+            command = start.call_args.args[1]
+            self.assertIn("gazebo_native_observer.py", command[1])
+            self.assertIn("--world", command)
+            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
+            observer = runtime["gazebo_native_observer"]
+            self.assertEqual(observer["world_stats_topic"], "/world/test_world/stats")
+            self.assertEqual(observer["world_clock_topic"], "/world/test_world/clock")
+            self.assertEqual(observer["verdict_owner"], "diagnostic_only")
+
+    def test_report_includes_gazebo_native_diagnostics_without_reasons(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "gazebo_native_summary.json").write_text(
+                json.dumps({"schema_version": 1, "psi_samples": 2}) + "\n",
+                encoding="utf-8",
+            )
+            runtime = {
+                "gazebo_native_observer": {
+                    "world_stats_topic": "/world/test/stats",
+                    "verdict_owner": "diagnostic_only",
+                }
+            }
+            diagnostics = report._gazebo_native_diagnostics(session, runtime)
+
+            self.assertEqual(diagnostics["psi_samples"], 2)
+            self.assertEqual(diagnostics["observer"]["world_stats_topic"], "/world/test/stats")
+            self.assertEqual(diagnostics["verdict_owner"], "diagnostic_only")
+            self.assertEqual(report._experimental_bypass_reasons(runtime), [])
+
     def test_report_analysis_failure_writes_minimal_artifact_set(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
@@ -1149,6 +1229,33 @@ class RuntimeContractTest(unittest.TestCase):
                 "analysis exploded",
                 (session / "REPORT_BUILD_ERROR.txt").read_text(encoding="utf-8"),
             )
+
+    def test_observation_complete_preserves_evaluated_failure_verdict(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "runtime.json").write_text("{}\n", encoding="utf-8")
+            fake_report = {
+                "workflow": "sim",
+                "verdict": "FAIL",
+                "reasons": ["stream freshness violation"],
+            }
+            import flight_review_report
+
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "_process_failures", return_value=[]), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session,
+                    "sim",
+                    ROOT / "config/runtime/sim.yaml",
+                    ROOT,
+                    observation_complete=True,
+                )
+            self.assertEqual(result["verdict"], "FAIL")
+            self.assertEqual(result["reasons"], ["stream freshness violation"])
+            self.assertTrue(result["observation_complete"])
+            self.assertEqual(result["observation_status"], "OBSERVATION_COMPLETE")
 
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]

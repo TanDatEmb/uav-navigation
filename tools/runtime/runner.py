@@ -1356,6 +1356,38 @@ def _wait_gazebo(world: str, timeout_s: float, gz_command: str) -> None:
     raise TimeoutError(f"Gazebo clock did not appear: {topic}")
 
 
+def _start_gazebo_native_observer(
+    session: Session, world: str, gz_command: str
+) -> subprocess.Popen[Any]:
+    process = session.start(
+        "gazebo_native_observer",
+        [
+            sys.executable,
+            str(ROOT / "tools/runtime/gazebo_native_observer.py"),
+            "--session",
+            str(session.directory),
+            "--world",
+            world,
+            "--gz-command",
+            gz_command,
+        ],
+        cwd=ROOT,
+    )
+    _write_runtime(
+        session,
+        gazebo_native_observer={
+            "status": "started",
+            "world_stats_topic": f"/world/{world}/stats",
+            "world_clock_topic": f"/world/{world}/clock",
+            "samples": str(session.directory / "gazebo_native_samples.jsonl"),
+            "summary": str(session.directory / "gazebo_native_summary.json"),
+            "process_period_s": 1.0,
+            "verdict_owner": "diagnostic_only",
+        },
+    )
+    return process
+
+
 def _run_sim_unlocked(
     headless: bool,
     control_interface: str = "offboard",
@@ -1372,6 +1404,7 @@ def _run_sim_unlocked(
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
     tb001_exp_jerk_penalty: float | str | None = None,
+    gazebo_native_diagnostic: bool = False,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
@@ -1721,6 +1754,8 @@ def _run_sim_unlocked(
         if not gz_command:
             raise RuntimeError("Gazebo simulator command is unavailable")
         _wait_gazebo(world, float(config["runtime"]["timeouts"]["startup_s"]), gz_command)
+        if gazebo_native_diagnostic:
+            _start_gazebo_native_observer(session, world, gz_command)
         session.start(
             "xrce_agent", ["MicroXRCEAgent", "udp4", "-p", str(isolated_xrce_port)], cwd=ROOT
         )
@@ -1886,7 +1921,7 @@ def _run_sim_unlocked(
             outcome == "PAUSED_SAFETY_STOP" and expected_fail_closed
         ):
             return 2
-    return 0 if result["verdict"] in {"PASS", "OBSERVATION_COMPLETE"} else 1
+    return 0 if result["verdict"] == "PASS" or result.get("observation_status") == "OBSERVATION_COMPLETE" else 1
 
 
 def _current_runner_session(existing: set[Path] | None = None) -> Session | None:
@@ -2222,6 +2257,10 @@ def main() -> int:
         "--tb001-exp-jerk-penalty", type=float, default=None,
         help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
     )
+    external_mode.add_argument(
+        "--gazebo-native-diagnostic", action="store_true",
+        help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
+    )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -2276,6 +2315,10 @@ def main() -> int:
         help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
     )
     external_mode_gui.add_argument(
+        "--gazebo-native-diagnostic", action="store_true",
+        help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
+    )
+    external_mode_gui.add_argument(
         "--manual-takeoff", action="store_true",
         help="do not send ARM/TAKEOFF; wait for the operator before activating External Mode",
     )
@@ -2309,6 +2352,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
+            gazebo_native_diagnostic=args.gazebo_native_diagnostic,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -2326,6 +2370,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
+            gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
         )

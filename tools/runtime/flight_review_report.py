@@ -443,7 +443,7 @@ def _evaluation(
     px4_condition = None if any(value is None for value in px4_values) else all(px4_values)
     telemetry_verdict = str(report.get("verdict") or "").upper()
     runtime_contract_condition = (
-        True if telemetry_verdict in {"PASS", "OBSERVATION_COMPLETE"}
+        True if telemetry_verdict == "PASS"
         else False if telemetry_verdict == "FAIL"
         else None
     )

@@ -165,6 +165,28 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         self.assertEqual(result["gates"]["runtime_contract"], "FAIL")
         self.assertEqual(result["overall"], "FAIL")
 
+    def test_observation_complete_is_not_an_acceptance_pass(self) -> None:
+        result = _evaluation(
+            {"verdict": "OBSERVATION_COMPLETE"},
+            {"outcome": "COMPLETE"},
+            {
+                "expected_outcome": "complete",
+                "mission_complete_observed": True,
+                "waypoint_acceptance_complete": True,
+            },
+            {"state": "TRACKING", "navigation_valid": True},
+            {
+                "estimator_initialized": True,
+                "local_position_valid": True,
+                "local_velocity_valid": True,
+            },
+            0.1,
+            0.75,
+            0.0,
+        )
+        self.assertEqual(result["gates"]["runtime_contract"], "N/A")
+        self.assertEqual(result["overall"], "INCOMPLETE")
+
     def test_current_super_navigation_diagnostics_are_parsed_without_fake_planner_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             session = Path(directory)
