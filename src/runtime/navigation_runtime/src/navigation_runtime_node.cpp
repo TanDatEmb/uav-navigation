@@ -1799,27 +1799,29 @@ void NavigationRuntimeNode::runCycle() {
     };
     planner_->lockCommittedTraj();
     const auto committed = planner_->getCommittedPositionTrajectory();
+    const auto committed_generation = planner_->committedGenerationSnapshot();
     const bool backup_available = planner_->committedBackupTrajectoryAvailable();
     const double backup_start_s = planner_->getCommittedBackupStartTrajectoryTime();
     planner_->unlockCommittedTraj();
     const auto guide_end = planner_->latestGuideEnd();
     const auto guide_min = planner_->latestGuideMin();
     const auto guide_max = planner_->latestGuideMax();
-    const auto committed_start = committed.empty() ? navigation_planning_backend::math::Vec3f{} : committed.getPos(0.0);
-    const auto committed_end = committed.empty()
+    const bool committed_valid = committed_generation > 0U && !committed.empty();
+    const auto committed_start = !committed_valid ? navigation_planning_backend::math::Vec3f{} : committed.getPos(0.0);
+    const auto committed_end = !committed_valid
                                    ? navigation_planning_backend::math::Vec3f{}
                                    : committed.getPos(committed.getTotalDuration());
     const double committed_duration = committed.getTotalDuration();
-    const auto committed_quarter = committed.empty()
+    const auto committed_quarter = !committed_valid
                                        ? navigation_planning_backend::math::Vec3f{}
                                        : committed.getPos(committed_duration * 0.25);
-    const auto committed_half = committed.empty()
+    const auto committed_half = !committed_valid
                                     ? navigation_planning_backend::math::Vec3f{}
                                     : committed.getPos(committed_duration * 0.50);
-    const auto committed_three_quarter = committed.empty()
+    const auto committed_three_quarter = !committed_valid
                                              ? navigation_planning_backend::math::Vec3f{}
                                              : committed.getPos(committed_duration * 0.75);
-    const auto main_end = committed.empty() || !backup_available
+    const auto main_end = !committed_valid || !backup_available
                               ? committed_end
                               : committed.getPos(std::clamp(
                                     backup_start_s, 0.0, committed_duration));
