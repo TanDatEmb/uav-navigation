@@ -438,13 +438,18 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                         values = status.get("values", {})
                         if not isinstance(values, dict):
                             continue
-                        entry = diagnostics.setdefault(name, {"count": 0, "latest": {}, "fields": {}})
+                        entry = diagnostics.setdefault(
+                            name, {"count": 0, "latest": {}, "fields": {}, "series": {}}
+                        )
                         entry["count"] += 1
                         entry["latest"] = dict(values)
                         for key, value in values.items():
                             number = _finite_number(value)
                             if number is not None:
                                 entry["fields"].setdefault(key, []).append(number)
+                                entry["series"].setdefault(key, []).append(
+                                    {"t": timestamp, "value": number}
+                                )
 
     scenario_path = session / "scenario.jsonl"
     if scenario_path.is_file():
@@ -539,6 +544,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                     "count": len(converted),
                     "nonzero_count": sum(abs(value) > 1e-12 for value in converted),
                     "stats": _summary(converted),
+                    "series": _sampled_dicts(entry.get("series", {}).get(field, []), limit),
                 })
         health_fields = {
             "state", "status", "navigation_valid", "transport_ok", "cycle_count",

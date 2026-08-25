@@ -1160,6 +1160,285 @@ def _diagnostic_timing_rows(observability: dict[str, Any]) -> str:
     return "".join(rows) or '<tr><td colspan="11">No LIO/planner processing telemetry recorded.</td></tr>'
 
 
+_TIMING_PHASE_META: dict[str, dict[str, str]] = {
+    "ros_pointcloud_decode_us": {"label": "ROS point-cloud decode", "group": "Input", "kind": "compute"},
+    "observation_pair_wait_us": {"label": "Observation pair wait", "group": "Wait", "kind": "wait"},
+    "mapping_callback_total_us": {"label": "Mapping callback total", "group": "Mapping", "kind": "total"},
+    "world_snapshot_export_us": {"label": "World snapshot export", "group": "Mapping", "kind": "compute"},
+    "rog_total_update_us": {"label": "ROG-Map update total", "group": "ROG-Map", "kind": "total"},
+    "rog_raycast_us": {"label": "ROG raycast", "group": "ROG-Map", "kind": "compute"},
+    "rog_probability_update_us": {"label": "ROG probability update", "group": "ROG-Map", "kind": "compute"},
+    "rog_inflation_us": {"label": "ROG inflation", "group": "ROG-Map", "kind": "compute"},
+    "rog_slide_us": {"label": "ROG slide", "group": "ROG-Map", "kind": "compute"},
+    "planning_latency_ms": {"label": "Planner cycle total", "group": "Planner", "kind": "total"},
+    "planning_scheduling_gap_us": {"label": "Planner scheduling gap", "group": "Planner", "kind": "wait"},
+    "mapping_input_lock_wait_us": {"label": "Planner input-lock wait", "group": "Planner", "kind": "wait"},
+    "exp_frontend_us": {"label": "Nominal trajectory frontend", "group": "Planner", "kind": "compute"},
+    "exp_opt_us": {"label": "Nominal trajectory optimizer", "group": "Planner", "kind": "compute"},
+    "backup_frontend_us": {"label": "Backup trajectory frontend", "group": "Planner", "kind": "compute"},
+    "backup_opt_us": {"label": "Backup trajectory optimizer", "group": "Planner", "kind": "compute"},
+    "scan_processing_p95_us": {"label": "LIO scan processing (reported p95)", "group": "LIO", "kind": "total"},
+    "measurement_model_us": {"label": "LIO measurement model", "group": "LIO", "kind": "compute"},
+    "ikfom_solver_only_us": {"label": "LIO IKFoM solver", "group": "LIO", "kind": "compute"},
+    "map_maintenance_us": {"label": "LIO map maintenance", "group": "LIO", "kind": "compute"},
+    "last_replay_runtime_us": {"label": "LIO propagation replay", "group": "LIO", "kind": "compute"},
+    "maximum_replay_runtime_us": {"label": "LIO propagation replay maximum", "group": "LIO", "kind": "total"},
+    "processing_lag_ns": {"label": "LIO transport processing lag", "group": "LIO", "kind": "wait"},
+}
+
+
+def _timing_value_to_us(value: Any, unit: Any) -> float | None:
+    number = finite(value)
+    if number is None:
+        return None
+    return number * {"us": 1.0, "ms": 1000.0, "ns": 0.001}.get(str(unit), 1.0)
+
+
+def _timing_phase_rows(observability: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    group_order = {"Wait": 0, "Input": 1, "Mapping": 2, "ROG-Map": 3, "Planner": 4, "LIO": 5}
+    for item in observability.get("timing", []):
+        if integer(item.get("nonzero_count")) == "—" or int(item.get("nonzero_count") or 0) <= 0:
+            continue
+        stats = item.get("stats", {})
+        meta = _TIMING_PHASE_META.get(str(item.get("metric")), {
+            "label": str(item.get("metric")), "group": str(item.get("component")), "kind": "observed",
+        })
+        converted = {
+            key: _timing_value_to_us(stats.get(key), item.get("unit"))
+            for key in ("mean", "p50", "p95", "p99", "maximum")
+        }
+        if converted["maximum"] is None:
+            continue
+        rows.append({
+            **item,
+            **meta,
+            **converted,
+            "metric": str(item.get("metric")),
+        })
+    return sorted(rows, key=lambda row: (group_order.get(str(row.get("group")), 9), -float(row.get("p95") or 0.0)))
+
+
+def _timing_display(value_us: Any) -> str:
+    value = finite(value_us)
+    if value is None:
+        return "—"
+    if value >= 1000.0:
+        return f"{value / 1000.0:.2f} ms"
+    return f"{value:.0f} µs"
+
+
+def _timing_row_map(observability: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(row.get("metric")): row for row in _timing_phase_rows(observability)}
+
+
+def _timing_overview_cards(observability: dict[str, Any]) -> str:
+    rows = _timing_row_map(observability)
+    cards = [
+        ("Mapping callback", "mapping_callback_total_us", "measured total", TEAL),
+        ("Planner cycle", "planning_latency_ms", "measured total", PURPLE),
+        ("LIO measurement phase", "measurement_model_us", "phase only; not LIO total", BLUE),
+        ("Observation pair wait", "observation_pair_wait_us", "queue/synchronization wait", ORANGE),
+    ]
+    html_cards = []
+    for label, metric, kind, color in cards:
+        row = rows.get(metric)
+        if row is None:
+            value = "N/A"
+            detail = "not recorded"
+        else:
+            value = _timing_display(row.get("p95"))
+            detail = f"p50 {_timing_display(row.get('p50'))} · max {_timing_display(row.get('maximum'))} · n {integer(row.get('count'))}"
+        html_cards.append(
+            f'<div class="timing-kpi" style="border-top-color:{color}">'
+            f'<div class="timing-kpi-label">{esc(label)}</div>'
+            f'<div class="timing-kpi-value">{esc(value)}</div>'
+            f'<div class="timing-kpi-kind">p95 · {esc(kind)}</div>'
+            f'<div class="timing-kpi-detail">{esc(detail)}</div></div>'
+        )
+    return f'<div class="timing-kpis">{"".join(html_cards)}</div>'
+
+
+def _timing_distribution_panel(group: str, rows: list[dict[str, Any]]) -> str:
+    width = 700
+    left, right, top, bottom = 200, 215, 36, 28
+    row_height = 29
+    height = top + row_height * len(rows) + bottom
+    maximum = max(float(row.get("maximum") or 0.0) for row in rows)
+    axis_max = max(1.0, maximum * 1.12)
+
+    def x(value: Any) -> float:
+        number = max(0.0, float(value or 0.0))
+        return left + min(1.0, number / axis_max) * (width - left - right)
+
+    group_colors = {"Wait": ORANGE, "Input": BLUE, "Mapping": TEAL, "ROG-Map": TEAL, "Planner": PURPLE, "LIO": BLUE}
+    color = group_colors.get(group, SLATE)
+    parts = [
+        f'<div class="chart-card timing-panel"><div class="chart-title">{esc(group)}</div>',
+        f'<svg class="chart timing-chart" viewBox="0 0 {width} {height}" role="img" aria-label="{esc(group)} timing distribution">',
+        f'<title>{esc(group)} timing distribution</title><rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>',
+    ]
+    for fraction in (0.0, 0.5, 1.0):
+        value = axis_max * fraction
+        tx = x(value)
+        parts.append(
+            f'<line x1="{tx:.1f}" y1="{top-8}" x2="{tx:.1f}" y2="{height-bottom}" stroke="{GRID}"/>'
+            f'<text x="{tx:.1f}" y="{height-bottom+18}" text-anchor="middle" class="axis-label">{esc(_timing_display(value))}</text>'
+        )
+    for index, row in enumerate(rows):
+        y = top + index * row_height + row_height / 2
+        p50 = float(row.get("p50") or 0.0)
+        p95 = float(row.get("p95") or 0.0)
+        maximum_value = float(row.get("maximum") or 0.0)
+        x50, x95, xmax = x(p50), x(p95), x(maximum_value)
+        kind = str(row.get("kind") or "observed")
+        stroke = color if kind != "wait" else ORANGE
+        weight = "800" if kind == "total" else "400"
+        parts.extend([
+            f'<text x="{left-10}" y="{y+4:.1f}" text-anchor="end" class="axis-label" font-weight="{weight}">{esc(row["label"])}</text>',
+            f'<line x1="{x50:.1f}" y1="{y:.1f}" x2="{x95:.1f}" y2="{y:.1f}" stroke="{stroke}" stroke-width="9" stroke-linecap="round" opacity="0.78"><title>{esc(row["label"])} p50–p95</title></line>',
+            f'<line x1="{x95:.1f}" y1="{y:.1f}" x2="{xmax:.1f}" y2="{y:.1f}" stroke="#526578" stroke-width="2"><title>p95 to max</title></line>',
+            f'<circle cx="{x50:.1f}" cy="{y:.1f}" r="4.2" fill="#18324b"><title>p50 {_timing_display(p50)}</title></circle>',
+            f'<line x1="{xmax:.1f}" y1="{y-8:.1f}" x2="{xmax:.1f}" y2="{y+8:.1f}" stroke="#18324b" stroke-width="2"><title>max {_timing_display(maximum_value)}</title></line>',
+            f'<text x="{width-right+8}" y="{y+4:.1f}" class="axis-label">{esc(_timing_display(p50))} / {esc(_timing_display(p95))} / {esc(_timing_display(maximum_value))} · n {integer(row.get("count"))}</text>',
+        ])
+    parts.extend([
+        f'<line x1="{left}" y1="{top-8}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
+        f'<text x="{left + (width-left-right)/2:.1f}" y="{height-7}" text-anchor="middle" class="axis-title">duration · linear scale</text>',
+        '</svg></div>',
+    ])
+    return "".join(parts)
+
+
+def _timing_distribution_chart(observability: dict[str, Any]) -> str:
+    rows = _timing_phase_rows(observability)
+    if not rows:
+        return '<div class="empty-chart">No non-zero phase timing samples recorded.</div>'
+    group_order = ["Wait", "Input", "Mapping", "ROG-Map", "Planner", "LIO"]
+    panels = []
+    for group in group_order:
+        group_rows = [row for row in rows if str(row.get("group")) == group]
+        if group_rows:
+            panels.append(_timing_distribution_panel(group, group_rows))
+    legend = (
+        '<div class="timing-legend">'
+        '<span><i class="timing-key compute"></i>compute</span>'
+        '<span><i class="timing-key wait"></i>wait / queue</span>'
+        '<span><i class="timing-key total"></i>aggregate total</span>'
+        '<span>dot = p50 · thick segment = p50–p95 · whisker = p95–max</span>'
+        '</div>'
+    )
+    return f'<div class="timing-panel-grid">{legend}{"".join(panels)}</div>'
+
+
+def _timing_timeline_chart(observability: dict[str, Any]) -> str:
+    wanted = (
+        "observation_pair_wait_us",
+        "mapping_callback_total_us",
+        "rog_total_update_us",
+        "planning_latency_ms",
+        "measurement_model_us",
+    )
+    rows = [row for metric in wanted for row in [_timing_row_map(observability).get(metric)] if row]
+    rows = [row for row in rows if len(row.get("series") or []) >= 2]
+    if not rows:
+        return '<div class="empty-chart">No timestamped timing samples recorded.</div>'
+    width = 980
+    left, right, top, bottom = 205, 120, 28, 34
+    row_height = 58
+    height = top + row_height * len(rows) + bottom
+    all_times = [finite(point.get("t")) for row in rows for point in row.get("series", [])]
+    all_times = [value for value in all_times if value is not None]
+    time_min, time_max = min(all_times), max(all_times)
+    time_span = max(1.0e-9, time_max - time_min)
+
+    def x(value: Any) -> float:
+        return left + (float(value) - time_min) / time_span * (width - left - right)
+
+    parts = [
+        '<div class="chart-card timing-timeline"><div class="chart-title">Observed duration over simulation time</div>',
+        '<p class="small timing-caption">Each dot is a diagnostic sample; this shows when values spike, not the exact start/end interval of the phase.</p>',
+        f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="Observed timing over simulation time">',
+        f'<title>Observed timing over simulation time</title><rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>',
+    ]
+    for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
+        tx = left + fraction * (width - left - right)
+        value = time_min + fraction * time_span
+        parts.append(
+            f'<line x1="{tx:.1f}" y1="{top-5}" x2="{tx:.1f}" y2="{height-bottom}" stroke="{GRID}"/>'
+            f'<text x="{tx:.1f}" y="{height-bottom+19}" text-anchor="middle" class="axis-label">{value:.1f}s</text>'
+        )
+    state_colors = {"normal": "#e6f5eb", "safety": "#fde8e5", "unknown": "#f1f3f5"}
+    for interval in observability.get("state_intervals", []):
+        start, end = finite(interval.get("t_start")), finite(interval.get("t_end"))
+        if start is None or end is None:
+            continue
+        x1, x2 = max(left, x(start)), min(width-right, x(end))
+        if x2 <= x1:
+            continue
+        parts.append(
+            f'<rect x="{x1:.1f}" y="{top-5}" width="{x2-x1:.1f}" height="{height-top-bottom+5}" fill="{state_colors.get(str(interval.get("state")), "#f1f3f5")}" opacity="0.7"><title>{esc(interval.get("state"))} state</title></rect>'
+        )
+    group_colors = {"Input": ORANGE, "Mapping": TEAL, "ROG-Map": TEAL, "Planner": PURPLE, "LIO": BLUE}
+    for index, row in enumerate(rows):
+        y_top = top + index * row_height
+        plot_top, plot_bottom = y_top + 8, y_top + row_height - 9
+        series = [point for point in row.get("series", []) if finite(point.get("t")) is not None and finite(point.get("value")) is not None]
+        max_value = max([float(point["value"]) for point in series] + [1.0])
+        p50, p95 = float(row.get("p50") or 0.0), float(row.get("p95") or 0.0)
+        def y(value: Any) -> float:
+            return plot_bottom - min(1.0, max(0.0, float(value or 0.0) / max_value)) * (plot_bottom - plot_top)
+        color = group_colors.get(str(row.get("group")), SLATE)
+        parts.extend([
+            f'<text x="{left-12}" y="{y_top+25}" text-anchor="end" class="axis-label">{esc(row["label"])}</text>',
+            f'<line x1="{left}" y1="{y(p95):.1f}" x2="{width-right}" y2="{y(p95):.1f}" stroke="{color}" stroke-dasharray="4 3" opacity="0.55"/>',
+            f'<text x="{width-right+8}" y="{y(p95)+4:.1f}" class="axis-label">p95 {_timing_display(p95)}</text>',
+        ])
+        for point in series:
+            parts.append(
+                f'<circle cx="{x(point["t"]):.1f}" cy="{y(point["value"]):.1f}" r="2.2" fill="{color}" opacity="0.62"><title>{esc(row["label"])} at {float(point["t"]):.2f}s: {_timing_display(float(point["value"]))}</title></circle>'
+            )
+    parts.extend([
+        f'<line x1="{left}" y1="{top-5}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
+        f'<text x="{left + (width-left-right)/2:.1f}" y="{height-7}" text-anchor="middle" class="axis-title">simulation time (s)</text>',
+        '</svg></div>',
+    ])
+    return "".join(parts)
+
+
+def _timing_execution_model() -> str:
+    lanes = [
+        ("LIO", (("measurement model", "compute"), ("IKFoM solver", "compute"), ("propagation", "compute"))),
+        ("Mapping worker", (("point-cloud decode", "compute"), ("pair wait", "wait"), ("ROG-Map update", "total"), ("snapshot export", "unavailable"))),
+        ("Planner cycle", (("pinned snapshot", "compute"), ("plan / replan", "compute"), ("publish command", "compute"))),
+    ]
+    parts = ['<div class="timing-flow"><div class="chart-title">Logical execution model</div>']
+    for label, boxes in lanes:
+        parts.append(f'<div class="timing-lane"><div class="timing-lane-label">{esc(label)}</div><div class="timing-lane-track">')
+        for index, (name, kind) in enumerate(boxes):
+            if index:
+                parts.append('<span class="timing-arrow">→</span>')
+            parts.append(f'<span class="timing-box {esc(kind)}">{esc(name)}</span>')
+        parts.append('</div></div>')
+    parts.append('<div class="timing-flow-note">Arrows are source-level sequence contracts. LIO, mapping and planner occupy independent worker lanes and may run concurrently; exact overlap requires start/end events, which this artifact does not record.</div></div>')
+    return "".join(parts)
+
+
+def _timing_relationship_rows() -> str:
+    rows = [
+        ("Input preparation", "decode → observation pair wait", "Decode precedes pair admission. Pair wait is synchronization/queue delay, not compute; it is not added to mapping callback total.", "observed + source contract"),
+        ("Mapping callback", "ROG-Map update → snapshot export", "mapping_callback_total_us is the callback envelope. ROG-Map update and snapshot export are inside this envelope when both are emitted.", "source contract; export unavailable in this artifact"),
+        ("ROG-Map update", "raycast + probability update + inflation + slide", "rog_total_update_us is an aggregate. Its subphases are reported separately; do not sum them with the aggregate.", "source contract"),
+        ("Planner cycle", "planning latency / optimizer phases", "Planner runs from a pinned world snapshot in a separate cycle. Module phase timings are only comparable when emitted by the same build.", "planner total observed; optimizer phases unavailable here"),
+        ("LIO estimator", "measurement model → IKFoM solver → propagation", "These are separate LIO diagnostics. The artifact has no single LIO end-to-end envelope, so their sum is not claimed as total LIO latency.", "observed; composition not certified"),
+        ("Concurrency", "mapping worker || planner cycle || LIO callbacks", "Mapping worker and planner cycle are independently scheduled; timestamps show samples, not proof of exact overlap for each invocation.", "source contract; overlap not directly recorded"),
+    ]
+    return "".join(
+        f'<tr><td>{esc(phase)}</td><td>{esc(sequence)}</td><td>{esc(meaning)}</td><td>{esc(evidence)}</td></tr>'
+        for phase, sequence, meaning, evidence in rows
+    )
+
+
 def _waypoint_event_rows(observability: dict[str, Any]) -> str:
     rows = []
     for item in observability.get("waypoint_events", []):
@@ -1459,6 +1738,11 @@ def render(session: Path, output: Path) -> Path:
     axis_rows = _axis_rows(observability)
     diagnostic_health_rows = _diagnostic_health_rows(observability)
     diagnostic_timing_rows = _diagnostic_timing_rows(observability)
+    timing_overview_cards = _timing_overview_cards(observability)
+    timing_phase_chart = _timing_distribution_chart(observability)
+    timing_timeline_chart = _timing_timeline_chart(observability)
+    timing_execution_model = _timing_execution_model()
+    timing_relationship_rows = _timing_relationship_rows()
     waypoint_event_rows = _waypoint_event_rows(observability)
     trajectory_paths = observability.get("trajectory_paths", [])
     main_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 1 for item in trajectory_paths)
@@ -1572,6 +1856,9 @@ def render(session: Path, output: Path) -> Path:
     .chart-card {{ border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 2px; overflow:hidden; }}
     .map-annotations {{ display:flex; flex-wrap:wrap; gap:6px 16px; padding:7px 4px 5px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; }} .map-annotations > div {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .map-annotations strong {{ color:#29435d; }} .map-tag {{ display:inline-block; padding:2px 6px; border:1px solid #c9d3dc; border-radius:999px; background:#f7fafc; color:#40566b; }} .map-tag.route {{ border-color:#e8897e; background:#fde8e5; color:#8f2e26; }} .map-tag.waypoint {{ border-color:#e2b35a; background:#fff5da; color:#7b4e00; }} .map-tag.muted {{ color:#8795a1; }}
     .state-note {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .state-key {{ display:inline-block; width:18px; height:10px; margin-left:7px; border:1px solid #b8c5ce; border-radius:2px; vertical-align:middle; }} .state-key.normal {{ background:#dff3e8; }} .state-key.safety {{ background:#fde3e0; }}
+    .timing-kpis {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:14px 0; }} .timing-kpi {{ min-height:112px; padding:12px 13px; border:1px solid #e3e9ee; border-top:4px solid; border-radius:8px; background:#fbfdfe; }} .timing-kpi-label {{ color:#53677b; font-size:12px; font-weight:800; }} .timing-kpi-value {{ margin-top:6px; color:#102b45; font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }} .timing-kpi-kind,.timing-kpi-detail {{ color:#68778a; font-size:11px; }} .timing-kpi-detail {{ margin-top:5px; font-variant-numeric:tabular-nums; }}
+    .timing-panel-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }} .timing-panel-grid > .timing-legend {{ grid-column:1/-1; }} .timing-panel {{ min-width:0; }} .timing-legend {{ display:flex; flex-wrap:wrap; gap:7px 16px; align-items:center; color:#53677b; font-size:11px; padding:2px 4px; }} .timing-key {{ width:18px; height:8px; display:inline-block; margin-right:5px; vertical-align:middle; border-radius:5px; background:{BLUE}; }} .timing-key.wait {{ background:{ORANGE}; }} .timing-key.total {{ height:10px; border:2px solid {TEAL}; background:#fff; }}
+    .timing-caption {{ margin:2px 5px 8px; }} .timing-timeline {{ margin-top:10px; }} .timing-flow {{ margin-top:10px; padding:10px; border:1px solid #e3e9ee; border-radius:9px; background:#fbfdfe; }} .timing-lane {{ display:grid; grid-template-columns:112px minmax(0,1fr); gap:10px; align-items:center; margin-top:8px; }} .timing-lane-label {{ color:#29435d; font-size:12px; font-weight:800; text-align:right; }} .timing-lane-track {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .timing-box {{ display:inline-block; padding:6px 9px; border:1px solid #9ab5ca; border-radius:6px; background:#eaf4fb; color:#234d70; font-size:11px; font-weight:700; }} .timing-box.wait {{ border-color:#e0b45b; background:#fff5dc; color:#7b4e00; }} .timing-box.total {{ border:2px solid {TEAL}; background:#e4f5f3; color:#126466; }} .timing-box.unavailable {{ border-style:dashed; background:#f2f4f6; color:#7b8996; }} .timing-arrow {{ color:#7c8d9d; font-weight:900; }} .timing-flow-note {{ margin:11px 0 0 122px; color:#68778a; font-size:11px; }}
     .chart-card:first-child {{ grid-column:auto; }}
     .chart-title {{ margin:2px 5px 2px; font-weight:800; font-size:14px; color:#29435d; }}
     .chart {{ width:100%; height:auto; display:block; }} .chart-legend-toggle {{ cursor:pointer; }} .chart-legend-toggle:focus {{ outline:2px solid {BLUE}; outline-offset:2px; }} .chart-legend-toggle.off {{ opacity:.32; }}
@@ -1586,8 +1873,8 @@ def render(session: Path, output: Path) -> Path:
     .raw-links {{ display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:8px; }} a {{ color:#1b63a1; }} code {{ background:#eef3f7; padding:2px 5px; border-radius:4px; font-size:11px; }}
     .small {{ font-size:12px; color:var(--muted); }} footer {{ margin-top:18px; font-size:11px; color:#7b8996; }}
     .run-log {{ display:flex; flex-wrap:wrap; gap:8px 18px; margin:0 0 14px; padding:10px 13px; border:1px solid #cfe0ec; border-left:4px solid {BLUE}; border-radius:7px; background:#f5faff; color:#29435d; font-size:12px; font-variant-numeric:tabular-nums; }} .run-log strong {{ color:#163b5b; }}
-    @media (max-width:900px) {{ .kpis {{ grid-template-columns:repeat(3,minmax(0,1fr)); }} .two-col {{ grid-template-columns:1fr; }} .replay-grid {{ grid-template-columns:1fr; }} }}
-    @media (max-width:600px) {{ main {{ padding:18px 12px 40px; }} .hero {{ display:block; }} .hero-right {{ margin-top:12px; }} .kpis {{ grid-template-columns:1fr 1fr; }} .findings {{ grid-template-columns:1fr; }} section {{ padding:14px; }} .evidence {{ font-size:12px; }} .evidence th:nth-child(3),.evidence td:nth-child(3) {{ display:none; }} }}
+    @media (max-width:900px) {{ .kpis {{ grid-template-columns:repeat(3,minmax(0,1fr)); }} .timing-kpis {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} .timing-panel-grid {{ grid-template-columns:1fr; }} .two-col {{ grid-template-columns:1fr; }} .replay-grid {{ grid-template-columns:1fr; }} }}
+    @media (max-width:600px) {{ main {{ padding:18px 12px 40px; }} .hero {{ display:block; }} .hero-right {{ margin-top:12px; }} .kpis,.timing-kpis {{ grid-template-columns:1fr 1fr; }} .findings {{ grid-template-columns:1fr; }} section {{ padding:14px; }} .evidence {{ font-size:12px; }} .evidence th:nth-child(3),.evidence td:nth-child(3) {{ display:none; }} .timing-lane {{ display:block; }} .timing-lane-label {{ text-align:left; margin-bottom:4px; }} .timing-flow-note {{ margin-left:0; }} }}
   </style>
 </head>
 <body>
@@ -1628,7 +1915,9 @@ def render(session: Path, output: Path) -> Path:
   {failure_reasons_html}
   {kinematics_html}
 
-  <section><h2>Measured processing time</h2><p class="small">Timing is extracted from LIO and planner diagnostic samples. <strong>Non-zero</strong> counts make zero-valued counters visible instead of silently treating them as missing.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></section>
+  <section><h2>Measured processing time · raw table</h2><p class="small">Detailed diagnostic values are retained here for audit. The visual summary below is the primary interpretation view.</p><details><summary>Show raw timing statistics</summary><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></details></section>
+
+  <section><h2>Timing overview · spread and execution model</h2><p class="small">Read the cards first, then compare phases within each subsystem panel. A thick segment is p50–p95; the thin whisker is p95–max. Totals are not added to their child phases. The timeline uses diagnostic sample timestamps, not invented phase start/end times.</p>{timing_overview_cards}{timing_phase_chart}{timing_timeline_chart}{timing_execution_model}<details><summary>Show timing composition and evidence limits</summary><table class="evidence"><thead><tr><th>Phase group</th><th>Observed/source sequence</th><th>How to read the timing</th><th>Evidence status</th></tr></thead><tbody>{timing_relationship_rows}</tbody></table></details></section>
 
   <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 

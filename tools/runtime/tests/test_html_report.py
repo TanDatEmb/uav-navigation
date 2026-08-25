@@ -7,7 +7,16 @@ from pathlib import Path
 RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
-from flight_review_report import _evaluation, _safety_stop_status, _timing_rows, line_chart
+from flight_review_report import (
+    _evaluation,
+    _safety_stop_status,
+    _timing_distribution_chart,
+    _timing_execution_model,
+    _timing_overview_cards,
+    _timing_timeline_chart,
+    _timing_rows,
+    line_chart,
+)
 from html_report import _planning_continuity, _runtime_observability, _safety_timeline, _samples, _trajectory_smoothness
 
 
@@ -161,6 +170,42 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
 
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_timing_view_is_split_by_subsystem_and_time(self) -> None:
+        observability = {
+            "timing": [
+                {
+                    "component": "Planner / ROG-Map",
+                    "source": "super_navigation/super_planner",
+                    "metric": "planning_latency_ms",
+                    "unit": "ms",
+                    "count": 3,
+                    "nonzero_count": 3,
+                    "stats": {"mean": 1.0, "p50": 0.8, "p95": 1.8, "p99": 2.0, "maximum": 2.2},
+                    "series": [{"t": 1.0, "value": 0.8}, {"t": 2.0, "value": 1.8}],
+                },
+                {
+                    "component": "Planner / ROG-Map",
+                    "source": "super_navigation/super_planner",
+                    "metric": "observation_pair_wait_us",
+                    "unit": "us",
+                    "count": 3,
+                    "nonzero_count": 3,
+                    "stats": {"mean": 1000.0, "p50": 800.0, "p95": 1800.0, "p99": 2000.0, "maximum": 2200.0},
+                    "series": [{"t": 1.0, "value": 800.0}, {"t": 2.0, "value": 1800.0}],
+                },
+            ],
+            "state_intervals": [],
+        }
+        distribution = _timing_distribution_chart(observability)
+        self.assertIn("linear scale", distribution)
+        self.assertIn("Planner", distribution)
+        self.assertNotIn("logarithmic µs scale", distribution)
+        self.assertIn("thick segment", distribution)
+        self.assertIn("p50–p95", distribution)
+        self.assertIn("Observed duration over simulation time", _timing_timeline_chart(observability))
+        self.assertIn("Logical execution model", _timing_execution_model())
+        self.assertIn("Planner cycle", _timing_overview_cards(observability))
+
     def test_safety_stop_is_observed_not_an_acceptance_pass(self) -> None:
         self.assertEqual(_safety_stop_status(True), "OBSERVE")
         self.assertEqual(_safety_stop_status(False), "N/A")
