@@ -1288,23 +1288,34 @@ void NavigationRuntimeNode::runCycle() {
                                     ? navigation_planning_backend::math::Vec3f{}
                                     : committed.getPos(clamped_elapsed_s);
     // ReplanOnce may run for more than a second while command publication and
-    // vehicle motion continue concurrently. The planner_state captured before
-    // that solve is therefore stale by construction. Validate against the
-    // freshest propagated odometry available after the solve.
+    // vehicle motion continue concurrently. The planner state captured before
+    // that solve is therefore stale by construction. Re-read the immutable
+    // execution lease after the solve and apply the same dual-clock contract
+    // used by command publication; a stale receive must not rescue a retained
+    // or emergency command.
+    const auto retained_execution_state = execution_state_store_.load();
+    const auto retained_state_freshness = retained_execution_state
+        ? navigation_contracts::evaluateExecutionStateFreshness(
+              now().nanoseconds(), retained_execution_state->source_stamp_ns,
+              steadyNowNanoseconds(), retained_execution_state->receive_stamp_ns,
+              input_max_age_s_)
+        : navigation_contracts::ExecutionStateFreshness{};
     navigation_planning_backend::math::Vec3f current_vehicle_position =
-        execution_state.position_world;
+        navigation_planning_backend::math::Vec3f::Zero();
     navigation_planning_backend::math::Vec3f current_vehicle_velocity =
-        execution_state.velocity_world;
-    double current_vehicle_yaw = execution_state.yaw_rad;
-    bool fresh_vehicle_state = false;
-    double latest_vehicle_state_age_s = std::numeric_limits<double>::infinity();
-    latest_vehicle_state_age_s = now().seconds() -
-                                 static_cast<double>(execution_state.source_stamp_ns) * 1.0e-9;
-    fresh_vehicle_state = execution_state.finite() &&
-                          std::abs(latest_vehicle_state_age_s) <= input_max_age_s_;
-    current_vehicle_position = execution_state.position_world;
-    current_vehicle_velocity = execution_state.velocity_world;
-    current_vehicle_yaw = execution_state.yaw_rad;
+        navigation_planning_backend::math::Vec3f::Zero();
+    double current_vehicle_yaw = 0.0;
+    const bool fresh_vehicle_state = retained_execution_state &&
+                                     retained_execution_state->finite() &&
+                                     retained_state_freshness.valid();
+    const double latest_vehicle_state_age_s = retained_execution_state
+        ? retained_state_freshness.source_age_ms * 1.0e-3
+        : std::numeric_limits<double>::infinity();
+    if (fresh_vehicle_state) {
+      current_vehicle_position = retained_execution_state->position_world;
+      current_vehicle_velocity = retained_execution_state->velocity_world;
+      current_vehicle_yaw = retained_execution_state->yaw_rad;
+    }
     const double anchor_error_m = committed.empty() || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();

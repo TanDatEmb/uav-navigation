@@ -1792,3 +1792,22 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   sanitizer report. This confirms the finite-input boundary at source,
   product-test and sanitizer levels; it does not close repeated SITL/dataset
   acceptance or HG-013.
+
+### 2026-08-26 - Retained command revalidates the post-solve execution lease
+
+- Owner: `navigation_runtime` retained-command and emergency-brake validation.
+  Scope: after a planner solve returns, reload the immutable propagated-state
+  lease instead of reusing the state snapshot captured before the solve.
+- Safety impact: retained and measured-state emergency paths now require the
+  same finite-state, ROS source-age and steady receive-age contract as command
+  publication. A delivery gap cannot be hidden by a fresh ROS header. No
+  freshness limit, braking value, collision policy or fallback gate changed;
+  invalid state remains fail-closed.
+- Evidence: `navigation_execution` focused test now covers a 20 ms source age
+  with a 514.760 ms receive age and expects `RECEIVE_STALE`; Release build
+  passed for `navigation_execution` and `navigation_runtime`, with 2/2 and
+  8/8 CTest executables passing. Repeated dataset/SITL evidence is still
+  required to diagnose transport, executor or estimator delivery gaps.
+- Review condition: retain the post-solve reload and add an executor/transport
+  starvation reproduction before adjusting any runtime scheduling or QoS
+  policy. Do not claim this local correction closes the SITL regression.

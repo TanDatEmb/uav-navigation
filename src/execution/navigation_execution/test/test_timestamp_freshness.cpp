@@ -43,6 +43,17 @@ TEST(ExecutionStateFreshness, RequiresBothRosSourceAndSteadyReceiptToBeFresh) {
   EXPECT_EQ(frozen_ros.reason,
             navigation_contracts::ExecutionStateFreshnessReason::kReceiveStale);
 
+  // A planner solve can finish with a current ROS header while the delivery
+  // path has been blocked for longer than the lease. Retained-command
+  // validation must keep rejecting that state instead of trusting source age.
+  const auto delayed_delivery = navigation_contracts::evaluateExecutionStateFreshness(
+      now_ros, now_ros - 20'000'000LL, now_steady,
+      now_steady - 514'760'000LL, 0.5);
+  EXPECT_EQ(delayed_delivery.reason,
+            navigation_contracts::ExecutionStateFreshnessReason::kReceiveStale);
+  EXPECT_DOUBLE_EQ(delayed_delivery.source_age_ms, 20.0);
+  EXPECT_DOUBLE_EQ(delayed_delivery.receive_age_ms, 514.76);
+
   const auto stale_source = navigation_contracts::evaluateExecutionStateFreshness(
       now_ros, now_ros - 500'000'001LL, now_steady, now_steady, 0.5);
   EXPECT_EQ(stale_source.reason,
