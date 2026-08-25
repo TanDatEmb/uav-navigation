@@ -2071,6 +2071,66 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertAlmostEqual(result["attitude"]["maximum"], 0.0, places=9)
         self.assertEqual(result["frame_contract_violation_count"], 0)
 
+    def test_planner_reference_residuals_separate_lio_and_px4_alignment(self) -> None:
+        records = [
+            {
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 1_000_000,
+                "bundle_id": 1,
+                "planning_state_position": [0.0, 0.0, 0.0],
+                "candidate_start_position": [0.0, 0.0, 0.0],
+            },
+            {
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 2_000_000,
+                "bundle_id": 2,
+                # LIO/execution is one metre behind PX4 while the candidate
+                # follows PX4.  The diagnostic must keep these contracts
+                # separate rather than blaming hot-replan timing.
+                "planning_state_position": [1.0, 0.0, 0.0],
+                "candidate_start_position": [2.0, 0.0, 0.0],
+            },
+        ]
+
+        def px4(stamp_us: int, enu_position: list[float]) -> dict[str, object]:
+            # PX4 payload is NED; inverse of C_NED_FROM_ENU is the same
+            # permutation/sign matrix used by the product conversion.
+            return {
+                "kind": "sample",
+                "stream": "px4_odometry",
+                "timestamp_ns": stamp_us * 1000,
+                "payload": {
+                    "timestamp_sample_us": stamp_us,
+                    "position": [enu_position[1], enu_position[0], -enu_position[2]],
+                },
+            }
+
+        result = report._planner_reference_residuals(
+            records,
+            [px4(1_000, [0.0, 0.0, 0.0]), px4(2_000, [2.0, 0.0, 0.0])],
+            1.0,
+        )
+        self.assertTrue(result["available"])
+        self.assertEqual(result["matched_commit_count"], 2)
+        self.assertAlmostEqual(result["candidate_vs_px4"]["norm"]["maximum"], 0.0, places=9)
+        self.assertAlmostEqual(result["execution_vs_px4"]["norm"]["maximum"], 1.0, places=9)
+        self.assertAlmostEqual(result["candidate_vs_execution"]["norm"]["maximum"], 1.0, places=9)
+
+    def test_planner_reference_residuals_is_fail_closed_as_diagnostic_when_unmatched(self) -> None:
+        result = report._planner_reference_residuals(
+            [{
+                "commit_observed_this_cycle": True,
+                "execution_stamp_ns": 1_000_000,
+                "planning_state_position": [0.0, 0.0, 0.0],
+                "candidate_start_position": [0.0, 0.0, 0.0],
+            }],
+            [],
+            1.0,
+        )
+        self.assertFalse(result["available"])
+        self.assertEqual(result["eligible_commit_count"], 1)
+        self.assertEqual(result["matched_commit_count"], 0)
+
     def test_report_verdict_set_is_closed(self) -> None:
         self.assertEqual(report.VERDICTS, {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"})
 

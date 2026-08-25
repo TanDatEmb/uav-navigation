@@ -1312,6 +1312,105 @@ def _frame_contract_residuals(samples: list[dict[str, Any]], tolerance_ms: float
     }
 
 
+def _planner_reference_residuals(
+    records: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+    tolerance_ms: float,
+) -> dict[str, Any]:
+    """Compare committed candidate/execution states with PX4 in ENU.
+
+    This is diagnostic-only.  It deliberately does not classify or reject a
+    mission: the planner state is in the LIO planning frame while PX4 reports
+    NED, so both streams are first origin-aligned and matched by the exact
+    execution stamp.  Keeping candidate-vs-PX4 and execution-vs-PX4 separate
+    prevents a frame/fusion disagreement from being mislabelled as a planner
+    timing failure.
+    """
+    px4 = _series(samples, "px4_odometry")
+    timestamped_px4: list[tuple[int, dict[str, Any]]] = []
+    for item in px4:
+        timestamp = _sample_time(item)
+        position = _vector(item.get("payload", {}).get("position"))
+        if timestamp <= 0 or position is None:
+            continue
+        timestamped_px4.append((timestamp, item))
+    timestamped_px4.sort(key=lambda pair: pair[0])
+    px4_times = [pair[0] for pair in timestamped_px4]
+
+    eligible = [
+        record for record in records
+        if isinstance(record, dict)
+        and record.get("commit_observed_this_cycle") is True
+        and isinstance(record.get("execution_stamp_ns"), int)
+        and _vector(record.get("candidate_start_position")) is not None
+        and _vector(record.get("planning_state_position")) is not None
+    ]
+    matched: list[tuple[dict[str, Any], tuple[float, float, float], float]] = []
+    tolerance_ns = int(max(0.0, tolerance_ms) * 1e6)
+    for record in eligible:
+        target = int(record["execution_stamp_ns"])
+        if not px4_times:
+            continue
+        index = bisect_left(px4_times, target)
+        candidates = timestamped_px4[max(0, index - 1):min(len(timestamped_px4), index + 1)]
+        if not candidates:
+            continue
+        px4_time, px4_item = min(candidates, key=lambda pair: abs(pair[0] - target))
+        delta_ns = target - px4_time
+        if abs(delta_ns) > tolerance_ns:
+            continue
+        px4_position_ned = _vector(px4_item.get("payload", {}).get("position"))
+        if px4_position_ned is None:
+            continue
+        matched.append((record, _matrix_vector(_C_NED_FROM_ENU, px4_position_ned), delta_ns / 1e6))
+
+    if not matched:
+        return {
+            "available": False,
+            "source": "planner commit trace vs px4/estimator_odometry",
+            "timestamp_alignment": "absolute execution_stamp_ns vs PX4 timestamp_sample",
+            "maximum_synchronization_tolerance_ms": tolerance_ms,
+            "eligible_commit_count": len(eligible),
+            "matched_commit_count": 0,
+        }
+
+    first_record, first_px4, _ = matched[0]
+    first_execution = _vector(first_record["planning_state_position"])
+    assert first_execution is not None
+    candidate_errors: list[tuple[float, float, float]] = []
+    execution_errors: list[tuple[float, float, float]] = []
+    candidate_execution_errors: list[tuple[float, float, float]] = []
+    timestamp_deltas = [abs(item[2]) for item in matched]
+    for record, px4_position, _ in matched:
+        candidate = _vector(record["candidate_start_position"])
+        execution = _vector(record["planning_state_position"])
+        assert candidate is not None and execution is not None
+        px4_delta = tuple(px4_position[index] - first_px4[index] for index in range(3))
+        execution_delta = tuple(execution[index] - first_execution[index] for index in range(3))
+        candidate_delta = tuple(candidate[index] - first_execution[index] for index in range(3))
+        candidate_errors.append(tuple(candidate_delta[index] - px4_delta[index] for index in range(3)))
+        execution_errors.append(tuple(execution_delta[index] - px4_delta[index] for index in range(3)))
+        candidate_execution_errors.append(tuple(candidate[index] - execution[index] for index in range(3)))
+    return {
+        "available": True,
+        "source": "planner commit trace vs px4/estimator_odometry",
+        "timestamp_alignment": "absolute execution_stamp_ns vs PX4 timestamp_sample",
+        "origin_alignment": "first matched execution state and PX4 ENU position removed",
+        "world_transform": "x_enu=y_ned; y_enu=x_ned; z_enu=-z_ned",
+        "maximum_synchronization_tolerance_ms": tolerance_ms,
+        "eligible_commit_count": len(eligible),
+        "matched_commit_count": len(matched),
+        "unmatched_commit_count": len(eligible) - len(matched),
+        "mean_timestamp_delta_ms": sum(timestamp_deltas) / len(timestamp_deltas),
+        "maximum_timestamp_delta_ms": max(timestamp_deltas),
+        "first_bundle_id": first_record.get("bundle_id"),
+        "last_bundle_id": matched[-1][0].get("bundle_id"),
+        "candidate_vs_px4": _vector_metric_summary(candidate_errors),
+        "execution_vs_px4": _vector_metric_summary(execution_errors),
+        "candidate_vs_execution": _vector_metric_summary(candidate_execution_errors),
+    }
+
+
 def _vector_metric_summary(errors: list[tuple[float, float, float]]) -> dict[str, Any]:
     return {
         "norm": _metric_summary([
@@ -2196,6 +2295,11 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     planning = _planning_timing_summary(samples)
     planning["execution"] = _planning_execution_summary(snapshot)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
+    planner_reference_residuals = _planner_reference_residuals(
+        planning["rolling_bundle_trace"].get("records", []),
+        samples,
+        _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0),
+    )
     scenario = _load_json(session / "scenario.json", {})
     terminal_outcome = str(scenario.get("outcome", ""))
     terminal_handover = terminal_outcome in {
@@ -2310,6 +2414,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "reference_vs_lio": "NOT_AVAILABLE",
             "reference_vs_ground_truth": "NOT_AVAILABLE",
             "lio_vs_ground_truth": ground_truth_residuals.get("lio_vs_ground_truth", {}),
+            "planner_reference_vs_px4": planner_reference_residuals,
             "coverage": observability.get("tracking_coverage"),
         },
         "offboard": scenario,
