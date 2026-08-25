@@ -1073,3 +1073,31 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Verification before a live run: runtime/HTML tests, Python compilation, and
   `git diff --check`. Live native observer evidence is pending and must be
   archived with the session identity and authoritative Release manifest.
+
+### 2026-08-25 - Native Gazebo ingress screening result (diagnostic only)
+
+- Artifact: `.artifacts/runtime/external-mode-check-20260825T020321-400183`,
+  `long_open_featured_speed`, requested speed cap 2 m/s, one run only. The
+  session is a screening artifact, not a speed, controller, hardware, or
+  certification result; the External Mode/PX4 checkout was dirty.
+- Native Gazebo Transport observed 11,114 `/clock` samples and 540 `/stats`
+  samples. Maximum wall-arrival gaps were 3.247 s and 3.269 s respectively;
+  source time and iteration values were monotonic with no duplicate or
+  regression events. Native real-time factor reached 0.0036. ROS IMU, ground
+  truth, LiDAR and propagated odometry showed aligned multi-second gaps, and
+  the product correctly failed closed on stale execution state. This narrows
+  the cause toward Gazebo update/source scheduling or a common GZ boundary;
+  it does not distinguish Gazebo publisher starvation from transport or host
+  scheduling and does not authorize a code or threshold change.
+- The native observer remains opt-in and diagnostic-only. Its process/PSI
+  rows are raw evidence, not liveness certification; the post-run summary now
+  also records process sample/role counts and PSI sample count, and failed
+  native subscriptions fail closed as `UNAVAILABLE` (commit `f1388b5`). The
+  artifact above predates that summary-field patch, so it is not evidence for
+  those new fields.
+- Next gate: rebuild the authoritative Release manifest after all committed
+  source changes, then run one bounded native diagnostic with valid summary
+  fields and correlate native Gazebo gaps against per-process scheduling/PSI.
+  Do not run TB-001 A/B, the 6 m/s ladder, or tune freshness/jerk/queues until
+  that causal branch is reviewed. Clean 3/3 speed and full scene/SITL gates
+  remain open.
