@@ -2155,3 +2155,32 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   Any future change that holds the trajectory at `t=0` before activation must
   be a separate motion-contract change with P/V/A/J/yaw continuity evidence.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
+
+### 2026-08-26 - Activation-boundary checkpoint validation
+
+- Authoritative Release checkpoint: commit `a791576` with manifest source HEAD
+  matching the commit; the only remaining worktree item is the pre-existing
+  untracked `test-results-asan/` directory. Release build completed `21/21`
+  packages, the product selector completed `13/13` packages, and
+  `build.py check` reported `68` tests with `0` errors, failures, or skips.
+- Dataset artifact
+  `.artifacts/runtime/dataset-20260825T223901-478552/report.json` is `PASS`
+  as recorded-data health evidence: LIO tracking coverage `1.0`, accepted
+  corrections `2754/2754`, mapping received/accepted/started/updated/published
+  `2756/2756/2756/2756/2756` with zero failures/drops/accounting violations,
+  propagated odometry `13772` samples at approximately `50 Hz`, and shadow
+  planning `50 READY/0 EMER` on generation `1`. `flight_acceptance=false` is
+  intentional for this dataset workflow; PX4/mission acceptance is not claimed.
+  The report also records synthetic operator-takeover teardown and diagnostic
+  duplicate/regression observations; these are preserved for follow-up and do
+  not justify relaxing product gates.
+- The parallel SITL agent was `BLOCKED_ENVIRONMENT` before session creation
+  because the dataset runner held the canonical runtime lock. No SITL artifact,
+  PX4, planner, odometry, or continuity claim was made. The dataset completed
+  `STOPPED/cleanup=PASS`; both agents were closed, the stale lock metadata was
+  removed only after verifying its PIDs were dead, and no validation process or
+  detached worktree remains.
+- Closure status: the recorded-data activation-boundary symptom is reproduced
+  as fixed on this checkpoint, but repeated dataset evidence and a preflight-
+  clean SITL run remain required for end-to-end closure.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.
