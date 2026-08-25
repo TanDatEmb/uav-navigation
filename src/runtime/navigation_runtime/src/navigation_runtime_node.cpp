@@ -1785,6 +1785,14 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.final_normalized_dynamic_violation);
     add_trace_value("exp_initial_duration_s", exp_diagnostics.initial_duration_s);
     add_trace_value("exp_final_duration_s", exp_diagnostics.final_duration_s);
+    add_trace_value("exp_retry_duration_lower_bound_min_s",
+                    exp_diagnostics.retry_duration_lower_bound_min_s);
+    add_trace_value("exp_retry_duration_lower_bound_max_s",
+                    exp_diagnostics.retry_duration_lower_bound_max_s);
+    add_trace_value("exp_retry_free_duration_seed_min_s",
+                    exp_diagnostics.retry_free_duration_seed_min_s);
+    add_trace_value("exp_retry_free_duration_seed_max_s",
+                    exp_diagnostics.retry_free_duration_seed_max_s);
     add_trace_value("guide_path_length_m", planner_->latestGuidePathLengthMeters());
     add_trace_value("guide_duration_s", planner_->latestGuideDurationSeconds());
     add_trace_value("exp_retry_budget_remaining_us",

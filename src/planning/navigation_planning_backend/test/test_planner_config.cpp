@@ -8,6 +8,42 @@
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
+#include <utils/optimization/optimization_utils.h>
+
+TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
+  navigation_math::VecDf tau(5);
+  tau << -3.0, -0.25, 0.0, 0.5, 2.0;
+
+  using MappedVector = Eigen::Map<Eigen::VectorXd>;
+  navigation_math::VecDf free_duration_s;
+  optimization_utils::Gcopter<MappedVector>::forwardMapTauToT(tau, free_duration_s);
+
+  navigation_math::VecDf duration_lower_bound_s(5);
+  duration_lower_bound_s << 1.0, 1.5, 2.0, 2.5, 3.0;
+  const navigation_math::VecDf total_duration_s =
+      duration_lower_bound_s + free_duration_s;
+
+  ASSERT_TRUE(free_duration_s.allFinite());
+  ASSERT_TRUE(total_duration_s.allFinite());
+  EXPECT_GT(free_duration_s.minCoeff(), 0.0);
+  for (int index = 0; index < total_duration_s.size(); ++index) {
+    EXPECT_GE(total_duration_s(index), duration_lower_bound_s(index));
+  }
+}
+
+TEST(PlannerDurationParameterization, RoundTripsFreeDurationSeed) {
+  navigation_math::VecDf free_duration_s(3);
+  free_duration_s << 0.05, 1.0, 10.0;
+  navigation_math::VecDf tau_storage(3);
+  using MappedVector = Eigen::Map<Eigen::VectorXd>;
+  MappedVector tau(tau_storage.data(), 3);
+  optimization_utils::Gcopter<MappedVector>::backwardMapTToTau(free_duration_s, tau);
+
+  navigation_math::VecDf reconstructed_free_duration_s;
+  optimization_utils::Gcopter<MappedVector>::forwardMapTauToT(
+      tau, reconstructed_free_duration_s);
+  EXPECT_TRUE(reconstructed_free_duration_s.isApprox(free_duration_s, 1.0e-12));
+}
 
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   const navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);

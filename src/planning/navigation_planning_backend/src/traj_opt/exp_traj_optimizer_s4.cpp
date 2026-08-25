@@ -353,8 +353,14 @@ double ExpTrajOpt::costFunctional(void *ptr,
     Mat3Df points;
     VecDf times;
     gcopter::forwardMapTauToT(tau, times);
-    if (obj.minimum_time_floor.size() == times.size()) {
-        times += obj.minimum_time_floor;
+    if (obj.duration_lower_bound.size() != 0 &&
+        obj.duration_lower_bound.size() != times.size()) {
+        recordNonFinite(2, 2, std::numeric_limits<double>::quiet_NaN(),
+                        std::numeric_limits<double>::quiet_NaN(), &times);
+        return INFINITY;
+    }
+    if (obj.duration_lower_bound.size() == times.size()) {
+        times += obj.duration_lower_bound;
     }
     if (!times.allFinite() || times.size() == 0 || times.minCoeff() <= 0.0) {
         recordNonFinite(2, 1, std::numeric_limits<double>::quiet_NaN(),
@@ -828,7 +834,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     diagnostics_.initial_duration_s = opt_vars.times.sum();
 
     /* 3)  construct the initial guess of the optimization varibles*/
-    opt_vars.minimum_time_floor.resize(0);
+    opt_vars.duration_lower_bound.resize(0);
     // Keep the vertical component of the optimized overlap points anchored to
     // the collision-checked A* guide on every solve, not only after a dynamics
     // retry.  A wide 3-D SFC can legitimately extend down to the ground; with
@@ -929,8 +935,16 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     // double dt = ttt.stop();
     const auto rebuild_candidate = [&]() {
         gcopter::forwardMapTauToT(tau, opt_vars.times);
-        if (opt_vars.minimum_time_floor.size() == opt_vars.times.size()) {
-            opt_vars.times += opt_vars.minimum_time_floor;
+        if (opt_vars.duration_lower_bound.size() != 0 &&
+            opt_vars.duration_lower_bound.size() != opt_vars.times.size()) {
+            planner_context_->warn(
+                    " -- [ExpOpt] duration lower-bound size mismatch: bound={} segments={}",
+                    opt_vars.duration_lower_bound.size(), opt_vars.times.size());
+            traj.clear();
+            return;
+        }
+        if (opt_vars.duration_lower_bound.size() == opt_vars.times.size()) {
+            opt_vars.times += opt_vars.duration_lower_bound;
         }
         switch (opt_vars.pos_constraint_type) {
             case 1: {
@@ -1041,7 +1055,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     struct CandidateSnapshot {
         VecDf x;
-        VecDf minimum_time_floor;
+        VecDf duration_lower_bound;
         VecDf penalty_weights;
         VecDf penalty_log;
         double feasibility_point_weight{0.0};
@@ -1054,6 +1068,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         rebuild_candidate();
         update_dynamic_extrema();
     }
+    const VecDf nominal_duration_s = opt_vars.times;
     print_optimizer_result();
 
     if (ret >= 0 && !position_constraint_satisfied()) {
@@ -1078,7 +1093,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     CandidateSnapshot best_candidate;
     const auto capture_best_candidate = [&]() {
         best_candidate.x = x;
-        best_candidate.minimum_time_floor = opt_vars.minimum_time_floor;
+        best_candidate.duration_lower_bound = opt_vars.duration_lower_bound;
         best_candidate.penalty_weights = opt_vars.penaltyWeights;
         best_candidate.penalty_log = opt_vars.penalty_log;
         best_candidate.feasibility_point_weight = opt_vars.feasibility_point_weight;
@@ -1091,7 +1106,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             return;
         }
         x = best_candidate.x;
-        opt_vars.minimum_time_floor = best_candidate.minimum_time_floor;
+        opt_vars.duration_lower_bound = best_candidate.duration_lower_bound;
         opt_vars.penaltyWeights = best_candidate.penalty_weights;
         opt_vars.penalty_log = best_candidate.penalty_log;
         opt_vars.feasibility_point_weight = best_candidate.feasibility_point_weight;
@@ -1129,23 +1144,37 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     0, (opt_vars.steady_deadline_ns - now_ns) / 1000);
         }
 
-        const VecDf base_duration_s = opt_vars.times;
         const double duration_reserve_scale = std::min(
                 4.0, std::max(kFeasibilityTimeReserve, required_scale * 1.05));
-        if (!base_duration_s.allFinite() || base_duration_s.size() == 0 ||
-            base_duration_s.minCoeff() <= 0.0 ||
+        if (!nominal_duration_s.allFinite() || nominal_duration_s.size() == 0 ||
+            nominal_duration_s.minCoeff() <= 0.0 ||
             !std::isfinite(duration_reserve_scale) ||
-            duration_reserve_scale < 1.0) {
+            duration_reserve_scale <= 1.0) {
             diagnostics_.retry_stop_reason = 1;
             break;
         }
-        // minimum_time_floor is an additive duration in seconds.  The free
-        // duration starts at the current finite solution, so the first retry
-        // starts at reserve_scale * base_duration instead of combining a
-        // full-duration floor with a separate 1% slack parameterization.
-        opt_vars.minimum_time_floor =
-                base_duration_s * (duration_reserve_scale - 1.0);
-        gcopter::backwardMapTToTau(base_duration_s, tau);
+        // duration_lower_bound is the complete nominal duration, not only the
+        // reserve.  The optimizer owns a strictly positive free duration above
+        // this bound, so retry cannot shrink any segment below its nominal
+        // duration.  Keep the reference fixed across retries; using a mutated
+        // candidate here would compound the reserve and hide the invariant.
+        opt_vars.duration_lower_bound = nominal_duration_s;
+        const VecDf free_duration_seed_s = nominal_duration_s *
+                (duration_reserve_scale - 1.0);
+        if (!free_duration_seed_s.allFinite() || free_duration_seed_s.size() == 0 ||
+            free_duration_seed_s.minCoeff() <= 0.0) {
+            diagnostics_.retry_stop_reason = 1;
+            break;
+        }
+        diagnostics_.retry_duration_lower_bound_min_s =
+                nominal_duration_s.minCoeff();
+        diagnostics_.retry_duration_lower_bound_max_s =
+                nominal_duration_s.maxCoeff();
+        diagnostics_.retry_free_duration_seed_min_s =
+                free_duration_seed_s.minCoeff();
+        diagnostics_.retry_free_duration_seed_max_s =
+                free_duration_seed_s.maxCoeff();
+        gcopter::backwardMapTToTau(free_duration_seed_s, tau);
         // Continue the soft solve toward the hard-feasible set. Disabled
         // penalties (notably the EXP jerk objective) remain disabled; only
         // configured dynamic penalties grow within this bounded retry.

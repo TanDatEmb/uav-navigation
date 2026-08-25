@@ -75,6 +75,14 @@ namespace traj_opt {
             std::numeric_limits<double>::quiet_NaN()};
         double initial_duration_s{std::numeric_limits<double>::quiet_NaN()};
         double final_duration_s{std::numeric_limits<double>::quiet_NaN()};
+        double retry_duration_lower_bound_min_s{
+                std::numeric_limits<double>::quiet_NaN()};
+        double retry_duration_lower_bound_max_s{
+                std::numeric_limits<double>::quiet_NaN()};
+        double retry_free_duration_seed_min_s{
+                std::numeric_limits<double>::quiet_NaN()};
+        double retry_free_duration_seed_max_s{
+                std::numeric_limits<double>::quiet_NaN()};
         std::int64_t retry_budget_remaining_us{-1};
         int nonfinite_evaluation_count{0};
         int first_nonfinite_stage{0}; // 1=input, 2=duration, 3=points, 4=MINCO, 5=objective, 6=gradient
@@ -116,7 +124,7 @@ namespace traj_opt {
             int piece_num;
             Mat3Df points;
             VecDf times;
-            VecDf minimum_time_floor;
+            VecDf duration_lower_bound;
             Mat3Df feasibility_reference_points;
             double feasibility_point_weight{0.0};
             VecDf magnitudeBounds, penaltyWeights;

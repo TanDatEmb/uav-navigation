@@ -2047,3 +2047,32 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   outcome and latency distribution; accept only a candidate that passes every
   hard gate. Do not increase the iteration bound or infer feasibility from a
   single replay.
+
+### 2026-08-26 - Retry duration lower-bound invariant
+
+- Owner: `navigation_planning_backend` EXP trajectory optimizer. Scope: rename
+  the retry duration offset to `duration_lower_bound`; anchor it once to the
+  nominal finite segment durations before the retry loop; initialize a separate
+  strictly positive `free_duration_seed_s`; use the same additive
+  `T = lower_bound + forwardMapTauToT(tau)` semantics in the objective and
+  candidate rebuild. A lower-bound size mismatch is now rejected fail-closed.
+- Safety impact: the retry can no longer optimize a segment below the nominal
+  duration merely because the reserve was stored as the lower bound. This fixes
+  an invalid parameterization invariant; it does not claim that longer duration
+  guarantees lower V/A/J with fixed boundary PVAJ, and it does not authorize a
+  candidate. Analytic dynamic extrema, corridor, vertical-guide, flatness,
+  cancellation and transactional commit gates remain authoritative. No
+  threshold, fallback or bypass changed.
+- Evidence: duration-map property and round-trip tests pass; planning CTest
+  2/2, runtime CTest 8/8 and Python runtime/planner contracts 147/147 pass;
+  focused Release targets build. The exact `363cad4` SITL artifact recorded
+  raw `LBFGSERR_MAXIMUMLINESEARCH (-1009)`, velocity ratio `1.02482`, no
+  candidate/PVA and no commit, while the exact dataset artifact remained
+  healthy at sensor/LIO/mapping level but failed its shadow EMER-before-READY
+  contract. Fresh authoritative build, dataset replay and repeated SITL are
+  required before closure.
+- Review condition: retain the fail-closed path and inspect the new lower-bound
+  and free-seed trace fields on replay; do not treat finite seed, iteration
+  limit, raw solver success or one replay as a feasibility certificate. If
+  `-1009` persists, investigate line-search/objective discretization and
+  conditioning separately from the duration invariant.

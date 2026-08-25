@@ -143,6 +143,10 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_final_normalized_dynamic_violation": "1.01",
                                     "exp_initial_duration_s": "4.25",
                                     "exp_final_duration_s": "4.75",
+                                    "exp_retry_duration_lower_bound_min_s": "1.25",
+                                    "exp_retry_duration_lower_bound_max_s": "2.50",
+                                    "exp_retry_free_duration_seed_min_s": "0.0625",
+                                    "exp_retry_free_duration_seed_max_s": "0.125",
                                     "guide_path_length_m": "18.5",
                                     "guide_duration_s": "4.0",
                                     "exp_retry_budget_remaining_us": "42000",
@@ -191,6 +195,10 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_best_normalized_dynamic_violation"], 1.01)
         self.assertEqual(records[0]["exp_initial_duration_s"], 4.25)
         self.assertEqual(records[0]["exp_final_duration_s"], 4.75)
+        self.assertEqual(records[0]["exp_retry_duration_lower_bound_min_s"], 1.25)
+        self.assertEqual(records[0]["exp_retry_duration_lower_bound_max_s"], 2.5)
+        self.assertEqual(records[0]["exp_retry_free_duration_seed_min_s"], 0.0625)
+        self.assertEqual(records[0]["exp_retry_free_duration_seed_max_s"], 0.125)
         self.assertEqual(records[0]["guide_path_length_m"], 18.5)
         self.assertEqual(records[0]["guide_duration_s"], 4.0)
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)

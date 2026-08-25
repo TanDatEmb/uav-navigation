@@ -59,6 +59,18 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "exp_initial_duration_s": ("exp_initial_duration_s",),
     "exp_final_duration_s": ("exp_final_duration_s",),
+    "exp_retry_duration_lower_bound_min_s": (
+        "exp_retry_duration_lower_bound_min_s",
+    ),
+    "exp_retry_duration_lower_bound_max_s": (
+        "exp_retry_duration_lower_bound_max_s",
+    ),
+    "exp_retry_free_duration_seed_min_s": (
+        "exp_retry_free_duration_seed_min_s",
+    ),
+    "exp_retry_free_duration_seed_max_s": (
+        "exp_retry_free_duration_seed_max_s",
+    ),
     "guide_path_length_m": ("guide_path_length_m",),
     "guide_duration_s": ("guide_duration_s",),
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
@@ -245,6 +257,18 @@ def normalize_planner_trace_record(
         ),
         "exp_initial_duration_s": _float(values["exp_initial_duration_s"]),
         "exp_final_duration_s": _float(values["exp_final_duration_s"]),
+        "exp_retry_duration_lower_bound_min_s": _float(
+            values["exp_retry_duration_lower_bound_min_s"]
+        ),
+        "exp_retry_duration_lower_bound_max_s": _float(
+            values["exp_retry_duration_lower_bound_max_s"]
+        ),
+        "exp_retry_free_duration_seed_min_s": _float(
+            values["exp_retry_free_duration_seed_min_s"]
+        ),
+        "exp_retry_free_duration_seed_max_s": _float(
+            values["exp_retry_free_duration_seed_max_s"]
+        ),
         "guide_path_length_m": _float(values["guide_path_length_m"]),
         "guide_duration_s": _float(values["guide_duration_s"]),
         "exp_retry_budget_remaining_us": _float(
