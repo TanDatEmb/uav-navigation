@@ -66,6 +66,16 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | TB-002 | planning / 2026-08-24 | Corridor-center attractor disabled after slalom/feasibility regression | May reduce convergence margin but does not bypass the corridor certificate | Incident comments and nominal SITL | Deterministic optimizer A/B proves a replacement improves feasibility without path drift | TEMPORARY_BYPASS |
 | TB-003 | mapping/planning / 2026-08-24 | CIRI limited to one iteration and obstacle skip 2 | May reduce corridor volume or omit redundant surfaces; inflation/collision gates remain authoritative | Current SITL only | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration/skip matrix | TEMPORARY_BYPASS |
 
+Bypass lifecycle is mandatory. Every `TEMPORARY_BYPASS` must name an owner,
+the introducing commit, the exact configuration/code switch used to re-enable
+the original behavior, a reproduction test with the bypass enabled, an A/B
+test with it disabled, and an explicit removal condition. An open bypass is
+never a certification or contract-freeze result. When the underlying defect is
+fixed, first run the original behavior with the bypass disabled and archive the
+result; only then change the register to `REMOVED` and delete the bypass. A
+test or report must not silently convert an open bypass into a permanent
+baseline.
+
 The following are not bypasses and must not be removed as cleanup: certified
 emergency brake, transactional candidate commit, stale-solve gating,
 endpoint-only UNKNOWN profile, OUT_OF_MAP fail-closed checks, and hardware
