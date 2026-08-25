@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "data_structure/base/trajectory.h"
+#include <navigation_world_model/goal_contract.hpp>
 #include "super_core/super_planner.h"
 #include "super_core/absolute_deadline.hpp"
 #include "super_core/command_time.hpp"
@@ -19,9 +20,11 @@
 #include "traj_opt/yaw_traj_opt.h"
 
 namespace {
+
 class SweepWorld : public navigation_world_model::WorldModelView {
  public:
   double blocked_from_x{std::numeric_limits<double>::infinity()};
+  bool endpoints_in_bounds{true};
   navigation_world_model::WorldGeometry geometry() const noexcept override {
     navigation_world_model::WorldGeometry value;
     value.inflated_resolution_m = 0.2;
@@ -37,7 +40,9 @@ class SweepWorld : public navigation_world_model::WorldModelView {
         ? navigation_world_model::CellState::kOccupied
         : navigation_world_model::CellState::kUnknown;
   }
-  bool contains(const navigation_world_model::Point3&) const noexcept override { return true; }
+  bool contains(const navigation_world_model::Point3&) const noexcept override {
+    return endpoints_in_bounds;
+  }
   navigation_world_model::GridIndex3 positionToIndex(
       const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
     return {};
@@ -654,6 +659,27 @@ TEST(SuperTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {
       guide_endpoint, goal, 0.4);
   EXPECT_TRUE(result.goal_connected);
   EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(SuperTrajectory, GoalPoliciesRemainNamedAndShareProvisionalValue) {
+  EXPECT_DOUBLE_EQ(navigation_world_model::kGoalConnectionToleranceM,
+                   navigation_world_model::kGoalCompletionToleranceM);
+  EXPECT_DOUBLE_EQ(navigation_world_model::kNearGoalShortcutToleranceM,
+                   navigation_world_model::kGoalCompletionToleranceM);
+}
+
+TEST(SuperTrajectory, NearGoalSegmentRejectsOccupiedAndOutOfMapEndpoints) {
+  SweepWorld world;
+  const navigation_world_model::Point3 start(0.0, 0.0, 0.0);
+  const navigation_world_model::Point3 goal(1.0, 0.0, 0.0);
+  EXPECT_TRUE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+
+  world.blocked_from_x = 0.5;
+  EXPECT_FALSE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+
+  world.blocked_from_x = std::numeric_limits<double>::infinity();
+  world.endpoints_in_bounds = false;
+  EXPECT_FALSE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
 }
 
 TEST(SuperTrajectory, GoalConnectionUsesInclusiveBoundary) {

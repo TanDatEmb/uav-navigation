@@ -1254,3 +1254,41 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   working-tree edits remain separate and are not overwritten. Sanitizer,
   repeated SITL, speed, dense vegetation, hardware FOV, and bypass-removal
   evidence remain open.
+
+### 2026-08-25 - Goal semantic split and direct near-goal segment check
+
+- Planner completion, planner endpoint connection, and near-goal A* shortcut
+  now have separate product-owned policy names while retaining the current
+  provisional 0.20 m values. This is a semantic ownership split, not threshold
+  tuning.
+- The near-goal shortcut and terminal endpoint snap now require a direct
+  inflated-world segment check. The main exploratory path continues to use
+  `UnknownPolicy::kAllowUnknown`; the WorldModel still fails closed for
+  occupied or out-of-map segments. Backup certification remains independent.
+- No bypass, optimizer weight, CIRI parameter, or acceptance threshold changed.
+  Removal condition: keep the split until separate completion/connection/
+  shortcut distributions justify distinct values and contracts.
+- Verification: SUPER build and `test_trajectory` 30/30; navigation runtime
+  build; direct runtime FSM/clock/mission tests 20/20. Full sanitizer,
+  repeated SITL, goal-distribution and hardware evidence remain open.
+
+### 2026-08-25 - EXP optimizer retry and budget observability
+
+- `ExpTrajOpt` now records per-solve L-BFGS attempt count, bounded-feasibility
+  retry count and violation mask, return codes, cancellation, normalized
+  dynamic-violation values, retry stop reason, and remaining steady-time
+  budget. The runtime planner trace emits these fields for correlation with
+  solve/module timing; the values are diagnostic-only and do not alter
+  candidate selection, retry limits, weights, deadlines, or safety gates.
+- The reset-before-solve boundary prevents a solve that bypasses EXP from
+  inheriting a previous generation's optimizer metrics. This is intended to
+  identify whether EXP/retries dominate the observed solve budget before any
+  optimizer tuning or bypass removal is attempted.
+- No temporary bypass was enabled or re-enabled in this change. The EXP jerk,
+  corridor-attractor, and CIRI/obstacle-skip bypasses remain explicitly open
+  debt with their existing removal conditions; they must be restored only in a
+  separately recorded, measured A/B batch.
+- Verification: Release package build, `test_trajectory` 31/31, planner-FSM
+  17/17, observation-accounting 16/16, and `git diff --check`. Runtime timing
+  distributions, sanitizer overlays, repeated SITL, and full bypass-removal
+  certification remain open.

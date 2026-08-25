@@ -754,9 +754,15 @@ namespace super_planner {
                     }
                 }
 
-                if (!gi_.new_goal &&
+                const bool near_goal_shortcut =
+                    !gi_.new_goal &&
                     (gi_.goal_p - last_exp_traj.getPos(replan_state_TT)).norm() <=
-                        navigation_world_model::kGoalCompletionToleranceM) {
+                        navigation_world_model::kNearGoalShortcutToleranceM &&
+                    navigation_world_model::isGoalSegmentTraversable(
+                        *map_ptr_,
+                        last_exp_traj.getPos(replan_state_TT).cast<double>(),
+                        gi_.goal_p.cast<double>());
+                if (near_goal_shortcut) {
                     // Return if the traj close to goal
                     out_exp_traj_info = last_exp_traj_info;
                     out_exp_traj_info.setGoalConnectedFlag(true);
@@ -890,7 +896,9 @@ namespace super_planner {
 //            double path_search_start_point_WT = guide_stamp.back() + guide_pos_traj.start_WT;
             // if the goal is close to the last point of the guide path, just add the goal to the guide path
             if ((guide_path.back() - gi_.goal_p).norm() <=
-                navigation_world_model::kGoalCompletionToleranceM) {
+                    navigation_world_model::kNearGoalShortcutToleranceM &&
+                navigation_world_model::isGoalSegmentTraversable(
+                    *map_ptr_, guide_path.back().cast<double>(), gi_.goal_p.cast<double>())) {
                 guide_stamp.push_back(guide_stamp.back() +
                                       (guide_path.back() - gi_.goal_p).norm() / cfg_.exp_traj_cfg.max_vel);
                 guide_path.push_back(gi_.goal_p);
@@ -961,9 +969,14 @@ namespace super_planner {
         // Resolve the terminal point before corridor construction. Snapping
         // only the MINCO tail after CIRI has certified the unsnapped guide can
         // place the fixed endpoint outside every generated polytope.
-        const GuideEndpoint resolved_endpoint = resolveGuideEndpoint(
-                guide_path.back(), gi_.goal_p,
-                navigation_world_model::kGoalCompletionToleranceM);
+        const bool direct_goal_segment_safe =
+            navigation_world_model::isGoalSegmentTraversable(
+                *map_ptr_, guide_path.back().cast<double>(), gi_.goal_p.cast<double>());
+        const GuideEndpoint resolved_endpoint = direct_goal_segment_safe
+            ? resolveGuideEndpoint(
+                  guide_path.back(), gi_.goal_p,
+                  navigation_world_model::kGoalConnectionToleranceM)
+            : GuideEndpoint{guide_path.back(), false};
         guide_path.back() = resolved_endpoint.position;
         const bool connected_goal = resolved_endpoint.goal_connected;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);

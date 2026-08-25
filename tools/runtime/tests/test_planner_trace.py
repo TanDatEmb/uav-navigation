@@ -129,6 +129,18 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_opt_us": "34000",
                                     "backup_frontend_us": "900",
                                     "backup_opt_us": "5600",
+                                    "exp_diagnostics_valid": "1",
+                                    "exp_lbfgs_attempt_count": "3",
+                                    "exp_retry_count": "2",
+                                    "exp_retry_violation_mask": "5",
+                                    "exp_retry_stop_reason": "5",
+                                    "exp_lbfgs_first_return_code": "0",
+                                    "exp_lbfgs_last_return_code": "-1",
+                                    "exp_lbfgs_cancelled": "0",
+                                    "exp_initial_normalized_dynamic_violation": "1.25",
+                                    "exp_best_normalized_dynamic_violation": "1.01",
+                                    "exp_final_normalized_dynamic_violation": "1.01",
+                                    "exp_retry_budget_remaining_us": "42000",
                                     "solve_deadline_exceeded": "0",
                                     "command_available": "1",
                                     "planner_failure_latched": "0",
@@ -153,6 +165,16 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_opt_us"], 34000.0)
         self.assertEqual(records[0]["backup_frontend_us"], 900.0)
         self.assertEqual(records[0]["backup_opt_us"], 5600.0)
+        self.assertTrue(records[0]["exp_diagnostics_valid"])
+        self.assertEqual(records[0]["exp_lbfgs_attempt_count"], 3)
+        self.assertEqual(records[0]["exp_retry_count"], 2)
+        self.assertEqual(records[0]["exp_retry_violation_mask"], 5)
+        self.assertEqual(records[0]["exp_retry_stop_reason"], 5)
+        self.assertEqual(records[0]["exp_lbfgs_first_return_code"], 0)
+        self.assertEqual(records[0]["exp_lbfgs_last_return_code"], -1)
+        self.assertFalse(records[0]["exp_lbfgs_cancelled"])
+        self.assertEqual(records[0]["exp_best_normalized_dynamic_violation"], 1.01)
+        self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
 
 
 if __name__ == "__main__":

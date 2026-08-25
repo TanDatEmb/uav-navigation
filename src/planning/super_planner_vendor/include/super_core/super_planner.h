@@ -199,6 +199,13 @@ namespace super_planner {
         int latestCommitDecision() const noexcept {
             return latest_commit_decision_.load();
         }
+        void resetExpOptimizationDiagnostics() noexcept {
+            if (exp_traj_opt_) exp_traj_opt_->resetDiagnostics();
+        }
+        traj_opt::ExpOptimizationDiagnostics latestExpOptimizationDiagnostics() const noexcept {
+            return exp_traj_opt_ ? exp_traj_opt_->diagnostics()
+                                 : traj_opt::ExpOptimizationDiagnostics{};
+        }
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
         }

@@ -719,6 +719,9 @@ bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &
 }
 
 double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
+    resetDiagnostics();
+    diagnostics_.valid = true;
+
     /* 1) allocate vector for optimization varibles */
     VecDf x(opt_vars.temporalDim + opt_vars.spatialDim);
     /*    creat map for the opt_var vector */
@@ -801,6 +804,23 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         truncateToSixDecimals(opt_vars.waypoint_attractor(2, i));
     }
 
+    const auto run_lbfgs = [&]() {
+        ++diagnostics_.lbfgs_attempt_count;
+        const int result = lbfgs::lbfgs_optimize(x,
+                                                  minCostFunctional,
+                                                  &ExpTrajOpt::costFunctional,
+                                                  nullptr,
+                                                  &ExpTrajOpt::monitorProgress,
+                                                  &this->opt_vars,
+                                                  lbfgs_params);
+        if (diagnostics_.lbfgs_attempt_count == 1) {
+            diagnostics_.first_lbfgs_return_code = result;
+        }
+        diagnostics_.last_lbfgs_return_code = result;
+        diagnostics_.cancelled = result == lbfgs::LBFGS_CANCELED;
+        return result;
+    };
+
     cout << std::fixed << std::setprecision(15);
     // only for debug
 //    cout << " -- [ExpOpt] Start optimization." << x.transpose() << endl;
@@ -811,14 +831,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //    cout << " -- [ExpOpt] waypoint_attractor_dead_d: " << opt_vars.waypoint_attractor_dead_d.transpose() << endl;
     // TimeConsuming ttt(" -- [ExpTrajOpt]", false);
     opt_vars.iter_num = 0;
-    int ret = lbfgs::lbfgs_optimize(x,
-                                    minCostFunctional,
-                                    &ExpTrajOpt::costFunctional,
-                                    nullptr,
-                                    &ExpTrajOpt::monitorProgress,
-                                    &this->opt_vars,
-                                    lbfgs_params);
+    int ret = run_lbfgs();
     if (ret == lbfgs::LBFGS_CANCELED) {
+        diagnostics_.retry_stop_reason = 2;
+        diagnostics_.final_normalized_dynamic_violation =
+                std::numeric_limits<double>::infinity();
         traj.clear();
         return INFINITY;
     }
@@ -958,6 +975,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     constexpr double kFeasibilityPenaltyGrowth = 10.0;
     constexpr double kFeasibilityTimeReserve = 1.05;
     double best_normalized_violation = normalized_dynamic_violation();
+    diagnostics_.initial_normalized_dynamic_violation = best_normalized_violation;
+    diagnostics_.best_normalized_dynamic_violation = best_normalized_violation;
     VecDf best_candidate = x;
     VecDf best_time_floor = opt_vars.minimum_time_floor;
     const VecDf nominal_penalty_weights = opt_vars.penaltyWeights;
@@ -969,10 +988,24 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         const double jerk_scale = std::cbrt(maximum_jerk / cfg_.max_jerk);
         const double required_scale = std::max({
                 1.0, velocity_scale, acceleration_scale, jerk_scale});
-        if (!std::isfinite(required_scale)) break;
+        if (!std::isfinite(required_scale)) {
+            diagnostics_.retry_stop_reason = 1;
+            break;
+        }
         const bool velocity_violated = maximum_velocity > cfg_.max_vel;
         const bool acceleration_violated = maximum_acceleration > cfg_.max_acc;
         const bool jerk_violated = maximum_jerk > cfg_.max_jerk;
+        diagnostics_.retry_violation_mask |=
+                (velocity_violated ? 1 : 0) |
+                (acceleration_violated ? 2 : 0) |
+                (jerk_violated ? 4 : 0);
+        ++diagnostics_.retry_count;
+        if (opt_vars.steady_deadline_ns > 0) {
+            const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            diagnostics_.retry_budget_remaining_us = std::max<std::int64_t>(
+                    0, (opt_vars.steady_deadline_ns - now_ns) / 1000);
+        }
 
         opt_vars.minimum_time_floor = opt_vars.times * std::min(
                 4.0, std::max(kFeasibilityTimeReserve, required_scale * 1.05));
@@ -1004,18 +1037,18 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 nominal_penalty_weights(2)});
         opt_vars.penalty_log.setZero();
         opt_vars.iter_num = 0;
-        ret = lbfgs::lbfgs_optimize(x,
-                                    minCostFunctional,
-                                    &ExpTrajOpt::costFunctional,
-                                    nullptr,
-                                    &ExpTrajOpt::monitorProgress,
-                                    &this->opt_vars,
-                                    lbfgs_params);
+        ret = run_lbfgs();
         if (ret == lbfgs::LBFGS_CANCELED) {
+            diagnostics_.retry_stop_reason = 2;
+            diagnostics_.final_normalized_dynamic_violation =
+                    std::numeric_limits<double>::infinity();
             traj.clear();
             return INFINITY;
         }
-        if (ret < 0) break;
+        if (ret < 0) {
+            diagnostics_.retry_stop_reason = 3;
+            break;
+        }
 
         rebuild_candidate();
         update_dynamic_extrema();
@@ -1023,6 +1056,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             ros_ptr_->warn(
                     " -- [ExpOpt] feasibility retry left corridor: attempt={} cost={}",
                     retry + 1, opt_vars.penalty_log(POS_IDX));
+            diagnostics_.retry_stop_reason = 4;
             ret = -1;
             break;
         }
@@ -1037,6 +1071,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             ros_ptr_->warn(
                     " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
                     best_normalized_violation, retry_violation);
+            diagnostics_.retry_stop_reason = 5;
             x = best_candidate;
             opt_vars.minimum_time_floor = best_time_floor;
             rebuild_candidate();
@@ -1044,9 +1079,17 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
         best_normalized_violation = retry_violation;
+        diagnostics_.best_normalized_dynamic_violation = best_normalized_violation;
         best_candidate = x;
         best_time_floor = opt_vars.minimum_time_floor;
     }
+    if (ret >= 0 && best_normalized_violation > 1.0 &&
+        diagnostics_.retry_count >= kMaximumFeasibilityRetries &&
+        diagnostics_.retry_stop_reason == 0) {
+        diagnostics_.retry_stop_reason = 6;
+    }
+    diagnostics_.final_normalized_dynamic_violation =
+            normalized_dynamic_violation();
     opt_vars.penaltyWeights = nominal_penalty_weights;
     opt_vars.feasibility_point_weight = 0.0;
 

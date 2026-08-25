@@ -40,6 +40,24 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "backup_frontend_us": ("backup_frontend_us",),
     "backup_opt_us": ("backup_opt_us",),
     "optimizer_latency_ms": ("optimizer_latency_ms",),
+    "exp_diagnostics_valid": ("exp_diagnostics_valid",),
+    "exp_lbfgs_attempt_count": ("exp_lbfgs_attempt_count",),
+    "exp_retry_count": ("exp_retry_count",),
+    "exp_retry_violation_mask": ("exp_retry_violation_mask",),
+    "exp_retry_stop_reason": ("exp_retry_stop_reason",),
+    "exp_lbfgs_first_return_code": ("exp_lbfgs_first_return_code",),
+    "exp_lbfgs_last_return_code": ("exp_lbfgs_last_return_code",),
+    "exp_lbfgs_cancelled": ("exp_lbfgs_cancelled",),
+    "exp_initial_normalized_dynamic_violation": (
+        "exp_initial_normalized_dynamic_violation",
+    ),
+    "exp_best_normalized_dynamic_violation": (
+        "exp_best_normalized_dynamic_violation",
+    ),
+    "exp_final_normalized_dynamic_violation": (
+        "exp_final_normalized_dynamic_violation",
+    ),
+    "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
     "status": ("status",),
     "failure_code": ("failure_code",),
     "maximum_velocity_mps": ("maximum_velocity_mps",),
@@ -96,6 +114,15 @@ def _int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value >= 0 else None
+
+
+def _signed_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _float(value: Any) -> float | None:
@@ -181,6 +208,30 @@ def normalize_planner_trace_record(
         "backup_frontend_us": _float(values["backup_frontend_us"]),
         "backup_opt_us": _float(values["backup_opt_us"]),
         "optimizer_latency_ms": _float(values["optimizer_latency_ms"]),
+        "exp_diagnostics_valid": _bool(values["exp_diagnostics_valid"]),
+        "exp_lbfgs_attempt_count": _int(values["exp_lbfgs_attempt_count"]),
+        "exp_retry_count": _int(values["exp_retry_count"]),
+        "exp_retry_violation_mask": _int(values["exp_retry_violation_mask"]),
+        "exp_retry_stop_reason": _int(values["exp_retry_stop_reason"]),
+        "exp_lbfgs_first_return_code": _signed_int(
+            values["exp_lbfgs_first_return_code"]
+        ),
+        "exp_lbfgs_last_return_code": _signed_int(
+            values["exp_lbfgs_last_return_code"]
+        ),
+        "exp_lbfgs_cancelled": _bool(values["exp_lbfgs_cancelled"]),
+        "exp_initial_normalized_dynamic_violation": _float(
+            values["exp_initial_normalized_dynamic_violation"]
+        ),
+        "exp_best_normalized_dynamic_violation": _float(
+            values["exp_best_normalized_dynamic_violation"]
+        ),
+        "exp_final_normalized_dynamic_violation": _float(
+            values["exp_final_normalized_dynamic_violation"]
+        ),
+        "exp_retry_budget_remaining_us": _float(
+            values["exp_retry_budget_remaining_us"]
+        ),
         "status": _int(values["status"]),
         "failure_code": str(values["failure_code"]) if values["failure_code"] is not None else None,
         "maximum_velocity_mps": _float(values["maximum_velocity_mps"]),

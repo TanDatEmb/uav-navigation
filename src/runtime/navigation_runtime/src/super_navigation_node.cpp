@@ -941,6 +941,9 @@ void SuperNavigationNode::runCycle() {
     return;
   }
   planner_->setWorldModelView(pinned_world.view);
+  // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
+  // cannot inherit retry metrics from the previous planning generation.
+  planner_->resetExpOptimizationDiagnostics();
   planner_solve_started_steady_ns_.store(steadyNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
@@ -968,6 +971,7 @@ void SuperNavigationNode::runCycle() {
   }
   std::vector<double> module_times;
   planner_->getModuleTimeConsuming(module_times);
+  const auto exp_diagnostics = planner_->latestExpOptimizationDiagnostics();
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     // A terminal mission status or a newer waypoint may arrive while the
@@ -1479,6 +1483,24 @@ void SuperNavigationNode::runCycle() {
                     module_times.size() > super_planner::BACK_TRAJ_OPT
                         ? module_times[super_planner::BACK_TRAJ_OPT] * 1.0e6
                         : 0.0);
+    add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
+    add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
+    add_trace_value("exp_retry_count", exp_diagnostics.retry_count);
+    add_trace_value("exp_retry_violation_mask", exp_diagnostics.retry_violation_mask);
+    add_trace_value("exp_retry_stop_reason", exp_diagnostics.retry_stop_reason);
+    add_trace_value("exp_lbfgs_first_return_code",
+                    exp_diagnostics.first_lbfgs_return_code);
+    add_trace_value("exp_lbfgs_last_return_code",
+                    exp_diagnostics.last_lbfgs_return_code);
+    add_trace_value("exp_lbfgs_cancelled", exp_diagnostics.cancelled ? 1 : 0);
+    add_trace_value("exp_initial_normalized_dynamic_violation",
+                    exp_diagnostics.initial_normalized_dynamic_violation);
+    add_trace_value("exp_best_normalized_dynamic_violation",
+                    exp_diagnostics.best_normalized_dynamic_violation);
+    add_trace_value("exp_final_normalized_dynamic_violation",
+                    exp_diagnostics.final_normalized_dynamic_violation);
+    add_trace_value("exp_retry_budget_remaining_us",
+                    exp_diagnostics.retry_budget_remaining_us);
     add_trace_value("solve_deadline_exceeded", solve_deadline_exceeded ? 1 : 0);
     add_trace_value("command_available", planner_command_available_.load() ? 1 : 0);
     add_trace_value("planner_failure_latched", planner_failure_latched_.load() ? 1 : 0);

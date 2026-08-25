@@ -27,6 +27,7 @@
 #include <iostream>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <traj_opt/config.hpp>
@@ -52,8 +53,32 @@ namespace traj_opt {
     using super_utils::PolyhedraH;
     using super_utils::PolyhedraV;
 
+    // Diagnostic-only EXP optimizer evidence.  These fields describe the
+    // bounded L-BFGS/retry path for one optimize() invocation; they do not
+    // participate in candidate selection, hard gates, or cancellation.
+    struct ExpOptimizationDiagnostics {
+        int lbfgs_attempt_count{0};
+        int retry_count{0};
+        int retry_violation_mask{0};  // bit 0=velocity, bit 1=acceleration, bit 2=jerk
+        int retry_stop_reason{0};     // 0=none, 1=non-finite scale, 2=cancelled,
+                                      // 3=LBFGS failure, 4=corridor rejection,
+                                      // 5=no progress, 6=retry limit
+        int first_lbfgs_return_code{-1};
+        int last_lbfgs_return_code{-1};
+        bool cancelled{false};
+        bool valid{false};
+        double initial_normalized_dynamic_violation{
+            std::numeric_limits<double>::quiet_NaN()};
+        double best_normalized_dynamic_violation{
+            std::numeric_limits<double>::quiet_NaN()};
+        double final_normalized_dynamic_violation{
+            std::numeric_limits<double>::quiet_NaN()};
+        std::int64_t retry_budget_remaining_us{-1};
+    };
+
 
     class ExpTrajOpt {
+        ExpOptimizationDiagnostics diagnostics_{};
         traj_opt::Config cfg_;
         std::ofstream failed_traj_log;
         std::ofstream penalty_log;
@@ -352,6 +377,10 @@ namespace traj_opt {
             opt_vars.solve_cancelled = solve_cancelled;
             opt_vars.steady_deadline_ns = steady_deadline_ns;
         }
+
+        void resetDiagnostics() noexcept { diagnostics_ = ExpOptimizationDiagnostics{}; }
+
+        ExpOptimizationDiagnostics diagnostics() const noexcept { return diagnostics_; }
 
         bool optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                       PolytopeVec &sfcs,
