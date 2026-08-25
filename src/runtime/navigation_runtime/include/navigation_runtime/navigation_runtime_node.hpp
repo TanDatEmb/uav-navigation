@@ -198,9 +198,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::optional<input_pairing::StampedObservation<std::shared_ptr<navigation_mapping::PointCloud>>>
       latest_cloud_;
   std::deque<nav_msgs::msg::Odometry> corrected_odometry_history_;
-  std::optional<nav_msgs::msg::Odometry> latest_propagated_odometry_;
-  std::int64_t latest_propagated_receive_steady_ns_{0};
-  std::uint64_t latest_propagated_sequence_{0};
   navigation_execution::ExecutionStateStore execution_state_store_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
   std::atomic_uint64_t active_goal_epoch_{0};
@@ -221,8 +218,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   bool skip_replan_once_{false};
   ConsecutiveFailureBudget plan_from_rest_failure_budget_{3U};
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
-  std::atomic_uint64_t received_cloud_count_{0};
-  std::atomic_uint64_t accepted_cloud_count_{0};
   std::atomic_uint64_t stale_input_count_{0};
   std::atomic_uint64_t stale_mapping_input_count_{0};
   std::atomic_uint64_t future_mapping_input_count_{0};

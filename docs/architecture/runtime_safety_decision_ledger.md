@@ -1832,3 +1832,54 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Review condition: retain only with repeated representative SITL evidence
   showing callback arrival and receive-age distributions; do not increase
   executor threads or alter QoS as a substitute for that evidence.
+
+### 2026-08-26 - Immutable execution-state lease ownership
+
+- Owner: `navigation_execution` and `navigation_runtime`. Scope: publish one
+  immutable `ExecutionStateLease` containing the typed kinematic state and an
+  accepted-ingress sequence; make that lease the source for planner, retained
+  command and command diagnostics; remove the runtime's duplicate propagated
+  odometry/receive/sequence fields and the unused legacy planner-state header.
+- Safety impact: state and diagnostic sequence now come from the same accepted
+  lease under one store lock, so callback reordering cannot expose a new state
+  with an old sequence. The sequence is provenance only; source/receive
+  freshness, epoch checks, frame checks and fail-closed command behavior are
+  unchanged. No threshold, QoS, executor count or fallback policy changed.
+- Known limitation: propagated `nav_msgs/Odometry` still lacks producer-owned
+  localization epoch provenance; the runtime-assigned epoch remains an open
+  safety item and this change must not be cited as closing it.
+- Verification command:
+  `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest --test-dir build/navigation_execution --output-on-failure && ctest --test-dir build/navigation_runtime --output-on-failure`.
+  Current result: Release focused build completed for 2 packages; execution
+  2/2 and runtime 8/8 CTest targets passed. Runtime Python contracts passed
+  141/141.
+- Review condition: add producer-owned epoch/generation or an equivalent
+  ingress barrier before claiming localization-reset safety is complete; then
+  repeat representative dataset/SITL and sanitizer evidence.
+
+### 2026-08-26 - Canonical mapping lifecycle diagnostics
+
+- Owner: `navigation_runtime` diagnostics producer and `tools/runtime/report.py`.
+  Scope: serialize the complete `ObservationAccounting::Snapshot` in both
+  mapping and planner diagnostic events; use accounting counters rather than
+  duplicate cloud counters; classify lifecycle events by schema so
+  `DECISION_TRACE` cannot replace a lifecycle snapshot; never treat missing
+  counters as zero.
+- Safety impact: removes a validation false-positive caused by combining
+  `accepted=309` with `published=300` while silently dropping the valid
+  `replaced=9` disposition. A real incomplete or inconsistent lifecycle
+  remains visible as an evidence failure; no mapping queue, replacement,
+  acceptance or safety gate was relaxed.
+- Evidence: artifact
+  `.artifacts/runtime/external-mode-check-20260825T185357-297920/report.json`
+  had `observation_accounting_valid=1`, `violation_count=0` while the old
+  report emitted the conservation failure. New report tests cover the exact
+  `TRACKING -> DECISION_TRACE -> world PUBLISHED_UPDATED` ordering, rejected
+  input conservation and incomplete-schema handling; Python contracts passed
+  141/141.
+- Verification command:
+  `python3 -m unittest tools.runtime.tests.test_runtime_contract && source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest --test-dir build/navigation_runtime --output-on-failure`.
+- Review condition: rebuild the authoritative Release manifest, rerun dataset
+  and SITL, and confirm genuine replacement/discard evidence is preserved. The
+  simultaneous simulator/transport blackout and mission safety-stop remain
+  open and are not hidden by this report correction.

@@ -3,7 +3,7 @@
 #include <memory>
 #include <mutex>
 
-#include <navigation_planning/kinematic_state.hpp>
+#include "navigation_execution/execution_state_lease.hpp"
 
 namespace navigation_execution {
 
@@ -19,9 +19,11 @@ class ExecutionStateStore final {
     if (!state.finite()) return false;
     std::lock_guard lock(mutex_);
     if (active_epoch_ != 0 && state.localization_epoch != active_epoch_) return false;
-    if (state_ && state.source_stamp_ns <= state_->source_stamp_ns) return false;
+    if (state_ && state.source_stamp_ns <= state_->state.source_stamp_ns) return false;
     active_epoch_ = state.localization_epoch;
-    state_ = std::make_shared<const navigation_planning::KinematicState>(std::move(state));
+    const auto ingress_sequence = ++next_ingress_sequence_;
+    state_ = std::make_shared<const ExecutionStateLease>(
+        ExecutionStateLease{std::move(state), ingress_sequence});
     return true;
   }
 
@@ -31,8 +33,7 @@ class ExecutionStateStore final {
     state_.reset();
   }
 
-  [[nodiscard]] std::shared_ptr<const navigation_planning::KinematicState> load()
-      const noexcept {
+  [[nodiscard]] std::shared_ptr<const ExecutionStateLease> load() const noexcept {
     std::lock_guard lock(mutex_);
     return state_;
   }
@@ -40,7 +41,8 @@ class ExecutionStateStore final {
  private:
   mutable std::mutex mutex_;
   std::uint64_t active_epoch_{0};
-  std::shared_ptr<const navigation_planning::KinematicState> state_;
+  std::uint64_t next_ingress_sequence_{0};
+  std::shared_ptr<const ExecutionStateLease> state_;
 };
 
 }  // namespace navigation_execution

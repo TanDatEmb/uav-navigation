@@ -70,6 +70,42 @@ std::int64_t steadyNowNanoseconds() {
       .count();
 }
 
+void addObservationAccountingValues(
+    diagnostic_msgs::msg::DiagnosticStatus& status,
+    const navigation_mapping::ObservationAccounting::Snapshot& accounting) {
+  const auto add_value = [&status](const std::string& key, std::uint64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
+  // These fields are one canonical snapshot. Report consumers must not
+  // reconstruct lifecycle state by combining independent diagnostic events.
+  add_value("received_observation_count", accounting.received);
+  add_value("observation_rejected_before_inbox_count", accounting.rejected_before_inbox);
+  add_value("accepted_observation_count", accounting.accepted_to_inbox);
+  add_value("observation_accepted_to_inbox_count", accounting.accepted_to_inbox);
+  add_value("observation_replaced_pending_count", accounting.replaced_pending);
+  add_value("observation_replaced_waiting_count", accounting.replaced_waiting);
+  add_value("observation_replaced_ready_count", accounting.replaced_ready);
+  add_value("dropped_cloud_count", accounting.replaced_waiting + accounting.replaced_ready);
+  add_value("observation_discarded_pending_count", accounting.discarded_pending);
+  add_value("observation_discarded_waiting_count", accounting.discarded_waiting);
+  add_value("observation_discarded_ready_count", accounting.discarded_ready);
+  add_value("observation_discarded_shutdown_ready_count", accounting.discarded_shutdown_ready);
+  add_value("observation_discarded_nonmonotonic_count", accounting.discarded_nonmonotonic);
+  add_value("observation_ready_submitted_count", accounting.ready_submitted);
+  add_value("observation_waiting_count", accounting.waiting);
+  add_value("observation_ready_count", accounting.ready);
+  add_value("mapping_started_count", accounting.mapping_started);
+  add_value("mapping_published_count", accounting.mapping_published);
+  add_value("mapping_failed_count", accounting.mapping_failed);
+  add_value("mapping_pending_count", accounting.pending);
+  add_value("mapping_in_flight_count", accounting.in_flight);
+  add_value("observation_accounting_valid", accounting.allInvariantsHold() ? 1U : 0U);
+  add_value("observation_accounting_violation_count", accounting.violation_count);
+}
+
 }  // namespace
 
 NavigationRuntimeNode::NavigationRuntimeNode(const rclcpp::NodeOptions& options)
@@ -293,13 +329,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_revision", mapping.world_revision);
         add_value("observation_stamp_ns", mapping.observation_stamp_ns);
         add_value("last_update_attempt_stamp_ns", mapping.last_update_attempt_stamp_ns);
-        add_value("received_observation_count", lifecycle.received);
-        add_value("accepted_observation_count", lifecycle.accepted_to_inbox);
-        add_value("mapping_started_count", lifecycle.mapping_started);
-        add_value("mapping_published_count", lifecycle.mapping_published);
-        add_value("mapping_failed_count", lifecycle.mapping_failed);
-        add_value("mapping_pending_count", lifecycle.pending);
-        add_value("mapping_in_flight_count", lifecycle.in_flight);
+        addObservationAccountingValues(status, lifecycle);
         add_text("mapping_update_outcome",
                  std::string(navigation_mapping::worldUpdateOutcomeName(map.update_outcome)));
         add_value("mapping_outcome_updated_count", mapping.outcome_updated);
@@ -554,7 +584,6 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
 
 void NavigationRuntimeNode::onRegisteredScan(
     const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message) {
-  ++received_cloud_count_;
   if (!accepting_observations_.load(std::memory_order_acquire) ||
       message->localization_epoch == 0U ||
       message->scan_sequence == 0U ||
@@ -617,7 +646,6 @@ void NavigationRuntimeNode::onRegisteredScan(
   observation_accounting_.recordAcceptedToInbox();
   if (mapping_worker_->submitFromWaiting(std::move(observation))) {
     typed_observation_seen_.store(true, std::memory_order_release);
-    ++accepted_cloud_count_;
   }
 }
 
@@ -634,7 +662,6 @@ void NavigationRuntimeNode::onEstimatorHealth(
 
 void NavigationRuntimeNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
   if (typed_observation_seen_.load(std::memory_order_acquire)) return;
-  ++received_cloud_count_;
   if (!accepting_observations_.load()) {
     observation_accounting_.recordRejectedBeforeInbox();
     return;
@@ -669,7 +696,6 @@ void NavigationRuntimeNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstSh
     latest_cloud_ = input_pairing::StampedObservation<
         std::shared_ptr<navigation_mapping::PointCloud>>{std::move(decoded), stamp_ns};
     pending_cloud_received_steady_ns_ = steadyNowNanoseconds();
-    ++accepted_cloud_count_;
     ready = tryPromotePairLocked();
     if (ready) (void)mapping_worker_->submitFromWaiting(std::move(*ready));
   }
@@ -745,15 +771,7 @@ void NavigationRuntimeNode::onPropagatedOdometry(
   typed_state.localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   typed_state.world_frame_id = message->header.frame_id;
   typed_state.body_frame_id = message->child_frame_id;
-  if (!execution_state_store_.publish(typed_state)) return;
-  std::lock_guard<std::mutex> lock(input_mutex_);
-  if (latest_propagated_odometry_ &&
-      stamp_ns < stampNanoseconds(latest_propagated_odometry_->header.stamp)) {
-    return;
-  }
-  latest_propagated_odometry_ = *message;
-  latest_propagated_receive_steady_ns_ = steadyNowNanoseconds();
-  ++latest_propagated_sequence_;
+  (void)execution_state_store_.publish(std::move(typed_state));
 }
 
 void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message) {
@@ -911,7 +929,7 @@ void NavigationRuntimeNode::runCycle() {
   }
   last_cycle_started_steady_ns_ = cycle_started_ns;
   ++cycle_count_;
-  std::shared_ptr<const navigation_planning::KinematicState> propagated_state;
+  std::shared_ptr<const navigation_execution::ExecutionStateLease> propagated_state;
   std::optional<navigation_contracts::msg::NavigationGoal> goal;
   bool new_goal = false;
   bool hot_goal_transition = false;
@@ -975,11 +993,9 @@ void NavigationRuntimeNode::runCycle() {
   };
   const auto& map_diagnostics = mapping.map;
   const auto accounting = observation_accounting_.snapshot();
-  add_value("received_observation_count", received_cloud_count_);
-  add_value("accepted_observation_count", accepted_cloud_count_);
+  addObservationAccountingValues(status, accounting);
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
-  add_value("dropped_cloud_count", accounting.replaced_waiting + accounting.replaced_ready);
   add_value("stale_input_count", stale_input_count_);
   add_value("stale_mapping_input_count",
             stale_mapping_input_count_.load() + mapping.discarded_stale);
@@ -1006,23 +1022,6 @@ void NavigationRuntimeNode::runCycle() {
   add_value("command_execution_receive_age_us",
             command_execution_receive_age_us_.load());
   add_value("processing_exception_count", map_update_exception_count_);
-  add_value("observation_rejected_before_inbox_count", accounting.rejected_before_inbox);
-  add_value("observation_replaced_pending_count", accounting.replaced_pending);
-  add_value("observation_replaced_waiting_count", accounting.replaced_waiting);
-  add_value("observation_replaced_ready_count", accounting.replaced_ready);
-  add_value("observation_discarded_ready_count", accounting.discarded_ready);
-  add_value("observation_discarded_shutdown_ready_count",
-            accounting.discarded_shutdown_ready);
-  add_value("observation_discarded_pending_count", accounting.discarded_pending);
-  add_value("observation_discarded_nonmonotonic_count",
-            accounting.discarded_nonmonotonic);
-  add_value("mapping_started_count", accounting.mapping_started);
-  add_value("mapping_published_count", accounting.mapping_published);
-  add_value("mapping_failed_count", accounting.mapping_failed);
-  add_value("mapping_pending_count", accounting.pending);
-  add_value("mapping_in_flight_count", accounting.in_flight);
-  add_value("observation_accounting_valid", accounting.allInvariantsHold() ? 1U : 0U);
-  add_value("observation_accounting_violation_count", accounting.violation_count);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
   add_value("localization_epoch",
@@ -1056,7 +1055,7 @@ void NavigationRuntimeNode::runCycle() {
   // sourced from the latest propagated odometry and may be unavailable or
   // invalid without suppressing a corrected observation from ROG-Map.
   if (!propagated_state) return;
-  const auto execution_stamp_ns = propagated_state->source_stamp_ns;
+  const auto execution_stamp_ns = propagated_state->state.source_stamp_ns;
   const auto execution_age_ns = now_ns - execution_stamp_ns;
   const auto execution_freshness =
       navigation_execution::classifyTimestampFreshness(now_ns, execution_stamp_ns, maximum_age_ns);
@@ -1067,7 +1066,7 @@ void NavigationRuntimeNode::runCycle() {
     if (execution_freshness == navigation_execution::TimestampFreshness::INVALID) ++invalid_execution_state_count_;
     return;
   }
-  const auto& execution_state = *propagated_state;
+  const auto& execution_state = propagated_state->state;
   if (!execution_state.finite() || !planner_->setState(execution_state)) {
     ++invalid_execution_state_count_;
     return;
@@ -1300,8 +1299,8 @@ void NavigationRuntimeNode::runCycle() {
     const auto retained_execution_state = execution_state_store_.load();
     const auto retained_state_freshness = retained_execution_state
         ? navigation_contracts::evaluateExecutionStateFreshness(
-              now().nanoseconds(), retained_execution_state->source_stamp_ns,
-              steadyNowNanoseconds(), retained_execution_state->receive_stamp_ns,
+              now().nanoseconds(), retained_execution_state->state.source_stamp_ns,
+              steadyNowNanoseconds(), retained_execution_state->state.receive_stamp_ns,
               input_max_age_s_)
         : navigation_contracts::ExecutionStateFreshness{};
     navigation_planning_backend::math::Vec3f current_vehicle_position =
@@ -1310,15 +1309,15 @@ void NavigationRuntimeNode::runCycle() {
         navigation_planning_backend::math::Vec3f::Zero();
     double current_vehicle_yaw = 0.0;
     const bool fresh_vehicle_state = retained_execution_state &&
-                                     retained_execution_state->finite() &&
+                                     retained_execution_state->state.finite() &&
                                      retained_state_freshness.valid();
     const double latest_vehicle_state_age_s = retained_execution_state
         ? retained_state_freshness.source_age_ms * 1.0e-3
         : std::numeric_limits<double>::infinity();
     if (fresh_vehicle_state) {
-      current_vehicle_position = retained_execution_state->position_world;
-      current_vehicle_velocity = retained_execution_state->velocity_world;
-      current_vehicle_yaw = retained_execution_state->yaw_rad;
+      current_vehicle_position = retained_execution_state->state.position_world;
+      current_vehicle_velocity = retained_execution_state->state.velocity_world;
+      current_vehicle_yaw = retained_execution_state->state.yaw_rad;
     }
     const double anchor_error_m = committed.empty() || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
@@ -1924,18 +1923,18 @@ void NavigationRuntimeNode::publishCommand() {
       command_execution_lease_failure_latch_.allowsCommandExposure()) return;
   std::optional<navigation_contracts::msg::NavigationGoal> command_goal;
   std::uint64_t goal_epoch_at_command = 0U;
-  std::shared_ptr<const navigation_planning::KinematicState> execution_state;
+  std::shared_ptr<const navigation_execution::ExecutionStateLease> execution_state;
   std::int64_t execution_receive_steady_ns = 0;
   std::uint64_t execution_sequence = 0;
   execution_state = execution_state_store_.load();
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
-    execution_receive_steady_ns = execution_state ? execution_state->receive_stamp_ns : 0;
-    execution_sequence = latest_propagated_sequence_;
     command_goal = active_goal_;
     goal_epoch_at_command = active_goal_epoch_.load(std::memory_order_acquire);
   }
-  const auto execution_source_ns = execution_state ? execution_state->source_stamp_ns : 0;
+  execution_receive_steady_ns = execution_state ? execution_state->state.receive_stamp_ns : 0;
+  execution_sequence = execution_state ? execution_state->ingress_sequence : 0;
+  const auto execution_source_ns = execution_state ? execution_state->state.source_stamp_ns : 0;
   const auto execution_freshness = navigation_contracts::evaluateExecutionStateFreshness(
       command_ros_time.nanoseconds(), execution_source_ns,
       steadyNowNanoseconds(), execution_receive_steady_ns, input_max_age_s_);
@@ -2057,7 +2056,7 @@ void NavigationRuntimeNode::publishCommand() {
   command.sample_id = ++command_id_;
   command.trajectory_time_s = trajectory_time_s;
   command.state_source_stamp = execution_state
-      ? navigation_common::nanosecondsToRosTime(execution_state->source_stamp_ns).value_or(
+      ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})
       : builtin_interfaces::msg::Time{};
   command.valid_until = rosTimeFromSeconds(now_seconds + input_max_age_s_);

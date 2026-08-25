@@ -1234,6 +1234,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_dataset_mapping_integrity_rejects_replaced_observations(self) -> None:
         reasons = report._mapping_integrity_reasons({
             "received_observation_count": 100,
+            "observation_rejected_before_inbox_count": 0,
             "accepted_observation_count": 100,
             "dropped_cloud_count": 49,
             "stale_input_count": 0,
@@ -1255,6 +1256,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_dataset_mapping_integrity_accepts_exact_once_consumption(self) -> None:
         self.assertEqual(report._mapping_integrity_reasons({
             "received_observation_count": 100,
+            "observation_rejected_before_inbox_count": 0,
             "accepted_observation_count": 100,
             "dropped_cloud_count": 0,
             "stale_input_count": 0,
@@ -1309,6 +1311,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_dataset_mapping_integrity_rejects_unterminalized_observation(self) -> None:
         reasons = report._mapping_integrity_reasons({
             "received_observation_count": 100,
+            "observation_rejected_before_inbox_count": 0,
             "accepted_observation_count": 100,
             "dropped_cloud_count": 0,
             "observation_replaced_pending_count": 0,
@@ -1320,7 +1323,9 @@ class RuntimeContractTest(unittest.TestCase):
             "observation_accounting_valid": 0,
         })
         self.assertIn("mapping observation accounting invariant failed", reasons)
-        self.assertIn("mapping accepted-observation conservation equation failed", reasons)
+        self.assertIn(
+            "mapping accepted-observation conservation equation failed", reasons
+        )
 
     def test_sim_and_dataset_share_mapping_integrity_gate(self) -> None:
         source = (ROOT / "tools/runtime/report.py").read_text(encoding="utf-8")
@@ -2690,8 +2695,17 @@ class RuntimeContractTest(unittest.TestCase):
             "message": "MAP_READY",
             "values": {
                 "received_observation_count": "2",
+                "observation_rejected_before_inbox_count": "0",
                 "accepted_observation_count": "2",
                 "dropped_cloud_count": "0",
+                "observation_replaced_pending_count": "0",
+                "observation_discarded_pending_count": "0",
+                "mapping_started_count": "2",
+                "mapping_published_count": "2",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
             },
         }
         world = {
@@ -2706,6 +2720,8 @@ class RuntimeContractTest(unittest.TestCase):
                 "mapping_pending_count": "0",
                 "mapping_in_flight_count": "0",
                 "observation_accounting_valid": "1",
+                "observation_replaced_pending_count": "0",
+                "observation_discarded_pending_count": "0",
                 **{key: str(value) for key, value in _mapping_outcomes(2).items()},
             },
         }
@@ -2740,6 +2756,7 @@ class RuntimeContractTest(unittest.TestCase):
             "message": "PUBLISHED",
             "values": {
                 "received_observation_count": "305",
+                "observation_rejected_before_inbox_count": "0",
                 "accepted_observation_count": "305",
                 "world_revision": "305",
                 "mapping_started_count": "305",
@@ -2748,6 +2765,8 @@ class RuntimeContractTest(unittest.TestCase):
                 "mapping_pending_count": "0",
                 "mapping_in_flight_count": "0",
                 "observation_accounting_valid": "1",
+                "observation_replaced_pending_count": "0",
+                "observation_discarded_pending_count": "0",
                 **{key: str(value) for key, value in _mapping_outcomes(305).items()},
             },
         }
@@ -2769,6 +2788,90 @@ class RuntimeContractTest(unittest.TestCase):
         world["values"]["accepted_observation_count"] = "304"
         inconsistent = report._navigation_mapping_summary(snapshot, samples)
         self.assertNotEqual(report._mapping_integrity_reasons(inconsistent), [])
+
+    def test_navigation_mapping_summary_ignores_decision_trace_for_lifecycle(self) -> None:
+        planner_lifecycle = {
+            "name": "navigation_runtime/planner",
+            "values": {
+                "received_observation_count": "186",
+                "observation_rejected_before_inbox_count": "0",
+                "accepted_observation_count": "186",
+                "observation_replaced_pending_count": "9",
+                "observation_discarded_pending_count": "0",
+                "mapping_started_count": "186",
+                "mapping_published_count": "186",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+            },
+        }
+        decision_trace = {
+            "name": "navigation_runtime/planner",
+            "message": "DECISION_TRACE",
+            "values": {"trajectory_generation": "1"},
+        }
+        world_lifecycle = {
+            "name": "navigation_mapping/world_model",
+            "level": 0,
+            "message": "PUBLISHED_UPDATED",
+            "values": {
+                "received_observation_count": "195",
+                "observation_rejected_before_inbox_count": "0",
+                "accepted_observation_count": "195",
+                "observation_replaced_pending_count": "9",
+                "observation_discarded_pending_count": "0",
+                "dropped_cloud_count": "9",
+                "mapping_started_count": "186",
+                "mapping_published_count": "186",
+                "mapping_failed_count": "0",
+                "mapping_pending_count": "0",
+                "mapping_in_flight_count": "0",
+                "observation_accounting_valid": "1",
+                **{key: str(value) for key, value in _mapping_outcomes(186).items()},
+                "world_revision": "186",
+            },
+        }
+        snapshot = {
+            "streams": {"mapping_diagnostics": {"received": 3}},
+            "latest": {"mapping_diagnostics": {"statuses": [world_lifecycle]}},
+        }
+        samples = [
+            {"stream": "diagnostics", "arrival_wall_ns": 100,
+             "payload": {"statuses": [planner_lifecycle]}},
+            {"stream": "diagnostics", "arrival_wall_ns": 200,
+             "payload": {"statuses": [decision_trace]}},
+            {"stream": "mapping_diagnostics", "arrival_wall_ns": 300,
+             "payload": {"statuses": [world_lifecycle]}},
+        ]
+        mapping = report._navigation_mapping_summary(snapshot, samples)
+        reasons = report._mapping_integrity_reasons(mapping)
+        self.assertIn("mapping replaced an unconsumed cloud: 9", reasons)
+        self.assertNotIn(
+            "mapping accepted-observation conservation equation failed", reasons
+        )
+        self.assertNotIn(
+            "mapping observation lifecycle evidence incomplete; "
+            "terminal conservation not evaluated",
+            reasons,
+        )
+
+    def test_mapping_input_conservation_allows_rejected_before_inbox(self) -> None:
+        reasons = report._mapping_integrity_reasons({
+            "received_observation_count": 10,
+            "observation_rejected_before_inbox_count": 2,
+            "accepted_observation_count": 8,
+            "observation_replaced_pending_count": 0,
+            "observation_discarded_pending_count": 0,
+            "mapping_published_count": 8,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
+            "observation_accounting_valid": 1,
+            **_mapping_outcomes(8),
+            "world_revision": 8,
+        })
+        self.assertEqual(reasons, [])
 
     def test_navigation_mapping_summary_uses_newer_planner_lifecycle_event(self) -> None:
         """A later discard event must not be merged with an older PUBLISHED event."""
@@ -2869,7 +2972,11 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(mapping["accepted_observation_count"], 304)
         self.assertEqual(mapping["mapping_published_count"], 305)
         reasons = report._mapping_integrity_reasons(mapping)
-        self.assertIn("mapping accepted-observation conservation equation failed", reasons)
+        self.assertIn(
+            "mapping observation lifecycle evidence incomplete; "
+            "terminal conservation not evaluated",
+            reasons,
+        )
 
     def test_planning_execution_summary_exposes_replan_skips_and_fallbacks(self) -> None:
         snapshot = {

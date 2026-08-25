@@ -2007,13 +2007,36 @@ def _navigation_mapping_summary(
     statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
     latest_by_owner: dict[str, dict[str, Any]] = {}
     # A lifecycle snapshot is coherent only when all of its counters come
-    # from the same diagnostic event.  The world-model and planner publishers
-    # are independent: a world PUBLISHED event can be followed by a planner
-    # event that accounts for observations discarded while the worker was
-    # busy.  Keep the event ordering so we do not combine an older world
-    # ingress count with newer planner dispositions.
-    latest_event_by_owner: dict[str, tuple[int, dict[str, Any]]] = {}
+    # from the same diagnostic event.  Planner decision traces reuse the
+    # planner status name without carrying lifecycle fields, so keep lifecycle
+    # ordering separate from the latest telemetry status.
+    latest_lifecycle_by_owner: dict[str, tuple[int, dict[str, Any]]] = {}
     lifecycle_event: tuple[int, dict[str, Any]] | None = None
+    lifecycle_fields = {
+        "received_observation_count",
+        "observation_rejected_before_inbox_count",
+        "accepted_observation_count",
+        "observation_accepted_to_inbox_count",
+        "dropped_cloud_count",
+        "observation_replaced_pending_count",
+        "observation_replaced_waiting_count",
+        "observation_replaced_ready_count",
+        "observation_discarded_pending_count",
+        "observation_discarded_waiting_count",
+        "observation_discarded_ready_count",
+        "observation_discarded_shutdown_ready_count",
+        "observation_discarded_nonmonotonic_count",
+        "observation_ready_submitted_count",
+        "observation_waiting_count",
+        "observation_ready_count",
+        "mapping_started_count",
+        "mapping_published_count",
+        "mapping_failed_count",
+        "mapping_pending_count",
+        "mapping_in_flight_count",
+        "observation_accounting_valid",
+        "observation_accounting_violation_count",
+    }
     event_order = 0
     # Keep the original monitor order across both diagnostic streams.  Do not
     # group by stream first: that would make an older world event appear newer
@@ -2042,9 +2065,13 @@ def _navigation_mapping_summary(
             if owner is None:
                 continue
             latest_by_owner[owner] = status
-            latest_event_by_owner[owner] = (event_key, status)
-            if lifecycle_event is None or event_key >= lifecycle_event[0]:
-                lifecycle_event = (event_key, status)
+            candidate = status.get("values", {})
+            if isinstance(candidate, dict) and any(
+                key in candidate for key in lifecycle_fields
+            ):
+                latest_lifecycle_by_owner[owner] = (event_key, status)
+                if lifecycle_event is None or event_key >= lifecycle_event[0]:
+                    lifecycle_event = (event_key, status)
     # The monitor's final snapshot contains only the last diagnostic message,
     # so retain it as a fallback for workflows without a sample stream.
     for status in statuses:
@@ -2053,11 +2080,21 @@ def _navigation_mapping_summary(
         status_name = str(status.get("name", ""))
         if status_name.endswith("/world_model"):
             latest_by_owner.setdefault("world_model", status)
+            candidate = status.get("values", {})
+            if isinstance(candidate, dict) and any(
+                key in candidate for key in lifecycle_fields
+            ):
+                latest_lifecycle_by_owner.setdefault("world_model", (0, status))
         elif status_name == "navigation_runtime/planner":
             latest_by_owner.setdefault("planner", status)
+            candidate = status.get("values", {})
+            if isinstance(candidate, dict) and any(
+                key in candidate for key in lifecycle_fields
+            ):
+                latest_lifecycle_by_owner.setdefault("planner", (0, status))
 
-    if lifecycle_event is None and latest_event_by_owner:
-        lifecycle_event = max(latest_event_by_owner.values(), key=lambda item: item[0])
+    if lifecycle_event is None and latest_lifecycle_by_owner:
+        lifecycle_event = max(latest_lifecycle_by_owner.values(), key=lambda item: item[0])
     values: dict[str, Any] = {}
     level = "NOT_AVAILABLE"
     message = "NOT_AVAILABLE"
@@ -2074,33 +2111,6 @@ def _navigation_mapping_summary(
             values.update(candidate)
         level = status.get("level", "NOT_AVAILABLE")
         message = status.get("message", "NOT_AVAILABLE")
-    lifecycle_fields = {
-        "received_observation_count",
-        "accepted_observation_count",
-        "dropped_cloud_count",
-        "observation_rejected_before_inbox_count",
-        "observation_replaced_pending_count",
-        "observation_replaced_waiting_count",
-        "observation_replaced_ready_count",
-        "observation_discarded_ready_count",
-        "observation_discarded_shutdown_ready_count",
-        "observation_discarded_pending_count",
-        "observation_discarded_nonmonotonic_count",
-        "mapping_started_count",
-        "mapping_published_count",
-        "mapping_failed_count",
-        "mapping_pending_count",
-        "mapping_in_flight_count",
-        "mapping_outcome_updated_count",
-        "mapping_outcome_accumulated_count",
-        "mapping_outcome_slide_only_count",
-        "mapping_outcome_empty_cloud_count",
-        "mapping_outcome_callback_owned_count",
-        "mapping_outcome_below_ground_count",
-        "mapping_outcome_above_ceiling_count",
-        "observation_accounting_valid",
-        "observation_accounting_violation_count",
-    }
     if lifecycle_event is not None:
         candidate = lifecycle_event[1].get("values", {})
         if isinstance(candidate, dict):
@@ -2137,13 +2147,18 @@ def _navigation_mapping_summary(
         "corrected_pair_mismatch_count",
         "invalid_execution_state_count",
         "observation_rejected_before_inbox_count",
+        "observation_accepted_to_inbox_count",
         "observation_replaced_pending_count",
         "observation_replaced_waiting_count",
         "observation_replaced_ready_count",
+        "observation_discarded_waiting_count",
         "observation_discarded_pending_count",
         "observation_discarded_ready_count",
         "observation_discarded_shutdown_ready_count",
         "observation_discarded_nonmonotonic_count",
+        "observation_ready_submitted_count",
+        "observation_waiting_count",
+        "observation_ready_count",
         "worker_discarded_stale_count",
         "worker_discarded_future_count",
         "worker_discarded_invalid_count",
@@ -2250,23 +2265,48 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
             reasons.append(f"{label}: {count}")
     received = int(_number(mapping.get("received_observation_count"), 0.0))
     accepted = int(_number(mapping.get("accepted_observation_count"), 0.0))
-    if received > 0 and accepted != received:
-        reasons.append(
-            f"mapping observation accounting mismatch: accepted {accepted} of {received}"
-        )
-    if "mapping_published_count" in mapping:
-        published = int(_number(mapping.get("mapping_published_count"), 0.0))
-        terminal_pending = int(
-            _number(mapping.get("observation_discarded_pending_count"), 0.0)
-        )
-        replaced = int(_number(mapping.get("observation_replaced_pending_count"), 0.0))
-        failed = int(_number(mapping.get("mapping_failed_count"), 0.0))
-        pending = int(_number(mapping.get("mapping_pending_count"), 0.0))
-        in_flight = int(_number(mapping.get("mapping_in_flight_count"), 0.0))
-        if accepted != published + terminal_pending + replaced + failed + pending + in_flight:
+    rejected_before_inbox = mapping.get("observation_rejected_before_inbox_count")
+    if received > 0:
+        if rejected_before_inbox is None:
             reasons.append(
-                "mapping accepted-observation conservation equation failed"
+                "mapping observation input lifecycle evidence incomplete; "
+                "input conservation not evaluated"
             )
+        elif received != int(_number(rejected_before_inbox, 0.0)) + accepted:
+            reasons.append(
+                "mapping observation input conservation equation failed"
+            )
+    if "mapping_published_count" in mapping:
+        terminal_fields = (
+            "accepted_observation_count",
+            "observation_replaced_pending_count",
+            "observation_discarded_pending_count",
+            "mapping_published_count",
+            "mapping_failed_count",
+            "mapping_pending_count",
+            "mapping_in_flight_count",
+        )
+        missing_terminal_fields = [
+            field for field in terminal_fields if field not in mapping
+        ]
+        if missing_terminal_fields:
+            reasons.append(
+                "mapping observation lifecycle evidence incomplete; "
+                "terminal conservation not evaluated"
+            )
+        else:
+            published = int(_number(mapping.get("mapping_published_count"), 0.0))
+            terminal_pending = int(
+                _number(mapping.get("observation_discarded_pending_count"), 0.0)
+            )
+            replaced = int(_number(mapping.get("observation_replaced_pending_count"), 0.0))
+            failed = int(_number(mapping.get("mapping_failed_count"), 0.0))
+            pending = int(_number(mapping.get("mapping_pending_count"), 0.0))
+            in_flight = int(_number(mapping.get("mapping_in_flight_count"), 0.0))
+            if accepted != published + terminal_pending + replaced + failed + pending + in_flight:
+                reasons.append(
+                    "mapping accepted-observation conservation equation failed"
+                )
     outcome_fields = (
         "mapping_outcome_updated_count",
         "mapping_outcome_accumulated_count",

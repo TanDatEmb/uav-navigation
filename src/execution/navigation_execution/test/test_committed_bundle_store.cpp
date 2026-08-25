@@ -72,6 +72,8 @@ TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
   ASSERT_TRUE(store.publish(state));
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(store.load()->ingress_sequence, 1U);
   EXPECT_FALSE(store.publish(state));
   store.resetForLocalizationEpoch(5);
   EXPECT_FALSE(store.load());
@@ -80,6 +82,8 @@ TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {
   EXPECT_FALSE(store.publish(state));
   state.localization_epoch = 5;
   EXPECT_TRUE(store.publish(state));
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(store.load()->ingress_sequence, 2U);
 }
 
 }  // namespace
