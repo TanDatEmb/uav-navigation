@@ -47,10 +47,6 @@ namespace path_search {
         cout << GREEN << " -- [RM] Init Astar-map." << RESET << endl;
         int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
         grid_node_buffer_.resize(map_buffer_size);
-        for (auto &i: grid_node_buffer_) {
-            i = std::make_unique<GridNode>();
-            i->rounds = 0;
-        }
         cout << BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << RESET << endl;
         cout << BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << RESET << endl;
     }
@@ -390,8 +386,8 @@ namespace path_search {
         }
 
 
-        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)].get();
-        GridNodePtr endPtr = grid_node_buffer_[getLocalIndexHash(end_idx)].get();
+        GridNodePtr startPtr = nodeAt(getLocalIndexHash(start_idx));
+        GridNodePtr endPtr = nodeAt(getLocalIndexHash(end_idx));
         endPtr->id_g = end_idx;
 
         std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
@@ -547,7 +543,7 @@ namespace path_search {
                             continue;
                         }
 
-                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)].get();
+                        neighborPtr = nodeAt(getLocalIndexHash(neighborIdx));
                         if (neighborPtr == nullptr) {
                             cout << RED << " -- [RM] neighborPtr is null, which should not happen." <<
                                  RESET
@@ -689,7 +685,7 @@ namespace path_search {
         rog_map::Vec3i start_idx;
         posToGlobalIndex(local_start_pt, start_idx);
 
-        GridNodePtr startPtr = grid_node_buffer_[getLocalIndexHash(start_idx)].get();
+        GridNodePtr startPtr = nodeAt(getLocalIndexHash(start_idx));
         std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
         GridNodePtr neighborPtr = NULL;
         GridNodePtr current = NULL;
@@ -782,7 +778,7 @@ namespace path_search {
                             continue;
                         }
 
-                        neighborPtr = grid_node_buffer_[getLocalIndexHash(neighborIdx)].get();
+                        neighborPtr = nodeAt(getLocalIndexHash(neighborIdx));
                         if (neighborPtr == nullptr) {
                             cout << RED << " -- [RM] neighborPtr is null, which should not happen" <<
                                  RESET << endl;

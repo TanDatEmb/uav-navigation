@@ -638,6 +638,13 @@ TEST(SuperTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
                std::invalid_argument);
   EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, std::numeric_limits<double>::max()}),
                std::invalid_argument);
+
+  // Simulation time may remain frozen while the optimizer is still executing.
+  // The monotonic budget must expire independently of the ROS-time contract.
+  const super_planner::AbsoluteDeadline frozen_sim_time(42.0, 0.001);
+  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  EXPECT_TRUE(frozen_sim_time.steadyExpired());
+  EXPECT_NEAR(frozen_sim_time.remaining(42.0), 0.001, 1.0e-12);
 }
 
 TEST(SuperTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {

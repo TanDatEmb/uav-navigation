@@ -1179,3 +1179,18 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   package tests (10/10), and the `AbsoluteDeadline` steady-clock unit assertion.
   ASan/UBSan/TSan and repeated SITL remain open. No TB-001/TB-002/TB-003
   bypass was enabled by this change.
+
+### 2026-08-25 - Lazy A* node ownership
+
+- A* retains the same indexed `unique_ptr<GridNode>` table and hash mapping, but
+  now constructs a node only when a search first touches that voxel. The prior
+  eager construction materialized roughly 25 million nodes for the configured
+  `[500,500,100]` map and dominated startup RSS. Lazy construction does not
+  change neighbor expansion, scores, father pointers, rounds, or safety flags;
+  it only removes untouched heap objects.
+- This is a memory/initialization optimization, not a map-resolution or timeout
+  change. Peak touched-node count, search latency, RSS, and failed-search
+  behavior must be measured on recorded data and repeated SITL before claiming
+  acceptance. No temporary bypass was enabled.
+- Verification: Release package build and existing SUPER tests; ASan/UBSan/TSan
+  plus repeated SITL and RSS measurements remain open.

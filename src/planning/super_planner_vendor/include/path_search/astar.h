@@ -134,6 +134,14 @@ namespace path_search {
 
         void ConvertNodePathToPointPath(const vector<GridNodePtr> &node_path, vec_Vec3f &point_path);
 
+        GridNodePtr nodeAt(const int local_index) {
+            auto &slot = grid_node_buffer_.at(static_cast<std::size_t>(local_index));
+            if (!slot) {
+                slot = std::make_unique<GridNode>();
+            }
+            return slot.get();
+        }
+
     public:
 
         Astar(const std::string & cfg_path,
