@@ -414,6 +414,11 @@ def status_chip(status: str, label: str | None = None) -> str:
     return f'<span class="status {status_class(status)}">{esc(label or status)}</span>'
 
 
+def _safety_stop_status(observed: bool) -> str:
+    """Report a safety action as evidence, never as mission acceptance."""
+    return "OBSERVE" if observed else "N/A"
+
+
 def _bool_value(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -1221,11 +1226,18 @@ def render(session: Path, output: Path) -> Path:
     telemetry_verdict = evaluation["telemetry_verdict"]
     telemetry_gate = "PASS" if telemetry_verdict == "PASS" else "INFO" if telemetry_verdict else "N/A"
     expected_outcome_text = f"expected {expected_outcome}"
+    safety_stop_observed = bool(safety.get("safety_stop_observed"))
+    safety_stop_detail = (
+        f"{safety.get('safety_stop_reason_name') or 'SAFETY_STOP'}"
+        f" → Hold in {fmt(safety.get('safety_to_handover_ms'), 1, ' ms')}"
+        if safety_stop_observed else "no structured safety-stop event"
+    )
     status_rows = [
         ("Mission outcome", outcome or "N/A", expected_outcome_text, gates["mission"]),
         ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", "explicit acceptance evidence only", gates["waypoint"]),
         ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", gates["cross_track"]),
         ("Collision safety", f"{fmt(collision_count, 0)} collisions", "0 collisions", gates["collision"]),
+        ("Application safety stop", "observed" if safety_stop_observed else "not observed", safety_stop_detail, _safety_stop_status(safety_stop_observed)),
         ("LIO navigation state", str(lio.get("state") or "N/A"), "TRACKING + navigation_valid=true", gates["lio"]),
         ("PX4 estimator / local position", px4_observed, "valid", gates["px4"]),
         ("Telemetry verdict", telemetry_verdict, "informational", telemetry_gate),

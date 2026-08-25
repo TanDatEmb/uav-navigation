@@ -152,6 +152,13 @@ class ExternalModeScenario:
         self.mode_exit_observed = False
         self.mode_completion_result: int | None = None
         self.mode_failure_observed = False
+        # A safety pause can hand over before PX4 publishes ModeCompleted.
+        # Keep the application decision separate from mode-completion status.
+        self.safety_stop_observed = False
+        self.safety_stop_sim_ns: int | None = None
+        self.safety_stop_reason_name: str | None = None
+        self.px4_hold_handover_requested_sim_ns: int | None = None
+        self.px4_hold_handover_trigger: str | None = None
         self.mission_unexpected_exit_observed = False
         self.mission_complete_observed = False
         self.mission_complete_sim_ns: int | None = None
@@ -663,6 +670,14 @@ class ExternalModeScenario:
             "acceptance_position_error_m": float(message.acceptance_position_error_m),
             "acceptance_speed_mps": float(message.acceptance_speed_mps),
         }
+        if (
+            record["state"] == int(self.NavigationModeStatus.PAUSED)
+            and record["reason"] == int(self.NavigationModeStatus.SAFETY_STOP)
+        ):
+            self.safety_stop_observed = True
+            if self.safety_stop_sim_ns is None:
+                self.safety_stop_sim_ns = self.sim_now_ns
+            self.safety_stop_reason_name = record["reason_name"]
         if record["waypoint_accepted"]:
             self.waypoint_acceptance_events.append(record)
             self._record("waypoint_accepted", record)
@@ -708,6 +723,16 @@ class ExternalModeScenario:
         if self.execution != "mission":
             return
         detail = dict(detail or {})
+        previous_handover_ns = getattr(self, "px4_hold_handover_requested_sim_ns", None)
+        if (
+            previous_handover_ns is None
+            or (
+                getattr(self, "safety_stop_sim_ns", None) is not None
+                and previous_handover_ns < getattr(self, "safety_stop_sim_ns")
+            )
+        ):
+            self.px4_hold_handover_requested_sim_ns = self.sim_now_ns
+            self.px4_hold_handover_trigger = trigger
         event = {
             "name": "px4_hold_handover_requested",
             "trigger": trigger,
@@ -1368,6 +1393,18 @@ class ExternalModeScenario:
             "external_mode_exit_observed": self.mode_exit_observed,
             "mode_completion_result": self.mode_completion_result,
             "mode_failure_observed": self.mode_failure_observed,
+            "safety_stop_observed": self.safety_stop_observed,
+            "safety_stop_sim_ns": self.safety_stop_sim_ns,
+            "safety_stop_reason_name": self.safety_stop_reason_name,
+            "px4_hold_handover_requested_sim_ns": self.px4_hold_handover_requested_sim_ns,
+            "px4_hold_handover_trigger": self.px4_hold_handover_trigger,
+            "safety_to_handover_ms": (
+                (self.px4_hold_handover_requested_sim_ns - self.safety_stop_sim_ns) / 1e6
+                if self.safety_stop_sim_ns is not None
+                and self.px4_hold_handover_requested_sim_ns is not None
+                and self.px4_hold_handover_requested_sim_ns >= self.safety_stop_sim_ns
+                else None
+            ),
             "mission_unexpected_exit_observed": self.mission_unexpected_exit_observed,
             "mission_complete_observed": self.mission_complete_observed,
             "mode_status_state": self.mode_status_state,

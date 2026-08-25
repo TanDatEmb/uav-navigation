@@ -1128,10 +1128,17 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   controller, acceptance or safety decisions.
 - Path grouping is generation-aware: samples from different committed
   generations cannot be joined into a visually continuous trajectory. Legacy
-  messages without generation use message identity instead of silently
-  claiming a shared bundle.
+  messages without generation are kept in one explicitly labelled
+  waypoint/role trace instead of treating every per-command message ID as a
+  separate one-point bundle. They remain legacy evidence and are not claimed
+  to provide committed-generation continuity.
+- The scenario/report view now records an observed application `SAFETY_STOP`
+  separately from `ModeCompleted` and shows the requested PX4 Hold handover
+  interval. This is report-only observability: it does not change the
+  controller envelope, handover decision, mission outcome, or acceptance
+  gates. Verification: runtime/HTML contract tests and `git diff --check`.
 - Verification: Release build 19 packages PASS; release check 64/64 PASS;
-  runtime/HTML contract tests 136/136 PASS; `git diff --check` PASS. This is
+  runtime/HTML contract tests 150/150 PASS; `git diff --check` PASS. This is
   static/report evidence only; browser rendering, clean PX4 provenance,
   repeated SITL, speed ladder, hardware FOV and sanitizer certification remain
   open.

@@ -7,8 +7,8 @@ from pathlib import Path
 RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
-from flight_review_report import _evaluation, _timing_rows, line_chart
-from html_report import _planning_continuity, _runtime_observability, _samples, _trajectory_smoothness
+from flight_review_report import _evaluation, _safety_stop_status, _timing_rows, line_chart
+from html_report import _planning_continuity, _runtime_observability, _safety_timeline, _samples, _trajectory_smoothness
 
 
 class HtmlReportSmoothnessTest(unittest.TestCase):
@@ -74,8 +74,97 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
         self.assertEqual({item["trajectory_generation"] for item in paths}, {4, 5})
         self.assertEqual(sorted(item["count"] for item in paths), [1, 2])
 
+    def test_legacy_commands_stay_one_explicit_waypoint_role_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            rows = []
+            for stamp, position in ((1_000_000_000, [0.0, 0.0, 3.0]),
+                                    (1_100_000_000, [0.1, 0.0, 3.0])):
+                rows.append(json.dumps({
+                    "kind": "sample",
+                    "stream": "pva_command",
+                    "timestamp_ns": stamp,
+                    "payload": {
+                        "stamp_ns": stamp,
+                        "position": position,
+                        "velocity": [1.0, 0.0, 0.0],
+                        "trajectory_id": stamp,
+                        "trajectory_flag": 1,
+                        "trajectory_status": 1,
+                    },
+                }))
+            (session / "samples.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            (session / "scenario.jsonl").write_text(
+                "\n".join(
+                    json.dumps({
+                        "kind": "pva_command",
+                        "sim_time_ns": stamp,
+                        "payload": json.loads(row)["payload"],
+                    })
+                    for stamp, row in zip((1_000_000_000, 1_100_000_000), rows)
+                ) + "\n",
+                encoding="utf-8",
+            )
+            observed = _runtime_observability(session)
+
+        paths = observed["trajectory_paths"]
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(paths[0]["trajectory_identity"], "legacy_waypoint_role")
+        self.assertEqual(paths[0]["count"], 2)
+
+    def test_legacy_trace_keeps_waypoint_and_role_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            rows = []
+            current_waypoint = None
+            for stamp, waypoint, flag in (
+                (1_000_000_000, 0, 1), (1_100_000_000, 1, 1),
+                (1_200_000_000, 1, 2),
+            ):
+                if waypoint != current_waypoint:
+                    rows.append(json.dumps({
+                        "kind": "goal", "sim_time_ns": stamp,
+                        "payload": {"mission_id": "m", "waypoint_index": waypoint},
+                    }))
+                    current_waypoint = waypoint
+                payload = {
+                    "stamp_ns": stamp,
+                    "position": [float(waypoint), float(flag), 3.0],
+                    "velocity": [1.0, 0.0, 0.0],
+                    "trajectory_id": stamp,
+                    "trajectory_flag": flag,
+                    "trajectory_status": 1,
+                }
+                rows.append(json.dumps({"kind": "pva_command", "sim_time_ns": stamp, "payload": payload}))
+            (session / "scenario.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            observed = _runtime_observability(session)
+
+        self.assertEqual(len(observed["trajectory_paths"]), 3)
+
+    def test_safety_timeline_recovers_boundary_from_older_event_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            events = [
+                {"kind": "navigation_mode_status", "sim_time_ns": 62_716_000_000,
+                 "payload": {"state_name": "PAUSED", "reason_name": "SAFETY_STOP"}},
+                {"kind": "event", "sim_time_ns": 62_732_000_000,
+                 "payload": {"name": "px4_hold_handover_requested", "trigger": "safety_stop"}},
+            ]
+            (session / "scenario.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8"
+            )
+            timeline = _safety_timeline(session)
+
+        self.assertTrue(timeline["safety_stop_observed"])
+        self.assertEqual(timeline["safety_stop_reason_name"], "SAFETY_STOP")
+        self.assertAlmostEqual(timeline["safety_to_handover_ms"], 16.0)
+
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_safety_stop_is_observed_not_an_acceptance_pass(self) -> None:
+        self.assertEqual(_safety_stop_status(True), "OBSERVE")
+        self.assertEqual(_safety_stop_status(False), "N/A")
+
     def test_line_chart_has_toggleable_legend_for_every_visible_trace(self) -> None:
         chart = line_chart(
             "Velocity components",

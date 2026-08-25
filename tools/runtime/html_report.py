@@ -526,15 +526,21 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         # A trajectory generation is the committed-bundle identity. Never
         # join samples from different generations into one visual path: doing
         # so would manufacture continuity across a replan/emergency handover.
-        # Legacy messages without generation fall back to message identity.
+        # Legacy messages without generation are grouped only by their
+        # observed waypoint/role context and remain explicitly legacy.
         grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         for index, item in enumerate(pva):
             generation = _finite_number(item.get("trajectory_generation"))
             message_id = _finite_number(item.get("trajectory_id"))
+            # Older recorders increment trajectory_id for every PVA command
+            # and do not emit trajectory_generation. Treating that ID as a
+            # committed trajectory makes every point a one-point path. Keep
+            # the observed waypoint/role trace together and mark it legacy;
+            # generation-aware sessions are split safely below.
             identity = (
                 "generation", int(generation)
             ) if generation is not None and generation > 0.0 else (
-                "message", int(message_id)
+                "legacy_waypoint_role", 0
             ) if message_id is not None and message_id > 0.0 else (
                 "sample", index
             )
@@ -572,6 +578,60 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         "mode_events": mode_events,
         "vehicle_events": vehicle_events,
         "trajectory_paths": trajectory_paths,
+    }
+
+
+def _safety_timeline(session: Path) -> dict[str, Any]:
+    """Recover the application safety-stop/hold handover boundary.
+
+    Older scenario summaries did not copy these fields, but the event log did
+    record both decisions.  Reading the event timestamps keeps the report
+    truthful without inferring a safety stop from a generic mode exit.
+    """
+    safety_ns: int | None = None
+    reason: str | None = None
+    handover_ns: int | None = None
+    trigger: str | None = None
+    path = session / "scenario.jsonl"
+    if path.is_file():
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                timestamp = _finite_number(event.get("sim_time_ns"))
+                payload = event.get("payload", {})
+                if timestamp is None or not isinstance(payload, dict):
+                    continue
+                if (
+                    event.get("kind") == "navigation_mode_status"
+                    and str(payload.get("state_name")) == "PAUSED"
+                    and str(payload.get("reason_name")) == "SAFETY_STOP"
+                    and safety_ns is None
+                ):
+                    safety_ns = int(timestamp)
+                    reason = str(payload.get("reason_name"))
+                if (
+                    event.get("kind") == "event"
+                    and payload.get("name") == "px4_hold_handover_requested"
+                    and handover_ns is None
+                ):
+                    handover_ns = int(timestamp)
+                    trigger = str(payload.get("trigger") or "") or None
+        except OSError:
+            pass
+    return {
+        "safety_stop_observed": safety_ns is not None,
+        "safety_stop_sim_ns": safety_ns,
+        "safety_stop_reason_name": reason,
+        "px4_hold_handover_requested_sim_ns": handover_ns,
+        "px4_hold_handover_trigger": trigger,
+        "safety_to_handover_ms": (
+            (handover_ns - safety_ns) / 1e6
+            if safety_ns is not None and handover_ns is not None and handover_ns >= safety_ns
+            else None
+        ),
     }
 
 
@@ -815,6 +875,16 @@ def _analyze(session: Path) -> dict[str, Any]:
     obstacles = _obstacles(session, descriptor)
     trajectory_records = _trajectory_records(session)
     observability = _runtime_observability(session)
+    safety_timeline = _safety_timeline(session)
+    if not safety_timeline["safety_stop_observed"] and scenario.get("safety_stop_observed"):
+        safety_timeline = {
+            "safety_stop_observed": True,
+            "safety_stop_sim_ns": scenario.get("safety_stop_sim_ns"),
+            "safety_stop_reason_name": scenario.get("safety_stop_reason_name"),
+            "px4_hold_handover_requested_sim_ns": scenario.get("px4_hold_handover_requested_sim_ns"),
+            "px4_hold_handover_trigger": scenario.get("px4_hold_handover_trigger"),
+            "safety_to_handover_ms": scenario.get("safety_to_handover_ms"),
+        }
     smoothness, plan_series = _trajectory_smoothness(trajectory_records)
     planning_continuity = _planning_continuity(planning)
     planner_trace_records = collect_planner_trace_records(scenario)
@@ -914,6 +984,7 @@ def _analyze(session: Path) -> dict[str, Any]:
             "actual_min_clearance_m": scenario.get("actual_min_clearance_m"),
             "trajectory_failure_count": scenario.get("trajectory_failure_count"),
             "safety_transition_count": scenario.get("safety_transition_count"),
+            **safety_timeline,
         },
         "control": {
             "setpoint_speed_mps": scenario.get("speed_metrics", {}).get("setpoint_mps", {}),
