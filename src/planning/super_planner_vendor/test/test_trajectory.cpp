@@ -120,6 +120,13 @@ TEST(SuperTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
   EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::FAILED));
   EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::NEW_TRAJ));
   EXPECT_FALSE(super_planner::expResultMayBuildCommandCandidate(super_utils::EMER));
+
+  EXPECT_TRUE(super_planner::backupResultMayBuildCommandCandidate(super_utils::SUCCESS));
+  EXPECT_TRUE(super_planner::backupResultMayBuildCommandCandidate(super_utils::NO_NEED));
+  EXPECT_TRUE(super_planner::backupResultMayBuildCommandCandidate(super_utils::FINISH));
+  EXPECT_FALSE(super_planner::backupResultMayBuildCommandCandidate(super_utils::FAILED));
+  EXPECT_FALSE(super_planner::backupResultMayBuildCommandCandidate(super_utils::OPT_FAILED));
+  EXPECT_FALSE(super_planner::backupResultMayBuildCommandCandidate(super_utils::EMER));
 }
 
 TEST(SuperTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {

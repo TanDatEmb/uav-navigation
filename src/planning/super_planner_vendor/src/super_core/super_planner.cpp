@@ -206,6 +206,14 @@ namespace super_planner {
             return FAILED;
         }
 
+        if (!backupResultMayBuildCommandCandidate(back_ret_code)) {
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            ros_ptr_->warn(
+                " -- [SUPER] in [PlanFromRest]: backup result is not executable; "
+                "leaving CmdTraj unchanged");
+            return FAILED;
+        }
+
         if (back_ret_code == SUCCESS) {
             if (cfg_.print_log) {
                 ros_ptr_->info(" -- [SUPER] in [PlanFromRest] generateBackupTrajectory SUCCESS.");
@@ -344,6 +352,7 @@ namespace super_planner {
         TimeConsuming t_back("t_back", false);
         if (solve_deadline.expired(ros_ptr_->getSimTime())) {
             ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
             return FAILED;
         }
         RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);
@@ -360,11 +369,20 @@ namespace super_planner {
         if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
             replan_dt > cfg_.solve_deadline_s) {
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
             return FAILED;
         }
 
         if (solve_cancelled_.load()) {
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            return FAILED;
+        }
+
+        if (!backupResultMayBuildCommandCandidate(back_ret_code)) {
+            latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            ros_ptr_->warn(
+                " -- [SUPER] in [ReplanOnce]: backup result is not executable; "
+                "leaving CmdTraj unchanged");
             return FAILED;
         }
 

@@ -136,5 +136,35 @@ TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
       true, elapsed_s, 4.0, effective_safety_start_s, 0.2, 0.75, true));
 }
 
+TEST(PlannerFsm, RepeatedBackupFailuresRetainModeBeforeAnchorInvalidation) {
+  // This models the product transition sequence observed in the Phase C
+  // trace: SUPER returns FAILED after backup generation, so the current
+  // committed generation is not replaced while its certified suffix remains
+  // usable. Once the suffix anchor exceeds the hard bound, validation fails
+  // closed rather than resurrecting an older bundle or synthesizing a MAIN.
+  // The generation value here is an explicit retained-state model; this test
+  // does not claim to invoke SuperPlanner::ReplanOnce or inspect its private
+  // CmdTraj snapshot.
+  constexpr std::uint64_t committed_generation = 8U;
+  constexpr double total_duration_s = 2.0;
+  constexpr double elapsed_s = 0.5;
+
+  for (int failure = 0; failure < 3; ++failure) {
+    EXPECT_EQ(classifyPlannerResult(
+                  super_utils::FAILED, false, true, false),
+              PlannerResultDisposition::RetainCommittedCommand);
+    EXPECT_TRUE(committedSafetySuffixIsUsable(
+        true, elapsed_s + 0.1 * failure, total_duration_s,
+        0.9, 0.70, 0.75, true));
+    EXPECT_EQ(committed_generation, 8U);
+  }
+
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      true, elapsed_s, total_duration_s, 0.9, 0.7500001, 0.75, true));
+  EXPECT_EQ(retainedValidationTransition(false),
+            RetainedValidationTransition::FailClosed);
+  EXPECT_EQ(committed_generation, 8U);
+}
+
 }  // namespace
 }  // namespace navigation_runtime
