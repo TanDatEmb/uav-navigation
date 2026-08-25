@@ -1288,7 +1288,7 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   corridor-attractor, and CIRI/obstacle-skip bypasses remain explicitly open
   debt with their existing removal conditions; they must be restored only in a
   separately recorded, measured A/B batch.
-- Verification: Release package build, `test_trajectory` 31/31, planner-FSM
+- Verification: Release package build, `test_trajectory` 30/30, planner-FSM
   17/17, observation-accounting 16/16, and `git diff --check`. Runtime timing
   distributions, sanitizer overlays, repeated SITL, and full bypass-removal
   certification remain open.
