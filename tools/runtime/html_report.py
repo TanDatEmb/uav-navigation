@@ -606,6 +606,30 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                 "count": len(records),
             })
 
+    # PositionCommand carries the planner's selected role at every accepted
+    # PVA sample. Convert the event stream into observed time bands for chart
+    # shading; a missing BACKUP flag remains missing evidence, never a guessed
+    # safety interval.
+    state_intervals: list[dict[str, Any]] = []
+    ordered_pva = sorted(
+        [item for item in pva if _finite_number(item.get("t")) is not None],
+        key=lambda item: float(item["t"]),
+    )
+    current: dict[str, Any] | None = None
+    for item in ordered_pva:
+        flag = int(_finite_number(item.get("trajectory_flag")) or 0)
+        role = {1: "normal", 2: "safety"}.get(flag, "unknown")
+        timestamp = float(item["t"])
+        if current is None:
+            current = {"state": role, "flag": flag, "t_start": timestamp, "t_end": timestamp}
+        elif role != current["state"]:
+            state_intervals.append(current)
+            current = {"state": role, "flag": flag, "t_start": timestamp, "t_end": timestamp}
+        else:
+            current["t_end"] = timestamp
+    if current is not None:
+        state_intervals.append(current)
+
     return {
         "streams": stream_summary,
         "diagnostics": diagnostics,
@@ -618,6 +642,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         "mode_events": mode_events,
         "vehicle_events": vehicle_events,
         "trajectory_paths": trajectory_paths,
+        "state_intervals": state_intervals,
         "coordinate_contract": _DISPLAY_FRAME_CONTRACT,
     }
 

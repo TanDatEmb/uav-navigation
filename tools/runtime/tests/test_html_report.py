@@ -179,6 +179,19 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         self.assertIn("PVA command", chart)
         self.assertIn('aria-pressed="true"', chart)
 
+    def test_line_chart_renders_observed_normal_and_safety_bands(self) -> None:
+        chart = line_chart(
+            "Velocity state bands",
+            [{"label": "measured", "points": [(0.0, 0.0), (2.0, 1.0)], "color": "#1f6feb"}],
+            "velocity (m/s)",
+            state_intervals=[
+                {"state": "normal", "t_start": 0.0, "t_end": 1.0},
+                {"state": "safety", "t_start": 1.0, "t_end": 2.0},
+            ],
+        )
+        self.assertIn('data-state-band="normal"', chart)
+        self.assertIn('data-state-band="safety"', chart)
+
     def test_line_chart_wraps_a_fifth_legend_entry_inside_the_svg(self) -> None:
         chart = line_chart(
             "Velocity ENU",

@@ -132,6 +132,7 @@ def line_chart(
     y_min: float | None = None,
     y_max: float | None = None,
     height: int = 300,
+    state_intervals: list[dict[str, Any]] | None = None,
 ) -> str:
     chart_id = "chart-" + "".join(
         character.lower() if character.isalnum() else "-"
@@ -197,6 +198,22 @@ def line_chart(
         f'<svg class="chart" viewBox="0 0 {width} {chart_height}" role="img" aria-label="{esc(title)}">',
         f'<title>{esc(title)}</title><rect x="0" y="0" width="{width}" height="{chart_height}" fill="#ffffff"/>',
     ]
+    for interval in state_intervals or []:
+        start = finite(interval.get("t_start"))
+        end = finite(interval.get("t_end"))
+        if start is None or end is None or end <= start:
+            continue
+        start = max(min_t, start)
+        end = min(max_t, end)
+        if end <= start:
+            continue
+        state = str(interval.get("state") or "unknown")
+        color = {"normal": "#dff3e8", "safety": "#fde3e0", "unknown": "#eef2f5"}.get(state, "#eef2f5")
+        x1 = left + (start - min_t) / (max_t - min_t) * plot_w
+        x2 = left + (end - min_t) / (max_t - min_t) * plot_w
+        parts.append(
+            f'<rect x="{x1:.1f}" y="{top}" width="{max(0.5, x2-x1):.1f}" height="{plot_h}" fill="{color}" fill-opacity="0.72" data-state-band="{esc(state)}"><title>{esc(state)} path observed from {start:.2f}s to {end:.2f}s</title></rect>'
+        )
     for tick in y_ticks:
         y = top + (1.0 - (tick - axis_min) / (axis_max - axis_min)) * plot_h
         parts.append(
@@ -207,12 +224,12 @@ def line_chart(
     for tick in x_ticks:
         x = left + (tick - min_t) / (max_t - min_t) * plot_w
         parts.append(
-            f'<line x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{height-bottom}" stroke="{GRID}"/>'
-            f'<text x="{x:.1f}" y="{height-bottom+20}" text-anchor="middle" class="axis-label">{esc(tick_label(tick))}</text>'
+            f'<line x1="{x:.1f}" y1="{top}" x2="{x:.1f}" y2="{chart_height-bottom}" stroke="{GRID}"/>'
+            f'<text x="{x:.1f}" y="{chart_height-bottom+20}" text-anchor="middle" class="axis-label">{esc(tick_label(tick))}</text>'
         )
     parts.extend([
-        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
-        f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{chart_height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
+        f'<line x1="{left}" y1="{chart_height-bottom}" x2="{width-right}" y2="{chart_height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
         f'<text x="18" y="{top + plot_h/2:.1f}" text-anchor="middle" transform="rotate(-90 18 {top + plot_h/2:.1f})" class="axis-title">{esc(y_label)}</text>',
         f'<text x="{left + plot_w/2:.1f}" y="{chart_height-10}" text-anchor="middle" class="axis-title">{esc(x_label)}</text>',
     ])
@@ -318,8 +335,6 @@ def map_svg(data: dict[str, Any]) -> str:
             parts.append(
                 f'<rect x="{top_left[0]:.1f}" y="{top_left[1]:.1f}" width="{bottom_right[0]-top_left[0]:.1f}" height="{bottom_right[1]-top_left[1]:.1f}" fill="{fill}" fill-opacity="0.72" stroke="{stroke}"/>'
             )
-        if is_route:
-            parts.append(f'<text x="{center[0]+8:.1f}" y="{center[1]-8:.1f}" class="map-label">{esc(obstacle["name"])}</text>')
     actual_sampled = samples([(item["position"][0], item["position"][1]) for item in data["ground_truth"]], 500)
     actual_coords = " ".join(f"{transform((x, y, 0.0))[0]:.1f},{transform((x, y, 0.0))[1]:.1f}" for x, y in actual_sampled)
     if actual_coords:
@@ -351,8 +366,6 @@ def map_svg(data: dict[str, Any]) -> str:
             parts.append(
                 f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-opacity="0.68" stroke-width="2"{dash_attr}/>'
             )
-            first = transform(points[0])
-            parts.append(f'<text x="{first[0]+8:.1f}" y="{first[1]-8:.1f}" class="map-label">{esc(label)} WP{esc(path.get("waypoint_index", "—"))}</text>')
     else:
         records = data.get("trajectory_records", [])
         record_step = max(1, len(records) // 36)
@@ -375,8 +388,12 @@ def map_svg(data: dict[str, Any]) -> str:
         x, y = transform(waypoint)
         parts.append(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#f0a51a" stroke="#7b4e00" stroke-width="1.2"/>'
-            f'<text x="{x+8:.1f}" y="{y-8:.1f}" class="map-label">WP{index}</text>'
         )
+    obstacle_tags = "".join(
+        f'<span class="map-tag {"route" if obstacle["name"] in route_obstacles else "obstacle"}">{esc(obstacle["name"])}</span>'
+        for obstacle in obstacles
+    ) or '<span class="map-tag muted">none</span>'
+    waypoint_tags = "".join(f'<span class="map-tag waypoint">WP{index}</span>' for index in range(len(waypoints))) or '<span class="map-tag muted">none</span>'
     parts.extend([
         f'<line x1="{left+12}" y1="22" x2="{left+32}" y2="22" stroke="{BLUE}" stroke-width="3"/><text x="{left+39}" y="26" class="legend-label">ground truth</text>',
         f'<line x1="{left+150}" y1="22" x2="{left+170}" y2="22" stroke="{TEAL}" stroke-width="2"/><text x="{left+177}" y="26" class="legend-label">main / nominal</text>',
@@ -384,7 +401,8 @@ def map_svg(data: dict[str, Any]) -> str:
         f'<rect x="{left+490}" y="16" width="14" height="12" fill="#e8897e" stroke="{RED}"/><text x="{left+511}" y="26" class="legend-label">route obstacles</text>',
         f'<circle cx="{left+666}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+679}" y="26" class="legend-label">waypoints</text>',
         f'<polygon points="{left+12},38 {left+32},44 {left+12},50" fill="{BLUE}" stroke="#ffffff"/><text x="{left+39}" y="48" class="legend-label">UAV heading ({esc(heading_source)})</text>',
-        '</svg></div>',
+        '</svg>',
+        f'<div class="map-annotations"><div><strong>Waypoints</strong> {waypoint_tags}</div><div><strong>Obstacles</strong> {obstacle_tags}</div><div class="small">Path role is encoded by line style/color; labels are listed here to keep the map readable.</div></div></div>',
     ])
     return "".join(parts)
 
@@ -833,12 +851,10 @@ _REPLAY_SCRIPT = r"""
         const z = world([obstacle.center[0] + half[0], obstacle.center[1] - half[1], 0]);
         svgNode("rect", {x: a[0], y: a[1], width: z[0] - a[0], height: z[1] - a[1], fill, "fill-opacity": .72, stroke}, staticLayer);
       }
-      if (isRoute) svgText(staticLayer, center[0] + 8, center[1] - 8, obstacle.name, "replay-map-label");
     });
     data.waypoints.forEach((point, index) => {
       const xy = world(point);
       svgNode("circle", {cx: xy[0], cy: xy[1], r: 5, fill: "#f0a51a", stroke: "#7b4e00"}, staticLayer);
-      svgText(staticLayer, xy[0] + 8, xy[1] - 8, `WP${index}`, "replay-map-label");
     });
   }
 
@@ -1420,6 +1436,7 @@ def render(session: Path, output: Path) -> Path:
                 {"label": "PX4 setpoint (NED→ENU)", "points": _px4_setpoint_points(observability, "position_ned", ("x", "y", "z").index(axis)), "color": RED, "dash": "6 4"},
             ],
             "position (m)",
+            state_intervals=observability.get("state_intervals", []),
         )
         for axis in ("x", "y", "z")
     )
@@ -1433,6 +1450,7 @@ def render(session: Path, output: Path) -> Path:
                 {"label": "PX4 setpoint (NED→ENU)", "points": _px4_setpoint_points(observability, "velocity_ned", ("vx", "vy", "vz").index(axis)), "color": PURPLE, "dash": "3 3"},
             ],
             "velocity (m/s)",
+            state_intervals=observability.get("state_intervals", []),
         )
         for axis in ("vx", "vy", "vz")
     )
@@ -1449,12 +1467,20 @@ def render(session: Path, output: Path) -> Path:
         f"Recorded command paths: {main_path_count} main/nominal and {backup_path_count} backup/safety. "
         "A missing backup path means no backup command was observed in this run; it is not treated as a successful safety-path test."
     )
+    state_intervals = observability.get("state_intervals", [])
+    observed_states = {str(item.get("state")) for item in state_intervals}
+    state_observation_note = (
+        "Background bands are derived from accepted PositionCommand flags: "
+        "green = normal/main, red = safety/backup. "
+        f"Observed states: {', '.join(sorted(observed_states)) if observed_states else 'none'}; "
+        "an absent safety band means no BACKUP command was recorded."
+    )
 
     plot_html = "".join([
         map_svg(data),
-        line_chart("Cross-track error", [{"label": "error", "points": error_series, "color": RED}], "distance error (m)", threshold=cross_limit, threshold_label=f"acceptance limit {fmt(cross_limit, 2, ' m')}"),
-        line_chart("Velocity components", [{"label": "vx", "points": velocity_series["vx"], "color": BLUE}, {"label": "vy", "points": velocity_series["vy"], "color": TEAL}, {"label": "vz", "points": velocity_series["vz"], "color": ORANGE}], "velocity (m/s)"),
-        line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "PVA command", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)"),
+        line_chart("Cross-track error", [{"label": "error", "points": error_series, "color": RED}], "distance error (m)", threshold=cross_limit, threshold_label=f"acceptance limit {fmt(cross_limit, 2, ' m')}", state_intervals=observability.get("state_intervals", [])),
+        line_chart("Velocity components", [{"label": "vx", "points": velocity_series["vx"], "color": BLUE}, {"label": "vy", "points": velocity_series["vy"], "color": TEAL}, {"label": "vz", "points": velocity_series["vz"], "color": ORANGE}], "velocity (m/s)", state_intervals=observability.get("state_intervals", [])),
+        line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "PVA command", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)", state_intervals=observability.get("state_intervals", [])),
     ])
     replay_html = replay_section(data)
 
@@ -1544,6 +1570,8 @@ def render(session: Path, output: Path) -> Path:
     .waypoint-label {{ font-weight:800; font-size:12px; }} .waypoint-state {{ font-size:11px; color:var(--muted); }} .waypoint.accepted .waypoint-state {{ color:var(--green); font-weight:700; }}
     .charts {{ display:grid; grid-template-columns:1fr; gap:14px; }}
     .chart-card {{ border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 2px; overflow:hidden; }}
+    .map-annotations {{ display:flex; flex-wrap:wrap; gap:6px 16px; padding:7px 4px 5px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; }} .map-annotations > div {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .map-annotations strong {{ color:#29435d; }} .map-tag {{ display:inline-block; padding:2px 6px; border:1px solid #c9d3dc; border-radius:999px; background:#f7fafc; color:#40566b; }} .map-tag.route {{ border-color:#e8897e; background:#fde8e5; color:#8f2e26; }} .map-tag.waypoint {{ border-color:#e2b35a; background:#fff5da; color:#7b4e00; }} .map-tag.muted {{ color:#8795a1; }}
+    .state-note {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .state-key {{ display:inline-block; width:18px; height:10px; margin-left:7px; border:1px solid #b8c5ce; border-radius:2px; vertical-align:middle; }} .state-key.normal {{ background:#dff3e8; }} .state-key.safety {{ background:#fde3e0; }}
     .chart-card:first-child {{ grid-column:auto; }}
     .chart-title {{ margin:2px 5px 2px; font-weight:800; font-size:14px; color:#29435d; }}
     .chart {{ width:100%; height:auto; display:block; }} .chart-legend-toggle {{ cursor:pointer; }} .chart-legend-toggle:focus {{ outline:2px solid {BLUE}; outline-offset:2px; }} .chart-legend-toggle.off {{ opacity:.32; }}
@@ -1602,7 +1630,7 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Measured processing time</h2><p class="small">Timing is extracted from LIO and planner diagnostic samples. <strong>Non-zero</strong> counts make zero-valued counters visible instead of silently treating them as missing.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></section>
 
-  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
+  <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 
   <section><h2>Flight overview</h2><p class="small">Plots are sampled for readability. Each plot has its own scale, units, labelled axes and legend; p95/limits remain visible in the cards above and in the gate table.</p><div class="charts">{plot_html}</div></section>
 
