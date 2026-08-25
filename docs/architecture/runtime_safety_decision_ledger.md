@@ -1103,3 +1103,18 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   Do not run TB-001 A/B, the 6 m/s ladder, or tune freshness/jerk/queues until
   that causal branch is reviewed. Clean 3/3 speed and full scene/SITL gates
   remain open.
+
+### 2026-08-25 - Native observer rerun after manifest refresh
+
+- Artifact `.artifacts/runtime/external-mode-check-20260825T021353-412079`
+  started after the authoritative Release manifest refresh. The native
+  summary is complete: `status=OK`, 7,996 native clock samples, 389 stats
+  samples, 40 process samples, 40 PSI samples, and role counts covering
+  Gazebo, bridges, LIO, mapping, monitor, PX4 ingress and External Mode.
+- The run remains `BLOCKED`, not certified: native clock/stats maximum arrival
+  gaps were 3.861 s and 3.906 s, native RTF reached 0.0033, and the ROS report
+  independently recorded stale clock/input/execution-state failures and early
+  safety termination. This repeats the causal screening signal; it is not a
+  2 m/s acceptance result and gives no authority to tune lease, jerk, queue or
+  controller limits. External PX4 is still dirty, so this remains causal
+  screening rather than clean closed-loop evidence.
