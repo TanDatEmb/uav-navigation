@@ -181,6 +181,10 @@ namespace super_planner {
                 previous_exp_snapshot, exp_traj_info, solve_deadline);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
+            if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
+                solve_deadline.steadyExpired()) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            }
             ros_ptr_->warn(" -- [SUPER] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
                            RET_CODE_STR[exp_ret_code].c_str());
             return FAILED;
@@ -190,15 +194,18 @@ namespace super_planner {
 
         back_traj_info.setEmpty();
         solve_stage_.store(5);
-        if (solve_deadline.expired(ros_ptr_->getSimTime())) {
+        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.steadyExpired()) {
             ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
             return FAILED;
         }
-        RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);;
+        RET_CODE back_ret_code = generateBackupTrajectory(
+                exp_traj_info, back_traj_info, solve_deadline);
 
         if (solve_cancelled_.load() ||
-            solve_deadline.expired(ros_ptr_->getSimTime())) {
+            solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.steadyExpired()) {
             if (!solve_cancelled_.load()) {
                 ros_ptr_->warn(" -- [SUPER] solve deadline exhausted during backup stage");
             }
@@ -310,6 +317,10 @@ namespace super_planner {
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
+            if (solve_cancelled_.load() || solve_deadline.expired(ros_ptr_->getSimTime()) ||
+                solve_deadline.steadyExpired()) {
+                latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
+            }
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: GenerateExpTrajectory failed, force return");
             return FAILED;
         } else if (exp_ret_code == NEW_TRAJ) {
@@ -350,12 +361,14 @@ namespace super_planner {
         // 2）生成back轨迹
         solve_stage_.store(5);
         TimeConsuming t_back("t_back", false);
-        if (solve_deadline.expired(ros_ptr_->getSimTime())) {
+        if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.steadyExpired()) {
             ros_ptr_->warn(" -- [SUPER] solve deadline exhausted before backup stage");
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
             return FAILED;
         }
-        RET_CODE back_ret_code = generateBackupTrajectory(exp_traj_info, back_traj_info);
+        RET_CODE back_ret_code = generateBackupTrajectory(
+                exp_traj_info, back_traj_info, solve_deadline);
         time_consuming_[GENERATE_BACK_TRAJ] = t_back.stop();
 
         {
@@ -367,6 +380,7 @@ namespace super_planner {
 
         double replan_dt = replan_total_t.stop();
         if (solve_deadline.expired(ros_ptr_->getSimTime()) ||
+            solve_deadline.steadyExpired() ||
             replan_dt > cfg_.solve_deadline_s) {
             ros_ptr_->warn(" -- [SUPER] in [ReplanOnce]: Replan overtime, check parameters, replan dt = {}.", replan_dt);
             latest_replan.setRetCode(SUPER_RET_CODE::SUPER_BACKUP_FAILED);
@@ -984,6 +998,8 @@ namespace super_planner {
         TimeConsuming t_exp_opt("t_exp_opt", false);
         auto original_sfc = sfc;
         solve_stage_.store(4);
+        exp_traj_opt_->setSolveBudget(
+                &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
         temp_ret = exp_traj_opt_->optimize(pos_init_state,
                                            pos_fina_state,
                                            guide_path,
@@ -1090,7 +1106,10 @@ namespace super_planner {
         return SUCCESS;
     }
 
-    RET_CODE SuperPlanner::generateBackupTrajectory(ExpTraj &ref_exp_traj, BackupTraj &back_traj_info) {
+    RET_CODE SuperPlanner::generateBackupTrajectory(
+            ExpTraj &ref_exp_traj,
+            BackupTraj &back_traj_info,
+            const AbsoluteDeadline &solve_deadline) {
         drone_state_mutex_.lock();
         back_traj_info.setRobotPos(robot_state_.p);
         drone_state_mutex_.unlock();
@@ -1396,6 +1415,8 @@ namespace super_planner {
                     heu_dur * static_cast<double>(i) /
                     cfg_.back_traj_cfg.piece_num));
         }
+        back_traj_opt_->setSolveBudget(
+                &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
         bool temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
                                                  t0,
                                                  backup_switch_upper_bound,
@@ -1575,7 +1596,7 @@ namespace super_planner {
         // an absolute budget so a timeout cannot multiply callback latency.
         const double stage_budget = std::min(
                 cfg_.astar_total_time_limit_s,
-                solve_deadline.remaining(ros_ptr_->getSimTime()));
+                solve_deadline.conservativeRemaining(ros_ptr_->getSimTime()));
         if (stage_budget <= 0.0) {
             ros_ptr_->warn(" -- [Astar] solve deadline exhausted before path search");
             return false;
@@ -1584,7 +1605,7 @@ namespace super_planner {
                 ros_ptr_->getSimTime(), stage_budget);
         const auto remaining_search_budget = [&]() {
             return std::min(search_deadline.remaining(ros_ptr_->getSimTime()),
-                            solve_deadline.remaining(ros_ptr_->getSimTime()));
+                            solve_deadline.conservativeRemaining(ros_ptr_->getSimTime()));
         };
         //            int start_id = getNearestFurtherGoalPoint(goal_waypoints, start_pt);
 

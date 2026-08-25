@@ -1161,3 +1161,21 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   Algorithmic optimization remains deferred until repeated open-map/dense
   measurements and SUPER-parity comparison are available. TB-001..003 remain
   temporary bypasses and must not be enabled implicitly.
+
+### 2026-08-25 - Steady-clock optimizer cancellation
+
+- `AbsoluteDeadline` retains the existing ROS/simulation-time checks used for
+  trajectory timestamps, and now also owns a monotonic steady-clock deadline.
+  EXP and backup L-BFGS progress callbacks stop on cancellation or steady-budget
+  expiry. A cancelled optimizer returns failure and clears its candidate; no
+  partial trajectory can reach `CmdTraj` commit or replace the certified bundle.
+- This addresses the measured failure mode where simulation time freezes while
+  an optimizer continues running, and bounds load-dependent tail work without
+  increasing the solve deadline or weakening any dynamic/world certificate.
+  It is not a speed or success-rate claim; the next benchmark must measure
+  timeout counts, cancellation stage, p95/p99 latency, and retained-command
+  behavior under the same safety contracts.
+- Verification: Release build of `super_planner_vendor` and `navigation_runtime`,
+  package tests (10/10), and the `AbsoluteDeadline` steady-clock unit assertion.
+  ASan/UBSan/TSan and repeated SITL remain open. No TB-001/TB-002/TB-003
+  bypass was enabled by this change.

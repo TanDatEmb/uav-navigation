@@ -25,6 +25,8 @@
 #define SUPER_EXP_TRAJ_OPT_H
 
 #include <iostream>
+#include <atomic>
+#include <cstdint>
 #include <vector>
 
 #include <traj_opt/config.hpp>
@@ -103,6 +105,9 @@ namespace traj_opt {
             int temporalDim, spatialDim;
 
             VecDf penalty_log;
+
+            std::atomic_bool* solve_cancelled{nullptr};
+            std::int64_t steady_deadline_ns{0};
         } opt_vars;
 
         static double costFunctional(void *ptr,
@@ -327,12 +332,26 @@ namespace traj_opt {
 
         double optimize(Trajectory &traj, const double &relCostTol);
 
+        static int monitorProgress(void *instance,
+                                   const VecDf &x,
+                                   const VecDf &g,
+                                   double fx,
+                                   double step,
+                                   int k,
+                                   int ls);
+
     public:
         typedef std::shared_ptr<ExpTrajOpt> Ptr;
 
         ExpTrajOpt(const traj_opt::Config &cfg, const ros_interface::RosInterface::Ptr & ros_ptr);
 
         ~ExpTrajOpt();
+
+        void setSolveBudget(std::atomic_bool* solve_cancelled,
+                            std::int64_t steady_deadline_ns) noexcept {
+            opt_vars.solve_cancelled = solve_cancelled;
+            opt_vars.steady_deadline_ns = steady_deadline_ns;
+        }
 
         bool optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                       PolytopeVec &sfcs,

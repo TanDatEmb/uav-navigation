@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/exp_traj_optimizer_s4.h>
+#include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <ros_interface/ros_interface.hpp>
@@ -42,6 +43,21 @@ using namespace optimization_utils;
 
 using Vec8f = Eigen::Matrix<double, 8, 1>;
 using Mat83f = Eigen::Matrix<double, 8, 3>;
+
+int ExpTrajOpt::monitorProgress(void *instance,
+                               const VecDf &, const VecDf &, double,
+                               double, int, int) {
+    auto *vars = static_cast<OptimizationVariables *>(instance);
+    if (!vars) return 1;
+    if (vars->solve_cancelled &&
+        vars->solve_cancelled->load(std::memory_order_relaxed)) return 1;
+    if (vars->steady_deadline_ns > 0) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now_ns >= vars->steady_deadline_ns) return 1;
+    }
+    return 0;
+}
 
 void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                                        const MatD3f &coeffs,
@@ -788,9 +804,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     minCostFunctional,
                                     &ExpTrajOpt::costFunctional,
                                     nullptr,
-                                    nullptr,
+                                    &ExpTrajOpt::monitorProgress,
                                     &this->opt_vars,
                                     lbfgs_params);
+    if (ret == lbfgs::LBFGS_CANCELED) {
+        traj.clear();
+        return INFINITY;
+    }
     // double dt = ttt.stop();
     const auto rebuild_candidate = [&]() {
         gcopter::forwardMapTauToT(tau, opt_vars.times);
@@ -977,9 +997,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     minCostFunctional,
                                     &ExpTrajOpt::costFunctional,
                                     nullptr,
-                                    nullptr,
+                                    &ExpTrajOpt::monitorProgress,
                                     &this->opt_vars,
                                     lbfgs_params);
+        if (ret == lbfgs::LBFGS_CANCELED) {
+            traj.clear();
+            return INFINITY;
+        }
         if (ret < 0) break;
 
         rebuild_candidate();

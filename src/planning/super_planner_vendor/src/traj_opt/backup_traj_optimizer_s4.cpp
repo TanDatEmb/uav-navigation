@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/backup_traj_optimizer_s4.h>
+#include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <super_core/backup_braking.hpp>
 #include <utils/header/color_msg_utils.hpp>
@@ -42,6 +43,21 @@ void forwardDurationAboveFloor(const Eigen::VectorXd &tau,
 }
 
 }  // namespace
+
+int BackupTrajOpt::monitorProgress(void *instance,
+                                   const Eigen::VectorXd &, const Eigen::VectorXd &,
+                                   double, double, int, int) {
+    auto *vars = static_cast<OptimizationVariables *>(instance);
+    if (!vars) return 1;
+    if (vars->solve_cancelled &&
+        vars->solve_cancelled->load(std::memory_order_relaxed)) return 1;
+    if (vars->steady_deadline_ns > 0) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now_ns >= vars->steady_deadline_ns) return 1;
+    }
+    return 0;
+}
 
 //========================================================================
 void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
@@ -539,10 +555,14 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     minCostFunctional,
                                     &BackupTrajOpt::costFunctional,
                                     nullptr,
-                                    nullptr,
+                                    &BackupTrajOpt::monitorProgress,
                                     &this->opt_vars,
                                     lbfgs_params);
 
+    }
+    if (ret == lbfgs::LBFGS_CANCELED) {
+        traj.clear();
+        return -1.0;
     }
     using namespace std;
     if (cfg_.print_optimizer_log) {

@@ -1,5 +1,6 @@
 #include <cmath>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -625,7 +626,18 @@ TEST(SuperTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
   EXPECT_DOUBLE_EQ(deadline.remaining(100.04), 0.0);
   EXPECT_TRUE(deadline.expired(100.05));
   EXPECT_DOUBLE_EQ(deadline.remaining(std::numeric_limits<double>::quiet_NaN()), 0.0);
+  const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  EXPECT_GT(deadline.steadyDeadlineNanoseconds(), now_ns);
+  EXPECT_FALSE(deadline.steadyExpired());
   EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, 0.0}), std::invalid_argument);
+  EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, -1.0}), std::invalid_argument);
+  EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, std::numeric_limits<double>::quiet_NaN()}),
+               std::invalid_argument);
+  EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, std::numeric_limits<double>::infinity()}),
+               std::invalid_argument);
+  EXPECT_THROW((super_planner::AbsoluteDeadline{0.0, std::numeric_limits<double>::max()}),
+               std::invalid_argument);
 }
 
 TEST(SuperTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {

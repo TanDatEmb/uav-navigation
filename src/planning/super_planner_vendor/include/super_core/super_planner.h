@@ -265,7 +265,9 @@ namespace super_planner {
                                  const AbsoluteDeadline &solve_deadline);
 
         /* For Backup traj generation */
-        RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj, BackupTraj &back_traj_info);
+        RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj,
+                                          BackupTraj &back_traj_info,
+                                          const AbsoluteDeadline &solve_deadline);
 
         int getNearestFurtherGoalPoint(const vec_E<Vec3f> &goals, const Vec3f &start_pt);
 

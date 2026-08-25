@@ -24,6 +24,8 @@
 #pragma once
 
 #include <memory>
+#include <atomic>
+#include <cstdint>
 
 #include <traj_opt/config.hpp>
 #include <traj_opt/minco.h>
@@ -119,6 +121,9 @@ namespace traj_opt {
             // init_ps include the optimized fina p
             vec_Vec3f given_init_ps;
 
+            std::atomic_bool* solve_cancelled{nullptr};
+            std::int64_t steady_deadline_ns{0};
+
         } opt_vars{};
 
     private:
@@ -146,6 +151,10 @@ namespace traj_opt {
         visualizeProgress(void *instance, const Eigen::VectorXd &x, const Eigen::VectorXd &g, const double fx,
                           const double step, const int k, const int ls);
 
+        static int
+        monitorProgress(void *instance, const Eigen::VectorXd &x, const Eigen::VectorXd &g,
+                        double fx, double step, int k, int ls);
+
         bool setupProblemAndCheck();
 
         static bool SimplifySFC(const Vec3f &head_p, const Vec3f &tail_p, PolytopeVec &sfcs);
@@ -159,6 +168,12 @@ namespace traj_opt {
 
         ~BackupTrajOpt() {
             penalty_log.close();
+        }
+
+        void setSolveBudget(std::atomic_bool* solve_cancelled,
+                            std::int64_t steady_deadline_ns) noexcept {
+            opt_vars.solve_cancelled = solve_cancelled;
+            opt_vars.steady_deadline_ns = steady_deadline_ns;
         }
 
         typedef std::shared_ptr<BackupTrajOpt> Ptr;
