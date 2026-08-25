@@ -160,7 +160,7 @@ namespace navigation_planning_backend {
         Trajectory getCommittedYawTrajectory();
 
         // Runtime safety metadata for the currently committed command. These
-        // accessors keep CmdTraj ownership inside SUPER while allowing the
+        // accessors keep backend trajectory ownership private while allowing the
         // mission/PX4 FSM to validate its optimized safety suffix.
         bool committedBackupTrajectoryAvailable() const {
             return cmd_traj_info_.backupTrajAvilibale();

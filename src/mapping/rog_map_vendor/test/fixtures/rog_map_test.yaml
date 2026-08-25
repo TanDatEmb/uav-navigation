@@ -1,5 +1,5 @@
 # Minimal ROG-Map config for rog_map_vendor smoke/lifecycle tests.
-# Values intentionally mirror the P1 baseline (see docs/architecture and
+# Values intentionally mirror the baseline contract (see docs/architecture and
 # config/runtime/mapping.yaml) but keep map size small enough for fast tests.
 rog_map:
   resolution: 0.2

@@ -26,7 +26,7 @@
 #include <algorithm>
 
 // uav-navigation local modification: pcl::io::loadPCDFile (used only by the
-// optional, P1-disabled load_pcd_en path below) was previously pulled in
+// optional disabled load_pcd_en path below) was previously pulled in
 // transitively via pcl_conversions.h, which this vendor package no longer
 // includes (see UPSTREAM.md). Include it directly instead.
 #include <pcl/io/pcd_io.h>
@@ -266,7 +266,7 @@ bool ROGMap::isLineKnownFree(const Vec3f& start_pt, const Vec3f& end_pt,
     return isLineFree(start_pt, end_pt, false, true);
   }
 
-  // ROG-Map can intentionally disable unknown inflation for SUPER's
+  // ROG-Map can intentionally disable unknown inflation for the planner's
   // endpoint-only visibility model.  A known-free query still has to combine
   // the two independent facts we care about: the probabilistic cell was
   // observed free, and the robot-radius inflated layer contains no obstacle.

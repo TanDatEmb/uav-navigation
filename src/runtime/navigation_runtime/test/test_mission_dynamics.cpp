@@ -28,7 +28,7 @@ class TemporaryMission {
 
 }  // namespace
 
-TEST(MissionDynamics, LoadsPlannerLimitsBeforeSuperConstruction) {
+TEST(MissionDynamics, LoadsPlannerLimitsBeforePlannerConstruction) {
   const TemporaryMission mission(R"(
 mission:
   planning:

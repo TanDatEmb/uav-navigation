@@ -198,7 +198,7 @@ namespace navigation_planning_backend {
                                                  planning_margin_m;
             if (std::abs(robot_r - required_robot_radius) > 1.0e-6) {
                 throw std::invalid_argument(
-                    "SUPER robot_r must equal the configured vehicle/tracking/localization/"
+                    "planner robot radius must equal the configured vehicle/tracking/localization/"
                     "mapping/planning safety envelope");
             }
             if (!std::isfinite(replan_forward_dt) || replan_forward_dt <= 0.0 ||

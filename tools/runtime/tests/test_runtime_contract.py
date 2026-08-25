@@ -118,8 +118,8 @@ class RuntimeContractTest(unittest.TestCase):
             artifact = install / "product/bin/node"
             source = root / "product.cpp"
             artifact.parent.mkdir(parents=True)
-            source.write_text("v1\n", encoding="utf-8")
-            artifact.write_bytes(b"binary-v1")
+            source.write_text("baseline\n", encoding="utf-8")
+            artifact.write_bytes(b"binary-baseline")
             (root / ".gitignore").write_text("install/\n", encoding="utf-8")
             subprocess = __import__("subprocess")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -139,12 +139,12 @@ class RuntimeContractTest(unittest.TestCase):
             build_provenance.write_manifest_atomic(install, manifest)
             with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
                 self.assertEqual(build_provenance.validate_manifest(root, install)["status"], "VALID")
-            source.write_text("v2\n", encoding="utf-8")
+            source.write_text("current\n", encoding="utf-8")
             with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
                 with self.assertRaisesRegex(RuntimeError, "source fingerprint"):
                     build_provenance.validate_manifest(root, install)
-            source.write_text("v1\n", encoding="utf-8")
-            artifact.write_bytes(b"binary-v2")
+            source.write_text("baseline\n", encoding="utf-8")
+            artifact.write_bytes(b"binary-current")
             with mock.patch.object(build_provenance, "runtime_artifact_paths", return_value=[artifact]):
                 with self.assertRaisesRegex(RuntimeError, "artifact identity mismatch"):
                     build_provenance.validate_manifest(root, install)

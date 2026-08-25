@@ -13,8 +13,8 @@
 #include "px4_odometry_bridge/topic_version.hpp"
 
 namespace {
-struct V0 { static constexpr std::uint32_t MESSAGE_VERSION = 0; };
-struct V2 { static constexpr std::uint32_t MESSAGE_VERSION = 2; };
+struct UnversionedTopicMessage { static constexpr std::uint32_t MESSAGE_VERSION = 0; };
+struct SuffixedTopicMessage { static constexpr std::uint32_t MESSAGE_VERSION = 2; };
 
 px4_odometry_bridge::ConvertedOdometry sample(std::int64_t time) {
   px4_odometry_bridge::ConvertedOdometry value;
@@ -31,14 +31,14 @@ px4_odometry_bridge::ConvertedOdometry sample(std::int64_t time) {
 }
 }  // namespace
 
-TEST(Px4TopicVersion, KeepsZeroUnversionedAndSuffixesPositiveVersions) {
-  EXPECT_EQ(px4_odometry_bridge::versioned_topic<V0>("/fmu/out/vehicle_odometry"),
+TEST(Px4TopicNaming, KeepsUnversionedAndSuffixesPositiveVersions) {
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<UnversionedTopicMessage>("/fmu/out/vehicle_odometry"),
             "/fmu/out/vehicle_odometry");
-  EXPECT_EQ(px4_odometry_bridge::versioned_topic<V2>("/fmu/out/vehicle_local_position"),
+  EXPECT_EQ(px4_odometry_bridge::versioned_topic<SuffixedTopicMessage>("/fmu/out/vehicle_local_position"),
             "/fmu/out/vehicle_local_position_v2");
 }
 
-TEST(Px4TopicVersion, UsesRealV117GeneratedMessageDefinitions) {
+TEST(Px4TopicNaming, UsesGeneratedMessageDefinitions) {
   EXPECT_EQ(px4_odometry_bridge::versioned_topic<px4_msgs::msg::VehicleOdometry>(
                 "/fmu/out/vehicle_odometry"),
             "/fmu/out/vehicle_odometry");

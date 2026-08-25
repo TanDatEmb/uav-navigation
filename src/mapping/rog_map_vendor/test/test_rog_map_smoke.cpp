@@ -51,7 +51,7 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   // The endpoint itself -> occupied.
   EXPECT_TRUE(map.isOccupied(obstacle));
   EXPECT_EQ(map.getInfGridType(obstacle), rog_map::GridType::OCCUPIED);
-  // SUPER's endpoint-only visibility contract allows UNKNOWN, but the
+  // The endpoint-only visibility contract allows UNKNOWN, but the
   // inflated query must still reject an obstacle inside the vehicle tube even
   // when the base-grid centre line does not cross the occupied voxel.
   const rog_map::Vec3f offset_start(0.0, 0.25, 0.0);

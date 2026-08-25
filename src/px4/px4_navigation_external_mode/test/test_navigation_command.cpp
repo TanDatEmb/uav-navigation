@@ -44,7 +44,7 @@ TEST(NavigationCommandContract, KeepsSampleIdDistinctFromBundleAndTime) {
   EXPECT_EQ(command.role, navigation_contracts::msg::NavigationCommand::ROLE_BACKUP);
 }
 
-TEST(NavigationCommandContract, ConvertsSuperYawAndYawRateFromEnuToNed) {
+TEST(NavigationCommandContract, ConvertsYawAndYawRateFromEnuToNed) {
   EXPECT_FLOAT_EQ(1.57079632679F, px4_ros2::yawEnuToNed(0.0F));
   EXPECT_FLOAT_EQ(-0.7F, px4_ros2::yawRateEnuToNed(0.7F));
 }

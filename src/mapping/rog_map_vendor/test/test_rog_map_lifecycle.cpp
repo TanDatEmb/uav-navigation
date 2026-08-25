@@ -1,4 +1,4 @@
-// Regression test for the P1 lifecycle patch (see UPSTREAM.md, "Lifecycle
+// Regression test for the lifecycle patch (see UPSTREAM.md, "Lifecycle
 // fix"). Upstream's original function-local static init guard made a second
 // ROGMap instance in the same process always throw, which is incompatible
 // with the public-frame-generation reset contract (destroy + reconstruct in

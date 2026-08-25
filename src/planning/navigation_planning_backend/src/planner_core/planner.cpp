@@ -72,7 +72,7 @@ namespace navigation_planning_backend {
         const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;
         if (occupied_inflation_radius + 1.0e-9 < cfg_.robot_r) {
             throw std::invalid_argument(
-                    "ROG-Map occupied inflation radius is smaller than SUPER robot_r");
+                    "mapping inflation radius is smaller than planner robot radius");
         }
         astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
         cg_ptr_ = std::make_shared<CorridorGenerator>(ros_ptr_, map_ptr_, cfg_.corridor_bound_dis,

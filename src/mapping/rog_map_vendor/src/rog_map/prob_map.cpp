@@ -489,7 +489,7 @@ GridType ProbMap::getInfGridType(const Vec3f& pos) const {
     // still owns the robot-radius OCCUPIED envelope but cannot classify
     // observation provenance. Preserve UNKNOWN/KNOWN_FREE from the base
     // probability map instead of silently treating all non-occupied cells as
-    // observed free. SUPER can then choose UNKNOWN_AS_FREE or
+    // observed free. The planner can then choose UNKNOWN_AS_FREE or
     // UNKNOWN_AS_OCCUPIED without requiring a conservative unknown halo.
     return getGridType(pos);
 }
