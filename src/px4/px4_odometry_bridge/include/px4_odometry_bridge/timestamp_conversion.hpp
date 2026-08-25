@@ -53,7 +53,4 @@ class TimestampConverter final {
   TimestampConversionDiagnostics diagnostics_;
 };
 
-[[nodiscard]] std::optional<std::uint64_t> nanoseconds_to_microseconds(
-    std::int64_t nanoseconds);
-
 }  // namespace px4_odometry_bridge

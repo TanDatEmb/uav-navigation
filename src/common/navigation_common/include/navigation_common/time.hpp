@@ -2,6 +2,7 @@
 
 #include <builtin_interfaces/msg/time.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -12,19 +13,42 @@ namespace navigation_common {
 using TimestampNs = std::int64_t;
 
 inline constexpr TimestampNs kNanosecondsPerSecond = 1'000'000'000LL;
+inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
+
+// Steady time is only for local receive, timeout, and latency measurements.
+// It must not be compared with ROS, simulation, or sensor source timestamps.
+[[nodiscard]] inline TimestampNs steadyClockNowNanoseconds() noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 [[nodiscard]] inline std::optional<TimestampNs> microsecondsToNanoseconds(
     const std::uint64_t microseconds) noexcept {
   constexpr auto max = static_cast<std::uint64_t>(
       std::numeric_limits<TimestampNs>::max());
-  if (microseconds > max / 1'000U) {
+  if (microseconds > max / static_cast<std::uint64_t>(kNanosecondsPerMicrosecond)) {
     return std::nullopt;
   }
-  const auto nanoseconds = microseconds * 1'000U;
+  const auto nanoseconds =
+      microseconds * static_cast<std::uint64_t>(kNanosecondsPerMicrosecond);
   if (nanoseconds == 0U) {
     return std::nullopt;
   }
   return static_cast<TimestampNs>(nanoseconds);
+}
+
+[[nodiscard]] inline std::optional<std::uint64_t> nanosecondsToMicroseconds(
+    const TimestampNs nanoseconds) noexcept {
+  if (nanoseconds <= 0) {
+    return std::nullopt;
+  }
+  const auto microseconds = static_cast<std::uint64_t>(
+      nanoseconds / kNanosecondsPerMicrosecond);
+  if (microseconds == 0U) {
+    return std::nullopt;
+  }
+  return microseconds;
 }
 
 [[nodiscard]] inline std::optional<TimestampNs> rosTimeToNanoseconds(

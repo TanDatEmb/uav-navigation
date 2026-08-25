@@ -153,7 +153,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           navigation_mapping::PointCloud& output);
   static builtin_interfaces::msg::Time rosTimeFromSeconds(double seconds);
-  static std::int64_t stampNanoseconds(const builtin_interfaces::msg::Time& stamp);
   std::string cloud_topic_;
   std::string registered_scan_topic_;
   std::string corrected_odometry_topic_;

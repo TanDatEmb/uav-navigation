@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <navigation_common/time.hpp>
+
 #include "px4_odometry_bridge/geometric_jump_latch.hpp"
 #include "px4_odometry_bridge/timestamp_conversion.hpp"
 
@@ -96,7 +98,7 @@ TEST(TimestampConversionTest, StaleFutureUnresolvedAndZeroAreFailClosed) {
   TimestampConverter zero(150'000'000);
   EXPECT_EQ(zero.convert(0, 1'000'000, true, 1).reason,
             "TIMESTAMP_ZERO_OR_OVERFLOW");
-  EXPECT_FALSE(nanoseconds_to_microseconds(0).has_value());
+  EXPECT_FALSE(navigation_common::nanosecondsToMicroseconds(0).has_value());
 }
 
 }  // namespace

@@ -2104,3 +2104,25 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   were closed and no ROS, PX4, Gazebo, XRCE, runner or detached agent
   worktree remained. Repeat a complete dataset replay and a preflight-clean
   SITL before closing the retry-duration item.
+
+### 2026-08-26 - Shared time conversion and local clock boundary
+
+- Owner: `navigation_common`, runtime input pairing, and PX4 odometry bridge.
+  Scope: make ROS timestamp-to-nanosecond, PX4 microsecond conversion, and
+  steady receive/latency sampling use one product-owned utility implementation.
+  `steadyClockNowNanoseconds()` is explicitly local steady time and is not
+  comparable with ROS, simulation, or sensor source timestamps.
+- Safety impact: behavior-preserving refactor only. Malformed/zero/negative
+  timestamps still become the existing fail-closed sentinel at each consumer;
+  ROS freshness remains ROS-clock based and receive/deadline measurements
+  remain steady-clock based. No clock-domain assumption, freshness threshold,
+  frame contract, fallback, or bypass changed.
+- Evidence: added common nanosecond-to-microsecond and steady-clock tests,
+  removed the duplicate runtime timestamp and steady-clock helpers, and made
+  PX4 `TimestampConverter` call the shared microsecond conversion. Focused
+  build/test and full Release validation are required before checkpoint.
+- Removal condition: none; this is the canonical utility boundary. Later
+  migration of FAST-LIO clock-domain types, manual ROS time arithmetic, and
+  frame/quaternion/covariance conversion is a separate phase with its own
+  tests and ledger evidence.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source install/setup.bash && python3 tools/runtime/build.py --mode release build && python3 tools/runtime/build.py --mode release test && python3 tools/runtime/build.py --mode release check`.

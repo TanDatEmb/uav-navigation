@@ -64,12 +64,6 @@ const geometry_msgs::msg::Point& plannerTarget(
   return goal.target;
 }
 
-std::int64_t steadyNowNanoseconds() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(
-             std::chrono::steady_clock::now().time_since_epoch())
-      .count();
-}
-
 void addObservationAccountingValues(
     diagnostic_msgs::msg::DiagnosticStatus& status,
     const navigation_mapping::ObservationAccounting::Snapshot& accounting) {
@@ -281,7 +275,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                              active_epoch->load(std::memory_order_acquire) ||
                          observation.localization_epoch == 0U ||
                          observation.stamp_ns <= 0 ||
-                         stampNanoseconds(observation.corrected_odometry.header.stamp) !=
+                         navigation_common::rosTimeToNanoseconds(
+                             observation.corrected_odometry.header.stamp).value_or(0) !=
                              observation.stamp_ns ||
                          !std::isfinite(pose.position.x) ||
                          !std::isfinite(pose.position.y) ||
@@ -486,11 +481,6 @@ builtin_interfaces::msg::Time NavigationRuntimeNode::rosTimeFromSeconds(double s
       builtin_interfaces::msg::Time{});
 }
 
-std::int64_t NavigationRuntimeNode::stampNanoseconds(
-    const builtin_interfaces::msg::Time& stamp) {
-  return navigation_common::rosTimeToNanoseconds(stamp).value_or(0);
-}
-
 std::optional<navigation_mapping::MappingObservation> NavigationRuntimeNode::tryPromotePairLocked() {
   if (!latest_cloud_) return std::nullopt;
   auto pair = input_pairing::tryTakeExactPair(
@@ -498,7 +488,9 @@ std::optional<navigation_mapping::MappingObservation> NavigationRuntimeNode::try
   if (pair) {
     last_pair_wait_us_ = pending_cloud_received_steady_ns_ > 0
         ? std::max<std::int64_t>(
-              0, (steadyNowNanoseconds() - pending_cloud_received_steady_ns_) / 1000)
+              0, (navigation_common::steadyClockNowNanoseconds() -
+                  pending_cloud_received_steady_ns_) /
+                  navigation_common::kNanosecondsPerMicrosecond)
         : 0;
     pending_cloud_received_steady_ns_ = 0;
     return navigation_mapping::MappingObservation{
@@ -508,7 +500,8 @@ std::optional<navigation_mapping::MappingObservation> NavigationRuntimeNode::try
   }
   const auto pending_stamp_ns = latest_cloud_->stamp_ns;
   const auto newest_corrected_stamp_ns = corrected_odometry_history_.empty()
-      ? 0 : stampNanoseconds(corrected_odometry_history_.back().header.stamp);
+      ? 0 : navigation_common::rosTimeToNanoseconds(
+                    corrected_odometry_history_.back().header.stamp).value_or(0);
   const auto freshness = navigation_execution::classifyTimestampFreshness(
       now().nanoseconds(), pending_stamp_ns,
       static_cast<std::int64_t>(input_max_age_s_ * 1e9));
@@ -589,8 +582,8 @@ void NavigationRuntimeNode::onRegisteredScan(
       message->scan_sequence == 0U ||
       message->header.frame_id != planning_frame_ ||
       message->points.header.frame_id != message->header.frame_id ||
-      stampNanoseconds(message->points.header.stamp) !=
-          stampNanoseconds(message->header.stamp) ||
+      navigation_common::rosTimeToNanoseconds(message->points.header.stamp).value_or(0) !=
+          navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0) ||
       message->body_frame_id != body_frame_id_) {
     observation_accounting_.recordRejectedBeforeInbox();
     return;
@@ -598,7 +591,7 @@ void NavigationRuntimeNode::onRegisteredScan(
   const auto& pose = message->corrected_pose.pose;
   const Eigen::Quaterniond quaternion{
       pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
-  if (stampNanoseconds(message->header.stamp) <= 0 ||
+  if (navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0) <= 0 ||
       !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
       !std::isfinite(pose.position.z) || !quaternion.coeffs().allFinite() ||
       quaternion.norm() <= 1.0e-6) {
@@ -638,7 +631,7 @@ void NavigationRuntimeNode::onRegisteredScan(
   navigation_mapping::MappingObservation observation{
       std::move(decoded), std::move(corrected), message->localization_epoch,
       message->scan_sequence,
-      stampNanoseconds(message->header.stamp),
+      navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0),
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - decode_started)
           .count(),
@@ -680,7 +673,8 @@ void NavigationRuntimeNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstSh
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Dropping malformed/empty PointCloud2");
     return;
   }
-  const auto stamp_ns = stampNanoseconds(message->header.stamp);
+  const auto stamp_ns =
+      navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0);
   if (stamp_ns <= 0) {
     observation_accounting_.recordRejectedBeforeInbox();
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -695,7 +689,7 @@ void NavigationRuntimeNode::onCloud(const sensor_msgs::msg::PointCloud2::ConstSh
     observation_accounting_.recordAcceptedToInbox();
     latest_cloud_ = input_pairing::StampedObservation<
         std::shared_ptr<navigation_mapping::PointCloud>>{std::move(decoded), stamp_ns};
-    pending_cloud_received_steady_ns_ = steadyNowNanoseconds();
+    pending_cloud_received_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
     ready = tryPromotePairLocked();
     if (ready) (void)mapping_worker_->submitFromWaiting(std::move(*ready));
   }
@@ -710,14 +704,16 @@ void NavigationRuntimeNode::onCorrectedOdometry(
                          message->header.frame_id.c_str(), planning_frame_.c_str());
     return;
   }
-  const auto stamp_ns = stampNanoseconds(message->header.stamp);
+  const auto stamp_ns =
+      navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0);
   if (stamp_ns <= 0) return;
   if (!accepting_observations_.load()) return;
   std::optional<navigation_mapping::MappingObservation> ready;
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (!corrected_odometry_history_.empty() &&
-        stamp_ns < stampNanoseconds(corrected_odometry_history_.back().header.stamp)) {
+        stamp_ns < navigation_common::rosTimeToNanoseconds(
+                          corrected_odometry_history_.back().header.stamp).value_or(0)) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                            "Dropping out-of-order odometry timestamp");
       return;
@@ -726,8 +722,9 @@ void NavigationRuntimeNode::onCorrectedOdometry(
     while (corrected_odometry_history_.size() > 64U) corrected_odometry_history_.pop_front();
     const auto horizon_ns = static_cast<std::int64_t>(2.0 * input_max_age_s_ * 1e9);
     while (!corrected_odometry_history_.empty() &&
-           stamp_ns - stampNanoseconds(
-                          corrected_odometry_history_.front().header.stamp) > horizon_ns) {
+           stamp_ns - navigation_common::rosTimeToNanoseconds(
+                          corrected_odometry_history_.front().header.stamp).value_or(0) >
+               horizon_ns) {
       corrected_odometry_history_.pop_front();
     }
     ready = tryPromotePairLocked();
@@ -743,7 +740,8 @@ void NavigationRuntimeNode::onPropagatedOdometry(
                          message->header.frame_id.c_str(), planning_frame_.c_str());
     return;
   }
-  const auto stamp_ns = stampNanoseconds(message->header.stamp);
+  const auto stamp_ns =
+      navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0);
   if (stamp_ns <= 0 || !propagatedOdometryFinite(*message)) {
     ++invalid_execution_state_count_;
     return;
@@ -767,7 +765,7 @@ void NavigationRuntimeNode::onPropagatedOdometry(
       message->twist.twist.linear.x, message->twist.twist.linear.y,
       message->twist.twist.linear.z};
   typed_state.source_stamp_ns = stamp_ns;
-  typed_state.receive_stamp_ns = steadyNowNanoseconds();
+  typed_state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
   typed_state.localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   typed_state.world_frame_id = message->header.frame_id;
   typed_state.body_frame_id = message->child_frame_id;
@@ -1161,7 +1159,7 @@ void NavigationRuntimeNode::runCycle() {
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
   // cannot inherit retry metrics from the previous planning generation.
   planner_->resetExpOptimizationDiagnostics();
-  planner_solve_started_steady_ns_.store(steadyNowNanoseconds());
+  planner_solve_started_steady_ns_.store(navigation_common::steadyClockNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
   const auto solve_started_ros_ns = now().nanoseconds();
@@ -1245,7 +1243,7 @@ void NavigationRuntimeNode::runCycle() {
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
           active_goal_->waypoint_index == goal->waypoint_index &&
           active_goal_->request_id == goal->request_id) {
-        const auto failure_now_ns = steadyNowNanoseconds();
+        const auto failure_now_ns = navigation_common::steadyClockNowNanoseconds();
         if (plan_from_rest_first_failure_steady_ns_ == 0) {
           plan_from_rest_first_failure_steady_ns_ = failure_now_ns;
         }
@@ -1300,7 +1298,8 @@ void NavigationRuntimeNode::runCycle() {
     const auto retained_state_freshness = retained_execution_state
         ? navigation_contracts::evaluateExecutionStateFreshness(
               now().nanoseconds(), retained_execution_state->state.source_stamp_ns,
-              steadyNowNanoseconds(), retained_execution_state->state.receive_stamp_ns,
+              navigation_common::steadyClockNowNanoseconds(),
+              retained_execution_state->state.receive_stamp_ns,
               input_max_age_s_)
         : navigation_contracts::ExecutionStateFreshness{};
     navigation_planning_backend::math::Vec3f current_vehicle_position =
@@ -1910,7 +1909,8 @@ void NavigationRuntimeNode::publishCommand() {
   const std::uint64_t active_solve = active_planner_solve_generation_.load();
   if (active_solve != 0U) {
     const std::int64_t solve_age_ns =
-        steadyNowNanoseconds() - planner_solve_started_steady_ns_.load();
+        navigation_common::steadyClockNowNanoseconds() -
+        planner_solve_started_steady_ns_.load();
     if (solve_age_ns > static_cast<std::int64_t>(planner_solve_timeout_s_ * 1e9)) {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
@@ -1963,7 +1963,8 @@ void NavigationRuntimeNode::publishCommand() {
   const auto execution_source_ns = execution_state ? execution_state->state.source_stamp_ns : 0;
   const auto execution_freshness = navigation_contracts::evaluateExecutionStateFreshness(
       command_ros_time.nanoseconds(), execution_source_ns,
-      steadyNowNanoseconds(), execution_receive_steady_ns, input_max_age_s_);
+      navigation_common::steadyClockNowNanoseconds(), execution_receive_steady_ns,
+      input_max_age_s_);
   command_execution_lease_reason_.store(static_cast<int>(execution_freshness.reason));
   command_execution_source_age_us_.store(static_cast<std::int64_t>(
       execution_freshness.source_age_ms * 1000.0));

@@ -27,10 +27,6 @@ struct CoherentPair {
   std::int64_t stamp_ns{0};
 };
 
-inline std::int64_t stampNanoseconds(const builtin_interfaces::msg::Time& stamp) {
-  return navigation_common::rosTimeToNanoseconds(stamp).value_or(0);
-}
-
 inline std::optional<std::size_t> nearestOdometryIndex(
     const std::deque<nav_msgs::msg::Odometry>& history,
     std::int64_t cloud_stamp_ns,
@@ -39,7 +35,8 @@ inline std::optional<std::size_t> nearestOdometryIndex(
   std::optional<std::size_t> best_index;
   std::int64_t best_delta = max_skew_ns + 1;
   for (std::size_t index = 0; index < history.size(); ++index) {
-    const auto odometry_stamp_ns = stampNanoseconds(history[index].header.stamp);
+    const auto odometry_stamp_ns =
+        navigation_common::rosTimeToNanoseconds(history[index].header.stamp).value_or(0);
     if (odometry_stamp_ns <= 0) continue;
     const auto delta = std::llabs(odometry_stamp_ns - cloud_stamp_ns);
     if (delta < best_delta) {
@@ -55,7 +52,8 @@ inline std::optional<std::size_t> exactOdometryIndex(
     std::int64_t observation_stamp_ns) {
   if (history.empty() || observation_stamp_ns <= 0) return std::nullopt;
   for (std::size_t index = 0; index < history.size(); ++index) {
-    if (stampNanoseconds(history[index].header.stamp) == observation_stamp_ns) {
+    if (navigation_common::rosTimeToNanoseconds(history[index].header.stamp).value_or(0) ==
+        observation_stamp_ns) {
       return index;
     }
   }

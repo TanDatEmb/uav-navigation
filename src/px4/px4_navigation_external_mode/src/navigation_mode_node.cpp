@@ -24,12 +24,6 @@ namespace {
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
 
-std::int64_t steadyNowNanoseconds() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(
-             std::chrono::steady_clock::now().time_since_epoch())
-      .count();
-}
-
 Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
   return navigation_common::enuToNed(value_enu).cast<float>();
 }
@@ -335,7 +329,8 @@ void NavigationMode::onNavigationCommand(
         ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0) : 0;
     odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
         node().get_clock()->now().nanoseconds(), odometry_source_ns,
-        steadyNowNanoseconds(), last_odometry_receive_steady_ns_, state_stale_after_s_);
+        navigation_common::steadyClockNowNanoseconds(), last_odometry_receive_steady_ns_,
+        state_stale_after_s_);
     const auto acceptance_gate = classifyCommandAcceptance(
         odometry_freshness, message->sample_id,
         navigation_command_ ? navigation_command_->sample_id : 0U);
@@ -617,7 +612,7 @@ void NavigationMode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& m
         (receive_ns - last_odometry_receive_ns_) / 1000);
   }
   last_odometry_receive_ns_ = receive_ns;
-  last_odometry_receive_steady_ns_ = steadyNowNanoseconds();
+  last_odometry_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
   ++odometry_callback_count_;
   odometry_ = *message;
 }
@@ -856,7 +851,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     const auto odometry_source_ns = odometry
         ? navigation_common::rosTimeToNanoseconds(odometry->header.stamp).value_or(0) : 0;
     const auto odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
-        now.nanoseconds(), odometry_source_ns, steadyNowNanoseconds(),
+        now.nanoseconds(), odometry_source_ns,
+        navigation_common::steadyClockNowNanoseconds(),
         odometry_receive_steady_ns, state_stale_after_s_);
     if (!odometry_freshness.valid()) {
       {

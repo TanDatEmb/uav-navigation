@@ -39,6 +39,21 @@ TEST(NavigationCommon, ConvertsPositiveMicrosecondsWithOverflowProtection) {
                    .has_value());
 }
 
+TEST(NavigationCommon, ConvertsNanosecondsToPositiveMicroseconds) {
+  const auto converted = navigation_common::nanosecondsToMicroseconds(2'345'678LL);
+  ASSERT_TRUE(converted.has_value());
+  EXPECT_EQ(*converted, 2'345U);
+  EXPECT_FALSE(navigation_common::nanosecondsToMicroseconds(999).has_value());
+  EXPECT_FALSE(navigation_common::nanosecondsToMicroseconds(0).has_value());
+  EXPECT_FALSE(navigation_common::nanosecondsToMicroseconds(-1).has_value());
+}
+
+TEST(NavigationCommon, ProvidesAStableMonotonicSteadyClockSample) {
+  const auto first = navigation_common::steadyClockNowNanoseconds();
+  const auto second = navigation_common::steadyClockNowNanoseconds();
+  EXPECT_GE(second, first);
+}
+
 TEST(NavigationCommon, FrameConversionsAreSelfInverse) {
   const Eigen::Vector3d enu(1.0, 2.0, 3.0);
   const Eigen::Vector3d flu(-4.0, 5.0, -6.0);

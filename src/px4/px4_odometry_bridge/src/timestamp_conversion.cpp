@@ -1,6 +1,7 @@
 #include "px4_odometry_bridge/timestamp_conversion.hpp"
 
-#include <limits>
+#include <navigation_common/time.hpp>
+
 #include <utility>
 
 namespace px4_odometry_bridge {
@@ -16,18 +17,6 @@ TimestampConversionResult invalid_result(
 }
 
 }  // namespace
-
-std::optional<std::uint64_t> nanoseconds_to_microseconds(
-    const std::int64_t nanoseconds) {
-  if (nanoseconds <= 0) {
-    return std::nullopt;
-  }
-  const auto value = static_cast<std::uint64_t>(nanoseconds / 1'000);
-  if (value == 0 || value > std::numeric_limits<std::uint64_t>::max()) {
-    return std::nullopt;
-  }
-  return value;
-}
 
 TimestampConversionResult TimestampConverter::convert(
     const std::int64_t measurement_time_ns,
@@ -57,8 +46,8 @@ TimestampConversionResult TimestampConverter::convert(
     last_measurement_time_us_.reset();
     last_publication_time_us_.reset();
   }
-  const auto measurement_us = nanoseconds_to_microseconds(measurement_time_ns);
-  const auto publication_us = nanoseconds_to_microseconds(publication_time_ns);
+  const auto measurement_us = navigation_common::nanosecondsToMicroseconds(measurement_time_ns);
+  const auto publication_us = navigation_common::nanosecondsToMicroseconds(publication_time_ns);
   if (!measurement_us || !publication_us) {
     return fail("TIMESTAMP_ZERO_OR_OVERFLOW");
   }

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(navigation_common LANGUAGES CXX)
 
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
