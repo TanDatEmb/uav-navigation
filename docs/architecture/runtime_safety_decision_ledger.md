@@ -1929,3 +1929,50 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   SITL artifact `external-mode-check-20260825T192608-321637` as `BLOCKED` until
   a replay identifies and fixes the actual non-finite source, then repeat
   dataset/SITL and adversarial review.
+
+### 2026-08-26 - Post-instrumentation validation evidence
+
+- Dataset artifact
+  `.artifacts/runtime/dataset-20260825T195426-343584` on `77d7cdd` had full
+  IMU/LiDAR coverage, LIO tracking, propagated odometry at `49.9996 Hz`,
+  mapping lifecycle `2756/2756` with zero accounting violations, and shadow
+  planning `100 READY/0 EMER`. Its contract remains dataset health only;
+  `flight_acceptance=false`.
+- SITL artifact
+  `.artifacts/runtime/external-mode-check-20260825T195939-345561` remained
+  `BLOCKED`: the retry objective became non-finite at diagnostic stage `5`,
+  attempt `2`, iteration `46`, with duration range `2.601398..4.956079 s`;
+  no candidate/PVA was published. The same run observed a common clock and
+  transport blackout with gaps up to `783.1 ms` across clock/LiDAR/odometry.
+  No freshness, lease or mission gate was relaxed.
+- Cleanup: both validation agents returned and were closed; the repository
+  retains only the main worktree, no runner/ROS/LIO/Gazebo/PX4 process remains,
+  and no agent temporary directory remains. These results identify the retry
+  objective as the next product fix but do not close SITL acceptance.
+
+### 2026-08-26 - Feasibility retry duration parameterization
+
+- Owner: `navigation_planning_backend` EXP trajectory optimizer. Scope: treat
+  the retry reserve as a dimensionless initialization factor over the last
+  finite segment durations; store only the additive per-segment duration
+  reserve in seconds and initialize the free duration from the last finite
+  solution. Validate the base duration, reserve, resulting offset and mapped
+  tau before entering L-BFGS. The reserve is a retry seed and additive floor
+  for the free-duration component, not an authorization to skip final dynamic
+  or geometric gates.
+- Safety impact: removes the previous combination of a full-duration floor
+  and a separate 1% free-duration seed, which put the retry in a poorly scaled
+  parameterization before the stage-5 non-finite objective. Existing corridor,
+  vertical-guide, V/A/J, cancellation and fail-closed candidate gates remain
+  unchanged. No fallback, threshold relaxation, QoS change or gate bypass was
+  introduced.
+- Evidence: focused Release build passed; planning CTest 2/2, runtime CTest
+  8/8 and Python runtime/planner contracts 147/147 passed after the change.
+  Representative dataset/SITL replay on the previous diagnostic checkpoint
+  identified the stage-5 failure; a fresh authoritative build and repeated
+  dataset/SITL evidence on this exact change are required before sign-off.
+- Review condition: verify finite retry objective/gradient, preserve accepted
+  candidate transactionality on retry failure, and run repeated representative
+  dataset/SITL distributions. Do not claim this parameterization fixes the
+  independent simulator/transport blackout until those runs separate the two
+  blockers.

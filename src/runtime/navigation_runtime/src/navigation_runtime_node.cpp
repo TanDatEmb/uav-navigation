@@ -1793,6 +1793,8 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.nonfinite_evaluation_count);
     add_trace_value("exp_first_nonfinite_stage",
                     exp_diagnostics.first_nonfinite_stage);
+    add_trace_value("exp_first_nonfinite_value_mask",
+                    exp_diagnostics.first_nonfinite_value_mask);
     add_trace_value("exp_first_nonfinite_attempt",
                     exp_diagnostics.first_nonfinite_attempt);
     add_trace_value("exp_first_nonfinite_iteration",

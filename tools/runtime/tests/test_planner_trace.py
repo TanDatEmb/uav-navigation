@@ -147,6 +147,7 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_retry_budget_remaining_us": "42000",
                                     "exp_nonfinite_evaluation_count": "2",
                                     "exp_first_nonfinite_stage": "5",
+                                    "exp_first_nonfinite_value_mask": "9",
                                     "exp_first_nonfinite_attempt": "2",
                                     "exp_first_nonfinite_iteration": "4",
                                     "exp_first_nonfinite_min_duration_s": "0.031",
@@ -193,6 +194,7 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
         self.assertEqual(records[0]["exp_nonfinite_evaluation_count"], 2)
         self.assertEqual(records[0]["exp_first_nonfinite_stage"], 5)
+        self.assertEqual(records[0]["exp_first_nonfinite_value_mask"], 9)
         self.assertEqual(records[0]["exp_first_nonfinite_attempt"], 2)
         self.assertEqual(records[0]["exp_first_nonfinite_iteration"], 4)
         self.assertEqual(records[0]["exp_first_nonfinite_min_duration_s"], 0.031)

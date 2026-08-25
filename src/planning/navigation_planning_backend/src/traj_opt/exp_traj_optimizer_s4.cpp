@@ -324,12 +324,13 @@ double ExpTrajOpt::costFunctional(void *ptr,
     Eigen::Map<VecDf> gradTau(g.data(), dimTau);
     Eigen::Map<VecDf> gradXi(g.data() + dimTau, dimXi);
 
-    const auto recordNonFinite = [&](const int stage, const double cost,
-                                     const double gradient_norm,
+    const auto recordNonFinite = [&](const int stage, const int value_mask,
+                                     const double cost, const double gradient_norm,
                                      const VecDf *durations = nullptr) {
         ++obj.nonfinite_evaluation_count;
         if (obj.first_nonfinite_stage != 0) return;
         obj.first_nonfinite_stage = stage;
+        obj.first_nonfinite_value_mask = value_mask;
         obj.first_nonfinite_attempt = obj.solver_attempt;
         obj.first_nonfinite_iteration = obj.iter_num;
         obj.first_nonfinite_cost = cost;
@@ -342,7 +343,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
     };
 
     if (!x.allFinite()) {
-        recordNonFinite(1, std::numeric_limits<double>::quiet_NaN(),
+        recordNonFinite(1, 1, std::numeric_limits<double>::quiet_NaN(),
                         std::numeric_limits<double>::quiet_NaN());
         return INFINITY;
     }
@@ -356,7 +357,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
         times += obj.minimum_time_floor;
     }
     if (!times.allFinite() || times.size() == 0 || times.minCoeff() <= 0.0) {
-        recordNonFinite(2, std::numeric_limits<double>::quiet_NaN(),
+        recordNonFinite(2, 1, std::numeric_limits<double>::quiet_NaN(),
                         std::numeric_limits<double>::quiet_NaN(), &times);
         return INFINITY;
     }
@@ -372,7 +373,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
         }
     }
     if (!points.allFinite()) {
-        recordNonFinite(3, std::numeric_limits<double>::quiet_NaN(),
+        recordNonFinite(3, 1, std::numeric_limits<double>::quiet_NaN(),
                         std::numeric_limits<double>::quiet_NaN(), &times);
         return INFINITY;
     }
@@ -390,9 +391,14 @@ double ExpTrajOpt::costFunctional(void *ptr,
         obj.minco.getEnergyPartialGradByTimes(partialGradByTimes);
     }
     obj.penalty_log(0) = cost;
-    if (!std::isfinite(cost) || !partialGradByCoeffs.allFinite() ||
-        !partialGradByTimes.allFinite() || !obj.minco.getCoeffs().allFinite()) {
-        recordNonFinite(4, cost, std::numeric_limits<double>::quiet_NaN(), &times);
+    const int minco_value_mask =
+            (!std::isfinite(cost) ? 1 : 0) |
+            (!partialGradByCoeffs.allFinite() ? 2 : 0) |
+            (!partialGradByTimes.allFinite() ? 4 : 0) |
+            (!obj.minco.getCoeffs().allFinite() ? 8 : 0);
+    if (minco_value_mask != 0) {
+        recordNonFinite(4, minco_value_mask, cost,
+                        std::numeric_limits<double>::quiet_NaN(), &times);
         return INFINITY;
     }
 
@@ -407,9 +413,14 @@ double ExpTrajOpt::costFunctional(void *ptr,
                           magnitudeBounds, penaltyWeights,
                           quadrotor_flatness,
                           cost, partialGradByTimes, partialGradByCoeffs, obj.penalty_log);
-    if (!std::isfinite(cost) || !partialGradByCoeffs.allFinite() ||
-        !partialGradByTimes.allFinite() || !obj.penalty_log.allFinite()) {
-        recordNonFinite(5, cost, std::numeric_limits<double>::quiet_NaN(), &times);
+    const int objective_value_mask =
+            (!std::isfinite(cost) ? 1 : 0) |
+            (!partialGradByCoeffs.allFinite() ? 2 : 0) |
+            (!partialGradByTimes.allFinite() ? 4 : 0) |
+            (!obj.penalty_log.allFinite() ? 8 : 0);
+    if (objective_value_mask != 0) {
+        recordNonFinite(5, objective_value_mask, cost,
+                        std::numeric_limits<double>::quiet_NaN(), &times);
         return INFINITY;
     }
 
@@ -444,8 +455,12 @@ double ExpTrajOpt::costFunctional(void *ptr,
             break;
         }
     }
-    if (!std::isfinite(cost) || !gradTau.allFinite() || !gradXi.allFinite()) {
-        recordNonFinite(6, cost, g.norm(), &times);
+    const int gradient_value_mask =
+            (!std::isfinite(cost) ? 1 : 0) |
+            (!gradTau.allFinite() ? 2 : 0) |
+            (!gradXi.allFinite() ? 4 : 0);
+    if (gradient_value_mask != 0) {
+        recordNonFinite(6, gradient_value_mask, cost, g.norm(), &times);
         return INFINITY;
     }
     return cost;
@@ -781,6 +796,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     opt_vars.solver_attempt = 0;
     opt_vars.nonfinite_evaluation_count = 0;
     opt_vars.first_nonfinite_stage = 0;
+    opt_vars.first_nonfinite_value_mask = 0;
     opt_vars.first_nonfinite_attempt = 0;
     opt_vars.first_nonfinite_iteration = 0;
     opt_vars.first_nonfinite_min_duration_s =
@@ -1070,11 +1086,23 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     0, (opt_vars.steady_deadline_ns - now_ns) / 1000);
         }
 
-        opt_vars.minimum_time_floor = opt_vars.times * std::min(
+        const VecDf base_duration_s = opt_vars.times;
+        const double duration_reserve_scale = std::min(
                 4.0, std::max(kFeasibilityTimeReserve, required_scale * 1.05));
-        const VecDf initial_time_slack =
-                (opt_vars.minimum_time_floor * 0.01).cwiseMax(1.0e-3);
-        gcopter::backwardMapTToTau(initial_time_slack, tau);
+        if (!base_duration_s.allFinite() || base_duration_s.size() == 0 ||
+            base_duration_s.minCoeff() <= 0.0 ||
+            !std::isfinite(duration_reserve_scale) ||
+            duration_reserve_scale < 1.0) {
+            diagnostics_.retry_stop_reason = 1;
+            break;
+        }
+        // minimum_time_floor is an additive duration in seconds.  The free
+        // duration starts at the current finite solution, so the first retry
+        // starts at reserve_scale * base_duration instead of combining a
+        // full-duration floor with a separate 1% slack parameterization.
+        opt_vars.minimum_time_floor =
+                base_duration_s * (duration_reserve_scale - 1.0);
+        gcopter::backwardMapTToTau(base_duration_s, tau);
         // Continue the soft solve toward the hard-feasible set. Disabled
         // penalties (notably the EXP jerk objective) remain disabled; only
         // configured dynamic penalties grow within this bounded retry.
@@ -1155,6 +1183,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             normalized_dynamic_violation();
     diagnostics_.nonfinite_evaluation_count = opt_vars.nonfinite_evaluation_count;
     diagnostics_.first_nonfinite_stage = opt_vars.first_nonfinite_stage;
+    diagnostics_.first_nonfinite_value_mask =
+            opt_vars.first_nonfinite_value_mask;
     diagnostics_.first_nonfinite_attempt = opt_vars.first_nonfinite_attempt;
     diagnostics_.first_nonfinite_iteration = opt_vars.first_nonfinite_iteration;
     diagnostics_.first_nonfinite_min_duration_s =

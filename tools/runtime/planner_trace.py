@@ -64,6 +64,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
     "exp_nonfinite_evaluation_count": ("exp_nonfinite_evaluation_count",),
     "exp_first_nonfinite_stage": ("exp_first_nonfinite_stage",),
+    "exp_first_nonfinite_value_mask": ("exp_first_nonfinite_value_mask",),
     "exp_first_nonfinite_attempt": ("exp_first_nonfinite_attempt",),
     "exp_first_nonfinite_iteration": ("exp_first_nonfinite_iteration",),
     "exp_first_nonfinite_min_duration_s": ("exp_first_nonfinite_min_duration_s",),
@@ -252,6 +253,9 @@ def normalize_planner_trace_record(
             values["exp_nonfinite_evaluation_count"]
         ),
         "exp_first_nonfinite_stage": _int(values["exp_first_nonfinite_stage"]),
+        "exp_first_nonfinite_value_mask": _int(
+            values["exp_first_nonfinite_value_mask"]
+        ),
         "exp_first_nonfinite_attempt": _int(values["exp_first_nonfinite_attempt"]),
         "exp_first_nonfinite_iteration": _int(
             values["exp_first_nonfinite_iteration"]

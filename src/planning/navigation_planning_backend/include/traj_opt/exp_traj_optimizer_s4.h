@@ -78,6 +78,7 @@ namespace traj_opt {
         std::int64_t retry_budget_remaining_us{-1};
         int nonfinite_evaluation_count{0};
         int first_nonfinite_stage{0}; // 1=input, 2=duration, 3=points, 4=MINCO, 5=objective, 6=gradient
+        int first_nonfinite_value_mask{0};
         int first_nonfinite_attempt{0};
         int first_nonfinite_iteration{0};
         double first_nonfinite_min_duration_s{
@@ -149,6 +150,7 @@ namespace traj_opt {
             int solver_attempt{0};
             int nonfinite_evaluation_count{0};
             int first_nonfinite_stage{0};
+            int first_nonfinite_value_mask{0};
             int first_nonfinite_attempt{0};
             int first_nonfinite_iteration{0};
             double first_nonfinite_min_duration_s{
