@@ -53,6 +53,23 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _heading_from_q_xyzw(value: Any) -> float | None:
+    """Return ENU yaw from a ROS x,y,z,w quaternion, in radians."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        x, y, z, w = (float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(item) for item in (x, y, z, w)):
+        return None
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm < 1e-9 or not math.isfinite(norm):
+        return None
+    x, y, z, w = (item / norm for item in (x, y, z, w))
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
 def _acceptance_summary(
     session: Path,
     scenario: dict[str, Any],
@@ -249,6 +266,7 @@ def _samples(session: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
                             "t": float(payload.get("stamp_ns", item.get("timestamp_ns", 0))) / 1e9,
                             "position": position,
                             "velocity": _point(payload.get("linear_velocity")),
+                            "heading_rad": _heading_from_q_xyzw(payload.get("q_xyzw")),
                         })
                 elif item.get("stream") in {"planning_diagnostics", "mapping_diagnostics", "diagnostics"}:
                     payload = item.get("payload", {})
@@ -338,6 +356,22 @@ def _enu_from_ned(value: Any) -> list[float] | None:
     return [east, north, -down]
 
 
+_DISPLAY_FRAME_CONTRACT = {
+    "display_frame": "ENU (x=east, y=north, z=up)",
+    "ned_to_enu": "[x, y, z]_ENU = [y, x, -z]_NED",
+    "streams": {
+        "ground_truth_odometry": {"source_frame": "Gazebo world ENU", "transform": "identity"},
+        "propagated_odometry": {"source_frame": "LIO lio_odom ENU", "transform": "identity"},
+        "corrected_odometry": {"source_frame": "LIO lio_odom ENU", "transform": "identity"},
+        "external_odometry": {"source_frame": "PX4 VehicleOdometry NED", "transform": "NED -> ENU"},
+        "px4_odometry": {"source_frame": "PX4 VehicleOdometry NED", "transform": "NED -> ENU"},
+        "local_position": {"source_frame": "PX4 local position NED", "transform": "NED -> ENU"},
+        "pva_command": {"source_frame": "LIO planning ENU", "transform": "identity"},
+        "setpoint": {"source_frame": "PX4 setpoint NED", "transform": "NED -> ENU"},
+    },
+}
+
+
 def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
     """Extract system-level telemetry that the acceptance gates do not score.
 
@@ -374,7 +408,13 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                     continue
                 position = _point(payload.get("position"))
                 velocity = _point(payload.get("linear_velocity"))
-                if stream_name == "local_position":
+                if stream_name in {"external_odometry", "px4_odometry"}:
+                    # VehicleOdometry is recorded at the PX4 boundary in NED.
+                    # Convert both vectors before statistics and plotting so
+                    # the report never compares mixed axis conventions.
+                    position = _enu_from_ned(position)
+                    velocity = _enu_from_ned(payload.get("velocity"))
+                elif stream_name == "local_position":
                     position = _enu_from_ned([
                         payload.get("x_ned_m"), payload.get("y_ned_m"), payload.get("z_ned_m")
                     ])
@@ -462,7 +502,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
             "last_t": times[-1] if times else None,
             "duration_s": (times[-1] - times[0]) if len(times) >= 2 else None,
             "mean_rate_hz": (len(records) - 1) / (times[-1] - times[0]) if len(times) >= 2 and times[-1] > times[0] else None,
-            "max_gap_ms": max(gaps, default=None) * 1000.0,
+            "max_gap_ms": max(gaps) * 1000.0 if gaps else None,
             "p95_gap_ms": _percentile([gap * 1000.0 for gap in gaps], 0.95),
             "position_stats": {axis: _axis_stats([{"v": record["position"][index]} for record in records if "position" in record], "v") for index, axis in enumerate(("x", "y", "z"))},
             "velocity_stats": {axis: _axis_stats([{"v": record["velocity"][index]} for record in records if "velocity" in record], "v") for index, axis in enumerate(("vx", "vy", "vz"))},
@@ -578,6 +618,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         "mode_events": mode_events,
         "vehicle_events": vehicle_events,
         "trajectory_paths": trajectory_paths,
+        "coordinate_contract": _DISPLAY_FRAME_CONTRACT,
     }
 
 

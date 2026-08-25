@@ -179,6 +179,48 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         self.assertIn("PVA command", chart)
         self.assertIn('aria-pressed="true"', chart)
 
+    def test_line_chart_wraps_a_fifth_legend_entry_inside_the_svg(self) -> None:
+        chart = line_chart(
+            "Velocity ENU",
+            [
+                {"label": f"trace-{index}", "points": [(0.0, 0.0), (1.0, float(index))], "color": "#1f6feb"}
+                for index in range(5)
+            ],
+            "velocity (m/s)",
+        )
+        self.assertIn('viewBox="0 0 980 322"', chart)
+        self.assertEqual(chart.count('class="chart-legend-toggle"'), 5)
+        self.assertIn('y1="44"', chart)
+
+    def test_px4_ned_vectors_are_normalized_to_display_enu(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            rows = []
+            for stream in ("external_odometry", "px4_odometry"):
+                rows.append(json.dumps({
+                    "kind": "sample",
+                    "stream": stream,
+                    "timestamp_ns": 1_000_000_000,
+                    "payload": {
+                        "timestamp_us": 1_000_000,
+                        "pose_frame": 1,
+                        "velocity_frame": 1,
+                        "position": [1.0, 2.0, 3.0],
+                        "velocity": [4.0, 5.0, 6.0],
+                    },
+                }))
+            (session / "samples.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            observed = _runtime_observability(session)
+
+        for stream in ("external_odometry", "px4_odometry"):
+            self.assertEqual(observed["streams"][stream]["position_series"][0]["x"], 2.0)
+            self.assertEqual(observed["streams"][stream]["position_series"][0]["y"], 1.0)
+            self.assertEqual(observed["streams"][stream]["position_series"][0]["z"], -3.0)
+            self.assertEqual(observed["streams"][stream]["velocity_series"][0]["vx"], 5.0)
+            self.assertEqual(observed["streams"][stream]["velocity_series"][0]["vy"], 4.0)
+            self.assertEqual(observed["streams"][stream]["velocity_series"][0]["vz"], -6.0)
+        self.assertEqual(observed["coordinate_contract"]["display_frame"], "ENU (x=east, y=north, z=up)")
+
     def test_complete_observation_is_passed_from_explicit_evidence(self) -> None:
         result = _evaluation(
             {"verdict": "PASS"},

@@ -171,10 +171,18 @@ def line_chart(
     axis_max += padding
     if not allow_negative:
         axis_min = 0.0
-    left, top, right, bottom = 70, 46, 24, 56
+    left, right, bottom = 70, 24, 56
     width = 980
+    # Keep the legend inside the SVG. Three fixed columns leave enough room
+    # for the long frame-qualified labels (for example NED→ENU) and make a
+    # fifth trace wrap to a second row instead of disappearing off-screen.
+    legend_columns = 3
+    legend_row_height = 22
+    legend_rows = max(1, math.ceil(len(plotted) / legend_columns))
+    top = 46 + (legend_rows - 1) * legend_row_height
+    chart_height = height + (legend_rows - 1) * legend_row_height
     plot_w = width - left - right
-    plot_h = height - top - bottom
+    plot_h = chart_height - top - bottom
     y_ticks = nice_ticks(axis_min, axis_max, 5)
     axis_min = min(axis_min, y_ticks[0])
     axis_max = max(axis_max, y_ticks[-1])
@@ -186,8 +194,8 @@ def line_chart(
 
     parts = [
         f'<div class="chart-card"><div class="chart-title">{esc(title)}</div>',
-        f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{esc(title)}">',
-        f'<title>{esc(title)}</title><rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>',
+        f'<svg class="chart" viewBox="0 0 {width} {chart_height}" role="img" aria-label="{esc(title)}">',
+        f'<title>{esc(title)}</title><rect x="0" y="0" width="{width}" height="{chart_height}" fill="#ffffff"/>',
     ]
     for tick in y_ticks:
         y = top + (1.0 - (tick - axis_min) / (axis_max - axis_min)) * plot_h
@@ -205,8 +213,8 @@ def line_chart(
     parts.extend([
         f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
         f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
-        f'<text x="16" y="{top-16}" class="axis-title">{esc(y_label)}</text>',
-        f'<text x="{left + plot_w/2:.1f}" y="{height-10}" text-anchor="middle" class="axis-title">{esc(x_label)}</text>',
+        f'<text x="18" y="{top + plot_h/2:.1f}" text-anchor="middle" transform="rotate(-90 18 {top + plot_h/2:.1f})" class="axis-title">{esc(y_label)}</text>',
+        f'<text x="{left + plot_w/2:.1f}" y="{chart_height-10}" text-anchor="middle" class="axis-title">{esc(x_label)}</text>',
     ])
     if threshold is not None:
         y = top + (1.0 - (threshold - axis_min) / (axis_max - axis_min)) * plot_h
@@ -227,15 +235,17 @@ def line_chart(
             f'<circle cx="{end_x:.1f}" cy="{end_y:.1f}" r="3.5" fill="{color}"/>'
             f'<text x="{min(width-right-4, end_x+8):.1f}" y="{max(top+14, end_y-8):.1f}" class="end-label" fill="{color}">{esc(fmt(points[-1][1]))}</text></g>'
         )
-    legend_x = left
+    legend_y = 22
     for index, (label, _, color, _) in enumerate(plotted):
         series_id = f"{chart_id}-series-{index}"
+        legend_x = left + (index % legend_columns) * (plot_w / legend_columns)
+        legend_row = index // legend_columns
+        legend_y = 22 + legend_row * legend_row_height
         parts.append(
             f'<g class="chart-legend-toggle" data-target="{esc(series_id)}" tabindex="0" role="button" aria-pressed="true">'
-            f'<line x1="{legend_x}" y1="22" x2="{legend_x+20}" y2="22" stroke="{color}" stroke-width="3"/>'
-            f'<text x="{legend_x+27}" y="26" class="legend-label">{esc(label)}</text></g>'
+            f'<line x1="{legend_x:.1f}" y1="{legend_y}" x2="{legend_x+20:.1f}" y2="{legend_y}" stroke="{color}" stroke-width="3"/>'
+            f'<text x="{legend_x+27:.1f}" y="{legend_y+4}" class="legend-label">{esc(label)}</text></g>'
         )
-        legend_x += 150 + min(120, len(label) * 4)
     parts.append('</svg></div>')
     return "".join(parts)
 
@@ -252,7 +262,7 @@ def map_svg(data: dict[str, Any]) -> str:
     min_y = min(point[1] for point in all_points) - 3.0
     max_y = max(point[1] for point in all_points) + 3.0
     width, height = 980, 500
-    left, top, right, bottom = 68, 38, 22, 54
+    left, top, right, bottom = 68, 62, 22, 54
     plot_w, plot_h = width - left - right, height - top - bottom
     scale = min(plot_w / max(1.0, max_x - min_x), plot_h / max(1.0, max_y - min_y))
     origin_x = left + (plot_w - (max_x - min_x) * scale) / 2
@@ -287,8 +297,8 @@ def map_svg(data: dict[str, Any]) -> str:
     parts.extend([
         f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
         f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="{NAVY}" stroke-width="1.2"/>',
-        f'<text x="{left + plot_w/2:.1f}" y="{height-10}" text-anchor="middle" class="axis-title">world X (m)</text>',
-        f'<text x="16" y="{top-12}" class="axis-title">world Y (m)</text>',
+        f'<text x="{left + plot_w/2:.1f}" y="{height-10}" text-anchor="middle" class="axis-title">display ENU X = east (m)</text>',
+        f'<text x="18" y="{top + plot_h/2:.1f}" text-anchor="middle" transform="rotate(-90 18 {top + plot_h/2:.1f})" class="axis-title">display ENU Y = north (m)</text>',
     ])
     route_obstacles = set(data["metrics"].get("route_obstacles", []))
     for obstacle in obstacles:
@@ -314,6 +324,13 @@ def map_svg(data: dict[str, Any]) -> str:
     actual_coords = " ".join(f"{transform((x, y, 0.0))[0]:.1f},{transform((x, y, 0.0))[1]:.1f}" for x, y in actual_sampled)
     if actual_coords:
         parts.append(f'<polyline points="{actual_coords}" fill="none" stroke="{BLUE}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>')
+    heading, heading_source = _map_heading(data)
+    if heading is not None and data["ground_truth"]:
+        latest_xy = transform(tuple(data["ground_truth"][-1]["position"]))
+        parts.append(
+            f'<polygon points="{_arrow_polygon(latest_xy, heading)}" fill="{BLUE}" stroke="#ffffff" stroke-width="2">'
+            f'<title>UAV heading: {math.degrees(heading):.1f}° ({esc(heading_source)})</title></polygon>'
+        )
     trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
     if trajectory_paths:
         for path in trajectory_paths:
@@ -366,6 +383,7 @@ def map_svg(data: dict[str, Any]) -> str:
         f'<line x1="{left+310}" y1="22" x2="{left+330}" y2="22" stroke="{RED}" stroke-width="2" stroke-dasharray="5 4"/><text x="{left+337}" y="26" class="legend-label">backup / safety</text>',
         f'<rect x="{left+490}" y="16" width="14" height="12" fill="#e8897e" stroke="{RED}"/><text x="{left+511}" y="26" class="legend-label">route obstacles</text>',
         f'<circle cx="{left+666}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+679}" y="26" class="legend-label">waypoints</text>',
+        f'<polygon points="{left+12},38 {left+32},44 {left+12},50" fill="{BLUE}" stroke="#ffffff"/><text x="{left+39}" y="48" class="legend-label">UAV heading ({esc(heading_source)})</text>',
         '</svg></div>',
     ])
     return "".join(parts)
@@ -572,6 +590,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
             "t": finite(item.get("t")),
             "p": position,
             "s": speed if speed is not None and math.isfinite(speed) else None,
+            "heading_rad": finite(item.get("heading_rad")),
         })
     ground_truth = _replay_sampled(ground_truth, 720)
 
@@ -762,6 +781,22 @@ _REPLAY_SCRIPT = r"""
       points: points.map(world).map(point => point.map(value => value.toFixed(1)).join(",")).join(" ")
     }), parent);
   }
+  function drawHeadingArrow(parent, point, heading) {
+    if (!Number.isFinite(Number(heading))) return;
+    const angle = Number(heading), dx = Math.cos(angle), dy = -Math.sin(angle);
+    const px = -dy, py = dx, length = 24, width = 7;
+    const tip = [point[0] + dx * length, point[1] + dy * length];
+    const base = [point[0] - dx * length * .42, point[1] - dy * length * .42];
+    const left = [base[0] + px * width, base[1] + py * width];
+    const right = [base[0] - px * width, base[1] - py * width];
+    const arrow = svgNode("polygon", {
+      points: [tip, left, right].map(item => item.map(value => value.toFixed(1)).join(",")).join(" "),
+      fill: "#1f6feb", stroke: "#ffffff", "stroke-width": 2
+    }, parent);
+    const title = svgNode("title", {}, arrow);
+    title.textContent = `UAV heading ${((angle * 180 / Math.PI) + 360) % 360}° ENU yaw`;
+    svgNode("circle", {cx: point[0], cy: point[1], r: 4, fill: "#1f6feb", stroke: "#ffffff", "stroke-width": 2}, parent);
+  }
 
   const staticLayer = svgNode("g", {}, svg);
   const trailLayer = svgNode("g", {}, svg);
@@ -783,8 +818,9 @@ _REPLAY_SCRIPT = r"""
     }
     svgNode("line", {x1: left, y1: top, x2: left, y2: H - bottom, stroke: "#18324b", "stroke-width": 1.2}, staticLayer);
     svgNode("line", {x1: left, y1: H - bottom, x2: W - right, y2: H - bottom, stroke: "#18324b", "stroke-width": 1.2}, staticLayer);
-    svgText(staticLayer, left + plotW / 2, H - 10, "world X (m)", "replay-svg-title", "middle");
-    svgText(staticLayer, 16, top - 12, "world Y (m)", "replay-svg-title", "start");
+    svgText(staticLayer, left + plotW / 2, H - 10, "display ENU X = east (m)", "replay-svg-title", "middle");
+    const yTitle = svgText(staticLayer, 16, top + plotH / 2, "display ENU Y = north (m)", "replay-svg-title", "middle");
+    yTitle.setAttribute("transform", `rotate(-90 16 ${top + plotH / 2})`);
     const routeObstacles = new Set(data.route_obstacles || []);
     data.obstacles.forEach(obstacle => {
       const center = world(obstacle.center), isRoute = routeObstacles.has(obstacle.name);
@@ -837,12 +873,13 @@ _REPLAY_SCRIPT = r"""
     }
     if (ground) {
       const point = world(ground.p);
-      svgNode("circle", {cx: point[0], cy: point[1], r: 7, fill: "#1f6feb", stroke: "#ffffff", "stroke-width": 2}, vehicleLayer);
       const previous = nearestGround(currentTime - .15);
-      if (previous && previous !== ground) {
-        const from = world(previous.p), dx = point[0] - from[0], dy = point[1] - from[1], length = Math.hypot(dx, dy);
-        if (length > 1) svgNode("line", {x1: point[0], y1: point[1], x2: point[0] + dx / length * 16, y2: point[1] + dy / length * 16, stroke: "#1f6feb", "stroke-width": 3}, vehicleLayer);
+      let heading = Number(ground.heading_rad);
+      if (!Number.isFinite(heading) && previous && previous !== ground) {
+        const from = world(previous.p), dx = point[0] - from[0], dy = point[1] - from[1];
+        if (Math.hypot(dx, dy) > 1) heading = Math.atan2(-dy, dx);
       }
+      drawHeadingArrow(vehicleLayer, point, heading);
     }
     data.plans.forEach((item, index) => {
       if (markers[index]) markers[index].classList.toggle("active", item === plan);
@@ -913,7 +950,7 @@ def replay_section(data: dict[str, Any]) -> str:
     <div class="replay-event-caption"><span>path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal <i class="replay-swatch safety"></i> safety</span></div>
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
-      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div></div>
+      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div></div>
       <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active path</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd></dl><p class="small">The replay shows the recorded command path and observed vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
     </div>
     <script>
@@ -962,13 +999,48 @@ def _px4_setpoint_points(observability: dict[str, Any], field: str, axis: int) -
     return result
 
 
+def _map_heading(data: dict[str, Any]) -> tuple[float | None, str]:
+    """Use recorded ENU yaw; fall back only to the measured track direction."""
+    ground = data.get("ground_truth", [])
+    if not ground:
+        return None, "unavailable"
+    latest = ground[-1]
+    heading = finite(latest.get("heading_rad"))
+    if heading is not None:
+        return heading, "recorded ENU yaw"
+    if len(ground) >= 2:
+        previous = ground[-2]
+        latest_position = latest.get("position", [])
+        previous_position = previous.get("position", [])
+        if len(latest_position) >= 2 and len(previous_position) >= 2:
+            dx = finite(latest_position[0])
+            dy = finite(latest_position[1])
+            px = finite(previous_position[0])
+            py = finite(previous_position[1])
+            if None not in (dx, dy, px, py) and math.hypot(dx - px, dy - py) > 1e-6:
+                return math.atan2(dy - py, dx - px), "measured track direction"
+    return None, "unavailable"
+
+
+def _arrow_polygon(center: tuple[float, float], heading: float, length: float = 24.0) -> str:
+    """Create a QGC-like screen-space arrow for an ENU world yaw."""
+    dx = math.cos(heading)
+    dy = -math.sin(heading)  # SVG y grows downward; ENU y grows upward.
+    px, py = -dy, dx
+    tip = (center[0] + dx * length, center[1] + dy * length)
+    base = (center[0] - dx * length * 0.42, center[1] - dy * length * 0.42)
+    left = (base[0] + px * length * 0.28, base[1] + py * length * 0.28)
+    right = (base[0] - px * length * 0.28, base[1] - py * length * 0.28)
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in (tip, left, right))
+
+
 def _stream_rows(observability: dict[str, Any]) -> str:
     labels = {
         "ground_truth_odometry": "Ground truth odometry",
         "propagated_odometry": "LIO propagated odometry",
         "corrected_odometry": "LIO corrected odometry",
-        "external_odometry": "PX4 external odometry",
-        "px4_odometry": "PX4 odometry",
+        "external_odometry": "PX4 external (NED→ENU)",
+        "px4_odometry": "PX4 odometry (NED→ENU)",
         "local_position": "PX4 local position (NED→ENU)",
     }
     rows = []
@@ -984,14 +1056,39 @@ def _stream_rows(observability: dict[str, Any]) -> str:
     return "".join(rows) or '<tr><td colspan="6">No position/velocity telemetry recorded.</td></tr>'
 
 
+def _coordinate_contract_rows(observability: dict[str, Any]) -> str:
+    contract = observability.get("coordinate_contract", {})
+    streams = contract.get("streams", {}) if isinstance(contract, dict) else {}
+    labels = {
+        "ground_truth_odometry": "Ground truth odometry",
+        "propagated_odometry": "LIO propagated odometry",
+        "corrected_odometry": "LIO corrected odometry",
+        "external_odometry": "PX4 external odometry",
+        "px4_odometry": "PX4 odometry",
+        "local_position": "PX4 local position",
+        "pva_command": "PVA command",
+        "setpoint": "PX4 setpoint event",
+    }
+    rows = []
+    for name in labels:
+        item = streams.get(name, {})
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            f'<tr><td>{esc(labels[name])}</td><td>{esc(item.get("source_frame", "—"))}</td>'
+            f'<td>{esc(item.get("transform", "—"))}</td><td>{esc(contract.get("display_frame", "ENU (x=east, y=north, z=up)"))}</td></tr>'
+        )
+    return "".join(rows) or '<tr><td colspan="4">Coordinate-frame metadata unavailable.</td></tr>'
+
+
 def _axis_rows(observability: dict[str, Any]) -> str:
     labels = {
         "ground_truth_odometry": "Ground truth",
         "propagated_odometry": "LIO propagated",
         "corrected_odometry": "LIO corrected",
-        "external_odometry": "PX4 external",
-        "px4_odometry": "PX4 odometry",
-        "local_position": "PX4 local position",
+        "external_odometry": "PX4 external (NED→ENU)",
+        "px4_odometry": "PX4 odometry (NED→ENU)",
+        "local_position": "PX4 local position (NED→ENU)",
     }
     rows = []
     for name, item in observability.get("streams", {}).items():
@@ -1296,9 +1393,9 @@ def render(session: Path, output: Path) -> Path:
         "ground_truth_odometry": "ground truth",
         "propagated_odometry": "LIO propagated",
         "corrected_odometry": "LIO corrected",
-        "external_odometry": "PX4 external",
-        "px4_odometry": "PX4 odometry",
-        "local_position": "PX4 local position",
+        "external_odometry": "PX4 external (NED→ENU)",
+        "px4_odometry": "PX4 odometry (NED→ENU)",
+        "local_position": "PX4 local position (NED→ENU)",
     }
     stream_colors = {
         "ground_truth_odometry": BLUE,
@@ -1316,11 +1413,11 @@ def render(session: Path, output: Path) -> Path:
     ]
     position_plot_html = "".join(
         line_chart(
-            f"Position {axis.upper()} · ENU metres",
+            f"Position {axis.upper()} · display ENU ({({'x': 'east', 'y': 'north', 'z': 'up'})[axis]})",
             [
                 *[{"label": stream_labels[name], "points": _obs_points(observability, name, "position", axis), "color": stream_colors[name]}
                   for name in observed_streams],
-                {"label": "PX4 setpoint event", "points": _px4_setpoint_points(observability, "position_ned", ("x", "y", "z").index(axis)), "color": RED, "dash": "6 4"},
+                {"label": "PX4 setpoint (NED→ENU)", "points": _px4_setpoint_points(observability, "position_ned", ("x", "y", "z").index(axis)), "color": RED, "dash": "6 4"},
             ],
             "position (m)",
         )
@@ -1328,18 +1425,19 @@ def render(session: Path, output: Path) -> Path:
     )
     velocity_plot_html = "".join(
         line_chart(
-            f"Velocity {axis} · measured and PVA command",
+            f"Velocity {axis} · display ENU ({({'vx': 'east', 'vy': 'north', 'vz': 'up'})[axis]})",
             [
                 *[{"label": stream_labels[name], "points": _obs_points(observability, name, "velocity", axis), "color": stream_colors[name]}
                   for name in observed_streams],
-                {"label": "PVA command", "points": setpoint_velocity_series[axis], "color": RED, "dash": "6 4"},
-                {"label": "PX4 setpoint event", "points": _px4_setpoint_points(observability, "velocity_ned", ("vx", "vy", "vz").index(axis)), "color": PURPLE, "dash": "3 3"},
+                {"label": "PVA command (LIO ENU)", "points": setpoint_velocity_series[axis], "color": RED, "dash": "6 4"},
+                {"label": "PX4 setpoint (NED→ENU)", "points": _px4_setpoint_points(observability, "velocity_ned", ("vx", "vy", "vz").index(axis)), "color": PURPLE, "dash": "3 3"},
             ],
             "velocity (m/s)",
         )
         for axis in ("vx", "vy", "vz")
     )
     stream_rows = _stream_rows(observability)
+    coordinate_contract_rows = _coordinate_contract_rows(observability)
     axis_rows = _axis_rows(observability)
     diagnostic_health_rows = _diagnostic_health_rows(observability)
     diagnostic_timing_rows = _diagnostic_timing_rows(observability)
@@ -1361,6 +1459,15 @@ def render(session: Path, output: Path) -> Path:
     replay_html = replay_section(data)
 
     session_name = session.name
+    sim_duration_s = finite(mission.get("duration_sim_s"))
+    wall_elapsed_s = finite(mission.get("wall_elapsed_s"))
+    sim_samples = data.get("ground_truth", [])
+    sim_start_s = finite(sim_samples[0].get("t")) if sim_samples else None
+    sim_end_s = finite(sim_samples[-1].get("t")) if sim_samples else None
+    sim_window = (
+        f"t={fmt(sim_start_s, 2)}–{fmt(sim_end_s, 2)} s"
+        if sim_start_s is not None and sim_end_s is not None else "window unavailable"
+    )
     raw_links = [
         ("report schema", "report.json"),
         ("scenario snapshot", "scenario.json"),
@@ -1443,13 +1550,14 @@ def render(session: Path, output: Path) -> Path:
     .axis-label {{ fill:#617284; font-size:11px; }} .axis-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .legend-label {{ fill:#53677b; font-size:11px; }} .threshold-label {{ fill:{RED}; font-size:11px; font-weight:700; }} .end-label {{ font-size:11px; font-weight:800; }} .map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }} .bar-value {{ fill:#29435d; font-size:12px; font-weight:800; }} .bar-note {{ fill:#68778a; font-size:10px; }}
     .replay-toolbar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 8px; }} .replay-toolbar button {{ border:1px solid #b9c9d6; border-radius:6px; background:#fff; color:#1f4f78; padding:7px 13px; font-weight:800; cursor:pointer; }} .replay-toolbar button:hover {{ background:#edf5fb; }} .replay-time-control {{ display:flex; align-items:center; gap:10px; flex:1; min-width:280px; color:#53677b; font-size:12px; font-weight:700; }} .replay-time-control input {{ flex:1; accent-color:{BLUE}; }} .replay-time-control output {{ min-width:62px; color:#18324b; font-variant-numeric:tabular-nums; }}
     .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:18px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 65%,#edf2f6 65%,#edf2f6 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:11px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ background:{TEAL}; }} .replay-marker.safety {{ background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
-    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 250px; gap:14px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 8px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:14px; }} .replay-status h3 {{ margin-bottom:10px; }} .replay-status dl {{ margin:0; }} .replay-status dt {{ margin-top:9px; color:#68778a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }} .replay-status dd {{ margin:2px 0 0; color:#1f3c56; font-size:13px; font-weight:700; overflow-wrap:anywhere; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
+    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 250px; gap:14px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:10px 10px 8px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:14px; }} .replay-status h3 {{ margin-bottom:10px; }} .replay-status dl {{ margin:0; }} .replay-status dt {{ margin-top:9px; color:#68778a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }} .replay-status dd {{ margin:2px 0 0; color:#1f3c56; font-size:13px; font-weight:700; overflow-wrap:anywhere; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
     .evidence {{ width:100%; border-collapse:collapse; font-size:13px; }} .evidence th,.evidence td {{ padding:10px 9px; border-bottom:1px solid #e5ebef; text-align:left; vertical-align:middle; }} .evidence th {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }} .evidence .observed {{ font-weight:800; color:#1f3c56; }}
     .two-col {{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; align-items:start; }}
     .callout {{ padding:13px 15px; background:#f7fafc; border-left:4px solid var(--blue); border-radius:6px; }} .callout p {{ color:#385169; font-size:13px; }}
     details {{ margin-top:12px; border-top:1px solid var(--line); padding-top:12px; }} summary {{ cursor:pointer; font-weight:800; color:#2d5e8c; }}
     .raw-links {{ display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:8px; }} a {{ color:#1b63a1; }} code {{ background:#eef3f7; padding:2px 5px; border-radius:4px; font-size:11px; }}
     .small {{ font-size:12px; color:var(--muted); }} footer {{ margin-top:18px; font-size:11px; color:#7b8996; }}
+    .run-log {{ display:flex; flex-wrap:wrap; gap:8px 18px; margin:0 0 14px; padding:10px 13px; border:1px solid #cfe0ec; border-left:4px solid {BLUE}; border-radius:7px; background:#f5faff; color:#29435d; font-size:12px; font-variant-numeric:tabular-nums; }} .run-log strong {{ color:#163b5b; }}
     @media (max-width:900px) {{ .kpis {{ grid-template-columns:repeat(3,minmax(0,1fr)); }} .two-col {{ grid-template-columns:1fr; }} .replay-grid {{ grid-template-columns:1fr; }} }}
     @media (max-width:600px) {{ main {{ padding:18px 12px 40px; }} .hero {{ display:block; }} .hero-right {{ margin-top:12px; }} .kpis {{ grid-template-columns:1fr 1fr; }} .findings {{ grid-template-columns:1fr; }} section {{ padding:14px; }} .evidence {{ font-size:12px; }} .evidence th:nth-child(3),.evidence td:nth-child(3) {{ display:none; }} }}
   </style>
@@ -1460,6 +1568,8 @@ def render(session: Path, output: Path) -> Path:
     <div><div class="eyebrow">PX4 / SITL flight review</div><h1>External Mode · {esc(metrics.get('mission', {}).get('waypoint_count', 0))}-waypoint mission</h1><p class="session">Session: {esc(session_name)} · {fmt(mission.get('duration_sim_s'), 1, ' s')} simulated · generated from recorded artifacts</p></div>
     <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
   </header>
+
+  <div class="run-log" aria-label="Simulation runtime"><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
   <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 
@@ -1481,7 +1591,9 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Waypoint and command-state timeline</h2><p class="small">The replay cursor exposes the latest vehicle state, active waypoint, acceptance result, and active command path. This table is the durable waypoint evidence behind the replay.</p><table class="evidence"><thead><tr><th>Time</th><th>Waypoint</th><th>State</th><th>Reason</th><th>Accepted</th><th>Position error</th><th>Speed at acceptance</th></tr></thead><tbody>{waypoint_event_rows}</tbody></table><p class="small">{esc(path_observation_note)}</p></section>
 
-  <section><h2>Telemetry coverage</h2><p class="small">Position and velocity streams are reported in their recorded frame; PX4 local position is converted from NED to ENU for comparison. Gaps are based on consecutive accepted recorder samples.</p><table class="evidence"><thead><tr><th>Stream</th><th>Samples</th><th>Mean rate</th><th>Duration</th><th>Gap p95</th><th>Max gap</th></tr></thead><tbody>{stream_rows}</tbody></table><details><summary>Position XYZ and velocity XYZ statistics</summary><table class="evidence"><thead><tr><th>Stream</th><th>Axis</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{axis_rows}</tbody></table></details></section>
+  <section><h2>Coordinate-frame contract</h2><p class="small">All charts and map/replay geometry use one display frame: ENU, with <strong>x=east, y=north, z=up</strong>. PX4 vectors are converted before statistics and plotting with <code>[x,y,z]ENU = [y,x,-z]NED</code>; LIO, ground truth and PVA are already ENU.</p><table class="evidence"><thead><tr><th>Source</th><th>Recorded convention</th><th>Report transform</th><th>Display convention</th></tr></thead><tbody>{coordinate_contract_rows}</tbody></table></section>
+
+  <section><h2>Telemetry coverage</h2><p class="small">Position and velocity streams below are already normalized to display ENU. PX4 external odometry, PX4 odometry, local position and setpoint events carry an explicit NED→ENU label in the charts. Gaps are based on consecutive accepted recorder samples.</p><table class="evidence"><thead><tr><th>Stream</th><th>Samples</th><th>Mean rate</th><th>Duration</th><th>Gap p95</th><th>Max gap</th></tr></thead><tbody>{stream_rows}</tbody></table><details><summary>Position XYZ and velocity XYZ statistics</summary><table class="evidence"><thead><tr><th>Stream</th><th>Axis</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{axis_rows}</tbody></table></details></section>
 
   <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO and SUPER/ROG-Map. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
 
