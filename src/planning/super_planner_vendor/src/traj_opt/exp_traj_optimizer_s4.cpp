@@ -22,6 +22,7 @@
 */
 
 #include <traj_opt/exp_traj_optimizer_s4.h>
+#include <algorithm>
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <utils/optimization/lbfgs.h>
@@ -692,10 +693,20 @@ bool ExpTrajOpt::setupProblemAndCheck() {
 
 bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &init_ts) {
     opt_vars.default_init = false;
-    if (opt_vars.times.size() != init_ts.size()) {
+    if (opt_vars.times.size() == 0 || init_ts.empty() ||
+        opt_vars.times.size() != init_ts.size()) {
         return false;
     }
     if (opt_vars.points.cols() != init_ps.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < init_ts.size(); ++i) {
+        if (!std::isfinite(init_ts[i]) || init_ts[i] <= 0.0) {
+            return false;
+        }
+    }
+    if (!std::all_of(init_ps.begin(), init_ps.end(),
+                     [](const Vec3f &point) { return point.allFinite(); })) {
         return false;
     }
 
