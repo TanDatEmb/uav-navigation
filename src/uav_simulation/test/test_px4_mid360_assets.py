@@ -43,11 +43,19 @@ def test_px4_lio_smoke_world_and_bridge_contract():
     assert physics.findtext("max_step_size") == "0.004"
     assert physics.findtext("real_time_factor") == "0.8"
     assert physics.findtext("real_time_update_rate") == "200"
-    bridge = (ROOT / "bridge/px4_mid360_bridge.yaml").read_text()
-    assert "/world/px4_lio_smoke/clock" in bridge
-    assert "/sim/mid360/scan/points" in bridge
-    assert "/sim/mid360/imu" in bridge
-    assert "/sim/ground_truth/odometry" in bridge
+    control_bridge = (
+        ROOT / "bridge/px4_mid360_control_bridge.yaml"
+    ).read_text()
+    lidar_bridge = (
+        ROOT / "bridge/px4_mid360_lidar_bridge.yaml"
+    ).read_text()
+    assert "/world/px4_lio_smoke/clock" in control_bridge
+    assert "/sim/mid360/imu" in control_bridge
+    assert "/sim/ground_truth/odometry" in control_bridge
+    assert "/sim/mid360/scan/points" not in control_bridge
+    assert "/sim/mid360/scan/points" in lidar_bridge
+    assert "/world/px4_lio_smoke/clock" not in lidar_bridge
+    assert "/sim/mid360/imu" not in lidar_bridge
 
 
 def test_launcher_disables_px4_gazebo_truth_odometry_source():

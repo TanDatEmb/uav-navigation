@@ -997,12 +997,23 @@ def _wait_until(session: Session, predicate: Callable[[dict[str, Any]], bool], t
         snapshot = _monitor_snapshot(session)
         if predicate(snapshot):
             return
+        live_pgids = {
+            int(record["pgid"])
+            for record in session.live_records()
+            if record.get("pgid") is not None
+        }
         for record in session.records():
-            if record.get("role") in {"monitor", "lio", "px4_gazebo", "bridge", "px4_ingress"}:
+            if record.get("role") in {
+                "monitor", "lio", "px4_gazebo", "bridge", "bridge_lidar",
+                "px4_ingress", "mapping",
+            }:
                 # A monitor snapshot is the authoritative readiness signal, but
-                # an early process exit must be reported immediately.
-                if not Path(f"/proc/{record.get('pid')}").exists() and record.get("role") == "monitor":
-                    raise RuntimeError("runtime monitor exited before readiness")
+                # an early process exit must be reported immediately. Process-
+                # group liveness deliberately excludes unreaped zombies.
+                if int(record.get("pgid", -1)) not in live_pgids:
+                    raise RuntimeError(
+                        f"runtime process {record.get('role')} exited before readiness"
+                    )
         time.sleep(0.25)
     raise TimeoutError(f"timed out waiting for {description}")
 
@@ -1227,7 +1238,8 @@ def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
         ROOT / "src/uav_simulation/models/x500_mid360/model.sdf",
         ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf",
         ROOT / "src/uav_simulation/worlds/px4_lio_smoke.sdf",
-        ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml",
+        ROOT / "src/uav_simulation/bridge/px4_mid360_control_bridge.yaml",
+        ROOT / "src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml",
         ROOT / "install/setup.bash",
     ):
         if not path.exists():
@@ -1642,17 +1654,32 @@ def _run_sim_unlocked(
         session.start(
             "xrce_agent", ["MicroXRCEAgent", "udp4", "-p", str(isolated_xrce_port)], cwd=ROOT
         )
-        bridge_source = ROOT / "src/uav_simulation/bridge/px4_mid360_bridge.yaml"
-        bridge_config = session.directory / "px4_mid360_bridge.yaml"
-        bridge_config.write_text(
-            bridge_source.read_text(encoding="utf-8").replace(
+        control_bridge_source = (
+            ROOT / "src/uav_simulation/bridge/px4_mid360_control_bridge.yaml"
+        )
+        lidar_bridge_source = (
+            ROOT / "src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml"
+        )
+        control_bridge_config = session.directory / "px4_mid360_control_bridge.yaml"
+        lidar_bridge_config = session.directory / "px4_mid360_lidar_bridge.yaml"
+        control_bridge_config.write_text(
+            control_bridge_source.read_text(encoding="utf-8").replace(
                 "/world/px4_lio_smoke/clock", f"/world/{world}/clock"
             ),
             encoding="utf-8",
         )
+        lidar_bridge_config.write_text(
+            lidar_bridge_source.read_text(encoding="utf-8"), encoding="utf-8"
+        )
         session.start("bridge", _ros_shell([
             "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
-            "-r", "__node:=px4_mid360_bridge", "-p", f"config_file:={bridge_config}", "-p", "use_sim_time:=true",
+            "-r", "__node:=px4_mid360_control_bridge",
+            "-p", f"config_file:={control_bridge_config}",
+        ], enable_rviz=not headless), cwd=ROOT)
+        session.start("bridge_lidar", _ros_shell([
+            "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
+            "-r", "__node:=px4_mid360_lidar_bridge",
+            "-p", f"config_file:={lidar_bridge_config}",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("px4_ingress", _ros_shell([
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",

@@ -381,6 +381,7 @@ class RuntimeMonitor:
     def _specs(self) -> list[TopicSpec]:
         from diagnostic_msgs.msg import DiagnosticArray
         from nav_msgs.msg import Odometry
+        from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import Imu, PointCloud2
 
         specs = [
@@ -397,6 +398,14 @@ class RuntimeMonitor:
             TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
         if self.workflow != "dataset":
+            # Observe the product simulation clock as a first-class stream.
+            # Wall-arrival gaps here distinguish a GZ->ROS transport stall
+            # from an estimator-only pause; the clock value remains the
+            # authoritative source timestamp.
+            specs.append(TopicSpec(
+                "simulation_clock", "/clock", Clock,
+                lambda m: {"stamp_ns": _time_ns(m.clock)},
+            ))
             # Gazebo's OdometryPublisher is the independent simulator truth.
             # It is ENU/FLU and must remain a separate stream; comparing an
             # estimate to a bridge output derived from that same estimate

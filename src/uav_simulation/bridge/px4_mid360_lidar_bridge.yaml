@@ -1,0 +1,8 @@
+# Gazebo Harmonic -> ROS 2 Jazzy high-bandwidth bridge.
+# PointCloud conversion has its own process/lifecycle so it cannot delay the
+# simulation clock or estimator-critical IMU transport.
+- ros_topic_name: /lidar/points
+  gz_topic_name: /sim/mid360/scan/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: gz.msgs.PointCloudPacked
+  direction: GZ_TO_ROS

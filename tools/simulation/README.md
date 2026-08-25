@@ -6,7 +6,9 @@ cleanup policy. The runner owns all child process groups and writes the single
 session artifact under `.artifacts/runtime/`.
 
 The only simulation configuration is `config/runtime/sim.yaml`; the bridge
-asset is `src/uav_simulation/bridge/px4_mid360_bridge.yaml`.
+assets are `src/uav_simulation/bridge/px4_mid360_control_bridge.yaml` and
+`src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml`; PointCloud conversion
+is process-isolated from `/clock` and IMU transport.
 
 Manual-control profiles are selected by the runtime runner:
 

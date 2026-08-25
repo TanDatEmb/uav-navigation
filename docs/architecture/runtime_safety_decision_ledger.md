@@ -808,3 +808,48 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   Sanitizers, real executor starvation injection and the clean 2 m/s Gazebo
   3/3 gate remain open. No dataset, speed-ladder or full-map acceptance is
   claimed by this checkpoint.
+
+### 2026-08-25 - SITL Gazebo bridge isolation screening checkpoint
+
+- Artifact `.artifacts/runtime/external-mode-check-20260824T234947-296974`
+  exposed a 0.7--0.8 s common wall-arrival blackout on `/clock`, raw IMU,
+  LiDAR and Gazebo ground truth while independent PX4 XRCE odometry continued.
+  FAST-LIO propagation then stopped at the existing 0.5 s steady receive-age
+  contract. The shared `ros_gz parameter_bridge` process, rather than ROG or
+  propagated-odometry computation, was therefore the first common ownership
+  boundary requiring isolation.
+- The canonical GZ-to-ROS manifest is split into a low-bandwidth control bridge
+  (`/clock`, IMU and evaluation-only ground truth) and an independent
+  high-bandwidth PointCloud bridge. Both remain pure GZ-to-ROS transports with
+  unchanged topics, types and source stamps. `use_sim_time` is intentionally
+  absent from these transport nodes: they do not own time-based product logic,
+  and the control bridge must not subscribe to the same `/clock` it publishes.
+  FAST-LIO, navigation runtime, controller and PX4 ingress retain simulation
+  time. No QoS, queue, sensor rate, downsampling or freshness value changed.
+- `/clock` is now a first-class monitor stream. Its active wall-arrival gaps
+  are derived directly from consecutive recorded callbacks, independent of
+  stale-timer scheduling; queued source stamps with small deltas cannot erase
+  an outage. Startup and post-observation gaps are excluded by the existing
+  active-window policy. The 0.5 s limit is the existing execution-state lease
+  budget, reused as evidence for the same loss interval rather than introduced
+  as a clock-specific tuned threshold. Both bridge processes are lifecycle-
+  owned, and an early exit now fails readiness immediately. Per-process CPU,
+  RSS and context-switch evidence remains open: the `ros2 run` registry PID is
+  a launcher parent rather than the actual bridge worker, so this checkpoint
+  does not publish misleading zero-CPU resource metrics.
+- The intermediate split-only artifact
+  `.artifacts/runtime/external-mode-check-20260825T000029-301769` isolated the
+  failure further: LiDAR continued while clock/IMU/ground truth in the control
+  bridge shared a 0.54 s blackout and correctly triggered `RECEIVE_STALE`.
+  After removing the transport TimeSource, dirty screening artifact
+  `.artifacts/runtime/external-mode-check-20260825T000631-304227` ran to sim
+  time 118.4 s with 31,436 clock, 25,149 IMU and 6,287 ground-truth samples,
+  zero active control-stream wall gap over 0.5 s and no propagated-odometry
+  stale event. It later stopped for an independent, genuine SUPER
+  cross-generation WT/TT discontinuity. This is positive one-run A/B screening
+  evidence only; clean 2 m/s 3/3, LiDAR/mapping-loss gates, full Gazebo matrix
+  and CPU/RSS certification remain open.
+- Verification on the dirty harness: runtime contract tests passed 93/93,
+  simulation asset tests passed 8/8 and `git diff --check` passed. The arrival-
+  gap tests cover a 700 ms callback gap with continuous source timestamps and
+  no intervening monitor tick, plus exclusion of a pre-TRACKING startup gap.

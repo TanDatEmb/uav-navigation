@@ -431,6 +431,56 @@ def _active_stale_count(
     return len(active_times) if active_times is not None else int(row.get("stale_event_count", 0))
 
 
+def _active_arrival_gap_summary(
+    name: str,
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Measure wall-arrival gaps without depending on the monitor timer.
+
+    A queued callback can run before the monitor's stale timer and otherwise
+    erase an outage.  Deriving gaps from consecutive recorded callbacks makes
+    the evidence deterministic.  Startup and post-observation gaps use the
+    same active-window policy as the existing stale-event contract.
+    """
+    runtime_config = config.get("runtime", {})
+    stream_config = runtime_config.get("streams", {}).get(name, {})
+    stale_after_s = _number(
+        stream_config.get(
+            "stale_after_s", runtime_config.get("thresholds", {}).get("stale_after_s", 1.0)
+        )
+    )
+    if not math.isfinite(stale_after_s) or stale_after_s <= 0.0:
+        return {"count": 0, "maximum_gap_ms": None}
+    threshold_ns = int(stale_after_s * 1e9)
+    arrivals = sorted(
+        int(item.get("arrival_wall_ns", 0))
+        for item in _series(samples, name)
+        if int(item.get("arrival_wall_ns", 0)) > 0
+    )
+    events: list[int] = []
+    gaps_by_event: dict[int, float] = {}
+    for before, after in zip(arrivals, arrivals[1:]):
+        gap_ns = after - before
+        if gap_ns > threshold_ns:
+            event_ns = before + threshold_ns
+            events.append(event_ns)
+            gaps_by_event[event_ns] = gap_ns / 1e6
+    active_events = _active_stale_times(
+        {"stale_event_count": len(events), "stale_event_times_ns": events},
+        runtime,
+        samples,
+    )
+    if active_events is None:
+        active_events = events
+    active_gaps = [gaps_by_event[event] for event in active_events]
+    return {
+        "count": len(active_gaps),
+        "maximum_gap_ms": max(active_gaps, default=None),
+    }
+
+
 def _stale_classification(
     name: str,
     row: dict[str, Any],
@@ -519,6 +569,18 @@ def _annotate_stale_classification(
 ) -> None:
     for name, row in streams.items():
         row.update(_stale_classification(name, row, config, runtime, samples))
+        arrival_gaps = _active_arrival_gap_summary(
+            name, config, runtime, samples
+        )
+        row["active_wall_arrival_gap_count"] = arrival_gaps["count"]
+        row["maximum_active_wall_arrival_gap_ms"] = arrival_gaps["maximum_gap_ms"]
+
+
+def _sim_stream_stale_violation(name: str, row: dict[str, Any]) -> int:
+    """Return the authoritative sim freshness count for one stream."""
+    if name == "simulation_clock":
+        return int(row.get("active_wall_arrival_gap_count", 0) or 0)
+    return int(row.get("source_stale_event_count", 0) or 0)
 
 
 def _metric_summary(values: list[float]) -> dict[str, Any]:
@@ -1809,7 +1871,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
 
 def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None, workflow: str = "sim") -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    names = ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
+    names = ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
@@ -1834,10 +1896,15 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         terminal_outcome == "PAUSED_SAFETY_STOP"
     )
     reasons: list[str] = []
-    for name in ("imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
+    for name in ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
         if streams[name]["sample_count"] <= 0:
             reasons.append(f"{name} has no samples")
-        stale_violation = streams[name]["source_stale_event_count"]
+        # /clock is itself the source-time authority, so a long wall-arrival
+        # gap cannot be downgraded merely because the queued clock values catch
+        # up with small source deltas afterward.  A monitor-wide stall is also
+        # insufficient evidence for flight acceptance and therefore remains
+        # fail-closed here.
+        stale_violation = _sim_stream_stale_violation(name, streams[name])
         # A fail-closed External Mode hands control to the supervisor before
         # landing. The PX4 external-odometry bridge may stop publishing during
         # that handover; it is outside the active navigation interval and must

@@ -73,6 +73,35 @@ class RuntimeContractTest(unittest.TestCase):
             with runner.RuntimeLock(lock_path):
                 pass
 
+    def test_readiness_fails_immediately_for_an_exited_zombie_process(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            runtime_root = Path(temporary) / "runtime"
+            session = runner.Session.create(runtime_root, "sim")
+            process = session.start(
+                "bridge_lidar", ["bash", "-lc", "exit 0"], cwd=ROOT
+            )
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    state = Path(f"/proc/{process.pid}/stat").read_text(
+                        encoding="utf-8"
+                    ).split(")", 1)[1].strip().split()[0]
+                except OSError:
+                    state = "gone"
+                if state in {"Z", "gone"}:
+                    break
+                time.sleep(0.01)
+            try:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "runtime process bridge_lidar exited before readiness",
+                ):
+                    runner._wait_until(
+                        session, lambda _: False, 1.0, "test readiness"
+                    )
+            finally:
+                process.wait(timeout=2.0)
+
     def test_clean_preserves_incremental_build_and_install_trees(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             root = Path(temporary)
@@ -898,6 +927,100 @@ class RuntimeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("export PX4_PARAM_SIM_GZ_EN_BARO=1", launcher)
+
+    def test_simulation_bridge_isolates_pointcloud_from_clock_and_imu(self) -> None:
+        bridge_root = ROOT / "src/uav_simulation/bridge"
+        control = yaml.safe_load(
+            (bridge_root / "px4_mid360_control_bridge.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        lidar = yaml.safe_load(
+            (bridge_root / "px4_mid360_lidar_bridge.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        control_topics = {item["ros_topic_name"] for item in control}
+        lidar_topics = {item["ros_topic_name"] for item in lidar}
+        self.assertEqual(
+            control_topics,
+            {"/clock", "/lidar/imu", "/sim/ground_truth/odometry"},
+        )
+        self.assertEqual(lidar_topics, {"/lidar/points"})
+        self.assertFalse(control_topics & lidar_topics)
+        runner_source = (RUNTIME / "runner.py").read_text(encoding="utf-8")
+        self.assertIn('session.start("bridge"', runner_source)
+        self.assertIn('session.start("bridge_lidar"', runner_source)
+        bridge_launch = runner_source[
+            runner_source.index('session.start("bridge"'):
+            runner_source.index('session.start("px4_ingress"')
+        ]
+        self.assertNotIn("use_sim_time:=true", bridge_launch)
+
+    def test_simulation_clock_is_a_first_class_freshness_stream(self) -> None:
+        runtime = runner.load_config("common.yaml")["runtime"]
+        clock = runtime["streams"]["simulation_clock"]
+        self.assertEqual(clock["expected_hz"], 100.0)
+        self.assertEqual(clock["stale_after_s"], 0.50)
+        monitor_source = (RUNTIME / "monitor.py").read_text(encoding="utf-8")
+        self.assertIn('"simulation_clock", "/clock", Clock', monitor_source)
+        report_source = (RUNTIME / "report.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'if name == "simulation_clock"', report_source
+        )
+
+    def test_clock_arrival_gap_is_detected_without_a_monitor_tick(self) -> None:
+        config = runner.load_config("common.yaml")
+        samples = [
+            {
+                "stream": "simulation_clock",
+                "arrival_wall_ns": 1_000_000_000,
+                "timestamp_ns": 10_000_000_000,
+            },
+            {
+                "stream": "simulation_clock",
+                "arrival_wall_ns": 1_700_000_001,
+                "timestamp_ns": 10_010_000_000,
+            },
+        ]
+        with mock.patch.object(report, "_first_tracking_wall_ns", return_value=0):
+            summary = report._active_arrival_gap_summary(
+                "simulation_clock", config, {}, samples
+            )
+        self.assertEqual(summary["count"], 1)
+        self.assertAlmostEqual(summary["maximum_gap_ms"], 700.000001)
+        self.assertEqual(
+            report._sim_stream_stale_violation(
+                "simulation_clock",
+                {
+                    "active_wall_arrival_gap_count": summary["count"],
+                    "source_stale_event_count": 0,
+                },
+            ),
+            1,
+        )
+
+    def test_clock_arrival_gap_before_tracking_is_not_an_active_failure(self) -> None:
+        config = runner.load_config("common.yaml")
+        samples = [
+            {
+                "stream": "simulation_clock",
+                "arrival_wall_ns": 1_000_000_000,
+                "timestamp_ns": 10_000_000_000,
+            },
+            {
+                "stream": "simulation_clock",
+                "arrival_wall_ns": 1_700_000_001,
+                "timestamp_ns": 10_010_000_000,
+            },
+        ]
+        with mock.patch.object(
+            report, "_first_tracking_wall_ns", return_value=2_000_000_000
+        ):
+            summary = report._active_arrival_gap_summary(
+                "simulation_clock", config, {}, samples
+            )
+        self.assertEqual(summary["count"], 0)
 
     def test_simulation_profiles_separate_headless_and_interactive_manual_control(self) -> None:
         self.assertEqual(

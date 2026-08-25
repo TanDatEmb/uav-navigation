@@ -6,6 +6,9 @@ runtime:
     stale_after_s: 1.0
     replay_tail_grace_s: 0.5
   streams:
+    # Reuse the product execution-state freshness budget. This is evidence for
+    # the same loss interval, not a newly tuned clock-specific threshold.
+    simulation_clock: {expected_hz: 100.0, stale_after_s: 0.50}
     imu: {expected_hz: 200.0, stale_after_s: 0.10}
     lidar: {expected_hz: 10.0, stale_after_s: 0.50}
     corrected_odometry: {expected_hz: 10.0, stale_after_s: 1.00}
