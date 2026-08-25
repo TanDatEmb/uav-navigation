@@ -1785,3 +1785,10 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Removal/review condition: retain permanently as the finite-input contract;
   review the backup geometric certificate separately under HG-013. Exact
   verification command is the focused build/test command above.
+- Post-commit verification: at `2e916c4`, Release build completed 21/21
+  packages, Release product tests completed 13/13 packages, `build.py check`
+  reported 68 tests with 0 errors/failures/skips, and ASan build/test completed
+  21/21 and 13/13 packages with all executed CTest suites passing and no
+  sanitizer report. This confirms the finite-input boundary at source,
+  product-test and sanitizer levels; it does not close repeated SITL/dataset
+  acceptance or HG-013.
