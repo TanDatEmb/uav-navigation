@@ -300,6 +300,7 @@ def _mission_waypoints_for_acceptance(
 def _mission_cross_track_p95(
     session: Path,
     waypoints: list[tuple[float, float, float]],
+    start_after_sim_time_ns: int | None = None,
 ) -> tuple[float | None, int]:
     if len(waypoints) < 2:
         return None, 0
@@ -307,6 +308,15 @@ def _mission_cross_track_p95(
     for item in _samples(session / "samples.jsonl"):
         if item.get("stream") != "ground_truth_odometry":
             continue
+        if start_after_sim_time_ns is not None:
+            raw_stamp = item.get(
+                "sim_time_ns", item.get("source_stamp_ns", item.get("timestamp_ns"))
+            )
+            try:
+                if int(raw_stamp) < start_after_sim_time_ns:
+                    continue
+            except (TypeError, ValueError):
+                continue
         position = _point3(item.get("payload", {}).get("position"))
         if position is None:
             continue
@@ -423,7 +433,30 @@ def _mission_acceptance(
         )
 
     waypoints = _mission_waypoints_for_acceptance(session, session_config, workspace)
-    cross_track_p95, sample_count = _mission_cross_track_p95(session, waypoints)
+    # A pass-through mission may deliberately begin at a waypoint that is not
+    # the takeoff pose.  Ground-truth samples before that waypoint is accepted
+    # describe the initial repositioning, not tracking of the mission polyline
+    # and can be several metres away by construction.  Start the metric at the
+    # first acceptance event while retaining the normal gate and fail-closed
+    # behaviour when no such event exists.
+    first_acceptance_sim_time_ns: int | None = None
+    for event in _scenario_events(session / "scenario.jsonl"):
+        if event.get("kind") != "waypoint_accepted":
+            continue
+        payload = event.get("payload", {})
+        if not isinstance(payload, dict) or payload.get("waypoint_accepted") is not True:
+            continue
+        try:
+            accepted_index = int(payload.get("accepted_waypoint_index"))
+            sim_time_ns = int(event.get("sim_time_ns"))
+        except (TypeError, ValueError):
+            continue
+        if accepted_index == 0 and sim_time_ns >= 0:
+            first_acceptance_sim_time_ns = sim_time_ns
+            break
+    cross_track_p95, sample_count = _mission_cross_track_p95(
+        session, waypoints, first_acceptance_sim_time_ns
+    )
     result["cross_track_error_p95_m"] = cross_track_p95
     result["cross_track_sample_count"] = sample_count
     if cross_track_p95 is None:
@@ -450,6 +483,22 @@ def _samples(path: Path) -> list[dict[str, Any]]:
             except ValueError:
                 continue
             if item.get("kind") == "sample":
+                result.append(item)
+    return result
+
+
+def _scenario_events(path: Path) -> list[dict[str, Any]]:
+    """Load compact scenario events without making malformed rows fatal."""
+    result: list[dict[str, Any]] = []
+    if not path.is_file():
+        return result
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            try:
+                item = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item, dict):
                 result.append(item)
     return result
 

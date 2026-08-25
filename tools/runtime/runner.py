@@ -797,7 +797,21 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
     canonical = "occlusion_featured" if map_profile == "occlusion" else map_profile
     profile = _map_registry().get(canonical)
     if profile is None:
-        world_name = "px4_lio_smoke" if map_profile == "smoke" else map_profile
+        # Keep legacy CLI aliases consistent with run_sim and collision-truth
+        # resolution.  These profiles intentionally reuse an existing world;
+        # attempting to read ``speed.sdf`` (or ``long_open_slow.sdf``) would
+        # fail before the simulator starts and make speed evidence impossible.
+        world_name = {
+            "smoke": "px4_lio_smoke",
+            "speed": "open",
+            "long_open_slow": "long_open",
+            "occlusion_featured": "occlusion",
+            "occlusion_degenerate": "occlusion_degenerate",
+            "long_open_featured_core_60": "long_open_featured_speed",
+            "long_open_featured_core_60_pv": "long_open_featured_speed",
+            "single_pillar_speed": "long_three_pillars_speed",
+            "single_pillar_speed_pv": "long_three_pillars_speed",
+        }.get(map_profile, map_profile)
         world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
         descriptor = {
             "profile": map_profile, "seed": 0, "stochastic": False,

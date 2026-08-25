@@ -1292,3 +1292,26 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   17/17, observation-accounting 16/16, and `git diff --check`. Runtime timing
   distributions, sanitizer overlays, repeated SITL, and full bypass-removal
   certification remain open.
+
+### 2026-08-25 - A* guide-time monotonicity and legacy speed-map resolution
+
+- The legacy `speed` profile now resolves to its existing `open.sdf` asset,
+  matching the runner's mission/collision alias contract; it no longer fails
+  before simulator startup by trying to read a nonexistent `speed.sdf`.
+- A* returns points in start-to-goal order while the time allocator reports
+  remaining-time coordinates. The planner now converts those values to
+  monotonic elapsed guide times before EXP/MINCO validation. This fixes an
+  obvious clear-route failure where multi-point speed routes were rejected as
+  non-monotonic. The allocator also clamps only round-off-level negative
+  quadratic discriminants at its switching boundary; materially invalid roots
+  remain rejected. No speed limit, jerk limit, deadline, or safety gate
+  changed.
+- Verification: speed alias regression test; full Release build/check; one
+  post-fix `MAP_PROFILE=speed SPEED_CAP_MPS=2` screening run. The run now
+  reaches all five waypoints and records the requested speed, but remains
+  `FAIL` because actual post-first-waypoint cross-track p95 is about 0.98 m;
+  this is retained as controller/turn-tracking evidence, not hidden by a
+  relaxed threshold. The report excludes only the initial takeoff/reposition
+  before waypoint 0 is accepted, which is not mission-polyline tracking.
+  Repeated speed ladders, dense scenes, sanitizers, and certification remain
+  open.

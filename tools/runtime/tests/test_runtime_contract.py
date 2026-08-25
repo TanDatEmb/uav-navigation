@@ -781,6 +781,31 @@ class RuntimeContractTest(unittest.TestCase):
             4.25,
         )
 
+    def test_cross_track_can_start_after_initial_pass_through(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            rows = [
+                {"kind": "sample", "stream": "ground_truth_odometry", "timestamp_ns": index,
+                 "payload": {"position": [0.0, 0.0, 0.0]}}
+                for index in range(1, 21)
+            ]
+            rows.append(
+                {"kind": "sample", "stream": "ground_truth_odometry", "timestamp_ns": 21,
+                 "payload": {"position": [-2.0, 4.5, 3.0]}}
+            )
+            (session / "samples.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            waypoints = [(-3.0, 4.5, 3.0), (4.0, 4.5, 3.0)]
+            all_p95, _ = report._mission_cross_track_p95(session, waypoints)
+            active_p95, active_count = report._mission_cross_track_p95(
+                session, waypoints, 21
+            )
+            self.assertGreater(all_p95 or 0.0, 1.0)
+            self.assertAlmostEqual(active_p95 or 0.0, 0.0)
+            self.assertEqual(active_count, 1)
+
     def test_long_three_pillars_speed_is_an_additive_two_waypoint_speed_benchmark(self) -> None:
         descriptor = runner._map_registry()["long_three_pillars_speed"]
         self.assertEqual(
@@ -835,6 +860,15 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue((session.directory / "map_descriptor.json").is_file())
             resolved = session.directory / "resolved_forest_clutter.sdf"
             self.assertEqual(hashlib.sha256(resolved.read_bytes()).hexdigest(), stochastic["world_sha256"])
+
+    def test_legacy_speed_alias_resolves_existing_world_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            world_name, descriptor = runner._resolve_map_descriptor(session, "speed", 0)
+            self.assertEqual(world_name, "open")
+            self.assertEqual(descriptor["profile"], "speed")
+            self.assertEqual(descriptor["world"], "open")
+            self.assertTrue((session.directory / "resolved_map.sdf").is_file())
 
     def test_profile_variants_share_mission_limits(self) -> None:
         for left, right in (("occlusion_featured", "occlusion_degenerate"),

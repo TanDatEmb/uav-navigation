@@ -934,34 +934,55 @@ namespace super_planner {
 //                }
 //                cout << endl;
                 vector<double> stamps(new_path.size(), 0);
-                vector<double> dt(new_path.size(), 0);
-                double last_stamp = 0;
                 for (int i = dis.size() - 1; i >= 0; i--) {
                     double vel;
                     geometry_utils::simplePMTimeAllocator(cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel,
                                                           guide_path_end_vel,
                                                           total_dis,
                                                           dis[i], stamps[i], vel);
-                    dt[i] = stamps[i] - last_stamp;
-                    last_stamp = stamps[i];
+                }
+                // simplePMTimeAllocator returns the time needed to reach each
+                // point measured from the *start* of the whole route's
+                // remaining-distance coordinate.  ``stamps`` therefore
+                // decreases as the A* path moves start -> goal.  The old
+                // subtraction used stamps[i]-stamps[i-1], producing negative
+                // guide times whenever A* returned more than two points;
+                // ExpTraj then rejected an otherwise clear path as
+                // non-monotonic. Convert remaining time to elapsed time
+                // explicitly and validate the contract before MINCO.
+                const double remaining_time_at_start = stamps.front();
+                if (!std::isfinite(remaining_time_at_start) ||
+                    remaining_time_at_start < 0.0) {
+                    ros_ptr_->warn(
+                            " -- [SUPER] invalid A* time allocation at route start: "
+                            "path_points={} total_dis={} v0={} a_max={} v_max={} stamp0={}",
+                            new_path.size(), total_dis, guide_path_end_vel,
+                            cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel,
+                            remaining_time_at_start);
+                    return FAILED;
                 }
                 double time_stamp = guide_stamp.back();
+                double previous_elapsed = 0.0;
 
 //                for (int i = 0; i < stamps.size(); i++) {
 //                    cout << stamps[i] << " ";
 //                }
 //                cout << endl;
 //
-//                for (int i = 0; i < dt.size(); i++) {
-//                    cout << dt[i] << " ";
-//                }
 //                cout << endl;
 
                 for (long unsigned int i = 1; i < new_path.size(); i++) {
-                    double t = dt[i];
-                    time_stamp += t;
+                    const double elapsed = remaining_time_at_start - stamps[i];
+                    if (!std::isfinite(elapsed) || elapsed < previous_elapsed) {
+                        ros_ptr_->warn(
+                                " -- [SUPER] A* time allocation is non-monotonic at index {}",
+                                i);
+                        return FAILED;
+                    }
+                    time_stamp = guide_stamp.back() + elapsed;
                     guide_path.emplace_back(new_path[i]);
                     guide_stamp.emplace_back(time_stamp);
+                    previous_elapsed = elapsed;
                 }
             }
         }

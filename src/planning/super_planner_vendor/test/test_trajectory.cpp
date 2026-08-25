@@ -18,6 +18,7 @@
 #include "super_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
+#include "utils/geometry/geometry_utils.h"
 
 namespace {
 
@@ -680,6 +681,17 @@ TEST(SuperTrajectory, NearGoalSegmentRejectsOccupiedAndOutOfMapEndpoints) {
   world.blocked_from_x = std::numeric_limits<double>::infinity();
   world.endpoints_in_bounds = false;
   EXPECT_FALSE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+}
+
+TEST(SuperTrajectory, TimeAllocatorHandlesSwitchingDistanceRoundoff) {
+  double elapsed = std::numeric_limits<double>::quiet_NaN();
+  double velocity = std::numeric_limits<double>::quiet_NaN();
+  constexpr double distance = 5.608921464952064;
+  geometry_utils::simplePMTimeAllocator(
+      3.0, 2.0, 0.0, distance, distance, elapsed, velocity);
+  EXPECT_TRUE(std::isfinite(elapsed));
+  EXPECT_GE(elapsed, 0.0);
+  EXPECT_TRUE(std::isfinite(velocity));
 }
 
 TEST(SuperTrajectory, GoalConnectionUsesInclusiveBoundary) {

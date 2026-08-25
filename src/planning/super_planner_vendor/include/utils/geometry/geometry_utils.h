@@ -47,6 +47,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include <utils/header/type_utils.hpp>
 #include <utils/geometry/quickhull.h>
 #include <Eigen/Eigen>
@@ -72,6 +76,21 @@ namespace geometry_utils {
         auto calc_time = [](double a, double cur_dis) { return sqrt(2 * cur_dis / a); };
         auto solve_quadratic = [](double a, double b, double c) {
             double delta = b * b - 4 * a * c;
+            if (!std::isfinite(delta) || !std::isfinite(a) ||
+                !std::isfinite(b) || !std::isfinite(c) || a == 0.0) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            // The switching-distance boundary can produce a tiny negative
+            // discriminant from floating-point cancellation even though the
+            // analytic root is exactly zero.  Clamp only that round-off band;
+            // a materially negative discriminant remains invalid.
+            const double scale = std::max({1.0, std::abs(b * b), std::abs(4 * a * c)});
+            if (delta < 0.0 && delta > -1.0e-12 * scale) {
+                delta = 0.0;
+            }
+            if (delta < 0.0) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
             return (-b + sqrt(delta)) / (2 * a);
         };
 
