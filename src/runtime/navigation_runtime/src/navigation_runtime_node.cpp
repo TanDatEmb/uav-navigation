@@ -10,8 +10,7 @@
 #include <navigation_contracts/execution_state_freshness.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_world_model/goal_contract.hpp>
-#include <navigation_planning_backend/planner.hpp>
-#include <planner_runtime_context/planner_runtime_context.hpp>
+#include <navigation_planning_backend/planner_facade.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -28,27 +27,6 @@
 
 namespace navigation_runtime {
 namespace {
-
-navigation_planning::PlannerStatus toProductPlannerStatus(
-    navigation_planning_backend::RET_CODE result) noexcept {
-  switch (result) {
-    case navigation_planning_backend::SUCCESS:
-      return navigation_planning::PlannerStatus::kSuccess;
-    case navigation_planning_backend::FINISH:
-      return navigation_planning::PlannerStatus::kFinished;
-    case navigation_planning_backend::NO_NEED:
-      return navigation_planning::PlannerStatus::kNoNeed;
-    case navigation_planning_backend::NEW_TRAJ:
-      return navigation_planning::PlannerStatus::kRestartFromRest;
-    case navigation_planning_backend::EMER:
-      return navigation_planning::PlannerStatus::kEmergency;
-    case navigation_planning_backend::OPT_FAILED:
-      return navigation_planning::PlannerStatus::kOptimizationFailed;
-    case navigation_planning_backend::FAILED:
-    default:
-      return navigation_planning::PlannerStatus::kFailed;
-  }
-}
 
 bool propagatedOdometryFinite(const nav_msgs::msg::Odometry& odometry) {
   const auto& position = odometry.pose.pose.position;
@@ -213,8 +191,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   plan_from_rest_failure_budget_ =
       ConsecutiveFailureBudget(max_plan_from_rest_failures_);
 
-  planner_context_ = std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
-      [this]() { return now().seconds(); });
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
   std::optional<navigation_planning::DynamicLimits> mission_limits;
@@ -382,9 +358,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         diagnostics.status.push_back(std::move(status));
         publisher->publish(diagnostics);
       });
-  planner_ = std::make_unique<navigation_planning_backend::Planner>(
-      planner_config_path_, planner_context_, world_snapshot_store_.load().view, mission_limits,
-      world_snapshot_store_);
+  planner_ = std::make_unique<navigation_planning_backend::PlannerFacade>(
+      planner_config_path_, world_snapshot_store_.load().view, mission_limits,
+      world_snapshot_store_, [this]() { return now().seconds(); });
   mapping_worker_->setStrictlyIncreasingOrderKey(
       [](const navigation_mapping::MappingObservation& observation) { return observation.stamp_ns; });
   mapping_worker_->start();
@@ -1142,10 +1118,10 @@ void NavigationRuntimeNode::runCycle() {
   // PASS_THROUGH is implemented by hot-retargeting while the committed
   // trajectory still carries non-zero PVA, not by skipping to next_target.
   const auto& planner_target = plannerTarget(*goal);
-  const navigation_planning_backend::math::Vec3f target{
-      static_cast<float>(pointFromMessage(planner_target, 0)),
-      static_cast<float>(pointFromMessage(planner_target, 1)),
-      static_cast<float>(pointFromMessage(planner_target, 2))};
+  const Eigen::Vector3d target{
+      pointFromMessage(planner_target, 0),
+      pointFromMessage(planner_target, 1),
+      pointFromMessage(planner_target, 2)};
   const auto planner_started = std::chrono::steady_clock::now();
   // This is the internal planner backend FSM boundary: each mission waypoint enters
   // PlanFromRest once, then every subsequent planning tick is ReplanOnce.
@@ -1166,12 +1142,12 @@ void NavigationRuntimeNode::runCycle() {
     skip_replan_once_ = false;
     return;
   }
-  navigation_planning_backend::RET_CODE result = navigation_planning_backend::FAILED;
+  navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const std::uint64_t solve_generation = ++planner_solve_generation_;
   const std::uint64_t localization_epoch_at_solve =
       active_localization_epoch_.load(std::memory_order_acquire);
   const std::uint64_t committed_generation_before_solve =
-      planner_->committedGenerationSnapshot();
+      planner_->committedGeneration();
   const auto pinned_world = world_snapshot_store_.load();
   if (!pinned_world) {
     RCLCPP_ERROR(get_logger(), "planner backend cannot solve without a published WorldModel snapshot");
@@ -1180,7 +1156,7 @@ void NavigationRuntimeNode::runCycle() {
   planner_->setWorldModelView(pinned_world.view);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
   // cannot inherit retry metrics from the previous planning generation.
-  planner_->resetExpOptimizationDiagnostics();
+  planner_->resetOptimizationDiagnostics();
   planner_solve_started_steady_ns_.store(navigation_common::steadyClockNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
@@ -1189,11 +1165,11 @@ void NavigationRuntimeNode::runCycle() {
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
   try {
     result = plan_from_rest
-                 ? planner_->PlanFromRest(target, 0.0, true)
-                 : planner_->ReplanOnce(target, 0.0, replan_for_new_goal);
+                 ? planner_->planFromRest(target, 0.0, true)
+                 : planner_->replanOnce(target, 0.0, replan_for_new_goal);
   } catch (const std::exception& error) {
     RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
-    result = navigation_planning_backend::EMER;
+    result = navigation_planning::PlannerStatus::kEmergency;
   }
   std::uint64_t expected_active_generation = solve_generation;
   active_planner_solve_generation_.compare_exchange_strong(
@@ -1214,9 +1190,8 @@ void NavigationRuntimeNode::runCycle() {
                 static_cast<unsigned long>(solve_generation));
     return;
   }
-  std::vector<double> module_times;
-  planner_->getModuleTimeConsuming(module_times);
-  const auto exp_diagnostics = planner_->latestExpOptimizationDiagnostics();
+  const auto planner_diagnostics = planner_->diagnostics();
+  const auto& exp_diagnostics = planner_diagnostics.optimization;
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     // A terminal mission status or a newer waypoint may arrive while the
@@ -1229,18 +1204,19 @@ void NavigationRuntimeNode::runCycle() {
     }
   }
   const auto committed_metadata_after_solve =
-      planner_->committedMetadataSnapshot();
+      planner_->committedMetadata();
   const bool solve_committed_new_generation = commitObservedThisCycle(
       committed_generation_before_solve,
       committed_metadata_after_solve.generation,
       committed_metadata_after_solve.diagnostics.generation);
   const auto disposition = classifyPlannerResult(
-      toProductPlannerStatus(result), plan_from_rest, planner_command_available_.load(),
+      result, plan_from_rest, planner_command_available_.load(),
       solve_committed_new_generation);
   if (disposition == PlannerResultDisposition::FailClosed) {
     planner_failure_latched_.store(true);
     trajectory_reaches_goal_.store(false);
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "planner backend planning failed (%d)", result);
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "planner backend planning failed (%d)", static_cast<int>(result));
   }
   if (disposition == PlannerResultDisposition::RestartFromRest) {
     planner_failure_latched_.store(false);
@@ -1286,7 +1262,8 @@ void NavigationRuntimeNode::runCycle() {
     } else {
       RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 2000,
-          "planner backend PlanFromRest transient failure (%d); retry %u/%u", result,
+          "planner backend PlanFromRest transient failure (%d); retry %u/%u",
+          static_cast<int>(result),
           failure_count, max_plan_from_rest_failures_);
     }
   }
@@ -1294,22 +1271,21 @@ void NavigationRuntimeNode::runCycle() {
       disposition == PlannerResultDisposition::ValidateRetainedCommand) {
     const bool validate_without_new_commit =
         disposition == PlannerResultDisposition::ValidateRetainedCommand;
-    planner_->lockCommittedTraj();
-    const auto committed = planner_->getCommittedPositionTrajectory();
-    const auto committed_yaw = planner_->getCommittedYawTrajectory();
-    const bool backup_available = planner_->committedBackupTrajectoryAvailable();
-    const double backup_start_s = planner_->getCommittedBackupStartTrajectoryTime();
-    planner_->unlockCommittedTraj();
+    const auto committed = planner_->committedSnapshot();
+    const bool backup_available = committed.backup_available;
+    const double backup_start_s = committed.backup_start_time_s;
 
     const double elapsed_s = committed.empty()
                                  ? std::numeric_limits<double>::infinity()
-                                 : now().seconds() - committed.start_WT;
-    const double total_duration_s = committed.getTotalDuration();
+                                 : now().seconds() - committed.position.start_wall_time_s;
+    const double total_duration_s = committed.position.duration_s;
     const double clamped_elapsed_s =
         std::clamp(elapsed_s, 0.0, std::max(0.0, total_duration_s));
-    const auto command_anchor = committed.empty()
-                                    ? navigation_planning_backend::math::Vec3f{}
-                                    : committed.getPos(clamped_elapsed_s);
+    navigation_planning::TrajectoryPoint command_anchor_sample;
+    const bool command_anchor_valid = !committed.empty() &&
+        committed.position.sample(clamped_elapsed_s, command_anchor_sample);
+    const Eigen::Vector3d command_anchor = command_anchor_valid
+        ? command_anchor_sample.position_world : Eigen::Vector3d::Zero();
     // ReplanOnce may run for more than a second while command publication and
     // vehicle motion continue concurrently. The planner state captured before
     // that solve is therefore stale by construction. Re-read the immutable
@@ -1324,10 +1300,8 @@ void NavigationRuntimeNode::runCycle() {
               retained_execution_state->state.receive_stamp_ns,
               input_max_age_s_)
         : navigation_contracts::ExecutionStateFreshness{};
-    navigation_planning_backend::math::Vec3f current_vehicle_position =
-        navigation_planning_backend::math::Vec3f::Zero();
-    navigation_planning_backend::math::Vec3f current_vehicle_velocity =
-        navigation_planning_backend::math::Vec3f::Zero();
+    Eigen::Vector3d current_vehicle_position = Eigen::Vector3d::Zero();
+    Eigen::Vector3d current_vehicle_velocity = Eigen::Vector3d::Zero();
     double current_vehicle_yaw = 0.0;
     const bool fresh_vehicle_state = retained_execution_state &&
                                      retained_execution_state->state.finite() &&
@@ -1340,31 +1314,32 @@ void NavigationRuntimeNode::runCycle() {
       current_vehicle_velocity = retained_execution_state->state.velocity_world;
       current_vehicle_yaw = retained_execution_state->state.yaw_rad;
     }
-    const double anchor_error_m = committed.empty() || !fresh_vehicle_state
+    const double anchor_error_m = !command_anchor_valid || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();
     bool sampled_path_clear = !committed.empty();
     double first_blocked_sample_s = std::numeric_limits<double>::quiet_NaN();
-    navigation_planning_backend::math::Vec3f first_blocked_sample = navigation_planning_backend::math::Vec3f::Constant(
+    Eigen::Vector3d first_blocked_sample = Eigen::Vector3d::Constant(
         std::numeric_limits<double>::quiet_NaN());
     navigation_world_model::CellState first_blocked_grid =
         navigation_world_model::CellState::kUnknown;
     if (sampled_path_clear) {
-      navigation_planning_backend::CandidateCommandBundle retained;
-      retained.position = committed;
-      retained.yaw = committed_yaw;
-      retained.start_wall_time = committed.start_WT;
       const auto latest_world = world_snapshot_store_.latest();
       const auto validation = latest_world
-          ? navigation_planning_backend::validateExecutableCandidate(
-                *latest_world.view, retained, now().seconds())
-          : navigation_planning_backend::SweptValidationResult{};
+          ? planner_->validateCommittedTrajectory(latest_world.view, now().seconds())
+          : navigation_planning::TrajectoryValidationResult{};
       sampled_path_clear = validation.valid;
       if (!sampled_path_clear) {
-        first_blocked_sample_s = std::isfinite(validation.first_blocked_tt)
-            ? validation.first_blocked_tt : clamped_elapsed_s;
-        first_blocked_sample = committed.getPos(std::clamp(
-            first_blocked_sample_s, 0.0, total_duration_s));
+        first_blocked_sample_s = std::isfinite(validation.first_blocked_time_s)
+            ? validation.first_blocked_time_s : clamped_elapsed_s;
+        first_blocked_sample = validation.first_blocked_position;
+        if (!first_blocked_sample.allFinite()) {
+          navigation_planning::TrajectoryPoint blocked_sample;
+          if (committed.position.sample(std::clamp(
+                  first_blocked_sample_s, 0.0, total_duration_s), blocked_sample)) {
+            first_blocked_sample = blocked_sample.position_world;
+          }
+        }
         const auto state = latest_world
             ? latest_world.view->classify(
                   first_blocked_sample,
@@ -1388,18 +1363,19 @@ void NavigationRuntimeNode::runCycle() {
         anchor_error_m, max_safety_suffix_anchor_error_m_, sampled_path_clear);
     bool emergency_brake_committed = false;
     if (!validate_without_new_commit && !use_safety_suffix && fresh_vehicle_state &&
-        !committed.empty() &&
-        !committed_yaw.empty()) {
+        !committed.empty() && command_anchor_valid) {
       // Position and velocity are measured at the newest propagated odometry
       // sample. Acceleration/jerk and yaw-rate are not measured by the LIO
       // interface, so retain their continuous values from the command that
       // PX4 was tracking at the same command-clock instant.
-      navigation_planning_backend::math::StatePVAJ emergency_state = committed.getState(clamped_elapsed_s);
-      emergency_state.col(0) = current_vehicle_position;
-      emergency_state.col(1) = current_vehicle_velocity;
-      const double emergency_yaw_dot = committed_yaw.getVel(clamped_elapsed_s).x();
-      emergency_brake_committed = planner_->commitEmergencyBrake(
-          emergency_state, current_vehicle_yaw, emergency_yaw_dot, now().seconds());
+      navigation_planning::TrajectoryPoint emergency_command;
+      if (committed.position.sample(clamped_elapsed_s, emergency_command)) {
+        emergency_command.position_world = current_vehicle_position;
+        emergency_command.velocity_world = current_vehicle_velocity;
+        emergency_command.yaw = current_vehicle_yaw;
+        emergency_brake_committed = planner_->commitEmergencyBrake(
+            emergency_command, now().seconds());
+      }
       use_safety_suffix = emergency_brake_committed;
     }
     if (emergency_brake_committed &&
@@ -1456,7 +1432,7 @@ void NavigationRuntimeNode::runCycle() {
       RCLCPP_WARN(get_logger(),
                   "planner backend hot replan failed (%d); retaining visible committed trajectory "
                   "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f",
-                  result, backup_available, elapsed_s, safety_transition_s,
+                  static_cast<int>(result), backup_available, elapsed_s, safety_transition_s,
                   total_duration_s, anchor_error_m);
     } else {
       RCLCPP_ERROR(get_logger(),
@@ -1500,12 +1476,12 @@ void NavigationRuntimeNode::runCycle() {
       safety_suffix_active_.store(false);
       trajectory_finished_.store(false);
     }
-    planner_->lockCommittedTraj();
-    const auto committed = planner_->getCommittedPositionTrajectory();
-    planner_->unlockCommittedTraj();
-    const auto committed_end = committed.empty()
-                                   ? navigation_planning_backend::math::Vec3f{}
-                                   : committed.getPos(committed.getTotalDuration());
+    const auto committed = planner_->committedSnapshot();
+    navigation_planning::TrajectoryPoint committed_end_sample;
+    const bool committed_end_valid = !committed.empty() && committed.position.sample(
+        committed.position.duration_s, committed_end_sample);
+    const Eigen::Vector3d committed_end = committed_end_valid
+        ? committed_end_sample.position_world : Eigen::Vector3d::Zero();
     trajectory_reaches_goal_.store(
         !committed.empty() &&
         (committed_end - target).norm() <=
@@ -1559,7 +1535,7 @@ void NavigationRuntimeNode::runCycle() {
   // replans are as important as failures for latency distributions and for
   // proving that sampled commands came from one committed generation.
   {
-    const auto committed_snapshot = planner_->committedTrajectorySnapshot();
+    const auto committed_snapshot = planner_->committedSnapshot();
     const auto& committed = committed_snapshot.position;
     const auto committed_generation = committed_snapshot.generation;
     const auto& committed_certificate = committed_snapshot.certificate;
@@ -1568,9 +1544,11 @@ void NavigationRuntimeNode::runCycle() {
         committed_generation_before_solve, committed_generation,
         commit_diagnostics.generation);
     const bool has_committed_bundle = committed_generation > 0U && !committed.empty();
-    const auto committed_end = !has_committed_bundle
-                                   ? navigation_planning_backend::math::Vec3f{}
-                                   : committed.getPos(committed.getTotalDuration());
+    navigation_planning::TrajectoryPoint committed_end_sample;
+    const bool committed_end_valid = has_committed_bundle && committed.sample(
+        committed.duration_s, committed_end_sample);
+    const Eigen::Vector3d committed_end = committed_end_valid
+        ? committed_end_sample.position_world : Eigen::Vector3d::Zero();
     const double endpoint_error = !has_committed_bundle
                                       ? std::numeric_limits<double>::infinity()
                                       : (committed_end - target).norm();
@@ -1583,16 +1561,16 @@ void NavigationRuntimeNode::runCycle() {
     // than reaching back into worker-owned mutable ROG state.
     const double nearest_known_free_distance =
         std::numeric_limits<double>::quiet_NaN();
-    navigation_planning_backend::math::Vec3f nearest_occupied = navigation_planning_backend::math::Vec3f::Constant(
+    Eigen::Vector3d nearest_occupied = Eigen::Vector3d::Constant(
         std::numeric_limits<double>::quiet_NaN());
     const double nearest_occupied_distance =
         std::numeric_limits<double>::quiet_NaN();
-    const int solve_stage = planner_->solveStage();
-    const int replan_return_code = planner_->latestReplanReturnCode();
-    const int commit_decision = planner_->latestCommitDecision();
+    const int solve_stage = planner_diagnostics.solve_stage;
+    const int replan_return_code = planner_diagnostics.replan_return_code;
+    const int commit_decision = planner_diagnostics.commit_decision;
     const double planner_elapsed_ms = static_cast<double>(last_planner_us_) * 1.0e-3;
     const bool solve_deadline_exceeded =
-        planner_elapsed_ms > planner_->solveDeadlineSeconds() * 1000.0;
+        planner_elapsed_ms > planner_diagnostics.solve_deadline_s * 1000.0;
     const auto trace_now_ns = now().nanoseconds();
     const double execution_age_at_trace_ms =
         static_cast<double>(trace_now_ns - execution_stamp_ns) * 1.0e-6;
@@ -1622,20 +1600,16 @@ void NavigationRuntimeNode::runCycle() {
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
                 static_cast<double>(execution_age_ns) * 1e-6,
-                plan_from_rest ? "PlanFromRest" : "ReplanOnce", result,
+                plan_from_rest ? "PlanFromRest" : "ReplanOnce", static_cast<int>(result),
                 replan_return_code, commit_decision, solve_stage,
-                navigation_planning_backend::solveStageName(solve_stage).data(), planner_elapsed_ms,
+                planner_diagnostics.solve_stage_name.c_str(), planner_elapsed_ms,
                 solve_deadline_exceeded, target.x(), target.y(),
                 target.z(), committed_end.x(), committed_end.y(), committed_end.z(),
                 endpoint_error, planner_command_available_.load(), planner_failure_latched_.load(),
-                module_times.size() > navigation_planning_backend::EPX_TRAJ_FRONTEND
-                    ? module_times[navigation_planning_backend::EPX_TRAJ_FRONTEND] * 1000.0 : 0.0,
-                module_times.size() > navigation_planning_backend::EXP_TRAJ_OPT
-                    ? module_times[navigation_planning_backend::EXP_TRAJ_OPT] * 1000.0 : 0.0,
-                module_times.size() > navigation_planning_backend::BACK_TRAJ_FRONTEND
-                    ? module_times[navigation_planning_backend::BACK_TRAJ_FRONTEND] * 1000.0 : 0.0,
-                module_times.size() > navigation_planning_backend::BACK_TRAJ_OPT
-                    ? module_times[navigation_planning_backend::BACK_TRAJ_OPT] * 1000.0 : 0.0,
+                planner_diagnostics.module_time_us[0] * 1.0e-3,
+                planner_diagnostics.module_time_us[1] * 1.0e-3,
+                planner_diagnostics.module_time_us[2] * 1.0e-3,
+                planner_diagnostics.module_time_us[3] * 1.0e-3,
                 static_cast<int>(robot_grid_type), static_cast<int>(robot_inflated_grid_type),
                 nearest_known_free_distance, nearest_occupied_distance,
                 nearest_occupied.x(), nearest_occupied.y(), nearest_occupied.z());
@@ -1655,27 +1629,27 @@ void NavigationRuntimeNode::runCycle() {
                   "splice_yaw_rate=%.6f",
                   static_cast<unsigned long>(commit_diagnostics.generation),
                   static_cast<unsigned long>(commit_diagnostics.previous_generation),
-                  commit_diagnostics.candidate_start_wall_time,
+                  commit_diagnostics.candidate_start_wall_time_s,
                   static_cast<long>(execution_stamp_ns),
                   execution_age_at_solve_ms,
                   execution_age_at_trace_ms,
                   execution_state.position_world.x(), execution_state.position_world.y(),
                   execution_state.position_world.z(), execution_state.velocity_world.x(),
                   execution_state.velocity_world.y(), execution_state.velocity_world.z(),
-                  commit_diagnostics.candidate_start_pvaj(0, 0),
-                  commit_diagnostics.candidate_start_pvaj(1, 0),
-                  commit_diagnostics.candidate_start_pvaj(2, 0),
-                  commit_diagnostics.candidate_start_pvaj(0, 1),
-                  commit_diagnostics.candidate_start_pvaj(1, 1),
-                  commit_diagnostics.candidate_start_pvaj(2, 1),
+                  commit_diagnostics.candidate_start_position.x(),
+                  commit_diagnostics.candidate_start_position.y(),
+                  commit_diagnostics.candidate_start_position.z(),
+                  commit_diagnostics.candidate_start_velocity.x(),
+                  commit_diagnostics.candidate_start_velocity.y(),
+                  commit_diagnostics.candidate_start_velocity.z(),
                   commit_diagnostics.previous_valid ? 1 : 0,
-                  commit_diagnostics.candidate_start_pvaj(0, 2),
-                  commit_diagnostics.candidate_start_pvaj(1, 2),
-                  commit_diagnostics.candidate_start_pvaj(2, 2),
-                  commit_diagnostics.candidate_start_pvaj(0, 3),
-                  commit_diagnostics.candidate_start_pvaj(1, 3),
-                  commit_diagnostics.candidate_start_pvaj(2, 3),
-                  commit_diagnostics.previous_sample_tt,
+                  commit_diagnostics.candidate_start_acceleration.x(),
+                  commit_diagnostics.candidate_start_acceleration.y(),
+                  commit_diagnostics.candidate_start_acceleration.z(),
+                  commit_diagnostics.candidate_start_jerk.x(),
+                  commit_diagnostics.candidate_start_jerk.y(),
+                  commit_diagnostics.candidate_start_jerk.z(),
+                  commit_diagnostics.previous_sample_time_s,
                   commit_diagnostics.position_residual.norm(),
                   commit_diagnostics.velocity_residual.norm(),
                   commit_diagnostics.acceleration_residual.norm(),
@@ -1688,7 +1662,7 @@ void NavigationRuntimeNode::runCycle() {
     trace_diagnostics.header.stamp = now();
     diagnostic_msgs::msg::DiagnosticStatus trace_status;
     trace_status.name = "navigation_runtime/planner";
-    trace_status.level = result == navigation_planning_backend::SUCCESS
+    trace_status.level = result == navigation_planning::PlannerStatus::kSuccess
                              ? diagnostic_msgs::msg::DiagnosticStatus::OK
                              : diagnostic_msgs::msg::DiagnosticStatus::WARN;
     trace_status.message = "DECISION_TRACE";
@@ -1723,19 +1697,19 @@ void NavigationRuntimeNode::runCycle() {
       add_trace_value("commit_previous_generation",
                       commit_diagnostics.previous_generation);
       add_trace_value("candidate_start_wall_time_s",
-                      commit_diagnostics.candidate_start_wall_time);
+                      commit_diagnostics.candidate_start_wall_time_s);
       add_trace_vector("candidate_start_position",
-                       commit_diagnostics.candidate_start_pvaj.col(0));
+                       commit_diagnostics.candidate_start_position);
       add_trace_vector("candidate_start_velocity",
-                       commit_diagnostics.candidate_start_pvaj.col(1));
+                       commit_diagnostics.candidate_start_velocity);
       add_trace_vector("candidate_start_acceleration",
-                       commit_diagnostics.candidate_start_pvaj.col(2));
+                       commit_diagnostics.candidate_start_acceleration);
       add_trace_vector("candidate_start_jerk",
-                       commit_diagnostics.candidate_start_pvaj.col(3));
+                       commit_diagnostics.candidate_start_jerk);
       add_trace_value("splice_previous_valid",
                       commit_diagnostics.previous_valid ? 1 : 0);
       add_trace_value("splice_previous_sample_tt_s",
-                      commit_diagnostics.previous_sample_tt);
+                      commit_diagnostics.previous_sample_time_s);
       add_trace_value("splice_position_residual_m",
                       commit_diagnostics.position_residual.norm());
       add_trace_value("splice_velocity_residual_mps",
@@ -1751,7 +1725,7 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("pinned_world_generation", pinned_world.identity.generation);
     add_trace_value("pinned_world_revision", pinned_world.identity.revision);
     add_trace_value("pinned_world_stamp_ns", pinned_world.identity.observation_stamp_ns);
-    add_trace_value("certificate_world_generation",
+      add_trace_value("certificate_world_generation",
                     committed_certificate.validated_world.generation);
     add_trace_value("certificate_world_revision",
                     committed_certificate.validated_world.revision);
@@ -1764,7 +1738,7 @@ void NavigationRuntimeNode::runCycle() {
     {
       diagnostic_msgs::msg::KeyValue item;
       item.key = "solve_stage_name";
-      item.value = std::string(navigation_planning_backend::solveStageName(solve_stage));
+      item.value = planner_diagnostics.solve_stage_name;
       trace_status.values.push_back(std::move(item));
     }
     add_trace_value("planning_latency_ms", planner_elapsed_ms);
@@ -1773,21 +1747,13 @@ void NavigationRuntimeNode::runCycle() {
     // publishing them here the report cannot identify which stage causes a
     // solve deadline overrun.
     add_trace_value("exp_frontend_us",
-                    module_times.size() > navigation_planning_backend::EPX_TRAJ_FRONTEND
-                        ? module_times[navigation_planning_backend::EPX_TRAJ_FRONTEND] * 1.0e6
-                        : 0.0);
+                    planner_diagnostics.module_time_us[0]);
     add_trace_value("exp_opt_us",
-                    module_times.size() > navigation_planning_backend::EXP_TRAJ_OPT
-                        ? module_times[navigation_planning_backend::EXP_TRAJ_OPT] * 1.0e6
-                        : 0.0);
+                    planner_diagnostics.module_time_us[1]);
     add_trace_value("backup_frontend_us",
-                    module_times.size() > navigation_planning_backend::BACK_TRAJ_FRONTEND
-                        ? module_times[navigation_planning_backend::BACK_TRAJ_FRONTEND] * 1.0e6
-                        : 0.0);
+                    planner_diagnostics.module_time_us[2]);
     add_trace_value("backup_opt_us",
-                    module_times.size() > navigation_planning_backend::BACK_TRAJ_OPT
-                        ? module_times[navigation_planning_backend::BACK_TRAJ_OPT] * 1.0e6
-                        : 0.0);
+                    planner_diagnostics.module_time_us[3]);
     add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
     add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
     add_trace_value("exp_retry_count", exp_diagnostics.retry_count);
@@ -1814,8 +1780,8 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.retry_free_duration_seed_min_s);
     add_trace_value("exp_retry_free_duration_seed_max_s",
                     exp_diagnostics.retry_free_duration_seed_max_s);
-    add_trace_value("guide_path_length_m", planner_->latestGuidePathLengthMeters());
-    add_trace_value("guide_duration_s", planner_->latestGuideDurationSeconds());
+    add_trace_value("guide_path_length_m", planner_diagnostics.latest_guide_path_length_m);
+    add_trace_value("guide_duration_s", planner_diagnostics.latest_guide_duration_s);
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
     add_trace_value("exp_nonfinite_evaluation_count",
@@ -1858,34 +1824,29 @@ void NavigationRuntimeNode::runCycle() {
                                   static_cast<std::size_t>(fraction * sorted.size()));
       return sorted[index];
     };
-    planner_->lockCommittedTraj();
-    const auto committed = planner_->getCommittedPositionTrajectory();
-    const auto committed_generation = planner_->committedGenerationSnapshot();
-    const bool backup_available = planner_->committedBackupTrajectoryAvailable();
-    const double backup_start_s = planner_->getCommittedBackupStartTrajectoryTime();
-    planner_->unlockCommittedTraj();
-    const auto guide_end = planner_->latestGuideEnd();
-    const auto guide_min = planner_->latestGuideMin();
-    const auto guide_max = planner_->latestGuideMax();
+    const auto committed = planner_->committedSnapshot();
+    const auto planner_diagnostics = planner_->diagnostics();
+    const auto committed_generation = committed.generation;
+    const bool backup_available = committed.backup_available;
+    const double backup_start_s = committed.backup_start_time_s;
+    const auto guide_end = planner_diagnostics.latest_guide_end;
+    const auto guide_min = planner_diagnostics.latest_guide_min;
+    const auto guide_max = planner_diagnostics.latest_guide_max;
     const bool committed_valid = committed_generation > 0U && !committed.empty();
-    const auto committed_start = !committed_valid ? navigation_planning_backend::math::Vec3f{} : committed.getPos(0.0);
-    const auto committed_end = !committed_valid
-                                   ? navigation_planning_backend::math::Vec3f{}
-                                   : committed.getPos(committed.getTotalDuration());
-    const double committed_duration = committed.getTotalDuration();
-    const auto committed_quarter = !committed_valid
-                                       ? navigation_planning_backend::math::Vec3f{}
-                                       : committed.getPos(committed_duration * 0.25);
-    const auto committed_half = !committed_valid
-                                    ? navigation_planning_backend::math::Vec3f{}
-                                    : committed.getPos(committed_duration * 0.50);
-    const auto committed_three_quarter = !committed_valid
-                                             ? navigation_planning_backend::math::Vec3f{}
-                                             : committed.getPos(committed_duration * 0.75);
+    const double committed_duration = committed.position.duration_s;
+    const auto sample_position = [&committed, committed_valid](const double time_s) {
+      navigation_planning::TrajectoryPoint sample;
+      return committed_valid && committed.position.sample(time_s, sample)
+          ? sample.position_world : Eigen::Vector3d::Zero();
+    };
+    const auto committed_start = sample_position(0.0);
+    const auto committed_end = sample_position(committed_duration);
+    const auto committed_quarter = sample_position(committed_duration * 0.25);
+    const auto committed_half = sample_position(committed_duration * 0.50);
+    const auto committed_three_quarter = sample_position(committed_duration * 0.75);
     const auto main_end = !committed_valid || !backup_available
                               ? committed_end
-                              : committed.getPos(std::clamp(
-                                    backup_start_s, 0.0, committed_duration));
+                              : sample_position(std::clamp(backup_start_s, 0.0, committed_duration));
     RCLCPP_INFO(get_logger(),
                 "planner_cycle_metrics cycles=%lu commands=%lu dropped_cloud=%lu "
                 "planner_cycle_ms=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f "
@@ -1938,6 +1899,8 @@ void NavigationRuntimeNode::publishCommand() {
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
         planner_->cancelActiveSolve();
+        const int timeout_stage = planner_->solveStage();
+        const std::size_t timeout_point_count = planner_->solvePointCount();
         {
           std::lock_guard<std::mutex> command_lock(
               command_execution_lease_failure_latch_.transitionMutex());
@@ -1950,8 +1913,8 @@ void NavigationRuntimeNode::publishCommand() {
                      "invalidating committed main trajectory",
                      static_cast<unsigned long>(active_solve),
                      static_cast<double>(solve_age_ns) / 1e9,
-                     planner_->solveStage(),
-                     planner_->solvePointCount());
+                     timeout_stage,
+                     timeout_point_count);
       }
     }
   }

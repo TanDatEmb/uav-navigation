@@ -2316,3 +2316,38 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Closure status: this confirms product data-path health only. SITL and planner
   feasibility remain open and must be rerun after the public-boundary phase
   reaches a stable checkpoint.
+
+### 2026-08-26 - Product planner facade and installed-header fence
+
+- Owner: `navigation_planning_backend::PlannerFacade` and the
+  `navigation_runtime::NavigationRuntimeNode` planning boundary. Scope: keep
+  planner implementation ownership behind a PImpl facade, expose only product
+  status/candidate/trajectory/diagnostic types to runtime, preserve role and
+  completion semantics while sampling, and carry both the pinned and validated
+  WorldModel identities through the committed snapshot. The watchdog now reads
+  stage/point counters directly and cannot reset module timing through a
+  diagnostic read.
+- Safety impact: ownership and observability refactor with explicit provenance;
+  no optimizer objective, dynamic limit, UNKNOWN policy, deadline, continuity
+  rule, candidate authorization, emergency gate, PX4 gate, or fallback behavior
+  was relaxed. Failed/empty snapshots remain fail-closed. No bypass or
+  test-only product behavior was added.
+- Evidence: Release build completed for
+  `navigation_planning`, `navigation_planning_backend`, and
+  `navigation_runtime`; focused CTest passed planning `1/1`, backend `3/3`
+  (including the facade boundary test), and runtime `8/8`. A fresh external
+  install `/tmp/uav-navigation-facade-install-Zogb2R` installed only
+  `navigation_planning_backend/planner_facade.hpp`; a C++20 `-Wall -Wextra
+  -Werror` public-header compile and clean consumer link both passed. The
+  runtime WorldSnapshotStore test no longer includes planner implementation
+  headers.
+- Removal condition: none for the facade contract. The remaining internal
+  planner vocabulary and vendor implementation headers are intentionally
+  quarantined for the next naming/ownership phase; do not expose them again
+  through an install rule or runtime public header. Dataset/SITL evidence is
+  still required and has not been run on this uncommitted boundary.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 tools/runtime/build.py --mode release build
+  --packages navigation_planning navigation_planning_backend
+  navigation_runtime && python3 tools/runtime/build.py --mode release test
+  --packages navigation_planning navigation_planning_backend navigation_runtime`.

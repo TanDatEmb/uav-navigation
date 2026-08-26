@@ -36,11 +36,7 @@
 #include <navigation_mapping/world_snapshot_store.hpp>
 
 namespace navigation_planning_backend {
-class Planner;
-}
-
-namespace navigation_planner_context {
-class PlannerRuntimeContext;
+class PlannerFacade;
 }
 
 namespace navigation_runtime {
@@ -270,14 +266,13 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;
 
-  std::shared_ptr<navigation_planner_context::PlannerRuntimeContext> planner_context_;
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
   navigation_execution::CommittedBundleStore command_bundle_store_;
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
   std::unique_ptr<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>> mapping_worker_;
-  std::unique_ptr<navigation_planning_backend::Planner> planner_;
+  std::unique_ptr<navigation_planning_backend::PlannerFacade> planner_;
 };
 
 }  // namespace navigation_runtime

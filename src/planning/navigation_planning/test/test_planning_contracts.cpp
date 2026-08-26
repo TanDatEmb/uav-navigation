@@ -7,6 +7,7 @@
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/planning_request.hpp>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_planning/planner_diagnostics.hpp>
 
 namespace {
 
@@ -84,6 +85,31 @@ TEST(DynamicLimits, HasOneProductOwnedValidationContract) {
 
   const navigation_planning::DynamicLimits invalid{7.0, 0.0, 12.0};
   EXPECT_FALSE(invalid.valid());
+}
+
+TEST(TrajectorySnapshot, PreservesRoleAndFinishedStateAtProductBoundary) {
+  navigation_planning::TrajectorySnapshot snapshot;
+  snapshot.start_wall_time_s = 10.0;
+  snapshot.duration_s = 2.0;
+  snapshot.evaluator = [](double time_s, navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = time_s;
+    point.trajectory_time_s = time_s;
+    return true;
+  };
+  snapshot.role_evaluator = [](double time_s) {
+    return time_s >= 1.0 ? navigation_planning::CandidateRole::kBackup
+                         : navigation_planning::CandidateRole::kMain;
+  };
+
+  navigation_planning::TrajectoryPoint main_point;
+  ASSERT_TRUE(snapshot.sample(0.5, main_point));
+  EXPECT_EQ(main_point.role, navigation_planning::CandidateRole::kMain);
+  EXPECT_FALSE(main_point.finished);
+
+  navigation_planning::TrajectoryPoint backup_point;
+  ASSERT_TRUE(snapshot.sample(2.0, backup_point));
+  EXPECT_EQ(backup_point.role, navigation_planning::CandidateRole::kBackup);
+  EXPECT_TRUE(backup_point.finished);
 }
 
 }  // namespace

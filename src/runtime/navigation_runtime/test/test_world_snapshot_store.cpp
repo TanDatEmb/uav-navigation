@@ -1,10 +1,10 @@
 #include <navigation_mapping/world_snapshot_store.hpp>
-#include <navigation_planning_backend/planner.hpp>
 
 #include <atomic>
-#include <cmath>
 #include <future>
 #include <latch>
+#include <mutex>
+#include <optional>
 #include <thread>
 #include <type_traits>
 
@@ -70,16 +70,42 @@ navigation_world_model::WorldModelViewPtr world(
           localization_epoch, generation, revision, stamp});
 }
 
-std::optional<navigation_planning_backend::CandidateCommandBundle> commandForRevision(
-    std::uint64_t revision) {
-  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
-  coefficients(0, 7) = static_cast<double>(revision);
-  coefficients(2, 7) = 3.0;
-  geometry_utils::Trajectory position({0.1}, {coefficients});
-  geometry_utils::Trajectory yaw({0.1}, {Eigen::MatrixXd::Zero(3, 8)});
-  position.start_WT = yaw.start_WT = 10.0;
-  return navigation_planning_backend::CmdTraj::buildEmergencyCandidate(position, yaw);
-}
+// This is deliberately a product-level test command. It models only the
+// atomic state that the execution boundary needs; it does not pull planner
+// implementation headers into the runtime package.
+class TestCommand final {
+ public:
+  struct Snapshot {
+    std::uint64_t generation{0};
+    navigation_world_model::WorldSnapshotIdentity pinned_world{};
+    navigation_world_model::WorldSnapshotIdentity validated_world{};
+    std::uint64_t position_revision{0};
+    bool backup{false};
+  };
+
+  bool commit(const navigation_world_model::WorldSnapshotIdentity& identity) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    pinned_world_ = identity;
+    validated_world_ = identity;
+    position_revision_ = identity.revision;
+    backup_ = true;
+    ++generation_;
+    return true;
+  }
+
+  Snapshot snapshot() const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return {generation_, pinned_world_, validated_world_, position_revision_, backup_};
+  }
+
+ private:
+  mutable std::mutex mutex_;
+  std::uint64_t generation_{0};
+  navigation_world_model::WorldSnapshotIdentity pinned_world_{};
+  navigation_world_model::WorldSnapshotIdentity validated_world_{};
+  std::uint64_t position_revision_{0};
+  bool backup_{false};
+};
 
 static_assert(!std::is_copy_constructible_v<navigation_mapping::WorldSnapshotStore>);
 
@@ -172,42 +198,30 @@ TEST(WorldSnapshotStore, PublicationCannotInterleaveAnAuthorizedCommit) {
   EXPECT_EQ(store.load().identity.revision, 2U);
 }
 
-TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitBundle) {
+TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitCommand) {
   navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
-  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
-  coefficients(0, 6) = 1.0;
-  coefficients(2, 7) = 3.0;
-  geometry_utils::Trajectory position({1.0}, {coefficients});
-  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
-  position.start_WT = yaw.start_WT = 10.0;
-  auto candidate = navigation_planning_backend::CmdTraj::buildEmergencyCandidate(position, yaw);
-  ASSERT_TRUE(candidate);
   const auto lease = store.latest();
-  ASSERT_TRUE(navigation_planning_backend::validateExecutableCandidate(
-      *lease.view, *candidate, 10.0).valid);
-
+  ASSERT_TRUE(lease);
   store.publish(world(1, 2, 200));
-  navigation_planning_backend::CmdTraj command;
+
+  TestCommand command;
   bool commit_invoked = false;
   EXPECT_EQ(store.commitIfCurrent(lease.identity, [&] {
               commit_invoked = true;
-              return command.commitCandidate(std::move(*candidate), {});
-            }), navigation_world_model::WorldCommitDecision::kWorldAdvanced);
+              return command.commit(lease.identity);
+            }),
+            navigation_world_model::WorldCommitDecision::kWorldAdvanced);
   EXPECT_FALSE(commit_invoked);
-  EXPECT_TRUE(command.empty());
-  EXPECT_EQ(command.generation(), 0U);
+  EXPECT_EQ(command.snapshot().generation, 0U);
 }
 
 TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent) {
   constexpr std::uint64_t kIterations = 100;
   navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
-  navigation_planning_backend::CmdTraj command;
-  auto initial = commandForRevision(1);
-  ASSERT_TRUE(initial);
-  ASSERT_TRUE(command.commitCandidate(
-      std::move(*initial), {{1, 1, 1, 100}, {1, 1, 1, 100}, 0.0}));
+  TestCommand command;
+  ASSERT_TRUE(command.commit(store.latest().identity));
 
   std::atomic_bool publisher_done{false};
   std::atomic_bool authorizer_done{false};
@@ -241,23 +255,16 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
     authorizer_active.store(true, std::memory_order_release);
     writers_ready.count_down();
     start_writers.wait();
-    auto authorize_once = [&] {
+    const auto authorize_once = [&] {
       const auto lease = store.latest();
-      auto candidate = commandForRevision(lease.identity.revision);
-      if (!candidate) {
-        incoherent.store(true);
-        return false;
-      }
-      const navigation_planning_backend::CommandCertificate certificate{
-          lease.identity, lease.identity, 0.0};
       const auto decision = store.commitIfCurrent(lease.identity, [&] {
-        return command.commitCandidate(std::move(*candidate), certificate);
+        return command.commit(lease.identity);
       });
       if (decision == navigation_world_model::WorldCommitDecision::kCommitted) {
         committed.fetch_add(1);
         return true;
-      } else if (decision ==
-                 navigation_world_model::WorldCommitDecision::kWorldAdvanced) {
+      }
+      if (decision == navigation_world_model::WorldCommitDecision::kWorldAdvanced) {
         world_advanced.fetch_add(1);
       } else {
         incoherent.store(true);
@@ -276,7 +283,7 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
     authorizer_done.store(true, std::memory_order_release);
   });
   std::thread sampler([&] {
-    std::uint64_t previous_generation = command.generation();
+    auto previous = command.snapshot();
     bool change_signaled = false;
     sampler_ready.count_down();
     start_writers.wait();
@@ -284,47 +291,30 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
     if (!first_authorization_committed.load(std::memory_order_acquire)) {
       incoherent.store(true);
     } else {
-      // The first authorization happens before this sampler reads the
-      // generation baseline. Count it as the first observed command change
-      // and release the publisher without depending on thread scheduling.
       observed_generation_changes.fetch_add(1);
     }
     sampler_observed_change.count_down();
     change_signaled = true;
     do {
-      std::uint64_t generation = 0;
-      navigation_world_model::WorldSnapshotIdentity pinned{};
-      navigation_world_model::WorldSnapshotIdentity validated{};
-      navigation_planning_backend::math::Vec3f position = navigation_planning_backend::math::Vec3f::Zero();
-      navigation_planning_backend::math::Vec3f yaw = navigation_planning_backend::math::Vec3f::Zero();
-      bool backup = false;
-      command.lock();
-      generation = command.generation();
-      pinned = command.certificate().pinned_world;
-      validated = command.certificate().validated_world;
-      position = command.getPos(0.0);
-      yaw = command.getYaw(0.0);
-      backup = command.isTTOnBackupTraj(0.0);
-      command.unlock();
-
+      const auto current = command.snapshot();
       if (publisher_active.load(std::memory_order_acquire) ||
           authorizer_active.load(std::memory_order_acquire)) {
         overlap_samples.fetch_add(1);
       }
-      if (generation != previous_generation) {
+      if (current.generation != previous.generation) {
         observed_generation_changes.fetch_add(1);
         if (!change_signaled) {
           sampler_observed_change.count_down();
           change_signaled = true;
         }
       }
-      if (generation < previous_generation || !position.allFinite() ||
-          !yaw.allFinite() || !backup ||
-          !navigation_mapping::WorldSnapshotStore::sameIdentity(pinned, validated) ||
-          position.x() != static_cast<double>(validated.revision)) {
+      if (current.generation < previous.generation || !current.backup ||
+          !navigation_mapping::WorldSnapshotStore::sameIdentity(
+              current.pinned_world, current.validated_world) ||
+          current.position_revision != current.validated_world.revision) {
         incoherent.store(true);
       }
-      previous_generation = generation;
+      previous = current;
     } while (!publisher_done.load(std::memory_order_acquire) ||
              !authorizer_done.load(std::memory_order_acquire));
   });
@@ -338,6 +328,7 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
 
   EXPECT_FALSE(incoherent.load());
   EXPECT_GT(committed.load(), 0U);
+  EXPECT_GT(world_advanced.load(), 0U);
   EXPECT_GT(overlap_samples.load(), 0U);
   EXPECT_GT(observed_generation_changes.load(), 0U);
   EXPECT_EQ(store.load().identity.revision, kIterations);

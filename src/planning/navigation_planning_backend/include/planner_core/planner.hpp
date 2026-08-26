@@ -83,7 +83,7 @@ namespace navigation_planning_backend {
         navigation_math::RobotState robot_state_;
 
         std::mutex drone_state_mutex_;
-        std::mutex replan_lock_;
+        mutable std::mutex replan_lock_;
         std::mutex solve_commit_mutex_;
 
         Vec3f local_start_p_;
@@ -276,6 +276,7 @@ namespace navigation_planning_backend {
                                   double start_WT);
 
         void getModuleTimeConsuming(vector<double> &time);
+        vector<double> moduleTimeConsumingSnapshot() const;
 
         /* Tow type of replan strategy */
         RET_CODE PlanFromRest(const Vec3f &goal_p,

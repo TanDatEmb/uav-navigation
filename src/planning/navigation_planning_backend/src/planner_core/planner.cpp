@@ -735,6 +735,11 @@ namespace navigation_planning_backend {
         std::fill(time_consuming_.begin(), time_consuming_.end(), 0);
     }
 
+    vector<double> Planner::moduleTimeConsumingSnapshot() const {
+        std::lock_guard<std::mutex> guard(replan_lock_);
+        return time_consuming_;
+    }
+
 
     RET_CODE Planner::generateExpTraj(
             ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info,

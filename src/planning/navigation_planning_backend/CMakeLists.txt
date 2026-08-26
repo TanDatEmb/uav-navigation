@@ -22,6 +22,7 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/planner_core/ciri.cpp
   src/planner_core/corridor_generator.cpp
   src/planner_core/planner.cpp
+  src/planner_facade.cpp
   src/traj_opt/backup_traj_optimizer_s4.cpp
   src/traj_opt/exp_traj_optimizer_s4.cpp
   src/traj_opt/yaw_traj_opt.cpp
@@ -45,27 +46,33 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
 add_library(${PROJECT_NAME} STATIC ${NAVIGATION_PLANNING_BACKEND_SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
-target_compile_definitions(${PROJECT_NAME} PUBLIC
+target_compile_definitions(${PROJECT_NAME} PRIVATE
   USE_ROS2
   ORIGIN_AT_CORNER
+)
+target_include_directories(${PROJECT_NAME} PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME} PUBLIC
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME}
   Eigen3::Eigen
-  fmt::fmt
-  navigation_world_model::navigation_world_model
   navigation_planning::navigation_planning
+  navigation_world_model::navigation_world_model
+)
+target_link_libraries(${PROJECT_NAME}
+  fmt::fmt
   rog_map_vendor::rog_map_vendor
   yaml-cpp::yaml-cpp
 )
-ament_target_dependencies(${PROJECT_NAME} PUBLIC std_msgs)
+ament_target_dependencies(${PROJECT_NAME} std_msgs)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
-install(DIRECTORY include/ DESTINATION include)
+install(FILES include/navigation_planning_backend/planner_facade.hpp
+  DESTINATION include/navigation_planning_backend)
 install(TARGETS ${PROJECT_NAME}
   EXPORT ${PROJECT_NAME}Targets
   ARCHIVE DESTINATION lib
@@ -84,12 +91,24 @@ ament_export_include_directories(include)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_trajectory test/test_trajectory.cpp)
+  target_compile_definitions(test_trajectory PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER)
   target_link_libraries(test_trajectory ${PROJECT_NAME})
 
   ament_add_gtest(test_planner_config test/test_planner_config.cpp)
   target_compile_definitions(test_planner_config PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER
     PLANNER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_planner_config ${PROJECT_NAME})
+
+  ament_add_gtest(test_planner_facade test/test_planner_facade.cpp)
+  target_compile_definitions(test_planner_facade PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER
+    PLANNER_FACADE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+  target_link_libraries(test_planner_facade ${PROJECT_NAME})
 endif()
 
 ament_package()
