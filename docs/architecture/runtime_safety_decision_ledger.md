@@ -2351,3 +2351,32 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   --packages navigation_planning navigation_planning_backend
   navigation_runtime && python3 tools/runtime/build.py --mode release test
   --packages navigation_planning navigation_planning_backend navigation_runtime`.
+
+### 2026-08-26 - Planner facade checkpoint parallel validation
+
+- Owner: validation harness only; no product source change. Scope: run the
+  recorded-data and PX4/SITL sidecars against exact commit `937c8ef` after the
+  facade checkpoint, and keep dataset evidence separate from flight acceptance.
+- Safety impact: evidence collection only. No gate, threshold, timeout,
+  fallback, UNKNOWN policy, preflight rule, or bypass was changed. The SITL
+  sidecar was fail-closed before launch because the canonical runtime lock was
+  held by the dataset runner.
+- Evidence: dataset artifact
+  `.artifacts/runtime/dataset-20260826T001126-569319/report.json` plus
+  `dataset_shadow_planning.json` recorded complete IMU/LiDAR source coverage,
+  LIO tracking coverage `1.0`, propagated odometry near `50 Hz` with maximum
+  observed gap about `25.98 ms`, mapping `2756/2756` received/published with
+  `0` accounting violations, and shadow planning `98 READY/0 EMER` across
+  generations `1..9`. `experimental_bypasses={}` and
+  `flight_acceptance=false` remain explicit. The SITL sidecar reported
+  `BLOCKED_ENVIRONMENT` with no session/report and therefore no PX4, planner,
+  odometry, or mission evidence.
+- Cleanup: both agents were closed; the dataset runner initially remained in
+  `STARTING` after replay data had completed, so it was shut down only after
+  the report existed and its recorded PIDs were checked. Final state was
+  `STOPPED/cleanup=PASS`, no validation process remained, the stale lock was
+  removed only after its owner PID was dead, and one worktree remained.
+- Removal condition: repeat a preflight-clean SITL run and representative
+  dataset distribution before making any end-to-end or flight-acceptance claim.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 tools/runtime/build.py --mode release check`.
