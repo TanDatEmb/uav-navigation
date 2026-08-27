@@ -52,6 +52,8 @@ class FastLioNode : public rclcpp::Node {
  private:
   void onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message);
   void onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
+  void onVisibilityCloud(
+      const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
   void onLivoxCustom(
       const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message);
   void onInitialStatePrior(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
@@ -83,6 +85,8 @@ class FastLioNode : public rclcpp::Node {
   std::unique_ptr<PropagatedOdometryWorker> propagated_odometry_worker_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
+      visibility_points_subscription_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr
       livox_custom_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr

@@ -203,6 +203,14 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
                 const sensor_msgs::msg::PointCloud2::ConstSharedPtr
                     message) { onLidar(message); });
   }
+  if (!parameters_.visibility_points_topic.empty()) {
+    visibility_points_subscription_ =
+        create_subscription<sensor_msgs::msg::PointCloud2>(
+            parameters_.visibility_points_topic, pointcloud_qos,
+            [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) {
+              onVisibilityCloud(message);
+            });
+  }
   if (profile_.estimator.initial_prior.source == InitialStatePriorSource::kTopic) {
     initial_state_prior_subscription_ =
         create_subscription<nav_msgs::msg::Odometry>(
@@ -320,6 +328,18 @@ void FastLioNode::onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& m
   } catch (const std::exception& error) {
     RCLCPP_WARN(get_logger(), "invalid LiDAR message: %s", error.what());
   }
+}
+
+void FastLioNode::onVisibilityCloud(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
+  if (!message || message->header.frame_id != parameters_.lidar_frame) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "discarding visibility cloud with unexpected frame (expected %s)",
+        parameters_.lidar_frame.c_str());
+    return;
+  }
+  output_publisher_.setVisibilityCloud(message);
 }
 
 void FastLioNode::onInitialStatePrior(

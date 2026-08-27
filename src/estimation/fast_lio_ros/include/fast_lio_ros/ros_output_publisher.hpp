@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,6 +31,7 @@ class RosOutputPublisher {
                      std::shared_ptr<LioPublicFrameGeneration>
                          public_frame_generation);
   void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
+  void setVisibilityCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
   [[nodiscard]] std::shared_ptr<CovarianceProjectionRuntime>
   covarianceProjectionRuntime() const noexcept {
     return covariance_runtime_;
@@ -93,6 +95,10 @@ class RosOutputPublisher {
 
   [[nodiscard]] sensor_msgs::msg::PointCloud2 makeCloud(
       const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const;
+  [[nodiscard]] sensor_msgs::msg::PointCloud2 makeFreeSpaceCloud(
+      const sensor_msgs::msg::PointCloud2& cloud,
+      const nav_msgs::msg::Odometry& corrected_odometry,
+      const builtin_interfaces::msg::Time& stamp) const;
   void publishTypedHealth(const EstimatorHealthSnapshot& health,
                           const ProcessResult& result,
                           const builtin_interfaces::msg::Time& stamp);
@@ -114,6 +120,8 @@ class RosOutputPublisher {
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   std::atomic_bool propagation_valid_{false};
   std::atomic<std::int64_t> last_propagated_state_stamp_ns_{0};
+  mutable std::mutex visibility_cloud_mutex_;
+  std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> visibility_clouds_;
   mutable std::mutex diagnostics_mutex_;
   std::optional<EstimatorHealthSnapshot> latest_diagnostic_health_;
 };

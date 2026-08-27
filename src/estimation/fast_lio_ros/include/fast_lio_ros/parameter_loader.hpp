@@ -20,6 +20,9 @@ struct RosParameters {
   std::string lidar_frame;
   std::string lidar_topic;
   std::string imu_topic;
+  // Optional simulation/driver visibility source. Empty means that the
+  // RegisteredScan carries no explicit no-return evidence.
+  std::string visibility_points_topic;
   std::string lidar_input_frame;
   std::string imu_input_frame;
   std::string lidar_message_type;

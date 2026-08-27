@@ -7069,3 +7069,35 @@ release profiles must not use the former allowance.
   declared dataset and `long_three_pillars_multiwaypoint` SITL ladder while
   checking `mapping_free_space_*`, strict backup certificate outcomes,
   clearance, altitude, waypoint completion, and p50/p95/p99 callback latency.
+
+### 2026-08-28 - Use a native 3D Gazebo visibility producer
+
+- **Owner:** Simulation and estimation integration maintainers.
+- **Scope:** The Mid-360 simulation path subscribes directly to
+  `gz.msgs.LaserScan` and publishes a bounded `PointCloud2` of explicit
+  no-return endpoints in `livox_frame`. It validates the frame, timestamp,
+  horizontal/vertical counts, flattened array length, finite scan metadata,
+  and max-range semantics before publication. The generic
+  `gz.msgs.LaserScan -> sensor_msgs/LaserScan` bridge is intentionally not used
+  for this 3D sensor. The producer uses deterministic sampling capped at 4096
+  endpoints per scan; this can only omit evidence, never manufacture it.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A malformed, incomplete,
+  empty, stale, or unsupported scan publishes no evidence; the downstream
+  typed contract still requires exact frame/timestamp matching and ROG still
+  applies miss-only rays. This does not relax UNKNOWN, OUT_OF_MAP, backup, or
+  planner gates. Avoiding the 2D converter also removes a process-crash path
+  that could otherwise interrupt the sensor/runtime stream.
+- **Evidence:** A direct converter probe with a synthetic 720 x 28 Gazebo
+  message reproduced a segmentation fault in the installed generic bridge;
+  native producer unit tests cover 3D geometry, incomplete arrays, wrong frame,
+  and all-hit scans. The authoritative build, full structured SITL ladder,
+  sanitizer coverage, and hardware visibility certificate remain open.
+- **Removal/review condition:** replace only with a typed 3D visibility source
+  that preserves vertical metadata, no-return semantics, timestamp/frame
+  provenance, and bounded resource use. Reconsider the 4096 cap only from
+  repeated latency/coverage distributions, never from one mission run.
+- **Verification:** `make build`; sourced colcon tests for `uav_simulation`,
+  `fast_lio_ros`, `navigation_contracts`, `navigation_mapping`, and
+  `rog_map_vendor`; then repeated structured SITL while checking
+  `mapping_free_space_*`, process liveness, waypoint completion, clearance,
+  altitude, and latency tails.

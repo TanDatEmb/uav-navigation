@@ -8,6 +8,7 @@ fast_lio:
     input:
       lidar_topic: /lidar/points
       imu_topic: /lidar/imu
+      visibility_points_topic: /lidar/free_space_endpoints
       lidar_frame: livox_frame
       imu_frame: livox_imu_frame
       lidar_message_type: pointcloud2

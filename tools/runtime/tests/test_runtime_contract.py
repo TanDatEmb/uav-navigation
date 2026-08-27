@@ -1727,6 +1727,7 @@ class RuntimeContractTest(unittest.TestCase):
         runner_source = (RUNTIME / "runner.py").read_text(encoding="utf-8")
         self.assertIn('session.start("bridge"', runner_source)
         self.assertIn('session.start("bridge_lidar"', runner_source)
+        self.assertIn('session.start("visibility_bridge"', runner_source)
         bridge_launch = runner_source[
             runner_source.index('session.start("bridge"'):
             runner_source.index('session.start("px4_ingress"')

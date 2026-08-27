@@ -133,6 +133,16 @@ is absent, strict backup certification remains fail-closed. The simulator must
 bridge the actual scan/ray source, and real Mid-360 ingestion must provide an
 equivalent producer before this evidence can be used for certification.
 
+For the Gazebo Mid-360, the producer is a native `gz.msgs.LaserScan` adapter.
+The generic `ros_gz_bridge` LaserScan converter is not a valid 3D path: the
+message carries 720 x 28 flattened rays while ROS `LaserScan` has no vertical
+axis, and the installed converter crashes when given that shape. The adapter
+therefore validates the complete 3D metadata/array, keeps only explicit
+max-range or positive-infinity rays, emits a lidar-frame `PointCloud2`, and
+uses deterministic bounded beam sampling (currently 4096 endpoints) to keep
+mapping work bounded. Any malformed, incomplete, empty, or mismatched message
+produces no visibility evidence.
+
 ### 3.5 PX4 handoff and altitude behavior
 
 The PX4 adapter continues to publish position/velocity/acceleration in the

@@ -1131,7 +1131,7 @@ def _wait_until(session: Session, predicate: Callable[[dict[str, Any]], bool], t
         for record in session.records():
             if record.get("role") in {
                 "monitor", "lio", "px4_gazebo", "bridge", "bridge_lidar",
-                "px4_ingress", "mapping",
+                "visibility_bridge", "px4_ingress", "mapping",
             }:
                 # A monitor snapshot is the authoritative readiness signal, but
                 # an early process exit must be reported immediately. Process-
@@ -1921,6 +1921,13 @@ def _run_sim_unlocked(
             "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
             "-r", "__node:=px4_mid360_lidar_bridge",
             "-p", f"config_file:={lidar_bridge_config}",
+        ], enable_rviz=not headless), cwd=ROOT)
+        session.start("visibility_bridge", _ros_shell([
+            "ros2", "run", "uav_simulation", "gz_visibility_bridge", "--ros-args",
+            "-p", "gz_topic:=/sim/mid360/scan",
+            "-p", "ros_topic:=/lidar/free_space_endpoints",
+            "-p", "expected_frame:=livox_frame",
+            "-p", "maximum_endpoints:=4096",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("px4_ingress", _ros_shell([
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",

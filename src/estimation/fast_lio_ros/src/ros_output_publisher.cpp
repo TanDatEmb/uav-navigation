@@ -1,8 +1,12 @@
 #include "fast_lio_ros/ros_output_publisher.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <chrono>
+#include <Eigen/Geometry>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <utility>
 
@@ -51,6 +55,17 @@ void RosOutputPublisher::setBaseLinkConverter(
   base_link_converter_ = std::move(converter);
 }
 
+void RosOutputPublisher::setVisibilityCloud(
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud) {
+  if (!cloud) return;
+  std::lock_guard lock(visibility_cloud_mutex_);
+  visibility_clouds_.push_back(std::move(cloud));
+  constexpr std::size_t kVisibilityCloudHistory = 16U;
+  while (visibility_clouds_.size() > kVisibilityCloudHistory) {
+    visibility_clouds_.pop_front();
+  }
+}
+
 sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
     const std::vector<Eigen::Vector3d>& points, const builtin_interfaces::msg::Time& stamp) const {
   sensor_msgs::msg::PointCloud2 cloud;
@@ -73,6 +88,112 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
     ++z;
   }
   return cloud;
+}
+
+sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
+    const sensor_msgs::msg::PointCloud2& cloud,
+    const nav_msgs::msg::Odometry& corrected_odometry,
+    const builtin_interfaces::msg::Time& stamp) const {
+  std::vector<Eigen::Vector3d> endpoints;
+  if (cloud.header.frame_id != parameters_.lidar_frame ||
+      cloud.header.stamp != stamp || cloud.height == 0U ||
+      cloud.width == 0U || cloud.point_step < sizeof(float) * 3U ||
+      cloud.row_step < cloud.point_step * cloud.width ||
+      cloud.data.size() < cloud.row_step * cloud.height ||
+      cloud.width * static_cast<std::size_t>(cloud.height) > 262144U ||
+      !base_link_converter_) {
+    return makeCloud(endpoints, stamp);
+  }
+
+  std::uint32_t x_offset = 0U;
+  std::uint32_t y_offset = 0U;
+  std::uint32_t z_offset = 0U;
+  bool x_found = false;
+  bool y_found = false;
+  bool z_found = false;
+  for (const auto& field : cloud.fields) {
+    if (field.name == "x") {
+      x_offset = field.offset;
+      x_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32;
+    } else if (field.name == "y") {
+      y_offset = field.offset;
+      y_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32;
+    } else if (field.name == "z") {
+      z_offset = field.offset;
+      z_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32;
+    }
+  }
+  if (!x_found || !y_found || !z_found ||
+      static_cast<std::size_t>(x_offset) + sizeof(float) > cloud.point_step ||
+      static_cast<std::size_t>(y_offset) + sizeof(float) > cloud.point_step ||
+      static_cast<std::size_t>(z_offset) + sizeof(float) > cloud.point_step) {
+    return makeCloud(endpoints, stamp);
+  }
+
+  const Eigen::Quaterniond q_odom_base(
+      corrected_odometry.pose.pose.orientation.w,
+      corrected_odometry.pose.pose.orientation.x,
+      corrected_odometry.pose.pose.orientation.y,
+      corrected_odometry.pose.pose.orientation.z);
+  const Eigen::Quaterniond q_imu_lidar(
+      parameters_.rotation_imu_lidar_xyzw[3],
+      parameters_.rotation_imu_lidar_xyzw[0],
+      parameters_.rotation_imu_lidar_xyzw[1],
+      parameters_.rotation_imu_lidar_xyzw[2]);
+  const double q_scale = q_odom_base.coeffs().cwiseAbs().maxCoeff();
+  const double lidar_q_scale = q_imu_lidar.coeffs().cwiseAbs().maxCoeff();
+  if (!q_odom_base.coeffs().allFinite() || !std::isfinite(q_scale) ||
+      q_scale <= 1.0e-9 || !q_imu_lidar.coeffs().allFinite() ||
+      !std::isfinite(lidar_q_scale) || lidar_q_scale <= 1.0e-9) {
+    return makeCloud(endpoints, stamp);
+  }
+
+  const Eigen::Quaterniond normalized_odom_base(
+      q_odom_base.w() / q_scale, q_odom_base.x() / q_scale,
+      q_odom_base.y() / q_scale, q_odom_base.z() / q_scale);
+  const Eigen::Quaterniond normalized_imu_lidar(
+      q_imu_lidar.w() / lidar_q_scale, q_imu_lidar.x() / lidar_q_scale,
+      q_imu_lidar.y() / lidar_q_scale, q_imu_lidar.z() / lidar_q_scale);
+  const Eigen::Matrix3d R_odom_base = normalized_odom_base.normalized().toRotationMatrix();
+  const Eigen::Matrix3d R_base_imu =
+      base_link_converter_->baseToImu().rotation().toRotationMatrix();
+  const Eigen::Matrix3d R_base_lidar =
+      R_base_imu * normalized_imu_lidar.normalized().toRotationMatrix();
+  const Eigen::Vector3d t_base_lidar =
+      R_base_imu * Eigen::Vector3d(
+          parameters_.translation_imu_lidar_m[0],
+          parameters_.translation_imu_lidar_m[1],
+          parameters_.translation_imu_lidar_m[2]) +
+      base_link_converter_->baseToImu().translation();
+  const Eigen::Vector3d p_odom_base(
+      corrected_odometry.pose.pose.position.x,
+      corrected_odometry.pose.pose.position.y,
+      corrected_odometry.pose.pose.position.z);
+  if (!p_odom_base.allFinite() || !t_base_lidar.allFinite()) {
+    return makeCloud(endpoints, stamp);
+  }
+
+  const Eigen::Vector3d p_odom_lidar =
+      p_odom_base + R_odom_base * t_base_lidar;
+  const Eigen::Matrix3d R_odom_lidar = R_odom_base * R_base_lidar;
+  const std::size_t point_count =
+      static_cast<std::size_t>(cloud.width) * cloud.height;
+  endpoints.reserve(point_count);
+  for (std::size_t row = 0U; row < cloud.height; ++row) {
+    for (std::size_t column = 0U; column < cloud.width; ++column) {
+      const std::size_t point_offset = row * cloud.row_step +
+          column * cloud.point_step;
+      float xyz[3]{};
+      std::memcpy(&xyz[0], cloud.data.data() + point_offset + x_offset, sizeof(float));
+      std::memcpy(&xyz[1], cloud.data.data() + point_offset + y_offset, sizeof(float));
+      std::memcpy(&xyz[2], cloud.data.data() + point_offset + z_offset, sizeof(float));
+      const Eigen::Vector3d p_lidar(xyz[0], xyz[1], xyz[2]);
+      if (!p_lidar.allFinite()) continue;
+      const Eigen::Vector3d p_odom = p_odom_lidar + R_odom_lidar * p_lidar;
+      if (p_odom.allFinite()) endpoints.push_back(p_odom);
+    }
+  }
+  return makeCloud(endpoints, stamp);
 }
 
 void RosOutputPublisher::publish(const ProcessResult& result,
@@ -220,6 +341,21 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     observation.body_frame_id = corrected_odometry->child_frame_id;
     observation.corrected_pose = corrected_odometry->pose;
     observation.points = std::move(registered_cloud);
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr matching_visibility_cloud;
+    {
+      std::lock_guard lock(visibility_cloud_mutex_);
+      for (auto iterator = visibility_clouds_.rbegin();
+           iterator != visibility_clouds_.rend(); ++iterator) {
+        if ((*iterator)->header.stamp == stamp) {
+          matching_visibility_cloud = *iterator;
+          break;
+        }
+      }
+    }
+    if (matching_visibility_cloud) {
+      observation.free_space_endpoints = makeFreeSpaceCloud(
+          *matching_visibility_cloud, *corrected_odometry, stamp);
+    }
     registered_scan_->publish(std::move(observation));
   }
   publishTypedHealth(health, result, diagnostics_stamp);

@@ -54,6 +54,7 @@ def test_px4_lio_smoke_world_and_bridge_contract():
     assert "/sim/ground_truth/odometry" in control_bridge
     assert "/sim/mid360/scan/points" not in control_bridge
     assert "/sim/mid360/scan/points" in lidar_bridge
+    assert "gz_topic_name: /sim/mid360/scan\n" not in lidar_bridge
     assert "/world/px4_lio_smoke/clock" not in lidar_bridge
     assert "/sim/mid360/imu" not in lidar_bridge
 

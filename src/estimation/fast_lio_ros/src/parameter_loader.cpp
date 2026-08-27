@@ -131,6 +131,8 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.lidar_frame = node.declare_parameter("frames.lidar", "livox_frame");
   result.lidar_topic = node.declare_parameter("input.lidar_topic", "/lidar/points");
   result.imu_topic = node.declare_parameter("input.imu_topic", "/lidar/imu");
+  result.visibility_points_topic = node.declare_parameter(
+      "input.visibility_points_topic", "");
   result.lidar_input_frame =
       node.declare_parameter("input.lidar_frame", result.lidar_frame);
   result.imu_input_frame =

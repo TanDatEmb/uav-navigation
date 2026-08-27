@@ -48,6 +48,7 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.lidar_queue_capacity, 8);
   EXPECT_EQ(parameters.overload_policy, "fail");
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
+  EXPECT_TRUE(parameters.visibility_points_topic.empty());
 }
 
 TEST_F(ParameterLoaderTest, RejectsInvalidPropagatedOdometryPolicy) {
@@ -162,6 +163,7 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
 
   EXPECT_EQ(parameters.lidar_topic, "/lidar/points");
   EXPECT_EQ(parameters.imu_topic, "/lidar/imu");
+  EXPECT_TRUE(parameters.visibility_points_topic.empty());
   EXPECT_EQ(parameters.lidar_frame, "livox_frame");
   EXPECT_EQ(parameters.imu_frame, "livox_imu_frame");
   EXPECT_EQ(parameters.lidar_input_frame, "livox_frame");
