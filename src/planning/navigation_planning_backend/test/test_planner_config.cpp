@@ -127,6 +127,13 @@ TEST(PlannerPassThrough, UsesBoundedOutgoingTerminalVelocity) {
 
   EXPECT_FALSE(navigation_planning_backend::passThroughTerminalVelocity(
       Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 5.0, 2.0));
+
+  const auto interior_velocity =
+      navigation_planning_backend::passThroughTerminalVelocity(
+          Eigen::Vector3d::Zero(), Eigen::Vector3d{100.0, 0.0, 0.0},
+          5.0 * 0.98, 2.0);
+  ASSERT_TRUE(interior_velocity.has_value());
+  EXPECT_DOUBLE_EQ(interior_velocity->norm(), 4.9);
 }
 
 TEST(PlannerPassThrough, LimitsOrthogonalVelocityChangeByTransitionTime) {

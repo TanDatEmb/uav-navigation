@@ -1443,13 +1443,22 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             pos_fina_state.col(1) = (gi_.goal_p - solve_state_.p).normalized() * cfg_.exp_traj_cfg.max_vel / 2;
         }
         if (pass_through_next_target_.has_value()) {
+            // Keep the outgoing tangent just inside the optimizer's declared
+            // interior search target. The mission/product V/A/J limits below
+            // remain unchanged; this only avoids asking a short MINCO guide
+            // to reach the exact speed boundary while rotating toward the
+            // next leg, which otherwise amplifies hard-gate churn at a
+            // pass-through waypoint.
+            const double terminal_velocity_cap =
+                    cfg_.exp_traj_cfg.max_vel *
+                    cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
             const auto terminal_velocity = passThroughTerminalVelocity(
                     pos_fina_state.col(0).cast<double>(),
                     *pass_through_next_target_,
                     pos_init_state.col(1).cast<double>(),
                     guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
                                          : guide_stamp.back(),
-                    cfg_.exp_traj_cfg.max_vel,
+                    terminal_velocity_cap,
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk);
             if (terminal_velocity.has_value()) {

@@ -6751,6 +6751,36 @@ release profiles must not use the former allowance.
   `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
   external-mode-check` and the declared speed ladder.
 
+### 2026-08-28 - Keep pass-through terminal tangent inside the search envelope
+
+- **Owner:** navigation planning maintainer. **Scope:** pass-through MINCO
+  terminal velocity uses the already validated nominal
+  `optimization_dynamic_reserve_ratio` as an interior seed cap. The active
+  waypoint remains the geometric endpoint, the outgoing direction still comes
+  only from mission-owned look-ahead, and STOP goals remain zero-terminal-
+  velocity goals.
+- **Safety impact:** continuity/conditioning improvement only. The reserve is
+  not a physical-limit tolerance: the generated polynomial is still checked
+  against exact mission V/A/J, flatness, corridor, world, freshness, and
+  atomic-commit certificates. No UNKNOWN, waypoint, braking, or execution
+  gate is relaxed.
+- **Reason/evidence:** repeated 3 m/s traces showed pass-through candidates
+  targeting the exact velocity cap while changing direction in a short local
+  guide, followed by real jerk violations and backup churn. Keeping the seed
+  slightly interior gives MINCO room to shape a continuous handover without
+  sacrificing the configured high-speed envelope.
+- **Evidence required:** repeat the same seeded three-pillar run, then the
+  3/4/5 m/s ladder and representative recorded-data replay. Inspect terminal
+  velocity residual, speed recovery, jerk/acceleration margins, altitude,
+  waypoint completion, clearance, backup ratio, and latency distributions.
+- **Removal condition:** remove only if repeated evidence shows worse
+  waypoint progress, speed recovery, continuity, clearance, or numerical
+  stability; do not restore an infeasible exact-cap tangent by relaxing a
+  hard gate.
+- **Verification:** `make build`; `make test`; repeated
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check` followed by the declared speed ladder.
+
 ### 2026-08-28 - Limit pass-through terminal velocity change by local time
 
 - **Owner:** Navigation planning maintainers. **Scope:** pass-through terminal
