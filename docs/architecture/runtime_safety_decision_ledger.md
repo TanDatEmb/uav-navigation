@@ -6620,3 +6620,19 @@ release profiles must not use the former allowance.
   `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
   PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, followed by the declared dataset
   replay and three-pillar SITL matrix.
+### 2026-08-28 - Expose actual swept-tube blocker provenance
+
+- **Owner:** Navigation planning/runtime maintainers.
+- **Scope:** The executable-candidate swept validator now reports the actual
+  inflated-grid cell center and cell state that rejected a certificate tube;
+  endpoint fallback remains only for non-cell/invalid-geometry failures.
+- **Safety impact:** Observability-only. Traversability policy, UNKNOWN policy,
+  certificate geometry, and all fail-closed behavior are unchanged.
+- **Evidence:** Focused trajectory tests cover direct tube diagnostics and
+  candidate-validation propagation. Runtime dataset traces showed
+  `certificate_tube_blocked` while reporting the endpoint, which was
+  insufficient to distinguish UNKNOWN coverage from endpoint rejection.
+- **Removal condition:** Remove only after all supported runtime artifacts
+  expose equivalent blocker provenance and the rejection-stage contract no
+  longer needs the diagnostic.
+- **Verification:** `make build`; `make test`.

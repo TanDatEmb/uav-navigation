@@ -183,7 +183,16 @@ inline bool certificateTubeIsSafe(
         const navigation_world_model::Point3& end,
         const double curve_deviation_m,
         const navigation_world_model::UnknownPolicy unknown_policy,
-        const double resolution_m) noexcept {
+        const double resolution_m,
+        navigation_world_model::CellState* blocked_cell_state = nullptr,
+        navigation_world_model::Point3* blocked_position = nullptr) noexcept {
+    if (blocked_cell_state != nullptr) {
+        *blocked_cell_state = navigation_world_model::CellState::kUndefined;
+    }
+    if (blocked_position != nullptr) {
+        *blocked_position = navigation_world_model::Point3::Constant(
+            std::numeric_limits<double>::quiet_NaN());
+    }
     if (!start.allFinite() || !end.allFinite() ||
         !std::isfinite(curve_deviation_m) || curve_deviation_m < 0.0 ||
         !std::isfinite(resolution_m) || resolution_m <= 0.0) {
@@ -248,6 +257,8 @@ inline bool certificateTubeIsSafe(
                 const auto state = world.classify(
                     cell_center, navigation_world_model::GridLayer::kInflated);
                 if (!navigation_world_model::isCellTraversable(state, unknown_policy)) {
+                    if (blocked_cell_state != nullptr) *blocked_cell_state = state;
+                    if (blocked_position != nullptr) *blocked_position = cell_center;
                     return false;
                 }
                 if (z == upper[2]) break;
@@ -520,13 +531,26 @@ inline SweptValidationResult validateExecutableCandidate(
             curve_deviation_bound =
                 acceleration_bound * segment_dt * segment_dt / 8.0;
         }
+        navigation_world_model::CellState tube_blocked_cell_state{
+            navigation_world_model::CellState::kUndefined};
+        navigation_world_model::Point3 tube_blocked_position =
+            navigation_world_model::Point3::Constant(
+                std::numeric_limits<double>::quiet_NaN());
+        const bool tube_safe = certificateTubeIsSafe(
+            world, previous, next, curve_deviation_bound, segment_policy,
+            geometry.inflated_resolution_m, &tube_blocked_cell_state,
+            &tube_blocked_position);
         if (!std::isfinite(curve_deviation_bound) ||
-            curve_deviation_bound > curve_deviation_tolerance ||
-            !certificateTubeIsSafe(world, previous, next, curve_deviation_bound,
-                                   segment_policy, geometry.inflated_resolution_m)) {
+            curve_deviation_bound > curve_deviation_tolerance || !tube_safe) {
             result.failure = SweptValidationResult::Failure::kCertificateTubeBlocked;
-            result.blocked_position = next;
-            if (next.allFinite()) {
+            if (tube_blocked_position.allFinite()) {
+                result.blocked_position = tube_blocked_position;
+                result.blocked_cell_state = tube_blocked_cell_state;
+            } else {
+                result.blocked_position = next;
+            }
+            if (result.blocked_cell_state ==
+                    navigation_world_model::CellState::kUndefined && next.allFinite()) {
                 result.blocked_cell_state = world.classify(
                     next, navigation_world_model::GridLayer::kInflated);
             }

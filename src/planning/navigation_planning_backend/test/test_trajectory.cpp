@@ -844,6 +844,51 @@ TEST(PlannerTrajectory, ContinuousTubeClassifiesCellTouchedByCenterline) {
       navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2));
 }
 
+TEST(PlannerTrajectory, ContinuousTubeReportsActualBlockingCell) {
+  const navigation_world_model::Point3 start(0.1, 0.2, 0.2);
+  const navigation_world_model::Point3 end(1.1, 0.2, 0.2);
+  const navigation_world_model::Point3 expected_blocker(0.1, 0.1, 0.1);
+  DiagonalNeighborWorld world(expected_blocker);
+  navigation_world_model::CellState blocked_state{
+      navigation_world_model::CellState::kUndefined};
+  navigation_world_model::Point3 blocked_position =
+      navigation_world_model::Point3::Constant(
+          std::numeric_limits<double>::quiet_NaN());
+
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      &blocked_state, &blocked_position));
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUnknown);
+  EXPECT_TRUE(blocked_position.isApprox(expected_blocker, 1.0e-12));
+}
+
+TEST(PlannerTrajectory, CandidateValidationReportsActualTubeBlocker) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+  // The main prefix is allowed to cross UNKNOWN, while the backup interval
+  // must report the first actual UNKNOWN voxel in its swept tube.
+  SweepWorld world;
+
+  const auto result = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::SweptValidationResult::Failure::
+                kCertificateTubeBlocked);
+  EXPECT_EQ(result.blocked_cell_state,
+            navigation_world_model::CellState::kUnknown);
+  EXPECT_TRUE(result.blocked_position.allFinite());
+  EXPECT_NEAR(result.blocked_position.x(), 0.5, 1.0e-12);
+}
+
 TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
