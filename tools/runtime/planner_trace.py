@@ -39,6 +39,36 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_opt_us": ("exp_opt_us",),
     "backup_frontend_us": ("backup_frontend_us",),
     "backup_opt_us": ("backup_opt_us",),
+    "backup_certificate_attempted": ("backup_certificate_attempted",),
+    "backup_switch_candidate_count": ("backup_switch_candidate_count",),
+    "backup_feasible_seed_count": ("backup_feasible_seed_count",),
+    "backup_visibility_hull_pass_count": ("backup_visibility_hull_pass_count",),
+    "backup_aligned_sfc_built_count": ("backup_aligned_sfc_built_count",),
+    "backup_aligned_hull_pass_count": ("backup_aligned_hull_pass_count",),
+    "backup_known_free_check_count": ("backup_known_free_check_count",),
+    "backup_known_free_pass_count": ("backup_known_free_pass_count",),
+    "backup_certificate_selected": ("backup_certificate_selected",),
+    "backup_last_reject_stage": ("backup_last_reject_stage",),
+    "backup_last_known_free_failure_code": ("backup_last_known_free_failure_code",),
+    "backup_last_known_free_cell_state": ("backup_last_known_free_cell_state",),
+    "backup_last_known_free_blocked_role": ("backup_last_known_free_blocked_role",),
+    "backup_last_known_free_first_blocked_time_s": (
+        "backup_last_known_free_first_blocked_time_s",
+    ),
+    "backup_last_known_free_blocked_position": (
+        "backup_last_known_free_blocked_position",
+    ),
+    "backup_last_seed_switch_time_s": ("backup_last_seed_switch_time_s",),
+    "backup_last_seed_duration_s": ("backup_last_seed_duration_s",),
+    "backup_last_seed_initial_velocity_mps": (
+        "backup_last_seed_initial_velocity_mps",
+    ),
+    "backup_last_seed_max_velocity_mps": ("backup_last_seed_max_velocity_mps",),
+    "backup_last_seed_max_acceleration_mps2": (
+        "backup_last_seed_max_acceleration_mps2",
+    ),
+    "backup_last_seed_max_jerk_mps3": ("backup_last_seed_max_jerk_mps3",),
+    "backup_last_seed_endpoint": ("backup_last_seed_endpoint",),
     "optimizer_latency_ms": ("optimizer_latency_ms",),
     "exp_diagnostics_valid": ("exp_diagnostics_valid",),
     "exp_lbfgs_attempt_count": ("exp_lbfgs_attempt_count",),
@@ -260,6 +290,58 @@ def normalize_planner_trace_record(
         "exp_opt_us": _float(values["exp_opt_us"]),
         "backup_frontend_us": _float(values["backup_frontend_us"]),
         "backup_opt_us": _float(values["backup_opt_us"]),
+        "backup_certificate_attempted": _bool(values["backup_certificate_attempted"]),
+        "backup_switch_candidate_count": _int(values["backup_switch_candidate_count"]),
+        "backup_feasible_seed_count": _int(values["backup_feasible_seed_count"]),
+        "backup_visibility_hull_pass_count": _int(
+            values["backup_visibility_hull_pass_count"]
+        ),
+        "backup_aligned_sfc_built_count": _int(
+            values["backup_aligned_sfc_built_count"]
+        ),
+        "backup_aligned_hull_pass_count": _int(
+            values["backup_aligned_hull_pass_count"]
+        ),
+        "backup_known_free_check_count": _int(
+            values["backup_known_free_check_count"]
+        ),
+        "backup_known_free_pass_count": _int(
+            values["backup_known_free_pass_count"]
+        ),
+        "backup_certificate_selected": _bool(values["backup_certificate_selected"]),
+        "backup_last_reject_stage": _int(values["backup_last_reject_stage"]),
+        "backup_last_known_free_failure_code": _int(
+            values["backup_last_known_free_failure_code"]
+        ),
+        "backup_last_known_free_cell_state": _int(
+            values["backup_last_known_free_cell_state"]
+        ),
+        "backup_last_known_free_blocked_role": _int(
+            values["backup_last_known_free_blocked_role"]
+        ),
+        "backup_last_known_free_first_blocked_time_s": _float(
+            values["backup_last_known_free_first_blocked_time_s"]
+        ),
+        "backup_last_known_free_blocked_position": _point(
+            values["backup_last_known_free_blocked_position"]
+        ),
+        "backup_last_seed_switch_time_s": _float(
+            values["backup_last_seed_switch_time_s"]
+        ),
+        "backup_last_seed_duration_s": _float(values["backup_last_seed_duration_s"]),
+        "backup_last_seed_initial_velocity_mps": _float(
+            values["backup_last_seed_initial_velocity_mps"]
+        ),
+        "backup_last_seed_max_velocity_mps": _float(
+            values["backup_last_seed_max_velocity_mps"]
+        ),
+        "backup_last_seed_max_acceleration_mps2": _float(
+            values["backup_last_seed_max_acceleration_mps2"]
+        ),
+        "backup_last_seed_max_jerk_mps3": _float(
+            values["backup_last_seed_max_jerk_mps3"]
+        ),
+        "backup_last_seed_endpoint": _point(values["backup_last_seed_endpoint"]),
         "optimizer_latency_ms": _float(values["optimizer_latency_ms"]),
         "exp_diagnostics_valid": _bool(values["exp_diagnostics_valid"]),
         "exp_lbfgs_attempt_count": _int(values["exp_lbfgs_attempt_count"]),

@@ -130,6 +130,70 @@ struct TrajectoryValidationResult {
   std::size_t segment_count{0};
 };
 
+// Diagnostics for the planner-owned BACKUP certificate search.  These fields
+// are observability only: the corresponding safety gates remain unchanged and
+// a zero/unknown value must never be interpreted as a certificate pass.
+struct BackupCertificateDiagnostics {
+  bool attempted{false};
+  std::uint32_t switch_candidate_count{0};
+  std::uint32_t feasible_seed_count{0};
+  std::uint32_t visibility_hull_pass_count{0};
+  std::uint32_t aligned_sfc_built_count{0};
+  std::uint32_t aligned_hull_pass_count{0};
+  std::uint32_t known_free_check_count{0};
+  std::uint32_t known_free_pass_count{0};
+  bool selected{false};
+  int last_reject_stage{0};
+  int last_known_free_failure_code{0};
+  int last_known_free_cell_state{0};
+  int last_known_free_blocked_role{0};
+  double last_known_free_first_blocked_time_s{
+      std::numeric_limits<double>::quiet_NaN()};
+  Eigen::Vector3d last_known_free_blocked_position{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  double last_seed_switch_time_s{std::numeric_limits<double>::quiet_NaN()};
+  double last_seed_duration_s{std::numeric_limits<double>::quiet_NaN()};
+  double last_seed_initial_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+  double last_seed_max_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+  double last_seed_max_acceleration_mps2{std::numeric_limits<double>::quiet_NaN()};
+  double last_seed_max_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
+  Eigen::Vector3d last_seed_endpoint{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+};
+
+enum class BackupCertificateRejectStage : std::uint8_t {
+  kNone = 0,
+  kCommandBoundary = 1,
+  kSeed = 2,
+  kVisibilityHull = 3,
+  kAlignedSfc = 4,
+  kAlignedHull = 5,
+  kKnownFree = 6,
+  kRefinementKnownFree = 7,
+  kYaw = 8,
+  kDynamic = 9,
+  kDeadline = 10,
+};
+
+inline const char* backupCertificateRejectStageName(
+    const BackupCertificateRejectStage stage) noexcept {
+  switch (stage) {
+    case BackupCertificateRejectStage::kNone: return "none";
+    case BackupCertificateRejectStage::kCommandBoundary: return "command_boundary";
+    case BackupCertificateRejectStage::kSeed: return "seed";
+    case BackupCertificateRejectStage::kVisibilityHull: return "visibility_hull";
+    case BackupCertificateRejectStage::kAlignedSfc: return "aligned_sfc";
+    case BackupCertificateRejectStage::kAlignedHull: return "aligned_hull";
+    case BackupCertificateRejectStage::kKnownFree: return "known_free";
+    case BackupCertificateRejectStage::kRefinementKnownFree:
+      return "refinement_known_free";
+    case BackupCertificateRejectStage::kYaw: return "yaw";
+    case BackupCertificateRejectStage::kDynamic: return "dynamic";
+    case BackupCertificateRejectStage::kDeadline: return "deadline";
+  }
+  return "unknown";
+}
+
 struct PlannerDiagnostics {
   int solve_stage{0};
   std::size_t solve_point_count{0};
@@ -157,6 +221,7 @@ struct PlannerDiagnostics {
   int requested_goal_inflated_state{0};
   int planning_goal_inflated_state{0};
   OptimizationDiagnostics optimization{};
+  BackupCertificateDiagnostics backup_certificate{};
 };
 
 }  // namespace navigation_planning

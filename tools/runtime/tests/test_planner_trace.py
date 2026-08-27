@@ -130,6 +130,28 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_opt_us": "34000",
                                     "backup_frontend_us": "900",
                                     "backup_opt_us": "5600",
+                                    "backup_certificate_attempted": "1",
+                                    "backup_switch_candidate_count": "4",
+                                    "backup_feasible_seed_count": "3",
+                                    "backup_visibility_hull_pass_count": "1",
+                                    "backup_aligned_sfc_built_count": "2",
+                                    "backup_aligned_hull_pass_count": "1",
+                                    "backup_known_free_check_count": "2",
+                                    "backup_known_free_pass_count": "1",
+                                    "backup_certificate_selected": "0",
+                                    "backup_last_reject_stage": "6",
+                                    "backup_last_known_free_failure_code": "10",
+                                    "backup_last_known_free_cell_state": "2",
+                                    "backup_last_known_free_blocked_role": "1",
+                                    "backup_last_known_free_first_blocked_time_s": "0.25",
+                                    "backup_last_known_free_blocked_position": "[1.0,2.0,3.0]",
+                                    "backup_last_seed_switch_time_s": "0.40",
+                                    "backup_last_seed_duration_s": "1.25",
+                                    "backup_last_seed_initial_velocity_mps": "4.0",
+                                    "backup_last_seed_max_velocity_mps": "4.1",
+                                    "backup_last_seed_max_acceleration_mps2": "2.1",
+                                    "backup_last_seed_max_jerk_mps3": "4.0",
+                                    "backup_last_seed_endpoint": "[2.0,3.0,3.0]",
                                     "exp_diagnostics_valid": "1",
                                     "exp_lbfgs_attempt_count": "3",
                                     "exp_retry_count": "2",
@@ -184,6 +206,20 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_opt_us"], 34000.0)
         self.assertEqual(records[0]["backup_frontend_us"], 900.0)
         self.assertEqual(records[0]["backup_opt_us"], 5600.0)
+        self.assertTrue(records[0]["backup_certificate_attempted"])
+        self.assertEqual(records[0]["backup_switch_candidate_count"], 4)
+        self.assertEqual(records[0]["backup_feasible_seed_count"], 3)
+        self.assertEqual(records[0]["backup_visibility_hull_pass_count"], 1)
+        self.assertEqual(records[0]["backup_aligned_sfc_built_count"], 2)
+        self.assertEqual(records[0]["backup_aligned_hull_pass_count"], 1)
+        self.assertEqual(records[0]["backup_known_free_check_count"], 2)
+        self.assertEqual(records[0]["backup_known_free_pass_count"], 1)
+        self.assertFalse(records[0]["backup_certificate_selected"])
+        self.assertEqual(records[0]["backup_last_reject_stage"], 6)
+        self.assertEqual(records[0]["backup_last_known_free_failure_code"], 10)
+        self.assertEqual(records[0]["backup_last_known_free_blocked_position"], [1.0, 2.0, 3.0])
+        self.assertEqual(records[0]["backup_last_seed_duration_s"], 1.25)
+        self.assertEqual(records[0]["backup_last_seed_max_jerk_mps3"], 4.0)
         self.assertTrue(records[0]["exp_diagnostics_valid"])
         self.assertEqual(records[0]["exp_lbfgs_attempt_count"], 3)
         self.assertEqual(records[0]["exp_retry_count"], 2)

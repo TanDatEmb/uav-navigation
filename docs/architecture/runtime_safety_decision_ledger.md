@@ -6591,3 +6591,32 @@ release profiles must not use the former allowance.
   repeated `SPEED_CAP_MPS=3`, `4`, and `5` with
   `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check` and
   the representative dataset shadow-planning replay.
+
+### 2026-08-28 - Expose backup certificate rejection provenance
+
+- **Owner:** planning backend diagnostics and runtime trace maintainers.
+- **Scope:** expose bounded per-solve counts and the last rejection provenance
+  for BACKUP seed feasibility, visibility-hull containment, braking-hull-aligned
+  SFC construction, KNOWN_FREE swept validation, and post-refinement validation.
+  The trace also carries the last braking seed duration, extrema, and endpoint.
+- **Safety impact:** none to authorization semantics; positive for diagnosis.
+  This change does not relax dynamic, UNKNOWN, OUT_OF_MAP, collision, freshness,
+  deadline, or atomic-commit gates. A missing or zero diagnostic value is not a
+  certificate pass and all existing rejection paths remain fail-closed.
+- **Derivation and cost:** the three-pillar artifacts showed EXP success followed
+  by backup failure but did not identify whether the seed, SFC, or KNOWN_FREE
+  swept certificate was authoritative. The bounded counters add no candidate
+  retries and only copy existing validation metadata into the product trace.
+- **Evidence:** focused planner-trace parsing coverage now preserves the new
+  fields; runtime artifacts can distinguish the rejection boundary without
+  interpreting free-form log text. This entry remains open until a current-H.E.A.D
+  dataset shadow and repeated three-pillar SITL run use the fields to select the
+  next behavior change.
+- **Removal condition:** replace only after an equivalent structured certificate
+  reason is available at the same runtime boundary and historical reports no
+  longer depend on these fields.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the focused planner/runtime tests, then
+  `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
+  PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, followed by the declared dataset
+  replay and three-pillar SITL matrix.

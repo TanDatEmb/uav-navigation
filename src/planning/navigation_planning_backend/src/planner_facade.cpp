@@ -370,6 +370,7 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
       impl_->planner->requestedGoalInflatedState());
   output.planning_goal_inflated_state = static_cast<int>(
       impl_->planner->planningGoalInflatedState());
+  output.backup_certificate = impl_->planner->backupCertificateDiagnostics();
   output.optimization = toProductDiagnostics(impl_->planner->latestExpOptimizationDiagnostics());
   return output;
 }

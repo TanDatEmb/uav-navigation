@@ -1597,6 +1597,7 @@ void NavigationRuntimeNode::runCycle() {
   }
   const auto planner_diagnostics = planner_->diagnostics();
   const auto& exp_diagnostics = planner_diagnostics.optimization;
+  const auto& backup_diagnostics = planner_diagnostics.backup_certificate;
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     // A terminal mission status or a newer waypoint may arrive while the
@@ -2235,6 +2236,50 @@ void NavigationRuntimeNode::runCycle() {
                     planner_diagnostics.module_time_us[2]);
     add_trace_value("backup_opt_us",
                     planner_diagnostics.module_time_us[3]);
+    add_trace_value("backup_certificate_attempted",
+                    backup_diagnostics.attempted ? 1 : 0);
+    add_trace_value("backup_switch_candidate_count",
+                    backup_diagnostics.switch_candidate_count);
+    add_trace_value("backup_feasible_seed_count",
+                    backup_diagnostics.feasible_seed_count);
+    add_trace_value("backup_visibility_hull_pass_count",
+                    backup_diagnostics.visibility_hull_pass_count);
+    add_trace_value("backup_aligned_sfc_built_count",
+                    backup_diagnostics.aligned_sfc_built_count);
+    add_trace_value("backup_aligned_hull_pass_count",
+                    backup_diagnostics.aligned_hull_pass_count);
+    add_trace_value("backup_known_free_check_count",
+                    backup_diagnostics.known_free_check_count);
+    add_trace_value("backup_known_free_pass_count",
+                    backup_diagnostics.known_free_pass_count);
+    add_trace_value("backup_certificate_selected",
+                    backup_diagnostics.selected ? 1 : 0);
+    add_trace_value("backup_last_reject_stage",
+                    backup_diagnostics.last_reject_stage);
+    add_trace_value("backup_last_known_free_failure_code",
+                    backup_diagnostics.last_known_free_failure_code);
+    add_trace_value("backup_last_known_free_cell_state",
+                    backup_diagnostics.last_known_free_cell_state);
+    add_trace_value("backup_last_known_free_blocked_role",
+                    backup_diagnostics.last_known_free_blocked_role);
+    add_trace_value("backup_last_known_free_first_blocked_time_s",
+                    backup_diagnostics.last_known_free_first_blocked_time_s);
+    add_trace_vector("backup_last_known_free_blocked_position",
+                     backup_diagnostics.last_known_free_blocked_position);
+    add_trace_value("backup_last_seed_switch_time_s",
+                    backup_diagnostics.last_seed_switch_time_s);
+    add_trace_value("backup_last_seed_duration_s",
+                    backup_diagnostics.last_seed_duration_s);
+    add_trace_value("backup_last_seed_initial_velocity_mps",
+                    backup_diagnostics.last_seed_initial_velocity_mps);
+    add_trace_value("backup_last_seed_max_velocity_mps",
+                    backup_diagnostics.last_seed_max_velocity_mps);
+    add_trace_value("backup_last_seed_max_acceleration_mps2",
+                    backup_diagnostics.last_seed_max_acceleration_mps2);
+    add_trace_value("backup_last_seed_max_jerk_mps3",
+                    backup_diagnostics.last_seed_max_jerk_mps3);
+    add_trace_vector("backup_last_seed_endpoint",
+                     backup_diagnostics.last_seed_endpoint);
     add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
     add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
     add_trace_value("exp_retry_count", exp_diagnostics.retry_count);

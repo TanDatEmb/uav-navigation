@@ -32,6 +32,7 @@
 #include <navigation_world_model/world_model_view.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_planning/kinematic_state.hpp>
+#include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_world_model/world_commit_authorizer.hpp>
 #include "planner_core/corridor_generator.h"
 #include "planner_core/fov_checker.h"
@@ -132,6 +133,7 @@ namespace navigation_planning_backend {
         bool estimated_boundary_warning_emitted_{false};
         std::uint64_t backup_refinement_success_count_{0};
         std::uint64_t backup_refinement_fallback_count_{0};
+        navigation_planning::BackupCertificateDiagnostics backup_certificate_diagnostics_{};
 
         Vec3f latest_guide_start_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
@@ -244,6 +246,9 @@ namespace navigation_planning_backend {
         }
         navigation_world_model::CellState planningGoalInflatedState() const noexcept {
             return planning_goal_inflated_state_;
+        }
+        navigation_planning::BackupCertificateDiagnostics backupCertificateDiagnostics() const noexcept {
+            return backup_certificate_diagnostics_;
         }
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();

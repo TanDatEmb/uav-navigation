@@ -1523,6 +1523,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // authorizeAndStage() still validates the complete main+backup bundle
         // against the latest immutable world before publication.
         TimeConsuming t_back_frontend("t_back_frontend", false);
+        backup_certificate_diagnostics_ = {};
+        backup_certificate_diagnostics_.attempted = true;
         double total_dur = ref_exp_traj.getTotalDuration();
         double start_t = planner_context_->getSimTime() - ref_exp_traj.getStartWallTime();
 
@@ -1541,6 +1543,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 command_start, command_start,
                 navigation_world_model::GridLayer::kInflated,
                 navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+            backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
+                navigation_planning::BackupCertificateRejectStage::kCommandBoundary);
             planner_context_->warn(
                     " -- [planner] backup command boundary is not KNOWN_FREE; "
                     "rejecting backup origin command=({}, {}, {}) measured=({}, {}, {})",
@@ -1786,19 +1790,38 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // the switch earlier gives the vehicle more braking distance and
         // preserves a known-free recovery suffix without weakening the
         // backup contract.
-        const auto minimum_snap_backup_is_known_free =
+        const auto record_known_free_validation = [this](
+                const SweptValidationResult& validation,
+                const navigation_planning::BackupCertificateRejectStage reject_stage) {
+            auto& diagnostics = backup_certificate_diagnostics_;
+            ++diagnostics.known_free_check_count;
+            if (validation.valid) {
+                ++diagnostics.known_free_pass_count;
+                return true;
+            }
+            diagnostics.last_reject_stage = static_cast<int>(reject_stage);
+            diagnostics.last_known_free_failure_code = static_cast<int>(validation.failure);
+            diagnostics.last_known_free_cell_state =
+                static_cast<int>(validation.blocked_cell_state);
+            diagnostics.last_known_free_blocked_role =
+                static_cast<int>(validation.blocked_role);
+            diagnostics.last_known_free_first_blocked_time_s = validation.first_blocked_tt;
+            diagnostics.last_known_free_blocked_position = validation.blocked_position;
+            return false;
+        };
+        const auto minimum_snap_backup_validation =
                 [this, &ref_exp_traj](const StatePVAJ &state,
                                       const double candidate_ts,
                                       const double duration) {
             if (solve_cancelled_.load() || !std::isfinite(candidate_ts) ||
                 !std::isfinite(duration) || duration <= 0.0) {
-                return false;
+                return SweptValidationResult{};
             }
             const double backup_start_wall_time =
                     ref_exp_traj.getStartWallTime() + candidate_ts;
             if (!std::isfinite(backup_start_wall_time) ||
                 backup_start_wall_time <= 0.0) {
-                return false;
+                return SweptValidationResult{};
             }
             CandidateCommandBundle backup_candidate;
             backup_candidate.position.emplace_back(
@@ -1810,7 +1833,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const auto validation = validateExecutableCandidate(
                     *map_ptr_, backup_candidate, planner_context_->getSimTime(),
                     navigation_world_model::UnknownPolicy::kRequireKnownFree);
-            return validation.valid;
+            return validation;
         };
         const double initial_switch_guess = heu_ts;
         const auto build_candidate_backup_sfc =
@@ -1853,6 +1876,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // This retains the latest certifiable switch instead of either
         // disabling backup or imposing an unrelated fixed replan horizon.
         for (double candidate_ts = heu_ts;;) {
+            auto& certificate_diagnostics = backup_certificate_diagnostics_;
+            ++certificate_diagnostics.switch_candidate_count;
             Polytope candidate_sfc = visibility_poly;
             bool candidate_aligned_sfc = false;
             switch_state = ref_exp_traj.posTraj().getState(candidate_ts);
@@ -1861,8 +1886,25 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
                     0.0);
+            certificate_diagnostics.last_seed_switch_time_s = candidate_ts;
+            certificate_diagnostics.last_seed_duration_s = braking_seed.duration_s;
+            certificate_diagnostics.last_seed_initial_velocity_mps =
+                braking_seed.initial_velocity_mps;
+            certificate_diagnostics.last_seed_max_velocity_mps =
+                braking_seed.maximum_velocity_mps;
+            certificate_diagnostics.last_seed_max_acceleration_mps2 =
+                braking_seed.maximum_acceleration_mps2;
+            certificate_diagnostics.last_seed_max_jerk_mps3 =
+                braking_seed.maximum_jerk_mps3;
+            certificate_diagnostics.last_seed_endpoint = braking_seed.endpoint.cast<double>();
             braking_seed_inside_sfc = braking_seed.feasible &&
                     braking_seed.duration_s > cfg_.sample_traj_dt_s;
+            if (!braking_seed_inside_sfc) {
+                certificate_diagnostics.last_reject_stage = static_cast<int>(
+                    navigation_planning::BackupCertificateRejectStage::kSeed);
+            } else {
+                ++certificate_diagnostics.feasible_seed_count;
+            }
             if (braking_seed_inside_sfc) {
                 const auto braking_control_points = minimumSnapStopBezierControlPoints(
                     switch_state, braking_seed.duration_s);
@@ -1870,6 +1912,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                      braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
                     braking_seed_inside_sfc =
                             candidate_sfc.PointIsInside(braking_control_points.col(i));
+                }
+                if (braking_seed_inside_sfc) {
+                    ++certificate_diagnostics.visibility_hull_pass_count;
+                } else {
+                    certificate_diagnostics.last_reject_stage = static_cast<int>(
+                        navigation_planning::BackupCertificateRejectStage::kVisibilityHull);
                 }
             }
             // The visibility SFC is built from the command origin to the EXP
@@ -1882,6 +1930,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             if (!braking_seed_inside_sfc) {
                 if (build_candidate_backup_sfc(
                         switch_state, braking_seed, candidate_sfc)) {
+                    ++certificate_diagnostics.aligned_sfc_built_count;
                     const auto braking_control_points =
                         minimumSnapStopBezierControlPoints(
                             switch_state, braking_seed.duration_s);
@@ -1891,15 +1940,28 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                         braking_seed_inside_sfc =
                             candidate_sfc.PointIsInside(braking_control_points.col(i));
                     }
-                    candidate_aligned_sfc = braking_seed_inside_sfc;
+                    if (braking_seed_inside_sfc) {
+                        ++certificate_diagnostics.aligned_hull_pass_count;
+                        candidate_aligned_sfc = true;
+                    } else {
+                        certificate_diagnostics.last_reject_stage = static_cast<int>(
+                            navigation_planning::BackupCertificateRejectStage::kAlignedHull);
+                    }
+                } else {
+                    certificate_diagnostics.last_reject_stage = static_cast<int>(
+                        navigation_planning::BackupCertificateRejectStage::kAlignedSfc);
                 }
             }
             if (braking_seed_inside_sfc) {
-                braking_seed_inside_sfc = minimum_snap_backup_is_known_free(
+                const auto validation = minimum_snap_backup_validation(
                     switch_state, candidate_ts, braking_seed.duration_s);
+                braking_seed_inside_sfc = record_known_free_validation(
+                    validation,
+                    navigation_planning::BackupCertificateRejectStage::kKnownFree);
             }
             if (braking_seed_inside_sfc) {
                 temp_poly = candidate_sfc;
+                certificate_diagnostics.selected = true;
                 if (candidate_aligned_sfc) {
                     planner_context_->info(
                         " -- [planner] selected braking-hull-aligned backup SFC "
@@ -1914,10 +1976,43 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             if (candidate_ts <= t0 + 1.0e-9) break;
             candidate_ts = std::max(t0, candidate_ts - cfg_.sample_traj_dt_s);
         }
+        const auto& certificate_diagnostics = backup_certificate_diagnostics_;
         if (!braking_seed_inside_sfc) {
             planner_context_->warn(
-                    " -- [planner] no dynamically feasible KNOWN_FREE minimum-snap "
-                    "backup hull inside SFC");
+                " -- [planner] no dynamically feasible KNOWN_FREE minimum-snap "
+                "backup hull inside SFC candidates={} feasible_seeds={} "
+                "visibility_hull_pass={} aligned_sfc_built={} aligned_hull_pass={} "
+                "known_free_checks={} known_free_pass={} last_reject_stage={} "
+                "last_known_free_failure={} last_known_free_cell={} "
+                "last_known_free_blocked_role={} last_known_free_tt={} "
+                "last_known_free_position=({}, {}, {}) "
+                "last_seed_switch={} last_seed_duration={} last_seed_v={} "
+                "last_seed_a={} last_seed_j={} last_seed_endpoint=({}, {}, {})",
+                certificate_diagnostics.switch_candidate_count,
+                certificate_diagnostics.feasible_seed_count,
+                certificate_diagnostics.visibility_hull_pass_count,
+                certificate_diagnostics.aligned_sfc_built_count,
+                certificate_diagnostics.aligned_hull_pass_count,
+                certificate_diagnostics.known_free_check_count,
+                certificate_diagnostics.known_free_pass_count,
+                navigation_planning::backupCertificateRejectStageName(
+                    static_cast<navigation_planning::BackupCertificateRejectStage>(
+                        certificate_diagnostics.last_reject_stage)),
+                certificate_diagnostics.last_known_free_failure_code,
+                certificate_diagnostics.last_known_free_cell_state,
+                certificate_diagnostics.last_known_free_blocked_role,
+                certificate_diagnostics.last_known_free_first_blocked_time_s,
+                certificate_diagnostics.last_known_free_blocked_position.x(),
+                certificate_diagnostics.last_known_free_blocked_position.y(),
+                certificate_diagnostics.last_known_free_blocked_position.z(),
+                certificate_diagnostics.last_seed_switch_time_s,
+                certificate_diagnostics.last_seed_duration_s,
+                certificate_diagnostics.last_seed_max_velocity_mps,
+                certificate_diagnostics.last_seed_max_acceleration_mps2,
+                certificate_diagnostics.last_seed_max_jerk_mps3,
+                certificate_diagnostics.last_seed_endpoint.x(),
+                certificate_diagnostics.last_seed_endpoint.y(),
+                certificate_diagnostics.last_seed_endpoint.z());
             return OPT_FAILED;
         }
         if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt_s * 0.5) {
@@ -1989,23 +2084,30 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     "backup_refinement_success={} backup_refinement_fallback={}",
                     backup_refinement_success_count_, backup_refinement_fallback_count_);
         }
-        const auto backupCandidateIsKnownFree = [this](
+        const auto backupCandidateValidation = [this](
                 const Trajectory& backup_position, const double backup_start_wall_time) {
-            if (!map_ptr_ || backup_position.empty() ||
-                !std::isfinite(backup_start_wall_time) || backup_start_wall_time <= 0.0) {
-                return false;
+            SweptValidationResult invalid_result;
+            if (!map_ptr_ || backup_position.empty()) {
+                invalid_result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+                return invalid_result;
+            }
+            if (!std::isfinite(backup_start_wall_time) || backup_start_wall_time <= 0.0) {
+                invalid_result.failure = SweptValidationResult::Failure::kInvalidTimeWindow;
+                return invalid_result;
             }
             CandidateCommandBundle backup_candidate;
             backup_candidate.position = backup_position;
             backup_candidate.start_wall_time = backup_start_wall_time;
             const double duration = backup_position.getTotalDuration();
-            if (!std::isfinite(duration) || duration <= 0.0) return false;
+            if (!std::isfinite(duration) || duration <= 0.0) {
+                invalid_result.failure = SweptValidationResult::Failure::kInvalidTimeWindow;
+                return invalid_result;
+            }
             backup_candidate.roles.push_back(
                     {0.0, duration, CandidateTrajectoryRole::BACKUP});
-            const auto validation = validateExecutableCandidate(
+            return validateExecutableCandidate(
                     *map_ptr_, backup_candidate, planner_context_->getSimTime(),
                     navigation_world_model::UnknownPolicy::kRequireKnownFree);
-            return validation.valid;
         };
         // The backup optimizer is constrained by the geometric SFC, while
         // the execution certificate is stricter: every swept cell in the
@@ -2014,9 +2116,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // mission corridor. Reject that refinement locally and retain the
         // already checked minimum-snap braking seed; never let
         // authorizeAndStage discover this only after the full mission solve.
-        if (!backupCandidateIsKnownFree(
-                    temp_pos_traj,
-                    ref_exp_traj.getStartWallTime() + opt_ts)) {
+        auto backup_validation = backupCandidateValidation(
+            temp_pos_traj, ref_exp_traj.getStartWallTime() + opt_ts);
+        if (!record_known_free_validation(
+                    backup_validation,
+                    navigation_planning::BackupCertificateRejectStage::kRefinementKnownFree)) {
             if (temp_ret) {
                 ++backup_refinement_fallback_count_;
                 planner_context_->warn(
@@ -2028,12 +2132,22 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 temp_pos_traj.emplace_back(braking_piece);
                 opt_ts = heu_ts;
             }
-            if (!backupCandidateIsKnownFree(
-                        temp_pos_traj,
-                        ref_exp_traj.getStartWallTime() + opt_ts)) {
+            backup_validation = backupCandidateValidation(
+                temp_pos_traj, ref_exp_traj.getStartWallTime() + opt_ts);
+            if (!record_known_free_validation(
+                        backup_validation,
+                        navigation_planning::BackupCertificateRejectStage::kRefinementKnownFree)) {
                 planner_context_->warn(
                         " -- [planner] minimum-snap backup seed is not KNOWN_FREE; "
-                        "rejecting backup candidate");
+                        "rejecting backup candidate failure={} cell={} role={} "
+                        "blocked_tt={} blocked_position=({}, {}, {})",
+                        sweptValidationFailureName(backup_validation.failure),
+                        static_cast<int>(backup_validation.blocked_cell_state),
+                        static_cast<int>(backup_validation.blocked_role),
+                        backup_validation.first_blocked_tt,
+                        backup_validation.blocked_position.x(),
+                        backup_validation.blocked_position.y(),
+                        backup_validation.blocked_position.z());
                 return OPT_FAILED;
             }
         }
