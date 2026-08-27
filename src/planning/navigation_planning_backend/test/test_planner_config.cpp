@@ -331,6 +331,22 @@ TEST(PlannerBackupBraking, PreservesTerminalAltitudeWithoutBreakingPVAJStop) {
   EXPECT_TRUE(piece.getMaxJerRate() < 8.0);
 }
 
+TEST(PlannerBackupBraking, ExtendsCertifiedSeedWhenAltitudeNeedsMoreTime) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) << 0.0, 0.0, 2.0;
+  initial.col(1) << 2.0, 0.0, 0.0;
+
+  const auto seed =
+      navigation_planning_backend::makeBackupBrakingSeedWithTerminalAltitude(
+          0.0, initial, 3.0, 2.0, 8.0, 0.05, 0.0, 3.0);
+  ASSERT_TRUE(seed.feasible);
+  ASSERT_TRUE(seed.terminal_altitude_preserved);
+  EXPECT_NEAR(seed.endpoint.z(), 3.0, 1.0e-9);
+  EXPECT_LE(seed.maximum_velocity_mps, seed.allowed_peak_velocity_mps);
+  EXPECT_LE(seed.maximum_acceleration_mps2, 2.0);
+  EXPECT_LE(seed.maximum_jerk_mps3, 8.0);
+}
+
 TEST(PlannerBackupBraking, PreservesMeasuredOverspeedWithoutIncreasingIt) {
   navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
   initial.col(0) << 2.0, -1.0, 3.0;

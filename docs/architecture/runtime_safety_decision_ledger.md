@@ -6781,9 +6781,11 @@ release profiles must not use the former allowance.
 - **Owner:** Navigation planning maintainers.
 - **Scope:** the minimum-snap backup seed may add a degree-7 C^3 smoothstep
   only in the altitude axis so its terminal position approaches the active
-  planning waypoint altitude. The measured handover PVAJ, terminal V/A/J=0,
-  SFC hull containment, exact dynamic limits, and strict KNOWN_FREE swept
-  certificate remain required.
+  planning waypoint altitude, and may search a bounded extension of its
+  already certified duration when the unmodified duration cannot satisfy the
+  exact envelope. The measured handover PVAJ, terminal V/A/J=0, SFC hull
+  containment, exact dynamic limits, and strict KNOWN_FREE swept certificate
+  remain required.
 - **Safety impact:** quality/continuity conditioning only. The altitude-held
   seed is selected only when its analytic velocity, acceleration and jerk
   extrema satisfy the existing backup envelope. If it does not, the existing

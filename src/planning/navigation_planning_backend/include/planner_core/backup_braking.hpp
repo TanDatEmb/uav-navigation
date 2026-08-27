@@ -19,6 +19,7 @@ struct BackupBrakingSeed {
   double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
   double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
   bool initial_overspeed{false};
+  bool terminal_altitude_preserved{false};
   bool feasible{false};
 };
 
@@ -217,6 +218,53 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
       return result;
     }
     duration_s *= 1.15;
+  }
+  return result;
+}
+
+inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
+    double switch_time_s, const navigation_math::StatePVAJ &switch_state,
+    double max_velocity_mps, double max_acc_mps2, double max_jerk_mps3,
+    double sample_traj_dt_s, double feasibility_margin,
+    double terminal_altitude_m) {
+  BackupBrakingSeed result = makeBackupBrakingSeed(
+      switch_time_s, switch_state, max_velocity_mps, max_acc_mps2,
+      max_jerk_mps3, sample_traj_dt_s, feasibility_margin);
+  if (!result.feasible || !std::isfinite(terminal_altitude_m)) {
+    return result;
+  }
+
+  const double gate = 1.0 + feasibility_margin;
+  double duration_s = result.duration_s;
+  // A vertical recovery target can need a little more time than the free-end
+  // stop. Search only a bounded extension of the already certified seed; the
+  // exact V/A/J limits remain unchanged and a failure retains the free-end
+  // certificate returned above.
+  for (int attempt = 0; attempt < 12; ++attempt) {
+    const auto altitude_piece = minimumSnapStopPieceWithTerminalAltitude(
+        switch_state, duration_s, terminal_altitude_m);
+    const double maximum_velocity_mps = altitude_piece.getMaxVelRate();
+    const double maximum_acceleration_mps2 = altitude_piece.getMaxAccRate();
+    const double maximum_jerk_mps3 = altitude_piece.getMaxJerRate();
+    if (altitude_piece.getPos(duration_s).allFinite() &&
+        std::isfinite(maximum_velocity_mps) &&
+        std::isfinite(maximum_acceleration_mps2) &&
+        std::isfinite(maximum_jerk_mps3) &&
+        maximum_velocity_mps <= gate * result.allowed_peak_velocity_mps &&
+        maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
+        maximum_jerk_mps3 <= gate * max_jerk_mps3) {
+      result.duration_s = duration_s;
+      result.endpoint = altitude_piece.getPos(duration_s);
+      result.maximum_velocity_mps = maximum_velocity_mps;
+      result.maximum_acceleration_mps2 = maximum_acceleration_mps2;
+      result.maximum_jerk_mps3 = maximum_jerk_mps3;
+      result.terminal_altitude_preserved = true;
+      return result;
+    }
+    duration_s *= 1.15;
+    if (!std::isfinite(duration_s) || duration_s <= 0.0) {
+      break;
+    }
   }
   return result;
 }

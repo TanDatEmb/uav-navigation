@@ -1952,43 +1952,25 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             Polytope candidate_sfc = visibility_poly;
             bool candidate_aligned_sfc = false;
             switch_state = ref_exp_traj.posTraj().getState(candidate_ts);
-            braking_seed = makeBackupBrakingSeed(
+            const double backup_altitude_target =
+                cfg_.preserve_backup_altitude &&
+                        std::isfinite(backup_altitude_target_m)
+                    ? backup_altitude_target_m
+                    : std::numeric_limits<double>::quiet_NaN();
+            braking_seed = makeBackupBrakingSeedWithTerminalAltitude(
                 candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
-                    0.0);
+                    0.0, backup_altitude_target);
             geometry_utils::Piece candidate_braking_piece;
             if (braking_seed.feasible &&
                 std::isfinite(braking_seed.duration_s) &&
                 braking_seed.duration_s > 0.0) {
-                candidate_braking_piece = minimumSnapStopPiece(
-                    switch_state, braking_seed.duration_s);
-                if (cfg_.preserve_backup_altitude &&
-                    std::isfinite(backup_altitude_target_m)) {
-                    const auto altitude_piece =
-                        minimumSnapStopPieceWithTerminalAltitude(
-                            switch_state, braking_seed.duration_s,
-                            backup_altitude_target_m);
-                    const double altitude_peak_velocity = altitude_piece.getMaxVelRate();
-                    const double altitude_peak_acceleration = altitude_piece.getMaxAccRate();
-                    const double altitude_peak_jerk = altitude_piece.getMaxJerRate();
-                    const bool altitude_piece_feasible =
-                        altitude_piece.getPos(braking_seed.duration_s).allFinite() &&
-                        std::isfinite(altitude_peak_velocity) &&
-                        std::isfinite(altitude_peak_acceleration) &&
-                        std::isfinite(altitude_peak_jerk) &&
-                        altitude_peak_velocity <= braking_seed.allowed_peak_velocity_mps &&
-                        altitude_peak_acceleration <= cfg_.back_traj_cfg.max_acc &&
-                        altitude_peak_jerk <= cfg_.back_traj_cfg.max_jerk;
-                    if (altitude_piece_feasible) {
-                        candidate_braking_piece = altitude_piece;
-                        braking_seed.endpoint =
-                            altitude_piece.getPos(braking_seed.duration_s);
-                        braking_seed.maximum_velocity_mps = altitude_peak_velocity;
-                        braking_seed.maximum_acceleration_mps2 = altitude_peak_acceleration;
-                        braking_seed.maximum_jerk_mps3 = altitude_peak_jerk;
-                    }
-                }
+                candidate_braking_piece = braking_seed.terminal_altitude_preserved
+                    ? minimumSnapStopPieceWithTerminalAltitude(
+                          switch_state, braking_seed.duration_s,
+                          backup_altitude_target_m)
+                    : minimumSnapStopPiece(switch_state, braking_seed.duration_s);
             }
             certificate_diagnostics.last_seed_switch_time_s = candidate_ts;
             certificate_diagnostics.last_seed_duration_s = braking_seed.duration_s;
