@@ -6718,6 +6718,38 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Align body-clear radius with the planner safety envelope
+
+- **Owner:** Mapping and navigation planning maintainers. **Scope:** the
+  canonical ROG-Map raycasting minimum/body-clear radius is `0.80 m`, matching
+  the planner-derived envelope
+  (`0.35 + 0.25 + 0.05 + 0.10 + 0.05 m`). The runtime contract test prevents
+  the two configuration owners from drifting below that envelope.
+- **Safety impact:** correctness of local free-space evidence. This removes an
+  artificial UNKNOWN ring that could intersect a strict BACKUP swept tube near
+  the execution anchor. It does not classify unknown future space as free,
+  permit UNKNOWN for BACKUP, alter obstacle inflation, or relax any dynamic,
+  geometric, freshness, or execution gate. The existing clear is still bounded
+  to the in-window body neighborhood and raycast returns remain the source of
+  free-space evidence beyond it.
+- **Reason/evidence:** authoritative runtime traces reported strict BACKUP
+  blockers at UNKNOWN cells about `0.78--0.80 m` from the current anchor while
+  `ray_range[0]` and the body-clear implementation were `0.70 m`; the planner
+  collision/safety envelope was `0.80 m`. The configured simulated LiDAR range
+  begins at `0.10 m`, so this alignment does not exceed the sensor's physical
+  minimum range.
+- **Evidence required:** focused runtime contract and ROG-Map tests,
+  authoritative rebuild, then repeated 3/4/5 m/s multiwaypoint SITL and
+  recorded-data replay. Inspect strict backup pass rate, blocker distance and
+  state, speed/altitude continuity, clearance, waypoint coverage, and mapping
+  latency. A lower UNKNOWN count alone is not acceptance.
+- **Removal condition:** revert only if repeated representative evidence shows
+  worse clearance, map provenance, latency, or dynamic/backup stability; do not
+  restore a configuration mismatch to hide a certificate failure.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.
+
 ### 2026-08-28 - Account for floating-point boundary ULPs in dynamic certificates
 
 - **Owner:** nominal/backup trajectory certificate maintainers.

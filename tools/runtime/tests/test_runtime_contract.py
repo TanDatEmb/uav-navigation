@@ -544,7 +544,19 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("unk_inflation_en", planner["rog_map"])
 
             self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
-            self.assertEqual(planner["rog_map"]["raycasting"]["ray_range"][0], 0.7)
+            ray_range_min = planner["rog_map"]["raycasting"]["ray_range"][0]
+            self.assertEqual(ray_range_min, 0.8)
+            planner_safety_radius = sum(
+                planner["planner"][name]
+                for name in (
+                    "vehicle_radius_m",
+                    "tracking_error_budget_m",
+                    "localization_error_budget_m",
+                    "mapping_error_budget_m",
+                    "planning_margin_m",
+                )
+            )
+            self.assertGreaterEqual(ray_range_min, planner_safety_radius)
 
             speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
             speed_target = runner._mapping_params(

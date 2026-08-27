@@ -216,9 +216,10 @@ rog_map:
     local_update_box: [100, 100, 5]
     # Reject returns from the airframe before occupancy insertion. This only
     # affects the planning map; the estimator keeps its own registered cloud.
-    # The radius must cover the complete body/landing-gear envelope, not just
-    # the planner collision radius.
-    ray_range: [0.7, 100]
+    # The minimum ray range is also the body-clear radius. It must cover the
+    # complete planner safety envelope so a strict BACKUP swept tube cannot
+    # enter an artificial UNKNOWN ring around the execution anchor.
+    ray_range: [0.8, 100]
     p_min: 0.12
     p_miss: 0.49
     p_free: 0.499
