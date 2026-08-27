@@ -6664,3 +6664,29 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; `make test`; repeated
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` with route/clearance evidence.
+
+### 2026-08-28 - Extend pass-through guide into the outgoing leg
+
+- **Owner:** Navigation planning maintainers.
+- **Scope:** When the active pass-through waypoint is reachable and the
+  supplied outgoing leg is a direct traversable segment, extend the guide
+  toward the next waypoint within the existing geometric horizon. The
+  extension is subdivided by the existing corridor seed-segment limit and
+  leaves a dynamics-derived braking-distance buffer before the next waypoint.
+- **Safety impact:** This removes an artificial stop at a pass-through
+  waypoint without changing the mission acceptance contract. Every added
+  segment uses the configured UNKNOWN policy and inflated-layer traversability
+  oracle; corridor generation, dynamic limits, endpoint validation, and strict
+  backup certification remain unchanged. If the direct continuation is not
+  certifiable, the planner retains the existing current-waypoint route.
+- **Evidence:** The 3 m/s multiwaypoint trace repeatedly selected a finite
+  backup suffix as the current waypoint became reachable, then failed main
+  replans at the short terminal route. The mission already supplies the next
+  waypoint as pass-through metadata.
+- **Removal condition:** Remove only if repeated multiwaypoint SITL and
+  recorded-data evidence shows worse waypoint coverage, speed recovery,
+  altitude tracking, or clearance than the current-waypoint-only behavior.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` with endpoint, role, speed, waypoint, and clearance
+  evidence.

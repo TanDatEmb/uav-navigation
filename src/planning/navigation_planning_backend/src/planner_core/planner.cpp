@@ -1298,6 +1298,71 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     return FAILED;
                 }
 
+                // A pass-through waypoint must not become an artificial
+                // terminal stop merely because the current geometric target
+                // is reachable inside this horizon.  Extend the guide along
+                // the already supplied outgoing leg while there is room in
+                // the same horizon.  This is intentionally a direct-segment
+                // continuation: obstacle detours remain owned by A* on the
+                // next replanning cycle, and every added sub-segment uses the
+                // configured UNKNOWN/inflated-map oracle.
+                if (pass_through_next_target_.has_value() &&
+                    (new_path.back() - gi_.goal_p).norm() <=
+                        navigation_world_model::kGoalConnectionToleranceM) {
+                    const Vec3f continuation_start = new_path.back();
+                    const Vec3f continuation_delta =
+                        *pass_through_next_target_ - continuation_start;
+                    const double continuation_distance = continuation_delta.norm();
+                    const double route_length = geometry_utils::computePathLength(new_path);
+                    const double remaining_horizon = temp_horizon - route_length;
+                    const double braking_distance =
+                        (cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.max_vel) /
+                        (2.0 * cfg_.exp_traj_cfg.max_acc);
+                    const double endpoint_buffer = std::max(
+                        navigation_world_model::kGoalConnectionToleranceM,
+                        braking_distance);
+                    const double extension_distance = std::min(
+                        continuation_distance - endpoint_buffer,
+                        remaining_horizon - cfg_.resolution);
+                    if (continuation_delta.allFinite() &&
+                        continuation_distance > endpoint_buffer &&
+                        std::isfinite(extension_distance) &&
+                        extension_distance > 2.0 * cfg_.resolution) {
+                        const Vec3f continuation_direction =
+                            continuation_delta / continuation_distance;
+                        const std::size_t segment_count = static_cast<std::size_t>(
+                            std::ceil(extension_distance /
+                                      cfg_.corridor_segment_max_length_m));
+                        const std::size_t route_size_before_extension = new_path.size();
+                        bool continuation_safe = segment_count > 0U;
+                        Vec3f previous = continuation_start;
+                        for (std::size_t segment = 1U;
+                             continuation_safe && segment <= segment_count; ++segment) {
+                            const double progress =
+                                extension_distance * static_cast<double>(segment) /
+                                static_cast<double>(segment_count);
+                            const Vec3f point = continuation_start +
+                                progress * continuation_direction;
+                            continuation_safe = map_ptr_->isSegmentTraversable(
+                                previous, point,
+                                navigation_world_model::GridLayer::kInflated,
+                                unknownPolicy());
+                            if (continuation_safe) {
+                                new_path.push_back(point);
+                                previous = point;
+                            }
+                        }
+                        if (!continuation_safe) {
+                            new_path.resize(route_size_before_extension);
+                        } else if (cfg_.print_log) {
+                            planner_context_->info(
+                                " -- [Astar] pass-through continuation extended guide by {} m "
+                                "toward next target; endpoint buffer={} m",
+                                extension_distance, endpoint_buffer);
+                        }
+                    }
+                }
+
                 geometry_utils::GuideTimeAllocation allocation;
                 if (!geometry_utils::allocateGuideElapsedTimes(
                         cfg_.exp_traj_cfg.max_acc,
