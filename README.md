@@ -114,6 +114,8 @@ planned-path topics.
   PX4 NED/FRD conversions;
 - [Product architecture and naming](docs/adr/ADR-012-product-owned-tree-and-naming.md):
   canonical tree, ownership, and migration sequence;
+- [Continuous waypoint trajectory plan](docs/architecture/continuous_waypoint_trajectory_plan.md):
+  staged route look-ahead, piecewise trajectory, sensing evidence, and acceptance plan;
 - [ADR index](docs/adr/): durable design decisions;
 - [Third-party notices](THIRD_PARTY_NOTICES.md): vendored source and license
   boundaries.
