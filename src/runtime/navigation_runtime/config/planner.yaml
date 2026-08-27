@@ -99,6 +99,9 @@ traj_opt:
       vertical_weight: 10.0
       lateral_deadband_m: 0.05
       vertical_deadband_m: 0.05
+    # Interior search target only; the independent physical V/A/J certificate
+    # remains at the mission limits and cannot be relaxed by this value.
+    optimization_dynamic_reserve_ratio: 0.98
     # Objective weights shape numerical search only. Hard corridor and dynamic
     # certificates are evaluated independently.
     objective:

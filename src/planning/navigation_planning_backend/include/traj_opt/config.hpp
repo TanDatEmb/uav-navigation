@@ -81,6 +81,10 @@ namespace traj_opt {
         double route_reference_vertical_weight{0};
         double route_reference_lateral_deadband_m{0};
         double route_reference_vertical_deadband_m{0};
+        // Keep the nominal optimizer's soft dynamic target inside the
+        // physical mission envelope. This is a search reserve only; the
+        // independent V/A/J certificate still uses max_vel/max_acc/max_jerk.
+        double optimization_dynamic_reserve_ratio{1.0};
         // Retained as a compatibility field so stale YAML fails explicitly at
         // validation instead of silently changing the physical certificate.
         // Product behavior is strict: this value must be exactly zero.
@@ -141,6 +145,8 @@ namespace traj_opt {
                                  route_reference_lateral_deadband_m, 0.0);
                 loader.LoadParam("traj_opt" + ns + "route_reference/vertical_deadband_m",
                                  route_reference_vertical_deadband_m, 0.0);
+                loader.LoadParam("traj_opt" + ns + "optimization_dynamic_reserve_ratio",
+                                 optimization_dynamic_reserve_ratio, 1.0);
             }
             loader.LoadParam("traj_opt/boundary/dynamic_limit_tolerance_ratio",
                              dynamic_limit_tolerance_ratio, 0.0);
@@ -201,6 +207,9 @@ namespace traj_opt {
                 route_reference_lateral_deadband_m < 0.0 ||
                 !std::isfinite(route_reference_vertical_deadband_m) ||
                 route_reference_vertical_deadband_m < 0.0 ||
+                !std::isfinite(optimization_dynamic_reserve_ratio) ||
+                optimization_dynamic_reserve_ratio <= 0.0 ||
+                optimization_dynamic_reserve_ratio > 1.0 ||
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||

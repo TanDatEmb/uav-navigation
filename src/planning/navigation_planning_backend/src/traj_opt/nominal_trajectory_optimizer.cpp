@@ -768,6 +768,30 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             opt_vars.points.col(i) = opt_vars.init_ps[i];
         }
     }
+    // Use a conservative interior target for the optimizer's soft dynamic
+    // penalties. The hard certificate below remains tied to cfg_ limits, and
+    // boundary states are never penalized merely for being above the interior
+    // target when they are already physically valid.
+    const double reserve = cfg_.optimization_dynamic_reserve_ratio;
+    if (!std::isfinite(reserve) || reserve <= 0.0 || reserve > 1.0) {
+        planner_context_->warn(
+                " -- [ExpOpt] invalid dynamic optimization reserve ratio={}", reserve);
+        traj.clear();
+        return INFINITY;
+    }
+    opt_vars.magnitudeBounds[0] = std::max(
+            cfg_.max_vel * reserve, opt_vars.headPVAJ.col(1).norm());
+    opt_vars.magnitudeBounds[1] = std::max(
+            cfg_.max_acc * reserve, opt_vars.headPVAJ.col(2).norm());
+    opt_vars.magnitudeBounds[2] = std::max(
+            cfg_.max_jerk * reserve, opt_vars.headPVAJ.col(3).norm());
+    if (!opt_vars.magnitudeBounds.allFinite() ||
+        (opt_vars.magnitudeBounds.array() <= 0.0).any()) {
+        planner_context_->warn(
+                " -- [ExpOpt] invalid dynamic optimization bounds after reserve");
+        traj.clear();
+        return INFINITY;
+    }
     diagnostics_.initial_duration_s = opt_vars.times.sum();
 
     /* 3)  construct the initial guess of the optimization varibles*/

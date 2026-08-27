@@ -68,6 +68,10 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
 
 TEST(ExpOptimizer, HighSpeedCorridorSolveKeepsContinuousCertificate) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  // This fixture intentionally starts at the exact physical velocity cap;
+  // keep its search envelope at the cap while testing corridor/flatness
+  // certification rather than interior reserve conditioning.
+  config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
   config.max_acc = 2.0;
   config.max_jerk = 4.0;
@@ -108,6 +112,9 @@ TEST(ExpOptimizer, HighSpeedCorridorSolveKeepsContinuousCertificate) {
 
 TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  // This fixture intentionally starts at the exact physical velocity cap;
+  // keep its search envelope at the cap while testing corridor certification.
+  config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
   config.max_acc = 2.0;
   config.max_jerk = 4.0;
@@ -145,6 +152,10 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
 
 TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  // This fixture intentionally starts at the exact physical velocity cap;
+  // keep its search envelope at the cap while testing obstacle-bypass
+  // certification.
+  config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
   config.max_acc = 2.0;
   config.max_jerk = 4.0;

@@ -6717,3 +6717,32 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; `make test`; repeated
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
+
+### 2026-08-28 - Keep nominal dynamic search inside the physical envelope
+
+- **Owner:** Navigation planning maintainers. **Scope:** nominal EXP soft
+  dynamic penalties use `optimization_dynamic_reserve_ratio=0.98` for V/A/J;
+  boundary states remain exempt up to their physically valid measured values.
+- **Safety impact:** conservative search conditioning only. The independent
+  V/A/J hard certificate still compares the generated trajectory against the
+  exact mission limits; no tolerance, backup policy, UNKNOWN policy, corridor,
+  flatness, or waypoint acceptance gate is relaxed.
+- **Reason/evidence:** the 3 m/s trace showed nominal MINCO repeatedly rejected
+  for small velocity overshoot (`3.0001--3.0009 m/s` against a strict 3 m/s
+  limit), causing repeated backup stopping trajectories and the observed
+  altitude/speed degradation. The reserve is intended to make the optimizer
+  seek an interior solution instead of relying on numerical contact with the
+  hard boundary.
+- **Evidence required:** focused optimizer/config tests, authoritative build,
+  and repeated 3/4/5 m/s SITL plus representative recorded-data replay. Check
+  exact V/A/J certificates, altitude residual, speed recovery, waypoint
+  coverage, clearance, backup ratio, and latency; a lower backup ratio alone
+  is not acceptance.
+- **Removal/review condition:** remove or retune only from a distribution that
+  shows the reserve causes unacceptable speed loss, numerical instability,
+  waypoint regressions, or worse clearance. Never use it to authorize a
+  trajectory that fails the exact hard certificate.
+- **Verification:** `make build`; `make test`; focused optimizer tests and
+  repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.
