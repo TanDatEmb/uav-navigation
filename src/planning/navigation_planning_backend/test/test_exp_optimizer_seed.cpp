@@ -189,6 +189,50 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   }
 }
 
+TEST(ExpOptimizer, KeepsRequiredPassThroughWaypointAsExactIntermediateNode) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.optimization_dynamic_reserve_ratio = 1.0;
+  config.max_vel = 8.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(30.0);
+  const navigation_math::Vec3f waypoint{10.0, 0.0, 1.0};
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(waypoint);
+  guide_path.emplace_back(navigation_math::Vec3f{20.0, 0.0, 1.0});
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 5.0, 9.0, 13.0};
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
+  geometry_utils::Trajectory trajectory;
+
+  optimizer.setRequiredWaypoint(waypoint);
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, corridors, trajectory));
+  ASSERT_EQ(trajectory.getPieceNum(), corridors.size());
+  ASSERT_FALSE(trajectory.empty());
+
+  const auto waypoint_state = trajectory[0].getState(trajectory[0].getDuration());
+  EXPECT_NEAR((waypoint_state.col(0) - waypoint).norm(), 0.0, 1.0e-9);
+  EXPECT_LE(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory[0], corridors[0].GetPlanes()),
+      config.corridor_plane_tolerance_m);
+  EXPECT_LE(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory[1], corridors[1].GetPlanes()),
+      config.corridor_plane_tolerance_m);
+}
+
 TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;

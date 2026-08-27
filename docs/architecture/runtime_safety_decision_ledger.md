@@ -6718,6 +6718,37 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Preserve active pass-through waypoint as an exact route node
+
+- **Owner:** Navigation planning maintainers. **Scope:** when a pass-through
+  goal is present inside the extended guide, corridor generation is forced to
+  split at that exact guide sample and the matching MINCO junction is fixed to
+  the certified planning waypoint. Stop goals and horizons that do not contain
+  the active goal retain the existing route construction.
+- **Safety impact:** mission-route correctness and continuity only. The exact
+  node remains inside both adjacent corridor polytopes; corridor containment,
+  V/A/J, flatness, strict UNKNOWN/OUT_OF_MAP handling, swept-tube, command
+  anchor, cancellation, and transactional commit gates remain unchanged. No
+  waypoint acceptance, collision, or dynamic threshold is relaxed.
+- **Reason/evidence:** the authoritative 3 m/s multiwaypoint trace extended a
+  nominal guide through WP1 but the optimized trajectory passed its closest
+  point at approximately 1.28 m while the acceptance radius was 0.9 m. The
+  previous optimizer had no exact intermediate waypoint constraint, so a
+  minimum-snap polynomial could bow around an active waypoint while its tail
+  remained on the outgoing guide.
+- **Evidence required:** focused corridor/optimizer tests, authoritative build,
+  then repeated 3/4/5 m/s multiwaypoint SITL and representative recorded-data
+  replay. Inspect exact waypoint-node residual, waypoint coverage, speed
+  recovery, altitude, clearance, backup/certificate outcomes, and latency.
+- **Removal/review condition:** revert only from repeated evidence showing
+  worse waypoint coverage, clearance, dynamic margin, numerical stability, or
+  processing tails. Never remove the node by replacing it with a relaxed
+  acceptance or collision gate.
+- **Verification:** `make build`; `source install/setup.bash && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.
+
 ### 2026-08-28 - Limit pass-through terminal velocity change by local time
 
 - **Owner:** Navigation planning maintainers. **Scope:** pass-through terminal

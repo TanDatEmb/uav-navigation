@@ -107,7 +107,8 @@ namespace navigation_planning_backend {
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,
                                   bool cut_first_poly = false,
-                                  const AbsoluteDeadline* deadline = nullptr);
+                                  const AbsoluteDeadline* deadline = nullptr,
+                                  int forced_break_index = -1);
 
         void getSeedBBox(const Vec3f &p1, const Vec3f &p2,
                          Vec3f &box_min, Vec3f &box_max);
