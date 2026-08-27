@@ -94,6 +94,33 @@ TEST(MappingActorContract, ValidatesNewEpochBeforeResettingTheMap) {
   EXPECT_NO_THROW(actor.process(next_old_epoch));
 }
 
+TEST(MappingActorContract, CarriesFiniteNoReturnEndpointsIntoMapEvidence) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
+  auto free_space = std::make_unique<navigation_mapping::PointCloud>();
+  free_space->push_back(
+      navigation_mapping::PointXYZI{4.0F, 0.0F, 0.0F, 0.0F});
+  observation.free_space_endpoints = std::move(free_space);
+
+  const auto result = actor.process(observation);
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.diagnostics.free_space_endpoint_count, 1U);
+  EXPECT_EQ(result.diagnostics.free_space_processed_count, 1U);
+}
+
+TEST(MappingActorContract, RejectsNonFiniteNoReturnEndpointsBeforeMapMutation) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
+  auto free_space = std::make_unique<navigation_mapping::PointCloud>();
+  free_space->push_back(
+      navigation_mapping::PointXYZI{NAN, 0.0F, 0.0F, 0.0F});
+  observation.free_space_endpoints = std::move(free_space);
+
+  EXPECT_THROW(actor.process(observation), std::invalid_argument);
+}
+
 TEST(MappingActorContract, ReconstructsBackendForNewLocalizationEpoch) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.process(observationAt(1'000'000'000LL, 1'000'000'000LL)).snapshot);

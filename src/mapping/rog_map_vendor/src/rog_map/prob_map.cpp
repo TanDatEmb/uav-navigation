@@ -24,6 +24,7 @@
 #include <rog_map/prob_map.h>
 #include <chrono>
 #include <cmath>
+#include <limits>
 using namespace rog_map;
 using namespace navigation_math;
 
@@ -345,8 +346,16 @@ void ProbMap::slideAllMap(const rog_map::Vec3f& pos) {
 }
 
 MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pose) {
+    static const PointCloud no_return_endpoints;
+    return updateProbMap(cloud, no_return_endpoints, pose);
+}
+
+MapUpdateOutcome ProbMap::updateProbMap(
+    const PointCloud& cloud, const PointCloud& free_space_endpoints,
+    const Pose& pose) {
     last_diagnostics_ = RaycastDiagnostics{};
     last_diagnostics_.endpoint_count = cloud.size();
+    last_diagnostics_.free_space_endpoint_count = free_space_endpoints.size();
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
     TimeConsuming tc("updateMap", false);
     const Vec3f& pos = pose.first;
@@ -388,7 +397,7 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
 
     updateLocalBox(pos);
     TimeConsuming t_raycast("raycast", false);
-    raycastProcess(cloud, pos);
+    raycastProcess(cloud, free_space_endpoints, pos);
     time_consuming_[1] = t_raycast.stop();
     last_diagnostics_.rog_raycast_us = static_cast<std::int64_t>(time_consuming_[1] * 1e6);
     raycast_data_.batch_update_counter++;
@@ -814,7 +823,9 @@ void ProbMap::missPointUpdate(const Vec3f& pos, const int& hash_id, const int& h
     }
 }
 
-void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odom) {
+void ProbMap::raycastProcess(const PointCloud& input_cloud,
+                             const PointCloud& free_space_endpoints,
+                             const Vec3f& cur_odom) {
     // bounding box of updated region
     raycast_data_.cache_box_min = cur_odom;
     raycast_data_.cache_box_max = cur_odom;
@@ -831,6 +842,8 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
     // new version of raycasting process
     auto raycasting_cloud = vec_Vec3f{};
     raycasting_cloud.reserve(cloud_in_size);
+    auto free_space_raycasting_cloud = vec_Vec3f{};
+    free_space_raycasting_cloud.reserve(free_space_endpoints.size());
 
     // 1) process all non-inf points, update occupied probability
     int temperol_cnt{0};
@@ -947,8 +960,81 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
     }
 
     if (cfg_.raycasting_en) {
+        // Explicit no-return endpoints are a separate evidence type.  They
+        // contribute miss updates up to the endpoint, but never insert a hit
+        // at that endpoint.  Do not apply hit intensity/point filters: a
+        // no-return endpoint has no return intensity and each supplied ray is
+        // already an intentional visibility sample.
+        for (const auto& free_endpoint : free_space_endpoints) {
+            ++last_diagnostics_.free_space_attempt_count;
+            if (!std::isfinite(free_endpoint.x) ||
+                !std::isfinite(free_endpoint.y) ||
+                !std::isfinite(free_endpoint.z)) {
+                ++last_diagnostics_.free_space_skipped_count;
+                continue;
+            }
+
+            Vec3f p(free_endpoint.x, free_endpoint.y, free_endpoint.z);
+            const double sqr_dis = (p - cur_odom).squaredNorm();
+            if (!std::isfinite(sqr_dis) ||
+                sqr_dis < cfg_.sqr_raycast_range_min) {
+                ++last_diagnostics_.free_space_skipped_count;
+                continue;
+            }
+
+            bool clipped = false;
+            if (cfg_.virtual_ground_ceiling_en &&
+                p.z() > cfg_.virtual_ceil_height) {
+                const double dz = p.z() - cur_odom.z();
+                if (std::abs(dz) <= std::numeric_limits<double>::epsilon()) {
+                    ++last_diagnostics_.free_space_skipped_count;
+                    continue;
+                }
+                const double pc = cfg_.virtual_ceil_height - cur_odom.z();
+                p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+                clipped = true;
+            } else if (cfg_.virtual_ground_ceiling_en &&
+                       p.z() < cfg_.virtual_ground_height) {
+                const double dz = p.z() - cur_odom.z();
+                if (std::abs(dz) <= std::numeric_limits<double>::epsilon()) {
+                    ++last_diagnostics_.free_space_skipped_count;
+                    continue;
+                }
+                const double pc = cfg_.virtual_ground_height - cur_odom.z();
+                p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+                clipped = true;
+            }
+
+            if (sqr_dis > cfg_.sqr_raycast_range_max) {
+                const double distance = std::sqrt(sqr_dis);
+                if (!std::isfinite(distance) || distance <= 0.0) {
+                    ++last_diagnostics_.free_space_skipped_count;
+                    continue;
+                }
+                p = cfg_.raycast_range_max / distance * (p - cur_odom) + cur_odom;
+                clipped = true;
+            }
+
+            if (((p - raycast_box_min).minCoeff() < 0) ||
+                ((p - raycast_box_max).maxCoeff() > 0)) {
+                p = lineBoxIntersectPoint(p, cur_odom, raycast_box_min,
+                                          raycast_box_max);
+                clipped = true;
+            }
+            if (!p.allFinite()) {
+                ++last_diagnostics_.free_space_skipped_count;
+                continue;
+            }
+
+            raycast_data_.cache_box_min = raycast_data_.cache_box_min.cwiseMin(p);
+            raycast_data_.cache_box_max = raycast_data_.cache_box_max.cwiseMax(p);
+            free_space_raycasting_cloud.push_back(p);
+            ++last_diagnostics_.free_space_processed_count;
+            if (clipped) ++last_diagnostics_.free_space_clipped_count;
+        }
+
         // 4) process all inf points, updae free probability
-        for (const auto& p : raycasting_cloud) {
+        const auto add_miss_ray = [this, &cur_odom](const Vec3f& p) {
             Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
             raycast_data_.raycaster.setInput(raycast_start, p);
             Vec3i ray_pt_id_g;
@@ -964,12 +1050,15 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud, const Vec3f& cur_odo
             }
             last_diagnostics_.voxel_traversal_count_max =
                 std::max(last_diagnostics_.voxel_traversal_count_max, ray_steps);
-        }
+        };
+        for (const auto& p : raycasting_cloud) add_miss_ray(p);
+        for (const auto& p : free_space_raycasting_cloud) add_miss_ray(p);
     }
     last_diagnostics_.skipped_count = last_diagnostics_.skip_nonfinite +
         last_diagnostics_.skip_intensity + last_diagnostics_.skip_point_filter +
         last_diagnostics_.skip_below_raycast_min_range +
-        last_diagnostics_.skip_endpoint_outside_local_map;
+        last_diagnostics_.skip_endpoint_outside_local_map +
+        last_diagnostics_.free_space_skipped_count;
 }
 
 void ProbMap::insertUpdateCandidate(const Vec3i& id_g, bool is_hit) {

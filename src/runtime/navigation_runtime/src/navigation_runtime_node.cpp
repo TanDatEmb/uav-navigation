@@ -646,6 +646,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   lifecycle.allInvariantsHold() ? 1U : 0U);
         add_value("observation_accounting_violation_count", lifecycle.violation_count);
         add_value("mapping_input_point_count", map.endpoint_count);
+        add_value("mapping_free_space_endpoint_count",
+                  map.free_space_endpoint_count);
+        add_value("mapping_free_space_processed_count",
+                  map.free_space_processed_count);
+        add_value("mapping_free_space_skipped_count",
+                  map.free_space_skipped_count);
         add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
         add_value("mapping_body_neighborhood_cells_cleared",
                   map.body_neighborhood_cells_cleared);
@@ -747,7 +753,8 @@ NavigationRuntimeNode::~NavigationRuntimeNode() {
 }
 
 bool NavigationRuntimeNode::decodeCloud(const sensor_msgs::msg::PointCloud2& message,
-                                      navigation_mapping::PointCloud& output) {
+                                      navigation_mapping::PointCloud& output,
+                                      const bool require_nonempty) {
   if (!hasFloatField(message, "x") || !hasFloatField(message, "y") ||
       !hasFloatField(message, "z") || message.point_step == 0U ||
       message.row_step < message.point_step * message.width ||
@@ -783,7 +790,7 @@ bool NavigationRuntimeNode::decodeCloud(const sensor_msgs::msg::PointCloud2& mes
     output.clear();
     return false;
   }
-  return !output.empty();
+  return !require_nonempty || !output.empty();
 }
 
 void NavigationRuntimeNode::resetForLocalizationEpochLocked(
@@ -841,13 +848,22 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
 
 void NavigationRuntimeNode::onRegisteredScan(
     const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message) {
+  const auto observation_stamp_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp).value_or(0);
+  const auto& free_space = message->free_space_endpoints;
+  const bool has_free_space_payload =
+      free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();
   if (!accepting_observations_.load(std::memory_order_acquire) ||
       message->localization_epoch == 0U ||
       message->scan_sequence == 0U ||
       message->header.frame_id != planning_frame_ ||
       message->points.header.frame_id != message->header.frame_id ||
       navigation_common::rosTimeToNanoseconds(message->points.header.stamp).value_or(0) !=
-          navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0) ||
+          observation_stamp_ns ||
+      (has_free_space_payload &&
+       (free_space.header.frame_id != message->header.frame_id ||
+        navigation_common::rosTimeToNanoseconds(free_space.header.stamp).value_or(0) !=
+            observation_stamp_ns)) ||
       message->body_frame_id != body_frame_id_) {
     observation_accounting_.recordRejectedBeforeInbox();
     return;
@@ -855,7 +871,7 @@ void NavigationRuntimeNode::onRegisteredScan(
   const auto& pose = message->corrected_pose.pose;
   const Eigen::Quaterniond quaternion{
       pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
-  if (navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0) <= 0 ||
+  if (observation_stamp_ns <= 0 ||
       !std::isfinite(pose.position.x) || !std::isfinite(pose.position.y) ||
       !std::isfinite(pose.position.z) || !finiteNonzeroQuaternion(quaternion)) {
     observation_accounting_.recordRejectedBeforeInbox();
@@ -866,6 +882,14 @@ void NavigationRuntimeNode::onRegisteredScan(
   if (!decodeCloud(message->points, *decoded)) {
     observation_accounting_.recordRejectedBeforeInbox();
     return;
+  }
+  std::unique_ptr<navigation_mapping::PointCloud> decoded_free_space;
+  if (has_free_space_payload) {
+    decoded_free_space = std::make_unique<navigation_mapping::PointCloud>();
+    if (!decodeCloud(free_space, *decoded_free_space, false)) {
+      observation_accounting_.recordRejectedBeforeInbox();
+      return;
+    }
   }
 
   std::lock_guard<std::mutex> transition_lock(localization_transition_mutex_);
@@ -894,10 +918,14 @@ void NavigationRuntimeNode::onRegisteredScan(
   navigation_mapping::MappingObservation observation{
       std::move(decoded), std::move(corrected), message->localization_epoch,
       message->scan_sequence,
-      navigation_common::rosTimeToNanoseconds(message->header.stamp).value_or(0),
+      observation_stamp_ns,
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - decode_started)
-          .count()};
+          .count(),
+      nullptr};
+  if (decoded_free_space) {
+    observation.free_space_endpoints = std::move(decoded_free_space);
+  }
   observation_accounting_.recordAcceptedToInbox();
   (void)mapping_worker_->submitFromWaiting(std::move(observation));
 }
@@ -1328,6 +1356,12 @@ void NavigationRuntimeNode::runCycle() {
                    command_execution_receive_age_us_.load());
   add_value("processing_exception_count", map_update_exception_count_);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
+  add_value("mapping_free_space_endpoint_count",
+            map_diagnostics.free_space_endpoint_count);
+  add_value("mapping_free_space_processed_count",
+            map_diagnostics.free_space_processed_count);
+  add_value("mapping_free_space_skipped_count",
+            map_diagnostics.free_space_skipped_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
   add_value("mapping_body_neighborhood_cells_cleared",
             map_diagnostics.body_neighborhood_cells_cleared);

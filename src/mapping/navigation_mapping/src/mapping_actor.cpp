@@ -40,8 +40,13 @@ namespace {
   RaycastDiagnostics result;
   result.update_outcome = toProductOutcome(source.update_outcome);
   result.endpoint_count = source.endpoint_count;
+  result.free_space_endpoint_count = source.free_space_endpoint_count;
   result.attempt_count = source.attempt_count;
   result.processed_count = source.processed_count;
+  result.free_space_attempt_count = source.free_space_attempt_count;
+  result.free_space_processed_count = source.free_space_processed_count;
+  result.free_space_clipped_count = source.free_space_clipped_count;
+  result.free_space_skipped_count = source.free_space_skipped_count;
   result.clipped_count = source.clipped_count;
   result.skipped_count = source.skipped_count;
   result.skip_nonfinite = source.skip_nonfinite;
@@ -245,7 +250,13 @@ class MappingActor::Impl final {
       const auto map_started = std::chrono::steady_clock::now();
       result.diagnostics = {};
       fillBackendCloud(*observation.cloud, backend_cloud_);
-      const auto backend_outcome = map_->updateMap(backend_cloud_, map_pose);
+      backend_free_space_cloud_.clear();
+      if (observation.free_space_endpoints) {
+        fillBackendCloud(*observation.free_space_endpoints,
+                         backend_free_space_cloud_);
+      }
+      const auto backend_outcome = map_->updateMap(
+          backend_cloud_, backend_free_space_cloud_, map_pose);
       result.outcome = toProductOutcome(backend_outcome);
       result.diagnostics = toProductDiagnostics(map_->lastDiagnostics());
       if (!worldUpdateAdvanced(result.outcome)) {
@@ -393,6 +404,15 @@ class MappingActor::Impl final {
         throw std::invalid_argument("mapping point cloud contains a non-finite point");
       }
     }
+    if (observation.free_space_endpoints) {
+      for (const auto& point : *observation.free_space_endpoints) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+            !std::isfinite(point.z) || !std::isfinite(point.intensity)) {
+          throw std::invalid_argument(
+              "mapping free-space endpoint cloud contains a non-finite point");
+        }
+      }
+    }
     if (observation.localization_epoch == localization_epoch_) {
       if (observation.stamp_ns <= last_observation_stamp_ns_) {
         throw std::runtime_error("mapping observation timestamp is not increasing");
@@ -408,6 +428,7 @@ class MappingActor::Impl final {
   std::function<double()> wall_clock_seconds_;
   std::unique_ptr<internal::RuntimeMappingMap> map_;
   rog_map::PointCloud backend_cloud_;
+  rog_map::PointCloud backend_free_space_cloud_;
   std::shared_ptr<const std::vector<navigation_world_model::GridIndex3>> nearest_offsets_;
   std::shared_ptr<const MappingWorldSnapshot> current_snapshot_;
   std::uint64_t localization_epoch_{1};

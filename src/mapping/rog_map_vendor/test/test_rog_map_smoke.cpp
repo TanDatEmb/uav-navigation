@@ -24,6 +24,10 @@ rog_map::PointCloud singlePointCloud(const rog_map::Vec3f& point) {
   return cloud;
 }
 
+rog_map::PointCloud noReturnEndpoints(const rog_map::Vec3f& point) {
+  return singlePointCloud(point);
+}
+
 }  // namespace
 
 TEST(RogMapVendorSmoke, ConstructAndInit) {
@@ -63,4 +67,32 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   EXPECT_FALSE(map.isLineKnownFree(sensor_origin, rog_map::Vec3f(4.5, 0.0, 0.0)));
   EXPECT_FALSE(map.isLineFree(sensor_origin, rog_map::Vec3f(100.0, 0.0, 0.0),
                               true, false));
+}
+
+TEST(RogMapVendorSmoke, ExplicitNoReturnEndpointAddsMissOnlyEvidence) {
+  TestRogMap map;
+  map.loadConfigAndInit(
+      std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) +
+      "/rog_map_raycasting_boundary.yaml");
+
+  const rog_map::Vec3f sensor_origin(0.0, 0.0, 0.0);
+  const rog_map::Pose pose(sensor_origin, Eigen::Quaterniond::Identity());
+  const auto free_endpoint = noReturnEndpoints(rog_map::Vec3f(4.0, 0.0, 0.0));
+  rog_map::PointCloud hits;
+  for (int i = 0; i < 30; ++i) {
+    EXPECT_EQ(map.updateMap(hits, free_endpoint, pose),
+              rog_map::MapUpdateOutcome::UPDATED);
+  }
+
+  const auto& diagnostics = map.lastDiagnostics();
+  EXPECT_EQ(diagnostics.endpoint_count, 0U);
+  EXPECT_EQ(diagnostics.free_space_endpoint_count, 1U);
+  EXPECT_EQ(diagnostics.free_space_attempt_count, 1U);
+  EXPECT_EQ(diagnostics.free_space_processed_count, 1U);
+  EXPECT_EQ(diagnostics.free_space_skipped_count, 0U);
+  EXPECT_LT(map.getMapValue(rog_map::Vec3f(1.0, 0.0, 0.0)), -0.0039);
+  // The DDA intentionally excludes the endpoint voxel itself.  A voxel
+  // strictly before the endpoint must nevertheless become known free.
+  EXPECT_TRUE(map.isKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0)));
+  EXPECT_FALSE(map.isOccupied(rog_map::Vec3f(4.0, 0.0, 0.0)));
 }

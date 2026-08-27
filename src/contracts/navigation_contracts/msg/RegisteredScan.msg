@@ -13,3 +13,13 @@ geometry_msgs/PoseWithCovariance corrected_pose
 # points.header.stamp and points.header.frame_id must equal header.stamp and
 # header.frame_id respectively.  The cloud is registered in the outer frame.
 sensor_msgs/PointCloud2 points
+
+# Optional explicit no-return endpoints in the same outer frame.  A ray to one
+# of these endpoints authorizes miss-only evidence along the ray; the endpoint
+# itself is never inserted as occupied.  An entirely empty message means that
+# this sensor/update has no explicit visibility evidence and must not be
+# interpreted as free space.
+# When populated, free_space_endpoints.header.stamp and
+# free_space_endpoints.header.frame_id must equal header.stamp and
+# header.frame_id respectively.
+sensor_msgs/PointCloud2 free_space_endpoints

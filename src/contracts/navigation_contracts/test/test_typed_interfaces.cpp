@@ -15,10 +15,13 @@ TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
   message.body_frame_id = "base_link";
   message.points.header.frame_id = message.header.frame_id;
   message.points.header.stamp = message.header.stamp;
+  message.free_space_endpoints.header.frame_id = message.header.frame_id;
+  message.free_space_endpoints.header.stamp = message.header.stamp;
 
   EXPECT_EQ(message.localization_epoch, 7U);
   EXPECT_EQ(message.scan_sequence, 11U);
   EXPECT_EQ(message.points.header.frame_id, "lio_odom");
+  EXPECT_EQ(message.free_space_endpoints.header.frame_id, "lio_odom");
   EXPECT_EQ(message.body_frame_id, "base_link");
 }
 

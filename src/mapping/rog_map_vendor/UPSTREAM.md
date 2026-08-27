@@ -266,6 +266,22 @@ by SUPER. Exhaustive fixture tests compare exported base/inflated cells with
 the live map away from separately represented virtual planes and prove an
 earlier export does not alias a later update.
 
+### 12. Explicit no-return visibility rays (`include/rog_map/prob_map.h`, `include/rog_map/rog_map.h`, `src/rog_map/prob_map.cpp`, `src/rog_map/rog_map.cpp`)
+
+The product API adds a separate optional point cloud for explicit no-return
+endpoints. Unlike hit endpoints, these points are processed as miss-only rays:
+the traversed voxels receive the existing miss update, while the endpoint is
+never inserted as occupied. The original two-argument `updateMap` and
+`updateProbMap` overloads delegate to an empty no-return cloud, preserving the
+upstream call contract when no visibility source is available.
+
+This distinction is required by the typed `RegisteredScan` contract. A point
+cloud contains returns only and cannot prove that the unreturned space beyond
+the last return is free. The optional field therefore remains empty unless a
+sensor/bridge explicitly supplies no-return evidence with matching frame and
+timestamp. UNKNOWN and OUT_OF_MAP semantics remain unchanged; no endpoint-only
+or blanket-free fallback was added.
+
 ## License metadata inconsistency found upstream
 
 Upstream `rog_map/package.xml` (ROS 2/ament) declares `<license>BSD</license>`,

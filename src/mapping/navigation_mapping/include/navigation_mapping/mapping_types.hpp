@@ -59,8 +59,13 @@ enum class MapUpdateOutcome : std::uint8_t {
 struct RaycastDiagnostics {
   MapUpdateOutcome update_outcome{MapUpdateOutcome::kEmptyCloud};
   std::uint64_t endpoint_count{0};
+  std::uint64_t free_space_endpoint_count{0};
   std::uint64_t attempt_count{0};
   std::uint64_t processed_count{0};
+  std::uint64_t free_space_attempt_count{0};
+  std::uint64_t free_space_processed_count{0};
+  std::uint64_t free_space_clipped_count{0};
+  std::uint64_t free_space_skipped_count{0};
   std::uint64_t clipped_count{0};
   std::uint64_t skipped_count{0};
   std::uint64_t skip_nonfinite{0};

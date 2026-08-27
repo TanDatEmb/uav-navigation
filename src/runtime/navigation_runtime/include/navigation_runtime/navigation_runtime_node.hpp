@@ -155,7 +155,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              std::int64_t now_ns);
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
-                          navigation_mapping::PointCloud& output);
+                          navigation_mapping::PointCloud& output,
+                          bool require_nonempty = true);
   std::string registered_scan_topic_;
   std::string propagated_odometry_topic_;
   std::string goal_topic_;

@@ -430,11 +430,19 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_
 }
 
 MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
+  static const PointCloud no_return_endpoints;
+  return updateMap(cloud, no_return_endpoints, pose);
+}
+
+MapUpdateOutcome ROGMap::updateMap(
+    const PointCloud& cloud, const PointCloud& free_space_endpoints,
+    const Pose& pose) {
   // Product runtime keeps timing in MappingDiagnostics; upstream's
   // per-update console timer is research instrumentation.
   TimeConsuming ssss("updateMap", false);
   last_diagnostics_ = ProbMap::RaycastDiagnostics{};
   last_diagnostics_.endpoint_count = cloud.size();
+  last_diagnostics_.free_space_endpoint_count = free_space_endpoints.size();
   last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
   if (cfg_.ros_callback_en) {
     std::cout << YELLOW << "ROS callback is enabled, can not insert map from updateMap API."
@@ -443,7 +451,7 @@ MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
     return last_diagnostics_.update_outcome;
   }
 
-  if (cloud.empty()) {
+  if (cloud.empty() && free_space_endpoints.empty()) {
     static int local_cnt = 0;
     if (local_cnt++ > 100) {
       cout << YELLOW << "No cloud input, please check the input topic." << RESET << endl;
@@ -454,7 +462,7 @@ MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
   }
 
   updateRobotState(pose);
-  return updateProbMap(cloud, pose);
+  return updateProbMap(cloud, free_space_endpoints, pose);
 }
 
 RobotState ROGMap::getRobotState() const { return robot_state_; }

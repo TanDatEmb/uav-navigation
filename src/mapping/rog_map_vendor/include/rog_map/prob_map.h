@@ -73,8 +73,13 @@ namespace rog_map {
         struct RaycastDiagnostics {
             MapUpdateOutcome update_outcome{MapUpdateOutcome::EMPTY_CLOUD};
             std::uint64_t endpoint_count{0};
+            std::uint64_t free_space_endpoint_count{0};
             std::uint64_t attempt_count{0};
             std::uint64_t processed_count{0};
+            std::uint64_t free_space_attempt_count{0};
+            std::uint64_t free_space_processed_count{0};
+            std::uint64_t free_space_clipped_count{0};
+            std::uint64_t free_space_skipped_count{0};
             std::uint64_t clipped_count{0};
             std::uint64_t skipped_count{0};
             std::uint64_t skip_nonfinite{0};
@@ -186,6 +191,13 @@ namespace rog_map {
         [[nodiscard]] MapUpdateOutcome updateProbMap(const PointCloud &cloud,
                                                      const Pose &pose);
 
+        // The second cloud contains explicit no-return endpoints.  It is
+        // deliberately separate from hit endpoints because a max-range/no-
+        // return sample must update only the miss portion of a ray.
+        [[nodiscard]] MapUpdateOutcome updateProbMap(
+            const PointCloud &cloud, const PointCloud &free_space_endpoints,
+            const Pose &pose);
+
         [[nodiscard]] const RaycastDiagnostics& lastDiagnostics() const noexcept {
             return last_diagnostics_;
         }
@@ -271,7 +283,9 @@ namespace rog_map {
         // local evidence and never authorizes unknown future space.
         [[nodiscard]] std::uint64_t clearRobotNeighborhood(const Vec3f &pos);
 
-        void raycastProcess(const PointCloud &input_cloud, const Vec3f &cur_odom);
+        void raycastProcess(const PointCloud &input_cloud,
+                            const PointCloud &free_space_endpoints,
+                            const Vec3f &cur_odom);
 
         void insertUpdateCandidate(const Vec3i &id_g, bool is_hit);
 

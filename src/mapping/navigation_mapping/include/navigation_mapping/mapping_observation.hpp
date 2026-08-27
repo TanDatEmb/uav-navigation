@@ -19,6 +19,10 @@ struct MappingObservation {
   std::uint64_t scan_sequence{0};
   std::int64_t stamp_ns{0};
   std::int64_t pointcloud_decode_us{0};
+  // Optional explicit no-return endpoints.  These are already registered in
+  // the outer/world frame and share stamp_ns with cloud.  Empty/absent means
+  // no visibility evidence, never blanket free space.
+  std::unique_ptr<const PointCloud> free_space_endpoints;
 };
 
 }  // namespace navigation_mapping

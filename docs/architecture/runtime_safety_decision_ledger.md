@@ -7029,3 +7029,43 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; `make test`; repeated
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
+
+### 2026-08-28 - Carry explicit no-return visibility as miss-only map evidence
+
+- **Owner:** Estimation, mapping, and simulation integration maintainers.
+- **Scope:** `RegisteredScan` may carry an optional
+  `free_space_endpoints` cloud registered in the same public world frame and
+  timestamp as the hit cloud. `MappingObservation` preserves that distinction
+  through the mapping actor. ROG-Map consumes the endpoints only as miss-only
+  rays; the endpoint is never inserted as occupied. An absent or empty field
+  means no explicit visibility evidence and does not classify UNKNOWN as free.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. This closes the current
+  evidence gap where endpoint-only point returns leave the open corridor
+  UNKNOWN even when the sensor reports no return to a longer range. A false
+  accept is prevented by keeping the contract typed, frame/timestamp checked,
+  and by separating hit and no-return inputs. A false reject remains possible
+  when the optional producer is absent, malformed, outside the local update
+  box, or clipped; that consequence is a bounded stop rather than an
+  unverified command. No UNKNOWN policy, OUT_OF_MAP handling, backup gate, or
+  planner threshold is relaxed.
+- **Derivation and cost:** endpoint evidence is only authoritative when a
+  sensor/bridge producer explicitly supplies it; point-cloud hit endpoints are
+  not reinterpreted. The current implementation adds one bounded vector and
+  one ray traversal per supplied endpoint, with the existing map update,
+  clipping, and batch cache path reused. Record free-space endpoint counts and
+  processing tails in mapping diagnostics before selecting a beam downsample.
+- **Evidence:** contract and ROG vendor smoke coverage proves timestamp/frame
+  plumbing and miss-only behavior; authoritative build, dataset replay,
+  repeated structured SITL, sanitizers, and hardware visibility certification
+  remain open. The optional field must remain empty for recorded data unless
+  its source has an equivalent no-return contract.
+- **Removal/review condition:** remove or change this contract only after a
+  replacement typed visibility certificate covers no-return semantics,
+  sensor pose/time registration, blind zones, and map-generation provenance.
+  Never replace it with blanket free-space insertion or UNKNOWN allowance.
+- **Verification:** `make build`; focused
+  `colcon test --packages-select rog_map_vendor navigation_mapping
+  navigation_contracts --event-handlers console_direct+`; then repeat the
+  declared dataset and `long_three_pillars_multiwaypoint` SITL ladder while
+  checking `mapping_free_space_*`, strict backup certificate outcomes,
+  clearance, altitude, waypoint completion, and p50/p95/p99 callback latency.
