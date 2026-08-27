@@ -10,7 +10,7 @@ find_package(Eigen3 REQUIRED)
 find_package(navigation_world_model REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-add_library(${PROJECT_NAME} src/mission.cpp)
+add_library(${PROJECT_NAME} src/mission.cpp src/route_progress.cpp)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(${PROJECT_NAME} PUBLIC

@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 
 #include "px4_navigation_external_mode/mission.hpp"
+#include "navigation_mission/route_progress.hpp"
 
 namespace px4_navigation_external_mode {
 
@@ -81,6 +82,7 @@ class MissionController final {
   static constexpr std::uint8_t kSafetyStopKind = 2U;
 
   Mission mission_;
+  navigation_mission::RouteProgress route_progress_;
   mutable std::mutex mutex_;
   MissionControllerState state_{MissionControllerState::Idle};
   std::size_t active_waypoint_index_{0U};

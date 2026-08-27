@@ -1,5 +1,7 @@
 #include <navigation_mission/mission.hpp>
+#include <navigation_mission/route_progress.hpp>
 
+#include <cmath>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -84,4 +86,73 @@ mission:
 )");
   EXPECT_THROW(navigation_mission::loadMission(mission.string(), "lio_odom"),
                std::invalid_argument);
+}
+
+namespace {
+
+navigation_mission::Mission makeRouteMission() {
+  navigation_mission::Mission mission;
+  mission.waypoints = {
+      {"start", Eigen::Vector3d{0.0, 0.0, 2.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"duplicate", Eigen::Vector3d{0.0, 0.0, 2.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"corner", Eigen::Vector3d{10.0, 0.0, 3.0}, 0.7, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"finish", Eigen::Vector3d{10.0, 10.0, 5.0}, 0.8, 0.2,
+       navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  return mission;
+}
+
+}  // namespace
+
+TEST(RouteProgress, SkipsDuplicateWaypointsAndInterpolatesAltitude) {
+  const navigation_mission::RouteProgress route(makeRouteMission());
+
+  ASSERT_EQ(route.segments().size(), 2U);
+  EXPECT_DOUBLE_EQ(route.totalLengthM(), std::sqrt(101.0) + std::sqrt(104.0));
+  EXPECT_DOUBLE_EQ(route.waypointArcLengthM(0U), 0.0);
+  EXPECT_DOUBLE_EQ(route.waypointArcLengthM(1U), 0.0);
+  EXPECT_DOUBLE_EQ(route.waypointArcLengthM(2U), std::sqrt(101.0));
+  EXPECT_TRUE(route.insideAcceptance(2U, Eigen::Vector3d{10.4, 0.0, 3.0}));
+  EXPECT_FALSE(route.insideAcceptance(2U, Eigen::Vector3d{10.8, 0.0, 3.0}));
+
+  const auto point = route.pointAtArc(std::sqrt(101.0) / 2.0);
+  ASSERT_TRUE(point.has_value());
+  EXPECT_NEAR(point->z(), 2.5, 1.0e-12);
+  EXPECT_NEAR(route.altitudeAtArc(std::sqrt(101.0) / 2.0), 2.5, 1.0e-12);
+}
+
+TEST(RouteProgress, ProgressDoesNotRegressWithinOrBeyondNoiseTolerance) {
+  navigation_mission::RouteProgress route(
+      makeRouteMission(), navigation_mission::RouteProgressConfig{0.5});
+
+  const auto first = route.update(Eigen::Vector3d{6.0, 0.0, 2.6});
+  ASSERT_TRUE(first.valid);
+  const auto small_backtrack = route.update(Eigen::Vector3d{5.6, 0.0, 2.56});
+  EXPECT_FALSE(small_backtrack.backtracking_exceeded);
+  EXPECT_GE(small_backtrack.progress_arc_m, first.progress_arc_m);
+  const auto large_backtrack = route.update(Eigen::Vector3d{3.0, 0.0, 2.3});
+  EXPECT_TRUE(large_backtrack.backtracking_exceeded);
+  EXPECT_GE(large_backtrack.progress_arc_m, small_backtrack.progress_arc_m);
+}
+
+TEST(RouteProgress, ExposesCornerTangentsAndFiniteProjection) {
+  const navigation_mission::RouteProgress route(makeRouteMission());
+  const auto incoming = route.incomingTangent(2U);
+  const auto outgoing = route.outgoingTangent(2U);
+  ASSERT_TRUE(incoming.has_value());
+  ASSERT_TRUE(outgoing.has_value());
+  EXPECT_NEAR(incoming->x(), 10.0 / std::sqrt(101.0), 1.0e-12);
+  EXPECT_NEAR(incoming->z(), 1.0 / std::sqrt(101.0), 1.0e-12);
+  EXPECT_DOUBLE_EQ(outgoing->x(), 0.0);
+  EXPECT_NEAR(outgoing->y(), 10.0 / std::sqrt(104.0), 1.0e-12);
+  EXPECT_NEAR(outgoing->z(), 2.0 / std::sqrt(104.0), 1.0e-12);
+
+  const auto projection = route.project(Eigen::Vector3d{4.0, 1.0, 2.4});
+  ASSERT_TRUE(projection.valid);
+  EXPECT_TRUE(projection.point.allFinite());
+  EXPECT_TRUE(projection.tangent.allFinite());
+  EXPECT_GT(projection.lateral_error_m, 0.0);
 }

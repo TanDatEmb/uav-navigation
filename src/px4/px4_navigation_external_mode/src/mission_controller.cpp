@@ -8,7 +8,8 @@
 
 namespace px4_navigation_external_mode {
 
-MissionController::MissionController(Mission mission) : mission_(std::move(mission)) {
+MissionController::MissionController(Mission mission)
+    : mission_(std::move(mission)), route_progress_(mission_) {
   if (mission_.waypoints.empty()) {
     throw std::invalid_argument("mission controller requires at least one waypoint");
   }
@@ -19,6 +20,7 @@ void MissionController::activate(double now_s) {
     throw std::invalid_argument("mission activation time must be finite");
   }
   std::lock_guard<std::mutex> lock(mutex_);
+  route_progress_.reset();
   if (!checkpoint_valid_ || active_waypoint_index_ >= mission_.waypoints.size()) {
     active_waypoint_index_ = 0U;
     request_id_ = 0U;
@@ -293,9 +295,12 @@ MissionControllerEvent MissionController::update(
   if (state_ == MissionControllerState::Paused) return {};
 
   const auto& waypoint = mission_.waypoints[active_waypoint_index_];
+  if (position.has_value()) {
+    (void)route_progress_.update(*position);
+  }
   const auto insideAcceptance = [&]() {
-    return position.has_value() && position->allFinite() &&
-           (*position - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m;
+    return position.has_value() &&
+           route_progress_.insideAcceptance(active_waypoint_index_, *position);
   };
   // A pass-through waypoint is still a mission waypoint, not a planner
   // horizon marker.  Never advance it from lookahead or velocity alone: the

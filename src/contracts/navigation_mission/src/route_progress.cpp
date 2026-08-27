@@ -1,0 +1,189 @@
+#include "navigation_mission/route_progress.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+namespace navigation_mission {
+namespace {
+
+constexpr double kMinimumSegmentLengthM = 1.0e-9;
+
+double clampArc(const double arc_length_m, const double total_length_m) {
+  if (!std::isfinite(arc_length_m)) return 0.0;
+  return std::clamp(arc_length_m, 0.0, total_length_m);
+}
+
+}  // namespace
+
+RouteProgress::RouteProgress(const Mission& mission, RouteProgressConfig config)
+    : waypoints_(mission.waypoints), config_(config) {
+  if (waypoints_.empty()) {
+    throw std::invalid_argument("route progress requires at least one waypoint");
+  }
+  if (!std::isfinite(config_.backtrack_tolerance_m) ||
+      config_.backtrack_tolerance_m < 0.0) {
+    throw std::invalid_argument("route backtrack tolerance must be finite and non-negative");
+  }
+
+  waypoint_arc_lengths_.assign(waypoints_.size(), 0.0);
+  for (std::size_t index = 0U; index < waypoints_.size(); ++index) {
+    const auto& waypoint = waypoints_[index];
+    if (!waypoint.position_enu.allFinite() ||
+        !std::isfinite(waypoint.acceptance_radius_m) ||
+        waypoint.acceptance_radius_m <= 0.0) {
+      throw std::invalid_argument("route waypoint geometry is invalid");
+    }
+    if (index == 0U) continue;
+    const Eigen::Vector3d delta = waypoint.position_enu -
+                                  waypoints_[index - 1U].position_enu;
+    const double length_m = delta.norm();
+    if (!std::isfinite(length_m)) {
+      throw std::invalid_argument("route waypoint segment is non-finite");
+    }
+    if (length_m > kMinimumSegmentLengthM) {
+      RouteSegment segment;
+      segment.start_waypoint_index = index - 1U;
+      segment.end_waypoint_index = index;
+      segment.start_arc_m = total_length_m_;
+      segment.length_m = length_m;
+      segment.end_arc_m = total_length_m_ + length_m;
+      segment.start = waypoints_[index - 1U].position_enu;
+      segment.end = waypoint.position_enu;
+      segment.tangent = delta / length_m;
+      segments_.push_back(segment);
+      total_length_m_ = segment.end_arc_m;
+    }
+    waypoint_arc_lengths_[index] = total_length_m_;
+  }
+}
+
+void RouteProgress::reset() noexcept { state_ = {}; }
+
+RouteProjection RouteProgress::project(const Eigen::Vector3d& position) const noexcept {
+  RouteProjection result;
+  if (!position.allFinite() || waypoints_.empty()) return result;
+
+  if (segments_.empty()) {
+    const double distance_m = (position - waypoints_.front().position_enu).norm();
+    if (!std::isfinite(distance_m)) return result;
+    result.valid = true;
+    result.arc_length_m = 0.0;
+    result.lateral_error_m = distance_m;
+    result.point = waypoints_.front().position_enu;
+    return result;
+  }
+
+  double best_distance_squared = std::numeric_limits<double>::infinity();
+  for (std::size_t index = 0U; index < segments_.size(); ++index) {
+    const auto& segment = segments_[index];
+    const Eigen::Vector3d delta = position - segment.start;
+    const double raw_fraction = delta.dot(segment.tangent) / segment.length_m;
+    if (!std::isfinite(raw_fraction)) continue;
+    const double fraction = std::clamp(raw_fraction, 0.0, 1.0);
+    const Eigen::Vector3d projected = segment.start + fraction *
+                                      (segment.end - segment.start);
+    const double distance_squared = (position - projected).squaredNorm();
+    if (!std::isfinite(distance_squared) || distance_squared >= best_distance_squared) {
+      continue;
+    }
+    best_distance_squared = distance_squared;
+    result.valid = true;
+    result.segment_index = index;
+    result.arc_length_m = segment.start_arc_m + fraction * segment.length_m;
+    result.lateral_error_m = std::sqrt(distance_squared);
+    result.segment_fraction = fraction;
+    result.point = projected;
+    result.tangent = segment.tangent;
+  }
+  return result;
+}
+
+RouteProgressState RouteProgress::update(const Eigen::Vector3d& position) noexcept {
+  const auto projection = project(position);
+  if (!projection.valid) return state_;
+  const bool was_valid = state_.valid;
+  const double previous_progress = state_.progress_arc_m;
+  state_.valid = true;
+  state_.backtracking_exceeded = was_valid &&
+      projection.arc_length_m + config_.backtrack_tolerance_m < previous_progress;
+  state_.projection = projection;
+  state_.progress_arc_m = was_valid
+      ? std::max(previous_progress, projection.arc_length_m)
+      : projection.arc_length_m;
+  return state_;
+}
+
+double RouteProgress::waypointArcLengthM(const std::size_t waypoint_index) const {
+  if (waypoint_index >= waypoint_arc_lengths_.size()) {
+    throw std::out_of_range("route waypoint index is out of range");
+  }
+  return waypoint_arc_lengths_[waypoint_index];
+}
+
+std::size_t RouteProgress::segmentForArc(const double arc_length_m) const noexcept {
+  if (segments_.empty()) return std::numeric_limits<std::size_t>::max();
+  const double clamped_arc = clampArc(arc_length_m, total_length_m_);
+  const auto iterator = std::lower_bound(
+      segments_.begin(), segments_.end(), clamped_arc,
+      [](const RouteSegment& segment, const double value) {
+        return segment.end_arc_m < value;
+      });
+  if (iterator == segments_.end()) return segments_.size() - 1U;
+  return static_cast<std::size_t>(std::distance(segments_.begin(), iterator));
+}
+
+std::optional<Eigen::Vector3d> RouteProgress::pointAtArc(
+    const double arc_length_m) const noexcept {
+  if (waypoints_.empty()) return std::nullopt;
+  if (segments_.empty()) return waypoints_.front().position_enu;
+  const std::size_t index = segmentForArc(arc_length_m);
+  if (index >= segments_.size()) return std::nullopt;
+  const auto& segment = segments_[index];
+  const double fraction = (clampArc(arc_length_m, total_length_m_) -
+                           segment.start_arc_m) / segment.length_m;
+  return segment.start + std::clamp(fraction, 0.0, 1.0) *
+      (segment.end - segment.start);
+}
+
+double RouteProgress::altitudeAtArc(const double arc_length_m) const noexcept {
+  if (waypoints_.empty() || segments_.empty()) {
+    return waypoints_.empty() ? std::numeric_limits<double>::quiet_NaN()
+                              : waypoints_.front().position_enu.z();
+  }
+  const std::size_t index = segmentForArc(arc_length_m);
+  if (index >= segments_.size()) return std::numeric_limits<double>::quiet_NaN();
+  const auto& segment = segments_[index];
+  const double fraction = (clampArc(arc_length_m, total_length_m_) -
+                           segment.start_arc_m) / segment.length_m;
+  return segment.start.z() + std::clamp(fraction, 0.0, 1.0) *
+      (segment.end.z() - segment.start.z());
+}
+
+std::optional<Eigen::Vector3d> RouteProgress::incomingTangent(
+    const std::size_t waypoint_index) const noexcept {
+  if (waypoint_index >= waypoints_.size()) return std::nullopt;
+  for (auto iterator = segments_.rbegin(); iterator != segments_.rend(); ++iterator) {
+    if (iterator->end_waypoint_index <= waypoint_index) return iterator->tangent;
+  }
+  return std::nullopt;
+}
+
+std::optional<Eigen::Vector3d> RouteProgress::outgoingTangent(
+    const std::size_t waypoint_index) const noexcept {
+  if (waypoint_index >= waypoints_.size()) return std::nullopt;
+  for (const auto& segment : segments_) {
+    if (segment.start_waypoint_index >= waypoint_index) return segment.tangent;
+  }
+  return std::nullopt;
+}
+
+bool RouteProgress::insideAcceptance(const std::size_t waypoint_index,
+                                     const Eigen::Vector3d& position) const noexcept {
+  if (waypoint_index >= waypoints_.size() || !position.allFinite()) return false;
+  const double distance_m = (position - waypoints_[waypoint_index].position_enu).norm();
+  return std::isfinite(distance_m) &&
+         distance_m <= waypoints_[waypoint_index].acceptance_radius_m;
+}
+
+}  // namespace navigation_mission
