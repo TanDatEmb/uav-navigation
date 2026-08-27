@@ -16,7 +16,7 @@ rog_map:
   virtual_ceil_height: 5.0
   map_sliding:
     enable: true
-    threshold: -1.0
+    threshold: 1.5
   load_pcd_en: false
   frontier_extraction_en: false
   ros_callback:

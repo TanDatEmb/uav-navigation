@@ -5,15 +5,16 @@ for a missing mapping/planning package.
 
 ## Current behavior
 
-`navigation_runtime` constructs one planner backend planner with backup trajectory
-generation enabled (`backup_traj_en: true`). The runtime keeps the main and
-backup trajectory ownership inside planner backend and performs the final command/safety
-checks before publishing. `frontend_in_known_free`, map visualization, and
-debug visualization are disabled in the canonical runtime configuration.
+`navigation_runtime` constructs one planner backend planner that always produces
+the nominal MAIN path together with a certified BACKUP suffix when the geometry
+and evidence permit it. The runtime keeps both trajectory roles inside the
+planner backend and performs the final command/safety checks before publishing.
+There is no runtime switch that disables the backup contract. Visualization is
+independently disabled in the canonical runtime configuration.
 
-Mission files may declare an `unknown_policy`, and `DUAL_PLANNING=1` enables a
-simulation experiment. Neither setting by itself proves that a trajectory is
-safe. Acceptance must show a valid command, a usable backup or emergency
+Mission files may declare an `unknown_policy`; it is translated to the typed
+MAIN policy while BACKUP remains known-free. Neither setting by itself proves
+that a trajectory is safe. Acceptance must show a valid command, a usable backup or emergency
 brake when required, fresh propagated odometry, and no collision/failsafe.
 
 ## Safety interpretation
@@ -25,14 +26,8 @@ brake when required, fresh propagated odometry, and no collision/failsafe.
 - Real-flight collision geometry remains a configuration and validation
   prerequisite, not an inference from simulator truth.
 
-The simulation-only dual-planning experiment is started explicitly:
-
-```bash
-DUAL_PLANNING=1 make external-mode-check
-```
-
-This flag is for measuring main/backup selection, verifier failures, and
-fail-closed behavior. It is not a real-flight permission.
+Main/backup selection, verifier failures, and fail-closed behavior are part of
+every runtime execution. They are not a separate flight permission mode.
 
 ## Required evidence for future changes
 

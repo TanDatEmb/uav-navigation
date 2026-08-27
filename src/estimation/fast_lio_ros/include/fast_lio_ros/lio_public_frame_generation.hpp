@@ -26,6 +26,10 @@ struct LioPublicFrameGenerationSnapshot {
 
 class LioPublicFrameGeneration final {
  public:
+  explicit LioPublicFrameGeneration(std::uint64_t initial_generation = 1U) noexcept {
+    snapshot_.generation = initial_generation == 0U ? 1U : initial_generation;
+  }
+
   [[nodiscard]] LioPublicFrameGenerationSnapshot snapshot() const noexcept {
     return snapshot_;
   }

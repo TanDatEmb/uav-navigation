@@ -8,7 +8,7 @@ LiDAR + IMU
      -> /lio/odometry_corrected
      -> /lio/odometry_propagated
      -> /lio/registered_points
-  -> navigation_runtime_node
+  -> navigation_mission + navigation_runtime_node
      -> mapping and planning backends
      -> /navigation/navigation_command
   -> px4_navigation_external_mode
@@ -25,10 +25,17 @@ the current point-cloud boundary consumed by the planner backend; it remains dis
 FAST-LIO's internal nearest-neighbour registration structure.
 
 All three LIO outputs use `lio_odom -> base_link`. The cloud consumed by the planner backend
-must carry `lio_odom` and finite XYZ fields. `/lio/diagnostics` is the
-estimator health surface.
+must carry `lio_odom` and finite XYZ fields. Typed `/lio/health` is the
+estimator control-plane health surface; `/lio/diagnostics` is observability
+only.
 
 ## Navigation runtime
+
+`navigation_mission` validates the mission schema before runtime or PX4
+mission behavior is constructed. It owns waypoint identity/frame checks,
+mission planning limits, and the typed world-model UNKNOWN policy. This is a
+contract boundary, not a second runtime execution node; Python mission
+readers remain tooling-only.
 
 `navigation_runtime_node` currently constructs the map/planner implementation
 through the transitional backend boundary. `navigation_planning` now defines the
@@ -48,11 +55,12 @@ bundle provenance. The diagnostic status name is
 dropped observations, planner cycles, published trajectories, stale inputs,
 and processing exceptions.
 
-The legacy runtime still keeps committed main/backup trajectory state inside the
-backend. The product-owned `navigation_execution::CommittedBundleStore` and
-`CommandSampler` are implemented and tested, but are not yet the runtime's sole
-command path. Until that cutover, the architecture is transitional and no
-end-to-end ownership claim is made.
+The product-owned `navigation_execution::CommittedBundleStore` is the sole
+exposed command candidate store at the runtime/PX4 boundary, and
+`CommandSampler` reads only that immutable store. The planner backend retains
+private trajectory history temporarily for replan continuity; that history is
+not an independent command path and remains an extraction debt until the
+execution coordinator accepts the previous candidate explicitly.
 
 ## PX4 boundary
 

@@ -34,7 +34,6 @@ mission:
       position: [2.0, 0.0, 3.0]
       acceptance_radius_m: 0.4
   planning:
-    replan_rate_hz: 5.0
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
     max_jerk_mps3: 6.0
@@ -71,7 +70,6 @@ TEST(MissionLoader, LoadsCompatibleControlContract) {
   EXPECT_DOUBLE_EQ(mission.waypoints[0].position_enu.x(), 1.0);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].hold_s, 0.1);
   EXPECT_DOUBLE_EQ(mission.planning.max_jerk_mps3, 6.0);
-  EXPECT_DOUBLE_EQ(mission.control.pass_through_lookahead_m, 0.0);
   EXPECT_EQ(mission.waypoints[0].behavior,
             px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
 }
@@ -112,7 +110,8 @@ mission:
 )yaml");
   const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
   std::filesystem::remove(path);
-  EXPECT_EQ(mission.planning.unknown_policy, "allow_unknown");
+  EXPECT_EQ(mission.planning.unknown_policy,
+            navigation_world_model::UnknownPolicy::kAllowUnknown);
 }
 
 TEST(MissionLoader, AllowsEmptyOptionalControlSection) {
@@ -304,7 +303,7 @@ mission:
   EXPECT_EQ(controller.nextWaypoint(), std::nullopt);
 }
 
-TEST(MissionController, PassThroughLookaheadDoesNotBypassAcceptanceRadius) {
+TEST(MissionController, PassThroughAcceptanceDoesNotBypassAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -314,8 +313,6 @@ mission:
     - {id: origin, position: [0.0, 0.0, 3.0], acceptance_radius_m: 0.4}
     - {id: middle, position: [1.0, 0.0, 3.0], acceptance_radius_m: 0.4}
     - {id: finish, position: [2.0, 0.0, 3.0], acceptance_radius_m: 0.4}
-  control:
-    pass_through_lookahead_m: 1.5
 )yaml");
   const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
   std::filesystem::remove(path);
@@ -616,7 +613,7 @@ TEST(MissionController, SafetyFallbackBrakesAndRequestsPositionControl) {
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Paused);
 }
 
-TEST(MissionController, SafetyStopGraceAllowsRollingRouteReplacement) {
+TEST(MissionController, SafetyStopAllowsRollingRouteReplacement) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -628,8 +625,6 @@ mission:
       behavior: stop
       acceptance_radius_m: 0.4
       hold_s: 0.1
-  control:
-    safety_stop_replan_grace_s: 2.0
 )yaml");
   const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
   std::filesystem::remove(path);
@@ -641,19 +636,19 @@ mission:
   controller.onTrajectory(true, 1U, 2U, 0.0, 0.2);
   EXPECT_EQ(controller.update(0.3, std::nullopt, true, Eigen::Vector3d::Zero()).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::None);
-  EXPECT_EQ(controller.update(1.0, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+  EXPECT_EQ(controller.update(0.6, std::nullopt, true, Eigen::Vector3d::Zero()).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::None);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Braking);
 
-  // A verified route arriving during the grace window resumes execution
-  // instead of handing the vehicle to POSCTL.
-  controller.onTrajectory(true, 1U, 1U, 1.1, 0.8);
+  // A verified route arriving before the stationary confirmation completes
+  // resumes execution instead of handing the vehicle to POSCTL.
+  controller.onTrajectory(true, 1U, 1U, 0.7, 0.8);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
-  EXPECT_EQ(controller.update(1.2, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+  EXPECT_EQ(controller.update(0.8, std::nullopt, true, Eigen::Vector3d::Zero()).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::None);
 }
 
-TEST(MissionController, SafetyStopGraceStillFailsClosedAfterTimeout) {
+TEST(MissionController, SafetyStopFailsClosedAfterConfirmation) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -664,8 +659,6 @@ mission:
       position: [2.0, 0.0, 3.0]
       behavior: stop
       acceptance_radius_m: 0.4
-  control:
-    safety_stop_replan_grace_s: 1.0
 )yaml");
   const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
   std::filesystem::remove(path);

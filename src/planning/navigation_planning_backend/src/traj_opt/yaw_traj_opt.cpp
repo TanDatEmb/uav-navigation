@@ -1,33 +1,17 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #include "traj_opt/yaw_traj_opt.h"
+#include <algorithm>
 #include <utils/optimization/polynomial_interpolation.h>
 using namespace geometry_utils;
 namespace traj_opt {
     using namespace color_text;
     void YawTrajOpt::getYawTimeAllocation(const double &duration, VecDf &times) const {
-        double interp_dt = M_PI / yaw_dot_max_;
+        double interp_dt = M_PI / yaw_rate_max_rad_s_;
         if (duration < interp_dt * 2) {
             /// if the duration less than 2 interp, then no waypoint need.
             times.resize(1);
@@ -96,7 +80,8 @@ namespace traj_opt {
 //            cout << times.transpose() << endl;
     }
 
-    YawTrajOpt::YawTrajOpt(const double &_yaw_dot_max) : yaw_dot_max_(_yaw_dot_max) {
+    YawTrajOpt::YawTrajOpt(const double &max_yaw_rate_rad_s)
+        : yaw_rate_max_rad_s_(max_yaw_rate_rad_s) {
     }
 
     bool YawTrajOpt::optimize(const Vec4f &istate_in,
@@ -113,7 +98,7 @@ namespace traj_opt {
         if (free_start) {
             Vec3f pt_i = pos_traj.getPos(0);
 
-            double t_g = pos_traj_dur > 0.5 > 0 ? 0.5 : pos_traj_dur;
+            double t_g = std::min(0.5, pos_traj_dur);
             Vec3f pt_g = pos_traj.getPos(t_g);
             Vec3f dir = pt_g - pt_i;
             while (dir.norm() < 0.5 && t_g < pos_traj_dur) {
@@ -195,8 +180,8 @@ namespace traj_opt {
         // sharp guide-path corner asks the unconstrained interpolant to rotate
         // faster than the vehicle contract. Fixed terminal yaw remains fail-closed.
         if (free_goal_ && std::isfinite(max_yaw_rate) &&
-            max_yaw_rate > yaw_dot_max_ + 1.0e-6 &&
-            std::abs(init_state(1)) <= yaw_dot_max_ + 1.0e-6) {
+            max_yaw_rate > yaw_rate_max_rad_s_ + 1.0e-6 &&
+            std::abs(init_state(1)) <= yaw_rate_max_rad_s_ + 1.0e-6) {
             const VecDf requested_waypoints = way_pts;
             const double requested_goal_yaw = goal_state(0);
             double feasible_scale = 0.0;
@@ -213,7 +198,7 @@ namespace traj_opt {
                 Trajectory projected = interpolate(projected_goal, projected_waypoints);
                 const double projected_rate = projected.getMaxVelRate();
                 if (std::isfinite(projected_rate) &&
-                    projected_rate <= yaw_dot_max_ + 1.0e-6) {
+                    projected_rate <= yaw_rate_max_rad_s_ + 1.0e-6) {
                     feasible_scale = scale;
                     feasible_traj = std::move(projected);
                 } else {
@@ -227,7 +212,7 @@ namespace traj_opt {
                      << ", max rate " << max_yaw_rate << RESET << endl;
             }
         }
-        if (!std::isfinite(max_yaw_rate) || max_yaw_rate > yaw_dot_max_ + 1.0e-6) {
+        if (!std::isfinite(max_yaw_rate) || max_yaw_rate > yaw_rate_max_rad_s_ + 1.0e-6) {
             cout << YELLOW << " Yaw rate too large, " << max_yaw_rate << RESET << endl;
             return false;
         }

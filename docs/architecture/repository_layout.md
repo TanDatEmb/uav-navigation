@@ -8,6 +8,7 @@ src/common/
   navigation_common/   shared ROS time and ENU/NED, FLU/FRD conversions
 src/contracts/
   navigation_contracts/ product ROS messages, services and boundary checks
+  navigation_mission/   validated mission schema and typed mission policy
 src/estimation/
   fast_lio_core/        ROS-independent estimator
   fast_lio_ros/         ROS adapters and published LIO outputs
@@ -38,25 +39,35 @@ tools/benchmarks/       optional offline benchmark utilities
 docs/                   architecture, ADRs, validation and benchmarks
 ```
 
+`navigation_mission` is the single C++ owner of mission YAML validation,
+waypoint identity/frame checks, planning limits, and the typed UNKNOWN-space
+policy. PX4 External Mode and runtime consume that contract; Python under
+`tools/runtime/` may read mission files for orchestration and reporting but is
+not a flight-authority parser.
+
 `navigation_runtime_node` is the current composition boundary. It consumes
-typed estimator observations, uses the product-owned mapping lifecycle
-primitive, still owns the mutable backend/world-snapshot composition, invokes
-the pinned planner backend, and publishes the single product-owned
+typed estimator observations, delegates mutable map integration and immutable
+snapshot construction to `navigation_mapping`, invokes the pinned planner
+backend, and publishes the single product-owned
 `navigation_contracts/NavigationCommand` stream. There is no snapshot/bundle
 ROS transport. Planning contracts and execution commit/sampling primitives now
-exist as product-owned libraries; runtime wiring remains an explicit migration
-step and is not claimed complete here.
+exist as product-owned libraries and the runtime uses them as its command
+authority. The mapping package may retain a private backend representation,
+but its installed public headers expose only product-owned snapshot, metrics,
+observation and world-model types.
 
 Ownership rules:
 
 - FAST-LIO owns estimation, corrected/propagated odometry, and its internal
   registration map;
-- `navigation_mapping` owns the bounded observation worker and exact lifecycle
-  accounting;
-- `navigation_runtime` still owns planning map update, backend solve/replan state,
-  and diagnostics while extraction is in progress;
-- `navigation_execution` owns the new immutable candidate commit and sampling
-  boundary; direct runtime sampling remains a tracked cutover until integration;
+- `navigation_mapping` owns the bounded observation worker, exact lifecycle
+  accounting, mutable map integration, and immutable planning snapshot
+  construction;
+- `navigation_runtime` owns composition, snapshot publication into the planning
+  lifecycle, backend solve/replan state, and runtime diagnostics; it does not
+  own the mutable mapping backend;
+- `navigation_execution` owns the immutable candidate commit and sampling
+  boundary;
 - PX4 External Mode owns the command-to-PX4 control boundary and mission
   completion notification;
 - `tools/runtime/report.py` is the only public report entrypoint and writes

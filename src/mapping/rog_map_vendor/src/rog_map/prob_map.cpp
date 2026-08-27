@@ -339,6 +339,7 @@ void ProbMap::slideAllMap(const rog_map::Vec3f& pos) {
     last_diagnostics_.map_slide_voxel_shift_y += shift.y();
     last_diagnostics_.map_slide_voxel_shift_z += shift.z();
     last_diagnostics_.map_slide_cells_cleared += lastSlideCellsCleared();
+    last_diagnostics_.changed_region_covers_world = true;
     last_diagnostics_.rog_slide_us += std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - slide_started).count();
 }
@@ -349,6 +350,7 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
     TimeConsuming tc("updateMap", false);
     const Vec3f& pos = pose.first;
+    const bool clears_first_frame = first_frame_clear_pending_;
     time_consuming_[4] = cloud.size();
     if (cfg_.map_sliding_en) {
         last_diagnostics_.map_slide_check_count = 1;
@@ -429,6 +431,19 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
                     }
                 }
             }
+        }
+    }
+
+    if (!last_diagnostics_.changed_region_covers_world) {
+        last_diagnostics_.changed_region_min = raycast_data_.cache_box_min;
+        last_diagnostics_.changed_region_max = raycast_data_.cache_box_max;
+        if (clears_first_frame) {
+            const auto first_frame_extent = Vec3f::Constant(
+                static_cast<float>(cfg_.raycast_range_min));
+            last_diagnostics_.changed_region_min =
+                last_diagnostics_.changed_region_min.cwiseMin(pos - first_frame_extent);
+            last_diagnostics_.changed_region_max =
+                last_diagnostics_.changed_region_max.cwiseMax(pos + first_frame_extent);
         }
     }
     last_diagnostics_.update_outcome = applies_probability_update

@@ -13,12 +13,10 @@ mission:
       behavior: stop
       hold_s: 0.5
   planning:
-    replan_rate_hz: 5.0
     max_velocity_mps: 8.0
     max_acceleration_mps2: 3.0
     max_jerk_mps3: 8.0
     unknown_policy: allow_unknown
   control:
-    safety_stop_replan_grace_s: 2.0
     acceptance_speed_mps: 0.15
     acceptance_confirmation_s: 0.5

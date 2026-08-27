@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 
 #ifndef CMD_TRAJ_H
@@ -56,10 +39,26 @@ namespace navigation_planning_backend {
         Trajectory yaw{};
         double start_wall_time{0.0};
         std::vector<CandidateRoleInterval> roles{};
+        // The execution identity belongs to the candidate that was planned,
+        // not to the caller that later exports it.  A zero field is allowed
+        // while constructing the candidate but must be rejected before commit.
+        std::uint64_t localization_epoch{0};
+        std::uint64_t goal_epoch{0};
+        std::uint64_t request_id{0};
         bool backup_suffix_available{false};
         double backup_start_tt{0.0};
         bool connected_goal{false};
         BackupDisposition backup_disposition{BackupDisposition::SUCCESS};
+    };
+
+    struct CommandIdentity {
+        std::uint64_t localization_epoch{0};
+        std::uint64_t goal_epoch{0};
+        std::uint64_t request_id{0};
+
+        bool valid() const noexcept {
+            return localization_epoch != 0U && goal_epoch != 0U && request_id != 0U;
+        }
     };
 
     struct CommandCertificate {
@@ -92,6 +91,7 @@ namespace navigation_planning_backend {
         Trajectory position{};
         Trajectory yaw{};
         std::uint64_t generation{0};
+        CommandIdentity identity{};
         CommandCertificate certificate{};
         CommitDiagnostics diagnostics{};
         std::vector<CandidateRoleInterval> roles{};
@@ -128,6 +128,7 @@ namespace navigation_planning_backend {
         bool flag_empty_{true};
         bool flag_backup_traj_avilibale_{false};
         std::uint64_t generation_{0};
+        CommandIdentity identity_{};
         std::vector<CandidateRoleInterval> role_intervals_{};
         CommandCertificate certificate_{};
         CommitDiagnostics commit_diagnostics_{};
@@ -336,6 +337,10 @@ namespace navigation_planning_backend {
             flag_backup_traj_avilibale_ = candidate.backup_suffix_available;
             backup_traj_start_TT_ = candidate.backup_start_tt;
             role_intervals_ = std::move(candidate.roles);
+            identity_ = {
+                candidate.localization_epoch,
+                candidate.goal_epoch,
+                candidate.request_id};
             certificate_ = certificate;
             first_part_exp_has_backup_traj_ = false;
             on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
@@ -354,12 +359,24 @@ namespace navigation_planning_backend {
             return true;
         }
 
+        [[nodiscard]] bool canCommitCandidate(
+                const CandidateCommandBundle& candidate) const {
+            LOCK_G
+            return flag_empty_ || candidate.start_wall_time >= start_WT_;
+        }
+
+        [[nodiscard]] std::uint64_t nextGeneration() const {
+            LOCK_G
+            return generation_ + 1U;
+        }
+
         CommittedTrajectorySnapshot snapshot() const {
             LOCK_G
             CommittedTrajectorySnapshot snapshot;
             snapshot.position = pos_traj_;
             snapshot.yaw = yaw_traj_;
             snapshot.generation = generation_;
+            snapshot.identity = identity_;
             snapshot.certificate = certificate_;
             snapshot.diagnostics = commit_diagnostics_;
             snapshot.roles = role_intervals_;
@@ -377,19 +394,6 @@ namespace navigation_planning_backend {
         CommittedTrajectoryMetadata metadataSnapshot() const {
             LOCK_G
             return {generation_, commit_diagnostics_};
-        }
-
-        bool setTrajectory(const ExpTraj&exp_traj,
-            const BackupTraj & backup_traj) {
-            auto candidate = buildCandidate(
-                exp_traj, &backup_traj, BackupDisposition::SUCCESS);
-            return candidate && commitCandidate(std::move(*candidate), {});
-        }
-
-        bool setTrajectory(const ExpTraj&exp_traj) {
-            auto candidate = buildCandidate(
-                exp_traj, nullptr, BackupDisposition::NO_NEED);
-            return candidate && commitCandidate(std::move(*candidate), {});
         }
 
         // Commit a safety-only trajectory generated from the current measured

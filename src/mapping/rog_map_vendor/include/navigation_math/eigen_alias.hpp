@@ -2,15 +2,15 @@
 // Created by yunfan on 11/8/24.
 //
 
-#ifndef SUPER_EIGEN_ALIAS_HPP
-#define SUPER_EIGEN_ALIAS_HPP
+#ifndef NAVIGATION_MATH_EIGEN_ALIAS_HPP
+#define NAVIGATION_MATH_EIGEN_ALIAS_HPP
 
 #include <Eigen/Eigen>
 
 
-#define DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+name))
-#define PCD_FILE_DIR(name) (string(string(ROOT_DIR) + "pcd/"+name))
-#define SIGN(x) ((x > 0) - (x < 0))
+#define NAVIGATION_MAP_DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+name))
+#define NAVIGATION_MAP_PCD_FILE_DIR(name) (string(string(ROOT_DIR) + "pcd/"+name))
+#define NAVIGATION_MATH_SIGN(x) ((x > 0) - (x < 0))
 
 namespace navigation_math{
 
@@ -137,4 +137,4 @@ namespace navigation_math{
 }
 
 
-#endif //SUPER_EIGEN_ALIAS_HPP
+#endif //NAVIGATION_MATH_EIGEN_ALIAS_HPP

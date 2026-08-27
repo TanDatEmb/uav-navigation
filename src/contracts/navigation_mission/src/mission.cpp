@@ -1,4 +1,4 @@
-#include "px4_navigation_external_mode/mission.hpp"
+#include "navigation_mission/mission.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -7,7 +7,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-namespace px4_navigation_external_mode {
+namespace navigation_mission {
 namespace {
 
 void requireMap(const YAML::Node& node, const char* name) {
@@ -46,9 +46,6 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
   if (path.empty()) {
     throw std::invalid_argument("navigation.mission_file must not be empty");
   }
-  if (expected_frame.empty()) {
-    throw std::invalid_argument("mission expected frame must not be empty");
-  }
   if (!std::filesystem::is_regular_file(path)) {
     throw std::invalid_argument("mission file does not exist: " + path);
   }
@@ -63,14 +60,15 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
                       "mission");
 
     Mission mission;
-    mission.version = node["version"] ? node["version"].as<int>() : 0;
-    if (mission.version != 1) {
+    mission.schema_version = node["version"] ? node["version"].as<int>() : 0;
+    if (mission.schema_version != 1) {
       throw std::invalid_argument("mission.version must be 1");
     }
     mission.id = node["id"] ? node["id"].as<std::string>() : "";
     mission.frame = node["frame"] ? node["frame"].as<std::string>() : "";
-    if (mission.id.empty() || mission.frame != expected_frame) {
-      throw std::invalid_argument("mission id is empty or frame does not match planning frame");
+    if (mission.id.empty() || mission.frame.empty() ||
+        (!expected_frame.empty() && mission.frame != expected_frame)) {
+      throw std::invalid_argument("mission id/frame is empty or frame does not match planning frame");
     }
 
     const YAML::Node waypoints = node["waypoints"];
@@ -102,10 +100,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
       waypoint.acceptance_radius_m = finiteScalar(
           waypoint_node["acceptance_radius_m"], "waypoints[].acceptance_radius_m", 0.0);
       waypoint.hold_s = waypoint_node["hold_s"]
-                            ? finiteScalar(waypoint_node["hold_s"], "waypoints[].hold_s", 0.0, true)
-                            : 0.0;
-      // Preserve legacy missions that used a positive hold_s as an implicit
-      // stop, while making a waypoint without hold_s pass-through by default.
+                           ? finiteScalar(waypoint_node["hold_s"], "waypoints[].hold_s", 0.0, true)
+                           : 0.0;
       const std::string behavior = waypoint_node["behavior"]
                                        ? waypoint_node["behavior"].as<std::string>()
                                        : (waypoint.hold_s > 0.0 || index + 1U == waypoints.size()
@@ -114,32 +110,25 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
       if (behavior == "pass_through") {
         waypoint.behavior = MissionWaypoint::Behavior::PassThrough;
         if (waypoint.hold_s > 0.0) {
-          throw std::invalid_argument(
-              "pass_through waypoint cannot specify a positive hold_s");
+          throw std::invalid_argument("pass_through waypoint cannot specify a positive hold_s");
         }
       } else if (behavior == "stop") {
         waypoint.behavior = MissionWaypoint::Behavior::Stop;
       } else {
-        throw std::invalid_argument(
-            "waypoints[].behavior must be pass_through or stop");
+        throw std::invalid_argument("waypoints[].behavior must be pass_through or stop");
       }
       mission.waypoints.push_back(waypoint);
     }
 
     if (node["planning"]) {
       requireMap(node["planning"], "planning");
-      rejectUnknownKeys(node["planning"], {"replan_rate_hz", "max_velocity_mps",
-                                            "max_acceleration_mps2", "max_jerk_mps3",
-                                            "unknown_policy"},
+      rejectUnknownKeys(node["planning"], {"max_velocity_mps", "max_acceleration_mps2",
+                                            "max_jerk_mps3", "unknown_policy"},
                         "planning");
       const auto planning = node["planning"];
-      if (planning["replan_rate_hz"]) {
-        mission.planning.replan_rate_hz =
-            finiteScalar(planning["replan_rate_hz"], "planning.replan_rate_hz", 0.0);
-      }
       if (planning["max_velocity_mps"]) {
-        mission.planning.max_velocity_mps =
-            finiteScalar(planning["max_velocity_mps"], "planning.max_velocity_mps", 0.0);
+        mission.planning.max_velocity_mps = finiteScalar(
+            planning["max_velocity_mps"], "planning.max_velocity_mps", 0.0);
       }
       if (planning["max_acceleration_mps2"]) {
         mission.planning.max_acceleration_mps2 = finiteScalar(
@@ -150,44 +139,29 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
             planning["max_jerk_mps3"], "planning.max_jerk_mps3", 0.0);
       }
       if (planning["unknown_policy"]) {
-        mission.planning.unknown_policy = planning["unknown_policy"].as<std::string>();
+        const auto policy = planning["unknown_policy"].as<std::string>();
+        if (policy == "allow_unknown") {
+          mission.planning.unknown_policy =
+              navigation_world_model::UnknownPolicy::kAllowUnknown;
+        } else if (policy != "blocked") {
+          throw std::invalid_argument(
+              "mission planning unknown_policy must be 'blocked' or 'allow_unknown'");
+        }
       }
     }
-    if (mission.planning.unknown_policy != "blocked" &&
-        mission.planning.unknown_policy != "allow_unknown") {
-      throw std::invalid_argument(
-          "mission planning unknown_policy must be 'blocked' or 'allow_unknown'");
-    }
 
-    // YAML permits an optional section to be written as `control:` with no
-    // values.  Treat that spelling like an omitted section so legacy planner backend
-    // mission files keep the struct defaults instead of aborting startup.
     const YAML::Node control = node["control"];
     if (control && !control.IsNull()) {
       requireMap(control, "control");
-      rejectUnknownKeys(control, {"acceptance_speed_mps",
-                                  "acceptance_confirmation_s",
-                                  "pass_through_lookahead_m",
-                                  "safety_stop_replan_grace_s"}, "control");
+      rejectUnknownKeys(control, {"acceptance_speed_mps", "acceptance_confirmation_s"},
+                        "control");
       if (control["acceptance_speed_mps"]) {
         mission.control.acceptance_speed_mps = finiteScalar(
-            control["acceptance_speed_mps"], "control.acceptance_speed_mps", 0.0,
-            true);
+            control["acceptance_speed_mps"], "control.acceptance_speed_mps", 0.0, true);
       }
       if (control["acceptance_confirmation_s"]) {
         mission.control.acceptance_confirmation_s = finiteScalar(
-            control["acceptance_confirmation_s"],
-            "control.acceptance_confirmation_s", 0.0, true);
-      }
-      if (control["pass_through_lookahead_m"]) {
-        mission.control.pass_through_lookahead_m = finiteScalar(
-            control["pass_through_lookahead_m"],
-            "control.pass_through_lookahead_m", 0.0, true);
-      }
-      if (control["safety_stop_replan_grace_s"]) {
-        mission.control.safety_stop_replan_grace_s = finiteScalar(
-            control["safety_stop_replan_grace_s"],
-            "control.safety_stop_replan_grace_s", 0.0, true);
+            control["acceptance_confirmation_s"], "control.acceptance_confirmation_s", 0.0, true);
       }
     }
     return mission;
@@ -196,4 +170,4 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
   }
 }
 
-}  // namespace px4_navigation_external_mode
+}  // namespace navigation_mission

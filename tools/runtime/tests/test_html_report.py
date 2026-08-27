@@ -180,7 +180,7 @@ class HtmlReportEvaluationTest(unittest.TestCase):
         observability = {
             "timing": [
                 {
-                    "component": "Planner / ROG-Map",
+                    "component": "Planner / Mapping",
                     "source": "navigation_runtime/planner",
                     "metric": "planning_latency_ms",
                     "unit": "ms",
@@ -190,7 +190,7 @@ class HtmlReportEvaluationTest(unittest.TestCase):
                     "series": [{"t": 1.0, "value": 0.8}, {"t": 2.0, "value": 1.8}],
                 },
                 {
-                    "component": "Planner / ROG-Map",
+                    "component": "Planner / Mapping",
                     "source": "navigation_runtime/planner",
                     "metric": "observation_pair_wait_us",
                     "unit": "us",
@@ -248,11 +248,13 @@ class HtmlReportEvaluationTest(unittest.TestCase):
             session = Path(directory)
             (session / "planner.yaml").write_text(
                 """planner:
-  safe_corridor_line_nominal_length: 11.0
-  safe_corridor_line_max_length: 19.0
-  sensing_horizon: 17.0
-  robot_r: 0.9
+  visibility_horizon_floor_m: 11.0
+  visibility_horizon_cap_m: 19.0
+  sensing_horizon_m: 17.0
   vehicle_radius_m: 0.4
+  tracking_error_budget_m: 0.2
+  localization_error_budget_m: 0.05
+  mapping_error_budget_m: 0.15
   planning_margin_m: 0.07
 rog_map:
   resolution: 0.25
@@ -288,6 +290,7 @@ rog_map:
         self.assertEqual(envelopes["planning_map_origin_xy_m"], (0.0, 0.0))
         self.assertEqual(envelopes["lio_half_extent_xy_m"], (24.0, 18.0))
         self.assertEqual(envelopes["inflation_radius_m"], 0.75)
+        self.assertEqual(envelopes["robot_radius_m"], 0.87)
         self.assertEqual(envelopes["planning_margin_m"], 0.07)
         self.assertTrue(envelopes["raycasting_enabled"])
         self.assertEqual(envelopes["ray_range_m"], (0.8, 55.0))
@@ -424,7 +427,7 @@ rog_map:
             {
                 "verdict": "PASS",
                 "experimental_bypasses": {
-                    "bypass_id": "TB-001",
+                    "bypass_id": "uncertified-objective-experiment",
                     "certification_status": "uncertified_experiment",
                 },
             },

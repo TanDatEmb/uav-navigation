@@ -68,7 +68,6 @@ MAP_SCENE=sanity_open make external-mode-check
 MAP_SCENE=structured_obstacle TEST_CASE=detour make external-mode-check
 MAP_SCENE=long_route MOTION_PRESET=slow make external-mode-check
 MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
-DUAL_PLANNING=1 make external-mode-check   # simulation experiment only
 ```
 
 `MAP_PROFILE` remains a compatibility alias for older profile names. A

@@ -105,6 +105,7 @@ class FastLioNode : public rclcpp::Node {
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::int64_t previous_ros_imu_ns_{-1};
   std::uint64_t correction_sequence_{0U};
+  std::uint64_t last_published_lio_generation_{1U};
   rclcpp::TimerBase::SharedPtr transport_diagnostics_timer_;
   rclcpp::TimerBase::SharedPtr estimator_diagnostics_timer_;
 };

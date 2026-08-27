@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #pragma once
 
@@ -39,8 +22,8 @@
 #include <data_structure/base/polytope.h>
 
 
-#include "traj_opt/exp_traj_optimizer_s4.h"
-#include "traj_opt/backup_traj_optimizer_s4.h"
+#include "traj_opt/nominal_trajectory_optimizer.hpp"
+#include "traj_opt/backup_trajectory_optimizer.hpp"
 #include "path_search/astar.h"
 #include <navigation_world_model/world_model_view.hpp>
 #include <navigation_planning/kinematic_state.hpp>
@@ -81,10 +64,22 @@ namespace navigation_planning_backend {
         CIRI::Ptr ciri_;
 
         navigation_math::RobotState robot_state_;
+        // Stable per-solve state. `robot_state_` is ingress-owned and may be
+        // replaced by an odometry callback while a solve is running.
+        navigation_math::RobotState solve_state_;
 
         std::mutex drone_state_mutex_;
         mutable std::mutex replan_lock_;
-        std::mutex solve_commit_mutex_;
+        mutable std::mutex solve_commit_mutex_;
+        mutable std::mutex command_identity_mutex_;
+        CommandIdentity command_identity_{};
+
+        struct StagedCommandCandidate {
+            CandidateCommandBundle command;
+            CommandCertificate certificate;
+            std::uint64_t generation{0};
+        };
+        std::optional<StagedCommandCandidate> staged_command_candidate_;
 
         Vec3f local_start_p_;
 
@@ -122,11 +117,28 @@ namespace navigation_planning_backend {
         double latest_guide_path_length_m_{std::numeric_limits<double>::quiet_NaN()};
         double latest_guide_duration_s_{std::numeric_limits<double>::quiet_NaN()};
 
-        bool authorizeAndCommit(CandidateCommandBundle&& candidate);
+        bool authorizeAndStage(CandidateCommandBundle&& candidate);
+
+        [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
+        exportStagedCommandCandidate(
+            const CandidateCommandBundle& command,
+            const CommandCertificate& certificate,
+            std::uint64_t generation,
+            std::uint64_t localization_epoch,
+            std::uint64_t goal_epoch,
+            std::uint64_t request_id,
+            std::int64_t valid_from_ns,
+            std::int64_t valid_until_ns) const;
+
+        [[nodiscard]] CommandIdentity commandIdentitySnapshot() const {
+            std::lock_guard<std::mutex> guard(command_identity_mutex_);
+            return command_identity_;
+        }
 
         PlannerResultCode classifySolveFailure(
             const AbsoluteDeadline &solve_deadline,
-            bool elapsed_budget_exceeded = false) const;
+            bool elapsed_budget_exceeded = false,
+            PlannerResultCode fallback = PLANNER_BACKUP_FAILED) const;
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -216,8 +228,36 @@ namespace navigation_planning_backend {
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
         }
+        navigation_world_model::UnknownPolicy unknownPolicy() const noexcept {
+            return cfg_.unknown_space_policy;
+        }
         void resetSolveCancellation() noexcept {
             solve_cancelled_.store(false);
+        }
+
+        // The execution coordinator calls this only after its own atomic
+        // candidate commit succeeds. The committed trajectory then becomes planning history,
+        // never the source sampled by the command timer.
+        bool acknowledgeCommandCandidate(std::uint64_t generation);
+        void discardCommandCandidate() noexcept;
+        [[nodiscard]] bool hasStagedCommandCandidate() const {
+            std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+            return staged_command_candidate_.has_value();
+        }
+
+        // Runtime sets the immutable mission identity before a solve starts.
+        // The identity is copied into the backend candidate and checked again
+        // at export; callers cannot relabel a trajectory after it is planned.
+        void setCommandIdentity(const CommandIdentity& identity) {
+            if (!identity.valid()) {
+                throw std::invalid_argument("command identity must be non-zero");
+            }
+            {
+                std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+                staged_command_candidate_.reset();
+            }
+            std::lock_guard<std::mutex> guard(command_identity_mutex_);
+            command_identity_ = identity;
         }
 
         // Planning-thread-only. Runtime pins one immutable revision before a
@@ -259,7 +299,7 @@ namespace navigation_planning_backend {
 
         // Export one immutable product candidate for the execution boundary.
         // The backend retains its private trajectory representation; callers do
-        // not sample or lock CmdTraj directly.
+        // not sample or lock the backend's mutable command state directly.
         std::optional<navigation_planning::CandidateBundle> exportCommandCandidate(
             std::uint64_t localization_epoch,
             std::uint64_t goal_epoch,

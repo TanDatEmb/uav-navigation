@@ -1,14 +1,16 @@
 # ADR-011: Stage WorldModel ownership before concurrent mapping and planning
 
-**Status:** accepted; Batch 1 implemented, runtime parity evidence pending.
+**Status:** accepted; Batches 1-3 implemented in source, runtime parity and
+concurrency evidence pending.
 
 ## Context and evidence
 
 The target navigation architecture gives mapping ownership to a product-owned
-WorldModel and gives each planner solve one immutable map revision. The current
-runtime instead owns one mutable imported map inside `navigation_runtime_node`;
-the same mutually-exclusive callback first updates the map and then runs the
-planner backend.
+WorldModel and gives each planner solve one immutable map revision. Earlier
+versions of the runtime owned one mutable imported map inside
+`navigation_runtime_node`; the same mutually-exclusive callback first updated
+the map and then ran the planner backend. That historical arrangement is no
+longer the current ownership model.
 
 The `aist-mid360-drive` dataset establishes two relevant facts:
 
@@ -50,7 +52,16 @@ the existing backend classification, coordinate conversion, nearest-cell, ray
 and ordered occupied-point queries. The planner no longer receives a mutable
 backend map pointer or map-update escape hatch. Execution intentionally remains
 sequential. The adapter currently observes mutable backend storage, so it is not an immutable
-snapshot and must not be used concurrently with mapping; Batch 3 remains open.
+snapshot and must not be used concurrently with mapping; it remains a
+transitional compatibility adapter.
+
+Implementation note (2026-08-27): `navigation_mapping::MappingActor` now owns
+mutable backend-map integration and constructs `MappingWorldSnapshot` objects
+from exported grid data. Runtime composition receives only the immutable
+snapshot for planning and keeps solve/replan lifecycle ownership. This closes
+the source-level ownership move for Batch 3; repeated runtime parity,
+concurrency, and tail-latency evidence remain required before independent
+mapping/planning scheduling is enabled.
 
 ### Batch 2: explicit mapping owner and revision
 

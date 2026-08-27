@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -46,12 +47,43 @@ class CommittedBundleStore final {
 
   bool publishWorldIdentity(
       const navigation_world_model::WorldSnapshotIdentity& identity) noexcept {
+    return publishWorldIdentity(identity, {}, false);
+  }
+
+  // Replace the world certificate for the currently exposed bundle only after
+  // an external validator has checked that bundle against the new immutable
+  // snapshot.  Pointer identity is part of the precondition: if a newer
+  // bundle was committed while validation was running, the new world must not
+  // inherit a certificate that was never checked against it.
+  bool publishWorldIdentity(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>&
+          expected_bundle,
+      bool retain_validated_bundle) noexcept {
     if (identity.localization_epoch == 0 || identity.generation == 0 ||
         identity.revision == 0 || identity.observation_stamp_ns <= 0) {
       return false;
     }
     std::lock_guard lock(mutex_);
     if (world_identity_ && !advances(*world_identity_, identity)) return false;
+    if (retain_validated_bundle && expected_bundle && committed_ &&
+        committed_.get() == expected_bundle.get() && world_identity_ &&
+        active_goal_epoch_ == expected_bundle->goal_epoch &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected_bundle->world_identity)) {
+      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(
+          *committed_);
+      recertified->world_identity = identity;
+      committed_ = recertified->valid()
+          ? std::shared_ptr<const navigation_planning::CandidateBundle>(
+                std::move(recertified))
+          : nullptr;
+    } else {
+      // A candidate is certified against one immutable snapshot.  If no
+      // matching validation certificate was supplied for the newer snapshot,
+      // clear it rather than retaining an uncertified command.
+      committed_.reset();
+    }
     world_identity_ = identity;
     return true;
   }
@@ -60,6 +92,31 @@ class CommittedBundleStore final {
       const noexcept {
     std::lock_guard lock(mutex_);
     return committed_;
+  }
+
+  // Execute the exposure callback while the same transaction lock protects
+  // the committed bundle, goal epoch and world identity.  A sampler may have
+  // loaded a shared_ptr just before a map update invalidated it; pointer and
+  // identity revalidation at this boundary prevents that stale command from
+  // reaching the transport.
+  template <typename ExposureFn>
+  bool publishIfCurrent(
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected,
+      std::uint64_t expected_goal_epoch,
+      ExposureFn&& expose) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!expected || !committed_ || committed_.get() != expected.get() ||
+        active_goal_epoch_ != expected_goal_epoch || !world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected->world_identity)) {
+      return false;
+    }
+    try {
+      std::forward<ExposureFn>(expose)();
+    } catch (...) {
+      return false;
+    }
+    return true;
   }
 
   CommitDecision tryCommit(

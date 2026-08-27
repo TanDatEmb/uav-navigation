@@ -10,6 +10,15 @@ assets are `src/uav_simulation/bridge/px4_mid360_control_bridge.yaml` and
 `src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml`; PointCloud conversion
 is process-isolated from `/clock` and IMU transport.
 
+The simulation harness makes Gazebo `/clock` the only simulation-time source and
+sets `UXRCE_DDS_SYNCT=0`; this avoids mixing wall-clock DDS synchronization into
+the simulation epoch. A realtime hardware deployment must use
+`use_sim_time=false` and keep PX4 uXRCE-DDS time synchronization enabled
+(`UXRCE_DDS_SYNCT=1` or the firmware default). The navigation bridge never adds
+`TimesyncStatus.estimated_offset` locally. Realtime validation must capture the
+timesync source/offset/round-trip fields and the resulting VehicleOdometry
+timestamp relation to the ROS system clock.
+
 Manual-control profiles are selected by the runtime runner:
 
 - `make sim-check` uses `COM_RC_IN_MODE=4` and disables manual control for the

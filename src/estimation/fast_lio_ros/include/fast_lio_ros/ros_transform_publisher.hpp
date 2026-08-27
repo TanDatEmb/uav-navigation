@@ -10,7 +10,6 @@
 
 #include "fast_lio_core/pipeline/process_result.hpp"
 #include "fast_lio_core/navigation/base_link_state_converter.hpp"
-#include "fast_lio_ros/parameter_loader.hpp"
 
 namespace uav::nav::lio {
 
@@ -22,15 +21,13 @@ class RosTransformPublisher {
     std::size_t conversion_failure_count{0U};
   };
 
-  RosTransformPublisher(rclcpp::Node& node, RosParameters parameters);
+  explicit RosTransformPublisher(rclcpp::Node& node);
   void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
-  void publishCorrected(const KinematicStateEstimate& estimate);
   void publishPropagated(const KinematicStateEstimate& estimate);
   [[nodiscard]] Diagnostics diagnostics() const;
 
  private:
   void publishKinematic(const KinematicStateEstimate& estimate);
-  RosParameters parameters_;
   tf2_ros::TransformBroadcaster broadcaster_;
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   mutable std::mutex mutex_;

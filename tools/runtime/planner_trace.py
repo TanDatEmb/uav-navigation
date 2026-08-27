@@ -125,6 +125,18 @@ _ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# These fields describe an optimizer execution, not a planner state snapshot.
+# A later cycle may legitimately reuse the last committed diagnostic values
+# while reporting ``exp_diagnostics_valid=false``.  Reports must not count
+# those carried values as new work.
+_EXECUTION_TIMING_FIELDS = frozenset({
+    "exp_frontend_us",
+    "exp_opt_us",
+    "backup_frontend_us",
+    "backup_opt_us",
+})
+
+
 def _first(raw: dict[str, Any], names: Iterable[str]) -> Any:
     for name in names:
         if name in raw:
@@ -171,6 +183,21 @@ def _bool(value: Any) -> bool | None:
         if normalized in {"false", "no", "off", "inactive", "deactivated", "0"}:
             return False
     return None
+
+
+def planner_timing_is_current(values: dict[str, Any], field: str) -> bool:
+    """Return whether a planner execution timing belongs to this cycle.
+
+    Older producers did not expose ``exp_diagnostics_valid``; those records
+    remain usable.  Once the producer exposes the field, an absent, malformed,
+    or false validity flag is conservative for execution-specific timings.
+    Non-execution fields are unaffected.
+    """
+    if field not in _EXECUTION_TIMING_FIELDS:
+        return True
+    if "exp_diagnostics_valid" not in values:
+        return True
+    return _bool(values.get("exp_diagnostics_valid")) is True
 
 
 def _branch(value: Any) -> str | int | None:

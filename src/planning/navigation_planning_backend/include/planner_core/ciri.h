@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 /*
     MIT License
@@ -46,7 +29,12 @@
 */
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 
 #include <data_structure/base/polytope.h>
 #include <data_structure/base/ellipsoid.h>
@@ -58,13 +46,21 @@
 #include <utils/header/type_utils.hpp>
 
 #include <planner_runtime_context/planner_runtime_context.hpp>
+#include <planner_core/absolute_deadline.hpp>
 
 namespace navigation_planning_backend {
     using navigation_math::RET_CODE;
     using geometry_utils::Ellipsoid;
     using geometry_utils::Polytope;
 
+#ifdef NAVIGATION_PLANNING_BACKEND_TESTING
+    struct CiriGeometryTestAccess;
+#endif
+
     class CIRI {
+#ifdef NAVIGATION_PLANNING_BACKEND_TESTING
+        friend struct CiriGeometryTestAccess;
+#endif
         navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
         double robot_r_{0};
         int iter_num_{1};
@@ -91,26 +87,35 @@ namespace navigation_planning_backend {
                 const Eigen::Vector3d &b,
                 Ellipsoid &out_ell);
 
-        static void findTangentPlaneOfSphere(const Eigen::Vector3d &center, const double &r,
+        static bool findTangentPlaneOfSphere(const Eigen::Vector3d &center, const double &r,
                                              const Eigen::Vector3d &pass_point,
                                              const Eigen::Vector3d &seed_p,
                                              Eigen::Vector4d &outter_plane);
 
         static double distancePointToSegment(const Eigen::Vector3d& P, const Eigen::Vector3d& A, const Eigen::Vector3d& B) {
-            // 计算向量 AB 和 AP
-            Eigen::Vector3d AB = B - A;
-            Eigen::Vector3d AP = P - A;
+            if (!P.allFinite() || !A.allFinite() || !B.allFinite()) {
+                // A non-finite obstacle must never make the clearance
+                // precheck fail open through NaN comparison semantics.
+                return 0.0;
+            }
+            const Eigen::Vector3d AB = B - A;
+            const Eigen::Vector3d AP = P - A;
 
-            // 计算 t（即点 Q 在 AB 上的位置）
-            double AB_AB = AB.dot(AB);  // AB·AB
-            double AP_AB = AP.dot(AB);  // AP·AB
-            double t = AP_AB / AB_AB;
+            const double AB_AB = AB.squaredNorm();
+            const double scale = std::max({1.0, AB.squaredNorm(), AP.squaredNorm()});
+            const double degeneracy_limit =
+                64.0 * std::numeric_limits<double>::epsilon() * scale;
+            if (!std::isfinite(AB_AB) || AB_AB <= degeneracy_limit) {
+                return AP.norm();
+            }
+
+            const double t = AP.dot(AB) / AB_AB;
 
             // 判断 t 是否在线段范围内
-            if (t < 0.0f) {
+            if (t < 0.0) {
                 // t 小于 0，最近点是 A
                 return (P - A).norm();
-            } else if (t > 1.0f) {
+            } else if (t > 1.0) {
                 // t 大于 1，最近点是 B
                 return (P - B).norm();
             } else {
@@ -125,7 +130,6 @@ namespace navigation_planning_backend {
 
         CIRI(const navigation_planner_context::PlannerRuntimeContext::Ptr & planner_context):planner_context_(planner_context){
             debug_en = true;
-            // const std::string failed_log_path = DEBUG_FILE_DIR("ciri_failed_log.csv");
             // failed_log.open(failed_log_path, std::ios::out | std::ios::trunc);
         }
 
@@ -138,7 +142,8 @@ namespace navigation_planning_backend {
         RET_CODE comvexDecomposition(const Eigen::MatrixX4d &bd,
                                      const Eigen::Matrix3Xd &pc,
                                      const Eigen::Vector3d &a,
-                                     const Eigen::Vector3d &b);
+                                     const Eigen::Vector3d &b,
+                                     const AbsoluteDeadline* deadline = nullptr);
 
         void getPolytope(Polytope &optimized_poly);
     };

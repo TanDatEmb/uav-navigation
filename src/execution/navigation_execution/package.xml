@@ -6,9 +6,9 @@
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <depend>navigation_contracts</depend>
   <depend>navigation_planning</depend>
   <depend>navigation_world_model</depend>
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>navigation_contracts</test_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

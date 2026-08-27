@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace px4_odometry_bridge {
 
@@ -31,6 +32,18 @@ struct TimestampConversionDiagnostics {
   std::string failure_reason{"NONE"};
 };
 
+// The PX4 uXRCE-DDS client owns the transport-side clock offset.  The
+// navigation bridge must only declare which source domain it is publishing;
+// it must not apply a second, locally estimated offset.
+enum class TimestampMappingMode : std::uint8_t {
+  kUnresolved,
+  kSimulationIdentity,
+  kRealtimeTransport,
+};
+
+[[nodiscard]] TimestampMappingMode timestampMappingModeFor(
+    bool use_sim_time, std::string_view input_clock_domain) noexcept;
+
 class TimestampConverter final {
  public:
   explicit TimestampConverter(std::int64_t maximum_age_ns)
@@ -38,7 +51,7 @@ class TimestampConverter final {
 
   [[nodiscard]] TimestampConversionResult convert(
       std::int64_t measurement_time_ns, std::int64_t publication_time_ns,
-      bool simulation_time_equivalence_proven,
+      TimestampMappingMode mapping_mode,
       std::uint64_t timestamp_mapping_generation);
 
   [[nodiscard]] TimestampConversionDiagnostics diagnostics() const noexcept {

@@ -31,6 +31,14 @@ class TemporaryMission {
 TEST(MissionDynamics, LoadsPlannerLimitsBeforePlannerConstruction) {
   const TemporaryMission mission(R"(
 mission:
+  version: 1
+  id: planner_limits
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [1.0, 2.0, 3.0]
+      acceptance_radius_m: 0.5
+      behavior: stop
   planning:
     max_velocity_mps: 7.0
     max_acceleration_mps2: 5.0
@@ -45,9 +53,37 @@ mission:
 TEST(MissionDynamics, RejectsNonPositiveLimits) {
   const TemporaryMission mission(R"(
 mission:
+  version: 1
+  id: planner_limits
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [1.0, 2.0, 3.0]
+      acceptance_radius_m: 0.5
+      behavior: stop
   planning:
     max_velocity_mps: 0.0
 )");
   EXPECT_THROW(navigation_runtime::loadMissionDynamicLimits(mission.path()),
+               std::invalid_argument);
+}
+
+TEST(MissionDynamics, EnforcesTheRuntimePlanningFrameThroughTheSharedLoader) {
+  const TemporaryMission mission(R"(
+mission:
+  version: 1
+  id: planner_limits
+  frame: map
+  waypoints:
+    - id: finish
+      position: [1.0, 2.0, 3.0]
+      acceptance_radius_m: 0.5
+      behavior: stop
+  planning:
+    max_velocity_mps: 7.0
+    max_acceleration_mps2: 5.0
+    max_jerk_mps3: 12.0
+)");
+  EXPECT_THROW(navigation_runtime::loadMissionDynamicLimits(mission.path(), "lio_odom"),
                std::invalid_argument);
 }

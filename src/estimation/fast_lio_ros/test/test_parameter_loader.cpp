@@ -47,7 +47,6 @@ TEST_F(ParameterLoaderTest, LoadsAndValidatesDefaultProductionSchema) {
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 8);
   EXPECT_EQ(parameters.overload_policy, "fail");
-  EXPECT_TRUE(parameters.propagated_odometry_enabled);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
 }
 
@@ -57,15 +56,8 @@ TEST_F(ParameterLoaderTest, RejectsInvalidPropagatedOdometryPolicy) {
   parameters.propagated_odometry_publish_rate_hz = 0.0;
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
   parameters.propagated_odometry_publish_rate_hz = 50.0;
-  parameters.propagated_odometry_imu_history_duration_ns =
-      parameters.propagated_odometry_maximum_correction_age_ns;
-  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
-}
-
-TEST_F(ParameterLoaderTest, RejectsDisabledPropagatedOdometryPolicy) {
-  rclcpp::Node node{"parameter_loader_propagated_disabled_test"};
-  auto parameters = ParameterLoader::declareAndLoad(node);
-  parameters.propagated_odometry_enabled = false;
+  parameters.propagated_odometry_imu_history_duration_s =
+      parameters.propagated_odometry_maximum_correction_age_s;
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 
@@ -180,8 +172,8 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_EQ(profile.timestamp_policy,
             LivoxTimestampPolicy::kTimebaseAuthoritative);
   EXPECT_TRUE(parameters.reject_timestamp_regression);
-  EXPECT_EQ(parameters.maximum_imu_gap_ns, 20'000'000);
-  EXPECT_EQ(parameters.maximum_recoverable_imu_gap_ns, 50'000'000);
+  EXPECT_DOUBLE_EQ(parameters.maximum_imu_gap_s, 0.02);
+  EXPECT_DOUBLE_EQ(parameters.maximum_recoverable_imu_gap_s, 0.05);
   EXPECT_EQ(parameters.recovery_confirmation_updates, 3);
   EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
   EXPECT_EQ(parameters.translation_imu_lidar_m,
@@ -198,16 +190,13 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_TRUE(parameters.publish_registered_points);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
-  EXPECT_EQ(parameters.maximum_processing_lag_ms, 200);
+  EXPECT_DOUBLE_EQ(parameters.maximum_processing_lag_s, 0.2);
   EXPECT_EQ(parameters.overload_policy, "fail");
   EXPECT_EQ(parameters.input_qos_reliability, "reliable");
-  EXPECT_TRUE(parameters.propagated_odometry_enabled);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
   EXPECT_EQ(parameters.propagated_odometry_imu_ingress_capacity, 4096);
-  EXPECT_EQ(parameters.propagated_odometry_imu_history_duration_ns,
-            1'000'000'000);
-  EXPECT_EQ(parameters.propagated_odometry_maximum_correction_age_ns,
-            250'000'000);
+  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_imu_history_duration_s, 1.0);
+  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_maximum_correction_age_s, 0.25);
 }
 
 TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {
@@ -276,7 +265,7 @@ TEST_F(ParameterLoaderTest, CanonicalConfigRequiresBothVoxelFields) {
 TEST_F(ParameterLoaderTest, CanonicalConfigRequiresTrackingPolicyFields) {
   for (const auto& [line, suffix] :
        std::array<std::pair<std::string_view, std::string_view>, 3>{
-           std::pair{"      maximum_recoverable_imu_gap_ns: 50000000\n",
+           std::pair{"      maximum_recoverable_imu_gap_s: 0.05\n",
                      "recoverable_gap"},
            std::pair{"      recovery_confirmation_updates: 3\n",
                      "recovery_updates"},
@@ -299,8 +288,7 @@ TEST_F(ParameterLoaderTest, RejectsInvalidTrackingRecoveryPolicy) {
                  std::invalid_argument);
   }
   parameters.discontinuity_covariance_inflation = 10.0;
-  parameters.maximum_recoverable_imu_gap_ns =
-      parameters.maximum_imu_gap_ns - 1;
+  parameters.maximum_recoverable_imu_gap_s = parameters.maximum_imu_gap_s - 0.001;
   EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
 }
 

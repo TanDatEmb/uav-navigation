@@ -2,7 +2,9 @@
 
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
+#include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/navigation_command_contract.hpp>
 
 TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
@@ -20,6 +22,23 @@ TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
   EXPECT_EQ(message.body_frame_id, "base_link");
 }
 
+TEST(NavigationContracts, PropagatedOdometryCarriesEpochSequenceAndSourceState) {
+  navigation_contracts::msg::PropagatedOdometry message;
+  message.localization_epoch = 7U;
+  message.sequence = 11U;
+  message.odometry.header.frame_id = "lio_odom";
+  message.odometry.child_frame_id = "base_link";
+  message.odometry.header.stamp.sec = 12;
+  message.odometry.header.stamp.nanosec = 34U;
+
+  EXPECT_EQ(message.localization_epoch, 7U);
+  EXPECT_EQ(message.sequence, 11U);
+  EXPECT_EQ(message.odometry.header.frame_id, "lio_odom");
+  EXPECT_EQ(message.odometry.child_frame_id, "base_link");
+  EXPECT_EQ(message.odometry.header.stamp.sec, 12);
+  EXPECT_EQ(message.odometry.header.stamp.nanosec, 34U);
+}
+
 TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {
   navigation_contracts::msg::EstimatorHealth message;
   message.state = navigation_contracts::msg::EstimatorHealth::TRACKING;
@@ -28,6 +47,8 @@ TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {
   message.observability_valid = false;
   message.correction_fresh = true;
   message.propagation_valid = true;
+  message.last_propagated_state_stamp.sec = 12;
+  message.last_propagated_state_stamp.nanosec = 34U;
 
   EXPECT_EQ(message.state,
             navigation_contracts::msg::EstimatorHealth::TRACKING);
@@ -36,6 +57,8 @@ TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {
   EXPECT_FALSE(message.observability_valid);
   EXPECT_TRUE(message.correction_fresh);
   EXPECT_TRUE(message.propagation_valid);
+  EXPECT_EQ(message.last_propagated_state_stamp.sec, 12);
+  EXPECT_EQ(message.last_propagated_state_stamp.nanosec, 34U);
 }
 
 TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
@@ -60,6 +83,13 @@ TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   EXPECT_EQ(message.world_revision, 21U);
   EXPECT_EQ(message.bundle_generation, 34U);
   EXPECT_EQ(message.sample_id, 55U);
+}
+
+TEST(NavigationContracts, CommandsRequireHealthyTypedEpochHandshake) {
+  EXPECT_FALSE(navigation_contracts::estimatorHealthAllowsCommand(false, true, 3U, 3U));
+  EXPECT_FALSE(navigation_contracts::estimatorHealthAllowsCommand(true, false, 3U, 3U));
+  EXPECT_FALSE(navigation_contracts::estimatorHealthAllowsCommand(true, true, 2U, 3U));
+  EXPECT_TRUE(navigation_contracts::estimatorHealthAllowsCommand(true, true, 3U, 3U));
 }
 
 TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedIdentity) {

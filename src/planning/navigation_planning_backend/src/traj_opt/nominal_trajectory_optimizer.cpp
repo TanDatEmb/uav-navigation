@@ -1,27 +1,10 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
-#include <traj_opt/exp_traj_optimizer_s4.h>
+#include <traj_opt/nominal_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
@@ -67,10 +50,13 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                                        const PolyhedraH &hPolys,
                                        const Mat3Df &waypoint_attractor,
                                        const VecDf &waypoint_attractor_dead_d,
-                                       const Mat3Df &feasibility_reference_points,
-                                       const double feasibility_reference_head_z,
-                                       const double feasibility_reference_tail_z,
-                                       const double feasibility_point_weight,
+                                       const Mat3Df &route_reference_points,
+                                       const Vec3f &route_reference_head,
+                                       const Vec3f &route_reference_tail,
+                                       const double route_reference_lateral_weight,
+                                       const double route_reference_vertical_weight,
+                                       const double route_reference_lateral_deadband_m,
+                                       const double route_reference_vertical_deadband_m,
                                        const double &smoothFactor,
                                        const int &integralResolution,
                                        const VecDf &magnitudeBounds,
@@ -183,21 +169,45 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
             // valid guide points while all waypoint variables remain anchored.
             // A piecewise-linear z reference still permits deliberate climb
             // and descent encoded by A* and by the fixed boundary PVAJ.
-            if (feasibility_point_weight > 0.0 &&
-                feasibility_reference_points.cols() == piece_num - 1) {
-                const double reference_start_z = i == 0
-                        ? feasibility_reference_head_z
-                        : feasibility_reference_points(2, i - 1);
-                const double reference_end_z = i == piece_num - 1
-                        ? feasibility_reference_tail_z
-                        : feasibility_reference_points(2, i);
+            // Reference timing is intentionally piece-local: each guide
+            // segment is matched to the corresponding polynomial segment.
+            // The guide time allocation remains the independent duration seed.
+            if ((route_reference_lateral_weight > 0.0 ||
+                 route_reference_vertical_weight > 0.0) &&
+                route_reference_points.rows() == 3 &&
+                route_reference_points.cols() == piece_num - 1 &&
+                route_reference_points.allFinite() &&
+                route_reference_head.allFinite() &&
+                route_reference_tail.allFinite()) {
+                const Vec3f reference_start = i == 0
+                        ? route_reference_head
+                        : route_reference_points.col(i - 1);
+                const Vec3f reference_end = i == piece_num - 1
+                        ? route_reference_tail
+                        : route_reference_points.col(i);
                 const double reference_alpha = j * integralFrac;
-                const double reference_z =
-                        (1.0 - reference_alpha) * reference_start_z +
-                        reference_alpha * reference_end_z;
-                const double vertical_error = pos.z() - reference_z;
-                gradPos.z() += 2.0 * feasibility_point_weight * vertical_error;
-                tmp_cost += feasibility_point_weight * vertical_error * vertical_error;
+                const Vec3f reference_point =
+                        (1.0 - reference_alpha) * reference_start +
+                        reference_alpha * reference_end;
+                const Eigen::Vector2d lateral_error =
+                        pos.head<2>() - reference_point.head<2>();
+                const double lateral_distance = lateral_error.norm();
+                if (route_reference_lateral_weight > 0.0 &&
+                    lateral_distance > route_reference_lateral_deadband_m) {
+                    const double excess = lateral_distance - route_reference_lateral_deadband_m;
+                    gradPos.head<2>() +=
+                        2.0 * route_reference_lateral_weight * excess *
+                        lateral_error / lateral_distance;
+                    tmp_cost += route_reference_lateral_weight * excess * excess;
+                }
+                const double vertical_error = pos.z() - reference_point.z();
+                const double vertical_excess =
+                    std::max(0.0, std::abs(vertical_error) - route_reference_vertical_deadband_m);
+                if (route_reference_vertical_weight > 0.0 && vertical_excess > 0.0) {
+                    gradPos.z() += 2.0 * route_reference_vertical_weight * vertical_excess *
+                        (vertical_error >= 0.0 ? 1.0 : -1.0);
+                    tmp_cost += route_reference_vertical_weight * vertical_excess * vertical_excess;
+                }
             }
 
             /* 2.3 For vel cost  */
@@ -313,6 +323,10 @@ double ExpTrajOpt::costFunctional(void *ptr,
     const auto &magnitudeBounds = obj.magnitudeBounds;
     const auto &penaltyWeights = obj.penaltyWeights;
     const auto &block_energy_cost = obj.block_energy_cost;
+    const auto &route_reference_lateral_weight = obj.route_reference_lateral_weight;
+    const auto &route_reference_vertical_weight = obj.route_reference_vertical_weight;
+    const auto &route_reference_lateral_deadband_m = obj.route_reference_lateral_deadband_m;
+    const auto &route_reference_vertical_deadband_m = obj.route_reference_vertical_deadband_m;
 
     auto &quadrotor_flatness = obj.quadrotor_flatness;
 
@@ -412,9 +426,12 @@ double ExpTrajOpt::costFunctional(void *ptr,
     constraintsFunctional(times, obj.minco.getCoeffs(),
                           hPolyIdx, hPolytopes,
                           waypoint_attractor, waypoint_attractor_dead_d,
-                          obj.feasibility_reference_points,
-                          obj.headPVAJ(2, 0), obj.tailPVAJ(2, 0),
-                          obj.feasibility_point_weight,
+                          obj.route_reference_points,
+                          obj.headPVAJ.col(0), obj.tailPVAJ.col(0),
+                          route_reference_lateral_weight,
+                          route_reference_vertical_weight,
+                          route_reference_lateral_deadband_m,
+                          route_reference_vertical_deadband_m,
                           smooth_eps, integral_res,
                           magnitudeBounds, penaltyWeights,
                           quadrotor_flatness,
@@ -435,15 +452,6 @@ double ExpTrajOpt::costFunctional(void *ptr,
     VecDf gradByTimes;
     obj.minco.propogateGrad(partialGradByCoeffs, partialGradByTimes,
                             gradByPoints, gradByTimes);
-    if (obj.feasibility_point_weight > 0.0 &&
-        obj.feasibility_reference_points.rows() == points.rows() &&
-        obj.feasibility_reference_points.cols() == points.cols()) {
-        const Eigen::RowVectorXd vertical_displacement =
-                points.row(2) - obj.feasibility_reference_points.row(2);
-        cost += obj.feasibility_point_weight * vertical_displacement.squaredNorm();
-        gradByPoints.row(2) +=
-                2.0 * obj.feasibility_point_weight * vertical_displacement;
-    }
     cost += weightT * times.sum();
     gradByTimes.array() += weightT;
 
@@ -476,63 +484,6 @@ static void truncateToSixDecimals(double &num) {
     num = std::trunc(num * 1e6) / 1e6; // 直接截断，无四舍五入
 }
 
-/*
- * @ brief: This function pre-process the corridor
- *
- */
-bool ExpTrajOpt::processCorridor() {
-    const long sizeCorridor = static_cast<long>(opt_vars.hPolytopes.size() - 1);
-
-    opt_vars.vPolytopes.clear();
-    opt_vars.vPolytopes.reserve(2 * sizeCorridor + 1);
-
-    long nv;
-    PolyhedronH curIH;
-    PolyhedronV curIV, curIOB;
-    opt_vars.waypoint_attractor.resize(3, sizeCorridor);
-    opt_vars.waypoint_attractor_dead_d.resize(sizeCorridor);
-    opt_vars.hOverlapPolytopes.resize(sizeCorridor);
-
-    for (long i = 0; i < sizeCorridor; i++) {
-        if (!geometry_utils::enumerateVs(opt_vars.hPolytopes[i], curIV)) {
-            cout << YELLOW << " -- [planner] in [ GcopterExpS4::processCorridor]: Failed to enumerate corridor Vs." << RESET
-                 << endl;
-            return false;
-        }
-        nv = curIV.cols();
-        curIOB.resize(3, nv);
-        curIOB.col(0) = curIV.col(0);
-        curIOB.rightCols(nv - 1) = curIV.rightCols(nv - 1).colwise() - curIV.col(0);
-        opt_vars.vPolytopes.push_back(curIOB);
-        curIH.resize(opt_vars.hPolytopes[i].rows() + opt_vars.hPolytopes[i + 1].rows(), 4);
-        curIH.topRows(opt_vars.hPolytopes[i].rows()) = opt_vars.hPolytopes[i];
-        curIH.bottomRows(opt_vars.hPolytopes[i + 1].rows()) = opt_vars.hPolytopes[i + 1];
-        opt_vars.hOverlapPolytopes[i] = curIH;
-        Vec3f interior;
-        const double &dis = geometry_utils::findInteriorDist(curIH, interior) / 2;
-        opt_vars.waypoint_attractor.col(i) = curIV.colwise().mean();
-        opt_vars.waypoint_attractor_dead_d(i) = dis;
-        nv = curIV.cols();
-        curIOB.resize(3, nv);
-        curIOB.col(0) = curIV.col(0);
-        curIOB.rightCols(nv - 1) = curIV.rightCols(nv - 1).colwise() - curIV.col(0);
-        opt_vars.vPolytopes.push_back(curIOB);
-    }
-
-    if (!geometry_utils::enumerateVs(opt_vars.hPolytopes.back(), curIV)) {
-        cout << YELLOW << " -- [planner] in [ GcopterExpS4::processCorridor]: Failed to enumerate corridor Vs." <<
-             RESET << endl;
-        return false;
-    }
-
-    nv = curIV.cols();
-    curIOB.resize(3, nv);
-    curIOB.col(0) = curIV.col(0);
-    curIOB.rightCols(nv - 1) = curIV.rightCols(nv - 1).colwise() - curIV.col(0);
-    opt_vars.vPolytopes.push_back(curIOB);
-    return true;
-}
-
 bool ExpTrajOpt::processCorridorWithGuideTraj() {
     // * 1) allocate memory for vertex
     const int sizeCorridor = static_cast<int>(opt_vars.hPolytopes.size() - 1);
@@ -546,7 +497,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     opt_vars.waypoint_attractor.resize(3, sizeCorridor);
     opt_vars.hOverlapPolytopes.resize(sizeCorridor);
     opt_vars.waypoint_attractor_dead_d.resize(sizeCorridor);
-    opt_vars.feasibility_reference_points.resize(3, sizeCorridor);
+    opt_vars.route_reference_points.resize(3, sizeCorridor);
     // * 2) Process the corridor
     for (int i = 0; i < sizeCorridor; i++) {
         // * 2.1) Get current vertex
@@ -633,7 +584,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         // Keep the collision-checked guide as a distinct reference even when
         // its nearest sample is not inside the overlap and the MINCO junction
         // itself must initialize at the overlap interior.
-        opt_vars.feasibility_reference_points.col(j) = guide_point;
+        opt_vars.route_reference_points.col(j) = guide_point;
         const VecDf guide_plane_values =
                 opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
                 opt_vars.hOverlapPolytopes[j].col(3);
@@ -666,14 +617,6 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     return true;
 }
 
-void ExpTrajOpt::defaultInitialization() {
-    const VecDf dis = (opt_vars.init_path.leftCols(opt_vars.piece_num) -
-                       opt_vars.init_path.rightCols(opt_vars.piece_num)).colwise().norm();
-    const double speed = cfg_.max_vel;
-    opt_vars.times = dis / speed;
-    opt_vars.points = opt_vars.waypoint_attractor;
-}
-
 bool ExpTrajOpt::setupProblemAndCheck() {
     // init internal variables size;
     opt_vars.piece_num = static_cast<int>(opt_vars.hPolytopes.size());
@@ -684,9 +627,6 @@ bool ExpTrajOpt::setupProblemAndCheck() {
     // Check corridor and init points
     if (opt_vars.default_init) {
         throw std::runtime_error("Not support default init in this version.");
-        if (!processCorridor()) {
-            return false;
-        }
     } else {
         if (!processCorridorWithGuideTraj()) {
             return false;
@@ -698,12 +638,9 @@ bool ExpTrajOpt::setupProblemAndCheck() {
     }
     opt_vars.init_path.col(0) = opt_vars.headPVAJ.col(0);
     opt_vars.init_path.rightCols(1) = opt_vars.tailPVAJ.col(0);
-    if (opt_vars.default_init) {
-        defaultInitialization();
-    } else {
-        opt_vars.times *= 0.8;
-    }
-
+    // The guide branch already populated times from its configured guide
+    // allocation. Preserve that seed; it is an initialization, not a
+    // dynamic certificate, and hard feasibility gates remain authoritative.
     if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() <= 0.0) {
         cout << YELLOW << " -- [ExpOpt] Init times and point failed: non-positive or non-finite duration." << RESET << endl;
         return false;
@@ -835,20 +772,19 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     /* 3)  construct the initial guess of the optimization varibles*/
     opt_vars.duration_lower_bound.resize(0);
-    // Keep the vertical component of the optimized overlap points anchored to
-    // the collision-checked A* guide on every solve, not only after a dynamics
-    // retry.  A wide 3-D SFC can legitimately extend down to the ground; with
-    // no guide cost, minimum-snap may use that volume and produce a large
-    // altitude excursion even though every A* sample remains at mission
-    // altitude.  The weight is derived from the configured hard-corridor cost
-    // rather than introducing another tuning parameter.
-    if (opt_vars.feasibility_reference_points.rows() != opt_vars.points.rows() ||
-        opt_vars.feasibility_reference_points.cols() != opt_vars.points.cols()) {
-        opt_vars.feasibility_reference_points = opt_vars.points;
+    // Keep the collision-checked guide available to the route-reference
+    // quality objective on every solve. Its weights are explicit quality
+    // parameters; a malformed reference must never silently disable the
+    // objective by becoming a self-reference.
+    if (opt_vars.route_reference_points.rows() != opt_vars.points.rows() ||
+        opt_vars.route_reference_points.cols() != opt_vars.points.cols() ||
+        !opt_vars.route_reference_points.allFinite() ||
+        !opt_vars.headPVAJ.col(0).allFinite() ||
+        !opt_vars.tailPVAJ.col(0).allFinite()) {
+        planner_context_->warn(
+            " -- [ExpOpt] route reference shape or values are invalid");
+        return INFINITY;
     }
-    opt_vars.feasibility_point_weight = std::max({
-            opt_vars.penaltyWeights(0), opt_vars.penaltyWeights(1),
-            opt_vars.penaltyWeights(2)});
     gcopter::backwardMapTToTau(opt_vars.times, tau);
     switch (opt_vars.pos_constraint_type) {
         case 1: {
@@ -876,8 +812,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     for (int col = 0; col < opt_vars.points.cols(); col++) {
         opt_vars.init_ps.emplace_back(opt_vars.points.col(col));
     }
-    const Mat3Df feasibility_reference_points =
-            opt_vars.feasibility_reference_points;
+    const Mat3Df route_reference_points = opt_vars.route_reference_points;
 
     // keep fixed accuracy for
     for (int i = 0; i < opt_vars.waypoint_attractor_dead_d.size(); i++) {
@@ -976,62 +911,36 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
         cout << "\tOptimized Time: " << opt_vars.times.transpose() << endl;
     };
+    const auto corridor_plane_violation = [&]() {
+        if (traj.empty() || opt_vars.hPolyIdx.size() != traj.getPieceNum() ||
+            opt_vars.hPolytopes.empty()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double maximum_violation = -std::numeric_limits<double>::infinity();
+        for (int piece_index = 0; piece_index < traj.getPieceNum(); ++piece_index) {
+            const int polytope_index = opt_vars.hPolyIdx(piece_index);
+            if (polytope_index < 0 ||
+                polytope_index >= static_cast<int>(opt_vars.hPolytopes.size())) {
+                return std::numeric_limits<double>::infinity();
+            }
+            const auto &polytope = opt_vars.hPolytopes[polytope_index];
+            maximum_violation = std::max(
+                maximum_violation,
+                navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+                    traj[piece_index], polytope));
+        }
+        return maximum_violation;
+    };
     const auto position_constraint_satisfied = [&]() {
         // Corridor planes are a hard safety contract.  The integrated L-BFGS
-        // penalty is only a search aid and must not authorize the historical
-        // 0.2 m excursion outside an SFC.
+        // penalty is only a search aid and must not authorize an excursion
+        // outside an SFC. Evaluate the certificate independently so disabling
+        // The objective position penalty cannot disable the gate.
         const double corridor_plane_tolerance = cfg_.corridor_plane_tolerance_m;
-        return cfg_.penna_pos <= 0 ||
-               opt_vars.penalty_log(POS_IDX) <= corridor_plane_tolerance;
+        const double maximum_violation = corridor_plane_violation();
+        return std::isfinite(maximum_violation) &&
+               maximum_violation <= corridor_plane_tolerance;
     };
-    const auto vertical_guide_envelope_satisfied = [&]() {
-        if (traj.empty() || feasibility_reference_points.cols() + 1 != traj.getPieceNum()) {
-            return false;
-        }
-        double minimum_reference_z = std::min(opt_vars.headPVAJ(2, 0),
-                                              opt_vars.tailPVAJ(2, 0));
-        double maximum_reference_z = std::max(opt_vars.headPVAJ(2, 0),
-                                              opt_vars.tailPVAJ(2, 0));
-        if (feasibility_reference_points.size() > 0) {
-            minimum_reference_z = std::min(
-                    minimum_reference_z,
-                    feasibility_reference_points.row(2).minCoeff());
-            maximum_reference_z = std::max(
-                    maximum_reference_z,
-                    feasibility_reference_points.row(2).maxCoeff());
-        }
-
-        // The SFC can be much taller than the collision-checked guide.  A
-        // minimum-snap polynomial must not invent a vertical extremum outside
-        // that guide envelope: doing so can recursively pull the next planning
-        // boundary toward unseen ground.  The tolerance is only the existing
-        // optimizer smoothing tolerance, not a new flight-tuning parameter.
-        // Leave only a small numerical transition band around the guide.
-        // Five optimizer smoothing widths (5 cm with the product config) are
-        // enough for fixed measured boundary PVAJ to settle without allowing
-        // the metre-scale artificial extrema this gate is intended to stop.
-        const double tolerance = cfg_.vertical_guide_tolerance_m;
-        constexpr int kEnvelopeSamplesPerPiece = 20;
-        for (int piece_index = 0; piece_index < traj.getPieceNum(); ++piece_index) {
-            const double duration = traj[piece_index].getDuration();
-            for (int sample = 0; sample <= kEnvelopeSamplesPerPiece; ++sample) {
-                const double time = duration * static_cast<double>(sample) /
-                                    static_cast<double>(kEnvelopeSamplesPerPiece);
-                const double z = traj[piece_index].getPos(time).z();
-                if (!std::isfinite(z) || z < minimum_reference_z - tolerance ||
-                    z > maximum_reference_z + tolerance) {
-                    planner_context_->warn(
-                            " -- [ExpOpt] vertical guide hard gate rejected trajectory: "
-                            "piece={} t={} z={} envelope=[{},{}] tolerance={}",
-                            piece_index, time, z, minimum_reference_z,
-                            maximum_reference_z, tolerance);
-                    return false;
-                }
-            }
-        }
-        return true;
-    };
-
     double maximum_velocity = std::numeric_limits<double>::infinity();
     double maximum_acceleration = std::numeric_limits<double>::infinity();
     double maximum_jerk = std::numeric_limits<double>::infinity();
@@ -1058,7 +967,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         VecDf duration_lower_bound;
         VecDf penalty_weights;
         VecDf penalty_log;
-        double feasibility_point_weight{0.0};
         double objective{std::numeric_limits<double>::infinity()};
         int iteration{0};
         bool valid{false};
@@ -1074,7 +982,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     if (ret >= 0 && !position_constraint_satisfied()) {
         planner_context_->warn(
                 " -- [ExpOpt] hard corridor gate rejected trajectory: cost={} limit={} lbfgs_ret={}",
-                opt_vars.penalty_log(POS_IDX),
+                corridor_plane_violation(),
                 cfg_.corridor_plane_tolerance_m, ret);
         ret = -1;
     }
@@ -1096,7 +1004,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         best_candidate.duration_lower_bound = opt_vars.duration_lower_bound;
         best_candidate.penalty_weights = opt_vars.penaltyWeights;
         best_candidate.penalty_log = opt_vars.penalty_log;
-        best_candidate.feasibility_point_weight = opt_vars.feasibility_point_weight;
         best_candidate.objective = minCostFunctional;
         best_candidate.iteration = opt_vars.iter_num;
         best_candidate.valid = true;
@@ -1109,7 +1016,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         opt_vars.duration_lower_bound = best_candidate.duration_lower_bound;
         opt_vars.penaltyWeights = best_candidate.penalty_weights;
         opt_vars.penalty_log = best_candidate.penalty_log;
-        opt_vars.feasibility_point_weight = best_candidate.feasibility_point_weight;
         minCostFunctional = best_candidate.objective;
         opt_vars.iter_num = best_candidate.iteration;
         rebuild_candidate();
@@ -1194,10 +1100,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 opt_vars.penaltyWeights(index) = nominal_penalty_weights(index);
             }
         }
-        opt_vars.feasibility_reference_points = feasibility_reference_points;
-        opt_vars.feasibility_point_weight = penalty_scale * std::max({
-                nominal_penalty_weights(0), nominal_penalty_weights(1),
-                nominal_penalty_weights(2)});
+        opt_vars.route_reference_points = route_reference_points;
         opt_vars.penalty_log.setZero();
         opt_vars.iter_num = 0;
         const int retry_result = run_lbfgs(true);
@@ -1226,7 +1129,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         if (!position_constraint_satisfied()) {
             planner_context_->warn(
                     " -- [ExpOpt] feasibility retry left corridor: attempt={} cost={}",
-                    retry + 1, opt_vars.penalty_log(POS_IDX));
+                    retry + 1, corridor_plane_violation());
             diagnostics_.retry_stop_reason = 4;
             restore_best_candidate();
             ret = -1;
@@ -1280,12 +1183,10 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             opt_vars.first_nonfinite_gradient_norm;
     diagnostics_.final_duration_s = std::numeric_limits<double>::quiet_NaN();
     opt_vars.penaltyWeights = nominal_penalty_weights;
-    opt_vars.feasibility_point_weight = 0.0;
 
     if (ret >= 0) {
         // Mission V/A/J values are command limits, not soft optimizer
-        // penalties. penna_margin remains available to body-rate/thrust
-        // numerical gates but must never raise the requested flight envelope.
+        // penalties. The flatness envelope is an exact hard certificate.
         constexpr double gate_margin = 1.0;
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
@@ -1303,13 +1204,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             minCostFunctional = INFINITY;
         }
         if (ret >= 0) {
-            if (!vertical_guide_envelope_satisfied()) {
-                traj.clear();
-                ret = -1;
-                minCostFunctional = INFINITY;
-            }
-        }
-        if (ret >= 0) {
             TrajectoryDynamicReport dynamic_report;
             if (!trajectorySatisfiesFlatnessEnvelope(traj, cfg_, &dynamic_report)) {
                 planner_context_->warn(
@@ -1317,11 +1211,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                         "finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
                         dynamic_report.finite,
                         dynamic_report.maximum_body_rate_rad_s,
-                        cfg_.max_omg * (1.0 + cfg_.penna_margin),
+                        cfg_.max_omg,
                         dynamic_report.minimum_thrust_n,
                         dynamic_report.maximum_thrust_n,
-                        cfg_.min_acc_thr * cfg_.mass / (1.0 + cfg_.penna_margin),
-                        cfg_.max_acc_thr * cfg_.mass * (1.0 + cfg_.penna_margin));
+                        cfg_.min_acc_thr * cfg_.mass,
+                        cfg_.max_acc_thr * cfg_.mass);
                 traj.clear();
                 ret = -1;
                 minCostFunctional = INFINITY;
@@ -1351,24 +1245,28 @@ ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_con
     //    std::string filename = ss.str() + "_exp_opt_log.csv";
     if(cfg_.save_log_en){
         std::string filename = "exp_opt_log.csv";
-        failed_traj_log.open(DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);
-        penalty_log.open(DEBUG_FILE_DIR("exp_opt_penna.csv"), std::ios::out | std::ios::trunc);
+        failed_traj_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);
+        penalty_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR("nominal_opt_objective.csv"), std::ios::out | std::ios::trunc);
     }
 
     opt_vars.magnitudeBounds.resize(6);
     opt_vars.penaltyWeights.resize(7);
     opt_vars.magnitudeBounds << cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk,
             cfg_.max_omg, cfg_.min_acc_thr * cfg_.mass, cfg_.max_acc_thr * cfg_.mass;
-    opt_vars.penaltyWeights << cfg_.penna_pos, cfg_.penna_vel,
-            cfg_.penna_acc, cfg_.penna_jerk,
-            cfg_.penna_attract, cfg_.penna_omg,
-            cfg_.penna_thr;
-    opt_vars.rho = cfg_.penna_t;
+    opt_vars.penaltyWeights << cfg_.position_penalty_weight,
+            cfg_.velocity_penalty_weight, cfg_.acceleration_penalty_weight,
+            cfg_.jerk_penalty_weight, cfg_.waypoint_attraction_weight,
+            cfg_.angular_rate_penalty_weight, cfg_.thrust_penalty_weight;
+    opt_vars.rho = cfg_.time_weight;
     opt_vars.pos_constraint_type = cfg_.pos_constraint_type;
     opt_vars.block_energy_cost = cfg_.block_energy_cost;
     opt_vars.smooth_eps = cfg_.smooth_eps;
     opt_vars.integral_res = cfg_.integral_reso;
     opt_vars.quadrotor_flatness = cfg_.quadrotot_flatness;
+    opt_vars.route_reference_lateral_weight = cfg_.route_reference_lateral_weight;
+    opt_vars.route_reference_vertical_weight = cfg_.route_reference_vertical_weight;
+    opt_vars.route_reference_lateral_deadband_m = cfg_.route_reference_lateral_deadband_m;
+    opt_vars.route_reference_vertical_deadband_m = cfg_.route_reference_vertical_deadband_m;
 }
 
 ExpTrajOpt::~ExpTrajOpt() {

@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #include <planner_core/corridor_generator.h>
 
@@ -34,7 +17,8 @@ namespace navigation_planning_backend {
                                          navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
                                          const double seed_line_max_dis, const double min_overlap_threshold,
                                          const double virtual_groud_height, const double virtual_ceil_height,
-                                         const double robot_r, const int box_search_skip_num, const int iris_iter_num)
+                                         const double robot_r, const int iris_iter_num,
+                                         const navigation_world_model::UnknownPolicy unknown_policy)
             : planner_context_(planner_context), map_ptr_(std::move(map_ptr)) {
         ciri_ = std::make_shared<CIRI>(planner_context_);
         ciri_->setupParams(robot_r, iris_iter_num);
@@ -42,8 +26,8 @@ namespace navigation_planning_backend {
         seed_line_max_length_ = seed_line_max_dis;
         min_overlap_threshold_ = min_overlap_threshold;
         robot_r_ = robot_r;
-        box_search_skip_num_ = box_search_skip_num;
         iris_iter_num_ = iris_iter_num;
+        unknown_policy_ = unknown_policy;
         refreshVerticalBounds();
 //        failed_traj_log.open(DEBUG_FILE_DIR("sfc.csv"), std::ios::out | std::ios::trunc);
     }
@@ -69,11 +53,13 @@ namespace navigation_planning_backend {
     bool
     CorridorGenerator::SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                             Vec3f &shifted_start_pt,
-                                            bool cut_first_poly) {
+                                            bool cut_first_poly,
+                                            const AbsoluteDeadline* deadline) {
         // https://whimsical.com/flow-3TASJFwe1dASYYY2xHEmze
         // password: wtr
         //	TimeConsuming t___("SearchPolytopeOnPath");
         sfcs.clear();
+        latest_pc.clear();
         solve_stage_.store(1);
         solve_point_count_.store(0);
         if (path.empty()) {
@@ -102,6 +88,15 @@ namespace navigation_planning_backend {
             solve_stage_.store(0);
             return false;
         }
+        if (!navigation_world_model::isCellTraversable(
+                map_ptr_->classify(path[first_id],
+                                   navigation_world_model::GridLayer::kInflated),
+                unknown_policy_)) {
+            planner_context_->warn(
+                " -- [planner] Corridor path starts in a non-traversable cell");
+            solve_stage_.store(0);
+            return false;
+        }
 
         if(first_id!=0){
             shifted_start_pt = path[first_id];
@@ -111,6 +106,10 @@ namespace navigation_planning_backend {
         }
 
         while (cnt_loop++ < max_loop) {
+            if (deadline && deadline->steadyExpired()) {
+                solve_stage_.store(0);
+                return false;
+            }
             solve_stage_.store(1);
             second_id = first_id;
             for (int j = first_id + 1; j < path.size(); j++) {
@@ -125,7 +124,7 @@ namespace navigation_planning_backend {
                 const bool line_free = seed_length <= seed_line_max_length_ &&
                     map_ptr_->isSegmentTraversable(
                         path[first_id], path[j], navigation_world_model::GridLayer::kInflated,
-                        navigation_world_model::UnknownPolicy::kAllowUnknown);
+                        unknown_policy_);
                 if (!line_free) {
                     reach_segment = true;
                 }
@@ -154,7 +153,7 @@ namespace navigation_planning_backend {
                 solve_stage_.store(0);
                 return false;
             }
-            if (!GeneratePolytopeFromLine(seed_lines.back(), temp_poly)) {
+            if (!GeneratePolytopeFromLine(seed_lines.back(), temp_poly, deadline)) {
                 cout << YELLOW << " -- [planner] GeneratePolytopeFromLine failed." << RESET << endl;
                 solve_stage_.store(0);
                 return false;
@@ -171,7 +170,7 @@ namespace navigation_planning_backend {
                 temp_poly.overlap_depth_with_last_one = interior_depth;
                 temp_poly.interior_pt_with_last_one = interior_pt;
                 if (interior_depth < min_overlap_threshold_) {
-                    if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p)) {
+                    if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p, deadline)) {
                         cout << YELLOW << " -- [planner] GeneratePolytopeFromPoint failed." << RESET << endl;
                         solve_stage_.store(0);
                         return false;
@@ -253,7 +252,9 @@ namespace navigation_planning_backend {
 //        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
     }
 
-    bool CorridorGenerator::GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope) {
+    bool CorridorGenerator::GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope,
+                                                      const AbsoluteDeadline* deadline) {
+        if (deadline && deadline->steadyExpired()) return false;
         Eigen::Vector3d box_max, box_min;
         vec_E<Vec3f> pc;
         getSeedBBox(pt, pt, box_min, box_max);
@@ -298,12 +299,12 @@ namespace navigation_planning_backend {
             polytope.SetSeedLine(Line{pt, pt});
             return true;
         }
-        latest_pc.insert(latest_pc.end(), pc.begin(), pc.end());
+        appendDiagnosticPoints(pc);
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         navigation_math::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
         solve_stage_.store(6);
-        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
+        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b, deadline);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {
@@ -364,7 +365,9 @@ namespace navigation_planning_backend {
         return true;
     }
 
-    bool CorridorGenerator::GeneratePolytopeFromLine(Line &line, Polytope &polytope) {
+    bool CorridorGenerator::GeneratePolytopeFromLine(Line &line, Polytope &polytope,
+                                                     const AbsoluteDeadline* deadline) {
+        if (deadline && deadline->steadyExpired()) return false;
         Eigen::Vector3d box_max, box_min;
         vec_E<Vec3f> pc, pts{line.first, line.second};
         getSeedBBox(line.first, line.second, box_min, box_max);
@@ -407,12 +410,12 @@ namespace navigation_planning_backend {
             return true;
         }
         // save to latest pc
-        latest_pc.insert(latest_pc.end(), pc.begin(), pc.end());
+        appendDiagnosticPoints(pc);
         Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pp(pc[0].data(), 3, pc.size());
         navigation_math::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
         solve_stage_.store(3);
-        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b);
+        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b, deadline);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {

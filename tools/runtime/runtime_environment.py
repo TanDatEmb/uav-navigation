@@ -90,10 +90,10 @@ class BuildRuntimeBusyError(RuntimeError):
 class BuildRuntimeLock:
     """Shared/exclusive lock for the single canonical Release install.
 
-    Runtime sessions take an exclusive lock; every build/test/check also takes
-    an exclusive lock.  This prevents concurrent sessions and a package-select
-    build from replacing a library while an already-started session is loading
-    the install overlay.
+    Builds/tests/checks take an exclusive lock. Runtime sessions take a shared
+    lock because they only read the canonical install after it was built. This
+    prevents a package-select build from replacing a library while still
+    allowing an isolated dataset replay and SITL session to run together.
     """
 
     def __init__(self, root: Path, *, exclusive: bool) -> None:
@@ -126,16 +126,21 @@ class BuildRuntimeLock:
                     f"({self._owner()}); finish the other operation first"
                 ) from error
             raise
-        payload = {
-            "pid": os.getpid(),
-            "mode": "exclusive-build" if self.exclusive else "shared-runtime",
-            "python": str(Path(sys.executable).resolve()),
-        }
-        self._file.seek(0)
-        self._file.truncate()
-        self._file.write(json.dumps(payload, sort_keys=True) + "\n")
-        self._file.flush()
-        os.fsync(self._file.fileno())
+        # Shared owners must not truncate or rewrite this common metadata file:
+        # doing so makes concurrent runtime owners race while the advisory
+        # flock itself is correctly shared. The last exclusive owner remains
+        # useful provenance when a build is rejected by a live runtime.
+        if self.exclusive:
+            payload = {
+                "pid": os.getpid(),
+                "mode": "exclusive-build",
+                "python": str(Path(sys.executable).resolve()),
+            }
+            self._file.seek(0)
+            self._file.truncate()
+            self._file.write(json.dumps(payload, sort_keys=True) + "\n")
+            self._file.flush()
+            os.fsync(self._file.fileno())
         return self
 
     def __exit__(self, _exception_type: Any, _exception: Any, _traceback: Any) -> None:

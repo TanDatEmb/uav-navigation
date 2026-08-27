@@ -1,27 +1,14 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #include <planner_core/ciri.h>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 using namespace color_text;
 using namespace optimization_utils;
 using namespace navigation_math;
@@ -30,7 +17,25 @@ using namespace navigation_math;
 namespace navigation_planning_backend {
 
     RET_CODE CIRI::comvexDecomposition(const Eigen::MatrixX4d& bd, const Eigen::Matrix3Xd& pc, const Eigen::Vector3d& a,
-                                       const Eigen::Vector3d& b) {
+                                       const Eigen::Vector3d& b,
+                                       const AbsoluteDeadline* deadline) {
+        const auto deadlineExpired = [deadline]() noexcept {
+            return deadline != nullptr && deadline->steadyExpired();
+        };
+        if (deadlineExpired()) return TIME_OUT;
+        if (bd.rows() <= 0 || pc.cols() <= 0 || !bd.allFinite() || !pc.allFinite() ||
+            !a.allFinite() || !b.allFinite()) {
+            return INIT_ERROR;
+        }
+        const Eigen::Vector3d seed_delta = b - a;
+        const double seed_scale = std::max({1.0, a.squaredNorm(), b.squaredNorm()});
+        const double seed_degeneracy_limit =
+            64.0 * std::numeric_limits<double>::epsilon() * seed_scale;
+        if (!std::isfinite(seed_degeneracy_limit) ||
+            !std::isfinite(seed_delta.squaredNorm()) ||
+            seed_delta.squaredNorm() <= seed_degeneracy_limit) {
+            return INIT_ERROR;
+        }
         const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
         const Eigen::Vector4d bh(b(0), b(1), b(2), 1.0);
 
@@ -61,14 +66,21 @@ namespace navigation_planning_backend {
         Vec3f infeasible_pt_w;
 
         for (int loop = 0; loop < iter_num_; ++loop) {
+            if (deadlineExpired()) return TIME_OUT;
             // Initialize the boundary in ellipsoid frame
             const Eigen::Vector3d fwd_a = E.toEllipsoidFrame(a);
             const Eigen::Vector3d fwd_b = E.toEllipsoidFrame(b);
             const Eigen::MatrixX4d bd_e = E.toEllipsoidFrame(bd);
+            const Eigen::VectorXd boundary_norms = bd_e.leftCols<3>().rowwise().norm();
+            if (!boundary_norms.allFinite() ||
+                (boundary_norms.array() <= std::numeric_limits<double>::epsilon()).any()) {
+                return INIT_ERROR;
+            }
             const Eigen::VectorXd distDs = bd_e.rightCols<1>().cwiseAbs().cwiseQuotient(
-                    bd_e.leftCols<3>().rowwise().norm());
+                    boundary_norms);
             const Eigen::Matrix3Xd pc_e = E.toEllipsoidFrame(pc);
             Eigen::VectorXd distRs = pc_e.colwise().norm();
+            if (!distDs.allFinite() || !distRs.allFinite()) return INIT_ERROR;
 
             Eigen::Matrix<uint8_t, -1, 1> bdFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(M, 1);
             Eigen::Matrix<uint8_t, -1, 1> pcFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(N, 1);
@@ -87,6 +99,7 @@ namespace navigation_planning_backend {
             Vec4f plan_before_ab;
 
             for (int i = 0; !completed && i < (M + N); ++i) {
+                if (deadlineExpired()) return TIME_OUT;
                 if (minSqrD < minSqrR) {
                     /// Case [Bd closer than ob]  enable the boundary constrain.
                     Vec4f p_e = bd_e.row(bdMinId);
@@ -99,16 +112,12 @@ namespace navigation_planning_backend {
                     ///
                     const auto & pt_w = pc.col(pcMinId);
                     const auto dis = distancePointToSegment(pt_w,a,b);
-                    if(dis < robot_r_ - 1e-2) {
+                    constexpr double kSeedClearanceToleranceM = 0.01;
+                    if(dis < robot_r_ - kSeedClearanceToleranceM) {
 //                        infeasible_problem = true;
                         infeasible_pt_w = pt_w;
                         cout<<YELLOW<<" -- [CIRI] WARNING! The problem is not feasible, the min dis to obstacle is only: "<<dis<<RESET<<endl;
                         return FAILED;
-                        cout<<" -- [CIRI] dis: "<<dis<<endl;
-                        cout<<" -- [CIRI] robot_r: "<<robot_r_<<endl;
-                        cout<<" -- [CIRI] pcMin: "<<pt_w.transpose()<<endl;
-                        cout<<" -- [CIRI] a: "<<a.transpose()<<endl;
-                        cout<<" -- [CIRI] b: "<<b.transpose()<<endl;
                     }
 
                     if (robot_r_ < epsilon_) {
@@ -118,22 +127,35 @@ namespace navigation_planning_backend {
 
                         if (temp_tangent.head(3).dot(fwd_a) + temp_tangent(3) > epsilon_) {
                             const Eigen::Vector3d delta = pc_e.col(pcMinId) - fwd_a;
-                            temp_tangent.head(3) = fwd_a - (delta.dot(fwd_a) / delta.squaredNorm()) * delta;
+                            const double delta_squared_norm = delta.squaredNorm();
+                            if (!std::isfinite(delta_squared_norm) ||
+                                delta_squared_norm <= std::numeric_limits<double>::epsilon()) {
+                                return FAILED;
+                            }
+                            temp_tangent.head(3) = fwd_a -
+                                (delta.dot(fwd_a) / delta_squared_norm) * delta;
                             distRs(pcMinId) = temp_tangent.head(3).norm();
+                            if (!std::isfinite(distRs(pcMinId)) ||
+                                distRs(pcMinId) <= std::numeric_limits<double>::epsilon()) {
+                                return FAILED;
+                            }
                             temp_tangent(3) = -distRs(pcMinId);
                             temp_tangent.head(3) /= distRs(pcMinId);
                         }
                         if (temp_tangent.head(3).dot(fwd_b) + temp_tangent(3) > epsilon_) {
                             const Eigen::Vector3d delta = pc_e.col(pcMinId) - fwd_b;
-                            temp_tangent.head(3) = fwd_b - (delta.dot(fwd_b) / delta.squaredNorm()) * delta;
+                            const double delta_squared_norm = delta.squaredNorm();
+                            if (!std::isfinite(delta_squared_norm) ||
+                                delta_squared_norm <= std::numeric_limits<double>::epsilon()) {
+                                return FAILED;
+                            }
+                            temp_tangent.head(3) = fwd_b -
+                                (delta.dot(fwd_b) / delta_squared_norm) * delta;
                             distRs(pcMinId) = temp_tangent.head(3).norm();
-                            temp_tangent(3) = -distRs(pcMinId);
-                            temp_tangent.head(3) /= distRs(pcMinId);
-                        }
-                        if (temp_tangent.head(3).dot(fwd_b) + temp_tangent(3) > epsilon_) {
-                            const Eigen::Vector3d delta = pc_e.col(pcMinId) - fwd_b;
-                            temp_tangent.head(3) = fwd_b - (delta.dot(fwd_b) / delta.squaredNorm()) * delta;
-                            distRs(pcMinId) = temp_tangent.head(3).norm();
+                            if (!std::isfinite(distRs(pcMinId)) ||
+                                distRs(pcMinId) <= std::numeric_limits<double>::epsilon()) {
+                                return FAILED;
+                            }
                             temp_tangent(3) = -distRs(pcMinId);
                             temp_tangent.head(3) /= distRs(pcMinId);
                         }
@@ -153,12 +175,17 @@ namespace navigation_planning_backend {
                         /// Cut line with sphere A and B,
                         if (temp_plane_w.head(3).dot(a) + temp_plane_w(3) > -epsilon_) {
                             // Case the plan make seed out, the plane should be modified in world frame
-                            findTangentPlaneOfSphere(pt_w, robot_r_, a, E.d(), temp_plane_w);
+                            if (!findTangentPlaneOfSphere(pt_w, robot_r_, a, E.d(), temp_plane_w)) {
+                                return FAILED;
+                            }
                         } else if (temp_plane_w.head(3).dot(b) + temp_plane_w(3) > -epsilon_) {
                             // Case the plan make seed out, the plane should be modified in world frame
-                            findTangentPlaneOfSphere(pt_w, robot_r_, b, E.d(), temp_plane_w);
+                            if (!findTangentPlaneOfSphere(pt_w, robot_r_, b, E.d(), temp_plane_w)) {
+                                return FAILED;
+                            }
                         }
                     }
+                    if (!temp_plane_w.allFinite()) return FAILED;
                     pcFlags(pcMinId) = 0;
                     tmp_nn_pt = pc.col(pcMinId);
                 }
@@ -201,7 +228,7 @@ namespace navigation_planning_backend {
                 break;
             }
 
-            if(hPoly.array().isNaN().any()) {
+            if(!hPoly.allFinite()) {
                 cout << YELLOW << " -- [CIRI] ERROR! maxVolInsEllipsoid failed." << RESET << endl;
 //                optimized_polytope_.Reset();
 //                optimized_polytope_.SetPlanes(hPoly);
@@ -221,7 +248,7 @@ namespace navigation_planning_backend {
             }
         }
 
-        if (std::isnan(hPoly.sum())) {
+        if (!hPoly.allFinite()) {
             cout << YELLOW << " -- [CIRI] ERROR! There is nan in generated planes." << RESET << endl;
             cout << a.transpose() << endl;
             cout << b.transpose() << endl;
@@ -249,6 +276,10 @@ namespace navigation_planning_backend {
     }
 
     void CIRI::setupParams(double robot_r, int iter_num) {
+        if (!std::isfinite(robot_r) || robot_r <= 0.0 || iter_num <= 0) {
+            throw std::invalid_argument(
+                "CIRI requires a finite positive radius and iteration count");
+        }
         robot_r_ = robot_r;
         iter_num_ = iter_num;
         sphere_template_ = Ellipsoid(Mat3f::Identity(), robot_r_ * Vec3f(1, 1, 1), Vec3f(0, 0, 0));
@@ -256,58 +287,53 @@ namespace navigation_planning_backend {
         //        split_thresh_ = split_thresh;
     }
 
-    void CIRI::findTangentPlaneOfSphere(const Eigen::Vector3d& center, const double& r,
+    bool CIRI::findTangentPlaneOfSphere(const Eigen::Vector3d& center, const double& r,
                                         const Eigen::Vector3d& pass_point,
                                         const Eigen::Vector3d& seed_p,
                                         Eigen::Vector4d& outter_plane) {
 
-        // v2
-        // const Vec3f v1 = (pass_point - seed_p);
-        // const Vec3f v2 = (center - seed_p);
-        // const Vec3f v3 = (center - pass_point);
-        // const double d1 = v1.norm();
-        // const double d2 = v2.norm();
-        // const double d3 = v3.norm();
-        //
-        // if(d3 < r || d1 < 1e-2 || d2< 1e-2) {
-        //     cout<<YELLOW<<" -- [CIRI] findTangentPlaneOfSphere: The pass point is inside the sphere."<<RESET<<endl;
-        //     return;
-        // }
-        //
-        // const double theta = asin(r / d3);
-        // const Vec3f axis = v1.cross(v2);
-        // const double d = sqrt(d3 * d3 - r * r);
-        // Eigen::AngleAxis<decimal_t> rot(theta, axis.normalized());
-        // Vec3f new_tangent_p = (rot * v3).normalized() * d + pass_point;
-        // Vec3f new_tangent_n = (new_tangent_p - center).normalized();
-        // // rebuild the tangent plan form pass point and tangent_normal
-        // outter_plane.head(3) = new_tangent_n;
-        // outter_plane(3) = -new_tangent_n.dot(new_tangent_p);
-        // if (outter_plane.head(3).dot(seed_p) + outter_plane(3) > epsilon_) {
-        //     outter_plane = -outter_plane;
-        // }
-
-        Vec3f seed = seed_p;
-        Vec3f dif = pass_point - pass_point;
-        if (dif.norm() < 1e-3) {
-            if ((pass_point - center).head(2).norm() > 1e-3) {
-                Vec3f v1 = (pass_point - center).normalized();
-                v1(2) = 0;
-                seed = seed_p + 0.01 * v1.cross(Vec3f(0, 0, 1)).normalized();
-            }
-            else {
-                seed = seed_p + 0.01 * (pass_point - center).cross(Vec3f(1, 0, 0)).normalized();
-            }
+        const Eigen::Vector3d point_from_center = pass_point - center;
+        const double point_distance = point_from_center.norm();
+        const double scale = std::max({1.0, point_distance, std::abs(r),
+                                       (seed_p - center).norm()});
+        const double tolerance = 128.0 * std::numeric_limits<double>::epsilon() * scale;
+        if (!std::isfinite(r) || r <= 0.0 || !point_from_center.allFinite() ||
+            !std::isfinite(point_distance) || point_distance <= r + tolerance) {
+            return false;
         }
-        Eigen::Vector3d P = pass_point - center;
-        Eigen::Vector3d norm_ = (pass_point - center).cross(seed - center).normalized();
-        Eigen::Matrix3d R = Eigen::Quaterniond::FromTwoVectors(norm_, Vec3f(0, 0, 1)).matrix();
+
+        // The tangent construction needs a plane through the pass point and
+        // the seed direction.  Collinear inputs have no unique orientation;
+        // choose the least-aligned coordinate axis instead of normalizing a
+        // zero cross product.
+        Eigen::Vector3d normal = point_from_center.cross(seed_p - center);
+        if (!normal.allFinite() || normal.squaredNorm() <= tolerance * tolerance) {
+            Eigen::Index least_aligned_axis = 0;
+            point_from_center.cwiseAbs().minCoeff(&least_aligned_axis);
+            Eigen::Vector3d reference_axis = Eigen::Vector3d::Zero();
+            reference_axis(least_aligned_axis) = 1.0;
+            normal = point_from_center.cross(reference_axis);
+        }
+        if (!normal.allFinite() || normal.squaredNorm() <= tolerance * tolerance) {
+            return false;
+        }
+        normal.normalize();
+
+        Eigen::Vector3d P = point_from_center;
+        Eigen::Matrix3d R = Eigen::Quaterniond::FromTwoVectors(
+                normal, Eigen::Vector3d::UnitZ()).matrix();
         P = R * P;
-        Eigen::Vector3d C = R * (seed - center);
+        Eigen::Vector3d C = R * (seed_p - center);
         Eigen::Vector3d Q;
         double r2 = r * r;
         double p1p2n = P.head(2).squaredNorm();
-        double d = sqrt(p1p2n - r2);
+        const double tangent_radicand = p1p2n - r2;
+        const double squared_tolerance = tolerance * tolerance;
+        if (!std::isfinite(tangent_radicand) ||
+            tangent_radicand <= squared_tolerance) {
+            return false;
+        }
+        double d = sqrt(tangent_radicand);
         double rp1p2n = r / p1p2n;
         double q11 = rp1p2n * (P(0) * r - P(1) * d);
         double q21 = rp1p2n * (P(1) * r + P(0) * d);
@@ -327,9 +353,10 @@ namespace navigation_planning_backend {
         outter_plane.head(3) = R.transpose() * Q;
         Q = outter_plane.head(3) + center;
         outter_plane(3) = -Q.dot(outter_plane.head(3));
-        if (outter_plane.head(3).dot(seed) + outter_plane(3) > epsilon_) {
+        if (outter_plane.head(3).dot(seed_p) + outter_plane(3) > epsilon_) {
             outter_plane = -outter_plane;
         }
+        return outter_plane.allFinite();
     }
 
     void CIRI::findEllipsoid(const Eigen::Matrix3Xd& pc,
@@ -379,7 +406,9 @@ namespace navigation_planning_backend {
                 break;
             }
         }
-        if (max_iter == 0) {
+        // Post-decrement makes an exhausted loop end at -1.  Checking for
+        // exactly zero misses the only case in which all iterations ran.
+        if (max_iter < 0) {
             cout << YELLOW << " -- [CIRI] Find Ellipsoid reach max iteration, may cause error." << endl;
         }
         max_iter = 100;
@@ -410,7 +439,7 @@ namespace navigation_planning_backend {
             }
         }
 
-        if (max_iter == 0) {
+        if (max_iter < 0) {
             cout << YELLOW << " -- [CIRI] Find Ellipsoid reach max iteration, may cause error." << endl;
         }
         E = Ellipsoid(Rf, r, center);

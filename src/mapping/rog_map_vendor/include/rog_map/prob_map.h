@@ -107,6 +107,11 @@ namespace rog_map {
             std::int64_t rog_inflation_us{0};
             std::int64_t rog_slide_us{0};
             std::uint64_t allocated_voxel_count{0};
+            // Conservative world-space provenance for the immutable product
+            // snapshot. A map slide invalidates the complete prior window.
+            Vec3f changed_region_min{Vec3f::Zero()};
+            Vec3f changed_region_max{Vec3f::Zero()};
+            bool changed_region_covers_world{false};
         };
 
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW

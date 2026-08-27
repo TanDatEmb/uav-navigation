@@ -23,8 +23,8 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/planner_core/corridor_generator.cpp
   src/planner_core/planner.cpp
   src/planner_facade.cpp
-  src/traj_opt/backup_traj_optimizer_s4.cpp
-  src/traj_opt/exp_traj_optimizer_s4.cpp
+  src/traj_opt/backup_trajectory_optimizer.cpp
+  src/traj_opt/nominal_trajectory_optimizer.cpp
   src/traj_opt/yaw_traj_opt.cpp
   src/utils/banded_system.cpp
   src/utils/ellipsoid.cpp
@@ -40,7 +40,6 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/utils/root_finder.cpp
   src/utils/sdlp.cpp
   src/utils/trajectory.cpp
-  src/utils/waypoint_trajectory_optimizer.cpp
 )
 
 add_library(${PROJECT_NAME} STATIC ${NAVIGATION_PLANNING_BACKEND_SOURCES})
@@ -58,17 +57,21 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PUBLIC
   Eigen3::Eigen
   navigation_planning::navigation_planning
   navigation_world_model::navigation_world_model
 )
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PRIVATE
   fmt::fmt
   rog_map_vendor::rog_map_vendor
   yaml-cpp::yaml-cpp
 )
-ament_target_dependencies(${PROJECT_NAME} std_msgs)
+if(std_msgs_TARGETS)
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${std_msgs_TARGETS})
+else()
+  target_include_directories(${PROJECT_NAME} PRIVATE ${std_msgs_INCLUDE_DIRS})
+endif()
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 install(FILES include/navigation_planning_backend/planner_facade.hpp
@@ -90,11 +93,24 @@ ament_export_dependencies(Eigen3 fmt navigation_planning navigation_world_model 
 ament_export_include_directories(include)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
+  function(configure_backend_test target)
+    target_link_libraries(${target}
+      fmt::fmt
+      rog_map_vendor::rog_map_vendor
+      yaml-cpp::yaml-cpp)
+    target_include_directories(${target} PRIVATE ${PCL_INCLUDE_DIRS})
+    ament_target_dependencies(${target}
+      navigation_planning navigation_world_model rog_map_vendor std_msgs)
+  endfunction()
+
   ament_add_gtest(test_trajectory test/test_trajectory.cpp)
   target_compile_definitions(test_trajectory PRIVATE
     USE_ROS2
-    ORIGIN_AT_CORNER)
+    ORIGIN_AT_CORNER
+    NAVIGATION_PLANNING_BACKEND_TESTING)
   target_link_libraries(test_trajectory ${PROJECT_NAME})
+  configure_backend_test(test_trajectory)
 
   ament_add_gtest(test_planner_config test/test_planner_config.cpp)
   target_compile_definitions(test_planner_config PRIVATE
@@ -102,6 +118,7 @@ if(BUILD_TESTING)
     ORIGIN_AT_CORNER
     PLANNER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_planner_config ${PROJECT_NAME})
+  configure_backend_test(test_planner_config)
 
   ament_add_gtest(test_planner_facade test/test_planner_facade.cpp)
   target_compile_definitions(test_planner_facade PRIVATE
@@ -109,6 +126,24 @@ if(BUILD_TESTING)
     ORIGIN_AT_CORNER
     PLANNER_FACADE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_planner_facade ${PROJECT_NAME})
+  configure_backend_test(test_planner_facade)
+
+  ament_add_gtest(test_planner_runtime_context
+    test/test_planner_runtime_context.cpp)
+  target_compile_definitions(test_planner_runtime_context PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER)
+  target_link_libraries(test_planner_runtime_context ${PROJECT_NAME})
+  configure_backend_test(test_planner_runtime_context)
+
+  ament_add_gtest(test_exp_optimizer_seed
+    test/test_exp_optimizer_seed.cpp)
+  target_compile_definitions(test_exp_optimizer_seed PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER
+    PLANNER_EXP_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+  target_link_libraries(test_exp_optimizer_seed ${PROJECT_NAME})
+  configure_backend_test(test_exp_optimizer_seed)
 endif()
 
 ament_package()

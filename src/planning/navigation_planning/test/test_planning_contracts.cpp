@@ -79,6 +79,23 @@ TEST(KinematicState, RequiresTimeFrameAndYawContract) {
   EXPECT_FALSE(state.finite());
 }
 
+TEST(KinematicState, QuaternionFiniteCheckIsStableForLargeFiniteCoefficients) {
+  navigation_planning::KinematicState state;
+  state.source_stamp_ns = 100;
+  state.receive_stamp_ns = 120;
+  state.localization_epoch = 3;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  state.yaw_rad = 0.25;
+
+  state.orientation_world_body = Eigen::Quaterniond(1.0e200, 1.0e200,
+                                                      -1.0e200, 1.0e200);
+  EXPECT_TRUE(state.finite());
+
+  state.orientation_world_body = Eigen::Quaterniond(0.0, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(state.finite());
+}
+
 TEST(DynamicLimits, HasOneProductOwnedValidationContract) {
   const navigation_planning::DynamicLimits valid{7.0, 5.0, 12.0};
   EXPECT_TRUE(valid.valid());

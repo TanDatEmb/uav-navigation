@@ -9,9 +9,9 @@
 
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
+#include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
-#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/components/mode_executor.hpp>
@@ -42,9 +42,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Node& node_;
   void onNavigationCommand(
       const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message);
-  void onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
-  void onLioDiagnostics(
-      const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message);
+  void onOdometry(
+      const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message);
   void onEstimatorHealth(
       const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
   void updateMission();
@@ -56,11 +55,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
                      const MissionControllerEvent* event = nullptr);
 
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
+  rclcpp::Subscription<navigation_contracts::msg::PropagatedOdometry>::SharedPtr
+      odometry_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::NavigationCommand>::SharedPtr
       navigation_command_subscription_;
-  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
-      lio_diagnostics_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::EstimatorHealth>::SharedPtr
       estimator_health_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_publisher_;
@@ -75,21 +73,16 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::string goal_topic_;
   std::string planning_frame_;
   double stale_after_s_{0.5};
-  double command_anchor_max_error_m_{2.0};
-  double command_tracking_lag_s_{0.25};
   double state_stale_after_s_{0.5};
   double trajectory_wait_timeout_s_{2.0};
-  // FAST-LIO can report one or two unhealthy registration updates while a
-  // scan is being re-anchored.  Keep the last valid control stream through a
-  // short, bounded burst; a sustained invalid state still fails closed.
-  double lio_health_grace_s_{1.0};
   std::optional<nav_msgs::msg::Odometry> odometry_;
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command_;
   bool lio_health_valid_{false};
   bool typed_health_seen_{false};
   std::uint64_t lio_localization_epoch_{0U};
+  std::int64_t last_propagated_state_stamp_ns_{0};
+  std::uint64_t last_propagated_state_sequence_{0U};
   std::int64_t last_lio_diagnostics_ns_{0};
-  std::int64_t lio_unhealthy_since_ns_{0};
   std::optional<Mission> mission_;
   std::unique_ptr<MissionController> mission_controller_;
   std::function<void()> px4_hold_handover_;

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 
 #include <Eigen/Core>
@@ -44,6 +45,12 @@ struct CandidateBundle {
   std::int64_t valid_from_ns{0};
   std::int64_t valid_until_ns{0};
   CandidateRole role{CandidateRole::kMain};
+  // Optional trajectory metadata used by execution diagnostics and handover
+  // checks. The evaluator remains the only source for a sampled point.
+  double start_wall_time_s{std::numeric_limits<double>::quiet_NaN()};
+  double duration_s{std::numeric_limits<double>::quiet_NaN()};
+  double backup_start_time_s{std::numeric_limits<double>::quiet_NaN()};
+  bool backup_available{false};
   std::function<bool(std::int64_t, TrajectoryPoint&)> evaluator;
 
   [[nodiscard]] bool valid() const noexcept {
@@ -52,6 +59,13 @@ struct CandidateBundle {
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
            world_identity.localization_epoch == localization_epoch &&
            world_identity.generation != 0 && world_identity.revision != 0;
+  }
+
+  [[nodiscard]] bool hasTrajectoryMetadata() const noexcept {
+    return std::isfinite(start_wall_time_s) && start_wall_time_s > 0.0 &&
+           std::isfinite(duration_s) && duration_s >= 0.0 &&
+           std::isfinite(backup_start_time_s) && backup_start_time_s >= 0.0 &&
+           backup_start_time_s <= duration_s + 1.0e-9;
   }
 
   [[nodiscard]] std::optional<TrajectoryPoint> sample(std::int64_t stamp_ns) const {

@@ -3,6 +3,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "fast_lio_core/navigation/base_link_state_converter.hpp"
+#include "fast_lio_ros/lio_public_frame_generation.hpp"
 #include "fast_lio_ros/ros_propagated_odometry_publisher.hpp"
 
 namespace uav::nav::lio {
@@ -32,7 +33,9 @@ TEST_F(RosPropagatedOdometryPublisherTest, ConvertsAndPublishesOwnedEstimate) {
   parameters.base_frame = "base_link";
   parameters.imu_frame = "livox_imu_frame";
   auto covariance_runtime = std::make_shared<CovarianceProjectionRuntime>();
-  RosPropagatedOdometryPublisher publisher(node, parameters, covariance_runtime);
+  auto public_frame_generation = std::make_shared<LioPublicFrameGeneration>();
+  RosPropagatedOdometryPublisher publisher(
+      node, parameters, covariance_runtime, public_frame_generation);
   publisher.setBaseLinkConverter(std::make_shared<const BaseLinkStateConverter>(
       RigidTransform(baseFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
                      Eigen::Vector3d::Zero())));

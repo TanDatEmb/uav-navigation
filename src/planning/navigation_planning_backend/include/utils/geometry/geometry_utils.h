@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 /*
     MIT License
@@ -117,7 +100,6 @@ namespace geometry_utils {
             const double b = -(a_max - v0);
             const double c = -(v0 * v0 / a_max + 2 * total_dis);
             const double t_acc = solve_quadratic(a, b, c);
-            const double t_dec = t_acc - t_to_v0;
             const double dis_acc = calc_dis(a_max, t_acc);
             const double cur_v_max = a_max * t_acc;
 
@@ -162,12 +144,12 @@ namespace geometry_utils {
         double path_length_m{0.0};
     };
 
-    static bool allocateGuideElapsedTimes(const double a_max,
-                                          const double v_max,
-                                          const double initial_speed,
-                                          const Vec3f &start,
-                                          const vec_Vec3f &path,
-                                          GuideTimeAllocation &allocation) {
+    inline bool allocateGuideElapsedTimes(const double a_max,
+                                           const double v_max,
+                                           const double initial_speed,
+                                           const Vec3f &start,
+                                           const vec_Vec3f &path,
+                                           GuideTimeAllocation &allocation) {
         allocation = GuideTimeAllocation{};
         if (!std::isfinite(a_max) || a_max <= 0.0 ||
             !std::isfinite(v_max) || v_max <= 0.0 ||

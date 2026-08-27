@@ -45,39 +45,37 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | ID | Gate and owner | Current value | Status | Evidence and risk | Required closure |
 |---|---|---:|---|---|---|
 | HG-001 | SUPER solve deadline (`PERFORMANCE_POLICY`) | A* attempt 40 ms, A* total 80 ms, solve 180 ms, future-state lead 200 ms | PROVISIONAL | Absolute nesting is unit-tested and prevents multiplied fallback latency. Structured SITL still alternates between A* timeout and later-stage failures, so the values are not certified distributions. | Collect per-stage p50/p95/p99 on repeated structured SITL and dense dataset shadow planning; prove p99 fits 180 ms without starving fallback. |
-| HG-002 | EXP corridor plane certificate (`NUMERICAL_TOLERANCE`) | max normalized plane violation 0.01 m | PROVISIONAL | The gate correctly rejected historical 0.2 m excursions. Its config is now independent of optimizer `smooth_eps`, but its provenance and continuous-trajectory coverage remain provisional. Rejections at 0.011-0.014 m must not be handled by silently raising it. | Validate continuous swept trajectory against normalized planes and inflated map; run scale sensitivity on map resolution and conditioning. |
-| HG-003 | Vertical guide envelope | guide min/max plus 5 x `smooth_eps` (0.05 m), 20 samples/piece | PROVISIONAL | Prevents artificial altitude excursions, but fixed sampling is not a continuous polynomial certificate and the factor five has only incident-derived rationale. | Replace with analytic extrema or an adaptive bound; test climb/descent, stitched boundary PVAJ, and lateral-obstacle altitude. |
+| HG-002 | EXP corridor plane certificate (`NUMERICAL_TOLERANCE`) | max normalized plane violation 0.01 m | PROVISIONAL | The gate correctly rejects historical 0.2 m excursions and now evaluates polynomial extrema continuously per plane, independent of optimizer `smooth_eps`. Numerical conditioning and the relation to the final world swept certificate remain provisional. Rejections at 0.011-0.014 m must not be handled by silently raising it. | Validate continuous swept trajectory against normalized planes and inflated map; run scale sensitivity on map resolution and conditioning. |
+| HG-003 | Vertical guide envelope | removed | REMOVED | The guide is now a route-reference quality input only. Corridor containment, dynamic/flatness gates and the final world-model swept certificate remain authoritative. The former fixed 20-sample/0.05 m gate could false-reject a feasible trajectory inside the corridor. | No reintroduction as a route-reference gate; any future altitude/terrain constraint needs a separately owned safety contract and evidence. |
 | HG-004 | Vehicle dynamic and flatness envelope | V/A/J 12/12/30, body rate 5 rad/s, thrust acceleration 6-25 m/s2 | PROVISIONAL | Product config says X500-derived, but controller/PX4/hardware provenance is incomplete. Backup missions may lower these limits. | Link airframe/controller evidence and dataset/SITL distributions; certify continuity and actual PX4 tracking before hardware. |
 | HG-005 | Planning radius invariant | 0.35 + 0.25 + 0.05 + 0.10 + 0.05 = 0.80 m | PROVISIONAL | Ownership and sum are explicit and config-validated. Component error budgets are not yet tied to measured distributions. | Derive tracking/localization/mapping p99 independently and preserve the sum invariant. |
-| HG-006 | Runtime input freshness | cloud/corrected/propagated maximum age 0.5 s; pairing skew 0.1 s | PROVISIONAL | Fail-closed works, but 0.5 s is far larger than a 0.2 s planning lead. Recent runs show health exits from scheduling gaps around this boundary. | Express per-stream deadlines from rates and braking envelope; measure dataset and loaded-SITL gap distributions. |
+| HG-006 | Runtime input freshness | cloud/corrected/propagated maximum age 0.5 s; exact timestamp pairing at the typed observation boundary | PROVISIONAL | Fail-closed works, but 0.5 s is far larger than a 0.2 s planning lead. Recent runs show health exits from scheduling gaps around this boundary. The removed legacy pairing-skew knob is no longer an independent authority. | Express per-stream deadlines from rates and braking envelope; measure dataset and loaded-SITL gap distributions. |
 | HG-007 | Safety suffix anchor | maximum state-to-command anchor error 0.75 m | PROVISIONAL | Prevents retaining a geometrically detached suffix, but value is independent of speed, stopping distance and localization confidence. | Replace with speed/covariance-aware contract or derive a certified worst case. |
 | HG-008 | Planner watchdog | 1.0 s | PROVISIONAL | Protects command publication from a hung solve, but exceeds the internal 0.18 s solve deadline by 5.6x and invalidates all command availability on expiry. | Align watchdog with cancellability and measured worst-case stage latency; test cancellation and immutable commit under load. |
 | HG-009 | Goal connectivity | Shared 3-D completion/connectivity tolerance 0.20 m | PROVISIONAL | Planner endpoint resolution and runtime completion now use one product-owned value; scale/provenance and mission distributions remain provisional. | Validate goal acceptance/rejection across map resolutions and 3-D endpoint cases; retain one shared owner. |
 | HG-010 | Retained-suffix swept validation | spatial step 0.5 inflated-map resolution, time step clamped 2-50 ms | PROVISIONAL | Adaptive segment checks fail closed for OCCUPIED and OUT_OF_MAP. Maximum step and map revision stability are not yet recorded in the certificate. | Attach map revision/generation and segment certificate to the committed bundle; test obstacle between legacy 50 ms samples. |
-| HG-011 | Hardware Mid-360 visibility | hardware blocked unless explicit certificate flag is true | CERTIFIED | Fail-closed deployment gate exists. No real-flight visibility certificate exists yet. | Keep hardware blocked until mounting, FOV/blind zones, accumulated observations and motion envelope are certified. |
+| HG-011 | Hardware Mid-360 visibility | hardware blocked unconditionally until an immutable certificate and verifier exist | CERTIFIED | No boolean can turn an unverified FOV/mounting assumption into evidence. No real-flight visibility certificate exists yet. | Keep hardware blocked until mounting, FOV/blind zones, accumulated observations and motion envelope are certified and verified at runtime. |
 | HG-012 | CIRI overlap/seed tolerances (`NUMERICAL_TOLERANCE`) | overlap threshold plus hard-coded 0.01 m and 0.25 ratio; seed clearance `robot_r - 0.01 m` | PROVISIONAL | Different meanings currently share unnamed constants and can reject dense geometry inconsistently. | Name each quantity, record units/reason codes and test resolution scaling before changing values. |
-| HG-013 | Backup corridor certificate (`SAFETY_INVARIANT`) | position penalty violation accepted up to 0.2 | PROVISIONAL | This differs from the 0.01 m EXP certificate and can reduce the margin on the trajectory intended to be safest. | Replace penalty-derived authorization with the same normalized continuous geometric certificate used by EXP; preserve certified seed fallback. |
-| HG-014 | Typed estimator-health control gate (`SAFETY_INVARIANT`) | `TRACKING` plus navigation/covariance/observability/correction/propagation flags all true | PROVISIONAL | PX4 now consumes the typed `/lio/health` contract when present; a false accept could expose External Mode during an invalid estimator or public-frame transition, while a false reject causes a bounded hold/handover. Callback work is constant-time and expected below 1 ms at p99. | Repeat typed-health negative tests, loaded SITL and recorded-data health timing; make typed health mandatory in every launch profile, then remove the DiagnosticArray fallback TB-004. |
+| HG-013 | Backup corridor certificate (`SAFETY_INVARIANT`) | same normalized continuous plane certificate as EXP | PROVISIONAL | Backup now uses the same independent normalized plane certificate rather than a penalty-derived 0.2 m threshold. Final world swept validation and numerical conditioning evidence remain open. | Validate the shared continuous certificate against the final inflated-map/world certificate and preserve the certified seed fallback. |
+| HG-014 | Typed estimator-health control gate (`SAFETY_INVARIANT`) | `TRACKING` plus navigation/covariance/observability/correction/propagation flags all true | PROVISIONAL | PX4 now consumes typed `/lio/health`; invalid health fails closed immediately, source timestamps must advance, and the message carries the latest propagated-state timestamp used as the localization-reset barrier. A false accept could expose External Mode during an invalid estimator or public-frame transition, while a false reject causes a bounded hold/handover. | Repeat typed-health negative tests, loaded SITL and recorded-data health timing; certify the typed health lease and reset barrier from repeated evidence. |
 
 ## Temporary-bypass register
 
 | ID | Owner/date | Scope | Safety impact | Evidence | Removal condition | Status |
 |---|---|---|---|---|---|---|
-| TB-001 | planning/runtime; intro `1661386` | EXP jerk objective disabled; explicit `--tb001-exp-jerk-penalty 5e8` re-enable candidate; analytic V/A/J hard gate remains authoritative | False-reject and runtime-tail risk; no false accept if hard gate is complete | Disabled vs explicit enabled `external-mode-check` and `dataset-check` A/B; reports are uncertified | Objective-enabled A/B on structured SITL and dense snapshot replay has equal certificates and bounded p99 | TEMPORARY_BYPASS |
-| TB-002 | planning; intro `30ca02c` | `traj_opt.exp_traj.penna_attract`: disabled `-1e7`, enabled reference `5e8`; no implicit runner switch yet | May reduce convergence margin but does not bypass the corridor certificate | Config-patched nominal/structured SITL A/B | Deterministic optimizer A/B proves a replacement improves feasibility without path drift | TEMPORARY_BYPASS |
-| TB-003 | mapping/planning; intro `30ca02c` (`iris_iter_num`), `1661386` (`obs_skip_num`) | `super_planner.iris_iter_num/obs_skip_num`: current `(1,2)`, enabled reference `(2,1)`; no implicit runner switch yet | May reduce corridor volume or omit redundant surfaces; inflation/collision gates remain authoritative | Config-patched dense snapshot and SITL A/B | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration/skip matrix | TEMPORARY_BYPASS |
-| TB-004 | PX4/runtime; intro `2026-08-25` | DiagnosticArray health remains a compatibility fallback only until the first valid typed `/lio/health` message is received | Legacy string health can control safety before typed health arrives; no intentional fail-open behavior, but the old parse path remains a contract risk | PX4 package build and existing health-gate tests; no closed-loop evidence yet | All launch profiles publish typed health before External Mode command exposure; negative epoch/flag tests pass; remove `onLioDiagnostics` safety fallback | TEMPORARY_BYPASS |
-| TB-005 | runtime/mapping; intro `2026-08-25` | Legacy cloud plus corrected-odometry pairing remains a compatibility fallback until the first valid `/lio/mapping_observation` is accepted | Retains the old pairing/skew and duplicate-input risk for legacy-only launches; typed observation path is atomic and fail-closed | Runtime build, world-store tests, shutdown test; no end-to-end typed-stream SITL evidence yet | Every supported launch uses atomic `RegisteredScan`; remove legacy mapping subscriptions and `input_pairing.hpp` after dataset/SITL migration evidence | TEMPORARY_BYPASS |
+| TB-001 | planning/runtime; intro `1661386` | Historical EXP jerk objective experiment; no longer exposed by product runner and no longer changes generated planner configuration | Historical false-reject and runtime-tail risk; no active bypass remains | Focused planner/runtime tests after removal; repeated dataset/SITL performance evidence remains open | None for the removed switch; retain history for traceability | REMOVED |
+| TB-002 | planning; intro `30ca02c` | Historical `traj_opt.exp_traj.penna_attract` switch was removed; the product-owned waypoint quality term is `traj_opt.exp_traj.objective.waypoint_attraction_weight` and is not a bypass switch | Historical convergence/conditioning risk; no active bypass remains | Product source scan shows no `penna_attract` consumer; planner configuration tests cover the replacement objective field | None for the removed switch; any future objective experiment must be an external, explicitly selected evaluation, not a flight parameter | REMOVED |
+| TB-003 | mapping/planning; intro `30ca02c` (`iris_iter_num`) | `planner.iris_iter_num`: current `1`, enabled reference `2`; the unused obstacle-skip setting was removed | May reduce corridor volume; inflation/collision gates remain authoritative | Config-patched dense snapshot and SITL A/B | Dense snapshot benchmark proves constraint coverage, feasible rate and p99 across the iteration matrix | TEMPORARY_BYPASS |
+| TB-004 | PX4/runtime; intro `2026-08-25` | Historical DiagnosticArray health fallback was removed; only typed `/lio/health` controls External Mode | Historical compatibility risk; no active fallback remains | PX4 source scan has no DiagnosticArray health subscription/parser; External Mode CTest passes | None for the removed fallback; keep the historical record and typed-health negative/replay evidence | REMOVED |
+| TB-005 | runtime/mapping; intro `2026-08-25`, removed `2026-08-27` | Legacy cloud plus corrected-odometry pairing was a compatibility fallback before the atomic `RegisteredScan` contract was made mandatory | Retained pairing/skew and duplicate-input risk for legacy-only launches | Typed-only runtime source, canonical profile, shutdown test publishing `RegisteredScan`, sourced runtime CTest and Python contract tests | None; retain this historical row for traceability | REMOVED |
 
-Register anchors for the remaining rows are explicit, but TB-002 and TB-003
-still have open switch debt rather than supported runner switches. TB-002 was
-introduced by the `30ca02c` change from `traj_opt.exp_traj.penna_attract=5e8`
-to `-1e7`; its disabled/enabled A/B must use that exact config key and values
-in the generated planner file. TB-003 has split provenance: `iris_iter_num`
-changed from 2 to 1 in `30ca02c`, while `obs_skip_num=2` entered with the
-initial SUPER integration `1661386`; its A/B must restore
-`(iris_iter_num=2, obs_skip_num=1)` versus the current `(1,2)` in the same
-config. Until explicit switches exist, patch the generated config manually,
+Register anchors for the remaining rows are explicit. TB-003 is limited to
+`iris_iter_num`, which
+changed from 2 to 1 in `30ca02c`. The previously loaded `obs_skip_num` had no
+consumer in corridor generation and was removed rather than preserved as a
+no-op configuration surface. Its A/B must restore `iris_iter_num=2` versus the
+current `1` in the same config. Until explicit switches exist, patch the
+generated config manually,
 archive enabled/disabled artifacts, and keep both rows open. No implicit
 environment switch exists for either row.
 
@@ -152,6 +150,183 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ## Decision history
 
+### 2026-08-26 - Invalidate execution bundle on world revision advance
+
+- Owner: `navigation_execution::CommittedBundleStore`; scope: the mapping
+  publication to command-sampling boundary in `publishWorldIdentity()`.
+  When a strictly newer immutable world identity is accepted, the store clears
+  the committed candidate before exposing the new identity.  An exact-world
+  candidate can be committed again only after the planner has produced and
+  validated it against that identity.
+- Safety impact: `SAFETY_INVARIANT`, fail closed.  A candidate certified on a
+  previous map revision must not remain executable after a newer observation
+  changes the world.  The deliberate false-reject consequence is a bounded
+  command gap while replanning; retaining the candidate would permit a false
+  accept if a newly observed obstacle intersects it.  Goal transitions and
+  localization resets continue to invalidate independently.
+- Derivation and cost: no threshold or new timing value was introduced.  The
+  identity equality/advance relation already owned by
+  `navigation_world_model` remains authoritative.  Clearing one shared
+  pointer is constant-time; measure command-gap and replan p50/p95/p99 on
+  repeated SITL and recorded-data runs before considering a certificate-horizon
+  optimization.
+- Evidence: `test_committed_bundle_store` now proves that a committed bundle
+  is unavailable after world advance, an old token is rejected, and a fresh
+  candidate for the new identity can commit.  Full runtime, dataset and SITL
+  evidence remain open.
+- Removal/review condition: do not remove this invalidation until an explicit
+  execution-side certificate proves the in-flight bundle safe against the
+  newer world and has regression, sanitizer, dataset and repeated SITL
+  evidence.  Verification command:
+  `colcon test --packages-select navigation_execution navigation_runtime
+  --event-handlers console_direct+`.
+
+### 2026-08-26 - Make backup corridor authorization independent of optimizer penalties
+
+- Owner: `navigation_planning_backend::BackupTrajOpt`; scope: both backup
+  refinement entry points and the shared corridor-plane validation helper.
+  Plane rows are normalized before optimization, and the final trajectory is
+  sampled against those planes to compute a maximum geometric violation in
+  metres.  `penalty_log` remains diagnostic only; `penna_pos` no longer enables,
+  disables, or scales the safety decision.
+- Safety impact: `SAFETY_INVARIANT`, fail closed.  The previous gate used
+  `0.2` and `penna_pos * 0.05`, which coupled a safety certificate to an
+  optimizer weight and could accept an out-of-corridor backup when the weight
+  was disabled or when the log was stale.  The change may increase false
+  rejects for a sampled excursion above the configured tolerance; it removes
+  this false-accept path.  Continuous extrema between samples remain an open
+  limitation recorded by HG-013.
+- Derivation and cost: the comparison is against the existing
+  `corridor_plane_tolerance_m` in metres after row normalization; no new
+  threshold was introduced.  The final pass adds the existing
+  `integral_reso` samples per piece and a constant amount of state; measure
+  backup p50/p95/p99 and rejection reasons before changing sampling policy.
+- Evidence: `test_planner_config` now verifies the geometric violation is
+  invariant under plane scaling.  The backend build and focused test are
+  required before closing this entry; dataset, repeated SITL, sanitizer and
+  hardware evidence remain open.
+- Removal/review condition: replace sampled authorization only with an
+  analytic or bounded continuous certificate that has scale, dataset,
+  sanitizer and repeated SITL evidence.  Verification command:
+  `colcon test --packages-select navigation_planning_backend --event-handlers
+  console_direct+`.
+
+### 2026-08-26 - Make A* search deadlines absolute and heap entries immutable
+
+- Owner: `navigation_planning_backend::Planner::PathSearch` and
+  `path_search::Astar`. Scope: the escape, preferred-altitude, unrestricted,
+  and probability-map alternatives now share one stage budget derived from the
+  existing absolute solve deadline. A* measures cancellation with
+  `std::chrono::steady_clock`; a caller-supplied zero budget is an immediate
+  timeout, not a request to restore the configured default. The open set stores
+  an immutable `(node, score, round)` entry and discards stale entries after
+  pop, because mutating a node through an existing `priority_queue` pointer
+  does not implement decrease-key.
+- Safety impact: performance/liveness and algorithmic correctness. A frozen
+  simulation clock can no longer keep A* running past its wall-time budget, and
+  fallback attempts cannot multiply the A* stage latency. The change does not
+  relax occupancy, UNKNOWN, OUT_OF_MAP, diagonal-segment, corridor, or
+  trajectory safety gates. A false timeout can reject a feasible route; a
+  missing timeout or stale heap ordering can block the callback or return a
+  non-shortest route.
+- Derivation and cost: the stage budget remains the configured A* total limit
+  intersected with the caller's absolute solve budget; no new threshold was
+  tuned. The extra queue entry score/round is constant-size overhead. Measure
+  A* p50/p95/p99 and timeout rates on repeated open, detour, no-path, and frozen
+  `/clock` cases before changing any budget.
+- Evidence: sourced C++20 backend build succeeded and
+  `test_planner_runtime_context` passed 3/3, including immutable open-set
+  ordering. End-to-end SITL remains unavailable in the sandbox and is not
+  represented as acceptance evidence.
+- Removal/review condition: retain until repeated dataset shadow planning and
+  structured SITL show the stage distribution and no timeout multiplication;
+  review if the queue implementation or deadline owner changes.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target test_planner_runtime_context -j1
+  && build/navigation_planning_backend/test_planner_runtime_context
+  --gtest_color=no`.
+
+### 2026-08-26 - Make degenerate CIRI tangent construction fail closed
+
+- Owner: `navigation_planning_backend::CIRI`. Scope:
+  `findTangentPlaneOfSphere` now rejects non-finite/inside-sphere/tangent-limit
+  inputs and uses a least-aligned coordinate axis for a collinear seed instead
+  of normalizing a zero cross product. Its caller propagates the failure as a
+  corridor failure; no NaN plane is allowed to continue to optimization.
+- Safety impact: numerical safety invariant. This prevents invalid planes,
+  invalid rotations, and square roots of negative tangent radicands from
+  entering corridor authorization. A false reject is possible for geometry at
+  the numerical tangent boundary; false acceptance of a non-finite plane is
+  explicitly prohibited. No obstacle margin or occupancy policy was relaxed.
+- Derivation and cost: the tolerance is scale-aware machine precision
+  (`128 * epsilon * max(1, geometry scale)`), not a mission-tuned clearance.
+  The fallback axis is deterministic and constant-time.
+- Evidence: sourced backend compilation passed through `ciri.cpp`; the focused
+  runtime-context test passed 3/3. A dedicated CIRI collinear/near-tangent
+  characterization and repeated planner replay remain required before this
+  numerical behavior is certified.
+- Removal/review condition: replace the sampled tangent construction only after
+  an analytic sphere-plane certificate and equivalent geometry test vectors are
+  available.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target test_planner_runtime_context -j1
+  && build/navigation_planning_backend/test_planner_runtime_context
+  --gtest_color=no`.
+
+### 2026-08-26 - Parse shared YAML configuration once per loader
+
+- Owner: `navigation_math::YamlLoader`. Scope: load the YAML document in the
+  constructor and traverse the cached immutable document for all parameter
+  reads. Nested lookup uses const node access so a missing key cannot mutate
+  the cached tree. Existing default/required semantics are intentionally
+  unchanged in this batch.
+- Safety impact: startup performance and configuration consistency. Repeated
+  file parsing previously multiplied initialization I/O and allowed a path
+  lookup to observe a separately parsed document. This change does not make a
+  permissive default into a safety authorization; strict schema, units, and
+  cross-field validation remain a separate contract phase.
+- Derivation and cost: one parse and one document lifetime per configuration
+  object; lookups remain proportional to path depth. No runtime planner gate
+  or numeric threshold changed.
+- Evidence: `test_rog_map_vendor` passes 14/14, including nested reads and a
+  required-missing fail-closed case. The existing map fixture behavior remains
+  unchanged after fixing const traversal.
+- Removal/review condition: retain as the sole shared loader. Before changing
+  defaults or adding strict unknown-key rejection, add typed schema tests for
+  mapping, planning, and execution configuration with explicit units.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/rog_map_vendor --target test_rog_map_vendor -j1 &&
+  build/rog_map_vendor/test_rog_map_vendor --gtest_color=no`.
+
+### 2026-08-26 - Validate stale solve candidates on the latest immutable world
+
+- Owner: `navigation_planning_backend::Planner::authorizeAndCommit`. Scope:
+  remove the pre-validation exact-identity rejection between the solve-pinned
+  view and the latest published view. Candidate swept validation now runs on
+  the latest immutable view; `WorldSnapshotStore::commitIfCurrent()` remains
+  the short publication/commit linearization point and rejects a publication
+  racing that validation.
+- Safety impact: liveness correction with fail-closed commit semantics. A
+  fresh obstacle or OUT_OF_MAP segment in the latest view still rejects the
+  candidate. The change prevents unrelated map revisions from starving every
+  60-100 ms solve under a 10-20 Hz mapper. It does not permit a candidate to
+  commit without latest-world geometric validation.
+- Derivation and cost: no gate value changes. Validation cost remains the
+  existing swept spatial/time sampling contract and is paid once on the
+  latest view rather than after an identity equality branch.
+- Evidence: source review identified the pre-check as the liveness boundary;
+  the existing world-store tests continue to require rejection when a
+  publication occurs during the short authorized commit. A focused planner
+  test with a stale pinned view and a safe advanced latest view, plus loaded
+  dataset and repeated SITL evidence, remains required before certification.
+- Removal/review condition: retain until candidate validation and commit
+  certificates expose both pinned and validated identities in all runtime
+  reports and the stale-solve acceptance matrix is repeated.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target navigation_planning_backend -j1`;
+  then run the planner facade/world-store CTest targets and the repeated
+  dataset/SITL stale-world scenarios.
+
 ### 2026-08-25 - WM-3B exact candidate and latest-world commit authorization
 
 - SUPER now constructs the exact executable position/yaw polynomial bundle,
@@ -170,13 +345,12 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   velocity-derived time step is clamped to 2-50 ms. OCCUPIED and OUT_OF_MAP
   fail closed and every adjacent segment is ray-checked. These values remain
   PROVISIONAL and were not tuned in WM-3B.
-- BACKUP is deliberately not redefined as persisted occupancy KNOWN_FREE in
-  this batch. With endpoint-only observation and raycasting disabled, current
-  SUPER backup provenance means visibility/obstacle-free certified while
-  occupancy UNKNOWN remains traversable. Requiring KNOWN_FREE here would be an
-  undocumented behavior change and a likely false-reject source. A stronger
-  product visibility certificate is a separate behavior batch and remains a
-  hardware-flight prerequisite.
+- Historical note: the earlier WM-3B contract allowed a BACKUP visibility
+  result to remain traversable through occupancy UNKNOWN. That contract is
+  superseded by the 2026-08-26 safety-certificate change below. Current
+  product authorization requires BACKUP samples and swept segments to provide
+  KNOWN_FREE evidence; raycasting-disabled or endpoint-only evidence is not a
+  hardware-flight certificate.
 - Focused evidence passes 18 trajectory/builder/sweep tests, five snapshot-store
   tests (including a real candidate rejected after WORLD_ADVANCED), and all
   eight runtime test targets. Independent post-change review found no remaining
@@ -1024,7 +1198,7 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Owner: planning/runtime harness. Scope: Python runtime runner and report
   artifacts only; no product C++, default YAML, SUPER safety gate, freshness
   threshold, deadline, QoS, queue, or acceptance threshold is changed.
-- Default behavior remains fail-closed with `traj_opt.exp_traj.penna_jerk`
+- Default behavior remains fail-closed with `traj_opt.exp_traj.objective.jerk_penalty_weight`
   negative, so the EXP jerk objective stays disabled and the analytic V/A/J
   hard gate remains authoritative. The only opt-in path is the explicit
   `--tb001-exp-jerk-penalty` argument on an External Mode or dataset-check
@@ -1197,6 +1371,11 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   acceptance. No temporary bypass was enabled.
 - Verification: Release package build and existing SUPER tests; ASan/UBSan/TSan
   plus repeated SITL and RSS measurements remain open.
+- Historical correction (2026-08-26): the indexed table described above was
+  subsequently removed. The current implementation derives asymmetric local
+  extents from the pinned `WorldGeometry` and uses a sparse touched-node map;
+  this correction does not change the ownership result or retroactively turn
+  the earlier verification into a performance acceptance claim.
 
 ### 2026-08-25 - Explicit solve failure provenance and goal contract
 
@@ -1506,8 +1685,8 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   fallback and is disabled after the first valid typed observation.
 - `EstimatorHealth` is the typed control-plane gate. PX4 requires TRACKING,
   navigation validity, covariance validity, observability validity, fresh
-  correction and valid propagated state. DiagnosticArray remains only under
-  TB-004 until all launch profiles are migrated. No numeric threshold, map
+  correction and valid propagated state. DiagnosticArray is observability-only
+  and no longer controls External Mode. No numeric threshold, map
   resolution, planner deadline, unknown policy or dynamic limit changed.
 - False-accept risk: stale or cross-epoch estimator state could keep External
   Mode active or authorize a stale world/command. False-reject risk: a missing
@@ -1774,8 +1953,8 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Safety impact: prevents malformed corridor coefficients from reaching
   `SimplifySFC`, geometric queries, or MINCO. Validation is fail-closed and
   leaves the caller's matrix unchanged when normalization cannot produce a
-  finite result. It does not certify backup geometry; HG-013 remains
-  provisional because the backup terminal check still uses aggregate penalty.
+  finite result. It does not by itself certify backup geometry; the separate
+  known-free backup certificate below remains authoritative.
 - Evidence: `python3 tools/runtime/build.py build --packages
   navigation_planning_backend` and `python3 tools/runtime/build.py test
   --packages navigation_planning_backend`; focused tests cover finite positive
@@ -1984,7 +2163,9 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   dynamic envelope), and snapshot/restore the complete accepted optimizer
   state when a retry fails, leaves the corridor, or makes no progress. The
   snapshot covers decision variables, additive duration floor, penalty weights,
-  penalty diagnostics, feasibility-point weight, objective and iteration count;
+  penalty diagnostics, objective and iteration count. Route-reference weights
+  and deadbands are immutable solve configuration and are never derived from
+  or scaled with feasibility penalties;
   `final_duration_s` is emitted only after all physical, vertical-guide and
   flatness gates pass. Planner trace now preserves the producer's explicit
   `commit_decision` separately from `candidate_result`.
@@ -2380,3 +2561,2186 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   dataset distribution before making any end-to-end or flight-acceptance claim.
 - Verification command: `source /opt/ros/jazzy/setup.bash && source
   install/setup.bash && python3 tools/runtime/build.py --mode release check`.
+
+### 2026-08-26 - Parallel dataset/SITL runtime lock boundary
+
+- Owner: `tools/runtime/runner.py` and
+  `tools/runtime/runtime_environment.py`. Scope: allow read-only dataset and
+  SITL sessions to use the same verified Release install concurrently, while
+  keeping every build/test/check exclusive. Dataset and SITL have separate
+  session locks and separate ROS domains so their ROS graphs cannot exchange
+  sensor, clock, planner, or PX4 messages.
+- Safety impact: orchestration and observability only. No planner objective,
+  dynamic limit, freshness gate, PX4 preflight rule, mission timeout, UNKNOWN
+  policy, fallback, or acceptance threshold changed. A build is still blocked
+  while any runtime reader holds the canonical install lock.
+- Evidence: the previous facade checkpoint artifact
+  `.artifacts/runtime/dataset-20260826T001126-569319` reached recorded-data
+  health but held `.build-runtime.lock` while the SITL sidecar was rejected
+  before session creation. Runtime contract tests passed `144/144` after the
+  lock/isolation change, including shared-reader/exclusive-build and
+  workflow-aware lock checks. A new parallel run is the removal evidence for
+  the starvation incident; it must record session creation for both agents
+  before any product verdict is considered.
+- Removal condition: replace this compatibility boundary only when runtime
+  sessions no longer share the canonical install or when a stronger explicit
+  multi-install isolation contract is adopted. Until then, do not revert
+  runtime readers to an exclusive build lock.
+- Verification command: `env -u VIRTUAL_ENV -u PYTHONHOME /usr/bin/python3
+  -m unittest tools/runtime/tests/test_runtime_contract.py`.
+
+### 2026-08-26 - Preserve the guide-time seed before hard-gated optimization
+
+- Owner: `ExpTrajOpt` guide-time initialization in
+  `navigation_planning_backend`. Scope: remove the unexplained `0.8`
+  contraction from both the implementation and the inline compatibility path;
+  preserve the segment durations produced by the guide allocation.
+- Safety impact: the former contraction could make the initial candidate
+  violate the configured velocity/acceleration envelope before optimization.
+  The correction removes an unsafe seed transformation. It does not change
+  dynamic limits, retry budgets, freshness gates, fallback authorization,
+  UNKNOWN handling, or acceptance thresholds. The hard feasibility gates
+  remain the authority.
+- Evidence: the pre-fix SITL artifact
+  `.artifacts/runtime/external-mode-check-20260826T004800-594297` recorded
+  normalized velocity violation `1.0247871740370653` and MINCO line-search
+  exhaustion. After the correction, Release build, selected CTest, and
+  runtime contracts `173/173` passed; the exact full dataset artifact
+  `.artifacts/runtime/dataset-20260826T034428-4` passed with complete
+  `55435/55435` IMU and `2772/2772` LiDAR coverage and zero accounting
+  violations. A fresh SITL mission result is still open.
+- Performance note: the same clean dataset replay measured planner
+  `planning_latency` p95 `2.343 ms` and `exp_opt` mean `641 us`, above the
+  two earlier clean baselines (`1.389/1.410 ms` and `472/380 us`), while
+  mapping and whole-replay throughput did not show a material regression.
+  This is an optimization follow-up, not permission to restore the magic
+  contraction or relax a safety gate.
+- Removal condition: none for the safe seed correction. Close the performance
+  follow-up only after repeated same-scenario A/B distributions and a fresh
+  SITL run demonstrate that any chosen optimization preserves feasibility,
+  continuity, clearance, PX4 state, and fail-closed behavior.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && make build && make test && make dataset-check
+  DATASET=aist-mid360-drive RATE=1.0`.
+
+### 2026-08-26 - Do not count carried planner timings as new execution
+
+- Owner: `tools/runtime/planner_trace.py`, `tools/runtime/report.py`, and
+  `tools/runtime/html_report.py`. Scope: execution-specific planner timing
+  fields (`exp_frontend_us`, `exp_opt_us`, `backup_frontend_us`,
+  `backup_opt_us`) are valid for a cycle only when the producer's explicit
+  `exp_diagnostics_valid` flag is true. Legacy records without that flag stay
+  compatible; planner total and scheduling fields are not filtered by this
+  rule.
+- Safety impact: observability/reporting only. The change prevents stale
+  telemetry from distorting performance decisions; it does not authorize or
+  reject commands and does not change any planner objective, dynamic limit,
+  deadline, freshness gate, fallback, UNKNOWN policy, or acceptance threshold.
+- Evidence: current replay samples contained 9 valid optimizer solves followed
+  by setup-only cycles carrying the previous `exp_opt_us` value. Added a
+  regression test proving false validity excludes carried execution timings.
+  Corrected reports for `.artifacts/runtime/dataset-20260826T041003-4` and
+  `.artifacts/runtime/dataset-20260826T041557-4` each contain 9 valid solves;
+  both replay verdicts are `PASS` with full source coverage and no experimental
+  bypasses.
+- Performance characterization: the corrected replay pair achieved
+  `0.985925x/0.986787x` source-to-wall playback, above the earlier
+  `0.983289x/0.985057x` baselines. Valid `exp_opt` means were `742/747 us`
+  versus `603/638 us` in the two valid baseline samples. Keep this as an open
+  optimizer-phase investigation; it is not a whole-replay regression or a
+  safety acceptance failure.
+- Removal condition: none while the runtime diagnostic contract can carry
+  forward values. Revisit only when the producer emits an explicit per-field
+  execution identity and the report can consume that stronger contract.
+- Verification command: `env -u VIRTUAL_ENV -u PYTHONHOME /usr/bin/python3
+  -m unittest tools/runtime/tests/test_runtime_contract.py`.
+
+### 2026-08-26 - Remove inactive duplicate EXP implementations
+
+- Owner: `navigation_planning_backend::ExpTrajOpt`. Scope: remove the unused
+  inline `processCorridorWithGuideTraj2()` and `setupProblemAndCheck2()` clones,
+  plus the unreachable default-initialization helpers behind the active
+  fail-closed path. The production call graph retains only
+  `processCorridorWithGuideTraj()` and `setupProblemAndCheck()`.
+- Safety impact: source/ownership refactor only. No optimizer objective,
+  guide-time allocation, dynamic limit, hard gate, retry budget, cancellation,
+  fallback, UNKNOWN policy, candidate authorization, or PX4 gate changed.
+  The active guide allocation remains the sole duration seed; no compatibility
+  implementation is kept as a second product path.
+- Evidence: call-graph review found no production consumer of either `*2`
+  function; the duplicate path also lacked active overlap/guide matching and
+  feasibility-reference behavior. The port manifest hashes were updated for
+  the reviewed deletion. Component tests and a direct EXP seed-duration
+  regression are required before this slice is considered stable; SITL remains
+  a separate acceptance gate.
+- Removal condition: none. Reintroducing a second implementation is prohibited;
+  any future algorithmic change must modify the single active path and update
+  the parity manifest/provenance review.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && make build && make test`; additionally run the planner
+  parity checker when the pinned upstream checkout is available.
+
+### 2026-08-26 - Make planner and execution exports describe their real boundary
+
+- Owner: `navigation_planning_backend` and `navigation_execution` CMake/export
+  contracts. Scope: mark backend-only fmt/ROG/YAML/std_msgs dependencies
+  private, keep only Eigen/planning/world-model dependencies in the backend
+  public link interface, and make the execution interface explicitly link the
+  product planning/world-model targets. `navigation_contracts` is test-only for
+  execution and is no longer exported by that package.
+- Safety impact: packaging/ABI boundary only. No runtime source, command gate,
+  planner objective, dynamic limit, deadline, fallback, UNKNOWN policy, or
+  acceptance threshold changed. The change is intended to prevent consumers
+  from accidentally compiling against implementation/vendor headers.
+- Evidence: current source inspection showed the facade header includes only
+  Eigen, `navigation_planning`, and `navigation_world_model`; execution
+  production headers use the latter two but not ROS contract headers. A fresh
+  install inventory and external C++20 consumer compile are required before
+  this boundary is stable; the existing canonical install contains stale
+  generated headers and is not evidence.
+- Removal condition: none. Re-export a dependency only if a public installed
+  header requires it and add a compile-fence test proving that requirement.
+- Verification command: configure/build into a fresh temporary prefix, assert
+  the installed header allowlist, compile one translation unit per public
+  header with `-Wall -Wextra -Werror`, and run the backend/execution/runtime
+  focused CTest targets.
+
+### 2026-08-26 - Preserve direct evidence for the single EXP seed path
+
+- Owner: `navigation_planning_backend::ExpTrajOpt` regression coverage. Scope:
+  exercise the active guide overload through a convex corridor and assert that
+  the diagnostic initial duration equals the guide's terminal timestamp.
+- Safety impact: test-only observability. The test does not alter optimizer
+  configuration, feasibility gates, retry behavior, dynamic limits, fallback,
+  or runtime acceptance.
+- Evidence: `test_exp_optimizer_seed` passed in the sourced ROS/workspace
+  environment; the full selected test command also passed with 69 C++ tests
+  and 173 Python tests. The direct run measured a successful finite trajectory
+  and `initial_duration_s == guide_t.back()`.
+- Removal condition: none while the guide allocation remains the sole active
+  duration seed. Any future seed change must update this invariant and its
+  safety rationale.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && build/navigation_planning_backend/
+  test_exp_optimizer_seed --gtest_color=no`.
+
+### 2026-08-26 - Fresh backend install has a narrow public header surface
+
+- Owner: `navigation_planning_backend` install/export contract. Scope: verify
+  the package in an empty temporary install prefix, not the accumulated
+  workspace install.
+- Safety impact: packaging/compile-boundary only. No runtime behavior,
+  planner objective, deadline, gate, fallback, or acceptance threshold changed.
+- Evidence: a fresh backend prefix installed exactly
+  `include/navigation_planning_backend/planner_facade.hpp`; no `super*`,
+  `mars*`, optimizer implementation, or private config headers were installed.
+  A C++20 external translation unit including only the facade compiled with
+  `-fsyntax-only` successfully. A fresh execution-only attempt was not
+  accepted because its dependency package hooks were absent from that prefix;
+  execution still requires a fresh multi-package consumer check.
+- Removal condition: none. Keep the explicit public-header allowlist and close
+  the execution check only after its dependencies are installed into the same
+  clean prefix.
+- Verification command: `colcon build --packages-select
+  navigation_planning_backend --build-base <fresh>/build --install-base
+  <fresh>/install --merge-install`, then inventory the installed include tree
+  and compile the facade with C++20.
+
+### 2026-08-26 - Independent corridor certificate and route-reference objective
+
+- Owner: `navigation_planning_backend::ExpTrajOpt` objective and acceptance
+  boundary. Scope: replace the derived `feasibility_point_weight` with the
+  explicit `route_reference/{lateral,vertical}_weight` and deadband terms.
+  Route-reference quality cost is evaluated independently from corridor and
+  dynamic feasibility penalties; retries may scale only the configured
+  feasibility penalties. The hard corridor certificate now recomputes the
+  maximum sampled half-space violation from the trajectory and corridor
+  planes, so `objective.position_penalty_weight` cannot disable or authorize that certificate.
+- Safety impact: removes a conditioning and ownership coupling that could make
+  a quality term inherit `5e8` from the position penalty, and closes the prior
+  non-positive position-penalty certificate bypass. A malformed or non-finite route
+  reference is rejected rather than replaced with the candidate itself. The
+  route weights/deadbands are quality parameters only; they do not certify
+  clearance or flight safety. The sampled corridor certificate remains
+  provisional until continuous-extrema evidence is added.
+- Evidence: product YAML declares all four route-reference fields; nominal
+  config requires them, validates finite positive optimizer accuracy and
+  integral resolution, and tests assert the loaded values. The post-correction
+  focused build passed `navigation_planning_backend`, `test_exp_optimizer_seed`,
+  `test_trajectory`, `test_planner_config`, `test_planner_runtime_context`,
+  and `test_planner_facade`; the focused tests passed 1/1, 34/34, 11/11,
+  3/3, and 1/1 respectively. The runtime contract suite passed 145/145.
+  Objective conditioning A/B and representative dataset/SITL evidence remain
+  open.
+- Removal condition: none for independent ownership and fail-closed
+  validation. Revisit the provisional YAML quality values only after repeated
+  same-scenario objective decomposition, gradient/iteration, latency and
+  trajectory-quality A/B distributions; never tune a hard gate from one run.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target navigation_planning_backend
+  test_exp_optimizer_seed test_trajectory test_planner_config
+  test_planner_runtime_context -j1`, followed by the sourced focused tests and
+  representative dataset/SITL validation.
+
+### 2026-08-26 - Role-preserving known-free backup certificate
+
+- Owner: planner authorization and committed-trajectory revalidation. Scope:
+  apply the mission UNKNOWN policy to MAIN only; BACKUP always requires
+  `kRequireKnownFree` for endpoint samples and swept segments. A candidate
+  using UNKNOWN for MAIN must contain a complete finite role partition with a
+  BACKUP suffix reaching the trajectory end. Revalidation copies the committed
+  role intervals before sweeping the latest world, so the runtime cannot turn
+  a BACKUP suffix into MAIN by reconstructing only position/yaw.
+- Safety impact: closes the predicate weakness where an atomic transaction
+  could commit or later revalidate a candidate through UNKNOWN without a real
+  backup certificate. Malformed, gapped or incomplete role schedules fail
+  closed. This can increase false rejects in partially observed maps; that is
+  intentional and must be characterized rather than bypassed. The certificate
+  is still sampled swept evidence, not a continuous polynomial proof, and no
+  hardware-flight claim is made.
+- Evidence: backup visibility uses known-free segment traversal; live and
+  immutable snapshot traversal explicitly check start, intermediate cells and
+  endpoint. Added role-policy tests cover MAIN UNKNOWN plus BACKUP UNKNOWN,
+  backup-suffix coverage and malformed-role rejection. The post-change
+  `test_trajectory` suite passed 34/34 and `test_planner_facade` passed 1/1;
+  runtime revalidation, repeated replay and SITL evidence remain open.
+- Removal condition: none. Keep the role partition and known-free predicate
+  as the sole authorization contract. Strengthen only by adding evidence or a
+  formally stronger certificate; never restore UNKNOWN acceptance for BACKUP
+  to improve planning rate.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target navigation_planning_backend
+  test_trajectory -j1 && build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`; then run the runtime revalidation, dataset and SITL
+  scenarios with full artifact correlation.
+
+### 2026-08-26 - Planner solve failure classification
+
+- Owner: `navigation_planning_backend::Planner` result contract. Scope:
+  preserve cancellation and deadline precedence while allowing each caller to
+  supply the non-budget fallback: main trajectory generation maps to
+  `PLANNER_EXP_FAILED`, candidate construction/world authorization maps to
+  `PLANNER_CANDIDATE_REJECTED`, and actual backup-stage failure remains
+  `PLANNER_BACKUP_FAILED`.
+- Safety impact: diagnostics and error ownership only. No failure is converted
+  into success, no fallback is weakened, and the previously committed command
+  remains unchanged on rejection. More precise codes are required to prevent
+  a corridor, optimizer, certificate or candidate error being misdiagnosed as
+  a backup-generation failure.
+- Evidence: enum/string regression coverage was extended; the post-change
+  `test_trajectory` suite passed 34/34 and the planner backend target rebuilt
+  successfully. Runtime replay and SITL evidence remain separate acceptance
+  gates.
+- Removal condition: retain the distinct codes until the product diagnostic
+  schema carries structured source/reason fields and all runtime consumers use
+  that schema.
+- Verification command: `source /opt/ros/jazzy/setup.bash && cmake --build
+  build/navigation_planning_backend --target navigation_planning_backend
+  test_trajectory -j1 && build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
+### 2026-08-26 - Candidate mission identity is immutable across export and sampling
+
+- Owner: `navigation_planning_backend::Planner` and
+  `navigation_execution::CommandSampler`. Scope: persist localization epoch,
+  goal epoch and request id on the backend committed trajectory, require the
+  runtime to set that identity before solving, reject export under a different
+  identity, and reject a retained bundle when the active goal epoch has
+  advanced.
+- Safety impact: closes a provenance flaw where a trajectory planned for an
+  older hot-retarget goal could be exported with newer goal metadata. A
+  retained bundle now becomes unavailable until a candidate for the new goal
+  is committed; this may create a command gap and is intentionally fail-closed.
+  No visibility predicate, timeout, fallback or acceptance threshold was
+  relaxed.
+- Evidence: backend/facade compilation passed after the identity fields were
+  added; `test_planner_facade` passed 1/1; `test_committed_bundle_store` passed
+  5/5; `navigation_runtime_node` relinked successfully against the refreshed
+  backend install. Full runtime, dataset and SITL evidence remains open.
+- Removal condition: none. Keep identity attached to the candidate until the
+  planner no longer owns any internal trajectory representation and the
+  execution coordinator receives a native immutable candidate directly.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/navigation_planning_backend
+  --target install -j2 && cmake --build build/navigation_runtime --target
+  navigation_runtime_node -j2 && build/navigation_execution/
+  test_committed_bundle_store --gtest_color=no`.
+
+### 2026-08-26 - Execution store is the sole exposed candidate commit
+
+- Owner: planner/execution boundary. Scope: the planner now authorizes and
+  stages a candidate with its world and mission certificate; runtime exports
+  that pending candidate and commits it through `CommittedBundleStore`. The
+  planner receives an ACK only after the execution-store swap and updates
+  `CmdTraj` as replanning history. The sampler never reads `CmdTraj`.
+- Safety impact: removes the second command commit path and prevents runtime
+  readiness from being inferred from a backend generation increment. A failed
+  execution commit discards the pending candidate; an ACK mismatch clears the
+  execution store and keeps exposure fail-closed. This is an ownership change,
+  not a relaxation of candidate/world/backup predicates.
+- Evidence: backend, facade and runtime targets rebuilt after the cutover;
+  `test_planner_config` passed 11/11, `test_trajectory` passed 34/34,
+  `test_planner_facade` passed 1/1, `test_committed_bundle_store` passed 5/5,
+  and PX4 odometry bridge CTest passed 6/6 after the related parameter cleanup.
+  Full runtime integration, dataset and SITL evidence remain open.
+- Removal condition: none. Remove the transitional backend trajectory history
+  only after the planner consumes an explicit immutable previous-candidate
+  input and all retained-command validation reads execution-owned state.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/navigation_planning_backend
+  --target install -j2 && cmake --build build/navigation_runtime --target
+  navigation_runtime_node -j2 && build/navigation_planning_backend/
+  test_trajectory --gtest_color=no && build/navigation_execution/
+  test_committed_bundle_store --gtest_color=no`.
+
+### 2026-08-26 - Unified command anchor safety contract
+
+- Owner: `navigation_contracts::kCommandAnchorErrorLimitM`. Scope: runtime
+  retained-command validation and PX4 command acceptance use the same named
+  geometric limit; the PX4-local `command_anchor_max_error_m` copy and the
+  speed-dependent `command_tracking_lag_s` behavior parameter are removed.
+- Safety impact: removes a second authority and prevents forward tracking delay
+  from enlarging the command acceptance envelope. A command must remain within
+  the finite geometric limit in forward, reverse and lateral directions.
+  This can increase command rejection during genuine tracking lag; it is
+  intentionally fail-closed and is not a SITL tuning result.
+- Evidence: focused tracking-envelope tests were updated to cover strict
+  forward/reverse/lateral limits; runtime and PX4 builds are pending after the
+  contract change. Repeated SITL and recorded-data distributions are required
+  before changing this product constant.
+- Removal condition: none. Change the constant only with repeated
+  representative tracking evidence and a reviewed safety decision; do not
+  reintroduce node-local copies or a lag allowance parameter.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/px4_navigation_external_mode
+  --target px4_navigation_external_mode_core test_tracking_envelope -j2 &&
+  build/px4_navigation_external_mode/test_tracking_envelope
+  --gtest_color=no && cmake --build build/navigation_runtime --target
+  navigation_runtime_node -j2`.
+
+### 2026-08-26 - User-facing duration units are seconds at ROS boundaries
+
+- Owner: `navigation_common::secondsToNanoseconds()` and estimator/PX4
+  parameter loaders. Scope: user-facing YAML/ROS duration keys now use `_s`;
+  conversion to integer nanoseconds occurs once before entering estimator,
+  odometry and point-time core contracts.
+- Safety impact: removes ambiguous raw integer duration parameters and prevents
+  accidental ns/ms unit mistakes. Existing numeric durations and all freshness,
+  continuity, timestamp and propagation gates are preserved exactly after
+  conversion; no timeout or grace period was relaxed.
+- Evidence: FAST-LIO CTest passed 12/12, PX4 odometry bridge CTest passed 6/6,
+  and focused parameter-loader tests passed 20/20 with ROS logs redirected to a
+  writable test directory. SITL and representative replay evidence remain
+  required for runtime timing claims.
+- Removal condition: none. New duration parameters must use seconds in the
+  profile and a named unit-suffixed internal field when integer timestamps are
+  required.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ROS_LOG_DIR=/tmp/uav-navigation-test-ros-logs ctest
+  --test-dir build/fast_lio_ros --output-on-failure && ctest --test-dir
+  build/px4_odometry_bridge --output-on-failure`.
+
+### 2026-08-26 - Planner collision radius is derived from owned budgets
+
+- Owner: planner configuration safety-envelope composition. Scope: remove the
+  independent `planner/robot_r` YAML value and derive the collision radius from
+  vehicle, tracking, localization, mapping and planning-margin budgets before
+  computing corridor/braking geometry.
+- Safety impact: prevents a stale radius parameter from silently disagreeing
+  with its component budgets. The derived radius is still validated and all
+  downstream collision/corridor gates keep the same value for the current
+  profile; no margin was reduced.
+- Evidence: configuration/trajectory focused tests must be rerun after the
+  exact YAML/config change; SITL and recorded-data evidence remain open.
+- Removal condition: none. Keep the component budgets as the only owners; do
+  not reintroduce an independently tunable aggregate radius.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/navigation_planning_backend
+  --target test_planner_config -j2 && build/navigation_planning_backend/
+  test_planner_config --gtest_color=no`.
+
+### 2026-08-26 - Mission configuration contains only consumed behavior
+
+- Owner: mission schema and runtime scheduling boundary. Scope: remove
+  `planning.replan_rate_hz` and `control.pass_through_lookahead_m`, which were
+  parsed and serialized in profiles but had no behavior consumer.
+- Safety impact: no gate, planner cadence, waypoint acceptance rule, or grace
+  interval is weakened. Runtime remains the owner of planner cadence and the
+  mission controller remains the owner of waypoint acceptance.
+- Evidence: strict parser, mission struct, tests and product mission profiles
+  were updated; fresh mission-profile validation is still required.
+- Removal condition: none. A new mission behavior field requires a consumer,
+  unit contract and negative test before it may enter the schema.
+- Verification command: `rg -n "replan_rate_hz|pass_through_lookahead_m"
+  src config/runtime/missions` must return no product matches, followed by the
+  PX4 mission CTest suite.
+
+### 2026-08-26 - Clock-domain selection remains explicit and fail-closed
+
+- Owner: launch ROS clock plus estimator measurement-domain contract. Scope:
+  `use_sim_time` selects the ROS node clock (`/clock` for SITL/replay, system
+  clock for realtime); `fast_lio.timing.clock_domain` describes incoming
+  measurement stamps (`simulation_time`, `sensor_time`, or `ros_time`). The
+  removed bridge flags did not control either clock and were not replaced by a
+  hidden boolean.
+- Safety impact: no implicit fallback from realtime to simulation timestamps
+  is allowed. The external odometry converter authorizes `ros_time` or
+  `system_time` only when `use_sim_time=false`; PX4's uXRCE-DDS transport owns
+  the ROS-to-PX4 boot-time offset after its own convergence gate. Sensor-time
+  input remains fail-closed until a sensor-to-ROS adapter exists.
+- Evidence: launch files pass `use_sim_time`; SITL uses
+  `timing.clock_domain: simulation_time`, dataset uses `sensor_time`, and the
+  converter rejects mismatched domains. The official uXRCE-DDS implementation
+  passes its session offset into timestamp serialization/deserialization and
+  waits for convergence before exposing topics; `TimesyncStatus` remains
+  diagnostic evidence, not a duplicate product mapping authority. Repeated
+  realtime and SITL validation remain open.
+- Removal condition: verify the source stamp domain on target hardware,
+  confirm the uXRCE-DDS session convergence and timestamp shift in captured
+  messages, then repeat realtime recorded-data plus SITL validation without
+  relaxing freshness gates. If a transport variant does not provide this
+  contract, retain fail-closed behavior rather than adding a local offset.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/px4_odometry_bridge
+  --output-on-failure` plus dedicated mapping-convergence tests.
+
+### 2026-08-26 - A* search workspace follows the pinned world geometry
+
+- Owner: planner frontend search workspace. Scope: remove the independent
+  `astar/map_voxel_num` geometry parameter, derive the local index extents from
+  the pinned `WorldGeometry`, and store only touched nodes for the current
+  search.
+- Safety impact: the search remains bounded by the actual immutable map window;
+  no unknown-space policy, collision query, diagonal-edge check, search
+  deadline, or fallback order is relaxed. Non-finite, non-positive, or
+  non-integral geometry is rejected before a path can be returned.
+- Evidence: focused build and CTest are required after the change. The
+  previous implementation reserved approximately 25 million pointer slots
+  from a second YAML geometry, while the new workspace has no eager map-sized
+  allocation. Repeated planner latency/RSS and dataset/SITL distributions
+  remain open; this entry is not a performance acceptance claim.
+- Removal condition: none. Future search-window changes must come from the
+  world-model geometry or a named planner horizon contract, never a duplicate
+  voxel-count parameter.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - C++ mission schema had multiple parsing owners
+
+- Owner: product mission contract. Scope: moved the validated mission schema
+  and YAML loader to `navigation_mission`; PX4 External Mode and runtime now
+  consume that one implementation. Runtime also checks the configured planning
+  frame through the common loader before constructing the planner, and the
+  loader returns the world-model UNKNOWN enum rather than a raw policy string.
+- Safety impact: removes drift between PX4 mission behavior and runtime
+  planner limits, including waypoint validation, frame validation, dynamic
+  limits and UNKNOWN policy. No limit, policy or acceptance threshold was
+  relaxed.
+- Evidence: added the shared package and contract tests; the new package, PX4
+  External Mode (3/3) and runtime (7/7) tests pass after the migration.
+- Removal condition: none. Python runner/report remain non-flight tooling
+  readers and must not become a second product authority.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mission
+  px4_navigation_external_mode navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_mission --output-on-failure`.
+
+### 2026-08-27 - Revalidation bypassed the main-only certificate policy
+
+- Owner: planner facade trajectory revalidation. Scope: revalidation now uses
+  the same role-aware `candidateCertificatePolicy()` as initial candidate
+  authorization. A main-only candidate is known-free even when the mission
+  permits UNKNOWN; only a candidate with a complete BACKUP suffix may apply the
+  mission policy to MAIN, while BACKUP remains known-free.
+- Safety impact: closes a P0 certificate gap where a newer-world revalidation
+  could have re-authorized an old main-only trajectory through UNKNOWN. No
+  mission policy was broadened, and OCCUPIED/OUT_OF_MAP plus swept-volume
+  checks remain fail-closed.
+- Evidence: adversarial review traced the mismatch from facade revalidation to
+  runtime bundle retention. The fix reuses the existing resolver; focused
+  planning/facade tests and runtime revalidation coverage are required before
+  this entry can be closed.
+- Removal condition: none. Any future candidate role must select its
+  certificate policy through the shared resolver at both initial authorization
+  and revalidation boundaries.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/navigation_planning_backend
+  --target navigation_planning_backend test_trajectory test_planner_facade -j2
+  && ctest --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Continuous certificate rejected off-tube cells
+
+- Owner: executable trajectory swept-volume validator. Scope: the continuous
+  certificate now enumerates the conservative voxel neighborhood around the
+  curve/chord tube and filters each cell by its distance to the chord. It no
+  longer treats the whole axis-aligned bounding box as occupied by the
+  trajectory.
+- Safety impact: removes a false-reject source for diagonal and curved paths;
+  every voxel that can intersect the bounded curve tube is still checked, and
+  OCCUPIED/OUT_OF_MAP plus BACKUP known-free semantics remain fail-closed.
+- Evidence: added an off-tube occupied-cell regression alongside the existing
+  curve-through-occupied-cell regression; navigation planning CTest passed 5/5.
+  Full body/tracking/localization/mapping certificate and runtime distributions
+  remain open.
+- Removal condition: none. Any faster rasterization must cover the same
+  bounded tube or provide a stronger independent certificate.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - SITL external odometry bridge declares its simulation clock domain
+
+- Owner: PX4 external odometry bridge time boundary. Scope: the SITL profile now
+  declares `timing.clock_domain: simulation_time` for the external odometry
+  bridge, matching the launcher's `use_sim_time:=true`. The bridge remains
+  responsible only for converting the ROS/simulation timestamp at its declared
+  boundary; PX4 uXRCE-DDS session synchronization is not duplicated locally.
+- Safety impact: prevents a startup configuration mismatch from leaving the
+  bridge unresolved or encouraging an unsafe fallback to wall time. This does
+  not relax freshness, continuity, timestamp, or PX4 preflight gates.
+- Evidence: the bridge mapping implementation rejects mismatched clock-domain
+  and `use_sim_time` combinations; the runtime profile contract test now checks
+  the explicit simulation setting. Full SITL startup, timestamp continuity,
+  estimator freshness, and repeated scenario evidence remain open.
+- Removal condition: none. A different simulator clock contract must provide a
+  typed profile and matching launch/test evidence; it must not rely on the
+  bridge default.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 -m unittest
+  tools.runtime.tests.test_runtime_contract && colcon build --packages-select
+  px4_odometry_bridge navigation_runtime --cmake-args -DBUILD_TESTING=ON`.
+
+### 2026-08-27 - Visibility horizon configuration has explicit ownership
+
+- Owner: planner visibility-horizon configuration. Scope: replace the
+  overloaded `safe_corridor_line_*` fields with a configured cap, configured
+  floor, and derived effective horizon. Replace the negative `sensing_horizon`
+  sentinel with `sensing_horizon_m: 0.0` for an explicitly disabled optional FOV
+  cut. The effective horizon is never written back into the configured cap.
+- Safety impact: preserves the existing 23 m cap, 14 m floor, braking/replan
+  validation, and FOV-disabled behavior while preventing an invalid negative
+  physical distance or a hidden cap mutation. No visibility, unknown-space, or
+  backup gate was relaxed.
+- Evidence: planner config tests now assert the derived 14 m effective horizon;
+  runtime report fixtures and profile keys use the new unit-explicit names.
+  Build/CTest plus profile/report tests are required below.
+- Removal condition: none. Any future horizon source must declare whether it is
+  a cap, a floor, or a derived value and must retain the fail-closed envelope
+  check.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 -m unittest
+  tools.runtime.tests.test_runtime_contract tools.runtime.tests.test_html_report
+  && colcon build --packages-select navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Executable trajectory validation bounds polynomial curve deviation
+
+- Owner: mapping-to-execution trajectory certificate. Scope: each validated
+  polynomial segment now derives a conservative continuous acceleration bound
+  from its coefficients, adaptively subdivides until the curve-to-chord bound
+  is below a quarter of the inflated voxel resolution, and checks the
+  resulting axis-aligned tube cells before accepting the chord. Tube size and
+  cell-query work are bounded; an invalid or oversized certificate fails
+  closed.
+- Safety impact: closes the previous chord/sample-only blind spot for curve
+  bowing between samples. OCCUPIED and OUT_OF_MAP remain failures for MAIN and
+  BACKUP; BACKUP still additionally requires KNOWN_FREE for every tube cell.
+  This is conservative and may reduce feasibility near unknown boundaries; no
+  unknown-space permission or numerical gate was relaxed.
+- Evidence: added a regression with a curved polynomial crossing an occupied
+  voxel while sampled points remain away from its center. Planning CTest passed
+  5/5 after the change. Full optimizer integration, mapping implementation
+  parity, runtime latency distributions, dataset, and repeated SITL evidence
+  remain open.
+- Removal condition: none. Any optimization must preserve a proved geometric
+  bound and an equivalent or stronger tube query; replacing it with fewer
+  samples requires a new certificate and adversarial test.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend navigation_runtime --cmake-args -DBUILD_TESTING=ON
+  && ctest --test-dir build/navigation_planning_backend --output-on-failure
+  && ctest --test-dir build/navigation_runtime --output-on-failure`.
+
+### 2026-08-27 - Planner unknown-space policy has one typed mission boundary
+
+- Owner: planner mission-policy boundary. Scope: remove the product YAML
+  `frontend_in_known_free` boolean and the unused planner-level
+  `visual_process` setting, including the runner's generated ghost key. The
+  planner stores a typed world-model unknown-space policy; when a mission
+  contract is supplied, that contract is the sole authority for exploratory A*
+  and corridor policy. A* visualization remains under its own search owner.
+- Safety impact: removes a second policy knob that could drift from mission
+  `unknown_policy`. MAIN continues to use the mission policy; BACKUP continues
+  to require `KNOWN_FREE` independently. No unknown-space permission is added
+  and no safety gate is relaxed.
+- Evidence: added a profile contract assertion and compile-time use of the
+  typed policy in all A* map flags. Planner and runtime tests/build are the
+  verification gate; dataset/SITL policy propagation remains required.
+- Removal condition: none. Any future policy must be represented by one typed
+  contract and explicitly mapped at the planner boundary.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 -m unittest
+  tools.runtime.tests.test_runtime_contract && colcon build --packages-select
+  navigation_planning_backend navigation_runtime --cmake-args -DBUILD_TESTING=ON
+  && ctest --test-dir build/navigation_planning_backend --output-on-failure
+  && ctest --test-dir build/navigation_runtime --output-on-failure`.
+
+### 2026-08-27 - A* uses exact per-layer bounds and stable frontier entries
+
+- Owner: planner frontend search workspace. Scope: A* now derives its index
+  domain from the pinned evidence or inflated `GridBounds`, including the
+  signed global minimum and asymmetric maximum index, instead of reconstructing
+  a centered window around the search point. Frontier queue entries capture
+  their score and sequence at enqueue time; stale entries are discarded. An
+  exhausted search that reaches its steady deadline reports `TIME_OUT` rather
+  than `NO_PATH`.
+- Safety impact: prevents search nodes, endpoint projections, and returned
+  frontier paths from escaping the immutable layer storage. It also preserves
+  deadline truth for the caller, so a later fallback cannot mistake an
+  incomplete search for a proved geometric no-path. Unknown-space policy,
+  diagonal-edge traversal, and backup known-free requirements are unchanged.
+- Evidence: exact-bound and frontier-order source/tests build successfully;
+  the planning backend CTest passes 5/5 and the runtime CTest passes 7/7 for
+  ten consecutive repetitions. Dataset distributions, sparse-workspace RSS,
+  and repeated SITL evidence remain open; this entry is not a performance or
+  flight-acceptance claim.
+- Removal condition: none. Any future local horizon must be an explicit
+  planner contract intersected with these world bounds, never a second map
+  geometry definition.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_world_model navigation_mapping navigation_planning_backend
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure && ctest --test-dir
+  build/navigation_runtime --repeat until-fail:10 --output-on-failure`.
+
+### 2026-08-27 - Runtime parameter materialization preserves map evidence
+
+- Owner: runtime harness and canonical planner profile. Scope:
+  `_mapping_params()` no longer overwrites `rog_map.raycasting.enable` with
+  `false`; the generated session planner file preserves the product profile's
+  sensor-origin raycasting setting. Mission unknown policy remains a separate
+  planner input and does not disable evidence production.
+- Safety impact: removes a hidden configuration contradiction that made BACKUP
+  known-free certification impossible in generated runtime sessions. No
+  unknown-space gate is relaxed; MAIN may still follow its explicit mission
+  policy and BACKUP still requires known-free evidence and inflated occupancy.
+  Raycasting can increase map callback cost, so this change is not a
+  performance acceptance claim.
+- Evidence: runtime contract tests now assert that both blocked and
+  allow-unknown mission materializations retain raycasting enabled. Dense
+  replay callback p50/p95/p99, RSS, and repeated SITL evidence remain required.
+- Removal condition: only after an independently verified replacement for
+  sensor-origin known-free evidence is installed and recorded here.
+- Verification command: `python3 -m unittest tools.runtime.tests.test_runtime_contract`
+  plus the dataset and SITL validation commands after the next stable build.
+
+### 2026-08-27 - Mapping probability configuration has one read per key
+
+- Owner: mapping configuration loader. Scope: remove the duplicate
+  `raycasting/p_free` load so one YAML key has one load site and one default;
+  the parsed value and mapping algorithm are otherwise unchanged.
+- Safety impact: none to the selected value or occupancy semantics. The change
+  removes ambiguity that could hide a future conflicting duplicate; all
+  probability ranges and known-free/occupied policies remain fail-closed.
+- Evidence: source audit identifies the duplicate load and the mapping vendor
+  build/tests are required below. Runtime/dataset/SITL evidence is unchanged.
+- Removal condition: none.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir build/rog_map_vendor
+  --output-on-failure`.
+
+### 2026-08-27 - Inflated map queries honor their own bounds
+
+- Owner: immutable mapping snapshot query boundary. Scope: classification and
+  segment traversal now validate containment against the selected evidence or
+  inflated grid layout; a point covered by the base layer but absent from the
+  inflated layer is out of map and cannot be treated as free.
+- Safety impact: closes a fail-open boundary mismatch that could allow an
+  inflated ray query outside its storage to pass under `kAllowUnknown`.
+  Unknown-space and known-free requirements remain unchanged.
+- Evidence: added a regression test with a shifted inflated layer; the mapping
+  world-model build and test command below must pass before checkpointing.
+- Removal condition: none. If layers are intentionally resized, their own
+  physical bounds must remain authoritative for all layer-specific queries.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_runtime --output-on-failure`.
+
+### 2026-08-27 - Present configuration type errors fail closed
+
+- Owner: shared YAML configuration loading boundary. Scope: a missing optional
+  key may still use its declared default, but a present value with an invalid
+  scalar/sequence type or an explicit null now raises an error for both
+  required and optional parameters.
+- Safety impact: prevents malformed deployment parameters from silently
+  selecting a different planner, mapping, timing, or vehicle-safety behavior.
+  No default value, gate, timeout, or unknown-space policy was relaxed.
+- Evidence: added regression coverage for optional type mismatch and present
+  null values; package build and YAML-loader tests are required below.
+- Removal condition: none. Any future compatibility exception must be isolated
+  at an explicit migration boundary and recorded here with its expiry.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/rog_map_vendor --output-on-failure`.
+
+### 2026-08-27 - Product mapping emits evidence for backup certification
+
+- Owner: product mapping profile and exploration/backup safety contract. Scope:
+  the product planner profile enables sensor-origin raycasting so the mapper
+  can produce `KNOWN_FREE` evidence; exploratory MAIN may still use UNKNOWN,
+  while every committed BACKUP segment remains fail-closed on known-free
+  evidence and inflated occupancy.
+- Safety impact: removes the configuration contradiction where backup required
+  `KNOWN_FREE` but mapping only inserted occupied endpoints. This increases map
+  update work and therefore cannot be treated as a performance improvement or
+  flight certification; no unknown-space gate was relaxed.
+- Evidence: source/test review confirms endpoint-only mode leaves the ray
+  between origin and hit UNKNOWN; product profile now selects the raycasting
+  path. Dense-cloud, 1x/2x replay, RSS and p50/p95/p99 mapping/export measures
+  remain mandatory before accepting the profile for hardware.
+- Removal condition: only if an equivalent, independently verified observed-free
+  certificate is implemented. Never disable raycasting while retaining a
+  `KNOWN_FREE` backup requirement without an explicit replacement certificate.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_runtime
+  rog_map_vendor --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_runtime --output-on-failure && ctest --test-dir
+  build/rog_map_vendor --output-on-failure`.
+
+### 2026-08-27 - Command exposure revalidates the execution certificate
+
+- Owner: execution command publication boundary. Scope: a sampled immutable
+  bundle is rechecked under the committed-store transaction lock immediately
+  before publication against pointer identity, goal epoch, and world identity;
+  a missing bundle during world recertification is treated as pending rather
+  than a planner terminal failure.
+- Safety impact: closes the load-then-publish race that could expose a bundle
+  after a newer world invalidated it, and avoids a false terminal latch during
+  the intentional recertification gap. No stale command is retained and no
+  safety gate is relaxed.
+- Evidence: added deterministic store tests for world and retained-goal
+  invalidation. Full runtime build/tests and a repeated multi-thread runtime
+  exercise remain required; this change is not SITL acceptance evidence.
+- Removal condition: none. Any future zero-copy publication path must preserve
+  the same lock/identity transaction at the transport exposure boundary.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_execution navigation_runtime --cmake-args -DBUILD_TESTING=ON
+  && ctest --test-dir build/navigation_execution --output-on-failure &&
+  ctest --test-dir build/navigation_runtime --output-on-failure`.
+
+### 2026-08-27 - World revision uses validated certificate transfer
+
+- Owner: mapping-to-execution publication boundary. Scope: a newer immutable
+  world snapshot no longer unconditionally removes a still-safe command. The
+  runtime validates the exact currently committed backend trajectory on the
+  new snapshot, and the world publication plus certificate transfer are
+  serialized under one publication gate. Pointer/generation mismatch,
+  validation failure, or an invalid certificate clears exposure.
+- Safety impact: restores liveness for map changes outside the remaining
+  swept trajectory without retaining an uncertified command. MAIN UNKNOWN
+  policy, BACKUP KNOWN_FREE policy, inflated occupancy, and localization/goal
+  identity checks are unchanged. This is not permission to assume that a map
+  delta is irrelevant; the full remaining executable trajectory is validated.
+- Evidence: added committed-bundle recertification and dependent-publication
+  ordering tests. The required execution and runtime CTest commands passed
+  2/2 and 7/7. End-to-end race, dataset distribution, and repeated SITL
+  evidence remain open.
+- Removal condition: none. Any future delta-aware optimization must prove an
+  equivalent or stronger swept-volume certificate and retain the exact-bundle
+  generation check.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_execution navigation_runtime --cmake-args -DBUILD_TESTING=ON
+  && ctest --test-dir build/navigation_execution --output-on-failure &&
+  ctest --test-dir build/navigation_runtime --output-on-failure`.
+
+### 2026-08-27 - CIRI and corridor generation obey one steady deadline
+
+- Owner: planner corridor frontend. Scope: CIRI geometry and corridor
+  diagnostic collection now reject non-finite or degenerate inputs, check the
+  shared steady deadline at bounded loop points, and cap retained diagnostic
+  point-cloud memory. The planner passes the same absolute deadline to main
+  and backup corridor generation.
+- Safety impact: prevents NaN/Inf geometry from becoming a candidate and
+  prevents diagnostic accumulation or repeated corridor work from escaping
+  the solve budget. Timeout returns remain fail-closed; no feasibility gate,
+  unknown policy, or backup certificate is relaxed.
+- Evidence: `test_trajectory` covers invalid CIRI configuration and the
+  navigation planning backend build plus CTest passes 5/5. Deadline coverage
+  in a forced long-running corridor, allocator/RSS measurements, dataset, and
+  repeated SITL evidence remain open.
+- Removal condition: none. Any larger diagnostic limit or additional solver
+  work must remain bounded by the same deadline and be justified by measured
+  memory/timing distributions.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - CIRI rejects a zero-length seed before geometric construction
+
+- Owner: planner corridor seed validation. Scope: CIRI now rejects a non-finite
+  or numerically degenerate seed segment before constructing the oriented
+  ellipsoid. A zero-length seed cannot define a stable tangent frame or a
+  meaningful corridor axis.
+- Safety impact: removes an undefined-orientation numerical path. It does not
+  relax obstacle, unknown-space, corridor, dynamic, deadline, or backup gates;
+  malformed input remains fail-closed as `INIT_ERROR`.
+- Evidence: added a direct regression using a finite bounded polytope and a
+  zero-length seed; planning backend CTest is required below. Full integration,
+  dataset, and repeated SITL evidence remain open.
+- Removal condition: none. Any future degenerate-seed policy must preserve a
+  deterministic fail-closed result or supply a separately certified axis.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Remove the ignored dual-planning runtime switch
+
+- Owner: runtime harness and planner role contract. Scope: remove
+  `DUAL_PLANNING`/`--dual-planning`, which was accepted and serialized by the
+  runner but discarded before parameter materialization. MAIN plus BACKUP is
+  now the single planner contract; the flag cannot create a second behavior
+  mode.
+- Safety impact: removes an inert configuration surface and prevents operators
+  from believing a command-line switch changes backup safety. No MAIN policy,
+  BACKUP known-free requirement, fallback, gate, or acceptance threshold
+  changed.
+- Evidence: runner, Makefile, docs, and contract tests no longer expose or pass
+  the ignored flag. Runtime Python contracts are required below; SITL and
+  recorded-data acceptance remain independent evidence.
+- Removal condition: none. A future role-policy experiment must be a typed,
+  explicitly scoped test fixture and must not be presented as a product mode.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && python3 -m unittest
+  tools.runtime.tests.test_runtime_contract tools.runtime.tests.test_html_report`.
+
+### 2026-08-27 - Propagated odometry enable switch duplicated a mandatory contract
+
+- Owner: FAST-LIO ROS estimator output boundary. Scope: propagated odometry is
+  the only estimator stream accepted by the navigation runtime, so the
+  `propagated_odometry.enabled` parameter and all branches that attempted to
+  disable that stream were removed. Publish rate, ingress capacity, history
+  duration, and correction-age limits remain explicit typed parameters.
+- Safety impact: removes a dead-looking configuration path that could make the
+  estimator report a superficially valid corrected stream while the runtime
+  still required propagated odometry. The node now always constructs and starts
+  the propagated worker, always publishes its health as required, and keeps the
+  dynamic TF owner unambiguously propagated. No gate is relaxed; propagation
+  health starts invalid and remains fail-closed until the worker is ready.
+- Evidence: removed the YAML key, loader field, disabled branches, and
+  misleading diagnostics flag; parameter-loader and FAST-LIO regression tests
+  plus the package build are required below. Dataset/SITL evidence remains
+  open.
+- Removal condition: none. Reintroducing an enable switch requires a different
+  end-to-end runtime contract in which navigation can safely consume an
+  explicitly selected estimator source.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select fast_lio_ros
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir build/fast_lio_ros
+  --output-on-failure`.
+
+### 2026-08-27 - Backup failure classification preserved actionable causes
+
+- Owner: planner result boundary. Scope: backup return codes are mapped to
+  distinct planner diagnostics for timeout, optimizer failure, initialization
+  failure and explicit no-path. The raw backend return value remains in the
+  planner log; only the previously lossy public result classification changes.
+- Safety impact: no candidate authorization or fallback gate is relaxed. A
+  timeout still fails closed, and every non-authorized backup result still
+  leaves the previous committed bundle untouched. The change improves the
+  runtime error history and prevents a genuine deadline/initialization issue
+  from being mislabeled as a generic backup failure.
+- Evidence: added a focused classifier test and updated both PlanFromRest and
+  ReplanOnce failure paths to apply cancellation/deadline precedence before
+  the specific backup cause. Dataset and SITL evidence remain open.
+- Removal condition: none. New backend return codes must be assigned an
+  explicit planner result before they can enter the product boundary.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Workspace and installed runtime profiles are parity-checked
+
+- Owner: navigation bringup configuration boundary. Scope: the workspace
+  runtime profile and the package-installed default now contain the same
+  navigation parameter map, including the status topic. A contract test
+  compares their parsed values so a launch-default drift cannot silently create
+  a second topic/rate/frame owner.
+- Safety impact: configuration parity only; no gate, threshold, fallback,
+  unknown policy, timestamp rule, or planner behavior changed.
+- Evidence: added the missing status-topic entry and a parsed-profile equality
+  regression in the Python runtime contract suite. End-to-end launch evidence
+  remains required.
+- Removal condition: none. If the profiles must differ for deployment, split
+  them into explicitly named deployment contracts and add a documented mapping
+  test rather than allowing accidental drift.
+- Verification command: `python3 -m unittest
+  tools.runtime.tests.test_runtime_contract`.
+
+### 2026-08-27 - Main-only known-free completion was rejected too early
+
+- Owner: planner candidate authorization. Scope: an `allow_unknown` mission may
+  commit a candidate without a BACKUP suffix only when the complete executable
+  trajectory is independently certified `KNOWN_FREE` (the `FINISH`/`NO_NEED`
+  result). Candidates with a BACKUP suffix continue to use the mission policy
+  for MAIN and the mandatory known-free policy for BACKUP.
+- Safety impact: removes an over-restrictive early rejection that treated every
+  main-only candidate as unsafe, while preserving fail-closed validation. A
+  main-only trajectory that contains UNKNOWN, OCCUPIED, OUT_OF_MAP or an invalid
+  swept segment is still rejected by the independent certificate.
+- Evidence: added `candidateCertificatePolicy()` and a regression covering both
+  main-only and MAIN-plus-BACKUP schedules; navigation planning CTest passed
+  5/5. End-to-end dataset and repeated SITL evidence remain open.
+- Removal condition: none. Any new candidate role must select an explicit
+  certificate policy before it can reach the commit boundary.
+- Verification command: `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest
+  --test-dir build/navigation_planning_backend --output-on-failure`.
+### 2026-08-27 - Route reference was incorrectly promoted to a sampled hard gate
+
+- Owner: nominal trajectory quality objective and corridor certificate. Scope:
+  removed `vertical_guide_tolerance_m` and the sampled vertical-guide envelope
+  rejection from the nominal optimizer.
+- Safety impact: the route reference no longer rejects a trajectory solely for
+  leaving the guide's vertical envelope. Safety remains enforced by sampled
+  corridor containment, dynamic/flatness gates, and the final world-model
+  swept certificate for the executable candidate; no UNKNOWN permission was
+  added and no existing safety certificate was relaxed.
+- Evidence: the route-reference terms remain objective-only; focused planner
+  configuration and trajectory tests must pass after this change.
+- Removal condition: none. A future vertical terrain/altitude constraint must
+  be introduced as a separately owned geometric contract with its own evidence,
+  not as a route-reference tolerance.
+- Verification: `source /opt/ros/jazzy/setup.bash && source install/setup.bash &&
+  colcon build --packages-select navigation_planning_backend
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Missing mission no longer inherited an exploratory UNKNOWN default
+
+- Owner: planner mission-policy boundary. Scope: changed the planner's
+  no-mission default to `RequireKnownFree`; `allow_unknown` is obtained only
+  from a successfully validated mission contract.
+- Safety impact: closes the gap where an omitted mission could implicitly make
+  UNKNOWN traversable. This is fail-closed and does not alter the explicit
+  mission policy or the independent BACKUP known-free rule.
+- Evidence: product planner configuration test asserts the no-mission default;
+  navigation mission, planner and runtime contract tests remain required.
+- Removal condition: none. A future permissive mode must be an explicit,
+  validated mission policy and retain the role-aware candidate certificate.
+- Verification: `source /opt/ros/jazzy/setup.bash && source install/setup.bash &&
+  colcon build --packages-select navigation_planning_backend
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Removed the EXP jerk objective bypass and negative objective sentinel
+
+- Owner: planner objective configuration and runtime validation harness. Scope:
+  objective weights now use `0` to disable a term; negative and non-finite
+  objective weights are rejected. The historical TB-001 runner option, marker,
+  report provenance path and A/B test fixtures were removed.
+- Safety impact: removes an uncertified behavior switch and prevents a negative
+  sentinel from silently changing optimizer semantics. Analytic dynamic and
+  geometric certificates remain independent of objective weights; no safety
+  threshold was relaxed and no alternate planner mode was introduced.
+- Evidence: planner config rejects invalid weights; generated planner config
+  keeps EXP jerk weight at zero; runtime tests cover the zero-disabled contract;
+  focused planner build/tests and full runtime Python tests are required after
+  this change. Existing historical ledger entries describing the experiment are
+  retained as provenance only.
+- Removal condition: none. Any future objective experiment must be a separate,
+  explicitly non-product tool and must not be exposed as a flight/runtime
+  switch.
+- Verification: `python3 -m unittest discover -s tools/runtime/tests -p
+  'test_*.py'` and `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_planning_backend
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 - Localization reset no longer publishes an unfinalized empty snapshot
+
+- Owner: mapping actor and navigation runtime publication boundary. Scope: a
+  localization-epoch change still resets the mutable map and advances the world
+  generation, but no longer exports/publishes an empty intermediate snapshot.
+  The first post-reset observation is exported once and published through the
+  existing `publishAndFinalize` transaction.
+- Safety impact: removes a transient state where a new world was visible before
+  the dependent execution certificate was invalidated. It also removes one
+  full-map export on reset; no occupancy policy, UNKNOWN policy, certificate
+  predicate or threshold was relaxed.
+- Evidence: source has one snapshot export per accepted map update and the
+  runtime publication path has one atomic finalization boundary. Mapping and
+  runtime tests/builds are required after this change.
+- Removal condition: none. Any future reset marker must be a diagnostic event,
+  not a second world publication without dependent-state finalization.
+- Verification: `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_mapping navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON` followed by the selected package CTests.
+
+### 2026-08-27 — Removed boolean hardware visibility enable gate
+
+- **Owner:** navigation runtime.
+- **Scope:** `hardware_visibility_certified` was removed from runtime parameters.
+- **Safety impact:** hardware startup now fails closed unconditionally until an
+  immutable sensor FOV/mounting certificate and a runtime verifier exist. A
+  parameter cannot turn an unverified visibility assumption into evidence.
+- **Evidence:** runtime source inspection and SITL/unit builds; no hardware
+  acceptance is claimed.
+- **Removal condition:** replace the unconditional block only after the
+  certificate schema, verifier, and repeated hardware/recorded-data evidence
+  are implemented.
+- **Verification command:** `rg -n "hardware_visibility_certified" src config docs`
+  returns no active parameter usage; runtime unit tests remain green.
+
+### 2026-08-27 — Mapping probability defaults now satisfy their own contract
+
+- **Owner:** mapping configuration loader.
+- **Scope:** the optional `raycasting/p_miss` default is now `0.35`, matching
+  the documented informative-miss invariant (`p_miss < 0.5`) and the product
+  fixture baseline. The explicit YAML value remains authoritative.
+- **Safety impact:** prevents an omitted optional key from selecting the old
+  contradictory `0.70` default and failing only after the rest of the map
+  configuration has loaded. No occupied/free threshold or UNKNOWN policy was
+  relaxed; invalid explicit values still fail closed.
+- **Evidence:** strict mapping configuration validation and
+  `test_rog_map_vendor` pass after the change.
+- **Removal condition:** none. Any future default must satisfy the probability
+  ordering invariant and be covered by a configuration regression.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir build/rog_map_vendor
+  --output-on-failure`.
+
+### 2026-08-27 — Planner and mapping configuration parse once per boundary
+
+- **Owner:** planner and mapping configuration boundaries.
+- **Scope:** planner trajectory, backup and A* configuration now share one
+  parsed YAML document; mapping configuration validates all loaded geometry,
+  probability and map-bound parameters before allocation/reset.
+- **Safety impact:** removes repeated parse overhead and rejects inconsistent
+  geometry before a planner query or map allocation can use it. No timeout,
+  unknown-space policy, certificate predicate or safety threshold was relaxed.
+- **Evidence:** focused planner, mapping and runtime package builds/CTest pass;
+  invalid YAML type, probability and geometry regressions are present.
+- **Removal condition:** none. New configuration consumers must either reuse
+  the typed boundary or document a separate owner and contract test.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  navigation_planning_backend navigation_mapping navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON` followed by the selected package CTests.
+
+### 2026-08-27 — Snapshot ray certificates now match inclusive virtual planes
+
+- **Owner:** immutable mapping snapshot traversal certificate.
+- **Scope:** evidence and inflated ray checks now use the same inclusive
+  virtual ground/ceiling boundaries as point classification; inflated checks
+  use the inflated plane bounds, and unknown inflation no longer masks an
+  unknown cell as free near a virtual plane.
+- **Safety impact:** closes a boundary inconsistency where a segment exactly on
+  a virtual plane could pass the ray certificate under `allow_unknown` despite
+  being classified `OCCUPIED`. The change tightens consistency and does not
+  broaden UNKNOWN access.
+- **Evidence:** added a regression covering both grid layers and both unknown
+  policies; mapping/runtime package tests are the verification gate.
+- **Removal condition:** none. Any future layer certificate must share the
+  point-classification boundary semantics and test the exact boundary values.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON` followed by their CTests.
+
+### 2026-08-27 — Propagated odometry receives an explicit localization barrier
+
+- **Owner:** typed estimator-health contract, FAST-LIO output publisher,
+  navigation runtime and PX4 External Mode.
+- **Scope:** `EstimatorHealth` now carries the latest propagated-state source
+  timestamp. Runtime and PX4 reject propagated `nav_msgs/Odometry` at or before
+  that timestamp after an epoch transition, reject source-time regressions, and
+  hold the state lease until a valid post-transition boundary exists.
+- **Safety impact:** closes the untagged-message gap where a delayed propagated
+  packet could be assigned the new active localization epoch and feed planning
+  or control after a reset. This is fail-closed and may discard boundary
+  samples; it does not broaden any command or UNKNOWN-space gate.
+- **Evidence:** `navigation_contracts`, `fast_lio_ros`, `navigation_runtime` and
+  `px4_navigation_external_mode` rebuild successfully; typed contract coverage
+  and source inspection verify the field and both consumers. Reset/replay
+  evidence on representative recorded data and SITL remains open.
+- **Removal condition:** none. The barrier may only be replaced by a typed
+  epoch-carrying state message after equivalent or stronger end-to-end
+  provenance evidence is available.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_contracts
+  fast_lio_ros navigation_runtime px4_navigation_external_mode
+  --cmake-args -DBUILD_TESTING=ON` followed by the selected package CTests.
+
+### 2026-08-27 — Typed estimator health no longer grants an unhealthy grace
+
+- **Owner:** PX4 External Mode health boundary.
+- **Scope:** removed `navigation.lio_health_grace_s`, the associated mission
+  configuration, and both execution/arming grace branches. Health source stamps
+  must be positive and strictly increasing; malformed, stale, future or
+  non-monotonic samples make the health gate fail closed.
+- **Safety impact:** an explicit unhealthy typed health sample can no longer
+  leave External Mode active for a configurable interval. The bounded
+  pre-health stationary acquisition window remains only before any typed
+  health sample has been received; it cannot mask an invalid sample.
+- **Evidence:** PX4 External Mode rebuilt with the parameter removed; source
+  scan shows no `lio_health_grace_s` consumer. Negative health tests and loaded
+  SITL/recorded-data timing evidence remain required.
+- **Removal condition:** none. Any recovery behavior must be represented by an
+  explicit state with its own safety certificate, not a time grace parameter.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON` followed by
+  the External Mode CTest.
+
+### 2026-08-27 — Invalid mapping counts are rejected instead of clamped
+
+- **Owner:** mapping configuration boundary.
+- **Scope:** removed the implicit conversion of non-positive
+  `point_filt_num` and `raycasting/batch_update_size` to `1`; the strict
+  validator now sees and rejects the original invalid value.
+- **Safety impact:** prevents malformed configuration from silently changing
+  map update density and timing. No valid configuration or safety threshold
+  changed.
+- **Evidence:** the mapping invalid-configuration regression now exercises the
+  constructor failure directly; `test_rog_map_vendor` passes.
+- **Removal condition:** none.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  --cmake-args -DBUILD_TESTING=ON && ctest --test-dir build/rog_map_vendor
+  --output-on-failure`.
+
+### 2026-08-27 — CIRI iteration exhaustion telemetry is accurate
+
+- **Owner:** planner corridor-generation diagnostics.
+- **Scope:** both `while (max_iter--)` exhaustion checks now recognize the
+  post-decrement sentinel `-1`.
+- **Safety impact:** diagnostics no longer under-report a fully exhausted
+  ellipsoid iteration. Geometry, iteration limits and acceptance predicates
+  are unchanged.
+- **Evidence:** planner source review and focused planner build/test; no gate
+  was relaxed.
+- **Removal condition:** none.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 — Stale command certificates require disjoint map provenance
+
+- **Owner:** immutable world publication and planner command certificate.
+- **Scope:** a swept candidate now exports a conservative protected region.
+  Immutable mapping snapshots retain persistent per-revision change records;
+  the publication store may transfer a certificate across a newer revision
+  only when every intervening change is proven outside that region. Missing
+  history, invalid geometry, map sliding, epoch changes and generation changes
+  remain fail-closed.
+- **Safety impact:** removes unconditional revision-based liveness rejection
+  for updates outside the executable trajectory without accepting a stale map
+  when a change can affect the trajectory. The region includes the certificate
+  tube and the mapping inflation/unknown-inflation footprint; it does not relax
+  UNKNOWN, occupancy or OUT_OF_MAP predicates.
+- **Evidence:** added world-authorizer disjoint-provenance coverage and rebuilt
+  the mapping, planning and runtime packages. Full loaded dataset, race
+  distribution and SITL evidence remain open.
+- **Removal condition:** none. A future mutable-map implementation must expose
+  equivalent complete change provenance or retain unconditional stale-world
+  rejection.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select rog_map_vendor
+  navigation_world_model navigation_mapping navigation_planning_backend
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON` followed by the focused
+  world-store, mapping, trajectory and facade tests.
+
+### 2026-08-27 — DiagnosticArray no longer controls External Mode health
+
+- **Owner:** PX4 External Mode health boundary.
+- **Scope:** removed the legacy `/lio/diagnostics` subscription and parser from
+  External Mode. Only typed `/lio/health` can establish or invalidate the
+  estimator control lease; DiagnosticArray remains published for diagnosis.
+- **Safety impact:** eliminates the untyped compatibility path that could make
+  safety behavior depend on diagnostic strings before the typed contract was
+  available. Missing typed health now fails closed; no recovery grace or gate
+  was added.
+- **Evidence:** source scan shows no External Mode DiagnosticArray health
+  consumer; the PX4 package rebuild and External Mode CTest pass.
+- **Removal condition:** none. A future compatibility adapter must not control
+  flight state without an explicit typed contract and equivalent evidence.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/px4_navigation_external_mode --output-on-failure`.
+
+### 2026-08-27 — Safety-stop replan grace is no longer a mission parameter
+
+- **Owner:** PX4 External Mode mission controller.
+- **Scope:** removed `safety_stop_replan_grace_s` from the mission contract,
+  parser and all runtime profiles. A stop waypoint now follows the explicit
+  braking and stationary-confirmation state; a verified replacement can resume
+  before confirmation, otherwise the existing PX4 Hold handover is used.
+- **Safety impact:** removes an unowned time-based behavior knob that could
+  delay fail-closed handover after a settled stop. No stop confirmation value,
+  collision predicate or trajectory certificate was relaxed.
+- **Evidence:** mission controller regression covers replacement before
+  confirmation and handover after confirmation; PX4 External Mode CTest passes.
+- **Removal condition:** none. Any future recovery interval must be an explicit
+  state with a safety certificate and measured evidence, not a mission scalar.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mission
+  px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/px4_navigation_external_mode --output-on-failure`.
+
+### 2026-08-27 — Flatness certification no longer has tunable widening slack
+
+- **Owner:** planner trajectory-dynamics certificate.
+- **Scope:** removed `flatness_gate_margin_fraction` from the planner schema,
+  runtime YAML and both optimizer paths. Body-rate and thrust limits are now
+  checked exactly against the configured physical envelope.
+- **Safety impact:** objective tuning can no longer authorize a trajectory
+  above the configured dynamic envelope. The change tightens the gate and
+  does not raise any limit or add a fallback.
+- **Evidence:** nominal/backup trajectory gate code, configuration scan and
+  focused planner build/tests verify the single exact threshold contract.
+  Repeated dataset/SITL feasibility and dynamic distributions remain open.
+- **Removal condition:** none. Any future margin must be part of a separately
+  certified physical envelope, not an optimizer or mission parameter.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`.
+
+### 2026-08-27 — Nominal objective and backup parameter ownership are explicit
+
+- **Owner:** `traj_opt::Config` and the nominal/backup trajectory optimizer
+  boundaries. **Scope:** `piece_num` and `uniform_time_en` are loaded only for
+  the backup profile, where the optimizer owns that parameterization. Nominal
+  piece count and timing remain derived from its guide/corridor contract. The
+  nominal waypoint quality term is named
+  `traj_opt.exp_traj.objective.waypoint_attraction_weight`; backup does not load
+  or infer that term.
+- **Safety impact:** removes misleading configuration surfaces and prevents a
+  quality objective from being mistaken for a corridor certificate or backup
+  authorization. No UNKNOWN, occupancy, dynamic, flatness or world-swept gate
+  is relaxed, and no safety threshold changes.
+- **Evidence:** synchronized planner/runtime build succeeds; focused planner
+  configuration, trajectory and optimizer-seed tests cover the new ownership
+  and field name. Repeated dataset/SITL conditioning and latency evidence
+  remains open.
+- **Removal condition:** none. Any future parameter must have one owner, a
+  physical unit or explicit objective role, domain validation, and a focused
+  test before entering the product profile.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend navigation_runtime --cmake-args -DBUILD_TESTING=ON`
+  followed by `test_planner_config`, `test_trajectory`,
+  `test_exp_optimizer_seed` and the runtime contract tests.
+
+### 2026-08-27 — Runtime command timestamps use the shared conversion owner
+
+- **Owner:** `navigation_common::secondsToRosTime` at the ROS message boundary.
+  **Scope:** runtime command header and world-observation timestamp conversion;
+  the node-local forwarding wrapper was removed. Integer nanosecond conversion
+  remains owned by the same shared time utility.
+- **Safety impact:** consistency/traceability only. The previous wrapper already
+  delegated to the shared implementation, so no timestamp, freshness, clock
+  domain or fail-closed behavior changed. Invalid conversion still produces the
+  existing zero-valued message fallback and is not used to authorize a command.
+- **Evidence:** runtime source has one conversion implementation and the
+  focused runtime command-clock, timestamp-freshness and shutdown tests pass.
+  Closed-loop timestamp/transport evidence remains open.
+- **Removal condition:** none. New ROS/PX4/simulation timestamp conversions
+  must use the shared utility or introduce a separately documented boundary
+  contract before code review.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && cmake --build build/navigation_runtime -j1` followed by
+  `test_command_clock`, `test_timestamp_freshness` and
+  `test_navigation_runtime_shutdown`.
+
+### 2026-08-27 — Reject oversized floating-point ROS timestamp input before narrowing
+
+- **Owner:** `navigation_common::secondsToRosTime`. **Scope:** conversion from
+  user-facing seconds to the ROS `int32` seconds plus nanoseconds message at
+  runtime command boundaries.
+- **Safety impact:** numerical fail-closed correction. A finite value larger
+  than the representable ROS seconds range could previously be narrowed before
+  the range check. Such input is now rejected before conversion; valid values,
+  timestamp monotonicity, clock-domain selection and freshness gates are
+  unchanged.
+- **Evidence:** added negative, oversized-finite and maximum-representable
+  boundary tests. Runtime direct command-clock and shutdown tests remain green.
+- **Removal condition:** none. Any future floating-point-to-integer timestamp
+  conversion must validate its destination range before narrowing.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_common
+  --cmake-args -DBUILD_TESTING=ON` followed by `build/navigation_common/test_navigation_common
+  --gtest_color=no`.
+
+### 2026-08-27 — Runtime consumes product mapping invariants, not vendor configuration
+
+- **Owner:** `navigation_mapping::MappingActor` at the mapping/runtime
+  composition boundary. **Scope:** expose only the three facts runtime must
+  enforce: mapping callbacks remain runtime-owned, raycast batch updates are
+  one observation at a time, and virtual ground/ceiling planes are compatible
+  with the selected planning frame. Backend-specific configuration stays
+  private to the mapping adapter.
+- **Safety impact:** architecture/clarity correction. The same values and
+  checks are preserved; no occupancy, UNKNOWN, virtual-plane, timestamp or
+  planner gate is relaxed. A malformed backend config still fails closed while
+  constructing the actor.
+- **Evidence:** runtime no longer reads `rog_map::Config` fields directly;
+  rebuilt `navigation_runtime`, command-clock, timestamp-freshness and runtime
+  shutdown tests pass. Full public-header vendor isolation is still an open
+  extraction phase because the current snapshot adapter remains header-based.
+- **Removal condition:** none. Do not add backend-specific fields to this
+  product summary; add a separately owned product invariant or keep the check
+  inside `navigation_mapping`.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON` followed by runtime mapping, shutdown and
+  world-snapshot tests.
+
+### 2026-08-27 — Mapping boundary rejects ambiguous state and observation provenance
+
+- **Owner:** `navigation_mapping::MappingActor` and the immutable
+  `MappingWorldSnapshot` boundary. **Scope:** product mapping inputs now use a
+  read-only point cloud; observation time must exactly equal corrected
+  odometry time; observation stamps and non-zero scan sequences must advance
+  within an epoch; finite pose and epoch checks occur before mutable-map reset
+  or update. Backend outcome translation is centralized and unknown enum values
+  throw instead of becoming a successful/default outcome. Exported grid storage
+  accepts only `UNKNOWN`, `OCCUPIED` and `KNOWN_FREE`; `OUT_OF_MAP`, undefined,
+  frontier and future values cannot be stored as evidence.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. This prevents a delayed,
+  relabeled or mismatched cloud/pose from mutating a map generation and
+  prevents ambiguous backend states from entering planning certificates.
+  The deliberate false-reject consequence is dropping malformed or duplicate
+  observations; no occupancy, UNKNOWN or world-swept gate is relaxed.
+- **Derivation and cost:** timestamp equality and monotonicity derive from the
+  shared integer-nanosecond ROS conversion and epoch contract. Point-cloud
+  reuse removes one per-update allocation; nearest-offset metadata is cached
+  once per actor. Full grid export remains O(N) and its p50/p95/p99 cost is
+  still open; no threshold was tuned.
+- **Evidence:** added actor contract tests for timestamp mismatch, non-finite
+  pose and non-monotonic observation time. Mapping CTest is 2/2 and runtime
+  mapping CTest is 7/7 after rebuilding both packages. Dataset, sanitizer and
+  repeated SITL evidence remain open.
+- **Removal condition:** none. Any future input compatibility adapter must
+  preserve immutable ownership, exact timestamp pairing and explicit state
+  translation, or remain outside the flight authority.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON` followed by the sourced
+  CTest commands for both build directories.
+
+### 2026-08-27 — World-model traversability is a total fail-closed predicate
+
+- **Owner:** `navigation_world_model::isCellTraversable` and all product
+  planner/world consumers. **Scope:** evidence, inflated-grid, corridor and
+  A* boundary decisions now use the shared predicate where they consume
+  product `CellState`. Unknown/frontier are admissible only under the explicit
+  allow-unknown policy; occupied, out-of-map, undefined and future enum values
+  are never implicitly free. A* neighbour aggregation now represents a
+  missing evidence neighbour as UNKNOWN rather than an implicit undefined
+  free cell.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. This removes a false
+  accept path in which a malformed/out-of-map/undefined classification could
+  enter corridor generation or graph expansion. The deliberate false-reject
+  consequence is that malformed state or a stricter known-free policy can end
+  a search earlier; no UNKNOWN gate is relaxed.
+- **Derivation and cost:** the policy is the existing product contract; no
+  threshold or magic margin changed. The predicate is constexpr and the A*
+  representation change is constant-time per neighbour. Behavioural parity
+  for diagonal/tie cases remains covered by the mapping characterization and
+  needs broader randomized replay before certification.
+- **Evidence:** added policy/state matrix and invalid stored-state regression;
+  planner and runtime rebuild plus focused CTest are required. Dataset,
+  sanitizer and repeated SITL evidence remain open.
+- **Removal condition:** none. New world-model consumers must call this
+  predicate or document a stricter separately owned certificate; do not add
+  local comparisons that reinterpret UNKNOWN, OUT_OF_MAP or undefined values.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend navigation_runtime --cmake-args
+  -DBUILD_TESTING=ON` followed by the sourced planning/runtime CTest commands.
+
+### 2026-08-27 — Runtime mapping consumes an opaque world view and explicit metrics
+
+- **Owner:** `navigation_mapping::MappingActor` at the public mapping/runtime
+  boundary. **Scope:** `MappingUpdateResult` and initial publication now carry
+  `WorldModelViewPtr` plus `MappingSnapshotMetrics`; runtime no longer includes
+  or calls the concrete snapshot storage class. `PlanningGrid` and
+  `MappingWorldSnapshot` are private implementation representations and are no
+  longer installed as package headers.
+- **Safety impact:** architecture/ABI correction only. World identity,
+  publication ordering, cell policy and certificate checks are unchanged.
+  Resource counters remain observable through an explicit product value rather
+  than through concrete storage statics.
+- **Derivation and cost:** metrics are captured at snapshot construction, so
+  telemetry does not need a cross-package static counter. Removing the
+  representation from the install surface prevents future consumers from
+  coupling to the full exported grid.
+- **Evidence:** sourced rebuild succeeded; mapping CTest 3/3 and runtime CTest
+  6/6 passed. Installed `libnavigation_mapping.so` exposes no vendor-named
+  dynamic symbols; a stale incremental install is being cleaned before it is
+  used as evidence. Dataset, sanitizer and repeated SITL evidence remain open.
+- **Removal condition:** none. New runtime consumers must depend on
+  `WorldModelView` and explicit product metrics; they must not include the
+  private concrete snapshot header.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON`, followed by sourced
+  CTest in `build/navigation_mapping` and `build/navigation_runtime`.
+
+### 2026-08-27 — Product ray certificates enumerate voxel-boundary ties symmetrically
+
+- **Owner:** immutable `MappingWorldSnapshot::isSegmentTraversable`.
+  **Scope:** when a segment reaches an edge or corner, the product DDA checks
+  every non-empty subset of the tied axes before advancing. Endpoint and
+  same-cell checks remain explicit.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The former single-axis
+  tie break could omit a cell and make the result depend on travel direction.
+  The new rule may deliberately reject a segment when any cell touched at a
+  boundary is occupied or not admissible; it does not turn UNKNOWN, occupied
+  or out-of-map state into free space.
+- **Derivation and cost:** the tied-axis set is computed from the first
+  parametric boundary and a machine-epsilon-scaled comparison. At most seven
+  adjacent cells are checked at a 3-axis corner; ordinary segments retain one
+  transition per boundary.
+- **Evidence:** added a diagonal corner regression with an occupied side cell;
+  both directions reject. Mapping CTest 3/3, planning backend 5/5 and runtime
+  6/6 passed after the change. Broad randomized parity/replay and latency
+  distributions remain required before declaring performance or flight
+  acceptance.
+- **Removal condition:** none. Any future traversal optimization must preserve
+  the symmetric touched-cell certificate and provide an equivalent adversarial
+  test corpus.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/navigation_mapping
+  --output-on-failure` with both overlays sourced.
+
+### 2026-08-27 — Corrected CTest count after regenerated mapping boundary
+
+- **Owner:** validation workflow. **Scope:** the earlier ledger entries that
+  reported mapping `2/2` and runtime `7/7` described an older generated test
+  graph. After moving the characterization test into `navigation_mapping` and
+  regenerating CMake, the authoritative current graph is mapping `3/3`,
+  planning backend `5/5`, runtime `6/6`.
+- **Safety impact:** evidence bookkeeping only. No test was removed to hide a
+  failure; the former runtime characterization target is now owned by the
+  mapping package and the stale CTest registration is not part of the current
+  source graph.
+- **Evidence:** sourced CTest completed with all current tests passing. The
+  unsourced `ctest` attempt is retained only as an environment error in the
+  error history and is not acceptance evidence.
+- **Removal condition:** none. Every future validation record must include the
+  exact package test graph and the required ROS/workspace overlay setup.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/navigation_mapping
+  --output-on-failure && ctest --test-dir build/navigation_planning_backend
+  --output-on-failure && ctest --test-dir build/navigation_runtime
+  --output-on-failure`.
+
+### 2026-08-27 — Changed-region provenance includes quantization shells
+
+- **Owner:** `navigation_mapping::MappingActor` at the mutable-map to
+  immutable-snapshot boundary. **Scope:** the `WorldChangeRecord` envelope now
+  expands backend-reported metric bounds by occupied/unknown inflation and by
+  half the evidence plus inflated voxel widths, then steps each bound outward
+  with `nextafter`.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A raw point/update AABB
+  does not prove that every affected discrete cell was inside the recorded
+  region. The old envelope could incorrectly classify a candidate as disjoint
+  at a voxel boundary. An over-approximation can only trigger extra
+  recertification; invalid bounds mark the update as whole-world.
+- **Derivation and cost:** the shell is the maximum quantization uncertainty
+  from both grid layers; inflation uses the larger occupied/unknown step. The
+  calculation is constant time per axis and does not add a new runtime
+  parameter.
+- **Evidence:** source rebuild and sourced mapping 3/3, planning 5/5 and
+  runtime 6/6 CTest pass. Repeated map-update/replay evidence remains open.
+- **Removal condition:** none. Any future provenance optimization must prove
+  the same discrete-cell coverage or conservatively mark the update as
+  whole-world.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/navigation_mapping
+  --output-on-failure`.
+
+### 2026-08-27 — Candidate role schedule has no implicit fallback
+
+- **Owner:** `navigation_planning_backend::validateExecutableCandidate`.
+  **Scope:** role intervals must start at zero, be finite and strictly
+  increasing, meet exactly at every boundary, end exactly at trajectory
+  duration, and resolve through an optional role lookup. There is no default
+  MAIN role for a gap or an invalid boundary.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A tolerant boundary or
+  implicit MAIN fallback could let a segment intended for the known-free
+  BACKUP suffix inherit the exploratory UNKNOWN policy. Gaps, overlaps and
+  malformed final intervals are rejected before certification.
+- **Derivation and cost:** role resolution is exact because the producer owns
+  the same stored interval endpoints; the validator performs no new tolerance
+  decision. The extra schedule walk is linear in the small role list.
+- **Evidence:** planning backend CTest 5/5 and runtime CTest 6/6 pass after
+  the change. A producer-level closed-loop test with floating-point switch
+  times and repeated SITL remains required.
+- **Removal condition:** none. Do not restore a default role or boundary
+  grace; if a producer cannot emit an exact partition it must be fixed at its
+  contract boundary.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/navigation_planning_backend
+  --output-on-failure`.
+
+### 2026-08-27 — Symmetric DDA tie scale excludes infinite sentinels
+
+- **Owner:** immutable `MappingWorldSnapshot::isSegmentTraversable`.
+  **Scope:** the machine-epsilon tie tolerance is scaled only by finite
+  parametric boundary values; axes with no remaining transition use the
+  infinite sentinel only for ordering, never for the tolerance scale. Every
+  tied-axis subset is still checked.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The first symmetric
+  supercover implementation used `DBL_MAX` in its scale, making the tolerance
+  effectively enormous whenever one axis was stationary and potentially
+  omitting a real transition. This correction removes that numerical
+  acceptance path; it does not classify any unknown cell as free.
+- **Derivation and cost:** finite boundary values determine the scale and
+  ordinary paths retain the same one-boundary step. Corner/edge crossings
+  check at most seven adjacent cells.
+- **Evidence:** the diagonal corner regression rejects both travel
+  directions; sourced mapping CTest 3/3, planning 5/5 and runtime 6/6 pass.
+  Randomized numerical parity and latency distributions remain open.
+- **Removal condition:** none. Any DDA optimization must retain finite-only
+  scaling and the symmetric touched-cell regression.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && ctest --test-dir build/navigation_mapping
+  --output-on-failure`.
+
+### 2026-08-27 — Product metadata no longer exposes backend version or key names
+
+- **Owner:** product package metadata and runtime diagnostics. **Scope:** the
+  PX4 package description no longer embeds a release version, the runtime
+  error names the product mapping concept instead of a backend configuration
+  key, and runtime no longer declares an unused vendor test dependency.
+- **Safety impact:** vocabulary/packaging only. Loader behavior, virtual-plane
+  validation and all safety gates are unchanged; backend names remain confined
+  to the private adapter and provenance/tooling boundary.
+- **Evidence:** navigation mapping/runtime rebuild and sourced CTest pass;
+  complete vendor/provenance cleanup is intentionally a separate phase so
+  attribution and parity evidence are not deleted.
+- **Removal condition:** none. Product-facing names must remain backend-neutral;
+  do not rename the private config root until a typed mapping configuration
+  owns and verifies the full schema.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON`.
+
+### 2026-08-27 — Planner configuration has deterministic neutral defaults
+
+- **Owner:** product planner and trajectory configuration value types. **Scope:**
+  every scalar that was previously default-constructed without initialization
+  now has an explicit neutral value; file-based loaders still provide the
+  product baseline and reject missing required physical limits.
+- **Safety impact:** numerical hygiene. A default-constructed test/helper or
+  future boundary object can no longer read indeterminate mass, gravity,
+  flatness, deadline, or planner-limit values. No valid YAML behavior or
+  safety threshold is raised.
+- **Derivation and cost:** zero/false means “not configured” for values that
+  the loaded configuration validates as positive, and is constant-initialized
+  with no runtime cost.
+- **Evidence:** planner source rebuild and sourced planning CTest 5/5 pass.
+  Full sanitizer and end-to-end evidence remain required.
+- **Removal condition:** none. New configuration fields must be initialized
+  and validated at their owning boundary.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON` followed by
+  sourced planner CTest.
+
+### 2026-08-27 — Backup visibility always certifies the terminal point
+
+- **Owner:** `Planner::generateBackupTrajectory` visibility sampling. **Scope:**
+  the sampled candidate list now appends the exact `total_dur` position after
+  the strictly-before-terminal sampling loop; a non-finite terminal point
+  fails the solve.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The previous all-visible
+  fast path could return `FINISH` after checking only samples with
+  `t < total_dur`, leaving the actual executable endpoint uncertified. The
+  change adds a required existing trajectory point to the same known-free
+  check and does not weaken the policy.
+- **Derivation and cost:** one endpoint insertion and one endpoint ray/check;
+  no new parameter or tolerance is introduced.
+- **Evidence:** planner source rebuild and sourced planning CTest are required;
+  a closed-loop visibility/backup regression and repeated SITL remain open.
+- **Removal condition:** none. Any future visibility fast path must include
+  the exact terminal point in its certificate.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON` followed by
+  sourced planner CTest.
+
+### 2026-08-27 — Bounded provenance retains the newest change window
+
+- **Owner:** `MappingActor` change-history publication. **Scope:** provenance is
+  stored as an immutable newest-first window of records. Each update copies at
+  most the retained window, prepends the new record, and drops only the oldest
+  record. Records older than that window are intentionally unavailable for
+  stale-certificate recertification.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A singly linked bounded
+  chain cannot truncate its tail in O(1): the earlier implementation skipped
+  the newest predecessor at saturation. The flat window now preserves every
+  newest record in order; a missing link still rejects recertification rather
+  than assuming unchanged geometry.
+- **Derivation and cost:** the bounded window is fixed at 256 records, so
+  memory and copy cost are bounded. The retention value is an implementation
+  bound, not a permission to accept an older certificate.
+- **Evidence:** mapping source rebuild and sourced mapping/world-model tests
+  are required; long-run history rollover and stale-candidate replay remain
+  open characterization work.
+- **Removal condition:** none. Any future history storage must preserve newest
+  records and fail closed across an unavailable provenance interval.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  --cmake-args -DBUILD_TESTING=ON` followed by sourced mapping CTest.
+
+### 2026-08-27 — Provenance rollover no longer skips the newest revision
+
+- **Owner:** immutable world-model history contract. **Scope:** all stale-map
+  recertification requires contiguous newest-first revision records; a history
+  window shorter than the requested interval fails closed.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. This closes the concrete
+  rollover defect found during adversarial review where revision `N-1` could be
+  skipped while revision `N` was retained.
+- **Evidence:** mapping source rebuild and the newest-record/truncation
+  regression are required; long-run rollover and repeated SITL remain open.
+- **Removal condition:** none. Do not replace the bounded flat window with a
+  singly linked list unless tail truncation preserves all newest records.
+- **Verification command:** sourced mapping build followed by mapping CTest.
+
+### 2026-08-27 — Mapping test targets use the product C++20 contract
+
+- **Owner:** `navigation_mapping` CMake test targets. **Scope:** the
+  `test_mapping_world_model` target now explicitly requests C++20, matching
+  the library and the other mapping tests.
+- **Safety impact:** build-contract only. This prevents a compiler default from
+  changing the language semantics of a world-model safety regression test; no
+  runtime behavior or gate changed.
+- **Evidence:** fresh mapping build and sourced mapping CTest are required.
+- **Removal condition:** none. Keep C++20 explicit on every product and test
+  target.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_mapping
+  --cmake-args -DBUILD_TESTING=ON` followed by sourced mapping CTest.
+
+### 2026-08-27 — Candidate admission rechecks measured-state anchoring
+
+- **Owner:** runtime execution boundary and planner state snapshot. **Scope:**
+  a candidate is sampled at the admission timestamp and compared with the
+  newest fresh propagated state before entering the execution bundle store;
+  the planner also copies one state snapshot at the start of each solve and
+  does not read the concurrently updated ingress state during that solve.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A solve completing after
+  a vehicle-state update must not publish a geometrically detached command.
+  The existing product geometric anchor limit is reused; no independent
+  tracking-lag or velocity-limit parameter is introduced. The measured state
+  remains the authority for position continuity, while trajectory dynamics and
+  the PX4 consumer retain their own physical checks.
+- **Derivation and cost:** one immutable state load, one candidate evaluation,
+  and one finite position-envelope check at the commit boundary. The solve
+  snapshot removes a data race without holding the ingress mutex throughout
+  optimization.
+- **Evidence:** planner/runtime rebuild and sourced CTest are required;
+  delayed-state, concurrent-state and closed-loop SITL tests remain open.
+- **Removal condition:** none. Any future candidate path must perform the same
+  fresh-state and world-identity checks before exposure.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select
+  navigation_planning_backend navigation_runtime --cmake-args
+  -DBUILD_TESTING=ON` followed by sourced planner/runtime CTest.
+
+### 2026-08-27 — Quaternion gates use scale-stable finite checks
+
+- **Owner:** mapping, runtime odometry ingress and planner kinematic-state
+  boundary. **Scope:** quaternion validity uses the largest finite coefficient
+  as the scale, then normalizes a bounded quaternion; it no longer relies on
+  a squared norm that can overflow for otherwise finite input.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. Zero, non-finite and
+  numerically degenerate orientations are rejected, while very large finite
+  representations cannot pass into an invalid normalized state.
+- **Evidence:** mapping/planner/runtime rebuild and sourced CTest are required;
+  explicit overflow-scale quaternion regressions and sanitizer coverage remain
+  open.
+- **Removal condition:** none. Keep scale-stable validation at every ingress
+  boundary; do not revert to unchecked `normalized()` on external values.
+- **Verification command:** sourced selected-package build followed by mapping,
+  planner and runtime CTest.
+
+### 2026-08-27 — Snapshot geometry rejects invalid inflation metadata
+
+- **Owner:** immutable mapping snapshot constructor. **Scope:**
+  `occupied_inflation_radius_m` must be finite and nonnegative before a snapshot
+  can be published.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A NaN radius can no longer
+  make a downstream `radius < robot_radius` check evaluate false and silently
+  bypass the clearance contract.
+- **Evidence:** mapping/planner rebuild and sourced CTest are required.
+- **Removal condition:** none. Any world view supplying geometry must validate
+  all physical clearance metadata before publication.
+- **Verification command:** sourced mapping, planner and runtime CTest.
+
+### 2026-08-27 — Candidate validity never extends caller expiry
+
+- **Owner:** planner candidate export. **Scope:** candidate validity ends at the
+  earlier of the caller's freshness deadline and the trajectory endpoint; an
+  invalid interval is rejected.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The previous `max()` could
+  extend a caller-owned freshness deadline to the end of a long trajectory.
+- **Evidence:** planner build and sourced CTest are required; direct boundary
+  tests for future, expired and shortened candidates remain open.
+- **Removal condition:** none. Caller expiry is a hard upper bound and may not
+  be widened by a producer.
+- **Verification command:** sourced planner build and planner CTest.
+
+### 2026-08-27 — Failed planner-history ACK clears both command owners
+
+- **Owner:** runtime execution commit boundary and planner staged-candidate
+  owner. **Scope:** when the execution bundle commits but the planner-history
+  ACK fails, runtime now clears the planner staged candidate before invalidating
+  the execution bundle.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The two ownership
+  boundaries can no longer leave a private staged candidate alive after its
+  execution counterpart was withdrawn; a later cycle cannot mistake that
+  candidate for a fresh solve result.
+- **Derivation and cost:** one discard operation on the existing planner
+  ownership boundary; no new state, parameter or timing gate.
+- **Evidence:** sourced runtime build and CTest 6/6 pass; an explicit injected
+  ACK-failure integration test remains follow-up coverage.
+- **Removal condition:** none. Any future execution/planner two-phase commit
+  must clear both owners on every failed ACK.
+- **Verification command:** sourced selected-package build followed by runtime
+  CTest.
+
+### 2026-08-27 — Snapshot adapter removes redundant cell conversion pass
+
+- **Owner:** `navigation_mapping` immutable snapshot adapter. **Scope:** the
+  private snapshot storage now moves the backend's already-byte-sized evidence
+  codes directly and decodes them only when answering a world-model query.
+- **Safety impact:** performance-only with unchanged semantics. Snapshot
+  validation still rejects every code outside UNKNOWN/OCCUPIED/KNOWN_FREE;
+  conversion is deferred, not removed.
+- **Derivation and cost:** removes one allocation and byte-to-enum loop per
+  full grid export. The immutable grid remains owned by the snapshot, and map
+  publication/commit gates are unchanged.
+- **Evidence:** fresh mapping build and sourced mapping CTest 3/3 pass; p50/p95
+  callback and observed-duration distributions remain required before claiming
+  an end-to-end performance improvement.
+- **Removal condition:** none. Keep storage representation private; do not
+  expose backend cell codes through the product API.
+- **Verification command:** sourced selected-package build followed by mapping
+  CTest and runtime performance replay.
+
+### 2026-08-27 — Runtime profile has one workspace source
+
+- **Owner:** `navigation_runtime` package configuration and launch tooling.
+  **Scope:** `config/runtime/mapping.yaml` is the only hand-edited runtime
+  profile. CMake copies it into the build/install tree as
+  `navigation_runtime.yaml` for the package launch default; the former second
+  source file is removed.
+- **Safety impact:** configuration ownership only. No parameter value, clock
+  policy, planner gate or hardware permission changes. A future profile edit
+  cannot silently diverge between workspace runner and installed launch.
+- **Derivation and cost:** one configure-time file copy; no runtime parsing or
+  callback cost is added.
+- **Evidence:** runtime CMake configure/build and the Python runtime contract
+  test are required; launch/install smoke coverage remains part of the next
+  SITL phase.
+- **Removal condition:** none. Do not add a second hand-edited runtime profile;
+  update the canonical workspace file and regenerate the install tree.
+- **Verification command:** `source /opt/ros/jazzy/setup.bash && source
+  install/setup.bash && colcon build --packages-select navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON` followed by
+  `python3 -m pytest -q tools/runtime/tests`.
+
+### 2026-08-27 — World evidence freshness gates executable commands
+
+- **Owner:** runtime planning, candidate admission and command publication
+  boundaries. **Scope:** the latest immutable world snapshot observation time
+  must be fresh in the ROS clock domain before solving, committing or
+  continuing to publish a trajectory. The same existing input age limit is
+  checked at each race-prone boundary.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. Fresh propagated odometry
+  cannot by itself certify that the map evidence is current. A stale or missing
+  world snapshot cancels active solving, clears command exposure and rejects
+  candidate admission; a later fresh mapping publication may recover it.
+- **Derivation and cost:** one identity load and timestamp classification per
+  boundary; no new parameter and no relaxed gate. The limit remains a
+  provisional source-age contract and requires distribution evidence before
+  future tuning.
+- **Evidence:** runtime build, CTest and timestamp freshness tests are
+  required; stale-world interleaving and repeated SITL evidence remain open.
+- **Removal condition:** none. Do not allow an execution-state freshness check
+  to substitute for world-evidence freshness.
+- **Verification command:** sourced selected-package build followed by runtime
+  CTest and repeated SITL/dataset timing validation.
+
+### 2026-08-27 — Mapping callback telemetry measures its full envelope
+
+- **Owner:** mapping runtime telemetry and report renderer. **Scope:**
+  `mapping_callback_total_us` is measured around `MappingActor::process`, so it
+  includes map update, snapshot export and dependent publication/finalization;
+  the backend update duration remains a separate metric.
+- **Safety impact:** observability only. No command gate or planner behavior is
+  changed.
+- **Derivation and cost:** two steady-clock reads per callback and one integer
+  subtraction. Report timing descriptions now label snapshot export as an
+  observed compute phase.
+- **Evidence:** runtime build, CTest and Python runtime tests are required;
+  repeated artifacts are still required for performance conclusions.
+- **Removal condition:** none. Do not report backend update time as the full
+  mapping callback envelope.
+- **Verification command:** sourced runtime build/CTest followed by
+  `python3 -m pytest -q tools/runtime/tests`.
+
+### 2026-08-27 — Unused waypoint optimizer removed from product build
+
+- **Owner:** `navigation_planning_backend` source list. **Scope:** the private
+  `GcopterWayptS3/S4` optimizer, which had no production consumer, is removed
+  from the target and source tree. The active optimizer path and shared
+  transform utility remain unchanged.
+- **Safety impact:** build surface and maintenance only. No trajectory behavior,
+  parameter, certificate or fallback path changes.
+- **Derivation and cost:** removes one unreferenced translation unit and header;
+  no runtime cost is added.
+- **Evidence:** repository-wide consumer search, backend rebuild and backend
+  CTest are required.
+- **Removal condition:** none. New optimizer implementations require a named
+  product owner and a production call site before entering the target.
+- **Verification command:** sourced backend build followed by planner CTest.
+
+### 2026-08-27 — Startup snapshot export is performed once
+
+- **Owner:** `navigation_mapping::MappingActor` startup path. **Scope:** the
+  initial immutable snapshot obtains nearest-cell metadata and product grid
+  storage from one backend export; construction no longer performs a separate
+  full-grid export merely to initialize offsets.
+- **Safety impact:** no map, certificate, unknown-policy or command-gate
+  change. The snapshot remains detached and immutable before publication.
+- **Derivation and cost:** removes one full-grid copy/translation at startup;
+  steady-state per-update export remains a separate open performance item.
+- **Evidence:** mapping actor/world-model tests and sourced mapping CTest are
+  required; repeated callback timing evidence remains open.
+- **Removal condition:** none. Do not reintroduce an initialization-only full
+  export without measuring its ownership and latency impact.
+- **Verification command:** sourced mapping build followed by mapping CTest.
+
+### 2026-08-27 — Runtime freshness window has one explicit name
+
+- **Owner:** `navigation_runtime` timing contract. **Scope:** rename the
+  ambiguous `input_max_age_s` parameter to `data_freshness_window_s`; its
+  nanosecond conversion is used by the runtime's world-source, execution-state
+  and command-lease checks. PX4 and bridge age parameters remain separate
+  because they measure different clocks and boundaries.
+- **Safety impact:** naming/ownership only; no threshold or freshness predicate
+  changed. Keeping one runtime value avoids adding three behavior knobs without
+  evidence for distinct policies.
+- **Derivation and cost:** one seconds-to-nanoseconds conversion at startup;
+  no runtime allocation or additional check.
+- **Evidence:** canonical profile contract, runtime build/CTest and Python
+  contract tests; repeated timing distributions remain required before tuning.
+- **Removal condition:** none. Split the value only when measured evidence and
+  a documented ownership contract prove separate policies are necessary.
+- **Verification command:** sourced runtime build and CTest followed by
+  `python3 -m pytest -q tools/runtime/tests`.
+
+### 2026-08-27 — Product planner profile no longer advertises a dead ROS callback
+
+- **Owner:** product planner configuration. **Scope:** remove the disabled
+  `rog_map/ros_callback` topic block from the product planner profile. Runtime
+  mapping admission is now exclusively the atomic `RegisteredScan` contract;
+  vendor parser fixtures retain their isolated callback schema for parser tests.
+- **Safety impact:** clarity and ownership only. The callback was disabled and
+  no runtime subscription or certificate predicate is changed.
+- **Derivation and cost:** removes two obsolete topic names and one unused
+  timeout from the product profile; no runtime allocation or branch is added.
+- **Evidence:** source/config search plus mapping/runtime build and CTest are
+  required. Do not infer product callback behavior from vendor fixtures.
+- **Removal condition:** none. Reintroduce a callback only with a named
+  product-owned message contract, epoch policy and safety review.
+- **Verification command:** sourced mapping/runtime build followed by CTest and
+  `python3 -m pytest -q tools/runtime/tests`.
+
+### 2026-08-27 — Mapping finalization failure is accounted as failure
+
+- **Owner:** mapping worker and world/execution publication boundary. **Scope:**
+  a failed dependent finalization no longer marks the epoch ready or lets the
+  worker count the callback as published. The callback records its measured
+  envelope and then fail-stops because the mutable map cannot roll back safely.
+- **Safety impact:** fail-closed safety and truthful lifecycle accounting. The
+  new world is not visible when its execution certificate transition fails.
+- **Derivation and cost:** one exception path and one duration write; no new
+  behavior parameter or relaxed gate.
+- **Evidence:** mapping/runtime build and CTest plus injected finalization-failure
+  coverage are required.
+- **Removal condition:** none. Never report a non-published snapshot as ready.
+- **Verification command:** sourced mapping/runtime build followed by CTest and
+  `python3 -m pytest -q tools/runtime/tests`.
+
+### 2026-08-27 — Public estimator epoch is tied to reset and process instance
+
+- **Owner:** FAST-LIO public output contract. **Scope:** seed the public epoch
+  from the monotonic host steady-clock process instance and advance it when the
+  estimator pipeline generation changes after a full reset. Both RegisteredScan
+  and EstimatorHealth continue to read the same owner.
+- **Safety impact:** prevents a restarted estimator with a reset source clock or
+  scan sequence from being relabeled as the active localization epoch. Existing
+  stale commands and maps are invalidated at the runtime boundary.
+- **Derivation and cost:** one monotonic-clock read at startup and one generation
+  comparison per processed result; no sensor timestamp offset is introduced.
+- **Evidence:** FAST-LIO public-generation tests, build and cross-epoch replay
+  with Health-before-Scan and Scan-before-Health ordering are required.
+- **Removal condition:** none. Do not derive localization epoch from ROS/sensor
+  time or reset it to a fixed literal on producer restart.
+- **Verification command:** sourced FAST-LIO/runtime build and CTest followed by
+  recorded reset/replay and repeated SITL validation.
+
+### 2026-08-27 — Transient world evidence gaps remain recoverable
+
+- **Owner:** navigation runtime world-freshness gate. **Scope:** stale/missing
+  world evidence clears command exposure and cancels the active solve without
+  setting the terminal planner-request latch. A later fresh snapshot can drive
+  a new solve for the still-active goal; localization epoch reset uses the same
+  recoverable barrier and resets the old execution lease.
+- **Safety impact:** no stale command can be published; liveness is restored
+  without weakening occupancy, UNKNOWN or execution-state certificates.
+- **Derivation and cost:** no new threshold or parameter; only separates the
+  recoverable world-evidence state from terminal planner/lease failures.
+- **Evidence:** runtime interleaving tests must prove stale→fresh recovery and
+  that no old command is exposed during the gap.
+- **Removal condition:** none. If recovery is changed to terminal, update this
+  contract and its mission-level handover evidence first.
+- **Verification command:** sourced runtime build/CTest and stale-world race
+  replay followed by repeated SITL.
+
+### 2026-08-27 — Mapping history retention includes the current record
+
+- **Owner:** mapping provenance history. **Scope:** retain at most 256 total
+  newest-first change records, including the record for the current revision;
+  missing or non-contiguous history still invalidates a stale certificate.
+- **Safety impact:** bound and provenance clarity only; no stale certificate is
+  newly admitted.
+- **Derivation and cost:** one subtraction from the existing retention limit;
+  memory remains bounded and no runtime parameter is added.
+- **Evidence:** rollover test beyond 256 updates and boundary stale-candidate
+  checks are required.
+- **Removal condition:** none. Keep fail-closed behavior when an interval falls
+  outside retention.
+- **Verification command:** sourced mapping build/CTest and long-run provenance
+  replay.
+
+### 2026-08-27 — Role diagnostics do not default gaps to MAIN
+
+- **Owner:** planner facade product output. **Scope:** the diagnostic role
+  evaluator returns EMERGENCY for invalid times or role gaps, and uses the same
+  half-open terminal convention as the validator. It no longer masks malformed
+  role metadata as MAIN.
+- **Safety impact:** observability and boundary consistency; executable command
+  admission remains governed by the independent complete schedule validator.
+- **Derivation and cost:** bounded scan over the existing role intervals; no new
+  gate or parameter.
+- **Evidence:** facade role translation tests and existing planner CTest are
+  required.
+- **Removal condition:** none. Do not reintroduce an optimistic MAIN fallback.
+- **Verification command:** sourced planner backend build followed by CTest.
+
+### 2026-08-27 — Mapping observation owns its immutable cloud and frame contract
+
+- **Owner:** product mapping boundary. **Scope:** MappingObservation now moves a
+  unique immutable cloud into the sole mapping actor; the actor rejects missing
+  frame IDs and, when supplied by runtime, requires the configured world/body
+  frame pair.
+- **Safety impact:** prevents producer aliases from mutating admitted evidence
+  and prevents a frame-mismatched cloud/pose from entering the mutable map.
+- **Derivation and cost:** one ownership transfer and string comparisons per
+  admitted observation; no copy of the point cloud and no tuning parameter.
+- **Evidence:** mapping actor frame/ownership regressions and runtime CTest are
+  required.
+- **Removal condition:** none. Do not restore shared mutable cloud ownership at
+  the product boundary.
+- **Verification command:** sourced mapping/runtime build followed by CTest.
+
+### 2026-08-27 — Registered cloud serialization is performed once
+
+- **Owner:** FAST-LIO output publisher. **Scope:** construct one registered
+  PointCloud2 message and reuse it for optional visualization publication and
+  the atomic RegisteredScan message.
+- **Safety impact:** observability/performance only; typed mapping content is
+  unchanged and remains the authoritative admission path.
+- **Derivation and cost:** removes one O(points) conversion/allocation per
+  corrected scan when both outputs are enabled.
+- **Evidence:** FAST-LIO build/tests and repeated dataset callback timing are
+  required; raw visualization output is not a mapping authority.
+- **Removal condition:** none. Keep the raw topic optional and separate from
+  the typed runtime contract.
+- **Verification command:** sourced FAST-LIO build/CTest and dataset timing
+  replay.
+
+### 2026-08-27 — Disabled product CLI controls are removed
+
+- **Owner:** runtime validation tooling. **Scope:** remove the public
+  `frontier-debug` option and `_mapping_params` arguments that were silently
+  ignored (`interactive`, `simulation`, `obstacle_evidence`). Mapping profile
+  generation now has one explicit input contract.
+- **Safety impact:** false-control-surface removal only; no product behavior or
+  safety gate is relaxed.
+- **Derivation and cost:** removes dead argument plumbing and misleading tests;
+  no runtime allocation or branch is added.
+- **Evidence:** full Python runtime contract tests are required.
+- **Removal condition:** none. Add a CLI option only when it changes a named,
+  tested product behavior.
+- **Verification command:** `python3 -m pytest -q tools/runtime/tests`.
+
+
+### 2026-08-27 — Steady-state world snapshots use bounded immutable patches
+
+- **Owner:** navigation mapping snapshot publication. **Scope:** after the
+  initial/full snapshot, a non-sliding map update exports only the affected
+  base and inflated index windows and layers that patch over the previous
+  immutable snapshot. Patch ancestry is bounded to eight updates; the next
+  update flattens to a full snapshot. A map slide, invalid/empty patch or
+  whole-world change always uses full export.
+- **Safety impact:** no occupancy, UNKNOWN or certificate predicate is
+  relaxed. Parent snapshots remain alive and immutable, and patch geometry,
+  state domain, identity successor and array sizes are validated before
+  publication. Any export/validation exception poisons the mutable actor and
+  is handled by the existing fail-stop path.
+- **Derivation and cost:** removes repeated O(N) allocation/translation from
+  the normal local-update path; the bounded depth prevents unbounded query
+  chains. The depth is a structural implementation bound, not a runtime
+  tuning control.
+- **Evidence:** mapping actor patch-depth and semantic-continuity tests,
+  sourced mapping CTest, package build, and repeated callback timing over
+  representative SITL/recorded data are required. This entry does not claim
+  the performance threshold is certified until those distributions exist.
+- **Removal condition:** none. Keep full export as the conservative recovery
+  path for map slides, whole-world changes and patch failures.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`, build `rog_map_vendor`/`navigation_mapping`, run their
+  sourced CTest suites, then run repeated dataset/SITL timing.
+
+### 2026-08-27 — Remove the unused planner interface from the product package
+
+- **Owner:** `navigation_planning` public contract. **Scope:** remove the
+  unused `LocalPlanner`/`local_planner.hpp` abstraction. The package exposes
+  value contracts (`PlanningRequest`, `PlanningOutcome`, `CandidateBundle`)
+  while the concrete planner entry point is the installed
+  `navigation_planning_backend::PlannerFacade`; no second virtual interface is
+  advertised or installed.
+- **Safety impact:** architecture clarity only. No runtime path, planner
+  predicate, fallback, timing budget or parameter is changed.
+- **Derivation and cost:** repository-wide reference search found no production
+  or test consumer of the header; deleting it removes a dead public API and
+  prevents a future implementation from diverging from the facade contract.
+- **Evidence:** `rg` reference audit, C++20 planning/backend build and focused
+  planning CTest are required.
+- **Removal condition:** none. Add a new abstraction only when a real second
+  implementation needs the same contract and its ownership/test boundary is
+  specified first.
+- **Verification command:** source the ROS/workspace overlays, build
+  `navigation_planning` and `navigation_planning_backend`, then run their
+  sourced CTest suites.
+
+### 2026-08-27 — Remove reference-comparison code from product tooling
+
+- **Owner:** product maintenance tooling. **Scope:** remove the executable
+  parity checker that encoded the historical reference repository's directory
+  and symbol names. The source tree keeps the provenance/license record in
+  documentation only; build and runtime code no longer depends on a reference
+  checkout or a versioned implementation comparison.
+- **Safety impact:** tooling and vocabulary cleanup only. No planner source,
+  gate, fallback, parameter or validation predicate is changed by this removal.
+- **Derivation and cost:** repository search found no build, test or runtime
+  consumer of the checker. Removing it prevents accidental reintroduction of a
+  second implementation authority and reduces maintenance surface.
+- **Evidence:** reference search, Python tooling tests and product source-name
+  audit are required. Provenance documents remain intentionally reviewable.
+- **Removal condition:** none. Any future conformance tool must compare
+  explicit product contracts and must not become a runtime/source dependency.
+- **Verification command:** `python3 -m pytest -q tools/runtime/tests` and a
+  product-source search excluding vendor/provenance documentation.
+
+### 2026-08-27 — Remove a duplicated CIRI endpoint correction
+
+- **Owner:** planner corridor geometry. **Scope:** remove the identical second
+  endpoint-`b` correction in the zero-radius numerical branch. Each endpoint is
+  now corrected at most once before the tangent plane is emitted.
+- **Safety impact:** numerical determinism and bounded work only. The branch
+  keeps the same finite/degenerate rejection checks and does not relax corridor,
+  world, dynamic or backup validation.
+- **Derivation and cost:** the second block had the same predicate and formula,
+  so it could only repeat the same calculation or amplify round-off; removing it
+  reduces redundant work and makes the endpoint contract explicit.
+- **Evidence:** CIRI geometry regression, backend CTest and source review are
+  required.
+- **Removal condition:** none. Do not restore duplicated numerical branches;
+  express repeated endpoint handling as a named bounded operation if needed.
+- **Verification command:** sourced `navigation_planning_backend` build followed
+  by its CTest suite.
+
+### 2026-08-27 — Require typed health before PX4 accepts state or commands
+
+- **Owner:** PX4 External Mode input boundary. **Scope:** propagated odometry
+  now passes the actual typed-health readiness state to the source-time epoch
+  barrier; navigation commands require both a current healthy health sample and
+  a matching public epoch before they can be cached.
+- **Safety impact:** closes a pre-health admission path. A queued or early
+  untagged `nav_msgs/Odometry` sample can no longer establish the execution
+  state before the typed estimator contract; pre-health commands are discarded
+  and the existing stationary/hold behavior remains authoritative.
+- **Derivation and cost:** this is the existing health/epoch contract, not a
+  new parameter. It adds one boolean conjunction per input callback and avoids
+  treating the absence of health as an implicit valid epoch.
+- **Evidence:** typed contract tests, PX4 External Mode CTest and loaded
+  epoch-transition replay are required.
+- **Removal condition:** none. Do not make health optional unless the state
+  message itself carries an equivalent producer-owned epoch and validity
+  certificate.
+- **Verification command:** sourced PX4 External Mode build followed by its
+  CTest suite and repeated epoch-reset replay.
+
+### 2026-08-27 — Propagated odometry carries its producer-owned identity
+
+- **Owner:** FAST-LIO propagated-state ROS contract and its runtime/PX4
+  consumers. **Scope:** replace the untagged `nav_msgs/Odometry` propagated
+  topic with `navigation_contracts/msg/PropagatedOdometry`, carrying the
+  producer-owned `localization_epoch` and monotonic per-epoch `sequence`.
+  The nested odometry header remains the sole source timestamp/frame payload.
+  Remove the obsolete source-time barrier helper; `EstimatorHealth` retains
+  its last propagated stamp for diagnostics only.
+- **Safety impact:** closes the reset ambiguity that allowed a delayed
+  untagged sample to be relabeled as the new estimator epoch. Runtime and PX4
+  now reject zero/regressed epoch or sequence and require the existing health
+  contract at the PX4 execution boundary. This does not certify the complete
+  continuous backup contingency.
+- **Derivation and cost:** one typed message identity check and one sequence
+  comparison per consumer callback; no new parameter, timestamp offset or
+  safety relaxation.
+- **Evidence:** typed contract test, affected package build/CTest and
+  repeated epoch-reset replay are required; SITL remains required for E2E
+  continuity.
+- **Removal condition:** none. Do not restore an untagged propagated-state
+  topic or infer producer identity from source time alone.
+- **Verification command:** source ROS/workspace overlays, build
+  `navigation_contracts fast_lio_ros navigation_runtime
+  px4_navigation_external_mode px4_odometry_bridge`, run their CTest suites,
+  then run recorded reset replay and repeated SITL.

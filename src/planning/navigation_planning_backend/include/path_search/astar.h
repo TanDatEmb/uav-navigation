@@ -1,31 +1,18 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 
 #pragma once
 
+#include <cstdint>
+#include <cstddef>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 
 #include "Eigen/Dense"
 #include "vector"
@@ -39,7 +26,7 @@
 namespace path_search {
     using namespace navigation_math;
 
-    constexpr double inf = 1 >> 20;
+    constexpr double inf = std::numeric_limits<double>::infinity();
     struct GridNode;
     typedef GridNode *GridNodePtr;
 
@@ -55,19 +42,35 @@ namespace path_search {
         double total_score{inf}, distance_score{inf};
         double distance_to_goal{inf};
         GridNodePtr father_ptr{nullptr};
+        std::uint64_t frontier_sequence{0U};
     };
 
-    class NodeComparator {
+    struct OpenSetEntry {
+        GridNodePtr node{nullptr};
+        double total_score{inf};
+        int rounds{0};
+    };
+
+    class OpenSetComparator {
     public:
-        bool operator()(GridNodePtr node1, GridNodePtr node2) {
-            return node1->total_score > node2->total_score;
+        bool operator()(const OpenSetEntry &entry1, const OpenSetEntry &entry2) const {
+            return entry1.total_score > entry2.total_score;
         }
+    };
+
+    struct FrontierEntry {
+        GridNodePtr node{nullptr};
+        double distance_to_goal{inf};
+        std::uint64_t sequence{0U};
     };
 
     class FrontierComparator {
     public:
-        bool operator()(GridNodePtr node1, GridNodePtr node2) {
-            return node1->distance_to_goal > node2->distance_to_goal;
+        bool operator()(const FrontierEntry &entry1, const FrontierEntry &entry2) const {
+            if (entry1.distance_to_goal != entry2.distance_to_goal) {
+                return entry1.distance_to_goal > entry2.distance_to_goal;
+            }
+            return entry1.sequence > entry2.sequence;
         }
     };
 
@@ -84,11 +87,15 @@ namespace path_search {
         navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
 
         PathSearchConfig cfg_;
+        double search_time_limit_s_{0.0};
         vec_Vec3i neighbor_list;
 
-        vector<std::unique_ptr<GridNode>> grid_node_buffer_;
+        // Search state is sparse: a solve usually visits a small fraction of
+        // the map. Allocate only nodes touched by the current search.
+        std::unordered_map<std::size_t, std::unique_ptr<GridNode>> visited_nodes_;
 
         int rounds_{0};
+        std::uint64_t frontier_sequence_{0U};
 
         static constexpr int DIAG = 0;
         static constexpr int MANH = 1;
@@ -108,6 +115,11 @@ namespace path_search {
             Vec3f local_map_center_d;
             double mission_rcv_WT{0};
             Vec3f local_map_max_d, local_map_min_d;
+            Vec3i local_global_min_index{Vec3i::Zero()};
+            Vec3i local_global_max_index{Vec3i::Zero()};
+            Vec3i local_lower_extent_i{Vec3i::Zero()};
+            Vec3i local_upper_extent_i{Vec3i::Zero()};
+            Vec3i local_voxel_count{Vec3i::Zero()};
             std::mutex mission_mtx;
         } md_;
 
@@ -115,7 +127,7 @@ namespace path_search {
 
         double getHeu(GridNodePtr node1, GridNodePtr node2, int type = DIAG) const;
 
-         int getLocalIndexHash(const Vec3i &id_in) const;
+        std::size_t getLocalIndexHash(const Vec3i &id_in) const;
 
         void posToGlobalIndex(const Vec3f &pos, Vec3i &id_g) const ;
 
@@ -134,8 +146,8 @@ namespace path_search {
 
         void ConvertNodePathToPointPath(const vector<GridNodePtr> &node_path, vec_Vec3f &point_path);
 
-        GridNodePtr nodeAt(const int local_index) {
-            auto &slot = grid_node_buffer_.at(static_cast<std::size_t>(local_index));
+        GridNodePtr nodeAt(const std::size_t local_index) {
+            auto& slot = visited_nodes_[local_index];
             if (!slot) {
                 slot = std::make_unique<GridNode>();
             }
@@ -144,9 +156,10 @@ namespace path_search {
 
     public:
 
-        Astar(const std::string & cfg_path,
+        Astar(const PathSearchConfig& config,
               const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
-              navigation_world_model::WorldModelViewPtr rm);
+              navigation_world_model::WorldModelViewPtr rm,
+              double search_time_limit_s);
 
         ~Astar();
         Astar(const Astar&) = delete;
@@ -176,7 +189,8 @@ namespace path_search {
         /// @ param:
         RET_CODE escapePathSearch(const Vec3f &start_pt, const int flag,
                                   vec_Vec3f &out_path,
-                                  const bool prefer_start_altitude = false);
+                                  const bool prefer_start_altitude = false,
+                                  const double time_out = -1.0);
 
 
     };

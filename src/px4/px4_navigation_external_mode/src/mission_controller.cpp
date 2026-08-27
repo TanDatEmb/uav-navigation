@@ -237,15 +237,6 @@ MissionControllerEvent MissionController::update(
       // stop waypoint still follows the fail-closed POSCTL path below.
       if (pass_through) return {};
       if (!stopped_start_time_s_.has_value()) stopped_start_time_s_ = now_s;
-      const double replan_grace_s = mission_.control.safety_stop_replan_grace_s;
-      if (std::isfinite(replan_grace_s) && replan_grace_s > 0.0 &&
-          now_s - *stopped_start_time_s_ < replan_grace_s) {
-        // Do not hand over on the first settled local stop when the mission
-        // explicitly permits a bounded map/replan grace period. A newer
-        // safety route is handled by onTrajectory() and resumes Braking;
-        // absence of one still falls through to the fail-closed handover.
-        return {};
-      }
       if (now_s - *stopped_start_time_s_ >= kSafetyStopConfirmationS) {
         state_ = MissionControllerState::Paused;
         return {MissionControllerEvent::Type::RequestPositionControl,

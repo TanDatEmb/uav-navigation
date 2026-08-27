@@ -1,7 +1,9 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <limits>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -12,6 +14,7 @@
 #include "planner_core/planner.hpp"
 #include "planner_core/absolute_deadline.hpp"
 #include "planner_core/command_time.hpp"
+#include "planner_core/ciri.h"
 #include "planner_core/guide_endpoint.hpp"
 #include "planner_core/replan_contract.hpp"
 #include "planner_core/planning_stage.hpp"
@@ -19,6 +22,20 @@
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 #include "utils/geometry/geometry_utils.h"
+
+namespace navigation_planning_backend {
+
+struct CiriGeometryTestAccess {
+  static bool findTangentPlaneOfSphere(
+      const Eigen::Vector3d& center, double radius,
+      const Eigen::Vector3d& pass_point, const Eigen::Vector3d& seed_point,
+      Eigen::Vector4d& plane) {
+    return CIRI::findTangentPlaneOfSphere(
+        center, radius, pass_point, seed_point, plane);
+  }
+};
+
+}  // namespace navigation_planning_backend
 
 namespace {
 
@@ -45,12 +62,14 @@ class SweepWorld : public navigation_world_model::WorldModelView {
     return endpoints_in_bounds;
   }
   navigation_world_model::GridIndex3 positionToIndex(
-      const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
-    return {};
+      const navigation_world_model::Point3& p,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (p.array() / 0.2).floor().cast<int>();
   }
   navigation_world_model::Point3 indexToPosition(
-      const navigation_world_model::GridIndex3&, navigation_world_model::GridLayer) const noexcept override {
-    return {};
+      const navigation_world_model::GridIndex3& index,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (index.cast<double>().array() + 0.5).matrix() * 0.2;
   }
   std::optional<navigation_world_model::Point3> nearestNotOccupied(
       const navigation_world_model::Point3& p, navigation_world_model::GridLayer,
@@ -69,6 +88,18 @@ class SweepWorld : public navigation_world_model::WorldModelView {
       const navigation_world_model::AxisAlignedBox&) const override { return {}; }
 };
 
+class CurvedCellWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    const navigation_world_model::Point3 occupied_cell_center(0.5, 0.3, 3.1);
+    return (point - occupied_cell_center).norm() < 1.0e-3
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kUnknown;
+  }
+};
+
 geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 6) = 1.0;
@@ -78,6 +109,52 @@ geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_t
   return result;
 }
 }  // namespace
+
+TEST(CiriGeometry, UsesNonCollinearSeedDirectionWithoutArtificialPerturbation) {
+  Eigen::Vector4d plane;
+  ASSERT_TRUE(navigation_planning_backend::CiriGeometryTestAccess::
+                  findTangentPlaneOfSphere(
+                      Eigen::Vector3d::Zero(), 1.0,
+                      Eigen::Vector3d(2.0, 0.0, 0.0),
+                      Eigen::Vector3d(0.0, 0.005, 0.0), plane));
+
+  // The positive-y seed selects the first tangent branch. A fixed
+  // pass_point - pass_point test would always perturb the seed by 0.01 m,
+  // crossing this deliberately narrow branch boundary and flipping plane.y.
+  EXPECT_NEAR(plane.x(), 0.5, 1e-12);
+  EXPECT_NEAR(plane.y(), std::sqrt(3.0) / 2.0, 1e-12);
+  EXPECT_NEAR(plane.z(), 0.0, 1e-12);
+  EXPECT_NEAR(plane.w(), -1.0, 1e-12);
+}
+
+TEST(CiriGeometry, RejectsInvalidConfigurationBeforeNumericalWork) {
+  navigation_planning_backend::CIRI ciri;
+  EXPECT_THROW(ciri.setupParams(0.0, 1), std::invalid_argument);
+  EXPECT_THROW(ciri.setupParams(0.5, 0), std::invalid_argument);
+  EXPECT_THROW(ciri.setupParams(std::numeric_limits<double>::quiet_NaN(), 1),
+               std::invalid_argument);
+}
+
+TEST(CiriGeometry, RejectsDegenerateSeedSegmentBeforeEllipsoidConstruction) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 1);
+
+  Eigen::MatrixX4d bounds(6, 4);
+  bounds <<
+      1.0, 0.0, 0.0, -2.0,
+     -1.0, 0.0, 0.0, -2.0,
+      0.0, 1.0, 0.0, -2.0,
+      0.0, -1.0, 0.0, -2.0,
+      0.0, 0.0, 1.0, -2.0,
+      0.0, 0.0, -1.0, -2.0;
+  Eigen::Matrix3Xd obstacles(3, 1);
+  obstacles.col(0) = Eigen::Vector3d(1.5, 1.5, 1.5);
+
+  EXPECT_EQ(ciri.comvexDecomposition(
+                bounds, obstacles, Eigen::Vector3d::Zero(),
+                Eigen::Vector3d::Zero()),
+            navigation_math::INIT_ERROR);
+}
 
 TEST(PlannerTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   std::vector<double> durations{1.0, 1.0};
@@ -147,7 +224,6 @@ TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
   config.max_omg = 2.0;
   config.min_acc_thr = 6.0;
   config.max_acc_thr = 15.0;
-  config.penna_margin = 0.0;
   config.quadrotot_flatness.reset(config.mass, config.grav, config.dh, config.dv,
                                   config.cp, config.v_eps);
 
@@ -404,7 +480,10 @@ TEST(PlannerTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
   navigation_planning_backend::ExpTraj exp;
   exp.setTrajectory(10.0, position, yaw, 0.0, 0.4);
   navigation_planning_backend::CmdTraj command;
-  command.setTrajectory(exp);
+  auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::NO_NEED);
+  ASSERT_TRUE(candidate);
+  ASSERT_TRUE(command.commitCandidate(std::move(*candidate), {}));
   EXPECT_FALSE(command.backupTrajAvilibale());
   EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
   EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
@@ -507,12 +586,150 @@ TEST(PlannerTrajectory, LatestWorldSweepAllowsUnknownAndRejectsFutureObstacle) {
   candidate.position = linearTrajectory(1.0, 10.0);
   candidate.yaw = linearTrajectory(1.0, 10.0);
   candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
   SweepWorld world;
-  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(world, candidate, 10.0).valid);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
   world.blocked_from_x = 0.7;
-  const auto blocked = navigation_planning_backend::validateExecutableCandidate(world, candidate, 10.0);
+  const auto blocked = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
   EXPECT_FALSE(blocked.valid);
-  EXPECT_GE(blocked.first_blocked_tt, 0.6);
+  // The continuous tube certificate may reject at the first segment whose
+  // conservative voxel tube reaches the obstacle boundary.
+  EXPECT_GT(blocked.first_blocked_tt, 0.0);
+}
+
+TEST(PlannerTrajectory, ExpiredCandidateCannotBeValidatedAtItsTerminalPoint) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  SweepWorld world;
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  // Validation must reject a candidate whose complete executable interval is
+  // already in the past; clamping to t=duration must not turn it into a
+  // terminal-point certificate.
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 11.01,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeRejectsCurvePassingThroughOccupiedCell) {
+  constexpr double vertex_time = 0.5 / 0.98;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 0.98;
+  coefficients(1, 5) = -0.3 / (vertex_time * vertex_time);
+  coefficients(1, 6) = 0.6 / vertex_time;
+  coefficients(2, 7) = 3.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  CurvedCellWorld world;
+  // The curve crosses the occupied voxel around t=0.5102 while its sampled
+  // points remain 0.1 m below the voxel center. The tube certificate must
+  // inspect the cell covered by the bounded curve deviation.
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeIgnoresOccupiedCellOutsideCurveTube) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  // This occupied cell is inside the segment's axis-aligned bounding box but
+  // outside the actual swept tube. A box-only certificate would falsely
+  // reject the candidate.
+  CurvedCellWorld world;
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+
+  SweepWorld world;
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  EXPECT_TRUE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
+
+  candidate.roles.pop_back();
+  EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
+}
+
+TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  EXPECT_EQ(
+      navigation_planning_backend::candidateCertificatePolicy(
+          candidate, navigation_world_model::UnknownPolicy::kAllowUnknown),
+      navigation_world_model::UnknownPolicy::kRequireKnownFree);
+
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+  EXPECT_EQ(
+      navigation_planning_backend::candidateCertificatePolicy(
+          candidate, navigation_world_model::UnknownPolicy::kAllowUnknown),
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+}
+
+TEST(PlannerTrajectory, MainOnlyRevalidationCannotReuseAllowUnknownPolicy) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  SweepWorld newer_world;
+  const auto mission_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  const auto certificate_policy =
+      navigation_planning_backend::candidateCertificatePolicy(candidate, mission_policy);
+  EXPECT_EQ(certificate_policy,
+            navigation_world_model::UnknownPolicy::kRequireKnownFree);
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+                   newer_world, candidate, 10.0, certificate_policy)
+                   .valid);
 }
 
 TEST(PlannerTrajectory, LatestWorldSweepIgnoresAlreadyExecutedBlockedPrefix) {
@@ -536,8 +753,12 @@ TEST(PlannerTrajectory, LatestWorldSweepIgnoresAlreadyExecutedBlockedPrefix) {
       return a.x() >= 0.4;
     }
   } prefix_world;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
   EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
-      prefix_world, candidate, 10.5).valid);
+      prefix_world, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
 }
 
 TEST(PlannerTrajectory, NonFiniteYawCannotReplaceCommittedGeneration) {
@@ -760,6 +981,29 @@ TEST(PlannerTrajectory, SolveFailureCodesRemainDistinct) {
   EXPECT_NE(navigation_planning_backend::PLANNER_SOLVE_TIMEOUT,
             navigation_planning_backend::PLANNER_BACKUP_FAILED);
   EXPECT_NE(navigation_planning_backend::PLANNER_SOLVE_CANCELLED,
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_NE(navigation_planning_backend::PLANNER_EXP_FAILED,
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_CANDIDATE_REJECTED),
+            "Generated candidate failed construction or world validation");
+}
+
+TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::TIME_OUT),
+            navigation_planning_backend::PLANNER_SOLVE_TIMEOUT);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::OPT_FAILED),
+            navigation_planning_backend::PLANNER_BACKUP_OPTIMIZATION_FAILED);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::INIT_ERROR),
+            navigation_planning_backend::PLANNER_BACKUP_INITIALIZATION_FAILED);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::NO_PATH),
+            navigation_planning_backend::PLANNER_BACKUP_NO_PATH);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::FAILED),
             navigation_planning_backend::PLANNER_BACKUP_FAILED);
 }
 

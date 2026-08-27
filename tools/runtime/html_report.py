@@ -16,7 +16,11 @@ import statistics
 import xml.etree.ElementTree as ET
 from typing import Any
 
-from planner_trace import collect_planner_trace_records, planner_trace_summary
+from planner_trace import (
+    collect_planner_trace_records,
+    planner_timing_is_current,
+    planner_trace_summary,
+)
 
 
 def _load(path: Path, default: Any) -> Any:
@@ -444,6 +448,8 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                         entry["count"] += 1
                         entry["latest"] = dict(values)
                         for key, value in values.items():
+                            if not planner_timing_is_current(values, key):
+                                continue
                             number = _finite_number(value)
                             if number is not None:
                                 entry["fields"].setdefault(key, []).append(number)
@@ -524,7 +530,7 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
     timing: list[dict[str, Any]] = []
     health: list[dict[str, Any]] = []
     for name, entry in diagnostics.items():
-        component = "LIO" if name.startswith("fast_lio/") else "Planner / ROG-Map" if name.startswith("navigation_runtime/") else name
+        component = "LIO" if name.startswith("fast_lio/") else "Planner / Mapping" if name.startswith("navigation_runtime/") else name
         for field, values in sorted(entry["fields"].items()):
             unit = None
             converted = list(values)

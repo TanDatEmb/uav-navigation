@@ -18,15 +18,15 @@ fast_lio:
         field: timestamp
         encoding: float64_absolute_nanoseconds
         scan_reference: minimum_point_time
-        maximum_scan_duration_ns: 200000000
-        maximum_header_offset_ns: 200000000
-        maximum_boundary_overlap_ns: 1000000
+        maximum_scan_duration_s: 0.2
+        maximum_header_offset_s: 0.2
+        maximum_boundary_overlap_s: 0.001
         minimum_points_after_overlap_trim: 1000
     timing:
       lidar_mode: per_point
       clock_domain: sensor_time
       livox_timestamp_policy: timebase_authoritative
-      max_imu_gap_ns: 20000000
+      max_imu_gap_s: 0.02
       reject_timestamp_regression: true
     initial_prior:
       source: zero
@@ -35,7 +35,7 @@ fast_lio:
       source_frame_transform: same_frame
       components: { position: true, velocity: true, attitude: yaw_only }
     tracking:
-      maximum_recoverable_imu_gap_ns: 50000000
+      maximum_recoverable_imu_gap_s: 0.05
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
     extrinsic:
@@ -59,13 +59,12 @@ fast_lio:
     output:
       publish_registered_points: true
     propagated_odometry:
-      enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
-      imu_history_duration_ns: 1000000000
-      maximum_correction_age_ns: 250000000
+      imu_history_duration_s: 1.0
+      maximum_correction_age_s: 0.25
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16
-      maximum_processing_lag_ms: 200
+      maximum_processing_lag_s: 0.2
       overload_policy: fail

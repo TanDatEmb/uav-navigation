@@ -4,18 +4,18 @@
 <package format="3">
   <name>px4_navigation_external_mode</name>
   <version>0.1.0</version>
-  <description>PX4 v1.17 ROS 2 External Mode for direct planner backend PVA navigation.</description>
+  <description>PX4 ROS 2 External Mode for direct planner backend PVA navigation.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>navigation_common</depend>
+  <depend>navigation_mission</depend>
   <depend>eigen3_cmake_module</depend>
   <depend>geometry_msgs</depend>
   <depend>diagnostic_msgs</depend>
   <depend>navigation_contracts</depend>
   <depend>nav_msgs</depend>
-  <depend>libyaml-cpp-dev</depend>
   <depend>px4_ros2_cpp</depend>
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>

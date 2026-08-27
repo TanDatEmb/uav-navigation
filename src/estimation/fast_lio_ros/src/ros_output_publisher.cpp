@@ -203,10 +203,14 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     }
   }
   const auto stamp = odometry_stamp.value_or(diagnostics_stamp);
-  if (parameters_.publish_registered_points && result.hasRegisteredScanOutput()) {
-    registered_points_->publish(makeCloud(result.registered_points_odom_m, stamp));
-  }
   if (result.hasRegisteredScanOutput() && corrected_odometry.has_value()) {
+    // Build the registered cloud once. The raw cloud topic is an optional
+    // visualization output; the typed observation carries the same immutable
+    // message into the mapping runtime.
+    auto registered_cloud = makeCloud(result.registered_points_odom_m, stamp);
+    if (parameters_.publish_registered_points) {
+      registered_points_->publish(registered_cloud);
+    }
     navigation_contracts::msg::RegisteredScan observation;
     observation.header = corrected_odometry->header;
     observation.localization_epoch = public_frame_generation_
@@ -215,7 +219,7 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     observation.scan_sequence = scan_sequence;
     observation.body_frame_id = corrected_odometry->child_frame_id;
     observation.corrected_pose = corrected_odometry->pose;
-    observation.points = makeCloud(result.registered_points_odom_m, stamp);
+    observation.points = std::move(registered_cloud);
     registered_scan_->publish(std::move(observation));
   }
   publishTypedHealth(health, result, diagnostics_stamp);
@@ -264,13 +268,21 @@ void RosOutputPublisher::publishTypedHealth(
                              covariance.twist_covariance_available;
   message.observability_valid = health.translation_observability_valid;
   message.correction_fresh = result.hasCorrectedOutput();
-  message.propagation_valid = !parameters_.propagated_odometry_enabled ||
-                              propagation_valid_.load(std::memory_order_acquire);
+  message.propagation_valid =
+      propagation_valid_.load(std::memory_order_acquire);
   if (health.last_lidar_correction_time_ns > 0) {
     message.last_correction_stamp.sec =
         static_cast<std::int32_t>(health.last_lidar_correction_time_ns / 1'000'000'000LL);
     message.last_correction_stamp.nanosec = static_cast<std::uint32_t>(
         health.last_lidar_correction_time_ns % 1'000'000'000LL);
+  }
+  const auto last_propagated_state_stamp_ns =
+      last_propagated_state_stamp_ns_.load(std::memory_order_acquire);
+  if (last_propagated_state_stamp_ns > 0) {
+    message.last_propagated_state_stamp.sec = static_cast<std::int32_t>(
+        last_propagated_state_stamp_ns / 1'000'000'000LL);
+    message.last_propagated_state_stamp.nanosec = static_cast<std::uint32_t>(
+        last_propagated_state_stamp_ns % 1'000'000'000LL);
   }
   message.reason_code = static_cast<std::uint16_t>(health.failure_class);
   typed_health_->publish(std::move(message));
@@ -441,6 +453,17 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       propagated.propagator.status == PropagatedOdometryStatus::kReady &&
           propagated.navigation_valid,
       std::memory_order_release);
+  if (propagated.propagator.propagated_time.has_value()) {
+    const auto propagated_stamp_ns =
+        propagated.propagator.propagated_time->nanoseconds();
+    auto previous_stamp_ns =
+        last_propagated_state_stamp_ns_.load(std::memory_order_acquire);
+    while (propagated_stamp_ns > previous_stamp_ns &&
+           !last_propagated_state_stamp_ns_.compare_exchange_weak(
+               previous_stamp_ns, propagated_stamp_ns,
+               std::memory_order_release, std::memory_order_acquire)) {
+    }
+  }
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = propagated.propagator.latest_imu_time.has_value()
                            ? RosTimeConverter::toRos(
@@ -450,10 +473,7 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "fast_lio/propagated_odometry";
   status.hardware_id = "lidar_imu";
-  status.level = !parameters_.propagated_odometry_enabled
-                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                 : propagated.propagator.status ==
-                           PropagatedOdometryStatus::kReady
+  status.level = propagated.propagator.status == PropagatedOdometryStatus::kReady
                      ? diagnostic_msgs::msg::DiagnosticStatus::OK
                      : diagnostic_msgs::msg::DiagnosticStatus::WARN;
   status.message = toString(propagated.propagator.status);
@@ -463,7 +483,6 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
   const auto& core = propagated.propagator;
   status.values = {
       keyValue("status", toString(core.status)),
-      keyValue("enabled", parameters_.propagated_odometry_enabled ? "true" : "false"),
       keyValue("navigation_valid", propagated.navigation_valid ? "true" : "false"),
       keyValue("latest_imu_time_ns", timeNs(core.latest_imu_time)),
       keyValue("propagated_time_ns", timeNs(core.propagated_time)),

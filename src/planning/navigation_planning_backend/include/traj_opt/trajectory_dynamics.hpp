@@ -86,11 +86,12 @@ inline bool trajectorySatisfiesFlatnessEnvelope(
     if (output != nullptr) {
         *output = report;
     }
-    const double margin = 1.0 + config.penna_margin;
-    const double minimum_thrust_n = config.min_acc_thr * config.mass / margin;
-    const double maximum_thrust_n = config.max_acc_thr * config.mass * margin;
+    // The dynamic envelope is a hard physical certificate. Objective slack
+    // must never widen the limits that authorize a command.
+    const double minimum_thrust_n = config.min_acc_thr * config.mass;
+    const double maximum_thrust_n = config.max_acc_thr * config.mass;
     return report.finite &&
-           report.maximum_body_rate_rad_s <= config.max_omg * margin &&
+           report.maximum_body_rate_rad_s <= config.max_omg &&
            report.minimum_thrust_n >= minimum_thrust_n &&
            report.maximum_thrust_n <= maximum_thrust_n;
 }

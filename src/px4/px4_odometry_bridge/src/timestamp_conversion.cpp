@@ -18,17 +18,29 @@ TimestampConversionResult invalid_result(
 
 }  // namespace
 
+TimestampMappingMode timestampMappingModeFor(
+    const bool use_sim_time, const std::string_view input_clock_domain) noexcept {
+  if (use_sim_time && input_clock_domain == "simulation_time") {
+    return TimestampMappingMode::kSimulationIdentity;
+  }
+  if (!use_sim_time &&
+      (input_clock_domain == "ros_time" || input_clock_domain == "system_time")) {
+    return TimestampMappingMode::kRealtimeTransport;
+  }
+  return TimestampMappingMode::kUnresolved;
+}
+
 TimestampConversionResult TimestampConverter::convert(
     const std::int64_t measurement_time_ns,
     const std::int64_t publication_time_ns,
-    const bool simulation_time_equivalence_proven,
+    const TimestampMappingMode mapping_mode,
     const std::uint64_t timestamp_mapping_generation) {
   const auto fail = [this, timestamp_mapping_generation](std::string reason) {
     ++diagnostics_.conversion_failure_count;
     diagnostics_.failure_reason = reason;
     return invalid_result(timestamp_mapping_generation, std::move(reason));
   };
-  if (!simulation_time_equivalence_proven) {
+  if (mapping_mode == TimestampMappingMode::kUnresolved) {
     return fail("TIME_DOMAIN_UNRESOLVED");
   }
   if (timestamp_mapping_generation == 0) {
@@ -93,13 +105,19 @@ TimestampConversionResult TimestampConverter::convert(
   last_publication_time_us_ = *publication_us;
   TimestampConversionResult result;
   result.valid = true;
-  result.source_domain = "ROS_SIMULATION_TIME";
-  result.target_domain = "PX4_SIMULATION_TIME";
+  if (mapping_mode == TimestampMappingMode::kSimulationIdentity) {
+    result.source_domain = "ROS_SIMULATION_TIME";
+    result.target_domain = "PX4_SIMULATION_TIME";
+    result.reason = "VALID_SIMULATION_TIME_EQUIVALENCE";
+  } else {
+    result.source_domain = "ROS_SYSTEM_TIME";
+    result.target_domain = "PX4_TIME_VIA_UXRCE_TIMESYNC";
+    result.reason = "VALID_REALTIME_UXRCE_MAPPING";
+  }
   result.measurement_time_us = *measurement_us;
   result.publication_time_us = *publication_us;
   result.timestamp_mapping_generation = timestamp_mapping_generation;
   result.timestamp_age_ns = static_cast<std::int64_t>(age);
-  result.reason = "VALID_SIMULATION_TIME_EQUIVALENCE";
   return result;
 }
 

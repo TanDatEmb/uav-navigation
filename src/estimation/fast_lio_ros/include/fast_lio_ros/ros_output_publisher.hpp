@@ -113,6 +113,7 @@ class RosOutputPublisher {
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   std::atomic_bool propagation_valid_{false};
+  std::atomic<std::int64_t> last_propagated_state_stamp_ns_{0};
   mutable std::mutex diagnostics_mutex_;
   std::optional<EstimatorHealthSnapshot> latest_diagnostic_health_;
 };

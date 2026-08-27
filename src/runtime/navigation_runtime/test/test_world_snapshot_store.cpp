@@ -14,8 +14,9 @@ namespace {
 
 class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
  public:
-  explicit IdentityOnlyWorld(navigation_world_model::WorldSnapshotIdentity identity)
-      : identity_(identity) {}
+  explicit IdentityOnlyWorld(navigation_world_model::WorldSnapshotIdentity identity,
+                             bool changed_region_intersects = true)
+      : identity_(identity), changed_region_intersects_(changed_region_intersects) {}
 
   navigation_world_model::WorldGeometry geometry() const noexcept override {
     navigation_world_model::WorldGeometry result;
@@ -24,6 +25,11 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
   }
   navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
     return identity_;
+  }
+  bool changedRegionIntersectsSince(
+      const navigation_world_model::WorldSnapshotIdentity&,
+      const navigation_world_model::AxisAlignedBox&) const noexcept override {
+    return changed_region_intersects_;
   }
   navigation_world_model::CellState classify(
       const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
@@ -60,6 +66,7 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
 
  private:
   navigation_world_model::WorldSnapshotIdentity identity_;
+  bool changed_region_intersects_{true};
 };
 
 navigation_world_model::WorldModelViewPtr world(
@@ -68,6 +75,15 @@ navigation_world_model::WorldModelViewPtr world(
   return std::make_shared<IdentityOnlyWorld>(
       navigation_world_model::WorldSnapshotIdentity{
           localization_epoch, generation, revision, stamp});
+}
+
+navigation_world_model::WorldModelViewPtr disjointWorld(
+    std::uint64_t generation, std::uint64_t revision, std::int64_t stamp,
+    std::uint64_t localization_epoch = 1U) {
+  return std::make_shared<IdentityOnlyWorld>(
+      navigation_world_model::WorldSnapshotIdentity{
+          localization_epoch, generation, revision, stamp},
+      false);
 }
 
 // This is deliberately a product-level test command. It models only the
@@ -198,6 +214,19 @@ TEST(WorldSnapshotStore, PublicationCannotInterleaveAnAuthorizedCommit) {
   EXPECT_EQ(store.load().identity.revision, 2U);
 }
 
+TEST(WorldSnapshotStore, PublishAndFinalizeKeepsDependentStateOrdered) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(world(1, 1, 100));
+  bool observed_new_world = false;
+  const bool finalized = store.publishAndFinalize(world(1, 2, 200), [&] {
+    observed_new_world = store.load().identity.revision == 1U;
+    return true;
+  });
+  EXPECT_TRUE(finalized);
+  EXPECT_TRUE(observed_new_world);
+  EXPECT_EQ(store.load().identity.revision, 2U);
+}
+
 TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitCommand) {
   navigation_mapping::WorldSnapshotStore store;
   store.publish(world(1, 1, 100));
@@ -214,6 +243,30 @@ TEST(WorldSnapshotStore, WorldAdvanceAfterCandidateValidationCannotCommitCommand
             navigation_world_model::WorldCommitDecision::kWorldAdvanced);
   EXPECT_FALSE(commit_invoked);
   EXPECT_EQ(command.snapshot().generation, 0U);
+}
+
+TEST(WorldSnapshotStore, AllowsStaleCertificateWhenChangeProvenanceIsDisjoint) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(disjointWorld(1, 1, 100));
+  const auto lease = store.latest();
+  ASSERT_TRUE(lease);
+  store.publish(disjointWorld(1, 2, 200));
+
+  bool invoked = false;
+  navigation_world_model::WorldSnapshotIdentity committed_identity{};
+  const auto decision = store.commitIfCurrentOrUnaffected(
+      lease.identity,
+      navigation_world_model::AxisAlignedBox{
+          navigation_world_model::Point3{-1.0, -1.0, -1.0},
+          navigation_world_model::Point3{1.0, 1.0, 1.0}},
+      [&](const navigation_world_model::WorldValidationLease& current) {
+        invoked = true;
+        committed_identity = current.identity;
+        return true;
+      });
+  EXPECT_EQ(decision, navigation_world_model::WorldCommitDecision::kCommitted);
+  EXPECT_TRUE(invoked);
+  EXPECT_EQ(committed_identity.revision, 2U);
 }
 
 TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent) {
@@ -328,7 +381,9 @@ TEST(WorldSnapshotStore, ConcurrentPublishAuthorizeAndCommandSampleStayCoherent)
 
   EXPECT_FALSE(incoherent.load());
   EXPECT_GT(committed.load(), 0U);
-  EXPECT_GT(world_advanced.load(), 0U);
+  // The deterministic stale-identity test above covers rejection. This
+  // stress test must not require a particular scheduler interleaving where
+  // the authorizer happens to observe every latest revision.
   EXPECT_GT(overlap_samples.load(), 0U);
   EXPECT_GT(observed_generation_changes.load(), 0U);
   EXPECT_EQ(store.load().identity.revision, kIterations);

@@ -21,8 +21,8 @@
 * along with ROG-Map. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef SUPER_UTILS_HEADER_TYPE_UTILS_HPP
-#define SUPER_UTILS_HEADER_TYPE_UTILS_HPP
+#ifndef NAVIGATION_ROG_MAP_COMMON_LIB_HPP
+#define NAVIGATION_ROG_MAP_COMMON_LIB_HPP
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -138,4 +138,4 @@ namespace rog_map {
 }
 
 
-#endif //SUPER_UTILS_HEADER_TYPE_UTILS_HPP
+#endif //NAVIGATION_ROG_MAP_COMMON_LIB_HPP

@@ -46,43 +46,77 @@ TEST(PlannerDurationParameterization, RoundTripsFreeDurationSeed) {
 }
 
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
-  const navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  EXPECT_EQ(planner.unknown_space_policy,
+            navigation_world_model::UnknownPolicy::kRequireKnownFree);
   const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = map.resolution;
+  world_geometry.inflated_resolution_m = map.inflation_resolution;
+  world_geometry.occupied_inflation_radius_m =
+      map.inflation_resolution * map.inflation_step;
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 10.0;
+  planner.bindWorldGeometry(world_geometry);
 
-  const double visibility_horizon = planner.sensing_horizon > 0.0
-      ? std::min(planner.sensing_horizon, planner.safe_corridor_line_max_length)
-      : planner.safe_corridor_line_max_length;
+  const double visibility_horizon = planner.sensing_horizon_m > 0.0
+      ? std::min(planner.sensing_horizon_m, planner.visibility_horizon_m)
+      : planner.visibility_horizon_m;
   const double required_horizon =
       navigation_planning_backend::jerkLimitedStopDistance(
           planner.exp_traj_cfg.max_vel, planner.back_traj_cfg.max_acc,
           planner.back_traj_cfg.max_jerk) +
-      2.0 * planner.exp_traj_cfg.max_vel * planner.replan_forward_dt +
+      2.0 * planner.exp_traj_cfg.max_vel * planner.replan_forward_dt_s +
       planner.robot_r;
   EXPECT_GE(visibility_horizon, required_horizon);
   EXPECT_GE(map.inflation_resolution * map.inflation_step, planner.robot_r);
-  EXPECT_LE(planner.astar_search_time_limit_s, planner.replan_forward_dt * 0.25);
+  EXPECT_LE(planner.astar_search_time_limit_s, planner.replan_forward_dt_s * 0.25);
   EXPECT_GE(planner.astar_total_time_limit_s, planner.astar_search_time_limit_s);
   EXPECT_LT(planner.astar_total_time_limit_s, planner.solve_deadline_s);
-  EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt);
+  EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt_s);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.corridor_plane_tolerance_m, 0.01);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.vertical_guide_tolerance_m, 0.05);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_weight, 1.0);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_weight, 1.0);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_deadband_m, 0.05);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_deadband_m, 0.05);
   EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
 
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
-  const navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = 0.2;
+  world_geometry.inflated_resolution_m = 0.2;
+  world_geometry.occupied_inflation_radius_m = 1.0;
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 10.0;
+  planner.bindWorldGeometry(world_geometry);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 7.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 5.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk, 12.0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.max_vel, 7.0);
-  EXPECT_DOUBLE_EQ(planner.safe_corridor_line_max_length, 14.0);
+  EXPECT_DOUBLE_EQ(planner.visibility_horizon_m, 14.0);
   EXPECT_THROW(
       (navigation_planning_backend::Config(
           PLANNER_PRODUCT_CONFIG_PATH,
           navigation_planning::DynamicLimits{12.1, 5.0, 12.0})),
       std::invalid_argument);
+}
+
+TEST(PlannerProductConfig, RejectsMapThatCannotContainConfiguredPlanningHorizon) {
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = 0.2;
+  world_geometry.inflated_resolution_m = 0.2;
+  world_geometry.occupied_inflation_radius_m = 1.0;
+  world_geometry.local_size_m = Eigen::Vector3d{10.0, 10.0, 6.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 10.0;
+  EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
 }
 
 TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {
@@ -133,6 +167,45 @@ TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {
   navigation_math::MatDf wrong_shape(1, 3);
   wrong_shape.setOnes();
   EXPECT_FALSE(navigation_planning_backend::normalizeCorridorPlanes(wrong_shape));
+}
+
+TEST(PlannerCorridorPlanes, GeometricCertificateIsIndependentOfPenaltyWeight) {
+  navigation_math::PolyhedronH planes(1, 4);
+  planes << 1.0, 0.0, 0.0, -0.4;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(planes));
+
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  geometry_utils::Trajectory trajectory({1.0}, {coefficients});
+
+  EXPECT_NEAR(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory, planes),
+      0.6, 1.0e-12);
+
+  navigation_math::PolyhedronH rescaled = planes * 1.0e8;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(rescaled));
+  EXPECT_NEAR(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory, rescaled),
+      0.6, 1.0e-12);
+}
+
+TEST(PlannerCorridorPlanes, CertificateChecksPolynomialExtremaBetweenSamples) {
+  navigation_math::PolyhedronH planes(1, 4);
+  planes << 1.0, 0.0, 0.0, -0.4;
+  ASSERT_TRUE(navigation_planning_backend::normalizeCorridorPlanes(planes));
+
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  // x(t) = 2t - 2t^2: endpoints are clear, but x(0.5) = 0.5.
+  coefficients(0, 6) = 2.0;
+  coefficients(0, 5) = -2.0;
+  geometry_utils::Trajectory trajectory({1.0}, {coefficients});
+
+  EXPECT_NEAR(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory, planes),
+      0.1, 1.0e-10);
 }
 
 TEST(PlannerBackupBraking, UsesJerkLimitedTriangularAndTrapezoidalProfiles) {

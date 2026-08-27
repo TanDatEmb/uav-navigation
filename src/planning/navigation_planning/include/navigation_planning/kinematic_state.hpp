@@ -23,10 +23,12 @@ struct KinematicState {
   std::string body_frame_id;
 
   [[nodiscard]] bool finite() const noexcept {
+    const double quaternion_scale = orientation_world_body.coeffs().cwiseAbs().maxCoeff();
     return position_world.allFinite() && velocity_world.allFinite() &&
            acceleration_world.allFinite() && jerk_world.allFinite() &&
            orientation_world_body.coeffs().allFinite() &&
-           orientation_world_body.norm() > 1.0e-9 && source_stamp_ns > 0 &&
+           std::isfinite(quaternion_scale) && quaternion_scale > 1.0e-9 &&
+           source_stamp_ns > 0 &&
            receive_stamp_ns > 0 && std::isfinite(yaw_rad) && localization_epoch != 0 &&
            !world_frame_id.empty() && !body_frame_id.empty();
   }

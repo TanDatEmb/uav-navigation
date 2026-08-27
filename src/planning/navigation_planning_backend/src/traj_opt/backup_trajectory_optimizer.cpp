@@ -1,27 +1,10 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
-#include <traj_opt/backup_traj_optimizer_s4.h>
+#include <traj_opt/backup_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
 #include <traj_opt/trajectory_dynamics.hpp>
@@ -74,12 +57,8 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
                                           Eigen::VectorXd &gradT,
                                           Eigen::MatrixX3d &gradC,
                                           VecDf &pena_log) {
-//    opt_vars.magnitudeBounds
-//            << cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk, cfg_.max_omg, cfg_.min_acc_thr, cfg_.max_acc_thr;
-//    opt_vars.penaltyWeights << cfg_.penna_pos, cfg_.penna_vel,
-//            cfg_.penna_acc, cfg_.penna_jerk,
-//            cfg_.penna_attract, cfg_.penna_omg,
-//            cfg_.penna_thr;
+    // The shared penalty vector reserves slot 4 for the nominal waypoint
+    // objective. Backup has no waypoint-attraction term.
     const double vmax = magnitudeBounds[0];
     const double amax = magnitudeBounds[1];
     const double jmax = magnitudeBounds[2];
@@ -100,7 +79,6 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
     const double weightVel = penaltyWeights[1];
     const double weightAcc = penaltyWeights[2];
     const double weightJer = penaltyWeights[3];
-    // const double weightAtt = penaltyWeights[4];
     const double weightOmg = penaltyWeights[5];
     const double weightAccThr = penaltyWeights[6];
 
@@ -125,17 +103,17 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
     double node, pena;
     const auto pieceNum = T.size();
     const double integralFrac = 1.0 / integralResolution;
-    double pos_penna_log = 0.0;
+    double position_penalty_log = 0.0;
     double max_pos_viola_log = 0.0;
-    double vel_penna_log = 0.0;
+    double velocity_penalty_log = 0.0;
     double max_vel_viola_log = 0.0;
-    double acc_penna_log = 0.0;
+    double acceleration_penalty_log = 0.0;
     double max_acc_viola_log = 0.0;
-    double jer_penna_log = 0.0;
+    double jerk_penalty_log = 0.0;
     double max_jer_viola_log = 0.0;
-    double omg_penna_log = 0.0;
+    double angular_rate_penalty_log = 0.0;
     double max_omg_viola_log = 0.0;
-    double thr_penna_log = 0.0;
+    double thrust_penalty_log = 0.0;
     double max_thr_viola_log = 0.0;
 
     for (int i = 0; i < pieceNum; i++) {
@@ -175,15 +153,19 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
             gradJer << 0, 0, 0;
             gradOmg << 0, 0, 0;
             pena = 0.0;
+            violaPos = 0.0;
+            violaOmg = 0.0;
+            violaThrust = 0.0;
 
-            if (weightPos > 0) {
-                for (int k = 0; k < K; k++) {
-                    outerNormal = hPoly.block<1, 3>(k, 0);
-                    violaPos = outerNormal.dot(pos) + hPoly(k, 3);
+            for (int k = 0; k < K; k++) {
+                outerNormal = hPoly.block<1, 3>(k, 0);
+                violaPos = outerNormal.dot(pos) + hPoly(k, 3);
+                max_pos_viola_log = std::max(max_pos_viola_log, violaPos);
+                if (weightPos > 0) {
                     if (gcopter::smoothedL1(violaPos, smoothFactor, violaPosPena, violaPosPenaD)) {
                         gradPos += weightPos * violaPosPenaD * outerNormal;
                         pena += weightPos * violaPosPena;
-                        pos_penna_log += weightPos * violaPosPena;
+                        position_penalty_log += weightPos * violaPosPena;
                     }
                 }
             }
@@ -191,19 +173,19 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
             if (weightVel > 0 && gcopter::smoothedL1(violaVel, smoothFactor, violaVelPena, violaVelPenaD)) {
                 gradVel += weightVel * violaVelPenaD * 2.0 * vel;
                 pena += weightVel * violaVelPena;
-                vel_penna_log += weightVel * violaVelPena;
+                velocity_penalty_log += weightVel * violaVelPena;
             }
 
             if (weightAcc > 0 && gcopter::smoothedL1(violaAcc, smoothFactor, violaAccPena, violaAccPenaD)) {
                 gradAcc += weightAcc * violaAccPenaD * 2.0 * acc;
                 pena += weightAcc * violaAccPena;
-                acc_penna_log += weightAcc * violaAccPena;
+                acceleration_penalty_log += weightAcc * violaAccPena;
             }
 
             if (weightJer > 0 && gcopter::smoothedL1(violaJer, smoothFactor, violaJerPena, violaJerPenaD)) {
                 gradJer += weightJer * violaJerPenaD * 2.0 * jer;
                 pena += weightJer * violaJerPena;
-                jer_penna_log += weightJer * violaJerPena;
+                jerk_penalty_log += weightJer * violaJerPena;
             }
 
             if (weightOmg > 0 && weightAccThr > 0) {
@@ -214,13 +196,13 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
                 if (gcopter::smoothedL1(violaOmg, smoothFactor, violaOmgPena, violaOmgPenaD)) {
                     gradOmg += weightOmg * violaOmgPenaD * 2.0 * omg;
                     pena += weightOmg * violaOmgPena;
-                    omg_penna_log += weightOmg * violaOmgPena;
+                    angular_rate_penalty_log += weightOmg * violaOmgPena;
                 }
 
                 if (gcopter::smoothedL1(violaThrust, smoothFactor, violaThrustPena, violaThrustPenaD)) {
                     gradThr += weightAccThr * violaThrustPenaD * 2.0 * (thr - thrustMean);
                     pena += weightAccThr * violaThrustPena;
-                    thr_penna_log += weightAccThr * violaThrustPena;
+                    thrust_penalty_log += weightAccThr * violaThrustPena;
                 }
 
 //            if (smoothedL1(violaTheta, smoothFactor, violaThetaPena, violaThetaPenaD))
@@ -245,11 +227,11 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
 
             {
                 // log the max violation
-                if (violaVel > max_vel_viola_log) max_vel_viola_log = violaVel;
-                if (violaAcc > max_acc_viola_log) max_acc_viola_log = violaAcc;
-                if (violaJer > max_jer_viola_log) max_jer_viola_log = violaJer;
-                if (violaOmg > max_omg_viola_log) max_omg_viola_log = violaOmg;
-                if (violaThrust > max_thr_viola_log) max_thr_viola_log = violaThrust;
+                max_vel_viola_log = std::max(max_vel_viola_log, violaVel);
+                max_acc_viola_log = std::max(max_acc_viola_log, violaAcc);
+                max_jer_viola_log = std::max(max_jer_viola_log, violaJer);
+                max_omg_viola_log = std::max(max_omg_viola_log, violaOmg);
+                max_thr_viola_log = std::max(max_thr_viola_log, violaThrust);
             }
 
             node = (j == 0 || j == integralResolution) ? 0.5 : 1.0;
@@ -269,13 +251,13 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
         }
     }
 
-//    pena_log(1) = pos_penna_log;
-//    pena_log(2) = vel_penna_log;
-//    pena_log(3) = acc_penna_log;
-//    pena_log(4) = jer_penna_log;
-//    pena_log(5) = att_penna_log;
-//    pena_log(6) = omg_penna_log;
-//    pena_log(7) = thr_penna_log;
+//    pena_log(1) = position_penalty_log;
+//    pena_log(2) = velocity_penalty_log;
+//    pena_log(3) = acceleration_penalty_log;
+//    pena_log(4) = jerk_penalty_log;
+//    pena_log(5) = attraction_penalty_log;
+//    pena_log(6) = angular_rate_penalty_log;
+//    pena_log(7) = thrust_penalty_log;
     pena_log(1) = max_pos_viola_log;
     pena_log(2) = max_vel_viola_log;
     pena_log(3) = max_acc_viola_log;
@@ -493,7 +475,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if(opt_vars.given_init_ts_and_ps){
         opt_vars.times = opt_vars.given_init_t_vec;
-        for (int i = 0; i < opt_vars.given_init_ps.size(); i++) {
+        for (std::size_t i = 0; i < opt_vars.given_init_ps.size(); ++i) {
             opt_vars.points.col(i) = opt_vars.given_init_ps[i];
         }
         opt_vars.ts = opt_vars.given_init_ts;
@@ -581,23 +563,6 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
         cout << "\tTs: " << opt_vars.ts << endl;
     }
-    if (cfg_.penna_pos > 0 && opt_vars.penalty_log(1) > 0.2) {
-        ret = -1;
-        if (cfg_.print_optimizer_log) {
-            cout << " -- [BaclOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
-            cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
-            cout << "\tPos: " << opt_vars.penalty_log(1) << endl;
-            cout << "\tVel: " << opt_vars.penalty_log(2) << endl;
-            cout << "\tAcc: " << opt_vars.penalty_log(3) << endl;
-            cout << "\tJerk: " << opt_vars.penalty_log(4) << endl;
-            cout << "\tAttract: " << opt_vars.penalty_log(5) << endl;
-            cout << "\tOmg: " << opt_vars.penalty_log(6) << endl;
-            cout << "\tThr: " << opt_vars.penalty_log(7) << endl;
-            cout << "\tTs: " << opt_vars.ts << endl;
-        }
-        planner_context_->warn(" -- [BackOpt] Opt failed, Omg or thr or Pos violation.");
-    }
-
     if (ret >= 0) {
         if (opt_vars.uniform_time_en) {
             Eigen::VectorXd total_floor(1);
@@ -641,24 +606,24 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
     cfg_ = cfg;
     std::string filename = "back_opt_log.csv";
     if(cfg_.save_log_en){
-        failed_traj_log.open(DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);
-        penalty_log.open(DEBUG_FILE_DIR("back_opt_penna.csv"), std::ios::out | std::ios::trunc);
+        failed_traj_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);
+        penalty_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR("backup_opt_objective.csv"), std::ios::out | std::ios::trunc);
     }
     opt_vars.magnitudeBounds.resize(6);
     opt_vars.penaltyWeights.resize(7);
     opt_vars.magnitudeBounds << cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk,
             cfg_.max_omg, cfg_.min_acc_thr * cfg_.mass, cfg_.max_acc_thr * cfg_.mass;
-    opt_vars.penaltyWeights << cfg_.penna_pos, cfg_.penna_vel,
-            cfg_.penna_acc, cfg_.penna_jerk,
-            cfg_.penna_attract, cfg_.penna_omg,
-            cfg_.penna_thr;
-    opt_vars.rho = cfg_.penna_t;
+    opt_vars.penaltyWeights << cfg_.position_penalty_weight,
+            cfg_.velocity_penalty_weight, cfg_.acceleration_penalty_weight,
+            cfg_.jerk_penalty_weight, 0.0,
+            cfg_.angular_rate_penalty_weight, cfg_.thrust_penalty_weight;
+    opt_vars.rho = cfg_.time_weight;
     opt_vars.pos_constraint_type = cfg_.pos_constraint_type;
     opt_vars.block_energy_cost = cfg_.block_energy_cost;
     opt_vars.smooth_eps = cfg_.smooth_eps;
     opt_vars.integral_res = cfg_.integral_reso;
     opt_vars.quadrotor_flatness = cfg_.quadrotot_flatness;
-    opt_vars.weight_ts = cfg_.penna_ts;
+    opt_vars.weight_ts = cfg_.terminal_time_weight;
     opt_vars.uniform_time_en = cfg_.uniform_time_en;
     opt_vars.piece_num = cfg_.piece_num;
     opt_vars.total_time.resize(1);
@@ -673,14 +638,13 @@ bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
                   << maximum_jerk << " > " << jerk_gate << RESET << std::endl;
         return false;
     }
-    constexpr double gate_margin = 1.0;
-    if (out_traj.getMaxVelRate() > gate_margin * cfg_.max_vel) {
+    if (out_traj.getMaxVelRate() > cfg_.max_vel) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max vel:\t" << out_traj.getMaxVelRate() << " m/s" << RESET
                   << std::endl;
         return false;
     }
-    if (out_traj.getMaxAccRate() > gate_margin * cfg_.max_acc) {
+    if (out_traj.getMaxAccRate() > cfg_.max_acc) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max Acc:\t" << out_traj.getMaxAccRate() << " m/s" << RESET
                   << std::endl;
@@ -691,11 +655,11 @@ bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup flatness hard gate failed: "
                   << "finite=" << dynamic_report.finite
                   << " body_rate=" << dynamic_report.maximum_body_rate_rad_s
-                  << "/" << cfg_.max_omg * gate_margin
+                  << "/" << cfg_.max_omg
                   << " thrust=[" << dynamic_report.minimum_thrust_n << ","
                   << dynamic_report.maximum_thrust_n << "]/["
-                  << cfg_.min_acc_thr * cfg_.mass / gate_margin << ","
-                  << cfg_.max_acc_thr * cfg_.mass * gate_margin << "]"
+                  << cfg_.min_acc_thr * cfg_.mass << ","
+                  << cfg_.max_acc_thr * cfg_.mass << "]"
                   << RESET << std::endl;
         return false;
     }
@@ -751,7 +715,12 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
         success = false;
     }
 
-    if (opt_vars.penalty_log(1) > cfg_.penna_pos * 0.05) {
+    const double maximum_corridor_violation =
+        navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+            out_traj, opt_vars.hPolytope);
+    if (success &&
+        (!std::isfinite(maximum_corridor_violation) ||
+         maximum_corridor_violation > cfg_.corridor_plane_tolerance_m)) {
         std::cout << YELLOW << " -- [planner] Minco backup_traj out of corridor." << RESET << std::endl;
         success = false;
     }
@@ -855,7 +824,12 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
         success = false;
     }
 
-    if (opt_vars.penalty_log(1) > cfg_.penna_pos * 0.05) {
+    const double maximum_corridor_violation =
+        navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+            out_traj, opt_vars.hPolytope);
+    if (success &&
+        (!std::isfinite(maximum_corridor_violation) ||
+         maximum_corridor_violation > cfg_.corridor_plane_tolerance_m)) {
         std::cout << YELLOW << " -- [planner] Minco backup_traj out of corridor." << RESET << std::endl;
         success = false;
     }

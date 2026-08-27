@@ -29,6 +29,18 @@ TEST(NavigationCommon, RejectsMalformedAndNegativeRosTime) {
   EXPECT_FALSE(navigation_common::nanosecondsToRosTime(-1).has_value());
 }
 
+TEST(NavigationCommon, RejectsSecondsOutsideRosTimeRangeBeforeNarrowing) {
+  EXPECT_FALSE(navigation_common::secondsToRosTime(-1.0).has_value());
+  EXPECT_FALSE(navigation_common::secondsToRosTime(
+                   std::numeric_limits<double>::max())
+                   .has_value());
+  const auto maximum = navigation_common::secondsToRosTime(
+      static_cast<double>(std::numeric_limits<std::int32_t>::max()));
+  ASSERT_TRUE(maximum.has_value());
+  EXPECT_EQ(maximum->sec, std::numeric_limits<std::int32_t>::max());
+  EXPECT_EQ(maximum->nanosec, 0U);
+}
+
 TEST(NavigationCommon, ConvertsPositiveMicrosecondsWithOverflowProtection) {
   const auto converted = navigation_common::microsecondsToNanoseconds(2'345U);
   ASSERT_TRUE(converted.has_value());

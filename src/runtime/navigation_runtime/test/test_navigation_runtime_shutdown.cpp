@@ -3,7 +3,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <cstdlib>
 #include <future>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,6 +13,7 @@
 
 #include <unistd.h>
 
+#include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
 
@@ -110,7 +113,24 @@ sensor_msgs::msg::PointCloud2 makeCloud(const builtin_interfaces::msg::Time& sta
   return cloud;
 }
 
+navigation_contracts::msg::RegisteredScan makeRegisteredScan(
+    const builtin_interfaces::msg::Time& stamp) {
+  navigation_contracts::msg::RegisteredScan observation;
+  observation.header.stamp = stamp;
+  observation.header.frame_id = "lio_odom";
+  observation.localization_epoch = 1U;
+  observation.scan_sequence = 1U;
+  observation.body_frame_id = "base_link";
+  observation.corrected_pose.pose.orientation.w = 1.0;
+  observation.points = makeCloud(stamp);
+  return observation;
+}
+
 TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
+  const std::filesystem::path ros_log_directory =
+      "/tmp/uav-navigation-test-ros-logs";
+  std::filesystem::create_directories(ros_log_directory);
+  ASSERT_EQ(setenv("ROS_LOG_DIR", ros_log_directory.c_str(), 1), 0);
   auto context = std::make_shared<rclcpp::Context>();
   context->init(0, nullptr);
   auto observer = std::make_shared<BlockingLifecycleObserver>();
@@ -120,8 +140,7 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   rclcpp::NodeOptions options;
   options.context(context);
   options.parameter_overrides({
-      rclcpp::Parameter("navigation_runtime.cloud_topic", prefix + "/cloud"),
-      rclcpp::Parameter("navigation_runtime.corrected_odometry_topic", prefix + "/corrected"),
+      rclcpp::Parameter("navigation_runtime.registered_scan_topic", prefix + "/observation"),
       rclcpp::Parameter("navigation_runtime.propagated_odometry_topic", prefix + "/propagated"),
       rclcpp::Parameter("navigation_runtime.goal_topic", prefix + "/goal"),
       rclcpp::Parameter("navigation_runtime.status_topic", prefix + "/status"),
@@ -138,10 +157,9 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   auto driver = std::make_shared<rclcpp::Node>(
       "shutdown_contract_driver_" + process_suffix, options);
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-  auto corrected_publisher =
-      driver->create_publisher<nav_msgs::msg::Odometry>(prefix + "/corrected", qos);
-  auto cloud_publisher =
-      driver->create_publisher<sensor_msgs::msg::PointCloud2>(prefix + "/cloud", qos);
+  auto observation_publisher =
+      driver->create_publisher<navigation_contracts::msg::RegisteredScan>(
+          prefix + "/observation", qos);
 
   rclcpp::ExecutorOptions executor_options;
   executor_options.context = context;
@@ -152,23 +170,15 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   ExecutorStopGuard executor_guard(executor, spin_thread);
 
   const auto discovery_deadline = std::chrono::steady_clock::now() + 5s;
-  while ((corrected_publisher->get_subscription_count() == 0U ||
-          cloud_publisher->get_subscription_count() == 0U) &&
+  while (observation_publisher->get_subscription_count() == 0U &&
          std::chrono::steady_clock::now() < discovery_deadline) {
     std::this_thread::sleep_for(10ms);
   }
-  ASSERT_GT(corrected_publisher->get_subscription_count(), 0U);
-  ASSERT_GT(cloud_publisher->get_subscription_count(), 0U);
+  ASSERT_GT(observation_publisher->get_subscription_count(), 0U);
 
   const builtin_interfaces::msg::Time stamp = driver->now();
   ASSERT_GT(rclcpp::Time(stamp).nanoseconds(), 0);
-  nav_msgs::msg::Odometry corrected;
-  corrected.header.stamp = stamp;
-  corrected.header.frame_id = "lio_odom";
-  corrected.child_frame_id = "base_link";
-  corrected.pose.pose.orientation.w = 1.0;
-  corrected_publisher->publish(corrected);
-  cloud_publisher->publish(makeCloud(stamp));
+  observation_publisher->publish(makeRegisteredScan(stamp));
   ASSERT_TRUE(observer->waitForMapUpdate(5s));
 
   executor_guard.stop();

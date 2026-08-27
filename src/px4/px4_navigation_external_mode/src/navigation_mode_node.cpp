@@ -9,6 +9,7 @@
 
 #include <navigation_common/frame_conventions.hpp>
 #include <navigation_common/time.hpp>
+#include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_contracts/execution_state_freshness.hpp>
 #include <px4_ros2/components/node_with_mode.hpp>
@@ -28,22 +29,6 @@ Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
   return navigation_common::enuToNed(value_enu).cast<float>();
 }
 
-bool diagnosticValueIsTrue(
-    const diagnostic_msgs::msg::DiagnosticStatus& status, std::string_view key) {
-  for (const auto& value : status.values) {
-    if (value.key == key) return value.value == "true";
-  }
-  return false;
-}
-
-std::string diagnosticValue(
-    const diagnostic_msgs::msg::DiagnosticStatus& status, std::string_view key) {
-  for (const auto& value : status.values) {
-    if (value.key == key) return value.value;
-  }
-  return {};
-}
-
 }  // namespace
 
 NavigationMode::NavigationMode(rclcpp::Node& node)
@@ -58,23 +43,14 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.planning_frame", "lio_odom")),
       stale_after_s_(node.declare_parameter<double>(
           "navigation.trajectory_stale_after_s", 0.75)),
-      command_anchor_max_error_m_(node.declare_parameter<double>(
-          "navigation.command_anchor_max_error_m", 2.0)),
-      command_tracking_lag_s_(node.declare_parameter<double>(
-          "navigation.command_tracking_lag_s", 0.25)),
       state_stale_after_s_(node.declare_parameter<double>(
           "navigation.state_stale_after_s", 0.5)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
-          "navigation.trajectory_wait_timeout_s", 2.0)),
-      lio_health_grace_s_(node.declare_parameter<double>(
-          "navigation.lio_health_grace_s", 1.0)) {
+          "navigation.trajectory_wait_timeout_s", 2.0)) {
   if (navigation_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
       !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
-      !std::isfinite(command_anchor_max_error_m_) || command_anchor_max_error_m_ <= 0.0 ||
-      !std::isfinite(command_tracking_lag_s_) || command_tracking_lag_s_ < 0.0 ||
       !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
-      !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
-      !std::isfinite(lio_health_grace_s_) || lio_health_grace_s_ < 0.0) {
+      !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0) {
     throw std::invalid_argument("invalid PX4 navigation external mode parameters");
   }
   navigation_command_subscription_ = node.create_subscription<
@@ -88,25 +64,22 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   if (state_topic.empty()) {
     throw std::invalid_argument("navigation.state_topic must not be empty");
   }
-  odometry_subscription_ = node.create_subscription<nav_msgs::msg::Odometry>(
+  odometry_subscription_ = node.create_subscription<
+      navigation_contracts::msg::PropagatedOdometry>(
       // Propagated odometry is published reliably by FAST-LIO. This state is
       // a hard input to the velocity tracker, so do not downgrade it to
       // best-effort and allow a transient DDS drop to look like stale state.
       // The velocity tracker consumes the newest state. A one-sample queue
       // avoids applying a burst of stale odometry after DDS/executor jitter.
       state_topic, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
-      [this](const nav_msgs::msg::Odometry::ConstSharedPtr& message) { onOdometry(message); });
+      [this](const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message) {
+        onOdometry(message);
+      });
   estimator_health_subscription_ = node.create_subscription<
       navigation_contracts::msg::EstimatorHealth>(
       "/lio/health", rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort(),
       [this](const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message) {
         onEstimatorHealth(message);
-      });
-  lio_diagnostics_subscription_ = node.create_subscription<
-      diagnostic_msgs::msg::DiagnosticArray>(
-      "/lio/diagnostics", rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort(),
-      [this](const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message) {
-        onLioDiagnostics(message);
       });
   const auto mission_file = node.declare_parameter<std::string>("navigation.mission_file", "");
   if (!mission_file.empty()) {
@@ -250,10 +223,7 @@ void NavigationMode::checkArmingAndRunConditions(
         px4_ros2::events::Log::Error, "Navigation odometry is stale");
   }
   const bool diagnostics_stale = stale(last_lio_diagnostics_ns_, state_stale_after_s_);
-  const bool grace_active = lio_unhealthy_since_ns_ > 0 &&
-                            static_cast<double>(now_ns - lio_unhealthy_since_ns_) / 1e9 <=
-                                lio_health_grace_s_;
-  if (diagnostics_stale || (!lio_health_valid_ && !grace_active)) {
+  if (diagnostics_stale || !lio_health_valid_) {
     reporter.armingCheckFailureExt(
         px4_ros2::events::ID("uav_navigation_lio_unhealthy"),
         px4_ros2::events::Log::Error, "FAST-LIO health is stale or invalid");
@@ -298,8 +268,13 @@ void NavigationMode::onNavigationCommand(
   std::optional<RejectProvenance> reject_provenance;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    const bool health_epoch_matches = !typed_health_seen_ ||
-        message->localization_epoch == lio_localization_epoch_;
+    // A command is executable only after a fresh, healthy typed-health sample
+    // has established the current public estimator epoch.  Caching a command
+    // before that handshake would let an untagged odometry stream become the
+    // implicit epoch authority.
+    const bool health_epoch_matches = navigation_contracts::estimatorHealthAllowsCommand(
+        typed_health_seen_, lio_health_valid_, message->localization_epoch,
+        lio_localization_epoch_);
     bool mission_identity_matches = false;
     if (mission_ && mission_controller_) {
       if (!mission_terminal_) {
@@ -376,8 +351,8 @@ void NavigationMode::onNavigationCommand(
       const Eigen::Vector3d command_velocity{message->velocity.x, message->velocity.y,
                                              message->velocity.z};
       tracking_envelope = evaluateTrackingEnvelope(
-          measured, command_position, command_velocity, command_anchor_max_error_m_,
-          command_tracking_lag_s_);
+          measured, command_position, command_velocity,
+          navigation_contracts::kCommandAnchorErrorLimitM);
       anchor_invalid = !tracking_envelope.valid;
       if (anchor_invalid) {
         reject_provenance = buildRejectProvenance(
@@ -439,9 +414,9 @@ void NavigationMode::onNavigationCommand(
                  tracking_envelope.longitudinal_error_m,
                  tracking_envelope.longitudinal_limit_m,
                  tracking_envelope.reverse_error_m,
-                 command_anchor_max_error_m_,
+                 navigation_contracts::kCommandAnchorErrorLimitM,
                  tracking_envelope.lateral_error_m,
-                 command_anchor_max_error_m_,
+                 navigation_contracts::kCommandAnchorErrorLimitM,
                  provenance.measured_position.x(), provenance.measured_position.y(),
                  provenance.measured_position.z(),
                  message->position.x, message->position.y, message->position.z,
@@ -594,10 +569,13 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
   }
 }
 
-void NavigationMode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
-  const auto& position = message->pose.pose.position;
-  const auto& velocity = message->twist.twist.linear;
-  if (message->header.frame_id != planning_frame_ || message->header.stamp.sec < 0 ||
+void NavigationMode::onOdometry(
+    const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message) {
+  if (!message || message->localization_epoch == 0U || message->sequence == 0U) return;
+  const auto& odometry = message->odometry;
+  const auto& position = odometry.pose.pose.position;
+  const auto& velocity = odometry.twist.twist.linear;
+  if (odometry.header.frame_id != planning_frame_ || odometry.header.stamp.sec < 0 ||
       !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
       !std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z)) {
     RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
@@ -605,7 +583,22 @@ void NavigationMode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& m
     return;
   }
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  if (!typed_health_seen_ || !lio_health_valid_ ||
+      message->localization_epoch != lio_localization_epoch_ ||
+      (last_propagated_state_sequence_ > 0U &&
+       message->sequence <= last_propagated_state_sequence_)) {
+    return;
+  }
   const auto receive_ns = node().get_clock()->now().nanoseconds();
+  const auto source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+      odometry.header.stamp).value_or(0);
+  if (source_stamp_ns <= 0 ||
+      (last_propagated_state_stamp_ns_ > 0 &&
+       source_stamp_ns <= last_propagated_state_stamp_ns_)) {
+    RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
+                         "Rejecting propagated odometry at or before estimator epoch barrier");
+    return;
+  }
   if (last_odometry_receive_ns_ > 0 && receive_ns >= last_odometry_receive_ns_) {
     maximum_odometry_callback_gap_us_ = std::max(
         maximum_odometry_callback_gap_us_,
@@ -613,46 +606,29 @@ void NavigationMode::onOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& m
   }
   last_odometry_receive_ns_ = receive_ns;
   last_odometry_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
+  last_propagated_state_stamp_ns_ = source_stamp_ns;
+  last_propagated_state_sequence_ = message->sequence;
   ++odometry_callback_count_;
-  odometry_ = *message;
-}
-
-void NavigationMode::onLioDiagnostics(
-    const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr& message) {
-  {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (typed_health_seen_) return;
-  }
-  const auto now_ns = node().get_clock()->now().nanoseconds();
-  for (const auto& status : message->status) {
-    if (status.name != "fast_lio/estimator") continue;
-    const bool tracking = diagnosticValue(status, "status") == "TRACKING";
-    const bool healthy = status.level == diagnostic_msgs::msg::DiagnosticStatus::OK &&
-                         tracking && diagnosticValueIsTrue(status, "navigation_valid") &&
-                         diagnosticValueIsTrue(status, "corrected_estimate_valid") &&
-                         diagnosticValueIsTrue(status, "translation_observability_valid");
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    lio_health_valid_ = healthy;
-    last_lio_diagnostics_ns_ = now_ns;
-    if (healthy) {
-      lio_unhealthy_since_ns_ = 0;
-    } else if (lio_unhealthy_since_ns_ == 0) {
-      lio_unhealthy_since_ns_ = now_ns;
-    }
-    return;
-  }
+  odometry_ = odometry;
 }
 
 void NavigationMode::onEstimatorHealth(
     const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message) {
-  if (message->localization_epoch == 0U) return;
-  const auto now_ns = node().get_clock()->now().nanoseconds();
+  if (!message || message->localization_epoch == 0U) return;
+  const auto source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp).value_or(0);
   const bool healthy =
       message->state == navigation_contracts::msg::EstimatorHealth::TRACKING &&
       message->navigation_valid && message->covariance_valid &&
       message->observability_valid && message->correction_fresh &&
       message->propagation_valid;
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  typed_health_seen_ = true;
+  if (source_stamp_ns <= 0 ||
+      (last_lio_diagnostics_ns_ > 0 && source_stamp_ns <= last_lio_diagnostics_ns_)) {
+    lio_health_valid_ = false;
+    return;
+  }
   if (lio_localization_epoch_ != 0U &&
       lio_localization_epoch_ != message->localization_epoch) {
     // Invalidate command exposure immediately when typed health announces a
@@ -663,16 +639,12 @@ void NavigationMode::onEstimatorHealth(
     odometry_.reset();
     last_odometry_receive_ns_ = 0;
     last_odometry_receive_steady_ns_ = 0;
+    last_propagated_state_stamp_ns_ = 0;
+    last_propagated_state_sequence_ = 0U;
   }
   lio_localization_epoch_ = message->localization_epoch;
-  typed_health_seen_ = true;
   lio_health_valid_ = healthy;
-  last_lio_diagnostics_ns_ = now_ns;
-  if (healthy) {
-    lio_unhealthy_since_ns_ = 0;
-  } else if (lio_unhealthy_since_ns_ == 0) {
-    lio_unhealthy_since_ns_ = now_ns;
-  }
+  last_lio_diagnostics_ns_ = source_stamp_ns;
 }
 
 void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
@@ -876,12 +848,12 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   }
 
   bool lio_healthy = false;
+  bool typed_health_seen = false;
   std::int64_t lio_diagnostics_age_ns = std::numeric_limits<std::int64_t>::max();
-  std::int64_t lio_unhealthy_since_ns = 0;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     lio_healthy = lio_health_valid_;
-    lio_unhealthy_since_ns = lio_unhealthy_since_ns_;
+    typed_health_seen = typed_health_seen_;
     if (last_lio_diagnostics_ns_ > 0 && now.nanoseconds() >= last_lio_diagnostics_ns_) {
       lio_diagnostics_age_ns = now.nanoseconds() - last_lio_diagnostics_ns_;
     }
@@ -893,20 +865,16 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   // finite health timeout.
   const bool diagnostics_missing = lio_diagnostics_age_ns == std::numeric_limits<std::int64_t>::max();
   const double diagnostics_wait_s = std::min(0.5, std::max(0.0, trajectory_wait_timeout_s_));
-  if (diagnostics_missing && since_activation_s <= diagnostics_wait_s) {
+  if (diagnostics_missing && !typed_health_seen && since_activation_s <= diagnostics_wait_s) {
     publishStationary(std::nullopt);
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     last_setpoint_time_ = now;
     return;
   }
-  const bool lio_health_grace_active =
-      !diagnostics_missing && !lio_healthy && lio_unhealthy_since_ns > 0 &&
-      now.nanoseconds() >= lio_unhealthy_since_ns &&
-      static_cast<double>(now.nanoseconds() - lio_unhealthy_since_ns) / 1e9 <=
-          lio_health_grace_s_;
-  if ((!diagnostics_missing && !lio_healthy && !lio_health_grace_active) ||
+  if ((!diagnostics_missing && !lio_healthy) ||
       lio_diagnostics_age_ns > static_cast<std::int64_t>(state_stale_after_s_ * 1e9) ||
-      (diagnostics_missing && since_activation_s > diagnostics_wait_s)) {
+      (diagnostics_missing &&
+       (typed_health_seen || since_activation_s > diagnostics_wait_s))) {
     failNavigation("FAST-LIO navigation health invalid or stale");
     return;
   }

@@ -2,8 +2,8 @@
 // Created by yunfan on 11/8/24.
 //
 
-#ifndef SUPER_COLOR_TEXT_HPP
-#define SUPER_COLOR_TEXT_HPP
+#ifndef NAVIGATION_MATH_COLOR_TEXT_HPP
+#define NAVIGATION_MATH_COLOR_TEXT_HPP
 
 #include <string>
 namespace color_text{
@@ -28,4 +28,4 @@ namespace color_text{
     static const std::string BOLDREDPURPLE = "\033[1m\033[95m";  /* Bold Red Purple */
 }
 
-#endif //SUPER_COLOR_TEXT_HPP
+#endif //NAVIGATION_MATH_COLOR_TEXT_HPP

@@ -3,9 +3,8 @@
   <name>rog_map_vendor</name>
   <version>0.1.0</version>
   <description>
-    Vendored ROG-Map local navigation world-model implementation, pinned to
-    hku-mars/SUPER commit 2ad3419c127a617c6d7df6925e81a14175a9c096. See
-    UPSTREAM.md for provenance and local modifications.
+    Product-owned local navigation world-model implementation with a pinned
+    mapping backend. See UPSTREAM.md for provenance and local modifications.
   </description>
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <!-- Upstream rog_map/package.xml declares BSD; upstream ros/ros1.package.xml

@@ -101,6 +101,7 @@ if(BUILD_TESTING)
     test/test_rog_map_lifecycle.cpp
     test/test_raycaster_equivalence.cpp
     test/test_planning_grid_export.cpp
+    test/test_yaml_loader.cpp
   )
   target_link_libraries(test_rog_map_vendor rog_map_vendor)
   target_compile_definitions(test_rog_map_vendor PRIVATE

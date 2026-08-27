@@ -71,6 +71,9 @@ namespace rog_map {
 
         [[nodiscard]] InflatedPlanningGridExport exportPlanningGrid() const;
 
+        [[nodiscard]] InflatedPlanningGridExport exportPlanningGridRegion(
+            const Vec3f& region_min, const Vec3f& region_max) const;
+
     private:
         struct InfMapData {
             std::vector<int16_t> occ_inflate_cnt;

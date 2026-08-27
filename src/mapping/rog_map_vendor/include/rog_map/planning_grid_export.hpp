@@ -49,4 +49,13 @@ struct PlanningGridExport {
   }
 };
 
+// A bounded update window in the same logical index domain as the full
+// export. Consumers may apply this to an immutable snapshot without scanning
+// or allocating the unchanged map volume.
+struct PlanningGridPatchExport {
+  PlanningGridLayoutExport base_layout;
+  InflatedPlanningGridExport inflated;
+  std::vector<std::uint8_t> base_state;
+};
+
 }  // namespace rog_map

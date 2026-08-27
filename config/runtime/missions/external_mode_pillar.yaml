@@ -31,7 +31,6 @@ mission:
       behavior: stop
       hold_s: 0.5
   planning:
-    replan_rate_hz: 5.0
     max_velocity_mps: 1.0
     max_acceleration_mps2: 2.0
     max_jerk_mps3: 6.0

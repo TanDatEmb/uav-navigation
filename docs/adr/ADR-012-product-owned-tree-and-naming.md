@@ -13,6 +13,7 @@ that contributed an algorithm:
 src/
   common/navigation_common/       time and ENU/NED, FLU/FRD conversions
   contracts/navigation_contracts/ ROS messages, services, and boundary checks
+  contracts/navigation_mission/  validated mission schema and typed policy
   estimation/                     estimator core and ROS adapter
   mapping/                        world model and mapping owner
   planning/                       planner product boundary and backend adapter
@@ -28,6 +29,9 @@ src/
 `navigation_interfaces` package and unused legacy command package are removed;
 there is no compatibility package kept in parallel. `navigation_common` is
 the only shared home for ROS timestamp conversion and basis conversion helpers.
+`navigation_mission` is the only C++ owner of the mission YAML schema and its
+planning limits/UNKNOWN policy; Python readers under `tools/runtime/` are
+orchestration/report tooling and cannot authorize planning or flight.
 
 Product classes, nodes, parameters, topics, config files, and tests must not
 use upstream project names or release/task labels. External ABI names such as
@@ -48,15 +52,20 @@ current backend packages until the mapping/planning extraction is complete;
 they are not valid names for new product APIs.
 
 The first mapping extraction is now implemented: `navigation_mapping` owns the
-bounded observation worker, exact lifecycle accounting, and immutable snapshot
-publication store. The runtime uses that library through an explicit
-namespace, while mutable backend-map ownership and snapshot construction
-remain in the runtime until the next boundary is validated.
+bounded observation worker, exact lifecycle accounting, mutable map
+integration, and immutable snapshot construction. The runtime composes the
+actor and publishes its snapshots into the planning lifecycle. The installed
+ABI boundary is product-owned; backend grid and map types remain private to
+the mapping implementation and tests.
 
 The planner backend package is now named `navigation_planning_backend`, with a
 single product-facing include `navigation_planning_backend/planner.hpp` and a
 `planner` configuration root. Upstream implementation namespaces remain
 isolated inside that backend boundary and are tracked by its parity manifest.
+
+The validated C++ mission loader is now named `navigation_mission` and is
+consumed by both runtime and PX4 External Mode. No second C++ mission parser
+is retained.
 
 The first pure product planning boundary is now implemented as
 `navigation_planning`: it contains C++20 planning request, outcome, budget,
@@ -73,8 +82,8 @@ with the product ROS contract package or the PX4 ROS adapter.
 
 ## Migration sequence
 
-1. Move mutable map ownership and snapshot export behind `navigation_mapping`;
-   its public API must not expose upstream map types.
+1. Move mutable map ownership and snapshot export behind `navigation_mapping`.
+   This ownership move and its installed product boundary are complete.
 2. Add observed-free evidence and a product-owned world-health contract.
 3. Introduce `navigation_planning` request/outcome contracts and keep the
    current planner only as a backend adapter that cannot commit execution.

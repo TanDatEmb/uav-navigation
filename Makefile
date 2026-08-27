@@ -7,6 +7,7 @@ CANONICAL_PYTHON_ENV = env -u VIRTUAL_ENV -u PYTHONHOME
 DATASET ?=
 RATE ?= 1.0
 DATASET_SHADOW_GOAL_M ?= 5.0
+DATASET_ROS_DOMAIN_ID ?=
 FRONTIER_DEBUG ?= 0
 PX4_DIR ?= $(HOME)/Dev/Autopilot
 BUILD_PX4_ROS2_EXAMPLES ?= 0
@@ -17,8 +18,7 @@ ROS_GUI_ENV = export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RV
 BUILD_ENV = PARALLEL_WORKERS="$${PARALLEL_WORKERS:-1}" MAKE_JOBS="$${MAKE_JOBS:-1}" GZ_VERSION="$${GZ_VERSION:-}" BUILD_PX4_ROS2_EXAMPLES="$${BUILD_PX4_ROS2_EXAMPLES:-$(BUILD_PX4_ROS2_EXAMPLES)}" COLCON_FLAGS="$${COLCON_FLAGS:-}"
 FRONTIER_DEBUG_ARG = $(if $(filter 1 true yes,$(FRONTIER_DEBUG)),--frontier-debug,)
 DATASET_SHADOW_GOAL_ARG = --shadow-planning-goal-distance-m $(DATASET_SHADOW_GOAL_M)
-DUAL_PLANNING ?= 0
-DUAL_PLANNING_ARG = $(if $(filter 1 true yes,$(DUAL_PLANNING)),--dual-planning,)
+DATASET_ROS_DOMAIN_ARG = $(if $(strip $(DATASET_ROS_DOMAIN_ID)),--ros-domain-id $(DATASET_ROS_DOMAIN_ID),)
 MAP_PROFILE ?=
 MAP_SCENE ?= sanity_open
 TEST_CASE ?= positive
@@ -49,7 +49,6 @@ help:
 	@echo "  make external-mode-gui                   GUI PX4/Gazebo + RViz + External Mode mission"
 	@echo "  MANUAL_TAKEOFF=1 make external-mode-gui  wait for manual Takeoff/arm; harness sends no ARM/TAKEOFF"
 	@echo "  make external-mode                       alias for external-mode-gui"
-	@echo "  DUAL_PLANNING=1 make external-mode-check  simulation-only nominal/safety experiment"
 	@echo "  MAP_SCENE=sanity_open|structured_obstacle|long_route|tunnel|clutter|planner_negative"
 	@echo "  TEST_CASE=positive|degenerate|detour|no_path  MOTION_PRESET=nominal|slow|fast"
 	@echo "  SPEED_CAP_MPS=<number>                      temporary speed cap for one mission run"
@@ -73,23 +72,23 @@ test:
 
 replay:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG) $(DATASET_SHADOW_GOAL_ARG)
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" --rviz $(FRONTIER_DEBUG_ARG) $(DATASET_SHADOW_GOAL_ARG) $(DATASET_ROS_DOMAIN_ARG)
 
 dataset-check:
 	@test -n "$(DATASET)" || { echo "DATASET is required" >&2; exit 64; }
-	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" $(DATASET_SHADOW_GOAL_ARG)
+	@$(ROS_ENV) $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py dataset-check --dataset "$(DATASET)" --rate "$(RATE)" $(DATASET_SHADOW_GOAL_ARG) $(DATASET_ROS_DOMAIN_ARG)
 
 sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim-check
 
 external-mode-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-check $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-check $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
 
 sim:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim
 
 external-mode-gui:
-	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-gui $(DUAL_PLANNING_ARG) $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
+	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-gui $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
 
 external-mode: external-mode-gui
 

@@ -1,34 +1,19 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #pragma once
 
 #include <cmath>
+#include <array>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <utils/geometry/quadrotor_flatness.hpp>
 #include <utils/header/yaml_loader.hpp>
-#define DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+(name)))
+#define NAVIGATION_PLANNER_DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+(name)))
 
 namespace traj_opt {
     using std::string;
@@ -48,7 +33,12 @@ namespace traj_opt {
         bool print_optimizer_log{false};
 
         /// Param for flatness
-        double mass, dh, dv, grav, cp, v_eps;
+        double mass{0.0};
+        double dh{0.0};
+        double dv{0.0};
+        double grav{0.0};
+        double cp{0.0};
+        double v_eps{0.0};
 
         // if save the optimization problem to log
         bool save_log_en{false};
@@ -58,30 +48,41 @@ namespace traj_opt {
         bool block_energy_cost{false};
         // Limit conditions.
         double max_vel{0}, max_acc{0}, max_jerk{0}, max_omg{0}, max_acc_thr{0}, min_acc_thr{0};
-        // Penalty cost.
-        double penna_scale{-1}, penna_vel{0}, penna_acc{0}, penna_jerk{0}, penna_omg{0}, penna_thr{0};
-        // penna_t; penna_pos only for corridor based method.
-        double penna_t{0}, penna_pos{0}, penna_attract{0};
-        // penna_ts only for backupTraj;
-        double penna_ts{0};
+        // Objective terms. These weights shape the numerical search only; hard
+        // geometric and dynamic certificates remain independent.
+        double velocity_penalty_weight{0};
+        double acceleration_penalty_weight{0};
+        double jerk_penalty_weight{0};
+        double angular_rate_penalty_weight{0};
+        double thrust_penalty_weight{0};
+        double time_weight{0};
+        double position_penalty_weight{0};
+        double waypoint_attraction_weight{0};
+        double terminal_time_weight{0};
         // for backup traj piece num
         int piece_num{0};
-
-        double penna_margin{0.05};
 
         double smooth_eps{0};
         // Numerical smoothing and geometric certificates have independent
         // ownership. Changing one must never silently relax the other.
         double corridor_plane_tolerance_m{0};
-        double vertical_guide_tolerance_m{0};
+        // Route-reference quality terms are independent from corridor
+        // feasibility penalties. They shape the nominal path only; corridor
+        // and dynamic hard gates remain authoritative.
+        double route_reference_lateral_weight{0};
+        double route_reference_vertical_weight{0};
+        double route_reference_lateral_deadband_m{0};
+        double route_reference_vertical_deadband_m{0};
         int integral_reso{0};
         double opt_accuracy{0};
         int feasibility_retry_max_iterations{64};
 
         Config() = default;
 
-        Config(const std::string & cfg_path, string ns) {
-            yaml_loader::YamlLoader loader(cfg_path);
+        Config(const std::string & cfg_path, string ns)
+            : Config(yaml_loader::YamlLoader(cfg_path), std::move(ns)) {}
+
+        Config(const yaml_loader::YamlLoader& loader, string ns) {
             if (ns.empty()) {
                 ns = "/";
             }
@@ -100,54 +101,94 @@ namespace traj_opt {
 
             loader.LoadParam("traj_opt/switch/save_log_en", save_log_en, false);
             loader.LoadParam("traj_opt" + ns + "pos_constraint_type", pos_constraint_type, 2);
-            loader.LoadParam("traj_opt" + ns + "piece_num", piece_num, 1);
-            loader.LoadParam("traj_opt" + ns + "uniform_time_en", uniform_time_en, false);
+            // Only the emergency trajectory owns a fixed piece count and
+            // uniform-time parameterization. The nominal optimizer derives
+            // its pieces from the generated corridor and guide path; loading
+            // these keys for that profile creates configuration that has no
+            // consumer and can mislead tuning.
+            const bool nominal_profile = ns == "/exp_traj/";
+            const bool backup_profile = ns == "/backup_traj/";
+            if (backup_profile) {
+                loader.LoadParam("traj_opt" + ns + "piece_num", piece_num, 1);
+                loader.LoadParam("traj_opt" + ns + "uniform_time_en", uniform_time_en, false);
+            }
             loader.LoadParam("traj_opt" + ns + "block_energy_cost", block_energy_cost, false);
             loader.LoadParam("traj_opt" + ns + "opt_accuracy", opt_accuracy, 1.0e-5);
-            loader.LoadParam("traj_opt" + ns + "feasibility_retry_max_iterations",
-                             feasibility_retry_max_iterations, 64);
             loader.LoadParam("traj_opt" + ns + "integral_reso", integral_reso, 10);
             loader.LoadParam("traj_opt" + ns + "smooth_eps", smooth_eps, 0.01);
             loader.LoadParam("traj_opt" + ns + "corridor_plane_tolerance_m",
                              corridor_plane_tolerance_m, 0.01);
-            loader.LoadParam("traj_opt" + ns + "vertical_guide_tolerance_m",
-                             vertical_guide_tolerance_m, 0.05);
-            loader.LoadParam("traj_opt/boundary/max_vel", max_vel, -1.0);
-            loader.LoadParam("traj_opt/boundary/max_acc", max_acc, -1.0);
-            loader.LoadParam("traj_opt/boundary/max_jerk", max_jerk, -1.0);
-            loader.LoadParam("traj_opt/boundary/max_omg", max_omg, -1.0);
-            loader.LoadParam("traj_opt/boundary/max_acc_thr", max_acc_thr, -1.0);
-            loader.LoadParam("traj_opt/boundary/min_acc_thr", min_acc_thr, -1.0);
-            loader.LoadParam("traj_opt/boundary/penna_margin", penna_margin, 0.05);
-
-            loader.LoadParam("traj_opt" + ns + "penna_scale", penna_scale, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_t", penna_t, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_ts", penna_ts, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_pos", penna_pos, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_vel", penna_vel, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_acc", penna_acc, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_jerk", penna_jerk, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_attract", penna_attract, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_omg", penna_omg, -1.0);
-            loader.LoadParam("traj_opt" + ns + "penna_thr", penna_thr, -1.0);
-
-            if (penna_scale > 0) {
-                penna_t = penna_t * penna_scale;
-                penna_ts = penna_ts * penna_scale;
-                penna_pos = penna_pos * penna_scale;
-                penna_vel = penna_vel * penna_scale;
-                penna_acc = penna_acc * penna_scale;
-                penna_jerk = penna_jerk * penna_scale;
-                penna_attract = penna_attract * penna_scale;
-                penna_omg = penna_omg * penna_scale;
-                penna_thr = penna_thr * penna_scale;
+            if (nominal_profile) {
+                loader.LoadParam("traj_opt" + ns + "feasibility_retry_max_iterations",
+                                 feasibility_retry_max_iterations, 64);
+                loader.LoadParam("traj_opt" + ns + "route_reference/lateral_weight",
+                                 route_reference_lateral_weight, 0.0);
+                loader.LoadParam("traj_opt" + ns + "route_reference/vertical_weight",
+                                 route_reference_vertical_weight, 0.0);
+                loader.LoadParam("traj_opt" + ns + "route_reference/lateral_deadband_m",
+                                 route_reference_lateral_deadband_m, 0.0);
+                loader.LoadParam("traj_opt" + ns + "route_reference/vertical_deadband_m",
+                                 route_reference_vertical_deadband_m, 0.0);
             }
+            // Missing physical limits remain invalid and are rejected by the
+            // planner contract; zero is the neutral loader default rather
+            // than a negative sentinel with an overloaded meaning.
+            loader.LoadParam("traj_opt/boundary/max_vel", max_vel, 0.0);
+            loader.LoadParam("traj_opt/boundary/max_acc", max_acc, 0.0);
+            loader.LoadParam("traj_opt/boundary/max_jerk", max_jerk, 0.0);
+            loader.LoadParam("traj_opt/boundary/max_omg", max_omg, 0.0);
+            loader.LoadParam("traj_opt/boundary/max_acc_thr", max_acc_thr, 0.0);
+            loader.LoadParam("traj_opt/boundary/min_acc_thr", min_acc_thr, 0.0);
 
+            loader.LoadParam("traj_opt" + ns + "objective/time_weight",
+                             time_weight, 0.0);
+            if (backup_profile) {
+                loader.LoadParam("traj_opt" + ns + "objective/terminal_time_weight",
+                                 terminal_time_weight, 0.0);
+            }
+            loader.LoadParam("traj_opt" + ns + "objective/position_penalty_weight",
+                             position_penalty_weight, 0.0);
+            loader.LoadParam("traj_opt" + ns + "objective/velocity_penalty_weight",
+                             velocity_penalty_weight, 0.0);
+            loader.LoadParam("traj_opt" + ns + "objective/acceleration_penalty_weight",
+                             acceleration_penalty_weight, 0.0);
+            loader.LoadParam("traj_opt" + ns + "objective/jerk_penalty_weight",
+                             jerk_penalty_weight, 0.0);
+            if (nominal_profile) {
+                loader.LoadParam("traj_opt" + ns + "objective/waypoint_attraction_weight",
+                                 waypoint_attraction_weight, 0.0);
+            }
+            loader.LoadParam("traj_opt" + ns + "objective/angular_rate_penalty_weight",
+                             angular_rate_penalty_weight, 0.0);
+            loader.LoadParam("traj_opt" + ns + "objective/thrust_penalty_weight",
+                             thrust_penalty_weight, 0.0);
+
+            const std::array<double, 9> objective_weights{
+                time_weight, terminal_time_weight, position_penalty_weight,
+                velocity_penalty_weight, acceleration_penalty_weight,
+                jerk_penalty_weight, waypoint_attraction_weight,
+                angular_rate_penalty_weight, thrust_penalty_weight};
+            for (const double weight : objective_weights) {
+                if (!std::isfinite(weight) || weight < 0.0) {
+                    throw std::invalid_argument(
+                        "trajectory objective weights must be finite and non-negative; "
+                        "use zero to disable an objective term");
+                }
+            }
             if (!std::isfinite(smooth_eps) || smooth_eps <= 0.0 ||
                 !std::isfinite(corridor_plane_tolerance_m) ||
                 corridor_plane_tolerance_m < 0.0 ||
-                !std::isfinite(vertical_guide_tolerance_m) ||
-                vertical_guide_tolerance_m < 0.0 ||
+                !std::isfinite(route_reference_lateral_weight) ||
+                route_reference_lateral_weight < 0.0 ||
+                !std::isfinite(route_reference_vertical_weight) ||
+                route_reference_vertical_weight < 0.0 ||
+                !std::isfinite(route_reference_lateral_deadband_m) ||
+                route_reference_lateral_deadband_m < 0.0 ||
+                !std::isfinite(route_reference_vertical_deadband_m) ||
+                route_reference_vertical_deadband_m < 0.0 ||
+                !std::isfinite(opt_accuracy) ||
+                opt_accuracy <= 0.0 ||
+                integral_reso <= 0 ||
                 feasibility_retry_max_iterations <= 0) {
                 throw std::invalid_argument(
                     "trajectory smoothing and geometric tolerances must be finite; "

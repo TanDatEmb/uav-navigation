@@ -8,8 +8,8 @@
 
 namespace uav::nav::lio {
 
-RosTransformPublisher::RosTransformPublisher(rclcpp::Node& node, RosParameters parameters)
-    : parameters_(std::move(parameters)), broadcaster_(node) {}
+RosTransformPublisher::RosTransformPublisher(rclcpp::Node& node)
+    : broadcaster_(node) {}
 
 void RosTransformPublisher::setBaseLinkConverter(
     std::shared_ptr<const BaseLinkStateConverter> converter) {
@@ -37,17 +37,9 @@ void publishConverted(tf2_ros::TransformBroadcaster& broadcaster,
 
 }  // namespace
 
-void RosTransformPublisher::publishCorrected(
-    const KinematicStateEstimate& estimate) {
-  if (parameters_.propagated_odometry_enabled) {
-    return;
-  }
-  publishKinematic(estimate);
-}
-
 void RosTransformPublisher::publishPropagated(
     const KinematicStateEstimate& estimate) {
-  if (!parameters_.propagated_odometry_enabled || !base_link_converter_) {
+  if (!base_link_converter_) {
     return;
   }
   publishKinematic(estimate);

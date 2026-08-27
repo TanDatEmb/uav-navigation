@@ -64,6 +64,7 @@ def _shared_artifact_root(root: Path = ROOT) -> Path:
 
 ARTIFACT_ROOT = _shared_artifact_root()
 RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".runtime-sim.lock"
+DATASET_RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".runtime-dataset.lock"
 BUILD_RUNTIME_LOCK_PATH = ARTIFACT_ROOT / ".build-runtime.lock"
 RVIZ_CONFIG = ROOT / "src/navigation_bringup/rviz/fast_lio.rviz"
 NO_RVIZ_ENV = {
@@ -103,19 +104,22 @@ MOTION_PRESETS = ("nominal", "slow", "fast")
 # Keep the complete SITL stack off the default DDS domain and off the PX4
 # default XRCE port.  A physical vehicle (or another developer's SITL) on the
 # same LAN must not be able to discover /fmu topics or external-mode
-# registration requests from this test.  Both values remain overridable for
-# deliberate externally-managed isolation; the normal runner still allows one
-# workspace-owned simulation at a time.
+# registration requests from this test. Both values remain overridable for
+# deliberate externally-managed isolation; the runner allows one workspace-owned
+# SITL and one isolated dataset replay at a time.
 DEFAULT_ROS_DOMAIN_ID = 42
+DEFAULT_DATASET_ROS_DOMAIN_ID = 43
 DEFAULT_XRCE_PORT = 8892
-TB001_EXP_JERK_REFERENCE = 5e8
 
 
 class RuntimeBusyError(RuntimeError):
     """Raised when a second workspace runtime would collide with a live one."""
 
 
-def _active_runtime_sessions(root: Path = ARTIFACT_ROOT) -> list[str]:
+def _active_runtime_sessions(
+    root: Path = ARTIFACT_ROOT,
+    workflows: set[str] | None = None,
+) -> list[str]:
     """Return live workspace-owned sessions, including orphaned children.
 
     The lock protects normal concurrent runners.  The artifact registry is a
@@ -130,6 +134,8 @@ def _active_runtime_sessions(root: Path = ARTIFACT_ROOT) -> list[str]:
             continue
         try:
             session = Session.from_path(path)
+            if workflows is not None and str(session.state().get("workflow", "")) not in workflows:
+                continue
             live_roles = sorted({str(record.get("role", "unknown")) for record in session.live_records()})
         except (OSError, ValueError, KeyError, TypeError):
             continue
@@ -141,12 +147,19 @@ def _active_runtime_sessions(root: Path = ARTIFACT_ROOT) -> list[str]:
 class RuntimeLock:
     """Hold an advisory repository-wide lock for the full simulation run."""
 
-    def __init__(self, path: Path | None = None, *, artifact_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        artifact_root: Path | None = None,
+        active_workflows: set[str] | None = None,
+    ) -> None:
         self.path = (path or RUNTIME_LOCK_PATH).resolve()
         self.artifact_root = (
             artifact_root
             or (ARTIFACT_ROOT if path is None else self.path.parent)
         ).resolve()
+        self.active_workflows = active_workflows
         self._file: Any | None = None
 
     def _owner(self) -> str:
@@ -178,7 +191,7 @@ class RuntimeLock:
                 "run `make stop` and wait for cleanup before starting another simulation"
             ) from error
 
-        active = _active_runtime_sessions(self.artifact_root)
+        active = _active_runtime_sessions(self.artifact_root, self.active_workflows)
         if active:
             fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
             self._file.close()
@@ -476,26 +489,6 @@ def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, 
     return resolved
 
 
-def _resolve_tb001_exp_jerk_penalty(value: float | str | None = None) -> float | None:
-    # Deliberately require an explicit CLI/API value.  A hidden environment
-    # variable could silently re-enable a temporary bypass in a later run.
-    raw = value
-    if raw in (None, ""):
-        return None
-    try:
-        resolved = float(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError("TB-001 EXP jerk penalty must be finite and positive") from error
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ValueError("TB-001 EXP jerk penalty must be finite and positive")
-    if resolved != TB001_EXP_JERK_REFERENCE:
-        raise ValueError(
-            "TB-001 EXP jerk penalty must equal the registered characterization "
-            f"value {TB001_EXP_JERK_REFERENCE:g}"
-        )
-    return resolved
-
-
 def _ros_params(session: Session, source: Path) -> Path:
     """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -520,21 +513,20 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     if not isinstance(planning, dict):
         raise ValueError("mission.planning must be a mapping")
     allowed_keys = {
-        "replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
+        "max_velocity_mps", "max_acceleration_mps2",
         "max_jerk_mps3", "unknown_policy",
     }
     unknown_keys = sorted(set(planning) - allowed_keys)
     if unknown_keys:
         raise ValueError(f"unsupported mission planning fields: {', '.join(unknown_keys)}")
-    unknown_policy = planning.get("unknown_policy", "allow_unknown")
-    if unknown_policy != "allow_unknown":
+    unknown_policy = planning.get("unknown_policy", "blocked")
+    if unknown_policy not in {"blocked", "allow_unknown"}:
         raise ValueError(
-            "planner backend endpoint-only mapping requires unknown_policy 'allow_unknown' "
-            "while probabilistic raycasting is disabled"
+            "mission planning unknown_policy must be 'blocked' or 'allow_unknown'"
         )
     result = {}
     result["unknown_policy"] = unknown_policy
-    for key in ("replan_rate_hz", "max_velocity_mps", "max_acceleration_mps2",
+    for key in ("max_velocity_mps", "max_acceleration_mps2",
                 "max_jerk_mps3"):
         if key in planning:
             number = float(planning[key])
@@ -949,17 +941,10 @@ def _mapping_params(
     session: Session,
     source: Path,
     *,
-    interactive: bool = False,
-    frontier_debug: bool = False,
-    simulation: bool = False,
-    dual_planning: bool = False,
     mission_file: Path | None = None,
-    obstacle_evidence: bool = False,
     speed_cap_mps: float | None = None,
-    tb001_exp_jerk_penalty: float | None = None,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
-    del interactive, frontier_debug, simulation, dual_planning, obstacle_evidence
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "navigation_runtime_node" not in value:
         raise ValueError(f"runtime config is missing navigation_runtime_node: {source}")
@@ -983,15 +968,10 @@ def _mapping_params(
         # the controller and planner with different mission identities and
         # makes runtime provenance unable to prove which limits were active.
         planner_parameters["mission_file"] = str(mission_file.resolve())
-    if "replan_rate_hz" in planning:
-        planner_parameters["planner_rate_hz"] = float(planning["replan_rate_hz"])
-    # planner backend's high-rate mapping path is endpoint-only. Keep probabilistic
-    # raycasting off and expose its upstream UNKNOWN-as-visible semantics
-    # truthfully in every mission contract. Collision safety comes from the
-    # inflated occupied tube and the atomic backup trajectory.
-    planner.setdefault("planner", {})["frontend_in_known_free"] = False
-    raycasting = planner.setdefault("rog_map", {}).setdefault("raycasting", {})
-    raycasting["enable"] = False
+    # The canonical planner profile owns map evidence production. Do not
+    # silently disable sensor-origin raycasting here: BACKUP certification
+    # requires KNOWN_FREE evidence, while MAIN unknown-space policy is applied
+    # independently below.
     target_speed = speed_cap_mps
     if target_speed is None:
         target_speed = planning.get("max_velocity_mps")
@@ -1019,35 +999,6 @@ def _mapping_params(
     traj_opt = planner.setdefault("traj_opt", {})
     exp_traj = traj_opt.setdefault("exp_traj", {})
     backup_traj = traj_opt.setdefault("backup_traj", {})
-    exp_jerk_penalty = float(exp_traj.get("penna_jerk", 0.0))
-    backup_jerk_penalty = float(backup_traj.get("penna_jerk", 0.0))
-    if not math.isfinite(exp_jerk_penalty) or exp_jerk_penalty >= 0.0:
-        raise ValueError(
-            "planner backend exp_traj jerk objective must stay disabled by default; TB-001 experiment opt-in is required"
-        )
-    if not math.isfinite(backup_jerk_penalty) or backup_jerk_penalty <= 0.0:
-        raise ValueError(
-            "planner backend backup_traj jerk objective must remain positive"
-        )
-    if tb001_exp_jerk_penalty is None:
-        tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty()
-    if tb001_exp_jerk_penalty is not None:
-        tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty(
-            tb001_exp_jerk_penalty
-        )
-        exp_traj["penna_jerk"] = tb001_exp_jerk_penalty
-        _write_runtime(
-            session,
-            tb001_exp_jerk_objective_ab={
-                "bypass_id": "TB-001",
-                "scope": "harness-only experiment",
-                "certification_status": "uncertified_experiment",
-                "exp_traj_penna_jerk": tb001_exp_jerk_penalty,
-                "disabled_exp_traj_penna_jerk": exp_jerk_penalty,
-                "reference_value": TB001_EXP_JERK_REFERENCE,
-                "default_behavior": "disabled",
-            },
-        )
     if "max_jerk_mps3" in planning:
         jerk_limit = float(planning["max_jerk_mps3"])
         if not math.isfinite(jerk_limit) or jerk_limit <= 0.0:
@@ -1275,8 +1226,16 @@ def _locked_dataset_runner(function: Callable[..., int]) -> Callable[..., int]:
     @wraps(function)
     def wrapped(*args: Any, **kwargs: Any) -> int:
         try:
-            with BuildRuntimeLock(ROOT, exclusive=True):
-                return function(*args, **kwargs)
+            # Dataset replay reads the already-built install. Keep builds
+            # excluded, but share the install lock with SITL so parallel
+            # validation agents do not starve each other before launch.
+            with BuildRuntimeLock(ROOT, exclusive=False):
+                with RuntimeLock(
+                    DATASET_RUNTIME_LOCK_PATH,
+                    artifact_root=ARTIFACT_ROOT,
+                    active_workflows={"dataset"},
+                ):
+                    return function(*args, **kwargs)
         except BuildRuntimeBusyError as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 2
@@ -1289,9 +1248,8 @@ def run_dataset(
     rate: float,
     *,
     enable_rviz: bool = False,
-    frontier_debug: bool = False,
-    tb001_exp_jerk_penalty: float | str | None = None,
     shadow_planning_goal_distance_m: float = 5.0,
+    ros_domain_id: int | None = None,
 ) -> int:
     if not dataset:
         raise ValueError("DATASET is required")
@@ -1305,8 +1263,20 @@ def run_dataset(
     config = load_config("dataset.yaml")
     config["runtime"]["dataset"] = dataset
     config["runtime"]["replay_rate"] = rate
+    isolated_domain = _resolve_isolation_value(
+        ros_domain_id,
+        "UAV_NAV_DATASET_ROS_DOMAIN_ID",
+        DEFAULT_DATASET_ROS_DOMAIN_ID,
+        low=0,
+        high=232,
+    )
     session = Session.create(ARTIFACT_ROOT, "dataset")
     print(f"Session: {session.directory}", flush=True)
+    os.environ["ROS_DOMAIN_ID"] = str(isolated_domain)
+    os.environ.pop("PX4_UXRCE_DDS_PORT", None)
+    os.environ.pop("PX4_UXRCE_DDS_NS", None)
+    os.environ["ROS_LOG_DIR"] = str(session.logs)
+    os.environ["RCUTILS_LOGGING_DIRECTORY"] = str(session.logs)
     monitor_process: subprocess.Popen[Any] | None = None
     try:
         _write_runtime(
@@ -1314,6 +1284,8 @@ def run_dataset(
             workflow="dataset",
             dataset=dataset,
             rate=rate,
+            ros_domain_id=isolated_domain,
+            dds_isolation="dataset ROS_DOMAIN_ID isolated from SITL",
             rviz=enable_rviz,
             replay_tail_grace_s=float(
                 config["runtime"]["thresholds"].get("replay_tail_grace_s", 0.5)
@@ -1339,9 +1311,6 @@ def run_dataset(
         mapping_config = _mapping_params(
             session,
             RUNTIME_CONFIG / "mapping.yaml",
-            interactive=enable_rviz,
-            frontier_debug=frontier_debug,
-            tb001_exp_jerk_penalty=_resolve_tb001_exp_jerk_penalty(tb001_exp_jerk_penalty),
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
@@ -1417,7 +1386,7 @@ def run_dataset(
         )
         _wait_until(session, _mapping_ready,
                     float(config["runtime"]["timeouts"]["drain_s"]),
-                    "ROG-Map output and visualization")
+                    "mapping output and visualization")
         _write_runtime(session, failures=[])
     except Exception as error:
         _write_runtime(session, failures=[str(error)])
@@ -1450,30 +1419,20 @@ def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
     ):
         if not path.exists():
             missing.append(f"missing path: {path}")
-    stale_interfaces = _stale_navigation_interface_artifacts()
-    if stale_interfaces:
+    stale_contract_artifacts = _stale_navigation_contract_artifacts()
+    if stale_contract_artifacts:
         missing.append(
-            "stale navigation_contracts generated artifacts: "
-            + ", ".join(stale_interfaces[:6])
-            + (" ..." if len(stale_interfaces) > 6 else "")
+            "stale navigation contract generated artifacts: "
+            + ", ".join(stale_contract_artifacts[:6])
+            + (" ..." if len(stale_contract_artifacts) > 6 else "")
             + "; rebuild the canonical workspace before starting SITL"
         )
     return missing
 
 
-def _stale_navigation_interface_artifacts() -> list[str]:
-    """Detect generated ROS message files left behind after an interface deletion."""
+def _stale_navigation_contract_artifacts() -> list[str]:
+    """Detect generated ROS message files not backed by the current contract."""
     stale: list[str] = []
-    for legacy_path in (
-        ROOT / "build/navigation_interfaces",
-        ROOT / "install/navigation_interfaces",
-        ROOT / "build/coordinate_conventions",
-        ROOT / "install/coordinate_conventions",
-        ROOT / "build/mars_quadrotor_msgs",
-        ROOT / "install/mars_quadrotor_msgs",
-    ):
-        if legacy_path.exists():
-            stale.append(str(legacy_path))
     source_names: set[str] = set()
     for path in (ROOT / "src/contracts/navigation_contracts/msg").glob("*.msg"):
         source_name = path.stem
@@ -1547,7 +1506,6 @@ def _run_sim_unlocked(
     headless: bool,
     control_interface: str = "offboard",
     *,
-    dual_planning: bool = False,
     map_profile: str | None = None,
     map_scene: str | None = None,
     test_case: str = "positive",
@@ -1558,12 +1516,10 @@ def _run_sim_unlocked(
     auto_scenario: bool = False,
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
-    tb001_exp_jerk_penalty: float | str | None = None,
     gazebo_native_diagnostic: bool = False,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
-    tb001_exp_jerk_penalty = _resolve_tb001_exp_jerk_penalty(tb001_exp_jerk_penalty)
     map_profile, scene_descriptor = _resolve_scene_profile(
         map_scene, test_case, motion_preset, map_profile
     )
@@ -1813,7 +1769,6 @@ def _run_sim_unlocked(
         "auto_scenario": auto_scenario,
         "manual_takeoff": manual_takeoff,
         "px4_dir": str(px4_dir),
-        "dual_planning": dual_planning,
         "map_profile": map_profile,
         "map_scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
@@ -1846,7 +1801,6 @@ def _run_sim_unlocked(
         gz_command=gz_command,
         failures=[],
         startup_complete=False,
-        dual_planning=dual_planning,
         map_profile=map_profile,
         map_scene=scene_descriptor["scene"],
         test_case=scene_descriptor["test_case"],
@@ -1870,15 +1824,10 @@ def _run_sim_unlocked(
         mapping_config = _mapping_params(
             session,
             RUNTIME_CONFIG / "mapping.yaml",
-            interactive=not headless,
-            simulation=True,
-            dual_planning=dual_planning,
             mission_file=mission_file,
-            obstacle_evidence=control_interface == "external_mode" and map_profile == "no_path",
             # The mission file above already owns the resolved speed contract.
             # Do not create a second planner-only source of truth here.
             speed_cap_mps=None if mission_file is not None else speed_cap_mps,
-            tb001_exp_jerk_penalty=tb001_exp_jerk_penalty,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -1986,7 +1935,7 @@ def _run_sim_unlocked(
         _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
         _wait_until(session, _mapping_ready,
                     float(config["runtime"]["timeouts"].get("mapping_ready_s", config["runtime"]["timeouts"]["external_odometry_s"])),
-                    "ROG-Map output and visualization")
+                    "mapping output and visualization")
         _write_runtime(session, startup_complete=True)
         if headless or auto_scenario:
             if auto_scenario:
@@ -2139,9 +2088,9 @@ def _recover_unfinalized_session(
 
 
 def _run_sim_with_runtime_lock(*args: Any, **kwargs: Any) -> int:
-    """Run one simulation under an exclusive lock and cleanup signal guard."""
+    """Run one simulation under a simulation lock and cleanup signal guard."""
     requested_port = kwargs.get("xrce_port")
-    with RuntimeLock():
+    with RuntimeLock(active_workflows={"sim", "external-mode"}):
         isolated_port = _resolve_isolation_value(
             requested_port, "UAV_NAV_XRCE_PORT", DEFAULT_XRCE_PORT, low=1024, high=65535
         )
@@ -2156,9 +2105,12 @@ def _run_sim_with_runtime_lock(*args: Any, **kwargs: Any) -> int:
 
 
 def run_sim(*args: Any, **kwargs: Any) -> int:
-    """Run SITL while excluding both concurrent builds and other replays."""
+    """Run SITL while excluding builds and other SITL sessions."""
     try:
-        with BuildRuntimeLock(ROOT, exclusive=True):
+        # SITL reads the verified install just like dataset replay. A shared
+        # install lock allows the two isolated validation workflows to start
+        # together while still excluding any build that could replace it.
+        with BuildRuntimeLock(ROOT, exclusive=False):
             return _run_sim_with_runtime_lock(*args, **kwargs)
     except BuildRuntimeBusyError as error:
         print(f"ERROR: {error}", file=sys.stderr)
@@ -2326,6 +2278,7 @@ def _clean_unlocked(*, clean_workspace_caches: bool = True) -> int:
                 for runtime_child in child.iterdir():
                     if runtime_child.resolve() in {
                         RUNTIME_LOCK_PATH.resolve(),
+                        DATASET_RUNTIME_LOCK_PATH.resolve(),
                         BUILD_RUNTIME_LOCK_PATH.resolve(),
                     }:
                         continue
@@ -2384,16 +2337,13 @@ def main() -> int:
     dataset = sub.add_parser("dataset-check")
     dataset.add_argument("--dataset", required=True)
     dataset.add_argument("--rate", type=float, required=True)
+    dataset.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=None,
+        help=f"isolated ROS 2 DDS domain (default: $UAV_NAV_DATASET_ROS_DOMAIN_ID or {DEFAULT_DATASET_ROS_DOMAIN_ID})",
+    )
     dataset.add_argument("--rviz", action="store_true", help="launch RViz for this replay")
-    dataset.add_argument(
-        "--frontier-debug",
-        action="store_true",
-        help="enable ROG frontier extraction/publication for RViz debugging",
-    )
-    dataset.add_argument(
-        "--tb001-exp-jerk-penalty", type=float, default=None,
-        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
-    )
     dataset.add_argument(
         "--shadow-planning-goal-distance-m",
         type=float,
@@ -2402,11 +2352,6 @@ def main() -> int:
     )
     sub.add_parser("sim-check")
     external_mode = sub.add_parser("external-mode-check")
-    external_mode.add_argument(
-        "--dual-planning",
-        action="store_true",
-        help="simulation-only nominal/safety experiment; default remains known-free",
-    )
     external_mode.add_argument(
         "--map-profile",
         choices=(
@@ -2446,10 +2391,6 @@ def main() -> int:
         help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode.add_argument(
-        "--tb001-exp-jerk-penalty", type=float, default=None,
-        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
-    )
-    external_mode.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -2458,11 +2399,6 @@ def main() -> int:
         "external-mode-gui",
         aliases=("external-mode",),
         help="interactive Gazebo/RViz session with the External Mode mission node",
-    )
-    external_mode_gui.add_argument(
-        "--dual-planning",
-        action="store_true",
-        help="simulation-only nominal/safety experiment; default remains known-free",
     )
     external_mode_gui.add_argument(
         "--map-profile",
@@ -2503,10 +2439,6 @@ def main() -> int:
         help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode_gui.add_argument(
-        "--tb001-exp-jerk-penalty", type=float, default=None,
-        help="uncertified TB-001 A/B experiment: finite positive EXP jerk objective penalty",
-    )
-    external_mode_gui.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -2525,9 +2457,8 @@ def main() -> int:
             args.dataset,
             args.rate,
             enable_rviz=args.rviz,
-            frontier_debug=args.frontier_debug,
-            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
             shadow_planning_goal_distance_m=args.shadow_planning_goal_distance_m,
+            ros_domain_id=args.ros_domain_id,
         )
     if args.command == "sim-check":
         return run_sim(True)
@@ -2535,7 +2466,6 @@ def main() -> int:
         return run_sim(
             True,
             control_interface="external_mode",
-            dual_planning=args.dual_planning,
             map_profile=args.map_profile,
             map_scene=args.map_scene,
             test_case=args.test_case,
@@ -2544,7 +2474,6 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
-            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
         )
     if args.command == "sim":
@@ -2553,7 +2482,6 @@ def main() -> int:
         return run_sim(
             False,
             control_interface="external_mode",
-            dual_planning=args.dual_planning,
             map_profile=args.map_profile,
             map_scene=args.map_scene,
             test_case=args.test_case,
@@ -2562,7 +2490,6 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
-            tb001_exp_jerk_penalty=args.tb001_exp_jerk_penalty,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,

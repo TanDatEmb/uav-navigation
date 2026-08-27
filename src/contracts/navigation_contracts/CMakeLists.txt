@@ -19,6 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavigationGoal.msg"
   "msg/NavigationModeStatus.msg"
   "msg/RegisteredScan.msg"
+  "msg/PropagatedOdometry.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
@@ -32,7 +33,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_typed_interfaces test/test_typed_interfaces.cpp)
   target_include_directories(test_typed_interfaces PRIVATE include)
   ament_target_dependencies(test_typed_interfaces
-    builtin_interfaces geometry_msgs navigation_common sensor_msgs std_msgs)
+    builtin_interfaces geometry_msgs nav_msgs navigation_common sensor_msgs std_msgs)
   rosidl_get_typesupport_target(navigation_contracts_typesupport_target
     ${PROJECT_NAME} "rosidl_typesupport_cpp")
   target_link_libraries(test_typed_interfaces

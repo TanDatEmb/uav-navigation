@@ -1,27 +1,15 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #include <path_search/astar.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
 #include <fmt/color.h>
 #include <rog_map/rog_map_core/common_lib.hpp>
 
@@ -33,28 +21,31 @@ namespace path_search {
     using navigation_world_model::CellState;
     using navigation_world_model::GridLayer;
     using navigation_world_model::UnknownPolicy;
+    using navigation_world_model::isCellTraversable;
     constexpr CellState OCCUPIED_CELL = CellState::kOccupied;
     constexpr CellState KNOWN_FREE_CELL = CellState::kKnownFree;
     constexpr CellState UNKNOWN_CELL = CellState::kUnknown;
-    constexpr CellState UNDEFINED_CELL = CellState::kUndefined;
 
 
-    Astar::Astar(const std::string &cfg_path,
+    Astar::Astar(const PathSearchConfig& config,
                  const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
-                 navigation_world_model::WorldModelViewPtr rm)
-        : map_ptr_(std::move(rm)), planner_context_(planner_context) {
-        cfg_ = PathSearchConfig(cfg_path);
-        cout << GREEN << " -- [RM] Init Astar-map." << RESET << endl;
-        int map_buffer_size = cfg_.map_voxel_num(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2);
-        grid_node_buffer_.resize(map_buffer_size);
-        cout << BLUE << "\tmap index size: " << cfg_.map_size_i.transpose() << RESET << endl;
-        cout << BLUE << "\tmap vox_num: " << cfg_.map_voxel_num.transpose() << RESET << endl;
+                 navigation_world_model::WorldModelViewPtr rm,
+                 const double search_time_limit_s)
+        : map_ptr_(std::move(rm)), planner_context_(planner_context),
+          cfg_(config), search_time_limit_s_(search_time_limit_s) {
+        if (!std::isfinite(search_time_limit_s_) || search_time_limit_s_ <= 0.0) {
+            throw std::invalid_argument(
+                "planner A* attempt budget must be finite and positive");
+        }
+        cout << GREEN << " -- [A*] Initialize sparse search workspace." << RESET << endl;
     }
 
     Astar::~Astar() = default;
 
     RET_CODE
     Astar::setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag, const double &searching_horizon) {
+        visited_nodes_.clear();
+        frontier_sequence_ = 0U;
         md_.start_pt = start_pt;
         md_.goal_pt = goal_pt;
         md_.mission_rcv_WT = planner_context_->getSimTime();
@@ -78,10 +69,57 @@ namespace path_search {
                  << ": cannot use both unknown_as_occupied and unknown_as_free." << RESET << endl;
             return INIT_ERROR;
         }
-        if (md_.use_prob_map) {
-            md_.resolution = map_ptr_->geometry().evidence_resolution_m;
-        } else {
-            md_.resolution = map_ptr_->geometry().inflated_resolution_m;
+        if (!map_ptr_) {
+            if (planner_context_) {
+                planner_context_->error(" -- [A*] World model is unavailable.");
+            }
+            return INIT_ERROR;
+        }
+        const auto geometry = map_ptr_->geometry();
+        md_.resolution = md_.use_prob_map
+                ? geometry.evidence_resolution_m
+                : geometry.inflated_resolution_m;
+        const auto bounds = md_.use_prob_map
+                ? geometry.evidence_bounds
+                : geometry.inflated_bounds;
+        if (!std::isfinite(md_.resolution) || md_.resolution <= 0.0 ||
+            !bounds.valid()) {
+            if (planner_context_) {
+                planner_context_->error(
+                        " -- [A*] World geometry has no finite grid resolution or exact layer bounds.");
+            }
+            return INIT_ERROR;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            const int dimension = bounds.dimensions(axis);
+            const std::int64_t minimum_index = bounds.global_min_index(axis);
+            const std::int64_t maximum_index = minimum_index +
+                    static_cast<std::int64_t>(dimension) - 1;
+            if (dimension <= 0 ||
+                maximum_index > std::numeric_limits<int>::max() ||
+                maximum_index < std::numeric_limits<int>::min()) {
+                if (planner_context_) {
+                    planner_context_->error(
+                            " -- [A*] World geometry axis {} cannot define a grid window.", axis);
+                }
+                return INIT_ERROR;
+            }
+            md_.local_global_min_index(axis) = bounds.global_min_index(axis);
+            md_.local_global_max_index(axis) = static_cast<int>(maximum_index);
+            md_.local_voxel_count(axis) = dimension;
+            md_.local_lower_extent_i(axis) = dimension / 2;
+            md_.local_upper_extent_i(axis) = dimension - 1 - dimension / 2;
+        }
+        const auto maximum_index = std::numeric_limits<std::size_t>::max();
+        const auto y_count = static_cast<std::size_t>(md_.local_voxel_count.y());
+        const auto z_count = static_cast<std::size_t>(md_.local_voxel_count.z());
+        const auto x_count = static_cast<std::size_t>(md_.local_voxel_count.x());
+        if (z_count == 0U || y_count > maximum_index / z_count ||
+            x_count > maximum_index / (y_count * z_count)) {
+            if (planner_context_) {
+                planner_context_->error(" -- [A*] World geometry index range overflows local addressing.");
+            }
+            return INIT_ERROR;
         }
         if (searching_horizon > 0) {
             md_.local_map_center_d = start_pt;
@@ -90,8 +128,8 @@ namespace path_search {
         }
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
-        md_.local_map_min_d = md_.local_map_center_d - md_.resolution * cfg_.map_size_i.cast<double>();
-        md_.local_map_max_d = md_.local_map_center_d + md_.resolution * cfg_.map_size_i.cast<double>();;
+        globalIndexToPos(md_.local_global_min_index, md_.local_map_min_d);
+        globalIndexToPos(md_.local_global_max_index, md_.local_map_max_d);
         if (cfg_.visual_process||cfg_.debug_visualization_en) {
             planner_context_->vizAstarBoundingBox(md_.local_map_min_d, md_.local_map_max_d);
         }
@@ -140,11 +178,19 @@ namespace path_search {
         }
     }
 
-    int Astar::getLocalIndexHash(const Vec3i &id_in) const {
-        rog_map::Vec3i id = id_in - md_.local_map_center_id_g + cfg_.map_size_i;
-        return id(0) * cfg_.map_voxel_num(1) * cfg_.map_voxel_num(2) +
-               id(1) * cfg_.map_voxel_num(2) +
-               id(2);
+    std::size_t Astar::getLocalIndexHash(const Vec3i &id_in) const {
+        const std::int64_t local_x = static_cast<std::int64_t>(id_in.x()) -
+                static_cast<std::int64_t>(md_.local_global_min_index.x());
+        const std::int64_t local_y = static_cast<std::int64_t>(id_in.y()) -
+                static_cast<std::int64_t>(md_.local_global_min_index.y());
+        const std::int64_t local_z = static_cast<std::int64_t>(id_in.z()) -
+                static_cast<std::int64_t>(md_.local_global_min_index.z());
+        return static_cast<std::size_t>(local_x) *
+                   static_cast<std::size_t>(md_.local_voxel_count(1)) *
+                   static_cast<std::size_t>(md_.local_voxel_count(2)) +
+               static_cast<std::size_t>(local_y) *
+                   static_cast<std::size_t>(md_.local_voxel_count(2)) +
+               static_cast<std::size_t>(local_z);
     }
 
     void Astar::posToGlobalIndex(const rog_map::Vec3f &pos, rog_map::Vec3i &id_g) const {
@@ -174,13 +220,8 @@ namespace path_search {
     }
 
     bool Astar::insideLocalMap(const rog_map::Vec3i &id_g) const {
-        rog_map::Vec3i delta = id_g - md_.local_map_center_id_g;
-        if (fabs(delta.x()) > cfg_.map_size_i.x() ||
-            fabs(delta.y()) > cfg_.map_size_i.y() ||
-            fabs(delta.z()) > cfg_.map_size_i.z()) {
-            return false;
-        }
-        return true;
+        return (id_g.array() >= md_.local_global_min_index.array()).all() &&
+               (id_g.array() <= md_.local_global_max_index.array()).all();
     }
 
     void Astar::setVisualProcessEn(const bool &en) {
@@ -227,13 +268,18 @@ namespace path_search {
                                            const int &flag, const double &searching_horizon,
                                            rog_map::vec_Vec3f &out_path, const double &time_out,
                                            const bool prefer_start_goal_altitude) {
-        const double effective_time_out = time_out > 0.0 ? time_out : cfg_.search_time_limit_s;
+        const double effective_time_out = time_out >= 0.0 ? time_out : search_time_limit_s_;
+        const auto steady_deadline = std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(effective_time_out));
         RET_CODE setup_ret = setup(start_pt, end_pt, flag, searching_horizon);
         if (setup_ret != SUCCESS) {
             return setup_ret;
         }
         out_path.clear();
-        double time_1 = planner_context_->getSimTime();
+        if (std::chrono::steady_clock::now() >= steady_deadline) {
+            return TIME_OUT;
+        }
         ++rounds_;
         /// 2) Switch both start and end point to local map
 
@@ -390,8 +436,20 @@ namespace path_search {
         GridNodePtr endPtr = nodeAt(getLocalIndexHash(end_idx));
         endPtr->id_g = end_idx;
 
-        std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
-        std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, FrontierComparator> frontier_queue;
+        using OpenSet = std::priority_queue<OpenSetEntry,
+                                            std::vector<OpenSetEntry>,
+                                            OpenSetComparator>;
+        OpenSet open_set;
+        std::priority_queue<FrontierEntry, std::vector<FrontierEntry>, FrontierComparator> frontier_queue;
+        const auto discard_stale_frontier_entries = [&frontier_queue]() {
+            while (!frontier_queue.empty()) {
+                const FrontierEntry& entry = frontier_queue.top();
+                if (entry.node != nullptr && entry.node->frontier_sequence == entry.sequence) {
+                    return;
+                }
+                frontier_queue.pop();
+            }
+        };
 
 
         GridNodePtr neighborPtr = NULL;
@@ -403,7 +461,7 @@ namespace path_search {
         startPtr->total_score = getHeu(startPtr, endPtr, cfg_.heu_type);
         startPtr->state = GridNode::OPENSET; //put start node in open set
         startPtr->father_ptr = NULL;
-        open_set.push(startPtr); //put start in open set
+        open_set.push({startPtr, startPtr->total_score, rounds_}); // put start in open set
         int num_iter = 0;
         vector<GridNodePtr> node_path;
 
@@ -421,9 +479,22 @@ namespace path_search {
         }
 
         while (!open_set.empty()) {
+            if (std::chrono::steady_clock::now() >= steady_deadline) {
+                fmt::print(fg(fmt::color::indian_red),
+                           "Failed in A star path searching after {} iterations: "
+                           "steady-clock time limit exceeded.\n",
+                           num_iter);
+                return TIME_OUT;
+            }
             num_iter++;
-            current = open_set.top();
+            const OpenSetEntry current_entry = open_set.top();
             open_set.pop();
+            current = current_entry.node;
+            if (current_entry.rounds != current->rounds ||
+                current_entry.total_score != current->total_score ||
+                current->state == GridNode::CLOSEDSET) {
+                continue;
+            }
             if (cfg_.visual_process) {
                 rog_map::Vec3f local_pt;
                 globalIndexToPos(current->id_g, local_pt);
@@ -459,9 +530,13 @@ namespace path_search {
             // Distance terminate condition
             if (searching_horizon > 0 && current->distance_score > searching_horizon / md_.resolution) {
                 GridNodePtr local_goal = current;
+                discard_stale_frontier_entries();
                 if (md_.unknown_as_occ && !frontier_queue.empty()) {
-                    local_goal = frontier_queue.top()->father_ptr;
-                    if (local_goal->distance_to_goal > current->distance_to_goal) {
+                    const GridNodePtr frontier_parent = frontier_queue.top().node->father_ptr;
+                    if (frontier_parent != nullptr &&
+                        frontier_parent->distance_to_goal > current->distance_to_goal) {
+                        local_goal = frontier_parent;
+                    } else if (frontier_parent == nullptr) {
                         local_goal = current;
                     }
                 }
@@ -530,16 +605,20 @@ namespace path_search {
                             } else {
                                 // use prob map, but query all neighbors of the current node
                                 // if there is one neighbor is occupied, then the neighbor is occupied.
-                                neighbor_type = neighborHaveOne(OCCUPIED_CELL, neighborIdx) ? OCCUPIED_CELL : UNDEFINED_CELL;
-                                // if there is one known free neighbor, then the neighbor is known free.
+                                neighbor_type = neighborHaveOne(OCCUPIED_CELL, neighborIdx)
+                                    ? OCCUPIED_CELL : UNKNOWN_CELL;
+                                // If there is one known-free neighbor, retain
+                                // that evidence for the frontier policy. A
+                                // missing neighbour is UNKNOWN, never an
+                                // implicit traversable UNDEFINED value.
                                 if (md_.unknown_as_occ && neighbor_type != OCCUPIED_CELL) {
-                                    neighbor_type = neighborHaveOne(KNOWN_FREE_CELL, neighborIdx) ? KNOWN_FREE_CELL : UNKNOWN_CELL;
+                                    neighbor_type = neighborHaveOne(KNOWN_FREE_CELL, neighborIdx)
+                                        ? KNOWN_FREE_CELL : UNKNOWN_CELL;
                                 }
                             }
                         }
 
-                        if (neighbor_type == CellState::kOccupied ||
-                            neighbor_type == CellState::kOutOfMap) {
+                        if (!isCellTraversable(neighbor_type, UnknownPolicy::kAllowUnknown)) {
                             continue;
                         }
 
@@ -564,7 +643,10 @@ namespace path_search {
                             rog_map::Vec3f pos;
                             globalIndexToPos(neighborIdx, pos);
                             neighborPtr->distance_to_goal = getHeu(neighborPtr, endPtr, cfg_.heu_type);
-                            frontier_queue.push(neighborPtr);
+                            neighborPtr->frontier_sequence = ++frontier_sequence_;
+                            frontier_queue.push({neighborPtr,
+                                                 neighborPtr->distance_to_goal,
+                                                 neighborPtr->frontier_sequence});
                             continue;
                         }
 
@@ -582,36 +664,40 @@ namespace path_search {
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->distance_to_goal = heu_score;
                             neighborPtr->total_score = distance_score + heu_score;
-                            open_set.push(neighborPtr); //put neighbor in open set and record it.
+                            open_set.push({neighborPtr, neighborPtr->total_score, rounds_});
                         } else if (distance_score < neighborPtr->distance_score) {
                             neighborPtr->father_ptr = current;
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->distance_to_goal = heu_score;
                             neighborPtr->total_score = distance_score + heu_score;
+                            // priority_queue has no decrease-key operation.
+                            // Store the score in the entry; the old entry is
+                            // discarded when its score no longer matches.
+                            open_set.push({neighborPtr, neighborPtr->total_score, rounds_});
                         }
                     }
-            double time_2 = planner_context_->getSimTime();
-            if (!cfg_.visual_process && (time_2 - time_1) > effective_time_out) {
+            if (std::chrono::steady_clock::now() >= steady_deadline) {
                 fmt::print(fg(fmt::color::indian_red),
                            "Failed in A star path searching after {} iterations: "
-                           "{} seconds time limit exceeded.\n",
-                           num_iter, effective_time_out);
+                           "steady-clock time limit exceeded.\n",
+                           num_iter);
                 return TIME_OUT;
             }
         }
-        double time_2 = planner_context_->getSimTime();
-        if ((time_2 - time_1) > effective_time_out) {
-            fmt::print(fg(fmt::color::indian_red), "Time consume in A star path finding is {} s, iter={}.\n",
-                       (time_2 - time_1),
-                       num_iter);
-            return NO_PATH;
+        if (std::chrono::steady_clock::now() >= steady_deadline) {
+            return TIME_OUT;
         }
 
+        discard_stale_frontier_entries();
         if (md_.unknown_as_occ && !frontier_queue.empty()) {
             GridNodePtr local_goal{nullptr};
             while (!frontier_queue.empty()) {
-                GridNodePtr candidate = frontier_queue.top();
+                const FrontierEntry entry = frontier_queue.top();
                 frontier_queue.pop();
+                if (entry.node == nullptr || entry.node->frontier_sequence != entry.sequence) {
+                    continue;
+                }
+                GridNodePtr candidate = entry.node;
                 rog_map::Vec3f pos;
                 globalIndexToPos(candidate->id_g, pos);
                 if ((pos - start_pt).norm() < 1.0) {
@@ -639,7 +725,12 @@ namespace path_search {
 
     RET_CODE Astar::escapePathSearch(const rog_map::Vec3f &start_pt, const int flag,
                                      rog_map::vec_Vec3f &out_path,
-                                     const bool prefer_start_altitude) {
+                                     const bool prefer_start_altitude,
+                                     const double time_out) {
+        const double effective_time_out = time_out >= 0.0 ? time_out : search_time_limit_s_;
+        const auto steady_deadline = std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(effective_time_out));
         // setup() records the goal even though escape search only uses the
         // start-centred horizon. Avoid propagating an indeterminate Eigen
         // vector into mission state.
@@ -649,7 +740,9 @@ namespace path_search {
             return setup_ret;
         }
 
-        double time_1 = planner_context_->getSimTime();
+        if (std::chrono::steady_clock::now() >= steady_deadline) {
+            return TIME_OUT;
+        }
         ++rounds_;
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
@@ -667,8 +760,8 @@ namespace path_search {
         // UNKNOWN_AS_FREE means an exact non-occupied start already satisfies
         // the escape contract. Snapping it to a voxel centre can otherwise
         // introduce an artificial altitude step on every planning cycle.
-        if (md_.unknown_as_free && exact_start_type != CellState::kOccupied &&
-            exact_start_type != CellState::kOutOfMap) {
+        if (md_.unknown_as_free &&
+            isCellTraversable(exact_start_type, UnknownPolicy::kAllowUnknown)) {
             out_path.clear();
             return NO_NEED;
         }
@@ -686,7 +779,10 @@ namespace path_search {
         posToGlobalIndex(local_start_pt, start_idx);
 
         GridNodePtr startPtr = nodeAt(getLocalIndexHash(start_idx));
-        std::priority_queue<GridNodePtr, std::vector<GridNodePtr>, NodeComparator> open_set;
+        using OpenSet = std::priority_queue<OpenSetEntry,
+                                            std::vector<OpenSetEntry>,
+                                            OpenSetComparator>;
+        OpenSet open_set;
         GridNodePtr neighborPtr = NULL;
         GridNodePtr current = NULL;
 
@@ -696,7 +792,7 @@ namespace path_search {
         startPtr->total_score = 0;
         startPtr->state = GridNode::OPENSET; //put start node in open set
         startPtr->father_ptr = NULL;
-        open_set.push(startPtr); //put start in open set
+        open_set.push({startPtr, startPtr->total_score, rounds_}); // put start in open set
         int num_iter = 0;
 
         vector<GridNodePtr> node_path;
@@ -707,9 +803,18 @@ namespace path_search {
                                      1);
         }
         while (!open_set.empty()) {
+            if (std::chrono::steady_clock::now() >= steady_deadline) {
+                return TIME_OUT;
+            }
             num_iter++;
-            current = open_set.top();
+            const OpenSetEntry current_entry = open_set.top();
             open_set.pop();
+            current = current_entry.node;
+            if (current_entry.rounds != current->rounds ||
+                current_entry.total_score != current->total_score ||
+                current->state == GridNode::CLOSEDSET) {
+                continue;
+            }
             if (cfg_.visual_process) {
                 rog_map::Vec3f local_pt;
                 globalIndexToPos(current->id_g, local_pt);
@@ -726,16 +831,13 @@ namespace path_search {
                 cur_inf_type != CellState::kUnknown) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
-//                double time_2 = planner_context_->getSimTime();
-                //                    printf("\033[34m Escape: A star iter:%d, time:%.3f ms\033[0m\n", num_iter, (time_2 - time_1).toSec() * 1000);
                 return REACH_HORIZON;
             }
 
-            if (md_.unknown_as_free && cur_inf_type != CellState::kOccupied) {
+            if (md_.unknown_as_free &&
+                isCellTraversable(cur_inf_type, UnknownPolicy::kAllowUnknown)) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
-//                double time_2 = planner_context_->getSimTime();
-                //                    printf("\033[34m Escape: A star iter:%d, time:%.3f ms\033[0m\n", num_iter, (time_2 - time_1).toSec() * 1000);
                 return REACH_HORIZON;
             }
 
@@ -769,8 +871,7 @@ namespace path_search {
                             neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kEvidence);
                         }
 
-                        if (neighbor_type == CellState::kOccupied ||
-                            neighbor_type == CellState::kOutOfMap) {
+                        if (!isCellTraversable(neighbor_type, UnknownPolicy::kAllowUnknown)) {
                             continue;
                         }
 
@@ -804,25 +905,20 @@ namespace path_search {
                             neighborPtr->father_ptr = current;
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->total_score = distance_score + heu_score;
-                            open_set.push(neighborPtr); //put neighbor in open set and record it.
+                            open_set.push({neighborPtr, neighborPtr->total_score, rounds_});
                         } else if (distance_score < neighborPtr->distance_score) {
                             neighborPtr->father_ptr = current;
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->total_score = distance_score + heu_score;
+                            open_set.push({neighborPtr, neighborPtr->total_score, rounds_});
                         }
                     }
-            double time_2 = planner_context_->getSimTime();
-            if (!cfg_.visual_process && (time_2 - time_1) > 0.2) {
-                fmt::print(fg(fmt::color::indian_red),
-                           "Failed in A star path searching !!! 0.2 seconds time limit exceeded.\n");
+            if (std::chrono::steady_clock::now() >= steady_deadline) {
                 return TIME_OUT;
             }
         }
-        double time_2 = planner_context_->getSimTime();
-        if ((time_2 - time_1) > 0.1) {
-            fmt::print(fg(fmt::color::indian_red), "Time consume in A star path finding is {} s, iter={}.\n",
-                       (time_2 - time_1),
-                       num_iter);
+        if (std::chrono::steady_clock::now() >= steady_deadline) {
+            return TIME_OUT;
         }
         cout << RED << " -- [A*] Escape path searcher, cannot find path, return." << RESET << endl;
         return NO_PATH;

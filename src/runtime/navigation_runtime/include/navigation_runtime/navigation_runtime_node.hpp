@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cstdint>
 #include <chrono>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -16,23 +15,21 @@
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
+#include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
-#include "navigation_runtime/input_pairing.hpp"
 #include <navigation_mapping/mapping_worker.hpp>
 #include <navigation_mapping/mapping_observation.hpp>
 #include <navigation_mapping/mapping_diagnostics.hpp>
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/observation_accounting.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
-#include <navigation_mapping/mapping_world_model_adapter.hpp>
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/committed_bundle_store.hpp>
 #include <navigation_execution/command_sampler.hpp>
-#include <navigation_mapping/mapping_world_snapshot.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
 
 namespace navigation_planning_backend {
@@ -49,11 +46,15 @@ struct MappingTelemetrySnapshot {
   std::int64_t last_update_attempt_stamp_ns{0};
   std::int64_t map_update_us{0};
   std::int64_t snapshot_export_us{0};
+  std::int64_t mapping_callback_total_us{0};
   std::int64_t pointcloud_decode_us{0};
-  std::int64_t pair_wait_us{0};
   std::uint64_t snapshot_bytes{0};
   std::uint64_t snapshot_owned_bytes{0};
   std::uint64_t snapshot_shared_metadata_bytes{0};
+  std::uint64_t snapshot_live_count{0};
+  std::uint64_t snapshot_peak_live_count{0};
+  std::uint64_t snapshot_live_owned_bytes{0};
+  std::uint64_t snapshot_peak_live_owned_bytes{0};
   std::uint64_t discarded_stale{0};
   std::uint64_t discarded_future{0};
   std::uint64_t discarded_invalid{0};
@@ -85,13 +86,13 @@ class MappingTelemetry {
     next.outcome_below_ground = state_.outcome_below_ground;
     next.outcome_above_ceiling = state_.outcome_above_ceiling;
     switch (next.map.update_outcome) {
-      case navigation_mapping::MapUpdateOutcome::UPDATED: ++next.outcome_updated; break;
-      case navigation_mapping::MapUpdateOutcome::ACCUMULATED: ++next.outcome_accumulated; break;
-      case navigation_mapping::MapUpdateOutcome::SLIDE_ONLY: ++next.outcome_slide_only; break;
-      case navigation_mapping::MapUpdateOutcome::EMPTY_CLOUD: ++next.outcome_empty_cloud; break;
-      case navigation_mapping::MapUpdateOutcome::CALLBACK_OWNED: ++next.outcome_callback_owned; break;
-      case navigation_mapping::MapUpdateOutcome::BELOW_GROUND: ++next.outcome_below_ground; break;
-      case navigation_mapping::MapUpdateOutcome::ABOVE_CEILING: ++next.outcome_above_ceiling; break;
+      case navigation_mapping::MapUpdateOutcome::kUpdated: ++next.outcome_updated; break;
+      case navigation_mapping::MapUpdateOutcome::kAccumulated: ++next.outcome_accumulated; break;
+      case navigation_mapping::MapUpdateOutcome::kSlideOnly: ++next.outcome_slide_only; break;
+      case navigation_mapping::MapUpdateOutcome::kEmptyCloud: ++next.outcome_empty_cloud; break;
+      case navigation_mapping::MapUpdateOutcome::kCallbackOwned: ++next.outcome_callback_owned; break;
+      case navigation_mapping::MapUpdateOutcome::kBelowGround: ++next.outcome_below_ground; break;
+      case navigation_mapping::MapUpdateOutcome::kAboveCeiling: ++next.outcome_above_ceiling; break;
     }
     state_ = std::move(next);
   }
@@ -104,6 +105,10 @@ class MappingTelemetry {
     state_.discarded_stale += stale ? 1U : 0U;
     state_.discarded_future += future ? 1U : 0U;
     state_.discarded_invalid += invalid ? 1U : 0U;
+  }
+  void recordCallbackFailure(std::int64_t callback_total_us) {
+    std::lock_guard lock(mutex_);
+    state_.mapping_callback_total_us = callback_total_us;
   }
  private:
   mutable std::mutex mutex_;
@@ -122,9 +127,8 @@ struct NavigationRuntimeDependencies {
   std::shared_ptr<MappingLifecycleObserver> lifecycle_observer;
 };
 
-// Product ROS boundary for the imported planner backend core. The cloud is retained as
-// one pending observation and odometry is retained as a short timestamped
-// history; planning consumes only a compatible cloud/odometry pair.
+// Product ROS boundary for the planner backend core. Mapping consumes one atomic
+// RegisteredScan containing the registered cloud and its corrected pose.
 class NavigationRuntimeNode final : public rclcpp::Node {
  public:
   explicit NavigationRuntimeNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions{});
@@ -133,13 +137,12 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   ~NavigationRuntimeNode() override;
 
  private:
-  void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message);
   void onRegisteredScan(
       const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message);
   void onEstimatorHealth(
       const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
-  void onCorrectedOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
-  void onPropagatedOdometry(const nav_msgs::msg::Odometry::ConstSharedPtr& message);
+  void onPropagatedOdometry(
+      const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message);
   void onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message);
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
@@ -150,14 +153,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              std::uint64_t localization_epoch,
                              std::int64_t now_ns);
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
-  std::optional<navigation_mapping::MappingObservation> tryPromotePairLocked();
-
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           navigation_mapping::PointCloud& output);
-  static builtin_interfaces::msg::Time rosTimeFromSeconds(double seconds);
-  std::string cloud_topic_;
   std::string registered_scan_topic_;
-  std::string corrected_odometry_topic_;
   std::string propagated_odometry_topic_;
   std::string goal_topic_;
   std::string status_topic_;
@@ -166,23 +164,20 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::string planning_frame_;
   std::string body_frame_id_;
   std::string deployment_profile_;
-  bool hardware_visibility_certified_{false};
   double planner_rate_hz_{10.0};
   double command_rate_hz_{50.0};
-  double input_pair_max_skew_s_{0.1};
-  double input_max_age_s_{0.5};
-  double max_safety_suffix_anchor_error_m_{0.75};
-  double planner_solve_timeout_s_{1.0};
+  double data_freshness_window_s_{0.5};
+  std::int64_t data_freshness_window_ns_{500'000'000};
+  double planner_watchdog_timeout_s_{1.0};
   double plan_from_rest_failure_confirmation_s_{0.5};
   std::uint32_t max_plan_from_rest_failures_{3U};
 
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::RegisteredScan>::SharedPtr
       registered_scan_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::EstimatorHealth>::SharedPtr
       estimator_health_subscription_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr corrected_odometry_subscription_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr propagated_odometry_subscription_;
+  rclcpp::Subscription<navigation_contracts::msg::PropagatedOdometry>::SharedPtr
+      propagated_odometry_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_subscription_;
@@ -196,17 +191,15 @@ class NavigationRuntimeNode final : public rclcpp::Node {
 
   std::mutex input_mutex_;
   std::mutex localization_transition_mutex_;
-  std::optional<input_pairing::StampedObservation<std::shared_ptr<navigation_mapping::PointCloud>>>
-      latest_cloud_;
-  std::deque<nav_msgs::msg::Odometry> corrected_odometry_history_;
   navigation_execution::ExecutionStateStore execution_state_store_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
   std::atomic_uint64_t active_goal_epoch_{0};
   std::atomic_uint64_t active_localization_epoch_{1U};
-  std::atomic_bool typed_observation_seen_{false};
   std::atomic_bool localization_epoch_ready_{true};
   std::atomic_uint64_t last_registered_scan_epoch_{1U};
   std::atomic_uint64_t last_registered_scan_sequence_{0U};
+  std::atomic_int64_t last_propagated_state_stamp_ns_{0};
+  std::atomic_uint64_t last_propagated_state_sequence_{0U};
   bool new_goal_{false};
   // PASS_THROUGH waypoint transitions retarget planner backend through ReplanOnce so the
   // committed polynomial supplies the future PVA initial state.
@@ -225,8 +218,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t stale_execution_state_count_{0};
   std::atomic_uint64_t future_execution_state_count_{0};
   std::atomic_uint64_t invalid_corrected_pose_count_{0};
-  std::atomic_uint64_t corrected_pair_mismatch_count_{0};
   std::atomic_uint64_t invalid_execution_state_count_{0};
+  std::atomic_uint64_t world_snapshot_freshness_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
   navigation_execution::ExecutionStateFailureLatch command_execution_lease_failure_latch_;
@@ -234,9 +227,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_int64_t command_execution_source_age_us_{0};
   std::atomic_int64_t command_execution_receive_age_us_{0};
   std::atomic_uint64_t map_update_exception_count_{0};
-  std::atomic_int64_t last_input_conversion_us_{0};
-  std::int64_t pending_cloud_received_steady_ns_{0};
-  std::atomic_int64_t last_pair_wait_us_{0};
   std::atomic_uint64_t command_id_{0};
   std::atomic_uint64_t execution_transaction_id_{0};
   std::atomic_uint64_t command_goal_epoch_{0};
@@ -258,6 +248,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t command_publish_count_{0};
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};
+  std::atomic_int64_t last_command_store_publish_us_{0};
+  std::atomic_int64_t last_command_transition_lock_wait_us_{0};
   std::int64_t last_input_lock_wait_us_{0};
   std::int64_t last_cycle_started_steady_ns_{0};
   std::int64_t planning_period_us_{0};

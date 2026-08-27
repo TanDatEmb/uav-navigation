@@ -2,16 +2,12 @@
 // Created by yunfan on 11/8/24.
 //
 
-#ifndef SUPER_TYPE_UTILS_HPP
-#define SUPER_TYPE_UTILS_HPP
+#ifndef NAVIGATION_MATH_TYPE_UTILS_HPP
+#define NAVIGATION_MATH_TYPE_UTILS_HPP
 
 // comment or uncomment the following line to enable or disable the utils
 #include <navigation_math/color_text.hpp>
 #include <navigation_math/eigen_alias.hpp>
-
-#define DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+name))
-#define PCD_FILE_DIR(name) (string(string(ROOT_DIR) + "pcd/"+name))
-#define SIGN(x) ((x > 0) - (x < 0))
 
 namespace navigation_math{
 
@@ -90,4 +86,4 @@ namespace navigation_math{
 }
 
 
-#endif //SUPER_TYPE_UTILS_HPP
+#endif //NAVIGATION_MATH_TYPE_UTILS_HPP

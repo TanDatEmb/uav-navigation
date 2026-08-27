@@ -14,7 +14,8 @@ using IkfomVector3 = MTK::vect<3, double>;
 using IkfomSo3 = MTK::SO3<double>;
 using IkfomGravity = MTK::S2<double, 98090, 10000, 1>;
 
-// Ported selectively from hku-mars/FAST_LIO include/use-ikfom.hpp at commit
+// Ported selectively from the pinned estimator reference; exact provenance is
+// recorded in the vendor documentation.
 // 7cc4175de6f8ba2edf34bab02a42195b141027e9. The ordering is the upstream
 // FAST-LIO2/IKFoM state ordering and yields a 23-DoF covariance.
 MTK_BUILD_MANIFOLD(

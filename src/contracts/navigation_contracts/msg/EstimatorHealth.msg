@@ -17,4 +17,9 @@ bool correction_fresh
 bool propagation_valid
 
 builtin_interfaces/Time last_correction_stamp
+# Conservative source-time barrier for untagged propagated odometry after a
+# localization reset. Samples at or before this time cannot be re-admitted.
+# Diagnostic-only source freshness observation. PropagatedOdometry carries the
+# authoritative localization_epoch and sequence used for admission.
+builtin_interfaces/Time last_propagated_state_stamp
 uint16 reason_code

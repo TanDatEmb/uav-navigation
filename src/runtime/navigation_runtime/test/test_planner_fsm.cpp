@@ -144,7 +144,7 @@ TEST(PlannerFsm, RepeatedBackupFailuresRetainModeBeforeAnchorInvalidation) {
   // closed rather than resurrecting an older bundle or synthesizing a MAIN.
   // The generation value here is an explicit retained-state model; this test
   // does not claim to invoke Planner::ReplanOnce or inspect its private
-  // CmdTraj snapshot.
+  // Planner command snapshot.
   constexpr std::uint64_t committed_generation = 8U;
   constexpr double total_duration_s = 2.0;
   constexpr double elapsed_s = 0.5;

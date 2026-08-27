@@ -51,6 +51,19 @@ inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
   return microseconds;
 }
 
+// User-facing duration profiles use seconds. Convert once at the boundary
+// before passing timestamps to integer-nanosecond core contracts.
+[[nodiscard]] inline std::optional<TimestampNs> secondsToNanoseconds(
+    const double seconds) noexcept {
+  if (!std::isfinite(seconds) || seconds < 0.0 ||
+      seconds > static_cast<double>(std::numeric_limits<TimestampNs>::max()) /
+                    static_cast<double>(kNanosecondsPerSecond)) {
+    return std::nullopt;
+  }
+  return static_cast<TimestampNs>(
+      std::llround(seconds * static_cast<double>(kNanosecondsPerSecond)));
+}
+
 [[nodiscard]] inline std::optional<TimestampNs> rosTimeToNanoseconds(
     const builtin_interfaces::msg::Time& stamp) noexcept {
   if (stamp.nanosec >= static_cast<std::uint32_t>(kNanosecondsPerSecond)) {
@@ -82,12 +95,13 @@ inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
 
 [[nodiscard]] inline std::optional<builtin_interfaces::msg::Time> secondsToRosTime(
     const double seconds) noexcept {
-  if (!std::isfinite(seconds) || seconds < 0.0) {
+  if (!std::isfinite(seconds) || seconds < 0.0 ||
+      seconds > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
     return std::nullopt;
   }
   const auto whole_seconds = static_cast<std::int64_t>(seconds);
   const auto fraction = seconds - static_cast<double>(whole_seconds);
-  if (whole_seconds > std::numeric_limits<std::int32_t>::max() || fraction < 0.0) {
+  if (fraction < 0.0) {
     return std::nullopt;
   }
   const auto nanoseconds = static_cast<std::int64_t>(fraction * kNanosecondsPerSecond);

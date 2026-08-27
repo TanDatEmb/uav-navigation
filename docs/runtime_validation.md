@@ -31,6 +31,13 @@ product planner acceptance workflow. `external-mode-gui` runs the same
 mission with Gazebo and RViz; `external-mode` is its Make alias. `sim` starts
 an interactive manual-control session and does not run an automatic mission.
 
+The dataset runner and SITL runner may run in parallel after a stable build:
+runtime sessions share the read-only install lock, while builds remain
+exclusive. Dataset ROS 2 defaults to domain `43`; SITL defaults to domain `42`.
+Override the dataset domain explicitly with `DATASET_ROS_DOMAIN_ID=<id>` when
+running more than one isolated dataset session. Do not start a build while
+either runtime session is live.
+
 The product launch entrypoint is:
 
 ```bash
@@ -51,7 +58,6 @@ ros2 launch navigation_bringup avoidance_mission.launch.py \
 | `MOTION_PRESET` | `nominal`, `slow`, `fast` | motion limits |
 | `MAP_SEED` | integer | deterministic clutter variation |
 | `SPEED_CAP_MPS` | number | temporary per-run cap |
-| `DUAL_PLANNING` | `0`/`1` | simulation experiment switch |
 
 Examples:
 
@@ -61,7 +67,6 @@ MAP_SCENE=structured_obstacle TEST_CASE=detour make external-mode-check
 MAP_SCENE=long_route MOTION_PRESET=slow make external-mode-check
 MAP_SCENE=clutter MAP_SEED=11 make external-mode-check
 MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
-DUAL_PLANNING=1 make external-mode-check
 ```
 
 `MAP_PROFILE` is a legacy compatibility alias. A `no_path` run is expected to
@@ -74,7 +79,7 @@ fail closed and is not a mission `PASS`.
   -> FAST-LIO
   -> /lio/odometry_corrected
   -> /lio/odometry_propagated
-  -> /lio/registered_points
+  -> /lio/mapping_observation (RegisteredScan: cloud + corrected pose)
   -> navigation_runtime_node
   -> /navigation/navigation_command
   -> px4_navigation_external_mode
@@ -92,10 +97,11 @@ mapping process or snapshot/bundle transport exists.
 |---|---|---|---|
 | sensor | `/lidar/points` | `sensor_msgs/msg/PointCloud2` | LiDAR input |
 | sensor | `/lidar/imu` | `sensor_msgs/msg/Imu` | IMU input |
-| LIO | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | corrected estimator output |
+| LIO | `/lio/odometry_corrected` | `nav_msgs/msg/Odometry` | corrected estimator output; embedded in `RegisteredScan` |
 | LIO/planner | `/lio/odometry_propagated` | `nav_msgs/msg/Odometry` | active navigation state |
-| planner input | `/lio/registered_points` | `sensor_msgs/msg/PointCloud2` | current planner backend cloud input |
-| LIO health | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | estimator state/health |
+| planner input | `/lio/mapping_observation` | `navigation_contracts/msg/RegisteredScan` | atomic registered cloud + corrected pose input |
+| LIO control health | `/lio/health` | `navigation_contracts/msg/EstimatorHealth` | typed estimator gate, epoch and timestamp provenance |
+| LIO diagnostics | `/lio/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | observability only; never a control input |
 | navigation goal | `/navigation/goal` | `navigation_contracts/msg/NavigationGoal` | waypoint request |
 | navigation status | `/navigation/mode_status` | `navigation_contracts/msg/NavigationModeStatus` | mission/mode evidence |
 | planner output | `/navigation/navigation_command` | `navigation_contracts/msg/NavigationCommand` | PVA command stream plus epoch/world/bundle provenance |
@@ -165,10 +171,25 @@ can provide input conversion, ROG-Map update, planner solve, command publish,
 input-lock, planner-cycle, and end-to-end samples. Missing timing fields are
 `NOT_AVAILABLE`, never zero-filled.
 
+Execution-specific optimizer timings are counted only when the diagnostic
+validity flag confirms that the optimizer ran in that cycle. A later setup-only
+cycle may carry the last values for continuity; those values are retained in
+the raw trace but excluded from timing distributions. Always compare the
+reported sample count with the number of executed solves.
+
+When comparing performance, keep three measurements separate: diagnostic phase
+duration over simulation time, wall duration divided by source simulation
+duration, and scheduler/transport gaps. The diagnostic timeline is anchored to
+observed simulation stamps and shows samples; it is not a direct wall-clock
+throughput measurement. Use repeated same-scenario runs and report the full
+distribution (at least p50/p95/max) before changing planner initialization,
+limits, deadlines, or acceptance thresholds.
+
 ## Inspection commands
 
 ```bash
 make status
+ros2 topic echo /lio/health
 ros2 topic echo /lio/diagnostics
 ros2 topic echo /navigation/diagnostics
 ros2 topic echo /navigation/navigation_command

@@ -1,34 +1,20 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #pragma once
 
 #include <atomic>
+#include <algorithm>
+#include <cstddef>
 #include "memory"
 #include <stdexcept>
 
 #include <planner_core/config.hpp>
 #include <planner_core/ciri.h>
+#include <planner_core/absolute_deadline.hpp>
 
 #include <data_structure/base/polytope.h>
 #include <data_structure/base/trajectory.h>
@@ -41,7 +27,6 @@
 
 
 namespace navigation_planning_backend {
-#define DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "log/"+name))
     using namespace geometry_utils;
     using navigation_math::Vec3i;
     using navigation_math::vec_E;
@@ -56,16 +41,26 @@ namespace navigation_planning_backend {
         double seed_line_max_length_;
         double min_overlap_threshold_;
         double robot_r_;
-        int box_search_skip_num_;
         int iris_iter_num_;
         double virtual_groud_height_ = 0.0;
         double virtual_ceil_height_ = 0.0;
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::UnknownPolicy unknown_policy_{
+            navigation_world_model::UnknownPolicy::kAllowUnknown};
         vec_E<Vec3i> line_seed_neighbor_list;
         CIRI::Ptr ciri_;
         std::ofstream failed_traj_log;
 
         vec_Vec3f latest_pc;
+        static constexpr std::size_t kMaximumDiagnosticPoints = 4096U;
+
+        void appendDiagnosticPoints(const vec_Vec3f& points) {
+            const std::size_t remaining =
+                kMaximumDiagnosticPoints > latest_pc.size()
+                    ? kMaximumDiagnosticPoints - latest_pc.size() : 0U;
+            const std::size_t count = std::min(remaining, points.size());
+            latest_pc.insert(latest_pc.end(), points.begin(), points.begin() + count);
+        }
 
         double ciri_t{0};
         int ciri_cnt{0};
@@ -90,8 +85,8 @@ namespace navigation_planning_backend {
                           const double virtual_groud_height,
                           const double virtual_ceil_height,
                           const double robot_r,
-                          const int box_search_skip_num,
-                          const int iris_iter_num);
+                          const int iris_iter_num,
+                          navigation_world_model::UnknownPolicy unknown_policy);
 
         ~CorridorGenerator() = default;
 
@@ -111,18 +106,21 @@ namespace navigation_planning_backend {
 
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,
-                                  bool cut_first_poly = false);
+                                  bool cut_first_poly = false,
+                                  const AbsoluteDeadline* deadline = nullptr);
 
         void getSeedBBox(const Vec3f &p1, const Vec3f &p2,
                          Vec3f &box_min, Vec3f &box_max);
 
-        bool GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope);
+        bool GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope,
+                                       const AbsoluteDeadline* deadline = nullptr);
 
         bool GenerateEmptyPolytope(const navigation_math::Vec3f &pt,
                                    const double & dis,
                                    Polytope & polytope);
 
-        bool GeneratePolytopeFromLine(Line &line, Polytope &polytope);
+        bool GeneratePolytopeFromLine(Line &line, Polytope &polytope,
+                                      const AbsoluteDeadline* deadline = nullptr);
 
         double getCiriComputationTime() {
             if (ciri_cnt == 0) {

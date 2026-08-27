@@ -26,6 +26,8 @@
 #include <rog_map/rog_map_core/common_lib.hpp>
 #include <navigation_math/yaml_loader.hpp>
 
+#include <limits>
+
 #ifndef ORIGIN_AT_CORNER
 #ifndef ORIGIN_AT_CENTER
 #error "Please define either ORIGIN_AT_CORNER or ORIGIN_AT_CENTER, but not both."
@@ -101,7 +103,7 @@ namespace rog_map {
             }
 
             loader.LoadParam(name_space + "/map_sliding/enable", map_sliding_en, true);
-            loader.LoadParam(name_space + "/map_sliding/threshold", map_sliding_thresh, -1.0);
+            loader.LoadParam(name_space + "/map_sliding/threshold", map_sliding_thresh, 0.0);
 
             vector<double> temp_fix_origin;
             loader.LoadParam(name_space + "/fix_map_origin", temp_fix_origin, vector<double>{0, 0, 0});
@@ -167,28 +169,17 @@ namespace rog_map {
 
 
             loader.LoadParam(name_space + "/point_filt_num", point_filt_num, 2);
-            if (point_filt_num <= 0) {
-                std::cout <<  color_text::YELLOW << " -- [ROG] point_filt_num should be larger or equal than 1, it is set to 1 now."
-                          << RESET << std::endl;
-                point_filt_num = 1;
-            }
 
 
             // raycasting
             loader.LoadParam(name_space + "/raycasting/enable", raycasting_en, true);
             loader.LoadParam(name_space + "/raycasting/batch_update_size", batch_update_size, 1);
-            if (batch_update_size <= 0) {
-                std::cout <<  color_text::YELLOW << " -- [ROG] batch_update_size should be larger or equal than 1, it is set to 1 now."
-                          << RESET << std::endl;
-                batch_update_size = 1;
-            }
             loader.LoadParam(name_space + "/raycasting/unk_thresh", unk_thresh, 0.70);
             loader.LoadParam(name_space + "/raycasting/p_hit", p_hit, 0.70f);
-            loader.LoadParam(name_space + "/raycasting/p_miss", p_miss, 0.70f);
+            loader.LoadParam(name_space + "/raycasting/p_miss", p_miss, 0.35f);
             loader.LoadParam(name_space + "/raycasting/p_min", p_min, 0.12f);
             loader.LoadParam(name_space + "/raycasting/p_max", p_max, 0.97f);
             loader.LoadParam(name_space + "/raycasting/p_occ", p_occ, 0.80f);
-            loader.LoadParam(name_space + "/raycasting/p_free", p_free, 0.30f);
             loader.LoadParam(name_space + "/raycasting/p_free", p_free, 0.30f);
 
             vector<double> temp_ray_range;
@@ -213,6 +204,7 @@ namespace rog_map {
             loader.LoadParam(name_space + "/virtual_ground_height", virtual_ground_height, -0.1);
             loader.LoadParam(name_space + "/virtual_ceil_height", virtual_ceil_height, -0.1);
 
+            validateConfiguration();
             resetMapSize();
 
             /// Probabilistic Update
@@ -354,6 +346,71 @@ namespace rog_map {
         double unk_thresh{};
         double map_sliding_thresh{};
 
+        void validateConfiguration() const {
+            const auto positiveFinite = [](const double value) {
+                return std::isfinite(value) && value > 0.0;
+            };
+            const auto nonNegativeFinite = [](const double value) {
+                return std::isfinite(value) && value >= 0.0;
+            };
+            if (!positiveFinite(resolution) || !positiveFinite(inflation_resolution) ||
+                inflation_resolution < resolution || inflation_step <= 0 ||
+                unk_inflation_step <= 0 || !map_size_d.allFinite() ||
+                (map_size_d.array() <= 0.0).any() || !fix_map_origin.allFinite()) {
+                throw std::invalid_argument(
+                    "rog_map geometry requires finite positive resolutions, inflation steps, "
+                    "map size, and map origin");
+            }
+            if (map_sliding_en && !positiveFinite(map_sliding_thresh)) {
+                throw std::invalid_argument(
+                    "rog_map/map_sliding/threshold must be positive when map sliding is enabled");
+            }
+            if (!nonNegativeFinite(map_sliding_thresh)) {
+                throw std::invalid_argument(
+                    "rog_map/map_sliding/threshold must be finite and non-negative");
+            }
+            if (point_filt_num <= 0 || batch_update_size <= 0) {
+                throw std::invalid_argument(
+                    "rog_map point_filt_num and raycasting batch_update_size must be positive");
+            }
+            if ((ros_callback_en && !positiveFinite(odom_timeout)) ||
+                (esdf_en && (!positiveFinite(esdf_resolution) ||
+                             !esdf_local_update_box.allFinite() ||
+                             (esdf_local_update_box.array() <= 0.0).any()))) {
+                throw std::invalid_argument(
+                    "rog_map odom timeout and enabled ESDF geometry must be finite and positive");
+            }
+            if (!local_update_box_d.allFinite() ||
+                (local_update_box_d.array() <= 0.0).any()) {
+                throw std::invalid_argument(
+                    "rog_map raycasting local_update_box must be finite and positive");
+            }
+            if (!std::isfinite(raycast_range_min) || raycast_range_min < 0.0 ||
+                !std::isfinite(raycast_range_max) || raycast_range_max <= raycast_range_min) {
+                throw std::invalid_argument(
+                    "rog_map raycasting ray_range must satisfy 0 <= min < max");
+            }
+            const auto probability = [](const float value) {
+                return std::isfinite(value) && value > 0.0F && value < 1.0F;
+            };
+            if (!probability(p_min) || !probability(p_max) || !probability(p_hit) ||
+                !probability(p_miss) || !probability(p_occ) || !probability(p_free) ||
+                !(p_min < p_free && p_free < p_occ && p_occ < p_max) ||
+                !(p_miss < 0.5F && p_hit > 0.5F)) {
+                throw std::invalid_argument(
+                    "rog_map probability parameters must be ordered and informative");
+            }
+            if (!std::isfinite(unk_thresh) || unk_thresh < 0.0 || unk_thresh > 1.0) {
+                throw std::invalid_argument("rog_map raycasting/unk_thresh must be in [0, 1]");
+            }
+            if (!std::isfinite(virtual_ground_height) ||
+                !std::isfinite(virtual_ceil_height) ||
+                virtual_ground_height >= virtual_ceil_height) {
+                throw std::invalid_argument(
+                    "rog_map virtual ground and ceiling must be finite and ordered");
+            }
+        }
+
         void resetMapSize() {
             int inflation_ratio = ceil(inflation_resolution / resolution);
 
@@ -404,9 +461,9 @@ namespace rog_map {
 
             // 6) reset the virtual ground and ceil size
 #ifdef ORIGIN_AT_CENTER
-            inf_virtual_ceil_height_id_g = static_cast<int>(virtual_ceil_height / inflation_resolution + SIGN(
+            inf_virtual_ceil_height_id_g = static_cast<int>(virtual_ceil_height / inflation_resolution + NAVIGATION_MATH_SIGN(
                 virtual_ceil_height) * 0.5);
-            inf_virtual_ground_height_id_g = static_cast<int>(virtual_ground_height / inflation_resolution + SIGN(
+            inf_virtual_ground_height_id_g = static_cast<int>(virtual_ground_height / inflation_resolution + NAVIGATION_MATH_SIGN(
                 virtual_ground_height) * 0.5);
             fmt::print(" -- [ROG-Map] Init, resetMapSize: ORIGIN_AT_CENTER.\n");
 #endif

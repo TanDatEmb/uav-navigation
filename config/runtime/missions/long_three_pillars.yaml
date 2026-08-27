@@ -28,7 +28,6 @@ mission:
       behavior: stop
       hold_s: 0.4
   planning:
-    replan_rate_hz: 5.0
     # Use the available SITL control authority so the benchmark evaluates
     # continuity at flight speed rather than at a deliberately slow crawl.
     max_velocity_mps: 3.0
@@ -48,4 +47,3 @@ mission:
     acceptance_confirmation_s: 0.5
     # Switch a pass-through corner early enough for the next local trajectory
     # to turn with the measured momentum instead of braking at the knot.
-    pass_through_lookahead_m: 1.5

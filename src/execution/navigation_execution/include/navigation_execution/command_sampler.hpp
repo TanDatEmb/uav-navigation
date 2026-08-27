@@ -23,9 +23,16 @@ class CommandSampler final {
  public:
   explicit CommandSampler(const CommittedBundleStore& store) : store_(store) {}
 
-  [[nodiscard]] SampleResult sample(std::int64_t stamp_ns) const noexcept {
+  [[nodiscard]] SampleResult sample(
+      std::int64_t stamp_ns,
+      std::uint64_t expected_goal_epoch = 0U) const noexcept {
     auto bundle = store_.load();
     if (!bundle) return {};
+    // A retained bundle may outlive a hot-retarget transition in the store.
+    // Never let the runtime relabel that old trajectory as the new goal.
+    if (expected_goal_epoch != 0U && bundle->goal_epoch != expected_goal_epoch) {
+      return {};
+    }
     if (stamp_ns < bundle->valid_from_ns) {
       return {std::move(bundle), std::nullopt, true};
     }
@@ -33,7 +40,9 @@ class CommandSampler final {
       auto point = bundle->sample(stamp_ns);
       return {std::move(bundle), std::move(point), false};
     } catch (...) {
-      return {};
+      // Preserve the bundle identity so the runtime can distinguish a
+      // malformed/expired sample from a world-recertification gap.
+      return {std::move(bundle), std::nullopt, false};
     }
   }
 

@@ -21,6 +21,10 @@
 * along with ROG-Map. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+
 #include <rog_map/inf_map.h>
 using namespace color_text;
 using namespace navigation_math;
@@ -48,7 +52,6 @@ namespace rog_map {
         };
         std::vector<int> hash_x(static_cast<std::size_t>(sc_.map_size_i.x()));
         std::vector<int> hash_y(static_cast<std::size_t>(sc_.map_size_i.y()));
-        std::vector<int> hash_z(static_cast<std::size_t>(sc_.map_size_i.z()));
         for (int i = 0; i < sc_.map_size_i.x(); ++i) {
             hash_x[static_cast<std::size_t>(i)] =
                 logical_coordinate(output.layout.global_min_index.x() + i, 0) *
@@ -58,21 +61,79 @@ namespace rog_map {
             hash_y[static_cast<std::size_t>(i)] =
                 logical_coordinate(output.layout.global_min_index.y() + i, 1) * sc_.map_size_i.z();
         }
-        for (int i = 0; i < sc_.map_size_i.z(); ++i) {
-            hash_z[static_cast<std::size_t>(i)] =
-                logical_coordinate(output.layout.global_min_index.z() + i, 2);
-        }
+        const int logical_z_start = logical_coordinate(output.layout.global_min_index.z(), 2);
+        const std::size_t first_z_count = static_cast<std::size_t>(
+            std::min(sc_.map_size_i.z(), sc_.map_size_i.z() - logical_z_start));
+        const std::size_t second_z_count =
+            static_cast<std::size_t>(sc_.map_size_i.z()) - first_z_count;
         for (int x = output.layout.global_min_index.x(), xi = 0; x < global_max.x(); ++x, ++xi) {
             for (int y = output.layout.global_min_index.y(), yi = 0; y < global_max.y(); ++y, ++yi) {
                 const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
                                     hash_y[static_cast<std::size_t>(yi)];
-                for (int z = output.layout.global_min_index.z(), zi = 0; z < global_max.z(); ++z, ++zi) {
-                    const int hash = hash_xy + hash_z[static_cast<std::size_t>(zi)];
-                    output.occupied[logical_offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
-                    if (cfg_.unk_inflation_en) {
-                        output.unknown[logical_offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                const auto emit_z_segment = [&](const int source_z_start,
+                                                const std::size_t count) {
+                    for (std::size_t index = 0; index < count; ++index) {
+                        const int hash = hash_xy + source_z_start + static_cast<int>(index);
+                        output.occupied[logical_offset] =
+                            imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
+                        if (cfg_.unk_inflation_en) {
+                            output.unknown[logical_offset] =
+                                imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                        }
+                        ++logical_offset;
                     }
-                    ++logical_offset;
+                };
+                emit_z_segment(logical_z_start, first_z_count);
+                if (second_z_count != 0U) emit_z_segment(0, second_z_count);
+            }
+        }
+        return output;
+    }
+
+    InflatedPlanningGridExport InfMap::exportPlanningGridRegion(
+        const Vec3f& region_min, const Vec3f& region_max) const {
+        InflatedPlanningGridExport output;
+        output.layout.resolution_m = sc_.resolution;
+        output.layout.local_center_m = local_map_origin_d_;
+        output.layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+        if (!region_min.allFinite() || !region_max.allFinite() ||
+            (region_max.array() < region_min.array()).any()) {
+            return output;
+        }
+
+        Vec3i requested_min;
+        Vec3i requested_max;
+        posToGlobalIndex(region_min, requested_min);
+        posToGlobalIndex(region_max, requested_max);
+        const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+        const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+        const Vec3i patch_min = requested_min.cwiseMax(map_min);
+        const Vec3i patch_max = requested_max.cwiseMin(map_max);
+        if ((patch_max.array() < patch_min.array()).any()) return output;
+
+        output.layout.global_min_index = patch_min;
+        output.layout.dimensions = patch_max - patch_min + Vec3i::Ones();
+        std::size_t count = 1U;
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto dimension = static_cast<std::size_t>(output.layout.dimensions[axis]);
+            if (count > std::numeric_limits<std::size_t>::max() / dimension) return {};
+            count *= dimension;
+        }
+        output.occupied.resize(count);
+        if (cfg_.unk_inflation_en) output.unknown.resize(count);
+
+        std::size_t offset = 0U;
+        for (std::int64_t x = patch_min.x(); x <= patch_max.x(); ++x) {
+            for (std::int64_t y = patch_min.y(); y <= patch_max.y(); ++y) {
+                for (std::int64_t z = patch_min.z(); z <= patch_max.z(); ++z) {
+                    const Vec3i index{static_cast<int>(x), static_cast<int>(y),
+                                      static_cast<int>(z)};
+                    const int hash = getHashIndexFromGlobalIndex(index);
+                    output.occupied[offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    if (cfg_.unk_inflation_en) {
+                        output.unknown[offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;
+                    }
+                    ++offset;
                 }
             }
         }

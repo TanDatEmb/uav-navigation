@@ -15,11 +15,10 @@
   <depend>navigation_execution</depend>
   <depend>navigation_planning</depend>
   <depend>navigation_mapping</depend>
+  <depend>navigation_mission</depend>
   <depend>navigation_world_model</depend>
-  <depend>rog_map_vendor</depend>
   <depend>navigation_planning_backend</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
-  <depend>yaml-cpp</depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

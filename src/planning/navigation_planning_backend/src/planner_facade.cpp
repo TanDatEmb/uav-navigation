@@ -7,7 +7,7 @@
 #include <planner_core/planning_stage.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <planner_runtime_context/planner_runtime_context.hpp>
-#include <traj_opt/exp_traj_optimizer_s4.h>
+#include <traj_opt/nominal_trajectory_optimizer.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -108,6 +108,7 @@ navigation_planning::TrajectorySnapshot toTrajectorySnapshot(
   auto position_copy = std::make_shared<geometry_utils::Trajectory>(position);
   auto yaw_copy = std::make_shared<geometry_utils::Trajectory>(yaw);
   auto roles_copy = std::make_shared<std::vector<CandidateRoleInterval>>(roles);
+  const double duration = position.getTotalDuration();
   output.evaluator = [position_copy, yaw_copy](
                           const double trajectory_time_s,
                           navigation_planning::TrajectoryPoint& point) {
@@ -124,14 +125,26 @@ navigation_planning::TrajectorySnapshot toTrajectorySnapshot(
     point.trajectory_time_s = trajectory_time_s;
     return true;
   };
-  output.role_evaluator = [roles_copy](const double trajectory_time_s) {
+  output.role_evaluator = [roles_copy, duration](const double trajectory_time_s) {
+    if (!std::isfinite(trajectory_time_s) || !std::isfinite(duration) ||
+        trajectory_time_s < 0.0 || trajectory_time_s > duration) {
+      return navigation_planning::CandidateRole::kEmergency;
+    }
     for (const auto& interval : *roles_copy) {
-      if (trajectory_time_s >= interval.begin_tt && trajectory_time_s <= interval.end_tt &&
-          interval.role == CandidateTrajectoryRole::BACKUP) {
-        return navigation_planning::CandidateRole::kBackup;
+      const bool in_interval = trajectory_time_s >= interval.begin_tt &&
+          (trajectory_time_s < interval.end_tt ||
+           (trajectory_time_s == duration && interval.end_tt == duration));
+      if (in_interval) {
+        return interval.role == CandidateTrajectoryRole::BACKUP
+            ? navigation_planning::CandidateRole::kBackup
+            : interval.role == CandidateTrajectoryRole::MAIN
+            ? navigation_planning::CandidateRole::kMain
+            : navigation_planning::CandidateRole::kEmergency;
       }
     }
-    return navigation_planning::CandidateRole::kMain;
+    // A gap or malformed time is not MAIN. This evaluator is diagnostic-only,
+    // but it must not hide a broken role partition with an optimistic fallback.
+    return navigation_planning::CandidateRole::kEmergency;
   };
   return output;
 }
@@ -169,6 +182,30 @@ void PlannerFacade::resetSolveCancellation() noexcept {
 
 void PlannerFacade::resetOptimizationDiagnostics() noexcept {
   if (impl_ && impl_->planner) impl_->planner->resetExpOptimizationDiagnostics();
+}
+
+void PlannerFacade::setCommandIdentity(
+    const std::uint64_t localization_epoch,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t request_id) {
+  if (!impl_ || !impl_->planner) {
+    throw std::logic_error("planner facade is not initialized");
+  }
+  impl_->planner->setCommandIdentity(
+      CommandIdentity{localization_epoch, goal_epoch, request_id});
+}
+
+bool PlannerFacade::acknowledgeCommandCandidate(const std::uint64_t generation) {
+  return impl_ && impl_->planner &&
+      impl_->planner->acknowledgeCommandCandidate(generation);
+}
+
+void PlannerFacade::discardCommandCandidate() noexcept {
+  if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
+}
+
+bool PlannerFacade::hasStagedCommandCandidate() const {
+  return impl_ && impl_->planner && impl_->planner->hasStagedCommandCandidate();
 }
 
 void PlannerFacade::setWorldModelView(navigation_world_model::WorldModelViewPtr world) {
@@ -247,7 +284,16 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   candidate.position = snapshot.position;
   candidate.yaw = snapshot.yaw;
   candidate.start_wall_time = snapshot.position.start_WT;
-  const auto validation = validateExecutableCandidate(*world, candidate, authorization_wall_time_s);
+  candidate.roles = snapshot.roles;
+  // Revalidation is another certificate boundary, not a lighter-weight query.
+  // Apply the same role-aware policy used by initial authorization: a
+  // main-only candidate is known-free even when the mission permits UNKNOWN;
+  // only a candidate with a complete BACKUP suffix may use the mission policy
+  // for its MAIN interval. BACKUP remains tightened inside the validator.
+  const auto certificate_policy = candidateCertificatePolicy(
+      candidate, impl_->planner->unknownPolicy());
+  const auto validation = validateExecutableCandidate(
+      *world, candidate, authorization_wall_time_s, certificate_policy);
   output.valid = validation.valid;
   output.begin_time_s = validation.begin_tt;
   output.first_blocked_time_s = validation.first_blocked_tt;

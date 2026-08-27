@@ -9,7 +9,7 @@ set +e
 # every arm request even when the OFFBOARD signal and estimator are healthy.
 param set NAV_DLL_ACT "${PX4_NAV_DLL_ACT:-0}"
 
-# PX4 SITL v1.17 does not publish the board-only system_power topic in this
+# The selected PX4 SITL release does not publish the board-only system_power topic in this
 # standalone profile. Keep the power circuit breaker scoped to simulation;
 # real hardware must use the authoritative board power checks.
 param set CBRK_SUPPLY_CHK "${PX4_PARAM_CBRK_SUPPLY_CHK:-894281}"
@@ -28,3 +28,4 @@ param show EKF2_BARO_CTRL
 param show EKF2_RNG_CTRL
 param show EKF2_MAG_TYPE
 param show COM_RC_IN_MODE
+param show UXRCE_DDS_SYNCT

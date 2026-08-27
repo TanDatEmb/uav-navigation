@@ -4,7 +4,7 @@
 <package format="3">
   <name>ikd_tree_vendor</name>
   <version>0.1.0</version>
-  <description>Pinned hku-mars ikd-Tree source for registration mapping.</description>
+  <description>Pinned registration-mapping KD-tree implementation.</description>
   <maintainer email="maintainers@example.invalid">UAV Navigation contributors</maintainer>
   <license>GPL-2.0-only</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

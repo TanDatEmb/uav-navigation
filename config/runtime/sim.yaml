@@ -16,7 +16,7 @@ fast_lio:
       lidar_mode: simultaneous_scan
       clock_domain: simulation_time
       livox_timestamp_policy: require_header_match
-      max_imu_gap_ns: 20000000
+      max_imu_gap_s: 0.02
       reject_timestamp_regression: true
     initial_prior:
       source: zero
@@ -25,7 +25,7 @@ fast_lio:
       source_frame_transform: same_frame
       components: { position: true, velocity: true, attitude: yaw_only }
     tracking:
-      maximum_recoverable_imu_gap_ns: 50000000
+      maximum_recoverable_imu_gap_s: 0.05
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
     extrinsic:
@@ -53,21 +53,25 @@ fast_lio:
       # odometry/world frame for the planner backend ROG-Map input boundary.
       publish_registered_points: true
     propagated_odometry:
-      enabled: true
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
-      imu_history_duration_ns: 1000000000
-      maximum_correction_age_ns: 250000000
+      imu_history_duration_s: 1.0
+      maximum_correction_age_s: 0.25
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16
-      maximum_processing_lag_ms: 200
+      maximum_processing_lag_s: 0.2
       overload_policy: fail
 px4_external_odometry_bridge:
   ros__parameters:
+    timing:
+      # The bridge receives odometry stamped by the simulator ROS clock.  This
+      # must agree with use_sim_time:=true; PX4 transport synchronization is
+      # applied at the DDS boundary and is not duplicated here.
+      clock_domain: simulation_time
     external_odometry:
-      maximum_age_ns: 500000000
-      diagnostics_maximum_age_ns: 2000000000
+      maximum_age_s: 0.5
+      diagnostics_maximum_age_s: 2.0
       position_jump_m: 0.75
       orientation_jump_rad: 0.35
       maximum_expected_speed_mps: 10.0
@@ -76,20 +80,11 @@ px4_external_odometry_bridge:
       maximum_continuity_dt_s: 0.5
 px4_odometry_bridge:
   ros__parameters:
-    simulation_clock: true
-    xrce_synchronized: false
     reset:
-      maximum_metadata_age_ns: 100000000
-      maximum_event_association_gap_ns: 5000000
+      maximum_metadata_age_s: 0.1
+      maximum_event_association_gap_s: 0.005
       stable_samples_after_reset: 3
 simulation:
   ros__parameters:
     world: px4_lio_smoke
     model: x500_mid360
-
-navigation_runtime:
-  ros__parameters:
-    navigation:
-      collision:
-        vehicle_radius_m: 0.35
-        safety_margin_m: 0.05

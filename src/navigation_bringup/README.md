@@ -17,12 +17,12 @@ current FAST-LIO, planner backend, and PX4 External Mode path.
 The product mapping path subscribes to the atomic
 `/lio/mapping_observation` (`RegisteredScan`) and the typed `/lio/health`
 epoch signal, together with `/lio/odometry_propagated`, `/navigation/goal`,
-and `/navigation/mode_status`. `/lio/registered_points` plus
-`/lio/odometry_corrected` remain compatibility/debug inputs only until the
-first valid typed observation is admitted. The command boundary is the typed
-`NavigationCommand` on `/navigation/navigation_command`; it carries localization,
-goal, world-snapshot and committed-bundle provenance alongside PVA. Diagnostics
-remain on `/navigation/diagnostics`.
+and `/navigation/mode_status`. `/lio/registered_points` and
+`/lio/odometry_corrected` are estimator/RViz outputs, not runtime mapping
+inputs. The command boundary is the typed `NavigationCommand` on
+`/navigation/navigation_command`; it carries localization, goal, world-snapshot
+and committed-bundle provenance alongside PVA. Diagnostics remain on
+`/navigation/diagnostics`.
 ROG-Map and planner backend are constructed in this process; there is no separate
 mapping ROS node in the current product path.
 

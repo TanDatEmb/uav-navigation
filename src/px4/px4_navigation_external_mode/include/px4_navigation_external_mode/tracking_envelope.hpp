@@ -15,27 +15,24 @@ struct TrackingEnvelopeResult {
   double longitudinal_limit_m{0.0};
 };
 
-// A moving position reference is expected to lead the measured vehicle by the
-// closed-loop tracking delay.  Keep lateral and reverse/overshoot errors on the
-// strict geometric limit, while allowing only forward lag proportional to the
-// commanded speed.  A blocked vehicle therefore still trips the finite bound
-// instead of letting the trajectory clock run away indefinitely.
+// A command is accepted only when its position remains inside the same finite
+// geometric envelope in every direction. Tracking delay is an execution
+// observation, not a permission to enlarge the command acceptance region.
 inline TrackingEnvelopeResult evaluateTrackingEnvelope(
     const Eigen::Vector3d& measured_position,
     const Eigen::Vector3d& command_position,
     const Eigen::Vector3d& command_velocity,
-    double geometric_limit_m,
-    double tracking_lag_s) {
+    double geometric_limit_m) {
   TrackingEnvelopeResult result;
   if (!measured_position.allFinite() || !command_position.allFinite() ||
       !command_velocity.allFinite() || !std::isfinite(geometric_limit_m) ||
-      geometric_limit_m <= 0.0 || !std::isfinite(tracking_lag_s) || tracking_lag_s < 0.0) {
+      geometric_limit_m <= 0.0) {
     return result;
   }
 
   const Eigen::Vector3d error = command_position - measured_position;
   const double speed = command_velocity.norm();
-  result.longitudinal_limit_m = geometric_limit_m + speed * tracking_lag_s;
+  result.longitudinal_limit_m = geometric_limit_m;
   if (speed <= 1e-3) {
     result.longitudinal_error_m = error.norm();
     result.lateral_error_m = 0.0;

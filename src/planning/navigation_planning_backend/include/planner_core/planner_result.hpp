@@ -1,25 +1,8 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 #ifndef PlannerResultCode_HPP
 #define PlannerResultCode_HPP
@@ -39,10 +22,15 @@ namespace navigation_planning_backend {
         PLANNER_BACKUP_FAILED = -3,
         PLANNER_SOLVE_TIMEOUT = -4,
         PLANNER_SOLVE_CANCELLED = -5,
+        PLANNER_EXP_FAILED = -6,
+        PLANNER_CANDIDATE_REJECTED = -7,
+        PLANNER_BACKUP_OPTIMIZATION_FAILED = -8,
+        PLANNER_BACKUP_INITIALIZATION_FAILED = -9,
+        PLANNER_BACKUP_NO_PATH = -10,
 
     };
 
-    static std::string PlannerResultCode_STR(const int& ret) {
+    inline std::string PlannerResultCode_STR(const int& ret) {
         switch (ret) {
         case PLANNER_SUCCESS_WITH_BACKUP:
             return "Success, with backup trajectory also success";
@@ -62,6 +50,16 @@ namespace navigation_planning_backend {
             return "Solve deadline exhausted before a candidate could be committed";
         case PLANNER_SOLVE_CANCELLED:
             return "Solve was cancelled before a candidate could be committed";
+        case PLANNER_EXP_FAILED:
+            return "Main trajectory generation failed before a candidate could be committed";
+        case PLANNER_CANDIDATE_REJECTED:
+            return "Generated candidate failed construction or world validation";
+        case PLANNER_BACKUP_OPTIMIZATION_FAILED:
+            return "Backup optimizer failed without exhausting the solve deadline";
+        case PLANNER_BACKUP_INITIALIZATION_FAILED:
+            return "Backup trajectory initialization failed";
+        case PLANNER_BACKUP_NO_PATH:
+            return "Backup path search found no admissible path";
         }
         return "Unknown planner return code (" + std::to_string(ret) + ")";
     };

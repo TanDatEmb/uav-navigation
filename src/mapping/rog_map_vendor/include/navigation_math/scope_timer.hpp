@@ -21,8 +21,8 @@
 * along with ROG-Map. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef SUPER_SCOPE_TIMER_HPP
-#define SUPER_SCOPE_TIMER_HPP
+#ifndef NAVIGATION_MATH_SCOPE_TIMER_HPP
+#define NAVIGATION_MATH_SCOPE_TIMER_HPP
 
 #include <chrono>
 #include <cstring>

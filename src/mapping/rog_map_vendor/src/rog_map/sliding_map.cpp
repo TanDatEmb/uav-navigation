@@ -193,7 +193,7 @@ void SlidingMap::posToGlobalIndex(const Vec3f &pos, Vec3i &id) const {
 
 void SlidingMap::posToGlobalIndex(const double &pos, int &id) const {
 #ifdef ORIGIN_AT_CENTER
-    id = static_cast<int>((sc_.resolution_inv * pos + SIGN(pos) * 0.5));
+    id = static_cast<int>((sc_.resolution_inv * pos + NAVIGATION_MATH_SIGN(pos) * 0.5));
 #endif
 #ifdef ORIGIN_AT_CORNER
     id = floor(pos * sc_.resolution_inv);

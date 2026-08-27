@@ -12,6 +12,8 @@
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <navigation_common/time.hpp>
+#include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -26,18 +28,26 @@ namespace px4_odometry_bridge {
 
 namespace {
 constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated";
+
+std::int64_t requireDurationNanoseconds(const double seconds, const bool allow_zero) {
+  const auto nanoseconds = navigation_common::secondsToNanoseconds(seconds);
+  if (!nanoseconds.has_value() || (!allow_zero && *nanoseconds <= 0)) {
+    throw std::invalid_argument("duration parameter must be finite and in range");
+  }
+  return *nanoseconds;
+}
 }  // namespace
 
 class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
  public:
   using VehicleOdometry = px4_msgs::msg::VehicleOdometry;
-  static constexpr std::uint64_t kSimulationTimestampMappingGeneration = 1;
+  static constexpr std::uint64_t kTransportTimestampMappingGeneration = 1;
 
   Px4ExternalOdometryBridgeNode() : Node("px4_external_odometry_bridge") {
-    max_age_ns_ = declare_parameter<std::int64_t>(
-        "external_odometry.maximum_age_ns", 500'000'000);
-    diagnostics_max_age_ns_ = declare_parameter<std::int64_t>(
-        "external_odometry.diagnostics_maximum_age_ns", 2'000'000'000);
+    const double max_age_s = declare_parameter<double>(
+        "external_odometry.maximum_age_s", 0.5);
+    const double diagnostics_max_age_s = declare_parameter<double>(
+        "external_odometry.diagnostics_maximum_age_s", 2.0);
     position_jump_m_ = declare_parameter<double>(
         "external_odometry.position_jump_m", 0.75);
     orientation_jump_rad_ = declare_parameter<double>(
@@ -50,7 +60,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       "external_odometry.minimum_continuity_dt_s", 1e-4);
     maximum_continuity_dt_s_ = declare_parameter<double>(
       "external_odometry.maximum_continuity_dt_s", 0.5);
-    if (max_age_ns_ <= 0 || diagnostics_max_age_ns_ <= 0 ||
+    if (!std::isfinite(max_age_s) || max_age_s <= 0.0 ||
+        !std::isfinite(diagnostics_max_age_s) || diagnostics_max_age_s <= 0.0 ||
         !std::isfinite(position_jump_m_) || position_jump_m_ <= 0.0 ||
       !std::isfinite(orientation_jump_rad_) || orientation_jump_rad_ <= 0.0 ||
       !std::isfinite(maximum_expected_speed_mps_) ||
@@ -59,8 +70,19 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
         maximum_expected_angular_rate_rad_s_ <= 0.0 ||
       !std::isfinite(minimum_continuity_dt_s_) || minimum_continuity_dt_s_ <= 0.0 ||
       !std::isfinite(maximum_continuity_dt_s_) ||
-        maximum_continuity_dt_s_ < minimum_continuity_dt_s_) {
+      maximum_continuity_dt_s_ < minimum_continuity_dt_s_) {
       throw std::invalid_argument("invalid external odometry bridge gate parameters");
+    }
+    max_age_ns_ = requireDurationNanoseconds(max_age_s, false);
+    diagnostics_max_age_ns_ = requireDurationNanoseconds(diagnostics_max_age_s, false);
+    const auto input_clock_domain = declare_parameter<std::string>(
+        "timing.clock_domain", "ros_time");
+    timestamp_mapping_mode_ = timestampMappingModeFor(
+        get_parameter("use_sim_time").as_bool(), input_clock_domain);
+    if (timestamp_mapping_mode_ == TimestampMappingMode::kUnresolved) {
+      throw std::invalid_argument(
+          "timing.clock_domain must be simulation_time with use_sim_time=true, "
+          "or ros_time/system_time with use_sim_time=false");
     }
     jump_continuity_config_.position_jump_margin_m = position_jump_m_;
     jump_continuity_config_.orientation_jump_margin_rad = orientation_jump_rad_;
@@ -75,9 +97,11 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
         rclcpp::QoS(10).best_effort());
     // This is deliberately the only odometry input. Never substitute
     // simulator ground truth here: it is evaluation-only.
-    lio_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+    lio_sub_ = create_subscription<navigation_contracts::msg::PropagatedOdometry>(
         kLioPropagatedOdometryTopic, rclcpp::QoS(20).reliable(),
-        [this](nav_msgs::msg::Odometry::ConstSharedPtr message) { on_lio(*message); });
+        [this](navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr message) {
+          on_lio(*message);
+        });
     lio_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
         "/lio/diagnostics", rclcpp::QoS(20).best_effort(),
         [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
@@ -177,9 +201,30 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
            now_ns - last_lio_diagnostics_ns_ <= diagnostics_max_age_ns_;
   }
 
-  void on_lio(const nav_msgs::msg::Odometry& message) {
+  void on_lio(const navigation_contracts::msg::PropagatedOdometry& message) {
     const bool previous_publication_active = publication_active_;
-    const auto frame = convert_ros_lio_odometry(message);
+    if (message.localization_epoch == 0U || message.sequence == 0U ||
+        (last_lio_epoch_ != 0U && message.localization_epoch < last_lio_epoch_) ||
+        (message.localization_epoch == last_lio_epoch_ &&
+         message.sequence <= last_lio_sequence_)) {
+      ++rejected_count_;
+      last_frame_valid_ = false;
+      last_rejection_reason_ = "PROPAGATED_STATE_IDENTITY_REJECTED";
+      publication_ready_ = false;
+      publication_active_ = false;
+      return;
+    }
+    if (last_lio_epoch_ != 0U && message.localization_epoch != last_lio_epoch_) {
+      // The typed state identity is the authoritative reset boundary. Clear
+      // continuity baselines before considering the first sample of the new
+      // epoch; diagnostics still has to certify estimator health before PX4
+      // publication is enabled again.
+      last_published_.reset();
+      last_received_.reset();
+      jump_continuity_state_ = GeometricJumpContinuityState{};
+      (void)jump_latch_.observePublicFrameGeneration(true, message.localization_epoch);
+    }
+    const auto frame = convert_ros_lio_odometry(message.odometry);
     if (!frame) {
       ++rejected_count_;
       last_frame_valid_ = false;
@@ -223,12 +268,11 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     const auto now_ns = now().nanoseconds();
     last_sample_timestamp_ns_ = frame->timestamp_ns;
     last_transport_timestamp_ns_ = now_ns;
-    const bool use_sim_time = get_parameter("use_sim_time").as_bool();
     const std::uint64_t public_generation =
         lio_public_frame_generation_valid_ ? lio_public_frame_generation_ : 0U;
     last_timestamp_result_ = timestamp_converter_->convert(
-        frame->timestamp_ns, now_ns, use_sim_time,
-        kSimulationTimestampMappingGeneration);
+        frame->timestamp_ns, now_ns, timestamp_mapping_mode_,
+        kTransportTimestampMappingGeneration);
     const bool timestamp_ready = last_timestamp_result_.valid;
     const bool transport_ready = output_->get_subscription_count() > 0;
     // The callback carries the high-rate propagated odometry and its timestamp
@@ -274,6 +318,9 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       return;
     }
 
+    last_lio_epoch_ = message.localization_epoch;
+    last_lio_sequence_ = message.sequence;
+
     VehicleOdometry output;
     output.timestamp = last_timestamp_result_.publication_time_us;
     output.timestamp_sample = last_timestamp_result_.measurement_time_us;
@@ -309,12 +356,13 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   }
 
   rclcpp::Publisher<VehicleOdometry>::SharedPtr output_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_sub_;
+  rclcpp::Subscription<navigation_contracts::msg::PropagatedOdometry>::SharedPtr lio_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr lio_diagnostics_sub_;
   std::optional<ExternalOdometryFrame> last_published_;
   std::optional<ExternalOdometryFrame> last_received_;
   GeometricJumpContinuityState jump_continuity_state_;
   std::unique_ptr<TimestampConverter> timestamp_converter_;
+  TimestampMappingMode timestamp_mapping_mode_{TimestampMappingMode::kUnresolved};
   GeometricJumpContinuityConfig jump_continuity_config_;
   GeometricJumpContinuityObservation last_jump_observation_;
   TimestampConversionResult last_timestamp_result_;
@@ -337,6 +385,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint8_t last_reset_counter_{0};
   GeometricJumpLatch jump_latch_;
   std::uint64_t lio_public_frame_generation_{0};
+  std::uint64_t last_lio_epoch_{0};
+  std::uint64_t last_lio_sequence_{0};
   std::int64_t last_lio_diagnostics_ns_{0};
   bool node_ready_{false};
   bool lio_valid_{false};

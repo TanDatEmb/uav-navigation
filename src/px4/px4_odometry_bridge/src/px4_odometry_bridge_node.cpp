@@ -1,5 +1,6 @@
 #include <array>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <navigation_common/time.hpp>
 #include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_attitude.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
@@ -58,18 +60,27 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   using TimesyncStatus = px4_msgs::msg::TimesyncStatus;
 
   Px4OdometryBridgeNode() : Node("px4_odometry_bridge") {
-    simulation_clock_ = declare_parameter<bool>("simulation_clock", false);
-    xrce_synchronized_ = declare_parameter<bool>("xrce_synchronized", false);
-    maximum_metadata_age_ns_ = declare_parameter<std::int64_t>(
-        "reset.maximum_metadata_age_ns", 100'000'000);
-    maximum_metadata_association_gap_ns_ = declare_parameter<std::int64_t>(
-        "reset.maximum_event_association_gap_ns", 5'000'000);
+    const double maximum_metadata_age_s = declare_parameter<double>(
+        "reset.maximum_metadata_age_s", 0.1);
+    const double maximum_metadata_association_gap_s = declare_parameter<double>(
+        "reset.maximum_event_association_gap_s", 0.005);
     stable_samples_after_reset_ = declare_parameter<std::int64_t>(
         "reset.stable_samples_after_reset", 3);
-    if (maximum_metadata_age_ns_ <= 0 || maximum_metadata_association_gap_ns_ < 0 ||
+    const auto maximum_metadata_age_ns =
+        navigation_common::secondsToNanoseconds(maximum_metadata_age_s);
+    const auto maximum_metadata_association_gap_ns =
+        navigation_common::secondsToNanoseconds(maximum_metadata_association_gap_s);
+    if (!std::isfinite(maximum_metadata_age_s) || maximum_metadata_age_s <= 0.0 ||
+        !std::isfinite(maximum_metadata_association_gap_s) ||
+        maximum_metadata_association_gap_s < 0.0 ||
+        !maximum_metadata_age_ns.has_value() || *maximum_metadata_age_ns <= 0 ||
+        !maximum_metadata_association_gap_ns.has_value() ||
+        *maximum_metadata_association_gap_ns < 0 ||
         stable_samples_after_reset_ <= 0) {
       throw std::invalid_argument("reset metadata/stable-sample configuration must be positive");
     }
+    maximum_metadata_age_ns_ = *maximum_metadata_age_ns;
+    maximum_metadata_association_gap_ns_ = *maximum_metadata_association_gap_ns;
     history_.setStableSamples(static_cast<std::size_t>(stable_samples_after_reset_));
     output_ = create_publisher<nav_msgs::msg::Odometry>(kOutputTopic, 10);
     diagnostics_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -90,8 +101,16 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
         });
     timesync_sub_ = create_subscription<TimesyncStatus>(
         "/fmu/out/timesync_status", px4_output_qos, [this](TimesyncStatus::ConstSharedPtr message) {
-          static_cast<void>(message);
-          timesync_seen_ = true;
+          // This is transport evidence only.  The uXRCE-DDS client owns the
+          // offset applied to timestamped PX4 messages; this bridge must never
+          // reconstruct or apply estimated_offset locally.
+          timesync_status_received_.store(true, std::memory_order_relaxed);
+          timesync_source_protocol_.store(message->source_protocol, std::memory_order_relaxed);
+          timesync_remote_timestamp_us_.store(message->remote_timestamp, std::memory_order_relaxed);
+          timesync_observed_offset_us_.store(message->observed_offset, std::memory_order_relaxed);
+          timesync_estimated_offset_us_.store(message->estimated_offset, std::memory_order_relaxed);
+          timesync_round_trip_time_us_.store(message->round_trip_time, std::memory_order_relaxed);
+          timesync_status_received_at_ns_.store(now().nanoseconds(), std::memory_order_relaxed);
         });
     service_ = create_service<SampleService>(
         "/px4/sample_odometry_at_time",
@@ -267,6 +286,10 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   }
 
   void on_odometry(const VehicleOdometry &message) {
+    // uXRCE-DDS may have normalized PX4 timestamp fields into the companion
+    // clock domain before ROS receives this message.  Compare the transported
+    // timestamp with this node's ROS clock, but do not add TimesyncStatus' offset
+    // here: doing so would apply the transport mapping twice.
     const auto timestamp_ns = checked_microseconds_to_nanoseconds(message.timestamp_sample);
     if (!timestamp_ns) {
       ++timestamp_rejected_count_;
@@ -444,10 +467,21 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     add_value("output_frame", kOutputFrame);
     add_value("output_child_frame", "base_link");
     add_value("world_convention", world_convention_name(last_world_convention_));
-    add_value("simulation_clock", simulation_clock_ ? "true" : "false");
     add_value("bridge_use_sim_time", get_parameter("use_sim_time").as_bool() ? "true" : "false");
-    add_value("xrce_synchronized", xrce_synchronized_ ? "true" : "false");
-    add_value("timesync_seen", timesync_seen_ ? "true" : "false");
+    add_value("timesync_status_received",
+              timesync_status_received_.load(std::memory_order_relaxed) ? "true" : "false");
+    add_value("timesync_source_protocol",
+              std::to_string(timesync_source_protocol_.load(std::memory_order_relaxed)));
+    add_value("timesync_remote_timestamp_us",
+              std::to_string(timesync_remote_timestamp_us_.load(std::memory_order_relaxed)));
+    add_value("timesync_observed_offset_us",
+              std::to_string(timesync_observed_offset_us_.load(std::memory_order_relaxed)));
+    add_value("timesync_estimated_offset_us",
+              std::to_string(timesync_estimated_offset_us_.load(std::memory_order_relaxed)));
+    add_value("timesync_round_trip_time_us",
+              std::to_string(timesync_round_trip_time_us_.load(std::memory_order_relaxed)));
+    add_value("timesync_status_received_at_ns",
+              std::to_string(timesync_status_received_at_ns_.load(std::memory_order_relaxed)));
     add_value("px4_timestamp_sample_ns", std::to_string(last_px4_timestamp_sample_ns_));
     add_value("px4_ros_output_stamp_ns", std::to_string(last_px4_ros_output_stamp_ns_));
     add_value("bridge_node_now_ns", std::to_string(now().nanoseconds()));
@@ -549,9 +583,13 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
   std::int64_t maximum_metadata_association_gap_ns_{5'000'000};
   std::int64_t stable_samples_after_reset_{3};
   static constexpr std::int64_t time_validator_max_stale_ns_{200'000'000};
-  bool simulation_clock_{false};
-  bool xrce_synchronized_{false};
-  bool timesync_seen_{false};
+  std::atomic_bool timesync_status_received_{false};
+  std::atomic<std::uint8_t> timesync_source_protocol_{0};
+  std::atomic<std::uint64_t> timesync_remote_timestamp_us_{0};
+  std::atomic<std::int64_t> timesync_observed_offset_us_{0};
+  std::atomic<std::int64_t> timesync_estimated_offset_us_{0};
+  std::atomic<std::uint32_t> timesync_round_trip_time_us_{0};
+  std::atomic<std::int64_t> timesync_status_received_at_ns_{0};
   std::int64_t last_px4_timestamp_sample_ns_{0};
   std::int64_t last_px4_ros_output_stamp_ns_{0};
   std::uint64_t timestamp_rejected_count_{0};

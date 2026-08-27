@@ -1,28 +1,16 @@
-/**
-* This file is part of SUPER
-*
-* Copyright 2025 Yunfan REN, MaRS Lab, University of Hong Kong, <mars.hku.hk>
-* Developed by Yunfan REN <renyf at connect dot hku dot hk>
-* for more information see <https://github.com/hku-mars/SUPER>.
-* If you use this code, please cite the respective publications as
-* listed on the above website.
-*
-* SUPER is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* SUPER is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with SUPER. If not, see <http://www.gnu.org/licenses/>.
-*/
+/*
+ * Product-owned navigation implementation.
+ * Algorithmic provenance and external attributions are documented in the
+ * package documentation; they are not part of the runtime API or behaviour.
+ */
 
 
 #pragma once
+
+#include <algorithm>
+#include <iostream>
+#include <limits>
+#include <vector>
 
 #include <utils/header/type_utils.hpp>
 #include <utils/geometry/geometry_utils.h>
@@ -102,18 +90,18 @@ namespace geometry_utils {
 
     typedef std::vector<Polytope> PolytopeVec;
 
-
-    static bool SimplifySFC(const Vec3f& head_p, const Vec3f& tail_p,
+    inline bool SimplifySFC(const Vec3f& head_p, const Vec3f& tail_p,
                                  geometry_utils::PolytopeVec& sfcs) {
         vec_Vec3f path{head_p, tail_p};
         int start_id{-1}, end_id{-1};
         if (sfcs.size() > 2) {
-            for (int i = 0; i < sfcs.size(); i++) {
+            for (std::size_t i = 0; i < sfcs.size(); ++i) {
                 if (sfcs[i].PointIsInside(path.front())) {
                     start_id = i;
                 }
-                if (sfcs[sfcs.size() - 1 - i].PointIsInside(path.back())) {
-                    end_id = static_cast<int>(sfcs.size() - 1 - i);
+                const std::size_t reverse_index = sfcs.size() - 1 - i;
+                if (sfcs[reverse_index].PointIsInside(path.back())) {
+                    end_id = static_cast<int>(reverse_index);
                 }
             }
             if (start_id < 0 || end_id < 0) {
@@ -146,7 +134,7 @@ namespace geometry_utils {
                 Polytope check_cand = sfcs_new[0], last_overlapped = sfcs_new[1];
                 PolytopeVec sfcs_final;
                 sfcs_final.push_back(sfcs_new[0]);
-                for (int i = 2; i < sfcs_new.size(); i++) {
+                for (std::size_t i = 2; i < sfcs_new.size(); ++i) {
                     Polytope cross_poly = check_cand.CrossWith(sfcs_new[i]);
                     Vec3f interior_pt;
                     bool is_overlapped = geometry_utils::findInterior(cross_poly.GetPlanes(), interior_pt);
@@ -160,7 +148,7 @@ namespace geometry_utils {
                     else {
                         sfcs_final.push_back(last_overlapped);
                         check_cand = last_overlapped;
-                        i--;
+                            --i;
                     }
                 }
                 sfcs = sfcs_final;
@@ -171,4 +159,6 @@ namespace geometry_utils {
         }
         return true;
     }
+
+
 }

@@ -4,13 +4,15 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <navigation_world_model/world_model_view.hpp>
 #include <rog_map/rog_map.h>
 
-namespace navigation_mapping {
+namespace navigation_mapping::internal {
 
 class RuntimeMappingMap final : public rog_map::ROGMap {
  public:
@@ -30,8 +32,8 @@ class RuntimeMappingMap final : public rog_map::ROGMap {
   std::function<double()> wall_clock_seconds_;
 };
 
-// Product-owned read adapter. Mutation remains owned by navigation_mapping;
-// planner backend receives only the const WorldModelView surface.
+// Transitional live-map parity adapter. It is deliberately private to the
+// mapping implementation and must not be used concurrently with map updates.
 class MappingWorldModelView final : public navigation_world_model::WorldModelView {
  public:
   explicit MappingWorldModelView(std::shared_ptr<RuntimeMappingMap> map,
@@ -51,6 +53,27 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
         ? config.virtual_ground_height : center.z() - 0.5 * size.z();
     const double effective_ceiling = config.virtual_ground_ceiling_en
         ? config.virtual_ceil_height : center.z() + 0.5 * size.z();
+    const auto bounds_for = [this, &center, &size](
+                                const double resolution,
+                                const navigation_world_model::GridLayer layer) {
+      navigation_world_model::GridBounds bounds;
+      if (!std::isfinite(resolution) || resolution <= 0.0 || !size.allFinite()) {
+        return bounds;
+      }
+      const auto count_real = size.array() / resolution;
+      const auto count = count_real.round().cast<int>().matrix().eval();
+      const auto count_as_real = count.cast<double>().array();
+      const auto center_index = positionToIndex(center, layer);
+      const auto tolerance = 64.0 * std::numeric_limits<double>::epsilon() *
+          count_real.cwiseAbs().cwiseMax(1.0);
+      if ((count.array() <= 0).any() ||
+          ((count_real - count_as_real).cwiseAbs() > tolerance).any()) {
+        return bounds;
+      }
+      bounds.dimensions = count;
+      bounds.global_min_index = center_index - count / 2;
+      return bounds;
+    };
     return {
         map_->getResolution(),
         map_->getInfResolution(),
@@ -60,6 +83,8 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
         center,
         size,
         config.virtual_ground_ceiling_en,
+        bounds_for(map_->getResolution(), navigation_world_model::GridLayer::kEvidence),
+        bounds_for(map_->getInfResolution(), navigation_world_model::GridLayer::kInflated),
     };
   }
 
@@ -166,4 +191,4 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
   std::atomic<std::int64_t> observation_stamp_ns_{0};
 };
 
-}  // namespace navigation_mapping
+}  // namespace navigation_mapping::internal

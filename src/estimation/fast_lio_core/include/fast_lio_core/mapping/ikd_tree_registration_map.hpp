@@ -32,7 +32,7 @@ struct IkdTreeStageTimingTotals {
   std::int64_t bookkeeping_us{0};
 };
 
-// Production wrapper around the pinned hku-mars ikd-Tree KD_TREE.
+// Production wrapper around the pinned registration-mapping KD-tree.
 //
 // The upstream tree owns a very large inline operation queue, so the concrete
 // KD_TREE is intentionally hidden behind a heap-allocated PIMPL. This wrapper

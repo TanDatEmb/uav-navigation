@@ -83,9 +83,9 @@ inline PlannerResultDisposition classifyPlannerResult(
   if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
     return PlannerResultDisposition::RetryFromRest;
   }
-  // A hot-replan failure leaves CmdTraj untouched.  That committed command
-  // contains planner backend's main-to-backup switch and remains the only safe command
-  // source while the committed safety suffix is drained.
+  // A hot-replan failure leaves the execution bundle untouched. That bundle
+  // contains the planner's main-to-backup switch and remains the only safe
+  // command source while the committed safety suffix is drained.
   if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
     return PlannerResultDisposition::RetainCommittedCommand;
   }

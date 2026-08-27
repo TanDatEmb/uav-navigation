@@ -106,6 +106,25 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         if inflation_resolution is not None and inflation_step is not None
         and inflation_resolution > 0.0 and inflation_step > 0.0 else None
     )
+    vehicle_radius = number(planner_cfg.get("vehicle_radius_m"))
+    tracking_error_budget = number(planner_cfg.get("tracking_error_budget_m"))
+    localization_error_budget = number(planner_cfg.get("localization_error_budget_m"))
+    mapping_error_budget = number(planner_cfg.get("mapping_error_budget_m"))
+    planning_margin = number(planner_cfg.get("planning_margin_m"))
+    safety_radius = None
+    safety_components = (
+        vehicle_radius,
+        tracking_error_budget,
+        localization_error_budget,
+        mapping_error_budget,
+        planning_margin,
+    )
+    if (
+        safety_components[0] is not None
+        and safety_components[0] > 0.0
+        and all(value is not None and value >= 0.0 for value in safety_components[1:])
+    ):
+        safety_radius = sum(value for value in safety_components if value is not None)
     input_cfg = lio_cfg.get("input", {}) if isinstance(lio_cfg.get("input"), dict) else {}
     frames_cfg = lio_cfg.get("frames", {}) if isinstance(lio_cfg.get("frames"), dict) else {}
     def vector_pair(value: Any) -> tuple[float, float] | None:
@@ -125,12 +144,12 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         "planning_map_origin_xy_m": vector_pair(rog_cfg.get("fix_map_origin")),
         "planning_resolution_m": number(rog_cfg.get("resolution")),
         "inflation_radius_m": inflation_radius,
-        "safe_corridor_nominal_m": number(planner_cfg.get("safe_corridor_line_nominal_length")),
-        "safe_corridor_max_m": number(planner_cfg.get("safe_corridor_line_max_length")),
-        "sensing_horizon_m": number(planner_cfg.get("sensing_horizon")),
-        "robot_radius_m": number(planner_cfg.get("robot_r")),
-        "vehicle_radius_m": number(planner_cfg.get("vehicle_radius_m")),
-        "planning_margin_m": number(planner_cfg.get("planning_margin_m")),
+        "visibility_horizon_floor_m": number(planner_cfg.get("visibility_horizon_floor_m")),
+        "visibility_horizon_cap_m": number(planner_cfg.get("visibility_horizon_cap_m")),
+        "sensing_horizon_m": number(planner_cfg.get("sensing_horizon_m")),
+        "robot_radius_m": safety_radius,
+        "vehicle_radius_m": vehicle_radius,
+        "planning_margin_m": planning_margin,
         "map_sliding_enabled": bool((rog_cfg.get("map_sliding") or {}).get("enable", False)) if isinstance(rog_cfg.get("map_sliding"), dict) else False,
         "map_sliding_threshold_m": number((rog_cfg.get("map_sliding") or {}).get("threshold")) if isinstance(rog_cfg.get("map_sliding"), dict) else None,
         "raycasting_enabled": bool(raycasting.get("enable", False)),
@@ -476,7 +495,7 @@ def _spatial_envelope_inset(envelopes: dict[str, Any]) -> str:
         f'<span><i class="envelope-key lio"></i>FAST-LIO local window</span>'
         '</div>',
         f'<div class="small"><strong>Loaded values:</strong> {esc(" · ".join(summary))}</div>',
-        f'<div class="small">{esc(parameter_note)} The planning rectangle is centered only for comparison because this artifact does not record the runtime snapshot center. {"ROG raycasting is disabled; configured ray_range is not treated as an active ring." if not envelopes.get("raycasting_enabled") else "ROG raycasting is enabled; ray_range is a map-update filter, not the full LiDAR field of view."}</div></div>',
+        f'<div class="small">{esc(parameter_note)} The planning rectangle is centered only for comparison because this artifact does not record the runtime snapshot center. {"Mapping raycasting is disabled; configured ray_range is not treated as an active ring." if not envelopes.get("raycasting_enabled") else "Mapping raycasting is enabled; ray_range is a map-update filter, not the full LiDAR field of view."}</div></div>',
     ])
     return "".join(parts)
 
@@ -855,7 +874,7 @@ def _timing_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     lio = report.get("lio", {}) if isinstance(report.get("lio"), dict) else {}
     add_distribution("LIO", "map maintenance", lio.get("map_maintenance"), "us")
     mapping = report.get("navigation_mapping", {}) if isinstance(report.get("navigation_mapping"), dict) else {}
-    add_timing_metrics("ROG-Map", mapping.get("timing_distributions") or {})
+    add_timing_metrics("Mapping", mapping.get("timing_distributions") or {})
     planning = report.get("planning", {}) if isinstance(report.get("planning"), dict) else {}
     add_timing_metrics("Planner", planning)
     external = report.get("external_mode", {}) if isinstance(report.get("external_mode"), dict) else {}
@@ -1443,11 +1462,11 @@ _TIMING_PHASE_META: dict[str, dict[str, str]] = {
     "observation_pair_wait_us": {"label": "Observation pair wait", "group": "Wait", "kind": "wait"},
     "mapping_callback_total_us": {"label": "Mapping callback total", "group": "Mapping", "kind": "total"},
     "world_snapshot_export_us": {"label": "World snapshot export", "group": "Mapping", "kind": "compute"},
-    "rog_total_update_us": {"label": "ROG-Map update total", "group": "ROG-Map", "kind": "total"},
-    "rog_raycast_us": {"label": "ROG raycast", "group": "ROG-Map", "kind": "compute"},
-    "rog_probability_update_us": {"label": "ROG probability update", "group": "ROG-Map", "kind": "compute"},
-    "rog_inflation_us": {"label": "ROG inflation", "group": "ROG-Map", "kind": "compute"},
-    "rog_slide_us": {"label": "ROG slide", "group": "ROG-Map", "kind": "compute"},
+    "mapping_total_update_us": {"label": "Mapping update total", "group": "Mapping", "kind": "total"},
+    "mapping_raycast_us": {"label": "Mapping raycast", "group": "Mapping", "kind": "compute"},
+    "mapping_probability_update_us": {"label": "Mapping probability update", "group": "Mapping", "kind": "compute"},
+    "mapping_inflation_us": {"label": "Mapping inflation", "group": "Mapping", "kind": "compute"},
+    "mapping_slide_us": {"label": "Mapping slide", "group": "Mapping", "kind": "compute"},
     "planning_latency_ms": {"label": "Planner cycle total", "group": "Planner", "kind": "total"},
     "planning_scheduling_gap_us": {"label": "Planner scheduling gap", "group": "Planner", "kind": "wait"},
     "mapping_input_lock_wait_us": {"label": "Planner input-lock wait", "group": "Planner", "kind": "wait"},
@@ -1474,7 +1493,7 @@ def _timing_value_to_us(value: Any, unit: Any) -> float | None:
 
 def _timing_phase_rows(observability: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
-    group_order = {"Wait": 0, "Input": 1, "Mapping": 2, "ROG-Map": 3, "Planner": 4, "LIO": 5}
+    group_order = {"Wait": 0, "Input": 1, "Mapping": 2, "Planner": 4, "LIO": 5}
     for item in observability.get("timing", []):
         if integer(item.get("nonzero_count")) == "—" or int(item.get("nonzero_count") or 0) <= 0:
             continue
@@ -1552,7 +1571,7 @@ def _timing_distribution_panel(group: str, rows: list[dict[str, Any]]) -> str:
         number = max(0.0, float(value or 0.0))
         return left + min(1.0, number / axis_max) * (width - left - right)
 
-    group_colors = {"Wait": ORANGE, "Input": BLUE, "Mapping": TEAL, "ROG-Map": TEAL, "Planner": PURPLE, "LIO": BLUE}
+    group_colors = {"Wait": ORANGE, "Input": BLUE, "Mapping": TEAL, "Planner": PURPLE, "LIO": BLUE}
     color = group_colors.get(group, SLATE)
     parts = [
         f'<div class="chart-card timing-panel"><div class="chart-title">{esc(group)}</div>',
@@ -1595,7 +1614,7 @@ def _timing_distribution_chart(observability: dict[str, Any]) -> str:
     rows = _timing_phase_rows(observability)
     if not rows:
         return '<div class="empty-chart">No non-zero phase timing samples recorded.</div>'
-    group_order = ["Wait", "Input", "Mapping", "ROG-Map", "Planner", "LIO"]
+    group_order = ["Wait", "Input", "Mapping", "Planner", "LIO"]
     panels = []
     for group in group_order:
         group_rows = [row for row in rows if str(row.get("group")) == group]
@@ -1616,7 +1635,7 @@ def _timing_timeline_chart(observability: dict[str, Any]) -> str:
     wanted = (
         "observation_pair_wait_us",
         "mapping_callback_total_us",
-        "rog_total_update_us",
+        "mapping_total_update_us",
         "planning_latency_ms",
         "measurement_model_us",
     )
@@ -1660,7 +1679,7 @@ def _timing_timeline_chart(observability: dict[str, Any]) -> str:
         parts.append(
             f'<rect x="{x1:.1f}" y="{top-5}" width="{x2-x1:.1f}" height="{height-top-bottom+5}" fill="{state_colors.get(str(interval.get("state")), "#f1f3f5")}" opacity="0.7"><title>{esc(interval.get("state"))} state</title></rect>'
         )
-    group_colors = {"Input": ORANGE, "Mapping": TEAL, "ROG-Map": TEAL, "Planner": PURPLE, "LIO": BLUE}
+    group_colors = {"Input": ORANGE, "Mapping": TEAL, "Planner": PURPLE, "LIO": BLUE}
     for index, row in enumerate(rows):
         y_top = top + index * row_height
         plot_top, plot_bottom = y_top + 8, y_top + row_height - 9
@@ -1690,7 +1709,7 @@ def _timing_timeline_chart(observability: dict[str, Any]) -> str:
 def _timing_execution_model() -> str:
     lanes = [
         ("LIO", (("measurement model", "compute"), ("IKFoM solver", "compute"), ("propagation", "compute"))),
-        ("Mapping worker", (("point-cloud decode", "compute"), ("pair wait", "wait"), ("ROG-Map update", "total"), ("snapshot export", "unavailable"))),
+        ("Mapping worker", (("point-cloud decode", "compute"), ("pair wait", "wait"), ("mapping update", "total"), ("snapshot export", "compute"))),
         ("Planner cycle", (("pinned snapshot", "compute"), ("plan / replan", "compute"), ("publish command", "compute"))),
     ]
     parts = ['<div class="timing-flow"><div class="chart-title">Logical execution model</div>']
@@ -1708,8 +1727,8 @@ def _timing_execution_model() -> str:
 def _timing_relationship_rows() -> str:
     rows = [
         ("Input preparation", "decode → observation pair wait", "Decode precedes pair admission. Pair wait is synchronization/queue delay, not compute; it is not added to mapping callback total.", "observed + source contract"),
-        ("Mapping callback", "ROG-Map update → snapshot export", "mapping_callback_total_us is the callback envelope. ROG-Map update and snapshot export are inside this envelope when both are emitted.", "source contract; export unavailable in this artifact"),
-        ("ROG-Map update", "raycast + probability update + inflation + slide", "rog_total_update_us is an aggregate. Its subphases are reported separately; do not sum them with the aggregate.", "source contract"),
+        ("Mapping callback", "mapping update → snapshot export", "mapping_callback_total_us is measured around the full mapping actor callback. Mapping update and snapshot export are inside this envelope.", "observed when diagnostic samples are present"),
+        ("Mapping update", "raycast + probability update + inflation + slide", "mapping_total_update_us is an aggregate. Its subphases are reported separately; do not sum them with the aggregate.", "source contract"),
         ("Planner cycle", "planning latency / optimizer phases", "Planner runs from a pinned world snapshot in a separate cycle. Module phase timings are only comparable when emitted by the same build.", "planner total observed; optimizer phases unavailable here"),
         ("LIO estimator", "measurement model → IKFoM solver → propagation", "These are separate LIO diagnostics. The artifact has no single LIO end-to-end envelope, so their sum is not claimed as total LIO latency.", "observed; composition not certified"),
         ("Concurrency", "mapping worker || planner cycle || LIO callbacks", "Mapping worker and planner cycle are independently scheduled; timestamps show samples, not proof of exact overlap for each invocation.", "source contract; overlap not directly recorded"),
@@ -2197,7 +2216,7 @@ def render(session: Path, output: Path) -> Path:
 
   <section><h2>Telemetry coverage</h2><p class="small">Position and velocity streams below are already normalized to display ENU. PX4 external odometry, PX4 odometry, local position and setpoint events carry an explicit NED→ENU label in the charts. Gaps are based on consecutive accepted recorder samples.</p><table class="evidence"><thead><tr><th>Stream</th><th>Samples</th><th>Mean rate</th><th>Duration</th><th>Gap p95</th><th>Max gap</th></tr></thead><tbody>{stream_rows}</tbody></table><details><summary>Position XYZ and velocity XYZ statistics</summary><table class="evidence"><thead><tr><th>Stream</th><th>Axis</th><th>Mean</th><th>P50</th><th>P95</th><th>Max</th><th>Samples</th></tr></thead><tbody>{axis_rows}</tbody></table></details></section>
 
-  <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO and planner backend/ROG-Map. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
+  <section><h2>LIO and planner diagnostics</h2><p class="small">These are explicit diagnostic fields from FAST-LIO, mapping and the planner backend. Boolean/counter fields show the latest observed value and diagnostic sample count; unavailable fields are omitted or shown as N/A.</p><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Field</th><th>Latest observed</th><th>Samples</th></tr></thead><tbody>{diagnostic_health_rows}</tbody></table></section>
 
   {failure_reasons_html}
   {kinematics_html}

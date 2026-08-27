@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <limits>
+#include <numbers>
 #include <stdexcept>
 #include <vector>
 
@@ -70,9 +72,9 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "initial_prior.components.position",
       "initial_prior.components.velocity",
       "initial_prior.components.attitude",
-      "timing.max_imu_gap_ns",
+      "timing.max_imu_gap_s",
       "timing.reject_timestamp_regression",
-      "tracking.maximum_recoverable_imu_gap_ns",
+      "tracking.maximum_recoverable_imu_gap_s",
       "tracking.recovery_confirmation_updates",
       "tracking.discontinuity_covariance_inflation",
       "extrinsic.translation_imu_lidar",
@@ -141,12 +143,12 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       "input.point_time.encoding", "uint32_relative_nanoseconds");
   result.point_time_scan_reference =
       node.declare_parameter("input.point_time.scan_reference", "header_stamp");
-  result.maximum_scan_duration_ns = node.declare_parameter<std::int64_t>(
-      "input.point_time.maximum_scan_duration_ns", 200'000'000);
-  result.maximum_header_offset_ns = node.declare_parameter<std::int64_t>(
-      "input.point_time.maximum_header_offset_ns", 200'000'000);
-  result.maximum_boundary_overlap_ns = node.declare_parameter<std::int64_t>(
-      "input.point_time.maximum_boundary_overlap_ns", 0);
+  result.maximum_scan_duration_s = node.declare_parameter<double>(
+      "input.point_time.maximum_scan_duration_s", 0.2);
+  result.maximum_header_offset_s = node.declare_parameter<double>(
+      "input.point_time.maximum_header_offset_s", 0.2);
+  result.maximum_boundary_overlap_s = node.declare_parameter<double>(
+      "input.point_time.maximum_boundary_overlap_s", 0.0);
   result.minimum_points_after_overlap_trim = node.declare_parameter<std::int64_t>(
       "input.point_time.minimum_points_after_overlap_trim", 1);
   result.input_clock_domain =
@@ -167,10 +169,10 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter("initial_prior.components.attitude", "yaw_only");
   result.initial_prior_topic = node.declare_parameter(
       "initial_prior.topic", "/initial_state_prior");
-  result.initial_prior_wait_timeout_ns = node.declare_parameter<std::int64_t>(
-      "initial_prior.topic_wait_timeout_ns", 2'000'000'000);
-  result.initial_prior_maximum_age_ns = node.declare_parameter<std::int64_t>(
-      "initial_prior.maximum_topic_prior_age_ns", 500'000'000);
+  result.initial_prior_wait_timeout_s = node.declare_parameter<double>(
+      "initial_prior.topic_wait_timeout_s", 2.0);
+  result.initial_prior_maximum_age_s = node.declare_parameter<double>(
+      "initial_prior.maximum_topic_prior_age_s", 0.5);
   result.initial_prior_fallback = node.declare_parameter(
       "initial_prior.ground_fallback", "zero");
   result.initial_prior_maximum_full_tilt_disagreement_rad = node.declare_parameter(
@@ -194,11 +196,11 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   std::copy(fixed_angular_velocity.begin(), fixed_angular_velocity.end(), result.initial_prior_fixed_angular_velocity_rad_s.begin());
   result.livox_timestamp_policy = node.declare_parameter(
       "timing.livox_timestamp_policy", "require_header_match");
-  result.maximum_imu_gap_ns =
-      node.declare_parameter<std::int64_t>("timing.max_imu_gap_ns", 20'000'000);
-  result.maximum_recoverable_imu_gap_ns =
-      node.declare_parameter<std::int64_t>(
-          "tracking.maximum_recoverable_imu_gap_ns", 50'000'000);
+  result.maximum_imu_gap_s =
+      node.declare_parameter<double>("timing.max_imu_gap_s", 0.02);
+  result.maximum_recoverable_imu_gap_s =
+      node.declare_parameter<double>(
+          "tracking.maximum_recoverable_imu_gap_s", 0.05);
   result.recovery_confirmation_updates =
       node.declare_parameter<std::int64_t>(
           "tracking.recovery_confirmation_updates", 3);
@@ -249,24 +251,22 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
       node.declare_parameter<std::int64_t>("runtime.imu_queue_capacity", 4096);
   result.lidar_queue_capacity =
       node.declare_parameter<std::int64_t>("runtime.lidar_queue_capacity", 8);
-  result.maximum_processing_lag_ms = node.declare_parameter<std::int64_t>(
-      "runtime.maximum_processing_lag_ms", 200);
+  result.maximum_processing_lag_s = node.declare_parameter<double>(
+      "runtime.maximum_processing_lag_s", 0.2);
   result.overload_policy =
       node.declare_parameter("runtime.overload_policy", "fail");
   result.input_qos_reliability =
       node.declare_parameter("input.qos_reliability", "best_effort");
-  result.propagated_odometry_enabled =
-      node.declare_parameter("propagated_odometry.enabled", true);
   result.propagated_odometry_publish_rate_hz =
       node.declare_parameter("propagated_odometry.publish_rate_hz", 50.0);
   result.propagated_odometry_imu_ingress_capacity = node.declare_parameter<std::int64_t>(
       "propagated_odometry.imu_ingress_capacity", 4096);
-  result.propagated_odometry_imu_history_duration_ns =
-      node.declare_parameter<std::int64_t>(
-          "propagated_odometry.imu_history_duration_ns", 1'000'000'000);
-  result.propagated_odometry_maximum_correction_age_ns =
-      node.declare_parameter<std::int64_t>(
-          "propagated_odometry.maximum_correction_age_ns", 250'000'000);
+  result.propagated_odometry_imu_history_duration_s =
+      node.declare_parameter<double>(
+          "propagated_odometry.imu_history_duration_s", 1.0);
+  result.propagated_odometry_maximum_correction_age_s =
+      node.declare_parameter<double>(
+          "propagated_odometry.maximum_correction_age_s", 0.25);
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
   for (const auto& [name, unused_value] : overrides) {
@@ -278,6 +278,14 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   }
   validate(result);
   return result;
+}
+
+std::int64_t ParameterLoader::durationNanosecondsFromSeconds(const double seconds) {
+  const auto nanoseconds = navigation_common::secondsToNanoseconds(seconds);
+  if (!nanoseconds.has_value()) {
+    throw std::invalid_argument("duration parameter must be finite and non-negative");
+  }
+  return *nanoseconds;
 }
 
 EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
@@ -299,11 +307,11 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
           ? ScanReference::kMinimumPointTime
           : ScanReference::kHeaderStamp;
   profile.point_time.maximum_scan_duration_ns =
-      parameters.maximum_scan_duration_ns;
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_scan_duration_s);
   profile.point_time.maximum_header_offset_ns =
-      parameters.maximum_header_offset_ns;
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_header_offset_s);
   profile.point_time.maximum_boundary_overlap_ns =
-      parameters.maximum_boundary_overlap_ns;
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_boundary_overlap_s);
   profile.point_time.minimum_points_after_overlap_trim =
       static_cast<std::size_t>(parameters.minimum_points_after_overlap_trim);
   profile.point_time.reject_scan_timestamp_regression =
@@ -312,9 +320,11 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   profile.timestamp_policy =
       parseTimestampPolicy(parameters.livox_timestamp_policy);
   auto& config = profile.estimator;
-  config.synchronization.maximum_imu_gap_ns = parameters.maximum_imu_gap_ns;
+  config.synchronization.maximum_imu_gap_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_imu_gap_s);
   config.tracking.maximum_recoverable_imu_gap_ns =
-      parameters.maximum_recoverable_imu_gap_ns;
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters.maximum_recoverable_imu_gap_s);
   config.tracking.recovery_confirmation_updates =
       static_cast<std::size_t>(parameters.recovery_confirmation_updates);
   config.tracking.discontinuity_covariance_inflation =
@@ -346,8 +356,10 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   config.initial_prior.mask.position = parameters.initial_prior_position_enabled;
   config.initial_prior.mask.velocity = parameters.initial_prior_velocity_enabled;
   config.initial_prior.mask.attitude = parsePriorAttitude(parameters.initial_prior_attitude);
-  config.initial_prior.topic_wait_timeout_ns = parameters.initial_prior_wait_timeout_ns;
-  config.initial_prior.maximum_topic_prior_age_ns = parameters.initial_prior_maximum_age_ns;
+  config.initial_prior.topic_wait_timeout_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.initial_prior_wait_timeout_s);
+  config.initial_prior.maximum_topic_prior_age_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.initial_prior_maximum_age_s);
   config.initial_prior.ground_fallback = parsePriorFallback(parameters.initial_prior_fallback);
   config.initial_prior.maximum_full_attitude_tilt_disagreement_rad =
       parameters.initial_prior_maximum_full_tilt_disagreement_rad;
@@ -435,6 +447,15 @@ void ParameterLoader::validate(const RosParameters& p) {
         "initial prior source frame needs an explicit same_frame or ground-startup "
         "startup_coincident transform");
   }
+  if (!std::isfinite(p.initial_prior_wait_timeout_s) ||
+      p.initial_prior_wait_timeout_s <= 0.0 ||
+      !std::isfinite(p.initial_prior_maximum_age_s) ||
+      p.initial_prior_maximum_age_s <= 0.0 ||
+      !std::isfinite(p.initial_prior_maximum_full_tilt_disagreement_rad) ||
+      p.initial_prior_maximum_full_tilt_disagreement_rad < 0.0 ||
+      p.initial_prior_maximum_full_tilt_disagreement_rad > std::numbers::pi) {
+    throw std::invalid_argument("invalid initial_prior duration or tilt configuration");
+  }
   if (p.lidar_message_type != "pointcloud2" && p.lidar_message_type != "livox_custom") {
     throw std::invalid_argument("unsupported input.lidar_message_type");
   }
@@ -446,8 +467,11 @@ void ParameterLoader::validate(const RosParameters& p) {
        p.point_time_encoding != "float64_absolute_nanoseconds") ||
       (p.point_time_scan_reference != "header_stamp" &&
        p.point_time_scan_reference != "minimum_point_time") ||
-      p.maximum_scan_duration_ns <= 0 || p.maximum_header_offset_ns < 0 ||
-      p.maximum_boundary_overlap_ns < 0 ||
+      !std::isfinite(p.maximum_scan_duration_s) || p.maximum_scan_duration_s <= 0.0 ||
+      !std::isfinite(p.maximum_header_offset_s) || p.maximum_header_offset_s < 0.0 ||
+      !std::isfinite(p.maximum_boundary_overlap_s) || p.maximum_boundary_overlap_s < 0.0 ||
+      ParameterLoader::durationNanosecondsFromSeconds(p.maximum_scan_duration_s) <= 0 ||
+      ParameterLoader::durationNanosecondsFromSeconds(p.maximum_header_offset_s) < 0 ||
       p.minimum_points_after_overlap_trim <= 0) {
     throw std::invalid_argument("invalid input.point_time configuration");
   }
@@ -485,8 +509,9 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument(
         "mapping.registration_map.voxel_size_m must be finite and positive");
   }
-  if (p.maximum_imu_gap_ns <= 0 ||
-      p.maximum_recoverable_imu_gap_ns <= 0 ||
+  if (!std::isfinite(p.maximum_imu_gap_s) || p.maximum_imu_gap_s <= 0.0 ||
+      !std::isfinite(p.maximum_recoverable_imu_gap_s) ||
+      p.maximum_recoverable_imu_gap_s <= 0.0 ||
       p.recovery_confirmation_updates <= 0 || p.minimum_imu_samples <= 0 ||
       p.maximum_registration_iterations <= 0 ||
       p.minimum_translation_observability_ratio < 0.0 ||
@@ -499,10 +524,10 @@ void ParameterLoader::validate(const RosParameters& p) {
       !std::isfinite(p.maximum_range_m)) {
     throw std::invalid_argument("numeric estimator parameter is out of range");
   }
-  if (p.maximum_recoverable_imu_gap_ns < p.maximum_imu_gap_ns) {
+  if (p.maximum_recoverable_imu_gap_s < p.maximum_imu_gap_s) {
     throw std::invalid_argument(
-        "tracking.maximum_recoverable_imu_gap_ns must be greater than or "
-        "equal to timing.max_imu_gap_ns");
+        "tracking.maximum_recoverable_imu_gap_s must be greater than or "
+        "equal to timing.max_imu_gap_s");
   }
   if (!std::isfinite(p.discontinuity_covariance_inflation) ||
       p.discontinuity_covariance_inflation < 1.0 ||
@@ -512,7 +537,8 @@ void ParameterLoader::validate(const RosParameters& p) {
         "[1, 1000]");
   }
   if (p.imu_queue_capacity <= 0 || p.lidar_queue_capacity <= 0 ||
-      p.maximum_processing_lag_ms <= 0 || p.overload_policy != "fail") {
+      !std::isfinite(p.maximum_processing_lag_s) ||
+      p.maximum_processing_lag_s <= 0.0 || p.overload_policy != "fail") {
     throw std::invalid_argument(
         "runtime queues must be positive and overload_policy must be fail");
   }
@@ -521,18 +547,19 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument(
         "input.qos_reliability must be best_effort or reliable");
   }
-  if (!p.propagated_odometry_enabled ||
-      !(p.propagated_odometry_publish_rate_hz > 0.0) ||
+  if (!(p.propagated_odometry_publish_rate_hz > 0.0) ||
       !std::isfinite(p.propagated_odometry_publish_rate_hz) ||
       p.propagated_odometry_imu_ingress_capacity <= 0 ||
-      p.propagated_odometry_imu_history_duration_ns <= 0 ||
-      p.propagated_odometry_maximum_correction_age_ns <= 0 ||
+      !std::isfinite(p.propagated_odometry_imu_history_duration_s) ||
+      p.propagated_odometry_imu_history_duration_s <= 0.0 ||
+      !std::isfinite(p.propagated_odometry_maximum_correction_age_s) ||
+      p.propagated_odometry_maximum_correction_age_s <= 0.0 ||
       // The history must outlive the maximum correction age so replay has a
       // timestamp bracket instead of relying on an expired oldest sample.
-      p.propagated_odometry_imu_history_duration_ns <=
-          p.propagated_odometry_maximum_correction_age_ns) {
+      p.propagated_odometry_imu_history_duration_s <=
+          p.propagated_odometry_maximum_correction_age_s) {
     throw std::invalid_argument(
-        "propagated_odometry.enabled is mandatory and its configuration is invalid");
+        "propagated_odometry configuration is invalid");
   }
   const Eigen::Map<const Eigen::Vector3d> local_half_extent(
       p.local_map_half_extent_m.data());

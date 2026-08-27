@@ -60,6 +60,36 @@ class WorldSnapshotStore final
     latest_.store(std::move(next), std::memory_order_release);
   }
 
+  // Publish the immutable view and run a dependent certificate transition
+  // under one publication gate.  A planner may authorize a candidate only
+  // after this operation returns, so the world identity and the execution
+  // certificate cannot be observed in opposite orders.
+  template <typename FinalizeFunction>
+  bool publishAndFinalize(navigation_world_model::WorldModelViewPtr next,
+                          FinalizeFunction&& finalize) {
+    if (!next) throw std::invalid_argument("cannot publish a null WorldModel snapshot");
+    const auto next_identity = next->identity();
+    if (next_identity.localization_epoch == 0U || next_identity.generation == 0U ||
+        next_identity.observation_stamp_ns < 0) {
+      throw std::invalid_argument("cannot publish an invalid WorldModel identity");
+    }
+    std::lock_guard<std::mutex> guard(publication_gate_);
+    const auto current = latest_.load(std::memory_order_relaxed);
+    if (current && !strictlyAdvances(current->identity(), next_identity)) {
+      throw std::logic_error("WorldModel publication identity is not monotonic");
+    }
+    try {
+      if (!std::invoke(std::forward<FinalizeFunction>(finalize))) return false;
+    } catch (...) {
+      return false;
+    }
+    // Keep the old world visible until all dependent execution state has been
+    // invalidated or recertified.  Readers therefore cannot observe a new
+    // world while an old-world command is still the only available bundle.
+    latest_.store(std::move(next), std::memory_order_release);
+    return true;
+  }
+
   template <typename CommitFunction>
   navigation_world_model::WorldCommitDecision authorize(
       const navigation_world_model::WorldSnapshotIdentity& validated_identity,
@@ -79,6 +109,25 @@ class WorldSnapshotStore final
       const navigation_world_model::WorldSnapshotIdentity& validated_identity,
       const std::function<bool()>& final_commit) override {
     return authorize(validated_identity, final_commit);
+  }
+
+  navigation_world_model::WorldCommitDecision commitIfCurrentOrUnaffected(
+      const navigation_world_model::WorldSnapshotIdentity& validated_identity,
+      const navigation_world_model::AxisAlignedBox& protected_region,
+      const std::function<bool(const navigation_world_model::WorldValidationLease&)>&
+          final_commit) override {
+    std::lock_guard<std::mutex> guard(publication_gate_);
+    const auto latest = latest_.load(std::memory_order_acquire);
+    if (!latest) return navigation_world_model::WorldCommitDecision::kNoPublishedWorld;
+    const auto latest_identity = latest->identity();
+    if (!sameIdentity(latest_identity, validated_identity) &&
+        latest->changedRegionIntersectsSince(validated_identity, protected_region)) {
+      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+    }
+    const navigation_world_model::WorldValidationLease lease{latest, latest_identity};
+    return std::invoke(final_commit, lease)
+        ? navigation_world_model::WorldCommitDecision::kCommitted
+        : navigation_world_model::WorldCommitDecision::kCancelled;
   }
 
   [[nodiscard]] static bool sameIdentity(

@@ -51,10 +51,12 @@ PointTimeConfig pointTimeConfig(const RosParameters& parameters) {
       parameters.point_time_scan_reference == "minimum_point_time"
           ? ScanReference::kMinimumPointTime
           : ScanReference::kHeaderStamp;
-  result.maximum_scan_duration_ns = parameters.maximum_scan_duration_ns;
-  result.maximum_header_offset_ns = parameters.maximum_header_offset_ns;
+  result.maximum_scan_duration_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_scan_duration_s);
+  result.maximum_header_offset_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_header_offset_s);
   result.maximum_boundary_overlap_ns =
-      parameters.maximum_boundary_overlap_ns;
+      ParameterLoader::durationNanosecondsFromSeconds(parameters.maximum_boundary_overlap_s);
   result.minimum_points_after_overlap_trim =
       static_cast<std::size_t>(parameters.minimum_points_after_overlap_trim);
   result.reject_scan_timestamp_regression =
@@ -92,6 +94,12 @@ void countRejection(RuntimeDiagnostics& diagnostics, const Status& status,
   }
 }
 
+std::uint64_t publicFrameGenerationSeed() noexcept {
+  const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  if (ticks <= 0) return 1U;
+  return static_cast<std::uint64_t>(ticks);
+}
+
 }  // namespace
 
 FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
@@ -108,9 +116,13 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           parameters_.lidar_input_frame,
           parseClockDomain(parameters_.input_clock_domain),
           livoxTimestampPolicy(parameters_)),
-      public_frame_generation_(std::make_shared<LioPublicFrameGeneration>()),
+      // The seed is monotonic for the host process lifetime, so a restarted
+      // estimator gets a generation greater than the runtime's previous
+      // epoch even when its source timestamp clock restarts at zero.
+      public_frame_generation_(std::make_shared<LioPublicFrameGeneration>(
+          publicFrameGenerationSeed())),
       output_publisher_(*this, parameters_, public_frame_generation_),
-      transform_publisher_(*this, parameters_) {
+      transform_publisher_(*this) {
   runtime_diagnostics_.imu_queue_capacity =
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
   runtime_diagnostics_.lidar_queue_capacity =
@@ -137,36 +149,34 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       converter.value());
   runtime_diagnostics_.static_geometry_ready = true;
   runtime_diagnostics_.static_geometry_source = "robot_state_publisher:/tf_static";
-  runtime_diagnostics_.dynamic_tf_owner =
-      parameters_.propagated_odometry_enabled ? "propagated" : "corrected";
+  runtime_diagnostics_.dynamic_tf_owner = "propagated";
   output_publisher_.setBaseLinkConverter(base_link_converter_);
   transform_publisher_.setBaseLinkConverter(base_link_converter_);
-  if (parameters_.propagated_odometry_enabled) {
-    propagated_odometry_publisher_ =
-        std::make_unique<RosPropagatedOdometryPublisher>(
-            *this, parameters_, output_publisher_.covarianceProjectionRuntime());
-    propagated_odometry_publisher_->setBaseLinkConverter(base_link_converter_);
-    PropagatedOdometryWorkerConfig worker_config;
-    worker_config.propagator.ikfom = profile_.estimator.ikfom;
-    worker_config.propagator.residual_builder =
-        profile_.estimator.residual_builder;
-    worker_config.propagator.imu_history_duration_ns =
-        parameters_.propagated_odometry_imu_history_duration_ns;
-    worker_config.imu_ingress_capacity = static_cast<std::size_t>(
-        parameters_.propagated_odometry_imu_ingress_capacity);
-    worker_config.maximum_correction_age_ns =
-        parameters_.propagated_odometry_maximum_correction_age_ns;
-    worker_config.publish_rate_hz =
-        parameters_.propagated_odometry_publish_rate_hz;
-    propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
-        worker_config, [this](const std::optional<KinematicStateEstimate>& estimate) {
-          if (estimate.has_value()) {
-            propagated_odometry_publisher_->publish(*estimate);
-            transform_publisher_.publishPropagated(*estimate);
-          }
-        });
-    propagated_odometry_worker_->start();
-  }
+  propagated_odometry_publisher_ =
+      std::make_unique<RosPropagatedOdometryPublisher>(
+          *this, parameters_, output_publisher_.covarianceProjectionRuntime(),
+          public_frame_generation_);
+  propagated_odometry_publisher_->setBaseLinkConverter(base_link_converter_);
+  PropagatedOdometryWorkerConfig worker_config;
+  worker_config.propagator.ikfom = profile_.estimator.ikfom;
+  worker_config.propagator.residual_builder = profile_.estimator.residual_builder;
+  worker_config.propagator.imu_history_duration_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters_.propagated_odometry_imu_history_duration_s);
+  worker_config.imu_ingress_capacity = static_cast<std::size_t>(
+      parameters_.propagated_odometry_imu_ingress_capacity);
+  worker_config.maximum_correction_age_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters_.propagated_odometry_maximum_correction_age_s);
+  worker_config.publish_rate_hz = parameters_.propagated_odometry_publish_rate_hz;
+  propagated_odometry_worker_ = std::make_unique<PropagatedOdometryWorker>(
+      worker_config, [this](const std::optional<KinematicStateEstimate>& estimate) {
+        if (estimate.has_value()) {
+          propagated_odometry_publisher_->publish(*estimate);
+          transform_publisher_.publishPropagated(*estimate);
+        }
+      });
+  propagated_odometry_worker_->start();
   const bool livox_input =
       parameters_.lidar_message_type == "livox_custom";
   const auto pointcloud_qos =
@@ -209,7 +219,7 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
               "runtime diagnostics are available on /lio/diagnostics",
               parameters_.odom_frame.c_str(),
               parameters_.base_frame.c_str(),
-              parameters_.propagated_odometry_enabled ? "propagated" : "corrected",
+              "propagated",
               parameters_.base_frame.c_str(), parameters_.imu_frame.c_str());
   transport_diagnostics_timer_ = create_wall_timer(
       std::chrono::seconds(1),
@@ -630,7 +640,7 @@ void FastLioNode::processingLoop() {
       runtime_diagnostics_.processing_lag_exceeded =
           runtime_diagnostics_.processing_lag_exceeded ||
           runtime_diagnostics_.processing_lag_ns >
-              parameters_.maximum_processing_lag_ms * 1'000'000;
+              static_cast<double>(parameters_.maximum_processing_lag_s) * 1.0e9;
       ++runtime_diagnostics_.worker_heartbeat;
       runtime_diagnostics_.worker_last_progress_wall_time_ns =
           std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -658,16 +668,23 @@ void FastLioNode::publishAvailableResults() {
       std::lock_guard lock(input_mutex_);
       augmented.diagnostics.sensor = ingress_diagnostics_;
     }
+    if (public_frame_generation_ &&
+        augmented.diagnostics.lio_generation > last_published_lio_generation_) {
+      // FastLioPipeline increments its generation only on a full estimator
+      // reset. That reset changes the public lio_odom frame contract, so the
+      // typed runtime epoch must advance before this result is published.
+      public_frame_generation_->observe(
+          PublicFrameEvent::kPublicFrameDiscontinuity,
+          augmented.diagnostics.lio_generation,
+          "FAST_LIO_PIPELINE_RESET");
+      last_published_lio_generation_ = augmented.diagnostics.lio_generation;
+    }
     const auto scan_sequence = augmented.hasCorrectedOutput()
                                     ? ++correction_sequence_
                                     : correction_sequence_;
     output_publisher_.publish(augmented, scan_sequence);
     if (augmented.diagnostics.initial_prior.applied) {
       closeInitialStatePriorStream();
-    }
-    if (augmented.corrected_kinematic_estimate.has_value()) {
-      transform_publisher_.publishCorrected(
-          *augmented.corrected_kinematic_estimate);
     }
     if (propagated_odometry_worker_) {
       const bool corrected = augmented.hasCorrectedOutput();

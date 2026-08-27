@@ -34,6 +34,12 @@ class PlannerFacade final {
   void cancelActiveSolve() noexcept;
   void resetSolveCancellation() noexcept;
   void resetOptimizationDiagnostics() noexcept;
+  void setCommandIdentity(std::uint64_t localization_epoch,
+                          std::uint64_t goal_epoch,
+                          std::uint64_t request_id);
+  bool acknowledgeCommandCandidate(std::uint64_t generation);
+  void discardCommandCandidate() noexcept;
+  [[nodiscard]] bool hasStagedCommandCandidate() const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
   bool setState(const navigation_planning::KinematicState& state);
 

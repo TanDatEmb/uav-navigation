@@ -9,26 +9,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
 find_package(navigation_common REQUIRED)
+find_package(navigation_mission REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(navigation_contracts REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(yaml-cpp REQUIRED)
 find_package(px4_ros2_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 
 add_library(${PROJECT_NAME}_contract
-  src/mission.cpp
   src/mission_controller.cpp)
 target_include_directories(${PROJECT_NAME}_contract PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
-target_link_libraries(${PROJECT_NAME}_contract PUBLIC yaml-cpp::yaml-cpp)
-ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC navigation_common diagnostic_msgs geometry_msgs navigation_contracts nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC navigation_common diagnostic_msgs geometry_msgs navigation_contracts navigation_mission nav_msgs)
 target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node
@@ -40,7 +38,7 @@ target_link_libraries(${PROJECT_NAME}_node
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
-ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts nav_msgs rclcpp std_msgs)
+ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs rclcpp std_msgs)
 target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -57,13 +55,13 @@ install(EXPORT ${PROJECT_NAME}Targets
   DESTINATION share/${PROJECT_NAME}/cmake)
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(navigation_common Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_ros2_cpp rclcpp std_msgs yaml-cpp)
+ament_export_dependencies(navigation_common navigation_mission Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_ros2_cpp rclcpp std_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_mission test/test_mission.cpp)
   target_link_libraries(test_mission ${PROJECT_NAME}_contract)
-  ament_target_dependencies(test_mission geometry_msgs navigation_contracts nav_msgs)
+  ament_target_dependencies(test_mission geometry_msgs navigation_contracts navigation_mission nav_msgs)
   ament_add_gtest(test_navigation_command test/test_navigation_command.cpp)
   target_include_directories(test_navigation_command PRIVATE
     include ${navigation_contracts_INCLUDE_DIRS})

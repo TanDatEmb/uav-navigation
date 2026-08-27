@@ -294,6 +294,40 @@ class RuntimeContractTest(unittest.TestCase):
             with runner.RuntimeLock(lock_path):
                 pass
 
+    def test_build_runtime_lock_allows_isolated_runtime_readers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = runner.BuildRuntimeLock(root, exclusive=False)
+            second = runner.BuildRuntimeLock(root, exclusive=False)
+            with first:
+                with second:
+                    self.assertTrue(True)
+
+    def test_build_runtime_lock_rejects_build_while_runtime_reader_is_live(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with runner.BuildRuntimeLock(root, exclusive=False):
+                with self.assertRaises(runner.BuildRuntimeBusyError):
+                    with runner.BuildRuntimeLock(root, exclusive=True):
+                        pass
+
+    def test_sim_lock_ignores_an_isolated_dataset_session(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            root = Path(temporary)
+            lock_path = root / ".runtime-sim.lock"
+
+            def active_sessions(_root: Path, workflows: set[str] | None) -> list[str]:
+                self.assertEqual(workflows, {"sim", "external-mode"})
+                return []
+
+            with mock.patch.object(runner, "_active_runtime_sessions", active_sessions):
+                with runner.RuntimeLock(
+                    lock_path,
+                    artifact_root=root,
+                    active_workflows={"sim", "external-mode"},
+                ):
+                    self.assertTrue(lock_path.is_file())
+
     def test_clean_preserves_build_runtime_lock_inode(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             parent = Path(temporary)
@@ -382,9 +416,12 @@ class RuntimeContractTest(unittest.TestCase):
 
             original_artifact_root = runner.ARTIFACT_ROOT
             original_lock_path = runner.RUNTIME_LOCK_PATH
+            original_dataset_lock_path = runner.DATASET_RUNTIME_LOCK_PATH
             original_paths = runner.GENERATED_CLEAN_PATHS
             runner.ARTIFACT_ROOT = runtime_root
             runner.RUNTIME_LOCK_PATH = lock
+            runner.DATASET_RUNTIME_LOCK_PATH = runtime_root / ".runtime-dataset.lock"
+            runner.DATASET_RUNTIME_LOCK_PATH.write_text("{}\n", encoding="utf-8")
             runner.GENERATED_CLEAN_PATHS = (artifacts,)
             try:
                 self.assertEqual(
@@ -393,29 +430,57 @@ class RuntimeContractTest(unittest.TestCase):
             finally:
                 runner.ARTIFACT_ROOT = original_artifact_root
                 runner.RUNTIME_LOCK_PATH = original_lock_path
+                runner.DATASET_RUNTIME_LOCK_PATH = original_dataset_lock_path
                 runner.GENERATED_CLEAN_PATHS = original_paths
 
             self.assertTrue(lock.is_file())
+            self.assertTrue((runtime_root / ".runtime-dataset.lock").is_file())
             self.assertFalse(session.exists())
             self.assertFalse((runtime_root / "latest").exists())
 
     def test_mapping_config_uses_canonical_product_contract(self) -> None:
         navigation = runner.load_config("mapping.yaml")["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
-        self.assertEqual(navigation["cloud_topic"], "/lio/registered_points")
-        self.assertEqual(navigation["corrected_odometry_topic"], "/lio/odometry_corrected")
+        self.assertEqual(navigation["registered_scan_topic"], "/lio/mapping_observation")
         self.assertEqual(navigation["propagated_odometry_topic"], "/lio/odometry_propagated")
+        self.assertNotIn("cloud_topic", navigation)
+        self.assertNotIn("corrected_odometry_topic", navigation)
         self.assertNotIn("odometry_topic", navigation)
+        self.assertEqual(navigation["planner_watchdog_timeout_s"], 1.0)
+        self.assertNotIn("planner_solve_timeout_s", navigation)
         self.assertEqual(navigation["command_topic"], "/navigation/navigation_command")
+        runtime_source = (
+            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("onRegisteredScan", runtime_source)
+        self.assertNotIn("navigation_runtime.cloud_topic", runtime_source)
+        self.assertNotIn("navigation_runtime.corrected_odometry_topic", runtime_source)
         rviz = runner.RVIZ_CONFIG.read_text(encoding="utf-8")
         self.assertIn("/lio/registered_points", rviz)
+
+    def test_package_and_workspace_runtime_profiles_have_one_navigation_contract(self) -> None:
+        workspace_profile = yaml.safe_load(
+            (ROOT / "config/runtime/mapping.yaml").read_text(encoding="utf-8")
+        )["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
+        cmake = (ROOT / "src/runtime/navigation_runtime/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("config/runtime/mapping.yaml", cmake)
+        self.assertIn("configure_file", cmake)
+        self.assertIn("config/planner.yaml", cmake)
+        self.assertNotIn(
+            "src/runtime/navigation_runtime/config/navigation_runtime.yaml",
+            cmake,
+        )
+        self.assertTrue(workspace_profile)
+        installed_planner = ROOT / "install/navigation_runtime/share/navigation_runtime/config/planner.yaml"
+        self.assertTrue(installed_planner.is_file())
 
     def test_corrected_mapping_precedes_propagated_planner_gates(self) -> None:
         source = (
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
         mapping_actor = (
-            ROOT
-            / "src/mapping/navigation_mapping/include/navigation_mapping/mapping_actor.hpp"
+            ROOT / "src/mapping/navigation_mapping/src/mapping_actor.cpp"
         ).read_text(encoding="utf-8")
         cycle = source[
             source.index("void NavigationRuntimeNode::runCycle()"):
@@ -424,7 +489,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("std::make_shared<navigation_mapping::MappingActor>", constructor)
         self.assertIn("const auto result = mapping_actor->process(observation);", constructor)
         self.assertIn("observation.corrected_odometry.pose.pose", mapping_actor)
-        self.assertIn("map_->updateMap(*observation.cloud, map_pose)", mapping_actor)
+        self.assertIn("map_->updateMap(backend_cloud_, map_pose)", mapping_actor)
         self.assertIn("mapping_worker_->start()", constructor)
         self.assertIn("propagated_state_callback_group_", constructor)
         self.assertIn("propagated_state_options.callback_group", constructor)
@@ -433,41 +498,24 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("if (!propagated_state) return;", cycle)
         self.assertIn("const bool completed_trajectory", cycle)
 
-    def test_mapping_profile_keeps_frontier_off_when_rviz_is_interactive(self) -> None:
+    def test_mapping_profile_is_independent_of_visualization_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
             target = runner._mapping_params(
-                session, ROOT / "config/runtime/mapping.yaml", interactive=True
+                session, ROOT / "config/runtime/mapping.yaml"
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
-
-            debug_target = runner._mapping_params(
-                session,
-                ROOT / "config/runtime/mapping.yaml",
-                interactive=True,
-                frontier_debug=True,
-            )
-            debug_parameters = yaml.safe_load(debug_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
-            self.assertTrue(Path(debug_parameters["config_path"]).is_file())
 
     def test_simulation_mapping_profile_preserves_collision_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
             target = runner._mapping_params(
-                session, ROOT / "config/runtime/mapping.yaml", simulation=True
+                session, ROOT / "config/runtime/mapping.yaml"
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
-            dual_target = runner._mapping_params(
-                session,
-                ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
-                dual_planning=True,
-            )
-            dual_parameters = yaml.safe_load(dual_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
-            self.assertTrue(Path(dual_parameters["config_path"]).is_file())
 
     def test_mission_planning_policy_is_applied_to_runtime_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -476,22 +524,25 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
-                dual_planning=True,
                 mission_file=mission,
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(parameters["planner_rate_hz"], 5.0)
+            self.assertEqual(parameters["planner_rate_hz"], 10.0)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
-            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
-            self.assertGreater(planner["traj_opt"]["backup_traj"]["penna_jerk"], 0.0)
-            self.assertFalse(planner["planner"]["frontend_in_known_free"])
-            self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
+            self.assertEqual(
+                planner["traj_opt"]["exp_traj"]["objective"]["jerk_penalty_weight"], 0.0
+            )
+            self.assertGreater(
+                planner["traj_opt"]["backup_traj"]["objective"]["jerk_penalty_weight"], 0.0
+            )
+            self.assertNotIn("frontend_in_known_free", planner["planner"])
+            self.assertTrue(planner["rog_map"]["raycasting"]["enable"])
             self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+
             self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
             self.assertEqual(planner["rog_map"]["raycasting"]["ray_range"][0], 0.7)
 
@@ -499,8 +550,6 @@ class RuntimeContractTest(unittest.TestCase):
             speed_target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
-                dual_planning=True,
                 mission_file=speed_mission,
             )
             speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
@@ -510,7 +559,6 @@ class RuntimeContractTest(unittest.TestCase):
             capped_target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
                 mission_file=speed_mission,
                 speed_cap_mps=2.0,
             )
@@ -524,6 +572,32 @@ class RuntimeContractTest(unittest.TestCase):
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
+
+    def test_blocked_policy_is_forwarded_to_planner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            mission = Path(temporary) / "blocked.yaml"
+            mission.write_text(
+                "mission:\n"
+                "  planning:\n"
+                "    unknown_policy: blocked\n"
+                "    max_velocity_mps: 1.0\n"
+                "    max_acceleration_mps2: 2.0\n"
+                "    max_jerk_mps3: 6.0\n",
+                encoding="utf-8",
+            )
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                mission_file=mission,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))
+            planner_path = Path(
+                parameters["navigation_runtime_node"]["ros__parameters"]
+                ["navigation_runtime"]["config_path"]
+            )
+            planner = yaml.safe_load(planner_path.read_text(encoding="utf-8"))
+            self.assertNotIn("frontend_in_known_free", planner["planner"])
 
     def test_speed_cap_materializes_one_resolved_mission_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -554,7 +628,6 @@ class RuntimeContractTest(unittest.TestCase):
             mapping = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
                 mission_file=resolved,
             )
             parameters = yaml.safe_load(mapping.read_text(encoding="utf-8"))[
@@ -583,100 +656,23 @@ class RuntimeContractTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "finite and positive"):
                         runner._resolved_mission_file(session, source, invalid)
 
-    def test_tb001_exp_jerk_objective_default_remains_disabled(self) -> None:
+    def test_objective_zero_disables_exp_jerk_without_bypass_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
             mission = ROOT / "config/runtime/missions/open.yaml"
             target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
                 mission_file=mission,
             )
 
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
-            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
-            self.assertNotIn("tb001_exp_jerk_objective_ab", runtime)
-
-    def test_tb001_exp_jerk_objective_opt_in_sets_positive_penalty_and_artifact(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            session = runner.Session(Path(temporary) / "session")
-            target = runner._mapping_params(
-                session,
-                ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
-                mission_file=ROOT / "config/runtime/missions/open.yaml",
-                tb001_exp_jerk_penalty=runner.TB001_EXP_JERK_REFERENCE,
-            )
-
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
-            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(planner["traj_opt"]["exp_traj"]["penna_jerk"], runner.TB001_EXP_JERK_REFERENCE)
-            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
-            experiment = runtime["tb001_exp_jerk_objective_ab"]
-            self.assertEqual(experiment["bypass_id"], "TB-001")
-            self.assertEqual(experiment["certification_status"], "uncertified_experiment")
-            self.assertEqual(experiment["exp_traj_penna_jerk"], runner.TB001_EXP_JERK_REFERENCE)
-
-    def test_tb001_exp_jerk_objective_does_not_use_hidden_environment(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            session = runner.Session(Path(temporary) / "session")
-            with mock.patch.dict(os.environ, {"UAV_NAV_TB001_EXP_JERK_PENALTY": "42.5"}):
-                target = runner._mapping_params(
-                    session,
-                    ROOT / "config/runtime/mapping.yaml",
-                    simulation=True,
-                    mission_file=ROOT / "config/runtime/missions/open.yaml",
-                )
-
-            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
-            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertLess(planner["traj_opt"]["exp_traj"]["penna_jerk"], 0.0)
-
-    def test_tb001_exp_jerk_objective_rejects_invalid_values(self) -> None:
-        for value in ("abc", 0.0, -1.0, math.nan, math.inf, 42.5):
-            with self.subTest(value=value):
-                with self.assertRaises(ValueError):
-                    runner._resolve_tb001_exp_jerk_penalty(value)
-
-    def test_tb001_exp_jerk_objective_report_is_not_certification(self) -> None:
-        runtime = {
-            "build_provenance": _valid_captured_provenance(),
-            "tb001_exp_jerk_objective_ab": {
-                "bypass_id": "TB-001",
-                "scope": "harness-only experiment",
-                "certification_status": "uncertified_experiment",
-                "default_behavior": "disabled",
-                "exp_traj_penna_jerk": runner.TB001_EXP_JERK_REFERENCE,
-                "disabled_exp_traj_penna_jerk": -5e8,
-                "reference_value": runner.TB001_EXP_JERK_REFERENCE,
-            },
-        }
-        reasons = report._experimental_bypass_reasons(runtime)
-        self.assertEqual(len(reasons), 1)
-        self.assertIn("uncertified", reasons[0])
-
-    def test_tb001_report_rejects_missing_or_malformed_marker_for_positive_config(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            planner_path = Path(temporary) / "planner.yaml"
-            planner_path.write_text(
-                "traj_opt:\n  exp_traj:\n    penna_jerk: 500000000.0\n",
-                encoding="utf-8",
-            )
-            runtime = {
-                "planner_config": str(planner_path),
-                "build_provenance": _valid_captured_provenance(),
-            }
-            reasons = report._experimental_bypass_reasons(runtime)
-            self.assertTrue(reasons)
             self.assertEqual(
-                report._experimental_bypass_metadata(runtime)["certification_status"],
-                "invalid_provenance",
+                planner["traj_opt"]["exp_traj"]["objective"]["jerk_penalty_weight"], 0.0
             )
-            runtime["tb001_exp_jerk_objective_ab"] = {"bypass_id": "TB-001"}
-            self.assertTrue(report._experimental_bypass_reasons(runtime))
+            runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
+            self.assertNotIn("experimental_bypasses", runtime)
 
     def test_speed_certification_requirement_tracks_each_requested_sweep_cap(self) -> None:
         for profile in (
@@ -716,8 +712,6 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
-                dual_planning=True,
                 mission_file=mission,
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))
@@ -726,8 +720,8 @@ class RuntimeContractTest(unittest.TestCase):
                 ["navigation_runtime"]["config_path"]
             )
             planner = yaml.safe_load(planner_path.read_text(encoding="utf-8"))
-            self.assertFalse(planner["planner"]["frontend_in_known_free"])
-            self.assertFalse(planner["rog_map"]["raycasting"]["enable"])
+            self.assertNotIn("frontend_in_known_free", planner["planner"])
+            self.assertTrue(planner["rog_map"]["raycasting"]["enable"])
             self.assertFalse(planner["rog_map"]["unk_inflation_en"])
 
     def test_runtime_rejects_mission_limits_above_x500_envelope(self) -> None:
@@ -825,7 +819,6 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
                 mission_file=ROOT / "config/runtime/missions/long_three_pillars.yaml",
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
@@ -837,7 +830,6 @@ class RuntimeContractTest(unittest.TestCase):
             target = runner._mapping_params(
                 session,
                 ROOT / "config/runtime/mapping.yaml",
-                simulation=True,
                 mission_file=ROOT / "config/runtime/missions/single_pillar_speed_pv.yaml",
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
@@ -1543,7 +1535,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(diagnostics["psi_samples"], 2)
             self.assertEqual(diagnostics["observer"]["world_stats_topic"], "/world/test/stats")
             self.assertEqual(diagnostics["verdict_owner"], "diagnostic_only")
-            self.assertEqual(report._experimental_bypass_reasons(runtime), [])
+            self.assertEqual(report._gazebo_native_diagnostics(session, runtime)["verdict_owner"], "diagnostic_only")
 
     def test_report_analysis_failure_writes_minimal_artifact_set(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
@@ -1610,20 +1602,43 @@ class RuntimeContractTest(unittest.TestCase):
         local_map = config["mapping"]["local_map"]
         self.assertGreater(local_map["absolute_map_point_guard"], 0)
         propagated = config["propagated_odometry"]
-        self.assertEqual(propagated["imu_history_duration_ns"], 1_000_000_000)
-        self.assertEqual(propagated["maximum_correction_age_ns"], 250_000_000)
+        self.assertNotIn("enabled", propagated)
+        self.assertEqual(propagated["imu_history_duration_s"], 1.0)
+        self.assertEqual(propagated["maximum_correction_age_s"], 0.25)
 
     def test_simulation_bridge_gates_are_explicit_profile_parameters(self) -> None:
         config = runner.load_config("sim.yaml")
         external = config["px4_external_odometry_bridge"]["ros__parameters"]
-        self.assertEqual(external["external_odometry"]["maximum_age_ns"], 500_000_000)
+        self.assertEqual(external["timing"]["clock_domain"], "simulation_time")
+        self.assertEqual(external["external_odometry"]["maximum_age_s"], 0.5)
         ingress = config["px4_odometry_bridge"]["ros__parameters"]
-        self.assertTrue(ingress["simulation_clock"])
+        self.assertNotIn("simulation_clock", ingress)
         self.assertEqual(ingress["reset"]["stable_samples_after_reset"], 3)
+        self.assertEqual(
+            config["fast_lio"]["ros__parameters"]["timing"]["clock_domain"],
+            "simulation_time",
+        )
         launcher = (ROOT / "tools/simulation/run_px4_mid360.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("export PX4_PARAM_SIM_GZ_EN_BARO=1", launcher)
+        self.assertIn("export PX4_PARAM_UXRCE_DDS_SYNCT=0", launcher)
+        startup = (ROOT / "tools/simulation/px4_mid360_startup.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("param show UXRCE_DDS_SYNCT", startup)
+
+    def test_planner_has_one_unknown_space_policy_owner(self) -> None:
+        planner_config = yaml.safe_load(
+            (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        planner = planner_config["planner"]
+        self.assertNotIn("frontend_in_known_free", planner)
+        self.assertNotIn("visual_process", planner)
+        astar = planner_config["astar"]
+        self.assertIn("visual_process", astar)
 
     def test_simulation_bridge_isolates_pointcloud_from_clock_and_imu(self) -> None:
         bridge_root = ROOT / "src/uav_simulation/bridge"
@@ -1772,9 +1787,10 @@ class RuntimeContractTest(unittest.TestCase):
     def test_replay_and_simulation_preserve_propagation_recovery_headroom(self) -> None:
         for config_name in ("sim.yaml", "dataset.yaml"):
             propagated = runner.load_config(config_name)["fast_lio"]["ros__parameters"]["propagated_odometry"]
-            self.assertEqual(propagated["maximum_correction_age_ns"], 250_000_000)
+            self.assertNotIn("enabled", propagated)
+            self.assertEqual(propagated["maximum_correction_age_s"], 0.25)
             self.assertGreater(
-                propagated["imu_history_duration_ns"] - propagated["maximum_correction_age_ns"],
+                propagated["imu_history_duration_s"] - propagated["maximum_correction_age_s"],
                 0,
             )
 
@@ -2655,6 +2671,24 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(planning["exp_opt_us"]["sample_count"], 3)
         self.assertEqual(planning["exp_opt_us"]["p50"], 24.0)
         self.assertEqual(planning["backup_opt_us"]["max"], 36.0)
+
+        stale = {
+            "stream": "diagnostics",
+            "payload": {"statuses": [{
+                "name": "navigation_runtime/planner",
+                "values": {
+                    "exp_diagnostics_valid": 0,
+                    "exp_frontend_us": 900,
+                    "exp_opt_us": 901,
+                    "backup_frontend_us": 902,
+                    "backup_opt_us": 903,
+                },
+            }]},
+        }
+        filtered = report._planning_timing_summary(samples + [stale])
+        self.assertEqual(filtered["exp_opt_us"]["sample_count"], 3)
+        self.assertEqual(filtered["exp_opt_us"]["max"], 34.0)
+        self.assertEqual(filtered["backup_opt_us"]["max"], 36.0)
 
     def test_navigation_mapping_summary_preserves_snapshot_identity_and_cost(self) -> None:
         values = {

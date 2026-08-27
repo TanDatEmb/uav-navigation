@@ -7,8 +7,8 @@ horizon transport.
 At each planning tick:
 
 1. A new waypoint starts `PlanFromRest`; later ticks use `ReplanOnce`.
-2. planner backend replans from a short future state (`replan_forward_dt: 0.2`) and
-   retains a bounded prefix (`receding_dis: 3.0`) so position, velocity, and
+2. planner backend replans from a short future state (`replan_forward_dt_s: 0.2`) and
+   retains a bounded prefix (`receding_distance_m: 3.0`) so position, velocity, and
    acceleration remain continuous.
 3. ROG-Map and the planner validate the committed path against the current
    inflated map. A hot-replan failure may retain a valid backup suffix.

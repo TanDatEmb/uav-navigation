@@ -43,7 +43,13 @@ TEST(CommittedBundleStore, CommitRequiresCurrentWorldAndGoal) {
   advanced.observation_stamp_ns = 2;
   ASSERT_TRUE(store.publishWorldIdentity(advanced));
   EXPECT_EQ(store.tryCommit(token, candidate), navigation_execution::CommitDecision::kWorldAdvanced);
-  ASSERT_TRUE(store.load());
+  EXPECT_FALSE(store.load());
+
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 2));
+  EXPECT_EQ(store.tryCommit({advanced, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_TRUE(store.load());
 }
 
 TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld) {
@@ -60,6 +66,23 @@ TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld)
   EXPECT_TRUE(static_cast<bool>(sampler.sample(50)));
   ASSERT_TRUE(store.setActiveGoalEpoch(8));
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50)));
+}
+
+TEST(CommandSampler, RejectsRetainedBundleFromPreviousGoal) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  // Hot-retarget may retain the physical pointer while the new goal is
+  // waiting for a fresh solve.  The sampler must not expose or relabel it.
+  ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
+  navigation_execution::CommandSampler sampler(store);
+  EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
@@ -99,6 +122,83 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   ASSERT_TRUE(expired.bundle);
   EXPECT_FALSE(expired.awaiting_activation);
   EXPECT_EQ(evaluations, 1U);
+}
+
+TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto sampled = store.load();
+  ASSERT_EQ(sampled.get(), candidate.get());
+  auto advanced = world;
+  advanced.revision = 2;
+  advanced.observation_stamp_ns = 2;
+  ASSERT_TRUE(store.publishWorldIdentity(advanced));
+
+  bool exposed = false;
+  EXPECT_FALSE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
+  EXPECT_FALSE(exposed);
+}
+
+TEST(CommittedBundleStore, ExposureRejectsRetainedBundleAfterGoalChange) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto sampled = store.load();
+  ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
+  bool exposed = false;
+  EXPECT_FALSE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
+  EXPECT_FALSE(exposed);
+}
+
+TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+  ASSERT_TRUE(store.publishWorldIdentity(next_world, candidate, true));
+  const auto recertified = store.load();
+  ASSERT_TRUE(recertified);
+  EXPECT_NE(recertified.get(), candidate.get());
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      recertified->world_identity, next_world));
+  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] {}));
+}
+
+TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
+  const auto unrelated_bundle = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 99));
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+  ASSERT_TRUE(store.publishWorldIdentity(next_world, unrelated_bundle, true));
+  EXPECT_FALSE(store.load());
 }
 
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {

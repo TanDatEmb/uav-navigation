@@ -24,6 +24,8 @@
 #include "rog_map/rog_map.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 // uav-navigation local modification: pcl::io::loadPCDFile (used only by the
 // optional disabled load_pcd_en path below) was previously pulled in
@@ -51,7 +53,6 @@ PlanningGridExport ROGMap::exportPlanningGrid() const {
   };
   std::vector<int> hash_x(static_cast<std::size_t>(sc_.map_size_i.x()));
   std::vector<int> hash_y(static_cast<std::size_t>(sc_.map_size_i.y()));
-  std::vector<int> hash_z(static_cast<std::size_t>(sc_.map_size_i.z()));
   for (int i = 0; i < sc_.map_size_i.x(); ++i) {
     hash_x[static_cast<std::size_t>(i)] =
         logical_coordinate(output.base_layout.global_min_index.x() + i, 0) *
@@ -61,31 +62,58 @@ PlanningGridExport ROGMap::exportPlanningGrid() const {
     hash_y[static_cast<std::size_t>(i)] =
         logical_coordinate(output.base_layout.global_min_index.y() + i, 1) * sc_.map_size_i.z();
   }
-  for (int i = 0; i < sc_.map_size_i.z(); ++i) {
-    hash_z[static_cast<std::size_t>(i)] =
-        logical_coordinate(output.base_layout.global_min_index.z() + i, 2);
-  }
-
   std::size_t logical_offset = 0;
   const Vec3i global_max = output.base_layout.global_min_index + sc_.map_size_i;
+  const int logical_z_start = logical_coordinate(output.base_layout.global_min_index.z(), 2);
+  const std::size_t first_z_count = static_cast<std::size_t>(
+      std::min(sc_.map_size_i.z(), sc_.map_size_i.z() - logical_z_start));
+  const std::size_t second_z_count =
+      static_cast<std::size_t>(sc_.map_size_i.z()) - first_z_count;
   for (int x = output.base_layout.global_min_index.x(), xi = 0; x < global_max.x(); ++x, ++xi) {
     for (int y = output.base_layout.global_min_index.y(), yi = 0; y < global_max.y(); ++y, ++yi) {
       const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
                           hash_y[static_cast<std::size_t>(yi)];
-      for (int z = output.base_layout.global_min_index.z(), zi = 0; z < global_max.z(); ++z, ++zi) {
-        // Export the public planning semantics, including the index-domain
-        // virtual-plane policy, rather than only the underlying probability byte.
-        GridType state = GridType::OCCUPIED;
-        if (!cfg_.virtual_ground_ceiling_en ||
-            (z > sc_.virtual_ground_height_id_g &&
-             z < sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
-          const float probability = occupancy_buffer_[
-              hash_xy + hash_z[static_cast<std::size_t>(zi)]];
-          state = isKnownFree(probability)
-                      ? GridType::KNOWN_FREE
-                      : (isOccupied(probability) ? GridType::OCCUPIED : GridType::UNKNOWN);
+      const auto emit_z_segment = [&](const int source_z_start,
+                                      const std::size_t count,
+                                      const int global_z_start) {
+        if (!cfg_.virtual_ground_ceiling_en) {
+          const auto source_begin = occupancy_buffer_.begin() + hash_xy + source_z_start;
+          auto destination_begin = output.base_state.begin() +
+              static_cast<std::ptrdiff_t>(logical_offset);
+          std::transform(source_begin, source_begin +
+                             static_cast<std::ptrdiff_t>(count), destination_begin,
+                         [this](const float probability) {
+                           const auto state = isKnownFree(probability)
+                               ? GridType::KNOWN_FREE
+                               : (isOccupied(probability) ? GridType::OCCUPIED
+                                                           : GridType::UNKNOWN);
+                           return static_cast<std::uint8_t>(state);
+                         });
+          logical_offset += count;
+          return;
         }
-        output.base_state[logical_offset++] = static_cast<std::uint8_t>(state);
+        for (std::size_t index = 0; index < count; ++index) {
+          // Export the public planning semantics, including the index-domain
+          // virtual-plane policy, rather than only the underlying probability byte.
+          GridType state = GridType::OCCUPIED;
+          const int global_z = global_z_start + static_cast<int>(index);
+          if (!cfg_.virtual_ground_ceiling_en ||
+              (global_z > sc_.virtual_ground_height_id_g &&
+               global_z < sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
+            const float probability = occupancy_buffer_[
+                hash_xy + source_z_start + static_cast<int>(index)];
+            state = isKnownFree(probability)
+                        ? GridType::KNOWN_FREE
+                        : (isOccupied(probability) ? GridType::OCCUPIED : GridType::UNKNOWN);
+          }
+          output.base_state[logical_offset++] = static_cast<std::uint8_t>(state);
+        }
+      };
+      emit_z_segment(logical_z_start, first_z_count, output.base_layout.global_min_index.z());
+      if (second_z_count != 0U) {
+        emit_z_segment(0, second_z_count,
+                       output.base_layout.global_min_index.z() +
+                           static_cast<int>(first_z_count));
       }
     }
   }
@@ -120,12 +148,56 @@ PlanningGridExport ROGMap::exportPlanningGrid() const {
   return output;
 }
 
+PlanningGridPatchExport ROGMap::exportPlanningGridRegion(
+    const Vec3f& region_min, const Vec3f& region_max) const {
+  PlanningGridPatchExport output;
+  output.base_layout.resolution_m = sc_.resolution;
+  output.base_layout.local_center_m = local_map_origin_d_;
+  output.base_layout.local_size_m = sc_.map_size_i.cast<double>() * sc_.resolution;
+  if (!region_min.allFinite() || !region_max.allFinite() ||
+      (region_max.array() < region_min.array()).any()) {
+    return output;
+  }
+
+  Vec3i requested_min;
+  Vec3i requested_max;
+  posToGlobalIndex(region_min, requested_min);
+  posToGlobalIndex(region_max, requested_max);
+  const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+  const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+  const Vec3i patch_min = requested_min.cwiseMax(map_min);
+  const Vec3i patch_max = requested_max.cwiseMin(map_max);
+  if ((patch_max.array() < patch_min.array()).any()) return output;
+
+  output.base_layout.global_min_index = patch_min;
+  output.base_layout.dimensions = patch_max - patch_min + Vec3i::Ones();
+  std::size_t count = 1U;
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto dimension = static_cast<std::size_t>(output.base_layout.dimensions[axis]);
+    if (count > std::numeric_limits<std::size_t>::max() / dimension) return {};
+    count *= dimension;
+  }
+  output.base_state.resize(count);
+
+  std::size_t offset = 0U;
+  for (std::int64_t x = patch_min.x(); x <= patch_max.x(); ++x) {
+    for (std::int64_t y = patch_min.y(); y <= patch_max.y(); ++y) {
+      for (std::int64_t z = patch_min.z(); z <= patch_max.z(); ++z) {
+        Vec3i index{static_cast<int>(x), static_cast<int>(y), static_cast<int>(z)};
+        output.base_state[offset++] = static_cast<std::uint8_t>(getGridType(index));
+      }
+    }
+  }
+  output.inflated = inf_map_->exportPlanningGridRegion(region_min, region_max);
+  return output;
+}
+
 void ROGMap::init() {
   initProbMap();
   planning_nearest_offsets_ =
       std::make_shared<const std::vector<Vec3i>>(cfg_.spherical_neighbor);
 
-  map_info_log_file_.open(DEBUG_FILE_DIR("rm_info_log.csv"), std::ios::out | std::ios::trunc);
+  map_info_log_file_.open(NAVIGATION_MAP_DEBUG_FILE_DIR("rm_info_log.csv"), std::ios::out | std::ios::trunc);
 
   robot_state_.p = cfg_.fix_map_origin;
 
@@ -227,18 +299,16 @@ bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& en
   } else {
     raycaster.setResolution(cfg_.resolution);
   }
-  Vec3f ray_pt;
-  raycaster.setInput(start_pt, end_pt);
-  while (raycaster.step(ray_pt)) {
-    if (!insideLocalMap(ray_pt)) return false;
+  const auto point_is_traversable = [this, use_inf_map, use_unk_as_occ](const Vec3f& point) {
+    if (!insideLocalMap(point)) return false;
     if (!use_unk_as_occ) {
       // allow both unk and free
       if (use_inf_map) {
-        if (isOccupiedInflate(ray_pt)) {
+        if (isOccupiedInflate(point)) {
           return false;
         }
       } else {
-        if (isOccupied(ray_pt)) {
+        if (isOccupied(point)) {
           return false;
         }
       }
@@ -246,17 +316,28 @@ bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& en
       // only allow known free
       if (use_inf_map) {
         if (!cfg_.unk_inflation_en) {
-          if (!isKnownFree(ray_pt) || isOccupiedInflate(ray_pt)) return false;
-        } else if (isUnknownInflate(ray_pt) || isOccupiedInflate(ray_pt)) {
+          if (!isKnownFree(point) || isOccupiedInflate(point)) return false;
+        } else if (isUnknownInflate(point) || isOccupiedInflate(point)) {
           return false;
         }
       } else {
-        if (!isKnownFree(ray_pt)) {
+        if (!isKnownFree(point)) {
           return false;
         }
       }
     }
+    return true;
+  };
+  if (!point_is_traversable(start_pt)) return false;
+  raycaster.setInput(start_pt, end_pt);
+  Vec3f ray_pt;
+  while (raycaster.step(ray_pt)) {
+    if (!point_is_traversable(ray_pt)) return false;
   }
+  // RayCaster enumerates cells crossed before the endpoint cell and returns
+  // false when its cursor reaches the endpoint. Always classify both metric
+  // endpoints so same-voxel segments and endpoint occupancy share one rule.
+  if (!point_is_traversable(end_pt)) return false;
   return true;
 }
 
