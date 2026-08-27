@@ -1171,6 +1171,19 @@ TEST(PlannerTrajectory, GuideTimeAllocationUsesPointAlignedTravelledDistance) {
   }
 }
 
+TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_Vec3f short_path{
+      start, navigation_math::Vec3f(1.0, 0.0, 0.0)};
+  geometry_utils::GuideTimeAllocation allocation;
+  ASSERT_TRUE(geometry_utils::allocateGuideElapsedTimes(
+      2.0, 3.0, 2.4, start, short_path, allocation));
+  ASSERT_EQ(allocation.points.size(), 1U);
+  EXPECT_NEAR(allocation.elapsed_s.back(), 0.5367, 0.005);
+  EXPECT_NEAR(allocation.terminal_velocity_mps, 1.3266, 0.005);
+  EXPECT_GE(allocation.terminal_velocity_mps, 0.0);
+}
+
 TEST(PlannerTrajectory, GuideTimeAllocationRejectsDegenerateOrInvalidInputs) {
   const navigation_math::Vec3f start(0.0, 0.0, 0.0);
   const navigation_math::vec_E<navigation_math::Vec3f> duplicate_path{start, start};

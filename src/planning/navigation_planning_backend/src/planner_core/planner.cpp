@@ -1405,7 +1405,35 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk);
             if (terminal_velocity.has_value()) {
-                pos_fina_state.col(1) = *terminal_velocity;
+                Eigen::Vector3d guide_tangent = Eigen::Vector3d::Zero();
+                for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                    const Eigen::Vector3d delta =
+                        (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
+                    if (delta.norm() > 1.0e-6) {
+                        guide_tangent = delta.normalized();
+                        break;
+                    }
+                }
+                const double incoming_speed_along_path =
+                    guide_tangent.dot(pos_init_state.col(1).cast<double>());
+                const double path_terminal_speed_cap = terminalSpeedCapForPath(
+                    geometry_utils::computePathLength(guide_path),
+                    guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                         : guide_stamp.back(),
+                    incoming_speed_along_path,
+                    terminal_velocity_cap);
+                if (guide_tangent.norm() > 0.5 &&
+                    path_terminal_speed_cap + 1.0e-6 < terminal_velocity->norm()) {
+                    // The current waypoint is too close for the requested
+                    // outgoing corner velocity. Keep the incoming leg and
+                    // let the next goal transition own the turn; forcing the
+                    // corner here creates an impossible P/V boundary and
+                    // repeated optimizer failure.
+                    pos_fina_state.col(1) = guide_tangent * std::min(
+                        path_terminal_speed_cap, terminal_velocity_cap);
+                } else {
+                    pos_fina_state.col(1) = *terminal_velocity;
+                }
             }
         }
         if (!connected_goal && guide_path.size() >= 2U) {

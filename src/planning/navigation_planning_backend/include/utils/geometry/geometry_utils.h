@@ -89,8 +89,23 @@ namespace geometry_utils {
 
         // Case 1: Only acceleration to v0
         if (total_dis <= dis_to_v0) {
-            t = calc_time(a_max, cur_dis);
-            vel = a_max * t;
+            // The vehicle is already moving faster than the distance can
+            // support under the declared acceleration envelope.  Decelerate
+            // from v0; the old zero-speed formula could assign a duration
+            // and terminal speed that did not satisfy the initial boundary.
+            const double discriminant = v0 * v0 - 2.0 * a_max * cur_dis;
+            const double scale = std::max({1.0, std::abs(v0 * v0),
+                                           std::abs(2.0 * a_max * cur_dis)});
+            const double bounded_discriminant =
+                discriminant < 0.0 && discriminant > -1.0e-12 * scale
+                    ? 0.0 : discriminant;
+            if (!std::isfinite(bounded_discriminant) || bounded_discriminant < 0.0) {
+                t = std::numeric_limits<double>::quiet_NaN();
+                vel = std::numeric_limits<double>::quiet_NaN();
+                return;
+            }
+            t = (v0 - std::sqrt(bounded_discriminant)) / a_max;
+            vel = v0 - a_max * t;
             return;
         }
 
@@ -142,6 +157,7 @@ namespace geometry_utils {
         vec_Vec3f points;
         std::vector<double> elapsed_s;
         double path_length_m{0.0};
+        double terminal_velocity_mps{0.0};
     };
 
     inline bool allocateGuideElapsedTimes(const double a_max,
@@ -201,7 +217,19 @@ namespace geometry_utils {
             allocation.elapsed_s.push_back(elapsed_s);
             previous_elapsed_s = elapsed_s;
         }
-        return allocation.elapsed_s.size() == allocation.points.size();
+        if (allocation.elapsed_s.size() != allocation.points.size()) return false;
+
+        double terminal_elapsed_s = std::numeric_limits<double>::quiet_NaN();
+        double terminal_velocity_mps = std::numeric_limits<double>::quiet_NaN();
+        simplePMTimeAllocator(a_max, v_max, initial_speed,
+                              allocation.path_length_m, allocation.path_length_m,
+                              terminal_elapsed_s, terminal_velocity_mps);
+        if (!std::isfinite(terminal_elapsed_s) ||
+            !std::isfinite(terminal_velocity_mps) || terminal_velocity_mps < 0.0) {
+            return false;
+        }
+        allocation.terminal_velocity_mps = terminal_velocity_mps;
+        return true;
     }
 
     ///============ 2023-06-30: add by yunfan ============///

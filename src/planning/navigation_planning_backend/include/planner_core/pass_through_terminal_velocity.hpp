@@ -28,6 +28,26 @@ inline double passThroughMaximumVelocityChange(
   return std::isfinite(maximum_delta) ? std::max(0.0, maximum_delta) : 0.0;
 }
 
+// Upper bound for a terminal speed that can be reached over a guide path
+// with a fixed time seed when the incoming speed is projected on its tangent.
+// This is a parameterization guard, not a dynamic-limit relaxation; the
+// optimizer and continuous certificate remain authoritative.
+inline double terminalSpeedCapForPath(
+    const double path_length_m,
+    const double duration_s,
+    const double incoming_speed_along_path_mps,
+    const double maximum_velocity_mps) noexcept {
+  if (!std::isfinite(path_length_m) || path_length_m <= 0.0 ||
+      !std::isfinite(duration_s) || duration_s <= 0.0 ||
+      !std::isfinite(incoming_speed_along_path_mps) ||
+      !std::isfinite(maximum_velocity_mps) || maximum_velocity_mps <= 0.0) {
+    return 0.0;
+  }
+  const double cap = 2.0 * path_length_m / duration_s -
+      incoming_speed_along_path_mps;
+  return std::clamp(cap, 0.0, maximum_velocity_mps);
+}
+
 // Compute a bounded outgoing velocity for a pass-through waypoint. The
 // direction comes from the mission-owned next target; the planner's dynamic
 // certificates still validate the complete polynomial afterwards.

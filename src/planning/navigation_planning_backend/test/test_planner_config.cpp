@@ -185,6 +185,15 @@ TEST(PlannerPassThrough, FrontierRejectsDegenerateGuideTail) {
       Eigen::Vector3d{3.0, 0.0, 0.0}, 3.0, 5.0, 2.0, 4.0, 0.2));
 }
 
+TEST(PlannerPassThrough, TerminalSpeedCapRejectsImpossibleShortBoundary) {
+  EXPECT_NEAR(
+      navigation_planning_backend::terminalSpeedCapForPath(1.0, 1.0, 2.4, 2.94),
+      0.0, 1.0e-12);
+  EXPECT_NEAR(
+      navigation_planning_backend::terminalSpeedCapForPath(20.0, 7.0, 2.4, 2.94),
+      2.94, 1.0e-12);
+}
+
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
