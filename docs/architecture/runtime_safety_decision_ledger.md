@@ -6718,6 +6718,40 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Rebase an expired pass-through transition on measured state
+
+- **Owner:** Navigation runtime and planning maintainers.
+- **Scope:** when a new pass-through waypoint is accepted while the previous
+  nominal command has no more than one configured planning-timer interval
+  remaining, the runtime invokes the existing measured-state `PlanFromRest`
+  path instead of hot-stitching through the previous command endpoint. The
+  planning interval is derived from the runtime timer; no new safety threshold
+  is introduced.
+- **Safety impact:** preserves the existing PVA state from propagated odometry
+  and retains the current atomic world/goal/lease/certificate gates. It avoids
+  an optimizer request whose historical endpoint is already expired. The old
+  command may remain exposed only under the existing hot-transition store and
+  publication contracts; a failed measured-state candidate still fails closed.
+  No UNKNOWN allowance, acceptance-radius change, dynamic-limit change, or
+  emergency-path bypass is added.
+- **Reason/evidence:** the 2026-08-28 structured run accepted waypoint 1, then
+  the old command ended at that waypoint while the new waypoint-2 transition
+  entered `ReplanOnce`; the first new-goal solve failed at `main_minco` with
+  `committed_end=(20,5,3)` and the mission entered a safety stop. This change
+  addresses that handoff boundary only; it does not claim to solve the
+  separate strict `KNOWN_FREE` map-evidence gap.
+- **Evidence required:** `test_planner_fsm` boundary cases, sourced runtime
+  build and PX4 external-mode contract tests, then repeated 3-column SITL
+  checking transition result, command gap, P/V/A continuity, waypoint order,
+  strict backup certificate, altitude, clearance, and p50/p95/p99 latency.
+- **Removal/review condition:** revert if repeated representative evidence
+  shows a larger command gap, anchor discontinuity, waypoint regression,
+  clearance regression, or worse failure behavior. Replace only after an
+  explicit piecewise route handoff owns this boundary.
+- **Verification:** `make build`; focused runtime FSM tests; PX4 external-mode
+  tests; repeated `MAP_PROFILE=long_three_pillars_multiwaypoint
+  SPEED_CAP_MPS=3 make external-mode-check`.
+
 ### 2026-08-28 - Make the active pass-through waypoint the trajectory boundary
 
 - **Owner:** Navigation planning and PX4 mission-controller maintainers.

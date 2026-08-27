@@ -1521,7 +1521,19 @@ void NavigationRuntimeNode::runCycle() {
   // planner backend itself owns the committed main/backup timing; the ROS adapter must
   // not add a second horizon-expiry or trajectory-slicing policy.
   const bool plan_from_rest = new_goal || restart_from_rest;
-  const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest;
+  const auto transition_bundle = command_bundle_store_.load();
+  const double transition_elapsed_s = transition_bundle
+      ? now().seconds() - transition_bundle->start_wall_time_s
+      : std::numeric_limits<double>::quiet_NaN();
+  const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
+  const bool measured_state_goal_transition = hotRetargetNeedsMeasuredStatePlan(
+      hot_goal_transition, planner_command_available_.load(std::memory_order_acquire),
+      transition_elapsed_s,
+      transition_bundle ? transition_bundle->duration_s
+                        : std::numeric_limits<double>::quiet_NaN(),
+      planning_interval_s);
+  const bool plan_from_rest_with_transition = plan_from_rest || measured_state_goal_transition;
+  const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest_with_transition;
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
@@ -1532,7 +1544,7 @@ void NavigationRuntimeNode::runCycle() {
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
   }
-  if (!plan_from_rest && !replan_for_new_goal && skip_replan_once_) {
+  if (!plan_from_rest_with_transition && !replan_for_new_goal && skip_replan_once_) {
     skip_replan_once_ = false;
     return;
   }
@@ -1571,7 +1583,7 @@ void NavigationRuntimeNode::runCycle() {
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
   try {
-    result = plan_from_rest
+    result = plan_from_rest_with_transition
                  ? planner_->planFromRest(target, 0.0, true)
                  : planner_->replanOnce(target, 0.0, replan_for_new_goal);
   } catch (const std::exception& error) {
@@ -1619,7 +1631,7 @@ void NavigationRuntimeNode::runCycle() {
   // after the execution commit ACK, so it is not evidence of a ready command.
   const bool solve_committed_new_generation = planner_->hasStagedCommandCandidate();
   const auto disposition = classifyPlannerResult(
-      result, plan_from_rest, planner_command_available_.load(),
+      result, plan_from_rest_with_transition, planner_command_available_.load(),
       solve_committed_new_generation);
   if (disposition != PlannerResultDisposition::CommandReady) {
     // A staged candidate is private planner state until the execution store
@@ -1967,7 +1979,7 @@ void NavigationRuntimeNode::runCycle() {
                   static_cast<long>(committed_bundle->valid_until_ns),
                   target.x(), target.y(), target.z());
     }
-    if (plan_from_rest) skip_replan_once_ = true;
+    if (plan_from_rest_with_transition) skip_replan_once_ = true;
     std::lock_guard<std::mutex> lock(input_mutex_);
     plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
@@ -1978,8 +1990,8 @@ void NavigationRuntimeNode::runCycle() {
         active_goal_->waypoint_index == goal->waypoint_index &&
         active_goal_->request_id == goal->request_id) {
       if (new_goal) new_goal_ = false;
-      if (plan_from_rest) hot_goal_transition_ = false;
-      if (replan_for_new_goal) hot_goal_transition_ = false;
+      if (plan_from_rest_with_transition) hot_goal_transition_ = false;
+      if (replan_for_new_goal || measured_state_goal_transition) hot_goal_transition_ = false;
       if (restart_from_rest) restart_from_rest_ = false;
     }
   }
@@ -2066,7 +2078,8 @@ void NavigationRuntimeNode::runCycle() {
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
                 static_cast<double>(execution_age_ns) * 1e-6,
-                plan_from_rest ? "PlanFromRest" : "ReplanOnce", static_cast<int>(result),
+                plan_from_rest_with_transition ? "PlanFromRest" : "ReplanOnce",
+                static_cast<int>(result),
                 replan_return_code, commit_decision, solve_stage,
                 planner_diagnostics.solve_stage_name.c_str(), planner_elapsed_ms,
                 solve_deadline_exceeded, target.x(), target.y(),

@@ -203,6 +203,15 @@ TEST(PlannerFsm, PassThroughHotRetargetsOnlyFromNominalCommand) {
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
 }
 
+TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, 1.0, 1.1, 0.1));
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, 1.2, 1.1, 0.1));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, 0.8, 1.1, 0.1));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(false, true, 1.2, 1.1, 0.1));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, false, 1.2, 1.1, 0.1));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, 1.2, 1.1, 0.0));
+}
+
 TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
   const double elapsed_s = 2.5;
   const double original_backup_start_s = 2.0;

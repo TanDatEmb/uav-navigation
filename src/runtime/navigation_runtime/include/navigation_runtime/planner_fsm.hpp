@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 #include <navigation_planning/planner_status.hpp>
@@ -14,6 +15,29 @@ inline bool canHotRetargetAtWaypointTransition(
     bool command_available, bool planner_failure_latched, bool safety_suffix_active) {
   return !same_logical_goal && previous_goal_was_pass_through && command_available &&
          !planner_failure_latched && !safety_suffix_active;
+}
+
+// A pass-through goal transition may arrive while the previous command is
+// already at its terminal boundary. Hot-replanning from that historical
+// command would ask the optimizer to stitch through an endpoint that has no
+// remaining temporal support. Rebase on the newest measured PVA state when
+// less than one planning interval remains; the interval is supplied by the
+// runtime timer rather than introduced as a second safety threshold.
+inline bool hotRetargetNeedsMeasuredStatePlan(
+    bool hot_goal_transition, bool command_available,
+    double command_elapsed_s, double command_duration_s,
+    double planning_interval_s) noexcept {
+  if (!hot_goal_transition || !command_available ||
+      !std::isfinite(command_elapsed_s) || !std::isfinite(command_duration_s) ||
+      !std::isfinite(planning_interval_s) || planning_interval_s <= 0.0 ||
+      command_duration_s <= 0.0) {
+    return false;
+  }
+  const double remaining_s = command_duration_s - command_elapsed_s;
+  // The command clock is reconstructed from nanosecond timestamps and stored
+  // in seconds for the backend, so an exact one-interval boundary can differ
+  // by a few representable floating-point units.
+  return remaining_s <= planning_interval_s + 1.0e-9;
 }
 
 enum class PlannerResultDisposition {
