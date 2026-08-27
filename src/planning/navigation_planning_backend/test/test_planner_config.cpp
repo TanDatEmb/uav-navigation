@@ -154,6 +154,37 @@ TEST(PlannerPassThrough, LimitsOrthogonalVelocityChangeByTransitionTime) {
   EXPECT_LE(terminal_velocity->norm(), 5.0);
 }
 
+TEST(PlannerPassThrough, FrontierKeepsCurrentGuideTangent) {
+  const auto terminal_velocity =
+      navigation_planning_backend::frontierContinuationVelocity(
+          Eigen::Vector3d{10.0, 0.0, 0.0},
+          Eigen::Vector3d{5.0, 0.0, 0.0},
+          Eigen::Vector3d{3.0, 0.0, 0.0},
+          3.0, 5.0, 2.0, 4.0, 0.2);
+  ASSERT_TRUE(terminal_velocity.has_value());
+  EXPECT_NEAR(terminal_velocity->x(), 3.0, 1.0e-12);
+  EXPECT_DOUBLE_EQ(terminal_velocity->y(), 0.0);
+  EXPECT_DOUBLE_EQ(terminal_velocity->z(), 0.0);
+}
+
+TEST(PlannerPassThrough, FrontierDoesNotTurnTowardFutureCorner) {
+  const auto terminal_velocity =
+      navigation_planning_backend::frontierContinuationVelocity(
+          Eigen::Vector3d{10.0, 0.0, 0.0},
+          Eigen::Vector3d{5.0, 0.0, 0.0},
+          Eigen::Vector3d{3.0, 0.0, 0.0},
+          3.0, 5.0, 2.0, 4.0, 0.2);
+  ASSERT_TRUE(terminal_velocity.has_value());
+  EXPECT_GT(terminal_velocity->x(), 0.0);
+  EXPECT_DOUBLE_EQ(terminal_velocity->y(), 0.0);
+}
+
+TEST(PlannerPassThrough, FrontierRejectsDegenerateGuideTail) {
+  EXPECT_FALSE(navigation_planning_backend::frontierContinuationVelocity(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d{3.0, 0.0, 0.0}, 3.0, 5.0, 2.0, 4.0, 0.2));
+}
+
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);

@@ -1385,7 +1385,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (cfg_.goal_vel_en && (gi_.goal_p - solve_state_.p).norm() > cfg_.planning_horizon_m / 2) {
             pos_fina_state.col(1) = (gi_.goal_p - solve_state_.p).normalized() * cfg_.exp_traj_cfg.max_vel / 2;
         }
-        if (pass_through_next_target_.has_value()) {
+        if (connected_goal && pass_through_next_target_.has_value()) {
             // Keep the outgoing tangent just inside the optimizer's declared
             // interior search target. The mission/product V/A/J limits below
             // remain unchanged; this only avoids asking a short MINCO guide
@@ -1404,6 +1404,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     terminal_velocity_cap,
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk);
+            if (terminal_velocity.has_value()) {
+                pos_fina_state.col(1) = *terminal_velocity;
+            }
+        }
+        if (!connected_goal && guide_path.size() >= 2U) {
+            // A frontier endpoint must continue along the current guide leg.
+            // Applying the next waypoint tangent here would turn toward a
+            // corner before the active waypoint is reached; leaving the
+            // endpoint at rest would create the stop/restart jitter that the
+            // receding planner is intended to avoid.
+            const double terminal_velocity_cap =
+                    cfg_.exp_traj_cfg.max_vel *
+                    cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
+            const auto terminal_velocity = frontierContinuationVelocity(
+                    guide_path.back().cast<double>(),
+                    guide_path[guide_path.size() - 2U].cast<double>(),
+                    pos_init_state.col(1).cast<double>(),
+                    guide_path_end_vel,
+                    terminal_velocity_cap,
+                    cfg_.exp_traj_cfg.max_acc,
+                    cfg_.exp_traj_cfg.max_jerk,
+                    guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                         : guide_stamp.back());
             if (terminal_velocity.has_value()) {
                 pos_fina_state.col(1) = *terminal_velocity;
             }

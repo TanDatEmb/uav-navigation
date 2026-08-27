@@ -80,4 +80,55 @@ inline std::optional<Eigen::Vector3d> passThroughTerminalVelocity(
   return incoming_velocity + delta * (maximum_delta / delta_norm);
 }
 
+// A guide endpoint that stops at a sensing/planning frontier is not a mission
+// waypoint.  Keep its terminal velocity on the guide tangent so a hot replan
+// can renew the command without manufacturing a stop before the next map
+// update.  The dynamic envelope still certifies the complete trajectory; this
+// helper only chooses a bounded continuity state for the optimizer.
+inline std::optional<Eigen::Vector3d> frontierContinuationVelocity(
+    const Eigen::Vector3d& endpoint,
+    const Eigen::Vector3d& previous_guide_point,
+    const Eigen::Vector3d& incoming_velocity,
+    const double preferred_speed,
+    const double maximum_velocity,
+    const double maximum_acceleration,
+    const double maximum_jerk,
+    const double transition_duration_s) noexcept {
+  if (!endpoint.allFinite() || !previous_guide_point.allFinite() ||
+      !incoming_velocity.allFinite() ||
+      !std::isfinite(preferred_speed) || preferred_speed < 0.0 ||
+      !std::isfinite(maximum_velocity) || maximum_velocity <= 0.0 ||
+      !std::isfinite(maximum_acceleration) || maximum_acceleration <= 0.0 ||
+      !std::isfinite(maximum_jerk) || maximum_jerk <= 0.0) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d guide_delta = endpoint - previous_guide_point;
+  const double guide_length = guide_delta.norm();
+  if (!std::isfinite(guide_length) || guide_length <= 1.0e-6) {
+    return std::nullopt;
+  }
+
+  const double incoming_speed = incoming_velocity.norm();
+  const double requested_speed = preferred_speed > 1.0e-6
+      ? preferred_speed
+      : (std::isfinite(incoming_speed) ? incoming_speed : 0.0);
+  const double speed = std::min(maximum_velocity, requested_speed);
+  if (!std::isfinite(speed) || speed <= 1.0e-6) {
+    return std::nullopt;
+  }
+
+  const Eigen::Vector3d desired = guide_delta * (speed / guide_length);
+  const Eigen::Vector3d delta = desired - incoming_velocity;
+  const double delta_norm = delta.norm();
+  if (!std::isfinite(delta_norm) || delta_norm <= 1.0e-9) {
+    return desired;
+  }
+  const double maximum_delta = passThroughMaximumVelocityChange(
+      transition_duration_s, maximum_acceleration, maximum_jerk);
+  if (maximum_delta <= 0.0 || delta_norm <= maximum_delta) {
+    return desired;
+  }
+  return incoming_velocity + delta * (maximum_delta / delta_norm);
+}
+
 }  // namespace navigation_planning_backend
