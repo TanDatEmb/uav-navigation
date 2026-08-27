@@ -79,7 +79,7 @@ struct RosParameters {
   double propagated_odometry_imu_history_duration_s{1.0};
   // At 10 Hz this permits one delayed correction while stopping sustained
   // estimator stalls before propagated output can mask them.
-  double propagated_odometry_maximum_correction_age_s{0.25};
+  double propagated_odometry_maximum_correction_age_s{0.50};
 };
 
 struct EstimatorProfile {

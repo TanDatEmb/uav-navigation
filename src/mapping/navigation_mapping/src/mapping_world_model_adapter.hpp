@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_world_model/continuous_clearance.hpp>
 #include <rog_map/rog_map.h>
 
 namespace navigation_mapping::internal {
@@ -151,9 +152,14 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       navigation_world_model::GridLayer layer,
       navigation_world_model::UnknownPolicy unknown_policy) const noexcept override {
     if (!start.allFinite() || !end.allFinite()) return false;
-    return map_->isLineFree(
+    if (!map_->isLineFree(
         start, end, layer == navigation_world_model::GridLayer::kInflated,
-        unknown_policy == navigation_world_model::UnknownPolicy::kRequireKnownFree);
+        unknown_policy == navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+      return false;
+    }
+    if (layer != navigation_world_model::GridLayer::kInflated) return true;
+    return navigation_world_model::observedOccupiedTubeIsClear(
+        *this, start, end, geometry().occupied_inflation_radius_m);
   }
 
   [[nodiscard]] navigation_world_model::AxisAlignedBox clampToLocalBounds(

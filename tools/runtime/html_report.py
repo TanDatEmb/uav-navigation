@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import bisect
 from pathlib import Path
 import statistics
 import xml.etree.ElementTree as ET
@@ -318,14 +319,32 @@ def _trajectory_records(session: Path) -> list[dict[str, Any]]:
                 records.append(record)
     except OSError:
         pass
-    if records:
-        return records
-    if isinstance(scenario, dict):
+    if not records and isinstance(scenario, dict):
         history = scenario.get("trajectory_history", [])
         records = history if isinstance(history, list) and history else scenario.get(
             "trajectory_records", []
         )
-    return [item for item in records if isinstance(item, dict) and item.get("position_points")]
+    sanitized: list[dict[str, Any]] = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        record = dict(item)
+        points = record.get("position_points")
+        if not isinstance(points, list):
+            continue
+        # Legacy artifacts appended the generation-zero REJECTED hold sample
+        # to the valid path.  Remove only that terminal diagnostic point while
+        # retaining the executable prefix for historical report rendering.
+        status = int(_finite_number(record.get("trajectory_status")) or 0)
+        generation = int(_finite_number(record.get("trajectory_generation")) or 0)
+        if status == 4 and generation == 0 and points:
+            record["position_points"] = points[:-1]
+            velocities = record.get("velocity_points")
+            if isinstance(velocities, list):
+                record["velocity_points"] = velocities[:-1]
+        if record.get("position_points"):
+            sanitized.append(record)
+    return sanitized
 
 
 def _sample_time_seconds(item: dict[str, Any], payload: dict[str, Any] | None = None) -> float | None:
@@ -391,6 +410,8 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
     waypoint_events: list[dict[str, Any]] = []
     mode_events: list[dict[str, Any]] = []
     vehicle_events: list[dict[str, Any]] = []
+    planner_path_snapshots: list[dict[str, Any]] = []
+    obstacle_observations: list[dict[str, Any]] = []
     current_goal: dict[str, Any] = {}
 
     samples_path = session / "samples.jsonl"
@@ -447,6 +468,17 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                         )
                         entry["count"] += 1
                         entry["latest"] = dict(values)
+                        if name == "navigation_runtime/planner_path":
+                            raw_snapshot = values.get("planner_path_snapshot_json")
+                            if isinstance(raw_snapshot, str):
+                                try:
+                                    snapshot = json.loads(raw_snapshot)
+                                except ValueError:
+                                    snapshot = None
+                                if isinstance(snapshot, dict):
+                                    snapshot = dict(snapshot)
+                                    snapshot["t"] = timestamp
+                                    planner_path_snapshots.append(snapshot)
                         for key, value in values.items():
                             if not planner_timing_is_current(values, key):
                                 continue
@@ -498,9 +530,14 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                         "trajectory_status": payload.get("trajectory_status"),
                         "trajectory_generation": payload.get("trajectory_generation"),
                         "trajectory_time_s": payload.get("trajectory_time_s"),
+                        "executable": payload.get("executable"),
                         "waypoint_index": current_goal.get("waypoint_index"),
                         "mission_id": current_goal.get("mission_id"),
                     })
+                elif kind == "lidar_observation":
+                    observation = dict(payload)
+                    observation["t"] = timestamp
+                    obstacle_observations.append(observation)
 
     stream_summary: dict[str, Any] = {}
     for name, records in stream_records.items():
@@ -603,6 +640,17 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
             grouped.setdefault(key, []).append(item)
         for (mission_id, waypoint_index, flag, identity), records in grouped.items():
             records.sort(key=lambda item: item["t"])
+            executable_records = [
+                item for item in records
+                if item.get("executable") is True or (
+                    item.get("executable") is None and
+                    int(_finite_number(item.get("trajectory_status")) or 0) != 4
+                )
+            ]
+            if not executable_records:
+                # A rejected/terminal diagnostic sample is evidence of the
+                # failure boundary, not a path that PX4 could execute.
+                continue
             trajectory_paths.append({
                 "mission_id": mission_id,
                 "waypoint_index": waypoint_index,
@@ -610,12 +658,12 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                 "trajectory_identity": identity[0],
                 "trajectory_identity_value": identity[1],
                 "trajectory_generation": records[-1].get("trajectory_generation"),
-                "trajectory_status": records[-1].get("trajectory_status"),
-                "t_start": records[0]["t"],
-                "t_end": records[-1]["t"],
-                "points": [item["position"] for item in records],
-                "velocity_points": [item["velocity"] for item in records if item.get("velocity") is not None],
-                "count": len(records),
+                "trajectory_status": executable_records[-1].get("trajectory_status"),
+                "t_start": executable_records[0]["t"],
+                "t_end": executable_records[-1]["t"],
+                "points": [item["position"] for item in executable_records],
+                "velocity_points": [item["velocity"] for item in executable_records if item.get("velocity") is not None],
+                "count": len(executable_records),
             })
 
     # NavigationCommand carries the planner's selected role at every accepted
@@ -630,8 +678,13 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
     )
     current: dict[str, Any] | None = None
     for item in ordered_pva:
+        if item.get("executable") is False or int(_finite_number(item.get("trajectory_status")) or 0) == 4:
+            continue
         flag = int(_finite_number(item.get("trajectory_flag")) or 0)
-        role = {1: "normal", 2: "safety"}.get(flag, "unknown")
+        # NavigationCommand.role is CandidateTrajectoryRole: 0 = MAIN,
+        # 1 = BACKUP. Keep this mapping aligned with the message contract so
+        # report shading does not label a backup suffix as normal flight.
+        role = {0: "normal", 1: "safety"}.get(flag, "unknown")
         timestamp = float(item["t"])
         if current is None:
             current = {"state": role, "flag": flag, "t_start": timestamp, "t_end": timestamp}
@@ -655,6 +708,8 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         "mode_events": mode_events,
         "vehicle_events": vehicle_events,
         "trajectory_paths": trajectory_paths,
+        "planner_path_snapshots": _sampled_dicts(planner_path_snapshots, limit),
+        "obstacle_observations": _sampled_dicts(obstacle_observations, min(limit, 240)),
         "state_intervals": state_intervals,
         "coordinate_contract": _DISPLAY_FRAME_CONTRACT,
     }
@@ -944,12 +999,175 @@ def _trajectory_smoothness(
     }
 
 
+def _velocity_tracking_summary(
+    ground_truth: list[dict[str, Any]], pva: list[dict[str, Any]],
+    match_window_s: float = 0.15,
+) -> dict[str, Any]:
+    """Pair executable planner commands with independent ground truth.
+
+    Rejected commands and terminal hold diagnostics are excluded.  This keeps
+    takeoff/safety handover speed from being reported as planner tracking
+    error when no executable trajectory existed.
+    """
+    measured = [
+        item for item in ground_truth
+        if _point(item.get("velocity")) is not None and _finite_number(item.get("t")) is not None
+    ]
+    measured.sort(key=lambda item: float(item["t"]))
+    measured_times = [float(item["t"]) for item in measured]
+    absolute_errors: list[float] = []
+    signed_errors: list[float] = []
+    overshoots: list[float] = []
+    vector_errors: list[float] = []
+    matched = 0
+    executable_commands = 0
+    for command in sorted(pva, key=lambda item: float(item.get("t", 0.0))):
+        status = int(_finite_number(command.get("trajectory_status")) or 0)
+        generation = _finite_number(command.get("trajectory_generation"))
+        executable = command.get("executable")
+        if executable is None:
+            executable = status != 4 and (generation is None or generation > 0.0)
+        if executable is not True:
+            continue
+        command_velocity = _point(command.get("velocity"))
+        command_time = _finite_number(command.get("t"))
+        if command_velocity is None or command_time is None:
+            continue
+        executable_commands += 1
+        if not measured_times:
+            continue
+        index = bisect.bisect_left(measured_times, command_time)
+        candidates = [index]
+        if index > 0:
+            candidates.append(index - 1)
+        nearest = min(candidates, key=lambda candidate: abs(measured_times[candidate] - command_time))
+        if abs(measured_times[nearest] - command_time) > match_window_s:
+            continue
+        measured_velocity = _point(measured[nearest].get("velocity"))
+        if measured_velocity is None:
+            continue
+        command_speed = math.sqrt(sum(value * value for value in command_velocity))
+        measured_speed = math.sqrt(sum(value * value for value in measured_velocity))
+        if not all(math.isfinite(value) for value in (command_speed, measured_speed)):
+            continue
+        signed = measured_speed - command_speed
+        signed_errors.append(signed)
+        absolute_errors.append(abs(signed))
+        overshoots.append(max(0.0, signed))
+        vector_errors.append(_distance(measured_velocity, command_velocity))
+        matched += 1
+    return {
+        "status": "available" if matched else "unavailable_no_matched_executable_command",
+        "match_window_s": match_window_s,
+        "executable_command_count": executable_commands,
+        "matched_sample_count": matched,
+        "speed_error_abs_mps": _summary(absolute_errors),
+        "speed_error_signed_mps": _summary(signed_errors),
+        "speed_overshoot_mps": _summary(overshoots),
+        "velocity_vector_error_mps": _summary(vector_errors),
+    }
+
+
+def _oscillation_summary(
+    ground_truth: list[dict[str, Any]], goals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose backtracking/turning evidence per published waypoint goal."""
+    ordered_goals = sorted(
+        [item for item in goals if _finite_number(item.get("t")) is not None],
+        key=lambda item: float(item["t"]),
+    )
+    per_waypoint: list[dict[str, Any]] = []
+    for index, goal in enumerate(ordered_goals):
+        target = _point((goal.get("x"), goal.get("y"), goal.get("z")))
+        if target is None:
+            continue
+        start_t = float(goal["t"])
+        end_t = float(ordered_goals[index + 1]["t"]) if index + 1 < len(ordered_goals) else math.inf
+        samples = [
+            item for item in ground_truth
+            if start_t <= float(item.get("t", -math.inf)) < end_t and _point(item.get("position")) is not None
+        ]
+        samples.sort(key=lambda item: float(item["t"]))
+        distances = [_distance(_point(item["position"]), target) for item in samples]
+        distance_reversals = 0
+        backward_distance_m = 0.0
+        previous_delta = 0.0
+        path_length = 0.0
+        for previous, current in zip(samples, samples[1:]):
+            previous_position = _point(previous["position"])
+            current_position = _point(current["position"])
+            if previous_position is None or current_position is None:
+                continue
+            path_length += _distance(previous_position, current_position)
+            delta = _distance(current_position, target) - _distance(previous_position, target)
+            if delta > 0.03:
+                backward_distance_m += delta
+            if abs(delta) > 0.03 and previous_delta != 0.0 and delta * previous_delta < 0.0:
+                distance_reversals += 1
+            if abs(delta) > 0.03:
+                previous_delta = delta
+        yaw_turns = 0.0
+        yaw_reversals = 0
+        previous_yaw: float | None = None
+        previous_yaw_delta = 0.0
+        for item in samples:
+            yaw = _finite_number(item.get("heading_rad"))
+            if yaw is None:
+                continue
+            if previous_yaw is not None:
+                delta = (yaw - previous_yaw + math.pi) % (2.0 * math.pi) - math.pi
+                yaw_turns += abs(delta) / (2.0 * math.pi)
+                if abs(delta) > math.radians(4.0) and previous_yaw_delta != 0.0 and delta * previous_yaw_delta < 0.0:
+                    yaw_reversals += 1
+                if abs(delta) > math.radians(4.0):
+                    previous_yaw_delta = delta
+            previous_yaw = yaw
+        direct_displacement = (
+            _distance(_point(samples[0]["position"]), _point(samples[-1]["position"]))
+            if len(samples) >= 2 else None
+        )
+        per_waypoint.append({
+            "waypoint_index": int(
+                round(_finite_number(goal.get("waypoint_index")))
+                if _finite_number(goal.get("waypoint_index")) is not None else -1
+            ),
+            "sample_count": len(samples),
+            "distance_start_m": distances[0] if distances else None,
+            "distance_min_m": min(distances) if distances else None,
+            "distance_end_m": distances[-1] if distances else None,
+            "backward_distance_m": backward_distance_m,
+            "distance_reversal_count": distance_reversals,
+            "path_length_m": path_length,
+            "direct_displacement_m": direct_displacement,
+            "path_to_displacement_ratio": (
+                path_length / direct_displacement
+                if direct_displacement is not None and direct_displacement > 1.0e-6 else None
+            ),
+            "heading_turns": yaw_turns,
+            "heading_reversal_count": yaw_reversals,
+            "oscillation_evidence": bool(distance_reversals >= 2 or yaw_turns >= 0.75),
+        })
+    return {
+        "goal_count": len(ordered_goals),
+        "waypoints": per_waypoint,
+        "distance_reversal_count": sum(int(item["distance_reversal_count"]) for item in per_waypoint),
+        "heading_turn_count": sum(int(item["heading_reversal_count"]) for item in per_waypoint),
+        "full_heading_turns": sum(float(item["heading_turns"]) for item in per_waypoint),
+        "oscillation_evidence": any(bool(item["oscillation_evidence"]) for item in per_waypoint),
+    }
+
+
 def _analyze(session: Path) -> dict[str, Any]:
     descriptor = _load(session / "map_descriptor.json", {})
     scenario = _load(session / "scenario.json", {})
     waypoints_raw = _mission_waypoints(session, descriptor)
     waypoints = [_point(item.get("position")) for item in waypoints_raw]
     waypoints = [item for item in waypoints if item is not None]
+    acceptance_radii = [
+        _finite_number(item.get("acceptance_radius_m"))
+        for item in waypoints_raw
+        if isinstance(item, dict)
+    ]
     ground_truth, planning = _samples(session)
     obstacles = _obstacles(session, descriptor)
     trajectory_records = _trajectory_records(session)
@@ -971,6 +1189,12 @@ def _analyze(session: Path) -> dict[str, Any]:
         **planner_trace_summary(planner_trace_records),
         "records": planner_trace_records,
     }
+    velocity_tracking = _velocity_tracking_summary(
+        ground_truth, observability.get("pva", [])
+    )
+    oscillation = _oscillation_summary(
+        ground_truth, observability.get("goals", [])
+    )
 
     tracking_errors: list[float] = []
     speeds: list[float] = []
@@ -1038,6 +1262,8 @@ def _analyze(session: Path) -> dict[str, Any]:
             "speed_mps": _summary(speeds),
             "speed_acceleration_mps2": _summary(acceleration),
             "heading_rate_rad_s": _summary(heading_rates),
+            "command_tracking": velocity_tracking,
+            "oscillation": oscillation,
         },
         "smoothness": smoothness,
         "planning": {
@@ -1084,6 +1310,7 @@ def _analyze(session: Path) -> dict[str, Any]:
     return {
         "metrics": metrics,
         "waypoints": waypoints,
+        "acceptance_radii_m": acceptance_radii,
         "ground_truth": ground_truth,
         "planning": planning,
         "trajectory_records": trajectory_records,

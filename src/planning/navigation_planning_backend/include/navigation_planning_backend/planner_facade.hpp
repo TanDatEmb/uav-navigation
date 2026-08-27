@@ -41,6 +41,7 @@ class PlannerFacade final {
   void discardCommandCandidate() noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
+  void setGoalAcceptanceRadius(double radius_m) noexcept;
   bool setState(const navigation_planning::KinematicState& state);
 
   [[nodiscard]] navigation_planning::PlannerStatus planFromRest(

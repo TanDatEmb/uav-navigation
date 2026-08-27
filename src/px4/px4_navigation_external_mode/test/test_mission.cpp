@@ -438,6 +438,56 @@ mission:
   EXPECT_EQ(outgoing_velocity.accepted_waypoint_index, 1U);
 }
 
+TEST(MissionController, NativeTerminalHoldWaitsForCornerToSettle) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: native_terminal_corner_hold
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: corner
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [1.0, 1.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  ASSERT_TRUE(controller.update(0.1, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+                                Eigen::Vector3d::Zero()).waypoint_accepted);
+  controller.onTrajectory(true, 0.1);
+  controller.onNativeTerminalHoldObserved();
+
+  const auto moving = controller.update(0.2, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                        Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(moving.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_FALSE(moving.waypoint_accepted);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  const auto settled = controller.update(0.3, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(settled.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(settled, 1U);
+  EXPECT_EQ(settled.waypoint_index, 2U);
+}
+
 TEST(MissionController, TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:
@@ -536,6 +586,55 @@ mission:
   expectWaypointAccepted(complete, 0U);
 }
 
+TEST(MissionController, HoldingDoesNotReplanForTransientSpeedOvershootInsideAcceptance) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: holding_speed_hysteresis
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.2
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.0
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  ASSERT_EQ(controller.update(0.1, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                              Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  ASSERT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  const auto transient = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                           Eigen::Vector3d{0.3, 0.0, 0.0});
+  EXPECT_EQ(transient.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_FALSE(transient.waypoint_accepted);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  const auto still_holding = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                               Eigen::Vector3d::Zero());
+  EXPECT_EQ(still_holding.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+
+  const auto complete = controller.update(0.41, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                          Eigen::Vector3d::Zero());
+  EXPECT_EQ(complete.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(complete, 0U);
+}
+
 TEST(MissionController, LostVehicleCannotCompleteMission) {
   const auto path = writeMission(R"yaml(
 mission:
@@ -611,6 +710,46 @@ TEST(MissionController, SafetyFallbackBrakesAndRequestsPositionControl) {
   EXPECT_EQ(handover.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Paused);
+}
+
+TEST(MissionController, CompletedBackupInsidePassThroughAcceptanceAdvances) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: completed_backup_pass_through
+  frame: lio_odom
+  waypoints:
+    - id: middle
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.9
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+
+  // A completed native BACKUP is a position hold. If the measured vehicle and
+  // the certified endpoint are already inside this pass-through waypoint,
+  // retain the hold long enough for MissionController to apply its normal
+  // measured-speed acceptance gate instead of forcing PX4 Hold.
+  controller.onTrajectory(true, 1U, 2U, 0.0, 0.0);
+  const auto event = controller.update(0.1, Eigen::Vector3d{1.2, 0.0, 3.0}, true,
+                                       Eigen::Vector3d::Zero());
+  EXPECT_EQ(event.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(event, 0U);
+  EXPECT_EQ(event.waypoint_index, 1U);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
 TEST(MissionController, SafetyStopAllowsRollingRouteReplacement) {

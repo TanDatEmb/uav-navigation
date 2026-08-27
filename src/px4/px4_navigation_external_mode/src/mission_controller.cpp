@@ -33,6 +33,7 @@ void MissionController::activate(double now_s) {
   arrival_start_time_s_.reset();
   pending_position_control_ = false;
   trajectory_ready_ = false;
+  terminal_hold_pending_ = false;
 }
 
 void MissionController::deactivate() {
@@ -48,6 +49,7 @@ void MissionController::deactivate() {
   arrival_start_time_s_.reset();
   pending_position_control_ = false;
   trajectory_ready_ = false;
+  terminal_hold_pending_ = false;
 }
 
 void MissionController::onTrajectory(bool success, double now_s) {
@@ -159,6 +161,40 @@ void MissionController::onNativeTrajectoryReady() {
   }
   checkpoint_valid_ = true;
   trajectory_ready_ = true;
+  terminal_hold_pending_ = false;
+}
+
+void MissionController::onNativeTerminalHoldObserved() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (state_ == MissionControllerState::Idle ||
+      state_ == MissionControllerState::Complete ||
+      state_ == MissionControllerState::Failed ||
+      active_waypoint_index_ >= mission_.waypoints.size()) {
+    return;
+  }
+
+  const auto& waypoint = mission_.waypoints[active_waypoint_index_];
+  if (waypoint.behavior == MissionWaypoint::Behavior::Stop) {
+    terminal_hold_pending_ = true;
+    return;
+  }
+  if (active_waypoint_index_ == 0U ||
+      active_waypoint_index_ + 1U >= mission_.waypoints.size()) {
+    return;
+  }
+  const auto& previous = mission_.waypoints[active_waypoint_index_ - 1U];
+  const auto& next = mission_.waypoints[active_waypoint_index_ + 1U];
+  const auto incoming = waypoint.position_enu - previous.position_enu;
+  const auto outgoing = next.position_enu - waypoint.position_enu;
+  if (!incoming.allFinite() || !outgoing.allFinite() || incoming.norm() <= 1e-6 ||
+      outgoing.norm() <= 1e-6) {
+    return;
+  }
+  // Match passThroughCornerReady(): a genuine turn must settle before the
+  // next mission request is allowed to change the velocity direction.
+  if (incoming.normalized().dot(outgoing.normalized()) <= 0.7) {
+    terminal_hold_pending_ = true;
+  }
 }
 
 MissionControllerEvent MissionController::update(
@@ -310,6 +346,20 @@ MissionControllerEvent MissionController::update(
     // trajectory/low-speed confirmation below.
     const bool immediate_pass_through = pass_through && inside && slowEnough();
     const bool acceptance_ready = pass_through ? passThroughCornerReady() : slowEnough();
+    if (terminal_hold_pending_) {
+      // A certified terminal MAIN sample already supplies a position hold.
+      // While the vehicle is inside the active acceptance ball but still
+      // moving, keep that hold and wait for measured settling. Re-publishing
+      // the same goal here would clear the hold and recreate the oscillation
+      // at a corner. If the vehicle has not yet entered the ball, the same
+      // bounded hold is still safe; a fresh non-terminal native trajectory
+      // clears this latch through onNativeTrajectoryReady().
+      if (inside && acceptance_ready) {
+        terminal_hold_pending_ = false;
+      } else {
+        return {};
+      }
+    }
     if ((trajectory_ready_ || immediate_pass_through) && inside && acceptance_ready) {
       if (pass_through) {
         const double acceptance_error = (*position - waypoint.position_enu).norm();
@@ -358,13 +408,21 @@ MissionControllerEvent MissionController::update(
   }
 
   if (state_ == MissionControllerState::Holding) {
-    if (!insideAcceptance() || !slowEnough()) {
+    if (!insideAcceptance()) {
       state_ = MissionControllerState::ExecutingWaypoint;
       trajectory_ready_ = false;
       arrival_start_time_s_.reset();
       next_goal_time_s_ = std::numeric_limits<double>::infinity();
       ++request_id_;
       return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
+    }
+    if (!slowEnough()) {
+      // Keep the certified position hold while the vehicle is still inside
+      // the acceptance ball. A single noisy/overshooting velocity sample must
+      // restart the measured hold timer, not publish the same goal again: the
+      // latter sends the planner back into a stop/replan loop at a waypoint.
+      hold_start_time_s_ = now_s;
+      return {};
     }
     if (now_s - hold_start_time_s_ >= waypoint.hold_s) {
       const double acceptance_error = (*position - waypoint.position_enu).norm();
@@ -429,6 +487,21 @@ std::optional<MissionWaypoint> MissionController::nextWaypoint() const {
   const auto next = active_waypoint_index_ + 1U;
   if (next >= mission_.waypoints.size()) return std::nullopt;
   return mission_.waypoints[next];
+}
+
+bool MissionController::nativeTrajectoryReady() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return trajectory_ready_;
+}
+
+bool MissionController::terminalHoldPending() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return terminal_hold_pending_;
+}
+
+double MissionController::acceptanceSpeedMps() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return mission_.control.acceptance_speed_mps;
 }
 
 }  // namespace px4_navigation_external_mode

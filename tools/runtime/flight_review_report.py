@@ -389,117 +389,6 @@ def line_chart(
     return "".join(parts)
 
 
-def _spatial_envelope_inset(envelopes: dict[str, Any]) -> str:
-    """Render configured envelopes in a separate relative-scale inset.
-
-    The main flight map must remain fitted to the observed route. Large
-    configured ranges (40 m LiDAR or a 110 m planning map) would otherwise
-    shrink the route until it becomes unreadable. The inset is explicitly a
-    configuration comparison, not an occupancy/map snapshot.
-    """
-    values = [
-        finite(envelopes.get("lidar_max_range_m")),
-        finite(envelopes.get("safe_corridor_max_m")),
-        finite(envelopes.get("safe_corridor_nominal_m")),
-        finite(envelopes.get("robot_radius_m")),
-    ]
-    lio_half = envelopes.get("lio_half_extent_xy_m")
-    map_size = envelopes.get("planning_map_size_xy_m")
-    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2:
-        values.extend(finite(value) for value in lio_half)
-    if isinstance(map_size, (list, tuple)) and len(map_size) >= 2:
-        values.extend(finite(value) / 2.0 if finite(value) is not None else None for value in map_size)
-    values = [value for value in values if value is not None and value > 0.0]
-    if not values:
-        return ""
-    extent = max(values) * 1.12
-    width, height = 330, 218
-    left, top, right, bottom = 42, 30, 16, 38
-    plot_w, plot_h = width - left - right, height - top - bottom
-    scale = min(plot_w, plot_h) / (2.0 * extent)
-    cx, cy = left + plot_w / 2.0, top + plot_h / 2.0
-
-    def point(x: float, y: float) -> tuple[float, float]:
-        return cx + x * scale, cy - y * scale
-
-    def number(value: Any) -> float | None:
-        return finite(value)
-
-    parts = [
-        '<div class="map-envelope-card"><div class="map-envelope-title">Configured spatial envelopes · relative scale</div>',
-        '<svg class="map-envelope-svg" viewBox="0 0 330 218" role="img" aria-label="Configured spatial envelopes">',
-        '<title>Configured spatial envelopes</title><rect x="0" y="0" width="330" height="218" fill="#fbfdfe"/>',
-        f'<line x1="{left}" y1="{cy:.1f}" x2="{width-right}" y2="{cy:.1f}" stroke="{GRID}"/>',
-        f'<line x1="{cx:.1f}" y1="{top}" x2="{cx:.1f}" y2="{height-bottom}" stroke="{GRID}"/>',
-    ]
-
-    map_x, map_y = map_size if isinstance(map_size, (list, tuple)) and len(map_size) >= 2 else (None, None)
-    if number(map_x) is not None and number(map_y) is not None:
-        top_left = point(-number(map_x) / 2.0, number(map_y) / 2.0)
-        bottom_right = point(number(map_x) / 2.0, -number(map_y) / 2.0)
-        parts.append(
-            f'<rect x="{top_left[0]:.1f}" y="{top_left[1]:.1f}" width="{bottom_right[0]-top_left[0]:.1f}" height="{bottom_right[1]-top_left[1]:.1f}" fill="#7650a8" fill-opacity="0.06" stroke="{PURPLE}" stroke-dasharray="5 4" stroke-width="1.5"><title>Planning map configured size {number(map_x):.1f} × {number(map_y):.1f} m; runtime center unavailable</title></rect>'
-        )
-    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2 and number(lio_half[0]) is not None and number(lio_half[1]) is not None:
-        half_x, half_y = number(lio_half[0]), number(lio_half[1])
-        top_left, bottom_right = point(-half_x, half_y), point(half_x, -half_y)
-        parts.append(
-            f'<rect x="{top_left[0]:.1f}" y="{top_left[1]:.1f}" width="{bottom_right[0]-top_left[0]:.1f}" height="{bottom_right[1]-top_left[1]:.1f}" fill="#1f6feb" fill-opacity="0.04" stroke="{BLUE}" stroke-dasharray="2 3" stroke-width="1.2"><title>FAST-LIO local registration half extent {half_x:.1f} × {half_y:.1f} m</title></rect>'
-        )
-
-    circles = [
-        ("lidar_max_range_m", "LiDAR configured max range", TEAL, "5 4", 0.035),
-        ("safe_corridor_max_m", "Planner safe visibility max", PURPLE, "6 4", 0.025),
-        ("safe_corridor_nominal_m", "Planner safe visibility nominal", PURPLE, "2 3", 0.015),
-        ("robot_radius_m", "Planner robot/safety radius", RED, "", 0.10),
-    ]
-    for key, label, color, dash, opacity in circles:
-        radius = number(envelopes.get(key))
-        if radius is None or radius <= 0.0:
-            continue
-        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
-        parts.append(
-            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{radius*scale:.1f}" fill="{color}" fill-opacity="{opacity}" stroke="{color}" stroke-opacity="0.85" stroke-width="1.5"{dash_attr}><title>{esc(label)}: {radius:.2f} m</title></circle>'
-        )
-    summary = []
-    lidar_min, lidar_max = number(envelopes.get("lidar_min_range_m")), number(envelopes.get("lidar_max_range_m"))
-    if lidar_max is not None:
-        summary.append(f"LiDAR {fmt(lidar_min, 2)}–{fmt(lidar_max, 2)} m")
-    if isinstance(lio_half, (list, tuple)) and len(lio_half) >= 2 and number(lio_half[0]) is not None and number(lio_half[1]) is not None:
-        summary.append(f"FAST-LIO ±{number(lio_half[0]):.1f} × ±{number(lio_half[1]):.1f} m")
-    if number(map_x) is not None and number(map_y) is not None:
-        summary.append(f"planning map {number(map_x):.1f} × {number(map_y):.1f} m")
-    origin = envelopes.get("planning_map_origin_xy_m")
-    if isinstance(origin, (list, tuple)) and len(origin) >= 2 and number(origin[0]) is not None and number(origin[1]) is not None:
-        summary.append(f"map origin ({number(origin[0]):.1f}, {number(origin[1]):.1f}) m")
-    nominal, maximum = number(envelopes.get("safe_corridor_nominal_m")), number(envelopes.get("safe_corridor_max_m"))
-    if nominal is not None or maximum is not None:
-        summary.append(f"planner visibility {fmt(nominal, 1)} / {fmt(maximum, 1)} m")
-    if number(envelopes.get("inflation_radius_m")) is not None:
-        summary.append(f"inflation {number(envelopes['inflation_radius_m']):.2f} m")
-    if envelopes.get("map_sliding_enabled") and number(envelopes.get("map_sliding_threshold_m")) is not None:
-        summary.append(f"map sliding threshold {number(envelopes['map_sliding_threshold_m']):.2f} m")
-    parameter_note = (
-        "Runtime parameter-update events detected; values shown are the final effective session snapshot."
-        if envelopes.get("parameter_updates_recorded")
-        else "No runtime parameter-update stream recorded; values shown are the final effective session YAML snapshots."
-    )
-    parts.extend([
-        f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="{NAVY}"><title>UAV-relative origin for comparison</title></circle>',
-        f'<text x="{cx:.1f}" y="{height-20}" text-anchor="middle" class="axis-label">x/y relative to UAV · not occupancy evidence</text>',
-        '</svg>',
-        '<div class="map-envelope-legend">'
-        f'<span><i class="envelope-key lidar"></i>LiDAR cap</span>'
-        f'<span><i class="envelope-key planner"></i>planner visibility</span>'
-        f'<span><i class="envelope-key map"></i>planning map bounds</span>'
-        f'<span><i class="envelope-key lio"></i>FAST-LIO local window</span>'
-        '</div>',
-        f'<div class="small"><strong>Loaded values:</strong> {esc(" · ".join(summary))}</div>',
-        f'<div class="small">{esc(parameter_note)} The planning rectangle is centered only for comparison because this artifact does not record the runtime snapshot center. {"Mapping raycasting is disabled; configured ray_range is not treated as an active ring." if not envelopes.get("raycasting_enabled") else "Mapping raycasting is enabled; ray_range is a map-update filter, not the full LiDAR field of view."}</div></div>',
-    ])
-    return "".join(parts)
-
-
 def _obstacle_footprint_points(obstacle: dict[str, Any]) -> list[tuple[float, float, float]]:
     center = obstacle.get("center")
     if not isinstance(center, (list, tuple)) or len(center) < 3:
@@ -559,8 +448,35 @@ def map_svg(data: dict[str, Any]) -> str:
     actual = [item["position"] for item in data["ground_truth"]]
     waypoints = data["waypoints"]
     obstacles = data["metrics"].get("obstacles", [])
+    observability = data.get("observability", {})
+    planner_snapshots = observability.get("planner_path_snapshots", [])
+    planner_path_points = []
+    for snapshot in planner_snapshots:
+        if not snapshot.get("path_available"):
+            continue
+        for key in ("nominal_path", "backup_path", "emergency_path"):
+            planner_path_points.extend(
+                point for point in snapshot.get(key, [])
+                if isinstance(point, (list, tuple)) and len(point) >= 3
+            )
+    observed_points = []
+    for observation in observability.get("obstacle_observations", []):
+        position = _replay_point(observation.get("vehicle_position"))
+        yaw = finite(observation.get("vehicle_yaw_rad"))
+        if position is None or yaw is None:
+            continue
+        cosine, sine = math.cos(yaw), math.sin(yaw)
+        for point in observation.get("sampled_points_sensor", []):
+            sensor_point = _replay_point(point)
+            if sensor_point is None:
+                continue
+            observed_points.append([
+                position[0] + cosine * sensor_point[0] - sine * sensor_point[1],
+                position[1] + sine * sensor_point[0] + cosine * sensor_point[1],
+                position[2] + sensor_point[2],
+            ])
     obstacle_points = [point for obstacle in obstacles for point in _obstacle_footprint_points(obstacle)]
-    all_points = actual + waypoints + obstacle_points
+    all_points = actual + waypoints + obstacle_points + planner_path_points + observed_points
     if not all_points:
         return '<div class="empty-chart">No trajectory samples recorded.</div>'
     envelopes = data.get("spatial_envelopes", {})
@@ -644,44 +560,95 @@ def map_svg(data: dict[str, Any]) -> str:
         parts.append(
             f'<circle cx="{latest_xy[0]:.1f}" cy="{latest_xy[1]:.1f}" r="{max(2.0, robot_radius*scale):.1f}" fill="{RED}" fill-opacity="0.10" stroke="{RED}" stroke-opacity="0.75" stroke-width="1.2"><title>Planner robot/safety radius: {robot_radius:.2f} m</title></circle>'
         )
-    trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
-    if trajectory_paths:
-        for path in trajectory_paths:
-            points = [
-                tuple(float(value) for value in point[:3])
-                for point in path.get("points", [])
-                if isinstance(point, (list, tuple)) and len(point) >= 3
-                and all(finite(value) is not None for value in point[:3])
-            ]
-            if len(points) < 2:
-                continue
-            coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
-            flag = int(finite(path.get("trajectory_flag")) or 0)
-            color = RED if flag == 2 else TEAL
-            dash = "5 4" if flag == 2 else ""
-            dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
-            label = "backup/safety" if flag == 2 else "main/nominal"
+    # Draw observed LiDAR samples in the same ENU map as the flight path. The
+    # body-to-world projection uses the recorded vehicle pose/yaw and is
+    # labelled as an observation overlay, never as a collision certificate.
+    for point in observed_points[::max(1, len(observed_points) // 900 or 1)]:
+        x, y = transform(tuple(point))
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="1.7" fill="{PURPLE}" fill-opacity="0.28"><title>Observed LiDAR sample (projected from sensor frame)</title></circle>'
+        )
+
+    for index, waypoint in enumerate(waypoints):
+        acceptance_radius = (
+            finite(data.get("acceptance_radii_m", [])[index])
+            if index < len(data.get("acceptance_radii_m", [])) else None
+        )
+        if acceptance_radius is not None and acceptance_radius > 0.0:
+            x, y = transform(waypoint)
             parts.append(
-                f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-opacity="0.68" stroke-width="2"{dash_attr}/>'
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{acceptance_radius*scale:.1f}" fill="#f0a51a" fill-opacity="0.05" stroke="#c88700" stroke-width="1.1" stroke-dasharray="4 3"><title>WP{index} acceptance radius: {acceptance_radius:.2f} m</title></circle>'
             )
-    else:
-        records = data.get("trajectory_records", [])
-        record_step = max(1, len(records) // 36)
-        for index, record in enumerate(records):
-            if index % record_step != 0 and index != len(records) - 1:
-                continue
-            points = []
-            for value in record.get("position_points", []):
-                if isinstance(value, (list, tuple)) and len(value) >= 3:
-                    try:
-                        point = (float(value[0]), float(value[1]), float(value[2]))
-                    except (TypeError, ValueError):
-                        continue
-                    if all(math.isfinite(item) for item in point):
-                        points.append(point)
-            if len(points) >= 2:
+
+    # The planner-path diagnostic is authoritative for generated geometry and
+    # contains both roles in one snapshot. Keep one latest snapshot per
+    # bundle generation to avoid painting every 10 Hz status refresh on top of
+    # itself; unlike the old fallback, a rejected one-point hold is absent.
+    latest_snapshots = {}
+    for snapshot in planner_snapshots:
+        if not snapshot.get("path_available"):
+            continue
+        generation = int(finite(snapshot.get("bundle_generation")) or 0)
+        latest_snapshots[generation] = snapshot
+    if latest_snapshots:
+        for snapshot in list(latest_snapshots.values())[-36:]:
+            for key, color, dash, label in (
+                ("nominal_path", TEAL, "", "planner nominal"),
+                ("backup_path", RED, "5 4", "planner backup"),
+                ("emergency_path", ORANGE, "2 3", "planner emergency"),
+            ):
+                points = [
+                    tuple(float(value) for value in point[:3])
+                    for point in snapshot.get(key, [])
+                    if isinstance(point, (list, tuple)) and len(point) >= 3
+                    and all(finite(value) is not None for value in point[:3])
+                ]
+                if len(points) < 2:
+                    continue
                 coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
-                parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{TEAL}" stroke-opacity="0.36" stroke-width="1.2" stroke-dasharray="5 4"/>')
+                dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+                parts.append(
+                    f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-opacity="0.78" stroke-width="2.4"{dash_attr}><title>{label}, bundle {int(finite(snapshot.get("bundle_generation")) or 0)}, world revision {int(finite(snapshot.get("certificate_world_revision")) or 0)}</title></polyline>'
+                )
+    else:
+        trajectory_paths = observability.get("trajectory_paths", [])
+        if trajectory_paths:
+            for path in trajectory_paths:
+                points = [
+                    tuple(float(value) for value in point[:3])
+                    for point in path.get("points", [])
+                    if isinstance(point, (list, tuple)) and len(point) >= 3
+                    and all(finite(value) is not None for value in point[:3])
+                ]
+                if len(points) < 2:
+                    continue
+                coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
+                flag = int(finite(path.get("trajectory_flag")) or 0)
+                color = RED if flag == 1 else TEAL
+                dash = "5 4" if flag == 1 else ""
+                dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+                label = "backup/safety" if flag == 1 else "main/nominal"
+                parts.append(
+                    f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-opacity="0.68" stroke-width="2"{dash_attr}/>'
+                )
+        else:
+            records = data.get("trajectory_records", [])
+            record_step = max(1, len(records) // 36)
+            for index, record in enumerate(records):
+                if index % record_step != 0 and index != len(records) - 1:
+                    continue
+                points = []
+                for value in record.get("position_points", []):
+                    if isinstance(value, (list, tuple)) and len(value) >= 3:
+                        try:
+                            point = (float(value[0]), float(value[1]), float(value[2]))
+                        except (TypeError, ValueError):
+                            continue
+                        if all(math.isfinite(item) for item in point):
+                            points.append(point)
+                if len(points) >= 2:
+                    coordinates = " ".join(f"{transform(point)[0]:.1f},{transform(point)[1]:.1f}" for point in points)
+                    parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{TEAL}" stroke-opacity="0.36" stroke-width="1.2" stroke-dasharray="5 4"/>')
     for index, waypoint in enumerate(waypoints):
         x, y = transform(waypoint)
         parts.append(
@@ -699,9 +666,9 @@ def map_svg(data: dict[str, Any]) -> str:
         f'<rect x="{left+490}" y="16" width="14" height="12" fill="#e8897e" stroke="{RED}"/><text x="{left+511}" y="26" class="legend-label">route obstacles</text>',
         f'<circle cx="{left+666}" cy="22" r="5" fill="#f0a51a" stroke="#7b4e00"/><text x="{left+679}" y="26" class="legend-label">waypoints</text>',
         f'<polygon points="{left+12},38 {left+32},44 {left+12},50" fill="{BLUE}" stroke="#ffffff"/><text x="{left+39}" y="48" class="legend-label">UAV heading ({esc(heading_source)})</text>',
+        f'<circle cx="{left+520}" cy="44" r="2" fill="{PURPLE}"/><text x="{left+530}" y="48" class="legend-label">LiDAR observation</text>',
         '</svg>',
-        _spatial_envelope_inset(envelopes),
-        f'<div class="map-annotations"><div><strong>Waypoints</strong> {waypoint_tags}</div><div><strong>Obstacles</strong> {obstacle_tags}</div><div><strong>Map focus</strong> obstacle footprint + observed path · padding {padding:.2f} m</div><div class="small">Path role is encoded by line style/color; labels are listed here to keep the map readable. Spatial padding uses active planning margin, robot radius and map inflation loaded from this session; it is not a fixed drawing extent.</div></div></div>',
+        f'<div class="map-annotations"><div><strong>Waypoints</strong> {waypoint_tags}</div><div><strong>Obstacles</strong> {obstacle_tags}</div><div><strong>Map focus</strong> observed flight + nominal/backup planner paths + acceptance circles + projected LiDAR samples · padding {padding:.2f} m</div><div class="small">Planner geometry is drawn from immutable bundle snapshots. LiDAR points are diagnostic projections only; map certificate and collision truth remain independent evidence.</div></div></div>',
     ])
     return "".join(parts)
 
@@ -912,8 +879,47 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
     ground_truth = _replay_sampled(ground_truth, 720)
 
     plans: list[dict[str, Any]] = []
-    trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
-    if trajectory_paths:
+    planner_snapshots = data.get("observability", {}).get("planner_path_snapshots", [])
+    latest_snapshots = {}
+    for snapshot in planner_snapshots:
+        if not snapshot.get("path_available"):
+            continue
+        generation = int(finite(snapshot.get("bundle_generation")) or 0)
+        latest_snapshots[generation] = snapshot
+    if latest_snapshots:
+        # One immutable bundle can contain two geometries: the nominal route
+        # and its backup suffix. Keep both as separate replay layers so the
+        # cursor shows their spatial divergence at the same timestamp.
+        for snapshot in latest_snapshots.values():
+            start_time = finite(snapshot.get("t"))
+            duration = max(0.01, finite(snapshot.get("duration_s")) or 0.01)
+            if start_time is None:
+                continue
+            for key, role, label in (
+                ("nominal_path", 0, "nominal / main"),
+                ("backup_path", 1, "safety / backup"),
+                ("emergency_path", 1, "emergency / backup"),
+            ):
+                positions = [
+                    point for point in (_replay_point(value) for value in snapshot.get(key, []))
+                    if point is not None
+                ]
+                if len(positions) < 2:
+                    continue
+                plans.append({
+                    "t": start_time,
+                    "duration": duration,
+                    "role": role,
+                    "role_label": label,
+                    "safety_kind": "bundle path snapshot",
+                    "waypoint": 0,
+                    "world_revision": int(finite(snapshot.get("certificate_world_revision")) or 0),
+                    "bundle_generation": int(finite(snapshot.get("bundle_generation")) or 0),
+                    "points": positions[:96],
+                })
+    else:
+        trajectory_paths = data.get("observability", {}).get("trajectory_paths", [])
+    if not plans and not latest_snapshots and trajectory_paths:
         for item in trajectory_paths:
             positions = [
                 point for point in (_replay_point(value) for value in item.get("points", []))
@@ -925,7 +931,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
                 positions[round(index * (len(positions) - 1) / max(1, min(96, len(positions)) - 1))]
                 for index in range(min(96, len(positions)))
             ]
-            role = 1 if int(finite(item.get("trajectory_flag")) or 0) == 2 else 0
+            role = 1 if int(finite(item.get("trajectory_flag")) or 0) == 1 else 0
             start_time = finite(item.get("t_start"))
             end_time = finite(item.get("t_end"))
             if start_time is None:
@@ -940,7 +946,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
                 "world_revision": 0,
                 "points": positions,
             })
-    else:
+    elif not plans and not latest_snapshots:
         for item in data.get("trajectory_records", []):
             publish_time = finite(item.get("_publish_time_s"))
             if publish_time is None:
@@ -1012,6 +1018,25 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
     envelopes = data.get("spatial_envelopes", {})
     envelopes = envelopes if isinstance(envelopes, dict) else {}
     bounds = _map_bounds(bounds_points, envelopes)
+    replay_envelopes = {
+        key: finite(envelopes.get(key))
+        for key in (
+            "lidar_max_range_m",
+            "safe_corridor_max_m",
+            "safe_corridor_nominal_m",
+            "robot_radius_m",
+        )
+        if finite(envelopes.get(key)) is not None and finite(envelopes.get(key)) > 0.0
+    }
+    # Keep the configured sensing/planning rings visible around the cursor UAV
+    # in the same replay viewport. Projected LiDAR points remain the
+    # time-varying observation evidence.
+    replay_radius = max(replay_envelopes.values(), default=0.0)
+    if replay_radius > 0.0 and ground_truth:
+        bounds["min_x"] = min(bounds["min_x"], min(item["p"][0] for item in ground_truth) - replay_radius)
+        bounds["max_x"] = max(bounds["max_x"], max(item["p"][0] for item in ground_truth) + replay_radius)
+        bounds["min_y"] = min(bounds["min_y"], min(item["p"][1] for item in ground_truth) - replay_radius)
+        bounds["max_y"] = max(bounds["max_y"], max(item["p"][1] for item in ground_truth) + replay_radius)
     min_x, max_x = bounds["min_x"], bounds["max_x"]
     min_y, max_y = bounds["min_y"], bounds["max_y"]
     timestamps = [item["t"] for item in ground_truth + plans + planner]
@@ -1023,10 +1048,13 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         "plans": plans,
         "planner": planner,
         "waypoints": [list(point) for point in data.get("waypoints", [])],
+        "acceptance_radii_m": list(data.get("acceptance_radii_m", [])),
+        "spatial_envelopes": replay_envelopes,
         "obstacles": obstacles,
         "route_obstacles": list(data.get("metrics", {}).get("route_obstacles", [])),
         "waypoint_events": [item for item in data.get("observability", {}).get("waypoint_events", []) if finite(item.get("t")) is not None],
         "vehicle_events": [item for item in data.get("observability", {}).get("vehicle_events", []) if finite(item.get("t")) is not None],
+        "lidar_observations": [item for item in data.get("observability", {}).get("obstacle_observations", []) if finite(item.get("t")) is not None],
         "bounds": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y, "padding_m": bounds["padding_m"]},
         "start": start,
         "end": end,
@@ -1080,6 +1108,10 @@ _REPLAY_SCRIPT = r"""
     }
     return answer;
   }
+  function activePlansAt(time) {
+    const active = data.plans.filter(item => item.t <= time + 1e-9 && item.t + item.duration >= time - 1e-9);
+    return active.length ? active : (latestAt(data.plans, time) ? [latestAt(data.plans, time)] : []);
+  }
   function nearestGround(time) {
     if (!data.ground_truth.length) return null;
     let low = 0, high = data.ground_truth.length - 1;
@@ -1111,6 +1143,20 @@ _REPLAY_SCRIPT = r"""
     const title = svgNode("title", {}, arrow);
     title.textContent = `UAV heading ${((angle * 180 / Math.PI) + 360) % 360}° ENU yaw`;
     svgNode("circle", {cx: point[0], cy: point[1], r: 4, fill: "#1f6feb", stroke: "#ffffff", "stroke-width": 2}, parent);
+  }
+
+  function drawEnvelope(parent, point, radius, color, dash, label) {
+    if (!Number.isFinite(Number(radius)) || Number(radius) <= 0) return;
+    const displayRadius = Number(radius) * scale;
+    const ring = svgNode("circle", {
+      cx: point[0], cy: point[1], r: displayRadius,
+      fill: color, "fill-opacity": .025, stroke: color,
+      "stroke-opacity": .78, "stroke-width": 1.5,
+      "stroke-dasharray": dash || ""
+    }, parent);
+    const title = svgNode("title", {}, ring);
+    title.textContent = `${label}: ${fmt(radius, 2)} m around UAV at replay cursor`;
+    svgText(parent, point[0] + 7, point[1] - displayRadius - 5, `${label} ${fmt(radius, 1)} m`, "replay-map-label");
   }
 
   const staticLayer = svgNode("g", {}, svg);
@@ -1151,41 +1197,65 @@ _REPLAY_SCRIPT = r"""
     });
     data.waypoints.forEach((point, index) => {
       const xy = world(point);
+      const radius = Number(data.acceptance_radii_m[index]);
+      if (Number.isFinite(radius) && radius > 0) {
+        svgNode("circle", {cx: xy[0], cy: xy[1], r: radius * scale, fill: "#f0a51a", "fill-opacity": .05, stroke: "#c88700", "stroke-dasharray": "4 3"}, staticLayer);
+      }
       svgNode("circle", {cx: xy[0], cy: xy[1], r: 5, fill: "#f0a51a", stroke: "#7b4e00"}, staticLayer);
     });
   }
 
-  function updateStatus(time, ground, plan, planner) {
+  function updateStatus(time, ground, plans, planner) {
     output.textContent = `${fmt(time, 2)} s`;
     document.getElementById("replay-time-value-side").textContent = output.textContent;
     document.getElementById("replay-position").textContent = ground ? `${fmt(ground.p[0], 2)}, ${fmt(ground.p[1], 2)}, ${fmt(ground.p[2], 2)} m` : "—";
     document.getElementById("replay-speed").textContent = ground && ground.s != null ? `${fmt(ground.s, 2)} m/s` : "—";
-    document.getElementById("replay-plan").textContent = plan ? `${plan.role_label} · published ${fmt(plan.t, 2)} s · ${fmt(plan.duration, 2)} s` : "No generated path yet";
-    document.getElementById("replay-plan-meta").textContent = plan ? `WP${plan.waypoint} · world revision ${plan.world_revision} · safety kind ${plan.safety_kind}` : "—";
+    const plan = plans.length ? plans[0] : null;
+    document.getElementById("replay-plan").textContent = plans.length ? `${plans.map(item => item.role_label).join(" + ")} · ${plans.length} planner path(s)` : "No generated executable path";
+    document.getElementById("replay-plan-meta").textContent = plan ? `bundle ${plan.bundle_generation || "—"} · world revision ${plan.world_revision} · ${plan.safety_kind}` : "Rejected/hold samples are not paths";
     document.getElementById("replay-planner").textContent = planner ? `${planner.reason} · horizon ${fmt(planner.horizon, 2)} m · known-free ${fmt(planner.known_free, 2)} m` : "No planner diagnostic yet";
     const waypoint = latestAt(data.waypoint_events, time);
     const vehicle = latestAt(data.vehicle_events, time);
     document.getElementById("replay-waypoint").textContent = waypoint ? `WP${waypoint.waypoint_index} · ${waypoint.state_name || "—"} · accepted ${waypoint.waypoint_accepted ? "yes" : "no"}` : "—";
     document.getElementById("replay-acceptance").textContent = waypoint ? `WP${waypoint.accepted_waypoint_index} · ${fmt(waypoint.acceptance_position_error_m, 2)} m · ${fmt(waypoint.acceptance_speed_mps, 2)} m/s` : "—";
     document.getElementById("replay-vehicle-state").textContent = vehicle ? `nav=${vehicle.nav_state ?? "—"} · armed=${vehicle.arming_state ?? "—"} · failsafe=${vehicle.failsafe ?? "—"}` : "—";
+    const lidar = latestAt(data.lidar_observations || [], time);
+    document.getElementById("replay-lidar").textContent = lidar ? `scan ${lidar.scan_index ?? "—"} · ${lidar.roi_points ?? 0} ROI points · range ${fmt(lidar.min_range_m, 2)}–${fmt(lidar.max_range_m, 2)} m` : "No LiDAR observation yet";
+    const envelopes = Object.entries(data.spatial_envelopes || {}).map(([name, radius]) => `${name.replaceAll("_m", "")}: ${fmt(radius, 2)} m`);
+    document.getElementById("replay-envelopes").textContent = envelopes.length ? `${envelopes.join(" · ")} · centered on UAV` : "No configured replay envelopes";
   }
 
   function update(time) {
     currentTime = Math.max(data.start, Math.min(data.end, Number(time)));
     slider.value = currentTime;
-    const ground = nearestGround(currentTime), plan = latestAt(data.plans, currentTime), planner = latestAt(data.planner, currentTime);
+    const ground = nearestGround(currentTime), plans = activePlansAt(currentTime), planner = latestAt(data.planner, currentTime);
     clear(trailLayer); clear(activeLayer); clear(vehicleLayer);
     const trail = data.ground_truth.filter(item => item.t <= currentTime + 1e-9).map(item => item.p);
     polyline(trailLayer, trail, {stroke: "#1f6feb", "stroke-width": 3});
-    if (plan) {
+    plans.forEach(plan => {
       const color = plan.role === 1 ? "#c0392b" : "#0f8b8d";
       polyline(activeLayer, plan.points, {stroke: color, "stroke-width": 3, "stroke-dasharray": "7 5", "stroke-opacity": .86});
       const end = world(plan.points[plan.points.length - 1]);
       svgNode("circle", {cx: end[0], cy: end[1], r: 5, fill: color, stroke: "#ffffff", "stroke-width": 2}, activeLayer);
       svgText(activeLayer, end[0] + 8, end[1] - 8, `${plan.role_label} path`, "replay-map-label");
-    }
+    });
+    (data.lidar_observations || []).filter(item => item.t <= currentTime + 1e-9).slice(-180).forEach(observation => {
+      const vehicle = observation.vehicle_position, yaw = Number(observation.vehicle_yaw_rad);
+      if (!vehicle || !Number.isFinite(yaw)) return;
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      (observation.sampled_points_sensor || []).forEach(sensor => {
+        if (!sensor || sensor.length < 3) return;
+        const point = [vehicle[0] + c * sensor[0] - s * sensor[1], vehicle[1] + s * sensor[0] + c * sensor[1], vehicle[2] + sensor[2]];
+        const xy = world(point);
+        svgNode("circle", {cx: xy[0], cy: xy[1], r: 1.6, fill: "#7c3aed", "fill-opacity": .25}, activeLayer);
+      });
+    });
     if (ground) {
       const point = world(ground.p);
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.robot_radius_m, "#c0392b", "", "vehicle radius");
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.safe_corridor_nominal_m, "#7650a8", "2 3", "planner nominal visibility");
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.safe_corridor_max_m, "#7650a8", "6 4", "planner max visibility");
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.lidar_max_range_m, "#0f8b8d", "5 4", "LiDAR max range");
       const previous = nearestGround(currentTime - .15);
       let heading = Number(ground.heading_rad);
       if (!Number.isFinite(heading) && previous && previous !== ground) {
@@ -1195,9 +1265,9 @@ _REPLAY_SCRIPT = r"""
       drawHeadingArrow(vehicleLayer, point, heading);
     }
     data.plans.forEach((item, index) => {
-      if (markers[index]) markers[index].classList.toggle("active", item === plan);
+      if (markers[index]) markers[index].classList.toggle("active", plans.includes(item));
     });
-    updateStatus(currentTime, ground, plan, planner);
+    updateStatus(currentTime, ground, plans, planner);
   }
 
   function animate(timestamp) {
@@ -1242,8 +1312,9 @@ def replay_section(data: dict[str, Any]) -> str:
     if payload["plans"]:
         replay_description = (
             "Scrub or play the recorded timeline. Blue is observed ground truth; "
-            "the dashed line is the latest generated trajectory available at that time. "
-            "Click a colored marker to jump to a path publication."
+            "solid/dashed colored lines are the nominal and backup paths from the same planner bundle. "
+            "Configured LiDAR/planner envelopes are drawn as rings around the cursor UAV; purple points are projected LiDAR observations. "
+            "Click a marker to jump to a path publication."
         )
     else:
         replay_description = (
@@ -1263,8 +1334,8 @@ def replay_section(data: dict[str, Any]) -> str:
     <div class="replay-event-caption"><span>path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal <i class="replay-swatch safety"></i> safety</span></div>
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
-      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span></div>{_spatial_envelope_inset(data.get("spatial_envelopes", {}) if isinstance(data.get("spatial_envelopes", {}), dict) else {})}</div>
-      <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active path</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd></dl><p class="small">The replay shows the recorded command path and observed vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
+      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span><span>◌ waypoint acceptance radius</span><span>○ configured LiDAR/planner envelope around UAV</span><span>• LiDAR observation</span></div></div>
+      <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active planner paths</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd><dt>LiDAR / obstacle evidence</dt><dd id="replay-lidar">—</dd><dt>Spatial envelopes</dt><dd id="replay-envelopes">—</dd></dl><p class="small">The replay shows recorded planner geometry, sensor evidence and vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
     </div>
     <script>
       {script}
@@ -1794,6 +1865,10 @@ def render(session: Path, output: Path) -> Path:
     known_free = planning.get("known_free_horizon_m", {})
     continuity = planning.get("continuity", {})
     safety_stop_ratio = finite(continuity.get("safety_stop_ratio"))
+    command_tracking = tracking.get("command_tracking", {})
+    oscillation = tracking.get("oscillation", {})
+    planner_path_snapshots = observability.get("planner_path_snapshots", [])
+    obstacle_observations = observability.get("obstacle_observations", [])
     trace = planning.get("rolling_bundle_trace", {})
     provenance = report.get("provenance", {}) if isinstance(report, dict) else {}
     manifest = provenance.get("manifest", {}) if isinstance(provenance, dict) else {}
@@ -1846,6 +1921,10 @@ def render(session: Path, output: Path) -> Path:
         findings.append(("OBSERVE", "Failure context: " + "; ".join(failure_reasons[:2]) + ("; ..." if len(failure_reasons) > 2 else "")))
     if zero_trace_fields:
         findings.append(("OBSERVE", f"The rolling trace contains constant zero values for {', '.join(zero_trace_fields)}; those fields are treated as unpopulated, not as measured zero residuals."))
+    if command_tracking.get("status") != "available":
+        findings.append(("OBSERVE", "No matched executable planner command was recorded; takeoff/hold speed is not reported as planner tracking error."))
+    if oscillation.get("oscillation_evidence"):
+        findings.append(("OBSERVE", f"Backtracking/rotation evidence detected: {oscillation.get('distance_reversal_count', 0)} distance reversals and {oscillation.get('full_heading_turns', 0.0):.2f} full heading turns in goal intervals."))
 
     path_points = data["ground_truth"]
     # Use the same segment-distance calculation as the benchmark generator,
@@ -1929,6 +2008,18 @@ def render(session: Path, output: Path) -> Path:
         ("Mission outcome", outcome or "N/A", expected_outcome_text, gates["mission"]),
         ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", "explicit acceptance evidence only", gates["waypoint"]),
         ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", gates["cross_track"]),
+        (
+            "Matched speed error p95",
+            fmt((command_tracking.get("speed_error_abs_mps") or {}).get("p95"), 2, " m/s"),
+            f"matched executable PVA↔ground truth, window {fmt(command_tracking.get('match_window_s'), 2, ' s')}",
+            "OBSERVE" if command_tracking.get("status") == "available" else "N/A",
+        ),
+        (
+            "Matched positive overshoot p95",
+            fmt((command_tracking.get("speed_overshoot_mps") or {}).get("p95"), 2, " m/s"),
+            "measured speed above executable command speed",
+            "OBSERVE" if command_tracking.get("status") == "available" else "N/A",
+        ),
         ("Collision safety", f"{fmt(collision_count, 0)} collisions", "0 collisions", gates["collision"]),
         ("Application safety stop", "observed" if safety_stop_observed else "not observed", safety_stop_detail, _safety_stop_status(safety_stop_observed)),
         ("LIO navigation state", str(lio.get("state") or "N/A"), "TRACKING + navigation_valid=true", gates["lio"]),
@@ -1983,6 +2074,14 @@ def render(session: Path, output: Path) -> Path:
         f'<td>{fmt(setpoint_speed_stats["p50"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["p95"], 2, " m/s")}</td>'
         f'<td>{fmt(setpoint_speed_stats["p99"], 2, " m/s")}</td><td>{fmt(setpoint_speed_stats["max"], 2, " m/s")}</td>'
         f'<td>{integer(setpoint_speed_stats["count"])}</td></tr>'
+        f'<tr><td class="observed">matched speed error |measured-command|</td><td>{fmt((command_tracking.get("speed_error_abs_mps") or {}).get("mean"), 2, " m/s")}</td>'
+        f'<td>{fmt((command_tracking.get("speed_error_abs_mps") or {}).get("p50"), 2, " m/s")}</td><td>{fmt((command_tracking.get("speed_error_abs_mps") or {}).get("p95"), 2, " m/s")}</td>'
+        f'<td>{fmt((command_tracking.get("speed_error_abs_mps") or {}).get("p99"), 2, " m/s")}</td><td>{fmt((command_tracking.get("speed_error_abs_mps") or {}).get("maximum"), 2, " m/s")}</td>'
+        f'<td>{integer(command_tracking.get("matched_sample_count"))}</td></tr>'
+        f'<tr><td class="observed">matched positive speed overshoot</td><td>{fmt((command_tracking.get("speed_overshoot_mps") or {}).get("mean"), 2, " m/s")}</td>'
+        f'<td>{fmt((command_tracking.get("speed_overshoot_mps") or {}).get("p50"), 2, " m/s")}</td><td>{fmt((command_tracking.get("speed_overshoot_mps") or {}).get("p95"), 2, " m/s")}</td>'
+        f'<td>{fmt((command_tracking.get("speed_overshoot_mps") or {}).get("p99"), 2, " m/s")}</td><td>{fmt((command_tracking.get("speed_overshoot_mps") or {}).get("maximum"), 2, " m/s")}</td>'
+        f'<td>{integer(command_tracking.get("matched_sample_count"))}</td></tr>'
     )
 
     stream_labels = {
@@ -2046,11 +2145,15 @@ def render(session: Path, output: Path) -> Path:
     timing_relationship_rows = _timing_relationship_rows()
     waypoint_event_rows = _waypoint_event_rows(observability)
     trajectory_paths = observability.get("trajectory_paths", [])
-    main_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 1 for item in trajectory_paths)
-    backup_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 2 for item in trajectory_paths)
+    # CandidateTrajectoryRole is 0 = MAIN and 1 = BACKUP. Do not use the
+    # NavigationCommand status enum here; confusing the two hides genuine
+    # backup suffixes and counts rejected samples as safety paths.
+    main_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 0 for item in trajectory_paths)
+    backup_path_count = sum(int(finite(item.get("trajectory_flag")) or 0) == 1 for item in trajectory_paths)
     path_observation_note = (
-        f"Recorded command paths: {main_path_count} main/nominal and {backup_path_count} backup/safety. "
-        "A missing backup path means no backup command was observed in this run; it is not treated as a successful safety-path test."
+        f"Recorded executable command paths: {main_path_count} main/nominal and {backup_path_count} backup/safety; "
+        f"planner bundle snapshots: {len(planner_path_snapshots)}. "
+        "Rejected/zero-point hold samples are excluded from path geometry and remain visible only as failure evidence."
     )
     state_intervals = observability.get("state_intervals", [])
     observed_states = {str(item.get("state")) for item in state_intervals}
@@ -2112,6 +2215,50 @@ def render(session: Path, output: Path) -> Path:
         '<table class="evidence"><thead><tr><th>Metric</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th></tr></thead>'
         f'<tbody>{kinematics_rows}</tbody></table></section>'
     )
+    planner_path_rows = []
+    for snapshot in planner_path_snapshots[-80:]:
+        if not isinstance(snapshot, dict):
+            continue
+        nominal_count = len(snapshot.get("nominal_path", [])) if isinstance(snapshot.get("nominal_path"), list) else 0
+        backup_count = len(snapshot.get("backup_path", [])) if isinstance(snapshot.get("backup_path"), list) else 0
+        emergency_count = len(snapshot.get("emergency_path", [])) if isinstance(snapshot.get("emergency_path"), list) else 0
+        available = bool(snapshot.get("path_available"))
+        reason = snapshot.get("absence_reason") or snapshot.get("terminal_command_semantics") or snapshot.get("commit_decision") or "—"
+        planner_path_rows.append(
+            f'<tr><td>{fmt(snapshot.get("t"), 2, " s")}</td>'
+            f'<td>{"executable bundle" if available else "NO EXECUTABLE PATH"}</td>'
+            f'<td>gen {integer(snapshot.get("bundle_generation"))} · world rev {integer(snapshot.get("certificate_world_revision"))}</td>'
+            f'<td>{esc(snapshot.get("selected_role") or "—")}</td>'
+            f'<td>{nominal_count}/{backup_count}/{emergency_count}</td>'
+            f'<td>{esc(reason)}</td></tr>'
+        )
+    planner_path_html = "".join(planner_path_rows) or '<tr><td colspan="6">No planner path snapshot was recorded by this build.</td></tr>'
+
+    lidar_rows = []
+    for observation in obstacle_observations[-80:]:
+        if not isinstance(observation, dict):
+            continue
+        lidar_rows.append(
+            f'<tr><td>{fmt(observation.get("t"), 2, " s")}</td>'
+            f'<td>#{integer(observation.get("scan_index"))} · {esc(observation.get("frame_id") or "—")}</td>'
+            f'<td>{integer(observation.get("finite_points"))}</td><td>{integer(observation.get("roi_points"))}</td>'
+            f'<td>{fmt(observation.get("min_range_m"), 2, " m")}</td><td>{fmt(observation.get("max_range_m"), 2, " m")}</td>'
+            f'<td>{"yes" if observation.get("vehicle_position") is not None else "no"}</td></tr>'
+        )
+    lidar_html = "".join(lidar_rows) or '<tr><td colspan="7">No timestamped raw LiDAR observations were recorded.</td></tr>'
+
+    oscillation_rows = []
+    for item in oscillation.get("waypoints", []):
+        if not isinstance(item, dict):
+            continue
+        oscillation_rows.append(
+            f'<tr><td>WP{integer(item.get("waypoint_index"))}</td><td>{integer(item.get("sample_count"))}</td>'
+            f'<td>{fmt(item.get("distance_start_m"), 2, " m")}</td><td>{fmt(item.get("distance_min_m"), 2, " m")}</td>'
+            f'<td>{fmt(item.get("distance_end_m"), 2, " m")}</td><td>{integer(item.get("distance_reversal_count"))}</td>'
+            f'<td>{fmt(item.get("backward_distance_m"), 2, " m")}</td><td>{fmt(item.get("heading_turns"), 2, " turns")}</td>'
+            f'<td>{"yes" if item.get("oscillation_evidence") else "no"}</td></tr>'
+        )
+    oscillation_html = "".join(oscillation_rows) or '<tr><td colspan="9">No goal interval with usable ground-truth samples was recorded.</td></tr>'
     html_text = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2159,7 +2306,6 @@ def render(session: Path, output: Path) -> Path:
     .state-note {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .state-key {{ display:inline-block; width:18px; height:10px; margin-left:7px; border:1px solid #b8c5ce; border-radius:2px; vertical-align:middle; }} .state-key.normal {{ background:#dff3e8; }} .state-key.safety {{ background:#fde3e0; }}
     .timing-kpis {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:14px 0; }} .timing-kpi {{ min-height:112px; padding:12px 13px; border:1px solid #e3e9ee; border-top:4px solid; border-radius:8px; background:#fbfdfe; }} .timing-kpi-label {{ color:#53677b; font-size:12px; font-weight:800; }} .timing-kpi-value {{ margin-top:6px; color:#102b45; font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }} .timing-kpi-kind,.timing-kpi-detail {{ color:#68778a; font-size:11px; }} .timing-kpi-detail {{ margin-top:5px; font-variant-numeric:tabular-nums; }}
     .timing-panel-grid {{ display:grid; grid-template-columns:1fr; gap:10px; }} .timing-panel-grid > .timing-legend {{ grid-column:1/-1; }} .timing-panel {{ min-width:0; }} .timing-legend {{ display:flex; flex-wrap:wrap; gap:7px 16px; align-items:center; color:#53677b; font-size:11px; padding:2px 4px; }} .timing-key {{ width:18px; height:8px; display:inline-block; margin-right:5px; vertical-align:middle; border-radius:5px; background:{BLUE}; }} .timing-key.wait {{ background:{ORANGE}; }} .timing-key.total {{ height:10px; border:2px solid {TEAL}; background:#fff; }}
-    .map-envelope-card {{ margin-top:10px; padding:10px; border:1px solid #e3e9ee; border-radius:9px; background:#fbfdfe; }} .map-envelope-title {{ margin:0 0 4px; color:#29435d; font-size:13px; font-weight:800; }} .map-envelope-svg {{ width:100%; max-width:520px; height:auto; display:block; }} .map-envelope-legend {{ display:flex; flex-wrap:wrap; gap:6px 14px; margin:4px 0; color:#53677b; font-size:11px; }} .envelope-key {{ display:inline-block; width:18px; height:8px; margin-right:5px; border:1px solid {BLUE}; vertical-align:middle; background:#e9f2fc; }} .envelope-key.lidar {{ border-color:{TEAL}; background:#dff3f1; border-style:dashed; }} .envelope-key.planner {{ border-color:{PURPLE}; background:#eee8f7; border-style:dashed; }} .envelope-key.map {{ border-color:{PURPLE}; background:#eee8f7; }} .envelope-key.lio {{ border-color:{BLUE}; background:#e9f2fc; border-style:dotted; }}
     .timing-caption {{ margin:2px 5px 8px; }} .timing-timeline {{ margin-top:10px; }} .timing-flow {{ margin-top:10px; padding:10px; border:1px solid #e3e9ee; border-radius:9px; background:#fbfdfe; }} .timing-lane {{ display:grid; grid-template-columns:112px minmax(0,1fr); gap:10px; align-items:center; margin-top:8px; }} .timing-lane-label {{ color:#29435d; font-size:12px; font-weight:800; text-align:right; }} .timing-lane-track {{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; }} .timing-box {{ display:inline-block; padding:6px 9px; border:1px solid #9ab5ca; border-radius:6px; background:#eaf4fb; color:#234d70; font-size:11px; font-weight:700; }} .timing-box.wait {{ border-color:#e0b45b; background:#fff5dc; color:#7b4e00; }} .timing-box.total {{ border:2px solid {TEAL}; background:#e4f5f3; color:#126466; }} .timing-box.unavailable {{ border-style:dashed; background:#f2f4f6; color:#7b8996; }} .timing-arrow {{ color:#7c8d9d; font-weight:900; }} .timing-flow-note {{ margin:11px 0 0 122px; color:#68778a; font-size:11px; }}
     .chart-card:first-child {{ grid-column:auto; }}
     .chart-title {{ margin:2px 5px 2px; font-weight:800; font-size:14px; color:#29435d; }}
@@ -2204,7 +2350,7 @@ def render(session: Path, output: Path) -> Path:
 
   {replay_html}
 
-  <section><h2>Flight overview</h2><p class="small">Both 2D maps show recorded geometry and a separate relative-scale envelope view. The envelope view is isolated below each map so its large configured ranges do not shrink the observed path and obstacle geometry.</p><div class="charts">{plot_html}</div></section>
+  <section><h2>Flight overview</h2><p class="small">Both 2D maps show recorded geometry in the same ENU frame. The interactive replay draws configured LiDAR/planner envelopes around the cursor UAV, while waypoint acceptance circles, observed LiDAR points and planner paths remain on the flight map.</p><div class="charts">{plot_html}</div></section>
 
   <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 
@@ -2220,6 +2366,8 @@ def render(session: Path, output: Path) -> Path:
 
   {failure_reasons_html}
   {kinematics_html}
+
+  <section><h2>Planner geometry, sensing and oscillation evidence</h2><p class="small">Every row is timestamped. Nominal, backup and emergency point counts are taken from the same immutable planner bundle. A rejected command or terminal hold is shown as <strong>NO EXECUTABLE PATH</strong>, never as a path at the takeoff origin.</p><table class="evidence"><thead><tr><th>Time</th><th>Planner state</th><th>Bundle / world</th><th>Selected role</th><th>Nominal / backup / emergency points</th><th>Reason / decision</th></tr></thead><tbody>{planner_path_html}</tbody></table><p class="small">LiDAR overlay uses the recorded vehicle pose/yaw to project sensor-frame samples into the same ENU flight map. It is observation evidence, not a collision certificate.</p><table class="evidence"><thead><tr><th>Time</th><th>Scan / frame</th><th>Finite points</th><th>ROI points</th><th>Min range</th><th>Max range</th><th>Vehicle pose</th></tr></thead><tbody>{lidar_html}</tbody></table><p class="small">Distance reversal counts and heading turns are diagnostic indicators. They do not by themselves prove a controller fault; compare them with the active planner role, path divergence and waypoint acceptance radius.</p><table class="evidence"><thead><tr><th>Waypoint</th><th>Samples</th><th>Start distance</th><th>Minimum distance</th><th>End distance</th><th>Distance reversals</th><th>Backward travel</th><th>Heading turns</th><th>Oscillation evidence</th></tr></thead><tbody>{oscillation_html}</tbody></table></section>
 
   <section><h2>Measured processing time · raw table</h2><p class="small">Detailed diagnostic values are retained here for audit. The visual summary below is the primary interpretation view.</p><details><summary>Show raw timing statistics</summary><table class="evidence"><thead><tr><th>Component</th><th>Source</th><th>Metric</th><th>Unit</th><th>Mean</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>Samples</th><th>Non-zero</th></tr></thead><tbody>{diagnostic_timing_rows}</tbody></table></details></section>
 

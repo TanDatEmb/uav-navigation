@@ -961,6 +961,41 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                          maximum_acceleration / cfg_.max_acc,
                          maximum_jerk / cfg_.max_jerk});
     };
+    const double velocity_gate_margin =
+            1.0 + cfg_.dynamic_limit_tolerance_ratio;
+    const double acceleration_gate_margin = velocity_gate_margin;
+    const double jerk_gate_margin = velocity_gate_margin;
+    const auto dynamic_gate_satisfied = [&]() {
+        return std::isfinite(maximum_velocity) &&
+               std::isfinite(maximum_acceleration) &&
+               std::isfinite(maximum_jerk) &&
+               maximum_velocity <= cfg_.max_vel * velocity_gate_margin &&
+               maximum_acceleration <= cfg_.max_acc * acceleration_gate_margin &&
+               maximum_jerk <= cfg_.max_jerk * jerk_gate_margin;
+    };
+    const auto acceptFiniteLineSearchCandidate = [&]() {
+        // L-BFGS can exhaust its line-search trials after leaving a finite,
+        // already usable iterate.  Solver convergence is not a safety
+        // certificate, so accept this path only after rebuilding the
+        // candidate and re-running the independent corridor and V/A/J gates.
+        if (ret != lbfgs::LBFGSERR_MAXIMUMLINESEARCH || !x.allFinite()) {
+            return false;
+        }
+        rebuild_candidate();
+        update_dynamic_extrema();
+        if (!position_constraint_satisfied() || !dynamic_gate_satisfied()) {
+            traj.clear();
+            return false;
+        }
+        planner_context_->warn(
+                " -- [ExpOpt] accepted finite candidate after line-search stop: "
+                "vel={}/{} acc={}/{} jerk={}/{}",
+                maximum_velocity, cfg_.max_vel * velocity_gate_margin,
+                maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
+                maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
+        ret = lbfgs::LBFGS_STOP;
+        return true;
+    };
 
     struct CandidateSnapshot {
         VecDf x;
@@ -975,6 +1010,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     if (ret >= 0) {
         rebuild_candidate();
         update_dynamic_extrema();
+    } else {
+        // A line-search stop is a numerical termination, not proof that the
+        // last finite iterate is unusable.  The helper still requires the
+        // independent hard gates before changing the solver result to a
+        // successful bounded stop.
+        (void)acceptFiniteLineSearchCandidate();
     }
     const VecDf nominal_duration_s = opt_vars.times;
     print_optimizer_result();
@@ -1022,9 +1063,165 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         update_dynamic_extrema();
     };
     capture_best_candidate();
+    // Keep the first finite candidate separately from later feasibility
+    // retries. A retry is allowed to move spatial variables, and if that
+    // move leaves the corridor we still need the last corridor-valid seed for
+    // the bounded temporal fallback below.
+    const CandidateSnapshot feasibility_seed_candidate = best_candidate;
+    const auto rebuildInitialCandidate = [&]() {
+        if (opt_vars.init_ts.size() == 0 ||
+            opt_vars.init_ts.size() != opt_vars.times.size() ||
+            opt_vars.init_ps.size() != static_cast<std::size_t>(opt_vars.points.cols())) {
+            return false;
+        }
+        opt_vars.duration_lower_bound.resize(0);
+        gcopter::backwardMapTToTau(opt_vars.init_ts, tau);
+        Mat3Df initial_points(3, opt_vars.init_ps.size());
+        for (std::size_t index = 0; index < opt_vars.init_ps.size(); ++index) {
+            if (!opt_vars.init_ps[index].allFinite()) return false;
+            initial_points.col(static_cast<Eigen::Index>(index)) = opt_vars.init_ps[index];
+        }
+        switch (opt_vars.pos_constraint_type) {
+            case 1: {
+                xi = Eigen::Map<const VecDf>(initial_points.data(), initial_points.size());
+                break;
+            }
+            default: {
+                gcopter::backwardP(initial_points, opt_vars.vPolyIdx,
+                                   opt_vars.vPolytopes, xi);
+                break;
+            }
+        }
+        if (!x.allFinite()) return false;
+        rebuild_candidate();
+        update_dynamic_extrema();
+        return !traj.empty();
+    };
+    const auto rebuildFeasibilitySeedCandidate = [&]() {
+        if (!feasibility_seed_candidate.valid ||
+            !feasibility_seed_candidate.x.allFinite()) {
+            return false;
+        }
+        x = feasibility_seed_candidate.x;
+        opt_vars.duration_lower_bound =
+                feasibility_seed_candidate.duration_lower_bound;
+        rebuild_candidate();
+        update_dynamic_extrema();
+        return !traj.empty() && position_constraint_satisfied();
+    };
+    const auto tryBoundedTimeStretch = [&]() {
+        // If the guide seed is geometrically valid but too fast, preserve its
+        // collision-checked spatial path and stretch only its durations. This
+        // is deterministic and bounded; it avoids a feasibility retry moving
+        // the points outside the already certified corridor before the dynamic
+        // gate can be evaluated.
+        // Prefer the last corridor-valid optimized seed. The original guide
+        // remains a fallback for a numerical line-search stop that did not
+        // produce a corridor-valid optimized iterate.
+        if (!rebuildFeasibilitySeedCandidate() &&
+            (!rebuildInitialCandidate() || !position_constraint_satisfied())) {
+            planner_context_->warn(
+                    " -- [ExpOpt] bounded time stretch skipped: no corridor-valid finite seed");
+            return false;
+        }
+        const double velocity_scale = maximum_velocity / cfg_.max_vel;
+        const double acceleration_scale = std::sqrt(maximum_acceleration / cfg_.max_acc);
+        const double jerk_scale = std::cbrt(maximum_jerk / cfg_.max_jerk);
+        const double required_scale = std::max({
+                1.0, velocity_scale, acceleration_scale, jerk_scale});
+        if (!std::isfinite(required_scale) || required_scale <= 1.0 ||
+            !nominal_duration_s.allFinite() || nominal_duration_s.size() == 0 ||
+            nominal_duration_s.minCoeff() <= 0.0) {
+            return false;
+        }
+        const double initial_duration_reserve_scale = std::min(
+                4.0, std::max(kFeasibilityTimeReserve, required_scale * 1.05));
+        if (!std::isfinite(initial_duration_reserve_scale) ||
+            initial_duration_reserve_scale <= 1.0) {
+            planner_context_->warn(
+                    " -- [ExpOpt] bounded time stretch skipped: invalid reserve scale={} "
+                    "required_scale={}",
+                    initial_duration_reserve_scale, required_scale);
+            return false;
+        }
+        // A single scale derived from the initial peak can still leave a
+        // fixed-boundary MINCO polynomial marginally outside the envelope.
+        // Try only two larger, deterministic reserves; never relax the hard
+        // certificate and never allow an unbounded retry loop.
+        const std::array<double, 3> duration_reserve_scales = {
+                initial_duration_reserve_scale,
+                std::min(4.0, initial_duration_reserve_scale * 1.5),
+                4.0};
+        for (const double duration_reserve_scale : duration_reserve_scales) {
+            const VecDf reserved_duration_s = nominal_duration_s * duration_reserve_scale;
+            const VecDf free_duration_seed_s = nominal_duration_s *
+                    (duration_reserve_scale - 1.0);
+            if (!reserved_duration_s.allFinite() || reserved_duration_s.size() == 0 ||
+                reserved_duration_s.minCoeff() <= 0.0 || !free_duration_seed_s.allFinite() ||
+                free_duration_seed_s.size() == 0 || free_duration_seed_s.minCoeff() <= 0.0) {
+                continue;
+            }
+            if (!rebuildFeasibilitySeedCandidate() &&
+                (!rebuildInitialCandidate() || !position_constraint_satisfied())) {
+                planner_context_->warn(
+                        " -- [ExpOpt] bounded time stretch candidate={} skipped: "
+                        "seed left corridor",
+                        duration_reserve_scale);
+                continue;
+            }
+            opt_vars.duration_lower_bound = reserved_duration_s;
+            gcopter::backwardMapTToTau(free_duration_seed_s, tau);
+            if (!x.allFinite()) continue;
+            rebuild_candidate();
+            update_dynamic_extrema();
+            if (!position_constraint_satisfied()) {
+                planner_context_->warn(
+                        " -- [ExpOpt] bounded time stretch candidate={} rejected: "
+                        "corridor_violation={}",
+                        duration_reserve_scale, corridor_plane_violation());
+                continue;
+            }
+            if (!dynamic_gate_satisfied()) {
+                planner_context_->warn(
+                        " -- [ExpOpt] bounded time stretch candidate={} rejected: "
+                        "vel={} acc={} jerk={} limits={}/{}/{}",
+                        duration_reserve_scale, maximum_velocity,
+                        maximum_acceleration, maximum_jerk,
+                        cfg_.max_vel * velocity_gate_margin,
+                        cfg_.max_acc * acceleration_gate_margin,
+                        cfg_.max_jerk * jerk_gate_margin);
+                continue;
+            }
+            diagnostics_.retry_duration_lower_bound_min_s = reserved_duration_s.minCoeff();
+            diagnostics_.retry_duration_lower_bound_max_s = reserved_duration_s.maxCoeff();
+            diagnostics_.retry_free_duration_seed_min_s = free_duration_seed_s.minCoeff();
+            diagnostics_.retry_free_duration_seed_max_s = free_duration_seed_s.maxCoeff();
+            planner_context_->warn(
+                    " -- [ExpOpt] accepted bounded time-stretched guide: "
+                    "scale={} vel={}/{} acc={}/{} jerk={}/{}",
+                    duration_reserve_scale,
+                    maximum_velocity, cfg_.max_vel * velocity_gate_margin,
+                    maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
+                    maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
+            ret = lbfgs::LBFGS_STOP;
+            return true;
+        }
+        return false;
+    };
+    const bool initial_bounded_solver_stop =
+            ret == lbfgs::LBFGSERR_MAXIMUMLINESEARCH ||
+            ret == lbfgs::LBFGSERR_MAXIMUMITERATION;
+    if (!dynamic_gate_satisfied() &&
+        (ret >= 0 || initial_bounded_solver_stop)) {
+        if (tryBoundedTimeStretch()) {
+            capture_best_candidate();
+        } else {
+            restore_best_candidate();
+        }
+    }
     const VecDf nominal_penalty_weights = opt_vars.penaltyWeights;
     for (int retry = 0;
-         ret >= 0 && best_normalized_violation > 1.0 &&
+         ret >= 0 && !dynamic_gate_satisfied() &&
          retry < kMaximumFeasibilityRetries; ++retry) {
         const double velocity_scale = maximum_velocity / cfg_.max_vel;
         const double acceleration_scale = std::sqrt(maximum_acceleration / cfg_.max_acc);
@@ -1035,9 +1232,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             diagnostics_.retry_stop_reason = 1;
             break;
         }
-        const bool velocity_violated = maximum_velocity > cfg_.max_vel;
-        const bool acceleration_violated = maximum_acceleration > cfg_.max_acc;
-        const bool jerk_violated = maximum_jerk > cfg_.max_jerk;
+        const bool velocity_violated =
+                maximum_velocity > cfg_.max_vel * velocity_gate_margin;
+        const bool acceleration_violated =
+                maximum_acceleration > cfg_.max_acc * acceleration_gate_margin;
+        const bool jerk_violated =
+                maximum_jerk > cfg_.max_jerk * jerk_gate_margin;
         diagnostics_.retry_violation_mask |=
                 (velocity_violated ? 1 : 0) |
                 (acceleration_violated ? 2 : 0) |
@@ -1059,12 +1259,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             diagnostics_.retry_stop_reason = 1;
             break;
         }
-        // duration_lower_bound is the complete nominal duration, not only the
-        // reserve.  The optimizer owns a strictly positive free duration above
-        // this bound, so retry cannot shrink any segment below its nominal
-        // duration.  Keep the reference fixed across retries; using a mutated
-        // candidate here would compound the reserve and hide the invariant.
-        opt_vars.duration_lower_bound = nominal_duration_s;
+        // Apply the reserve to the actual lower bound, not only to the initial
+        // free-duration seed.  The objective contains a time term and is
+        // allowed to drive the free duration back toward zero; keeping the
+        // old nominal lower bound therefore allowed the retry to return the
+        // same slightly overspeed trajectory.  The fixed nominal reference
+        // prevents compounding reserves across retries while the hard gate
+        // below remains authoritative for every dynamic component.
+        const VecDf reserved_duration_s = nominal_duration_s * duration_reserve_scale;
+        if (!reserved_duration_s.allFinite() || reserved_duration_s.size() == 0 ||
+            reserved_duration_s.minCoeff() <= 0.0) {
+            diagnostics_.retry_stop_reason = 1;
+            break;
+        }
+        opt_vars.duration_lower_bound = reserved_duration_s;
         const VecDf free_duration_seed_s = nominal_duration_s *
                 (duration_reserve_scale - 1.0);
         if (!free_duration_seed_s.allFinite() || free_duration_seed_s.size() == 0 ||
@@ -1073,9 +1281,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
         diagnostics_.retry_duration_lower_bound_min_s =
-                nominal_duration_s.minCoeff();
+                reserved_duration_s.minCoeff();
         diagnostics_.retry_duration_lower_bound_max_s =
-                nominal_duration_s.maxCoeff();
+                reserved_duration_s.maxCoeff();
         diagnostics_.retry_free_duration_seed_min_s =
                 free_duration_seed_s.minCoeff();
         diagnostics_.retry_free_duration_seed_max_s =
@@ -1119,6 +1327,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 ? lbfgs::LBFGS_STOP
                 : retry_result;
         if (ret < 0) {
+            if (retry_result == lbfgs::LBFGSERR_MAXIMUMLINESEARCH &&
+                x.allFinite()) {
+                ret = retry_result;
+                if (acceptFiniteLineSearchCandidate()) {
+                    capture_best_candidate();
+                    break;
+                }
+            }
             diagnostics_.retry_stop_reason = 3;
             restore_best_candidate();
             break;
@@ -1142,8 +1358,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 retry + 1, retry_violation,
                 penalty_scale,
                 maximum_velocity, maximum_acceleration, maximum_jerk);
-        const bool candidate_is_feasible = std::isfinite(retry_violation) &&
-                                            retry_violation <= 1.0;
+        const bool candidate_is_feasible = dynamic_gate_satisfied();
         const bool candidate_made_progress = std::isfinite(retry_violation) &&
                                              retry_violation < best_normalized_violation;
         if (!candidate_is_feasible && !candidate_made_progress) {
@@ -1161,7 +1376,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
     }
-    if (ret >= 0 && best_normalized_violation > 1.0 &&
+    if (ret >= 0 && !dynamic_gate_satisfied() &&
         diagnostics_.retry_count >= kMaximumFeasibilityRetries &&
         diagnostics_.retry_stop_reason == 0) {
         diagnostics_.retry_stop_reason = 6;
@@ -1186,19 +1401,19 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if (ret >= 0) {
         // Mission V/A/J values are command limits, not soft optimizer
-        // penalties. The flatness envelope is an exact hard certificate.
-        constexpr double gate_margin = 1.0;
+        // penalties. The explicitly configured, bounded numerical tolerance
+        // applies consistently to all three dynamic components.
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
-            maximum_velocity > cfg_.max_vel * gate_margin ||
-            maximum_acceleration > cfg_.max_acc * gate_margin ||
-            maximum_jerk > cfg_.max_jerk * gate_margin) {
+            maximum_velocity > cfg_.max_vel * velocity_gate_margin ||
+            maximum_acceleration > cfg_.max_acc * acceleration_gate_margin ||
+            maximum_jerk > cfg_.max_jerk * jerk_gate_margin) {
             planner_context_->warn(
                     " -- [ExpOpt] physical hard gate rejected trajectory: "
                     "vel={}/{} acc={}/{} jerk={}/{}",
-                    maximum_velocity, cfg_.max_vel * gate_margin,
-                    maximum_acceleration, cfg_.max_acc * gate_margin,
-                    maximum_jerk, cfg_.max_jerk * gate_margin);
+                    maximum_velocity, cfg_.max_vel * velocity_gate_margin,
+                    maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
+                    maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
             traj.clear();
             ret = -1;
             minCostFunctional = INFINITY;

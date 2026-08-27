@@ -121,6 +121,11 @@ struct TrajectoryValidationResult {
   Eigen::Vector3d first_blocked_position{Eigen::Vector3d::Constant(
       std::numeric_limits<double>::quiet_NaN())};
   int first_blocked_cell_state{0};
+  // Product-facing copy of the swept validator reason.  Keeping the reason
+  // here makes world-recertification failures diagnosable without weakening
+  // the fail-closed decision.
+  int failure_code{0};
+  int blocked_role{0};
   std::size_t sample_count{0};
   std::size_t segment_count{0};
 };
@@ -143,6 +148,14 @@ struct PlannerDiagnostics {
       std::numeric_limits<double>::quiet_NaN())};
   double latest_guide_path_length_m{std::numeric_limits<double>::quiet_NaN()};
   double latest_guide_duration_s{std::numeric_limits<double>::quiet_NaN()};
+  Eigen::Vector3d requested_goal{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  Eigen::Vector3d planning_goal{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  double goal_acceptance_radius_m{std::numeric_limits<double>::quiet_NaN()};
+  bool goal_endpoint_adjusted{false};
+  int requested_goal_inflated_state{0};
+  int planning_goal_inflated_state{0};
   OptimizationDiagnostics optimization{};
 };
 

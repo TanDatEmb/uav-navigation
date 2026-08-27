@@ -40,6 +40,25 @@ def _json_vector(values: Any) -> list[float | None]:
     return result
 
 
+def _heading_from_quaternion(quaternion: Any) -> float | None:
+    """Return ENU yaw from a ROS quaternion without trusting its scale."""
+    try:
+        x = float(quaternion.x)
+        y = float(quaternion.y)
+        z = float(quaternion.z)
+        w = float(quaternion.w)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if not math.isfinite(norm) or norm <= 1.0e-9:
+        return None
+    x, y, z, w = (value / norm for value in (x, y, z, w))
+    return math.atan2(
+        2.0 * (w * z + x * y),
+        1.0 - 2.0 * (y * y + z * z),
+    )
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -94,7 +113,11 @@ class ExternalModeScenario:
     def __init__(self, output: Path, config: dict[str, Any]) -> None:
         import rclpy
         from nav_msgs.msg import Odometry
-        from navigation_contracts.msg import NavigationGoal, NavigationModeStatus
+        from navigation_contracts.msg import (
+            NavigationGoal,
+            NavigationModeStatus,
+            PropagatedOdometry,
+        )
         from px4_msgs.msg import (
             ModeCompleted,
             TrajectorySetpoint,
@@ -166,6 +189,7 @@ class ExternalModeScenario:
         self.exit_request_sim_ns: int | None = None
         self.takeoff_requested = False
         self.takeoff_requested_sim_ns: int | None = None
+        self.takeoff_native_hold_ready = False
         self.takeoff_observed = False
         self.takeoff_stable_since_ns: int | None = None
         self.arm_ack_success_sim_ns: int | None = None
@@ -188,6 +212,10 @@ class ExternalModeScenario:
         self.trajectory_success_count = 0
         self.latest_trajectory: dict[str, Any] = {}
         self.trajectory_records: list[dict[str, Any]] = []
+        # Keep one bounded, timestamped observation summary per LiDAR scan.
+        # This is diagnostic evidence only; planner safety remains owned by
+        # the immutable map certificate.
+        self.raw_lidar_observations: list[dict[str, Any]] = []
         # Keep the sampled PVA command path. trajectory_records is the compact,
         # latest-per-waypoint view used by acceptance checks.
         self.trajectory_history: list[dict[str, Any]] = []
@@ -241,7 +269,12 @@ class ExternalModeScenario:
         self.goal_pub = self.node.create_publisher(NavigationGoal, "/navigation/goal", reliable_qos)
         self.command_pub = self.node.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", px4_qos)
         self.node.create_subscription(Clock, "/clock", self._clock, px4_qos)
-        self.node.create_subscription(Odometry, "/lio/odometry_propagated", self._odometry, reliable_qos)
+        self.node.create_subscription(
+            PropagatedOdometry,
+            "/lio/odometry_propagated",
+            self._odometry,
+            reliable_qos,
+        )
         self.node.create_subscription(Odometry, "/sim/ground_truth/odometry", self._ground_truth, reliable_qos)
         self.node.create_subscription(PointCloud2, "/lidar/points", self._raw_lidar, px4_qos)
         self.node.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self._local_position, px4_qos)
@@ -279,15 +312,19 @@ class ExternalModeScenario:
             self.sim_start_ns = self.sim_now_ns
 
     def _odometry(self, message: Any) -> None:
-        if message.header.frame_id != "lio_odom":
+        # The product propagated topic is a typed envelope. Keep the nested
+        # nav_msgs/Odometry as the state payload while preserving the envelope
+        # type at the subscription boundary.
+        odometry = message.odometry
+        if odometry.header.frame_id != "lio_odom":
             return
-        position = message.pose.pose.position
+        position = odometry.pose.pose.position
         values = (float(position.x), float(position.y), float(position.z))
         if all(math.isfinite(value) for value in values):
             velocity = tuple(float(value) for value in (
-                message.twist.twist.linear.x,
-                message.twist.twist.linear.y,
-                message.twist.twist.linear.z,
+                odometry.twist.twist.linear.x,
+                odometry.twist.twist.linear.y,
+                odometry.twist.twist.linear.z,
             ))
             if not all(math.isfinite(value) for value in velocity):
                 velocity = (0.0, 0.0, 0.0)
@@ -295,7 +332,7 @@ class ExternalModeScenario:
                 "x": values[0], "y": values[1], "z": values[2],
                 "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
             }
-            self.latest_odom_stamp_ns = _time_ns(message.header.stamp)
+            self.latest_odom_stamp_ns = _time_ns(odometry.header.stamp)
             self._update_localization_watchdog()
 
     def _ground_truth(self, message: Any) -> None:
@@ -313,6 +350,7 @@ class ExternalModeScenario:
         self.latest_ground_truth = {
             "x": values[0], "y": values[1], "z": values[2],
             "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
+            "yaw": _heading_from_quaternion(message.pose.pose.orientation),
         }
         self.latest_ground_truth_stamp_ns = _time_ns(message.header.stamp)
         self._update_localization_watchdog()
@@ -370,17 +408,34 @@ class ExternalModeScenario:
         self.actual_min_clearance_m = clearance if self.actual_min_clearance_m is None else min(self.actual_min_clearance_m, clearance)
 
     @staticmethod
-    def _cloud_roi_count(message: Any, *, sensor_frame: bool) -> int:
-        """Count finite obstacle samples without retaining a second point cloud."""
+    def _cloud_observation(message: Any, *, sensor_frame: bool) -> dict[str, Any]:
+        """Summarize one scan while retaining only a small debug sample."""
+        observation: dict[str, Any] = {
+            "finite_points": 0,
+            "roi_points": 0,
+            "min_range_m": None,
+            "max_range_m": None,
+            "sampled_points_sensor": [],
+        }
         try:
             from sensor_msgs_py import point_cloud2
-            count = 0
-            for point in point_cloud2.read_points(
+            for index, point in enumerate(point_cloud2.read_points(
                 message, field_names=("x", "y", "z"), skip_nans=True
-            ):
+            )):
                 x, y, z = (float(point[0]), float(point[1]), float(point[2]))
                 if not all(math.isfinite(value) for value in (x, y, z)):
                     continue
+                observation["finite_points"] += 1
+                range_m = math.sqrt(x * x + y * y + z * z)
+                if math.isfinite(range_m):
+                    if observation["min_range_m"] is None:
+                        observation["min_range_m"] = range_m
+                    else:
+                        observation["min_range_m"] = min(observation["min_range_m"], range_m)
+                    observation["max_range_m"] = max(
+                        observation["max_range_m"] or range_m, range_m)
+                if index % 64 == 0 and len(observation["sampled_points_sensor"]) < 32:
+                    observation["sampled_points_sensor"].append([x, y, z])
                 if sensor_frame:
                     # no_path wall is at x=1 and spans y/z; this ROI avoids
                     # using the floor as the obstacle evidence.
@@ -388,14 +443,22 @@ class ExternalModeScenario:
                 else:
                     inside = 0.5 <= x <= 1.5 and abs(y) <= 20.0 and 0.0 <= z <= 12.0
                 if inside:
-                    count += 1
-            return count
+                    observation["roi_points"] += 1
+            return observation
         except (ImportError, AttributeError, TypeError, ValueError):
-            return 0
+            observation["decode"] = "NOT_AVAILABLE"
+            return observation
+
+    @staticmethod
+    def _cloud_roi_count(message: Any, *, sensor_frame: bool) -> int:
+        """Compatibility wrapper for the existing acceptance counter."""
+        return int(ExternalModeScenario._cloud_observation(
+            message, sensor_frame=sensor_frame).get("roi_points", 0))
 
     def _raw_lidar(self, message: Any) -> None:
         self.raw_lidar_scan_count += 1
-        count = self._cloud_roi_count(message, sensor_frame=True)
+        observation = self._cloud_observation(message, sensor_frame=True)
+        count = int(observation.get("roi_points", 0))
         self.raw_lidar_roi_max_points = max(self.raw_lidar_roi_max_points, count)
         if count >= 20:
             self.raw_lidar_roi_scan_count += 1
@@ -405,6 +468,28 @@ class ExternalModeScenario:
                     "points": count,
                     "frame_id": str(message.header.frame_id),
                 })
+        event = {
+            "scan_index": self.raw_lidar_scan_count,
+            "stamp_ns": _time_ns(message.header.stamp),
+            "frame_id": str(message.header.frame_id),
+            "finite_points": int(observation.get("finite_points", 0)),
+            "roi_points": count,
+            "min_range_m": observation.get("min_range_m"),
+            "max_range_m": observation.get("max_range_m"),
+            "sampled_points_sensor": observation.get("sampled_points_sensor", []),
+            "vehicle_position": (
+                [self.latest_ground_truth[name] for name in ("x", "y", "z")]
+                if self.latest_ground_truth is not None else None
+            ),
+            "vehicle_yaw_rad": (
+                self.latest_ground_truth.get("yaw")
+                if self.latest_ground_truth is not None else None
+            ),
+        }
+        self.raw_lidar_observations.append(event)
+        if len(self.raw_lidar_observations) > 512:
+            del self.raw_lidar_observations[:-512]
+        self._record("lidar_observation", event)
 
     def _update_localization_watchdog(self) -> None:
         if not self.post_takeoff_mode_entered or self.latest_odom is None or self.latest_ground_truth is None:
@@ -589,6 +674,9 @@ class ExternalModeScenario:
         self.pva_command_success_count += 1
         self.trajectory_received += 1
         terminal_failure = int(message.status) == int(self.NavigationCommand.STATUS_REJECTED)
+        executable_command = (
+            not terminal_failure and int(getattr(message, "bundle_generation", 0)) > 0
+        )
         if terminal_failure:
             self.trajectory_failure_count += 1
         else:
@@ -612,6 +700,10 @@ class ExternalModeScenario:
             "yaw": float(message.yaw),
             "yaw_rate": float(message.yaw_rate),
             "vel_norm": float(getattr(message, "vel_norm", 0.0)),
+            # REJECTED is a diagnostic event, not a command PX4 was allowed
+            # to execute. Keep it in the event log but never let report code
+            # turn its hold sample into a generated trajectory.
+            "executable": executable_command,
         }
         goal = self.latest_goal
         mission_id = str(goal.get("mission_id", "navigation_mission"))
@@ -629,6 +721,7 @@ class ExternalModeScenario:
                 "trajectory_status": int(message.status),
                 "trajectory_generation": int(getattr(message, "bundle_generation", 0)),
                 "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
+                "executable": executable_command,
                 "first_sim_time_ns": int(self.sim_now_ns),
                 "position_points": [],
                 "velocity_points": [],
@@ -643,7 +736,13 @@ class ExternalModeScenario:
         trajectory["trajectory_generation"] = int(getattr(message, "bundle_generation", 0))
         trajectory["trajectory_time_s"] = float(getattr(message, "trajectory_time_s", 0.0))
         trajectory["last_sim_time_ns"] = int(self.sim_now_ns)
-        if not trajectory["position_points"] or trajectory["position_points"][-1] != position:
+        # A rejected terminal sample is an execution-boundary diagnostic, not
+        # a point PX4 was allowed to execute.  Do not append it to the compact
+        # path: otherwise the zero-valued emergency hold is rendered as a
+        # false line from the real flight position back to takeoff.
+        if executable_command and (
+            not trajectory["position_points"] or trajectory["position_points"][-1] != position
+        ):
             trajectory["position_points"].append(position)
             trajectory["velocity_points"].append(list(self.latest_pva_command["velocity"]))
             if len(trajectory["position_points"]) > 4096:
@@ -1048,6 +1147,26 @@ class ExternalModeScenario:
                 return
             if not self.takeoff_requested:
                 if not self.manual_takeoff:
+                    # PX4_CMD_NAV_TAKEOFF is an autopilot mode command: PX4
+                    # deliberately leaves a registered External Mode and
+                    # enters AUTO_TAKEOFF.  Request native Hold first so the
+                    # mode exit is intentional and does not get mistaken for
+                    # an External-Mode health/failsafe event.  External Mode
+                    # is re-entered only after the vehicle is stably airborne.
+                    if not self.takeoff_native_hold_ready:
+                        hold_nav_state = int(
+                            self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER)
+                        if (
+                            int(self.latest_status.get("nav_state", -1)) != hold_nav_state
+                            or int(self.latest_status.get("executor_in_charge", 0)) != 0
+                        ):
+                            self._retry(
+                                "prepare_takeoff_hold",
+                                self.VehicleCommand.VEHICLE_CMD_SET_NAV_STATE,
+                                float(hold_nav_state),
+                            )
+                            return
+                        self.takeoff_native_hold_ready = True
                     # The ACK confirms that PX4 accepted the arm request, but
                     # the vehicle_status transition can lag by a few scheduler
                     # ticks. Give commander one settle window before sending
@@ -1151,6 +1270,14 @@ class ExternalModeScenario:
                         {"odometry_age_s": odometry_age_s},
                     )
                 return
+            mode_elapsed_s = (
+                0.0 if self.mode_entered_sim_ns is None else
+                max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)
+            )
+            if mode_elapsed_s > float(self.config.get("mission_timeout_s", 90.0)):
+                self.failure = "mission did not complete and External Mode did not hand over"
+                self.finish("MISSION_TIMEOUT")
+                return
             if stable_elapsed_s < stable_s:
                 return
             px4_hold = int(self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER)
@@ -1194,7 +1321,8 @@ class ExternalModeScenario:
                     # rejection into a wall timeout or a component failure.
                     self._finish_or_wait("PAUSED_SAFETY_STOP")
                     return
-                if int(self.latest_status.get("nav_state", -1)) == px4_hold:
+                if (self.post_takeoff_mode_entered and
+                    int(self.latest_status.get("nav_state", -1)) == px4_hold):
                     self._finish_or_wait("PAUSED_SAFETY_STOP")
                 return
             if self.mode_exit_observed:
@@ -1202,13 +1330,6 @@ class ExternalModeScenario:
                     self.operator_aborted = True
                     self._finish_or_wait("ABORTED_OPERATOR")
                 return
-            mode_elapsed_s = (
-                0.0 if self.mode_entered_sim_ns is None else
-                max(0.0, (self.sim_now_ns - self.mode_entered_sim_ns) / 1e9)
-            )
-            if mode_elapsed_s > float(self.config.get("mission_timeout_s", 90.0)):
-                self.failure = "mission did not complete and External Mode did not hand over"
-                self.finish("MISSION_TIMEOUT")
             return
 
         if getattr(self, "pva_command_success_count", 0) == 0:
@@ -1383,6 +1504,7 @@ class ExternalModeScenario:
                 "raw_lidar_scan_count": self.raw_lidar_scan_count,
                 "raw_lidar_roi_scan_count": self.raw_lidar_roi_scan_count,
                 "raw_lidar_roi_max_points": self.raw_lidar_roi_max_points,
+                "raw_lidar_observation_count": len(self.raw_lidar_observations),
             },
             "latest_trajectory": self.latest_trajectory,
             "latest_pva_command": self.latest_pva_command,

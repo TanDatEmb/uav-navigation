@@ -397,6 +397,101 @@ namespace path_search {
             return INIT_ERROR;
         }
 
+        // The graph nodes are voxel centres, while the planner start is the
+        // measured continuous pose (or a point on the already certified guide
+        // prefix).  Starting the graph unconditionally at the containing
+        // voxel centre can therefore create an unvalidated first edge: the
+        // centre may be on the far side of an inflated obstacle even though
+        // the measured pose itself is free.  That edge is only discovered by
+        // PathSearch/CIRI after A* has returned, which strands hot replanning
+        // at exactly the point where the vehicle needs a detour.
+        //
+        // Use a bounded virtual-start projection.  It never changes the
+        // command start: PathSearch still prepends local_start_pt and checks
+        // the continuous segment.  It only chooses the first graph node from
+        // a small neighbourhood whose connection to the real pose has already
+        // passed the same inflated-map/unknown-space oracle used by the
+        // search.  If no such node exists, report NO_PATH and remain
+        // fail-closed rather than accepting an unverified jump.
+        const auto search_layer = md_.use_inf_map
+                ? GridLayer::kInflated : GridLayer::kEvidence;
+        const auto search_policy = md_.unknown_as_occ
+                ? UnknownPolicy::kRequireKnownFree
+                : UnknownPolicy::kAllowUnknown;
+        rog_map::Vec3f graph_start_pt;
+        globalIndexToPos(start_idx, graph_start_pt);
+        if (!map_ptr_->isSegmentTraversable(
+                    local_start_pt, graph_start_pt, search_layer, search_policy)) {
+            struct StartCandidate {
+                rog_map::Vec3i index;
+                rog_map::Vec3f position;
+                double score{std::numeric_limits<double>::infinity()};
+            };
+            std::optional<StartCandidate> best_candidate;
+            constexpr int kVirtualStartSearchRadiusCells = 3;
+            for (int radius = 1; radius <= kVirtualStartSearchRadiusCells; ++radius) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    for (int dy = -radius; dy <= radius; ++dy) {
+                        for (int dz = -radius; dz <= radius; ++dz) {
+                            if (std::max({std::abs(dx), std::abs(dy), std::abs(dz)}) != radius) {
+                                continue;
+                            }
+                            rog_map::Vec3i candidate_idx = start_idx;
+                            candidate_idx += rog_map::Vec3i(dx, dy, dz);
+                            if (!insideLocalMap(candidate_idx)) continue;
+                            rog_map::Vec3f candidate_pos;
+                            globalIndexToPos(candidate_idx, candidate_pos);
+                            if (!map_ptr_->contains(candidate_pos) ||
+                                (prefer_start_goal_altitude &&
+                                 std::abs(candidate_pos.z() - local_start_pt.z()) > md_.resolution)) {
+                                continue;
+                            }
+                            const CellState candidate_type = map_ptr_->classify(
+                                    candidate_pos, search_layer);
+                            if (!isCellTraversable(candidate_type,
+                                                   UnknownPolicy::kAllowUnknown) ||
+                                (md_.unknown_as_occ &&
+                                 (candidate_type == CellState::kUnknown ||
+                                  candidate_type == CellState::kFrontier))) {
+                                continue;
+                            }
+                            if (!map_ptr_->isSegmentTraversable(
+                                        local_start_pt, candidate_pos,
+                                        search_layer, search_policy)) {
+                                continue;
+                            }
+                            const double distance_from_pose =
+                                    (candidate_pos - local_start_pt).squaredNorm();
+                            const double distance_to_goal =
+                                    (candidate_pos - local_end_pt).squaredNorm();
+                            const double score = distance_from_pose + 0.05 * distance_to_goal;
+                            if (!best_candidate || score < best_candidate->score) {
+                                best_candidate = StartCandidate{
+                                        candidate_idx, candidate_pos, score};
+                            }
+                        }
+                    }
+                }
+                // Prefer the nearest reachable shell. A farther shell is
+                // considered only when every closer shell is geometrically
+                // blocked.
+                if (best_candidate) break;
+            }
+            if (!best_candidate) {
+                planner_context_->warn(
+                        " -- [A*] no graph voxel is continuously reachable from start {}; "
+                        "force return",
+                        local_start_pt.transpose());
+                return NO_PATH;
+            }
+            planner_context_->warn(
+                    " -- [A*] virtual start shifted graph seed from {} to {} "
+                    "while preserving measured start {}",
+                    graph_start_pt.transpose(), best_candidate->position.transpose(),
+                    local_start_pt.transpose());
+            start_idx = best_candidate->index;
+        }
+
         // UAV missions normally prefer a lateral detour over diving toward
         // unseen ground.  First search the start/goal altitude slab, expanded
         // by one map cell for discretization.  The caller retries unrestricted
@@ -430,7 +525,6 @@ namespace path_search {
             }
             return end_pt_out_local_map ? REACH_HORIZON : REACH_GOAL;
         }
-
 
         GridNodePtr startPtr = nodeAt(getLocalIndexHash(start_idx));
         GridNodePtr endPtr = nodeAt(getLocalIndexHash(end_idx));
@@ -578,21 +672,30 @@ namespace path_search {
                             continue;
                         }
 
-                        // A free diagonal endpoint does not imply a free
-                        // continuous edge: the segment can cut through the
-                        // corner of an inflated occupied voxel. Corridor
-                        // generation and CIRI operate on continuous seed
-                        // lines, so A* must validate the same geometry.
-                        if (std::abs(dx) + std::abs(dy) + std::abs(dz) > 1) {
-                            rog_map::Vec3f current_pos;
-                            globalIndexToPos(current->id_g, current_pos);
-                            if (!map_ptr_->isSegmentTraversable(
+                        // A free endpoint does not imply a free continuous
+                        // edge: the segment can cut through the corner of an
+                        // inflated occupied voxel. This applies to axial
+                        // edges as well as diagonals. Validate every graph
+                        // edge under the selected search layer and, because
+                        // the returned path is consumed by the inflated
+                        // corridor/execution gates, under the authoritative
+                        // inflated layer too. The latter is essential for the
+                        // probability-map fallback; evidence-free is not
+                        // equivalent to execution-safe.
+                        rog_map::Vec3f current_pos;
+                        globalIndexToPos(current->id_g, current_pos);
+                        const auto search_layer = md_.use_inf_map
+                                ? GridLayer::kInflated : GridLayer::kEvidence;
+                        const auto search_policy = md_.unknown_as_occ
+                                ? UnknownPolicy::kRequireKnownFree
+                                : UnknownPolicy::kAllowUnknown;
+                        if (!map_ptr_->isSegmentTraversable(
                                     current_pos, neighborPos,
-                                    md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
-                                    md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
-                                                       : UnknownPolicy::kAllowUnknown)) {
-                                continue;
-                            }
+                                    search_layer, search_policy) ||
+                            !map_ptr_->isSegmentTraversable(
+                                    current_pos, neighborPos,
+                                    GridLayer::kInflated, search_policy)) {
+                            continue;
                         }
 
                         CellState neighbor_type;
@@ -755,8 +858,12 @@ namespace path_search {
             return INIT_ERROR;
         }
         rog_map::Vec3f local_start_pt = start_pt;
+        const auto escape_layer = md_.use_inf_map
+                ? GridLayer::kInflated : GridLayer::kEvidence;
+        const auto escape_policy = md_.unknown_as_occ
+                ? UnknownPolicy::kRequireKnownFree : UnknownPolicy::kAllowUnknown;
         const CellState exact_start_type = map_ptr_->classify(
-                local_start_pt, md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence);
+                local_start_pt, escape_layer);
         // UNKNOWN_AS_FREE means an exact non-occupied start already satisfies
         // the escape contract. Snapping it to a voxel centre can otherwise
         // introduce an artificial altitude step on every planning cycle.
@@ -766,7 +873,7 @@ namespace path_search {
             return NO_NEED;
         }
         const auto nearest_start = map_ptr_->nearestNotOccupied(
-                start_pt, GridLayer::kEvidence, 3.0);
+                start_pt, escape_layer, 3.0);
         if (!nearest_start) {
             cout << RED <<
                  " -- [A*] " << RET_CODE_STR[INIT_ERROR]
@@ -826,16 +933,16 @@ namespace path_search {
             }
             rog_map::Vec3f cur_pos;
             globalIndexToPos(current->id_g, cur_pos);
-            const CellState cur_inf_type = map_ptr_->classify(cur_pos, GridLayer::kInflated);
-            if (md_.unknown_as_occ && cur_inf_type != CellState::kOccupied &&
-                cur_inf_type != CellState::kUnknown) {
+            const CellState cur_type = map_ptr_->classify(cur_pos, escape_layer);
+            if (md_.unknown_as_occ && cur_type != CellState::kOccupied &&
+                cur_type != CellState::kUnknown) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
                 return REACH_HORIZON;
             }
 
             if (md_.unknown_as_free &&
-                isCellTraversable(cur_inf_type, UnknownPolicy::kAllowUnknown)) {
+                isCellTraversable(cur_type, escape_policy)) {
                 retrievePath(current, node_path);
                 ConvertNodePathToPointPath(node_path, out_path);
                 return REACH_HORIZON;

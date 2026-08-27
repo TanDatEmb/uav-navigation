@@ -183,6 +183,25 @@ TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
   EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] {}));
 }
 
+TEST(CommittedBundleStore, RecertificationRenewsOnlyTheValidatedExecutionWindow) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = candidateFor(7, 1);
+  candidate.valid_until_ns = 100;
+  auto committed = std::make_shared<const navigation_planning::CandidateBundle>(candidate);
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, committed),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+  ASSERT_TRUE(store.publishWorldIdentity(next_world, committed, true, 300));
+  const auto recertified = store.load();
+  ASSERT_TRUE(recertified);
+  EXPECT_EQ(recertified->valid_until_ns, 300);
+  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] {}));
+}
+
 TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

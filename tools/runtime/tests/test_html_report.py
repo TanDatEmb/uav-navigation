@@ -345,7 +345,7 @@ rog_map:
             "metrics": {"obstacles": [obstacle], "route_obstacles": []},
             "spatial_envelopes": envelopes,
         })
-        self.assertIn("Configured spatial envelopes", final_map)
+        self.assertNotIn("Configured spatial envelopes", final_map)
         self.assertIn("Map focus", final_map)
         replay = replay_section({
             "ground_truth": [{"t": 0.0, "position": [0.0, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0]}],
@@ -354,8 +354,11 @@ rog_map:
             "observability": {},
             "spatial_envelopes": envelopes,
         })
-        self.assertIn("Configured spatial envelopes", replay)
-        self.assertIn("relative scale", replay)
+        self.assertNotIn("Configured spatial envelopes", replay)
+        self.assertNotIn("relative scale", replay)
+        self.assertIn("drawEnvelope", replay)
+        self.assertIn("centered on UAV", replay)
+        self.assertEqual(payload["spatial_envelopes"]["robot_radius_m"], 0.8)
 
     def test_line_chart_wraps_a_fifth_legend_entry_inside_the_svg(self) -> None:
         chart = line_chart(

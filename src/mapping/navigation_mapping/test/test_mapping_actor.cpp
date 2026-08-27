@@ -34,6 +34,21 @@ navigation_mapping::MappingObservation observationAt(
   return {std::move(cloud), std::move(odometry), 1U, 1U, stamp_ns, 0};
 }
 
+navigation_mapping::MappingObservation observationAtPose(
+    const std::int64_t stamp_ns, const std::int64_t odometry_stamp_ns,
+    const Eigen::Vector3d& position, const std::uint64_t scan_sequence) {
+  auto cloud = std::make_unique<navigation_mapping::PointCloud>();
+  cloud->push_back(navigation_mapping::PointXYZI{
+      static_cast<float>(position.x() + 2.0), static_cast<float>(position.y()),
+      static_cast<float>(position.z()), 0.0F});
+  auto odometry = odometryAt(static_cast<std::int32_t>(odometry_stamp_ns / 1'000'000'000LL));
+  odometry.pose.pose.position.x = position.x();
+  odometry.pose.pose.position.y = position.y();
+  odometry.pose.pose.position.z = position.z();
+  return {std::move(cloud), std::move(odometry), 1U, scan_sequence,
+          stamp_ns, 0};
+}
+
 TEST(MappingActorContract, RejectsMismatchedObservationAndOdometryTime) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   const auto initial = actor.initialSnapshot();
@@ -77,6 +92,62 @@ TEST(MappingActorContract, ValidatesNewEpochBeforeResettingTheMap) {
   auto next_old_epoch = observationAt(3'000'000'000LL, 3'000'000'000LL);
   next_old_epoch.scan_sequence = 2U;
   EXPECT_NO_THROW(actor.process(next_old_epoch));
+}
+
+TEST(MappingActorContract, ReconstructsBackendForNewLocalizationEpoch) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.process(observationAt(1'000'000'000LL, 1'000'000'000LL)).snapshot);
+
+  auto next_epoch = observationAt(2'000'000'000LL, 2'000'000'000LL);
+  next_epoch.localization_epoch = 2U;
+  next_epoch.scan_sequence = 1U;
+  const auto result = actor.process(next_epoch);
+
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.localization_epoch, 2U);
+  EXPECT_EQ(result.world_generation, 2U);
+  EXPECT_EQ(result.world_revision, 1U);
+}
+
+TEST(MappingActorContract, FirstFrameClearRemainsKnownFreeNearFiniteMapCeiling) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+
+  auto cloud = std::make_unique<navigation_mapping::PointCloud>();
+  cloud->push_back(navigation_mapping::PointXYZI{2.0F, 0.0F, 2.9F, 0.0F});
+  auto odometry = odometryAt(1);
+  odometry.pose.pose.position.z = 2.9;
+  navigation_mapping::MappingObservation observation{
+      std::move(cloud), std::move(odometry), 1U, 1U, 1'000'000'000LL, 0};
+
+  const auto result = actor.process(observation);
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.snapshot->classify(
+                navigation_world_model::Point3{0.0, 0.0, 2.9},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::CellState::kKnownFree);
+  EXPECT_EQ(result.snapshot->classify(
+                navigation_world_model::Point3{0.0, 0.0, 1.5},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::CellState::kUnknown);
+}
+
+TEST(MappingActorContract, FirstFrameClearSurvivesBoundedSnapshotPatches) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const Eigen::Vector3d position{-0.3, -0.3, 2.9};
+  const navigation_world_model::Point3 robot_point = position;
+
+  for (std::int64_t seconds = 1; seconds <= 20; ++seconds) {
+    const auto result = actor.process(observationAtPose(
+        seconds * 1'000'000'000LL, seconds * 1'000'000'000LL, position,
+        static_cast<std::uint64_t>(seconds)));
+    ASSERT_TRUE(result.snapshot);
+    EXPECT_EQ(result.snapshot->classify(
+                  robot_point, navigation_world_model::GridLayer::kEvidence),
+              navigation_world_model::CellState::kKnownFree)
+        << "revision=" << result.world_revision;
+  }
 }
 
 TEST(MappingActorContract, UsesBoundedPatchForSteadyStateMapUpdate) {

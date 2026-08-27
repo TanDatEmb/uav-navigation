@@ -5,6 +5,7 @@
 #include <px4_ros2/utils/frame_conversion.hpp>
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/planner_recovery.hpp"
 
 TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) {
   navigation_contracts::ExecutionStateFreshness stale;
@@ -18,6 +19,28 @@ TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) 
             px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
   EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 11U, 10U),
             px4_navigation_external_mode::CommandAcceptanceGate::kAccept);
+}
+
+TEST(NavigationCommandContract, BackupRecoveryWindowIsBoundedAndHoldOnly) {
+  EXPECT_FALSE(px4_navigation_external_mode::plannerRecoveryWaitExpired(
+      false, 2'000'000'000LL, 1'000'000'000LL));
+  EXPECT_FALSE(px4_navigation_external_mode::plannerRecoveryWaitExpired(
+      true, 999'000'000LL, 1'000'000'000LL));
+  EXPECT_TRUE(px4_navigation_external_mode::plannerRecoveryWaitExpired(
+      true, 1'000'000'000LL, 1'000'000'000LL));
+  EXPECT_TRUE(px4_navigation_external_mode::plannerRecoveryWaitExpired(
+      true, 1'100'000'000LL, 1'000'000'000LL));
+}
+
+TEST(NavigationCommandContract, BackupEndpointNearAcceptanceEdgeUsesAnchorEnvelope) {
+  EXPECT_TRUE(px4_navigation_external_mode::backupEndpointHoldIsAnchored(
+      true, true, true, 0.24, 0.25));
+  EXPECT_FALSE(px4_navigation_external_mode::backupEndpointHoldIsAnchored(
+      true, true, true, 0.26, 0.25));
+  EXPECT_FALSE(px4_navigation_external_mode::backupEndpointHoldIsAnchored(
+      false, true, true, 0.01, 0.25));
+  EXPECT_FALSE(px4_navigation_external_mode::backupEndpointHoldIsAnchored(
+      true, false, true, 0.01, 0.25));
 }
 
 TEST(NavigationCommandContract, UsesDistinctMainAndBackupRoles) {

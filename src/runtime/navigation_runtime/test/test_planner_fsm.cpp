@@ -1,5 +1,6 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/commit_trace.hpp"
+#include <navigation_planning/candidate_bundle.hpp>
 
 #include <gtest/gtest.h>
 
@@ -27,6 +28,27 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
             RetainedValidationTransition::FailClosed);
 }
 
+TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
+  EXPECT_TRUE(terminalHoldIsPending(true, true, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(false, true, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(true, false, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(true, true, 0U));
+}
+
+TEST(PlannerFsm, CertifiesMissedTerminalTickOnlyAtKnownFreeGoalEndpoint) {
+  EXPECT_TRUE(terminalEndpointHoldIsCertified(true, true, true));
+  EXPECT_FALSE(terminalEndpointHoldIsCertified(false, true, true));
+  EXPECT_FALSE(terminalEndpointHoldIsCertified(true, false, true));
+  EXPECT_FALSE(terminalEndpointHoldIsCertified(true, true, false));
+}
+
+TEST(PlannerFsm, ReplaysOnlyKnownFreeFrontierEndpointNearMeasuredState) {
+  EXPECT_TRUE(expiredEndpointMayBeReplayed(true, true, true));
+  EXPECT_FALSE(expiredEndpointMayBeReplayed(false, true, true));
+  EXPECT_FALSE(expiredEndpointMayBeReplayed(true, false, true));
+  EXPECT_FALSE(expiredEndpointMayBeReplayed(true, true, false));
+}
+
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
             PlannerResultDisposition::FailClosed);
@@ -44,6 +66,60 @@ TEST(PlannerFsm, AttributesOnlyTheCommitProducedByThisSolveCycle) {
 TEST(PlannerFsm, ExecutionAgeUsesDeclaredSolveStartInstant) {
   EXPECT_DOUBLE_EQ(executionStateAgeMs(1'250'000'000LL, 1'000'000'000LL), 250.0);
   EXPECT_DOUBLE_EQ(executionStateAgeMs(900'000'000LL, 1'000'000'000LL), -100.0);
+}
+
+TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 1U;
+  candidate.world_identity.generation = 1U;
+  candidate.world_identity.revision = 1U;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  candidate.bundle_generation = 1U;
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 1.0;
+  candidate.backup_start_time_s = 0.0;
+  candidate.valid_from_ns = 10000000000LL;
+  candidate.valid_until_ns = 10500000000LL;
+  candidate.evaluator = [](const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.position_world = Eigen::Vector3d{7.0, 0.0, 3.0};
+    point.trajectory_time_s = static_cast<double>(stamp_ns - 10000000000LL) * 1.0e-9;
+    return true;
+  };
+
+  EXPECT_FALSE(candidate.sample(11000000000LL).has_value());
+  const auto endpoint = candidate.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint.has_value());
+  EXPECT_NEAR(endpoint->position_world.x(), 7.0, 1.0e-12);
+  EXPECT_TRUE(endpoint->finished);
+}
+
+TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 1U;
+  candidate.world_identity.generation = 1U;
+  candidate.world_identity.revision = 1U;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  candidate.bundle_generation = 1U;
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 1.0;
+  candidate.valid_from_ns = 10000000000LL;
+  candidate.valid_until_ns = 10500000000LL;
+  candidate.evaluator = [](const std::int64_t,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.position_world = Eigen::Vector3d{7.0, 0.0, 3.0};
+    return true;
+  };
+
+  EXPECT_FALSE(candidate.hasTrajectoryMetadata());
+  EXPECT_TRUE(candidate.hasDeclaredEndpointMetadata());
+  const auto endpoint = candidate.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint.has_value());
+  EXPECT_TRUE(endpoint->finished);
 }
 
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {

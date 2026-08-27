@@ -13,6 +13,7 @@
 
 #include <navigation_mapping/mapping_types.hpp>
 #include <navigation_mapping/visibility_control.hpp>
+#include <navigation_world_model/continuous_clearance.hpp>
 
 namespace navigation_mapping {
 
@@ -374,7 +375,9 @@ class MappingWorldSnapshot final
     // The DDA stops before classifying the endpoint voxel. Check it explicitly,
     // including the same-voxel case where no traversal step is needed.
     if (!point_is_traversable(end)) return false;
-    return true;
+    if (layer != navigation_world_model::GridLayer::kInflated) return true;
+    return navigation_world_model::observedOccupiedTubeIsClear(
+        *this, start, end, grid.occupied_inflation_radius_m);
   }
 
   [[nodiscard]] navigation_world_model::AxisAlignedBox clampToLocalBounds(

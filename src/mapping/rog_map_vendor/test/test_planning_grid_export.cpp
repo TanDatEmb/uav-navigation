@@ -20,6 +20,11 @@ std::string noVirtualPlanesConfigPath() {
       "/rog_map_no_virtual_planes.yaml";
 }
 
+std::string raycastingBoundaryConfigPath() {
+  return std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) +
+      "/rog_map_raycasting_boundary.yaml";
+}
+
 rog_map::PointCloud singlePointCloud(const Eigen::Vector3d& point) {
   rog_map::PointCloud cloud;
   pcl::PointXYZI sample;
@@ -229,4 +234,51 @@ TEST(RogMapPlanningGridExport, DisabledVirtualPlanesAllowNegativeZAndMoveLocalWi
   EXPECT_FALSE(map.isOccupiedInflate(pose_position));
   // The earlier detached value remains immutable after the vertical slide.
   EXPECT_EQ(before.base_layout.local_center_m, Eigen::Vector3d::Zero());
+}
+
+TEST(RogMapPlanningGridExport, FirstFrameClearClipsToFiniteMapWindow) {
+  TestRogMap map;
+  map.loadConfigAndInit(raycastingBoundaryConfigPath());
+
+  const Eigen::Vector3d pose_position{0.0, 0.0, 2.9};
+  const auto outcome = map.updateMap(
+      singlePointCloud(pose_position + Eigen::Vector3d{2.0, 0.0, 0.0}),
+      rog_map::Pose{pose_position, Eigen::Quaterniond::Identity()});
+
+  ASSERT_EQ(outcome, rog_map::MapUpdateOutcome::UPDATED);
+  // The body-clear sphere reaches above the finite local map.  Every point
+  // retained inside the map must be known free, while an interior point that
+  // was not cleared remains unknown.  Most importantly, the boundary
+  // clipping must not corrupt the occupancy buffer.
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 2.9}),
+            rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getInfGridType(Eigen::Vector3d{0.0, 0.0, 2.9}),
+            rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 1.5}),
+            rog_map::GridType::UNKNOWN);
+}
+
+TEST(RogMapPlanningGridExport, MapSlideClearsFreshBodyNeighborhood) {
+  TestRogMap map;
+  map.loadConfigAndInit(raycastingBoundaryConfigPath());
+
+  const Eigen::Vector3d initial_pose{0.0, 0.0, 0.0};
+  ASSERT_EQ(map.updateMap(
+                singlePointCloud(initial_pose + Eigen::Vector3d{2.0, 0.0, 0.0}),
+                rog_map::Pose{initial_pose, Eigen::Quaterniond::Identity()}),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(initial_pose), rog_map::GridType::KNOWN_FREE);
+
+  // This exceeds the 1.5 m slide threshold and exposes a new local window
+  // around a takeoff-adjacent pose.  The newly exposed robot cell must be
+  // known free, while a point outside the body-clear sphere remains unknown.
+  const Eigen::Vector3d slid_pose{0.0, 0.0, 2.9};
+  ASSERT_EQ(map.updateMap(
+                singlePointCloud(slid_pose + Eigen::Vector3d{2.0, 0.0, 0.0}),
+                rog_map::Pose{slid_pose, Eigen::Quaterniond::Identity()}),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(slid_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getInfGridType(slid_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 1.5}),
+            rog_map::GridType::UNKNOWN);
 }

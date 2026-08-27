@@ -139,6 +139,21 @@ namespace navigation_planning_backend {
                 trajectory.getTotalDuration() < 0.0) {
                 return false;
             }
+            // A zero-duration MINCO piece is not executable: endpoint
+            // evaluation can still look finite, while the swept validator
+            // cannot assign a positive time interval to that piece. Reject
+            // it at candidate construction instead of allowing a malformed
+            // bundle to reach the world-certificate boundary.
+            constexpr double kMinimumPieceDurationS = 1.0e-6;
+            for (int piece_index = 0; piece_index < trajectory.getPieceNum(); ++piece_index) {
+                const auto& piece = trajectory[piece_index];
+                if (!std::isfinite(piece.getDuration()) ||
+                    piece.getDuration() < kMinimumPieceDurationS ||
+                    piece.getCoeffMat().size() == 0 ||
+                    !piece.getCoeffMat().allFinite()) {
+                    return false;
+                }
+            }
             constexpr std::size_t kValidationIntervals = 100U;
             for (std::size_t index = 0; index <= kValidationIntervals; ++index) {
                 const double t = trajectory.getTotalDuration() *
@@ -195,12 +210,10 @@ namespace navigation_planning_backend {
                 }
                 candidate.position = tmp_pos_traj + backup_traj->posTraj();
                 candidate.yaw = tmp_yaw_traj + backup_traj->yawTraj();
-                candidate.backup_suffix_available = true;
                 candidate.backup_start_tt = backup_start;
             } else {
                 candidate.position = exp_traj.posTraj();
                 candidate.yaw = exp_traj.yawTraj();
-                candidate.backup_suffix_available = false;
                 candidate.backup_start_tt = candidate.position.getTotalDuration();
             }
             if (!trajectoryFinite(candidate.position) || !trajectoryFinite(candidate.yaw) ||
@@ -226,7 +239,7 @@ namespace navigation_planning_backend {
                         {clipped_begin, clipped_end, CandidateTrajectoryRole::BACKUP});
                 }
             }
-            if (candidate.backup_suffix_available) {
+            if (backup_traj != nullptr) {
                 backup_intervals.push_back({candidate.backup_start_tt, duration,
                                             CandidateTrajectoryRole::BACKUP});
             }
@@ -257,6 +270,24 @@ namespace navigation_planning_backend {
                 candidate.roles.push_back(
                     {cursor, duration, CandidateTrajectoryRole::MAIN});
             }
+
+            // The execution flag is a certificate claim, not a record that a
+            // backup object happened to be passed to this builder.  A usable
+            // suffix must have positive duration and be the final interval of
+            // the complete role partition.  Otherwise the runtime could
+            // select the safety-suffix path for a candidate that has no
+            // executable backup segment.
+            const bool has_positive_backup_suffix =
+                !candidate.roles.empty() &&
+                candidate.roles.back().role == CandidateTrajectoryRole::BACKUP &&
+                std::isfinite(candidate.roles.back().begin_tt) &&
+                std::isfinite(candidate.roles.back().end_tt) &&
+                candidate.roles.back().end_tt == duration &&
+                candidate.roles.back().end_tt > candidate.roles.back().begin_tt;
+            if (backup_traj != nullptr && !has_positive_backup_suffix) {
+                return std::nullopt;
+            }
+            candidate.backup_suffix_available = has_positive_backup_suffix;
             return candidate;
         }
 

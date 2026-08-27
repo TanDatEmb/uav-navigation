@@ -14,6 +14,10 @@ struct KinematicState {
   Eigen::Vector3d velocity_world{Eigen::Vector3d::Zero()};
   Eigen::Vector3d acceleration_world{Eigen::Vector3d::Zero()};
   Eigen::Vector3d jerk_world{Eigen::Vector3d::Zero()};
+  // PropagatedOdometry does not currently carry A/J.  These flags distinguish
+  // finite-difference estimates from a future genuinely measured interface.
+  bool acceleration_estimated{false};
+  bool jerk_estimated{false};
   Eigen::Quaterniond orientation_world_body{Eigen::Quaterniond::Identity()};
   double yaw_rad{0.0};
   std::int64_t source_stamp_ns{0};

@@ -11,6 +11,52 @@ using namespace navigation_math;
 using namespace color_text;
 // Trasjectory==================================================
 
+namespace {
+
+bool locateSliceStart(const Trajectory& trajectory, const double time_s,
+                      int& piece_index, double& local_time_s) {
+    if (!std::isfinite(time_s) || time_s < 0.0 || trajectory.empty()) return false;
+    double piece_begin = 0.0;
+    for (int index = 0; index < trajectory.getPieceNum(); ++index) {
+        const double piece_duration = trajectory[index].getDuration();
+        if (!std::isfinite(piece_duration) || piece_duration <= 0.0) return false;
+        const double piece_end = piece_begin + piece_duration;
+        if (!std::isfinite(piece_end)) return false;
+        // A slice starts in the next piece at an exact internal boundary. This
+        // prevents a zero-duration prefix from being emitted.
+        if (time_s < piece_end || index == trajectory.getPieceNum() - 1) {
+            piece_index = index;
+            local_time_s = std::clamp(time_s - piece_begin, 0.0, piece_duration);
+            return true;
+        }
+        piece_begin = piece_end;
+    }
+    return false;
+}
+
+bool locateSliceEnd(const Trajectory& trajectory, const double time_s,
+                    int& piece_index, double& local_time_s) {
+    if (!std::isfinite(time_s) || time_s < 0.0 || trajectory.empty()) return false;
+    double piece_begin = 0.0;
+    for (int index = 0; index < trajectory.getPieceNum(); ++index) {
+        const double piece_duration = trajectory[index].getDuration();
+        if (!std::isfinite(piece_duration) || piece_duration <= 0.0) return false;
+        const double piece_end = piece_begin + piece_duration;
+        if (!std::isfinite(piece_end)) return false;
+        // A slice ending at an exact boundary belongs to the piece just
+        // completed, so its local endpoint is that piece's duration.
+        if (time_s <= piece_end || index == trajectory.getPieceNum() - 1) {
+            piece_index = index;
+            local_time_s = std::clamp(time_s - piece_begin, 0.0, piece_duration);
+            return true;
+        }
+        piece_begin = piece_end;
+    }
+    return false;
+}
+
+}  // namespace
+
 Trajectory::Trajectory(const std::vector<double> &durs,
                        const std::vector<Eigen::MatrixXd> &cMats) {
     int N = std::min(durs.size(), cMats.size());
@@ -220,11 +266,11 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
           c'
      * */
     double total_dur = getTotalDuration();
-    if (start_TT < 0 || start_TT >= total_dur) {
+    if (!std::isfinite(start_TT) || start_TT < 0 || start_TT >= total_dur) {
         std::cout << YELLOW << "Partial traj end_t error. [Start_TT]: " << start_TT
                   << " [Total Dur]: " << total_dur << RESET << std::endl;
     }
-    if (end_TT <= 0 || end_TT > total_dur) {
+    if (!std::isfinite(end_TT) || end_TT <= 0 || end_TT > total_dur) {
         std::cout << YELLOW << "Partial traj end_t error. [end_TT]: " << end_TT
                   << " [Total Dur]: " << total_dur <<
                   RESET << std::endl;
@@ -239,32 +285,30 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
     out_traj.clear();
     if (start_TT == 0) {
         // 只需要修改终点时间即可
-//            print("Only change end time.\n");
-        double t0 = end_TT;
-        int pieceIdx = locatePieceIdx(t0);
-//            print("pieceIdx = {}, t0 = {}.\n",pieceIdx,t0);
-        if (pieceIdx == 0) {
-            Piece new_pie = pieces[pieceIdx];
-            new_pie.setDuration(t0);
-            out_traj.emplace_back(new_pie);
-        } else {
-            for (int i = 0; i < pieceIdx; i++) {
-                out_traj.emplace_back(pieces[i]);
-            }
-            Piece new_pie = pieces[pieceIdx];
-            new_pie.setDuration(t0);
-            out_traj.emplace_back(new_pie);
+        double end_local_t = 0.0;
+        int pieceEndIdx = -1;
+        if (!locateSliceEnd(*this, end_TT, pieceEndIdx, end_local_t)) {
+            return false;
         }
+        for (int i = 0; i < pieceEndIdx; ++i) out_traj.emplace_back(pieces[i]);
+        Piece new_pie = pieces[pieceEndIdx];
+        new_pie.setDuration(end_local_t);
+        out_traj.emplace_back(new_pie);
         out_traj.start_WT = start_WT;
         return true;
     }
 
     // Get the start piece id
-    double t0 = start_TT;
-    double local_end_t = end_TT;
-    int pieceIdx = locatePieceIdx(t0);
+    double t0 = 0.0;
+    double local_end_t = 0.0;
+    int pieceIdx = -1;
+    int pieceEndIdx = -1;
+    if (!locateSliceStart(*this, start_TT, pieceIdx, t0) ||
+        !locateSliceEnd(*this, end_TT, pieceEndIdx, local_end_t) ||
+        pieceIdx > pieceEndIdx) {
+        return false;
+    }
     if (pieces[pieceIdx].getDegree() == 5) {
-        int pieceEndIdx = locatePieceIdx(local_end_t);
         double t02 = t0 * t0;
         double t03 = t02 * t0;
         double t04 = t03 * t0;
@@ -297,7 +341,6 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         out_traj.start_WT = start_WT + start_TT;
         return true;
     } else if (pieces[pieceIdx].getDegree() == 7) {
-        int pieceEndIdx = locatePieceIdx(local_end_t);
         double t02 = t0 * t0;
         double t03 = t02 * t0;
         double t04 = t03 * t0;

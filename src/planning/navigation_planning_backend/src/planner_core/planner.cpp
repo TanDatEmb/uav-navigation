@@ -15,6 +15,7 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <navigation_math/scope_timer.hpp>
 #include <fmt/color.h>
@@ -23,6 +24,21 @@ using namespace navigation_math;
 using std::isnan;
 
 namespace navigation_planning_backend {
+
+namespace {
+
+std::string trajectoryDurationSummary(const Trajectory& trajectory) {
+    std::ostringstream output;
+    output << '[';
+    for (int index = 0; index < trajectory.getPieceNum(); ++index) {
+        if (index != 0) output << ',';
+        output << trajectory[index].getDuration();
+    }
+    output << ']';
+    return output.str();
+}
+
+}  // namespace
 
     PlannerResultCode Planner::classifySolveFailure(
             const AbsoluteDeadline &solve_deadline,
@@ -38,6 +54,112 @@ namespace navigation_planning_backend {
         }
         return fallback;
     }
+
+    Vec3f Planner::resolveGoalForPlanning(const Vec3f& requested_goal) {
+        requested_goal_p_ = requested_goal;
+        planning_goal_p_ = requested_goal;
+        goal_endpoint_adjusted_ = false;
+        requested_goal_inflated_state_ = navigation_world_model::CellState::kOutOfMap;
+        planning_goal_inflated_state_ = navigation_world_model::CellState::kOutOfMap;
+
+        if (!map_ptr_ || !requested_goal.allFinite()) return requested_goal;
+
+        requested_goal_inflated_state_ = map_ptr_->classify(
+            requested_goal.cast<double>(), navigation_world_model::GridLayer::kInflated);
+        planning_goal_inflated_state_ = requested_goal_inflated_state_;
+
+        // UNKNOWN remains governed by the configured policy. OCCUPIED and
+        // OUT_OF_MAP terminal points may be projected into the mission
+        // acceptance ball; all other states retain the exact-goal contract.
+        // OUT_OF_MAP is included because a rolling local map can place a
+        // reachable waypoint just beyond its current window even though a
+        // certified acceptance point is already available inside it.
+        if ((requested_goal_inflated_state_ !=
+                 navigation_world_model::CellState::kOccupied &&
+             requested_goal_inflated_state_ !=
+                 navigation_world_model::CellState::kOutOfMap) ||
+            !std::isfinite(goal_acceptance_radius_m_) ||
+            goal_acceptance_radius_m_ <= 0.0) {
+            return requested_goal;
+        }
+
+        const auto candidate = map_ptr_->nearestNotOccupied(
+            requested_goal.cast<double>(), navigation_world_model::GridLayer::kInflated,
+            goal_acceptance_radius_m_);
+        if (!candidate || !candidate->allFinite() || !map_ptr_->contains(*candidate) ||
+            (*candidate - requested_goal.cast<double>()).norm() >
+                goal_acceptance_radius_m_ + 1.0e-6) {
+            return requested_goal;
+        }
+
+        planning_goal_inflated_state_ = map_ptr_->classify(
+            *candidate, navigation_world_model::GridLayer::kInflated);
+        if (!navigation_world_model::isCellTraversable(
+                planning_goal_inflated_state_, cfg_.unknown_space_policy)) {
+            planning_goal_inflated_state_ = requested_goal_inflated_state_;
+            return requested_goal;
+        }
+
+        planning_goal_p_ = *candidate;
+        // The nearest free voxel is only a topological escape from the
+        // occupied terminal voxel.  It can still leave the vehicle exactly
+        // on the inflated frontier, where the certificate tube or normal
+        // tracking error moves the command back into OCCUPIED on the next
+        // solve.  Walk farther in the same certified escape direction while
+        // the point remains inside the mission acceptance ball.  The loop is
+        // bounded by that finite ball and every added segment is checked by
+        // the same inflated-layer/UNKNOWN oracle; it never enlarges the
+        // acceptance radius or relaxes collision validation.
+        const auto geometry = map_ptr_->geometry();
+        const auto escape = candidate->cast<double>() - requested_goal.cast<double>();
+        const double escape_distance = escape.norm();
+        const double interior_step = geometry.inflated_resolution_m;
+        std::size_t interior_steps = 0U;
+        if (std::isfinite(interior_step) && interior_step > 0.0 &&
+            std::isfinite(escape_distance) && escape_distance > 1.0e-9) {
+            const auto escape_direction = escape / escape_distance;
+            while (true) {
+                const auto interior_candidate = planning_goal_p_.cast<double>() +
+                    escape_direction * interior_step;
+                const double interior_error =
+                    (interior_candidate - requested_goal.cast<double>()).norm();
+                if (!interior_candidate.allFinite() || !map_ptr_->contains(interior_candidate) ||
+                    !std::isfinite(interior_error) ||
+                    interior_error > goal_acceptance_radius_m_ + 1.0e-6) {
+                    break;
+                }
+                const auto interior_state = map_ptr_->classify(
+                    interior_candidate, navigation_world_model::GridLayer::kInflated);
+                if (!navigation_world_model::isCellTraversable(
+                        interior_state, cfg_.unknown_space_policy) ||
+                    !map_ptr_->isSegmentTraversable(
+                        planning_goal_p_.cast<double>(), interior_candidate,
+                        navigation_world_model::GridLayer::kInflated,
+                        cfg_.unknown_space_policy)) {
+                    break;
+                }
+                planning_goal_p_ = interior_candidate;
+                planning_goal_inflated_state_ = interior_state;
+                ++interior_steps;
+            }
+        }
+        goal_endpoint_adjusted_ = true;
+        planner_context_->warn(
+            " -- [planner] requested goal voxel is occupied or out-of-map; planning to acceptance-safe "
+            "endpoint requested=({:.3f},{:.3f},{:.3f}) planning=({:.3f},{:.3f},{:.3f}) "
+            "offset={:.3f} radius={:.3f}",
+            requested_goal.x(), requested_goal.y(), requested_goal.z(),
+            planning_goal_p_.x(), planning_goal_p_.y(), planning_goal_p_.z(),
+            (planning_goal_p_.cast<double>() - requested_goal.cast<double>()).norm(),
+            goal_acceptance_radius_m_);
+        if (interior_steps > 0U) {
+            planner_context_->info(
+                " -- [planner] moved acceptance-safe endpoint inward by {} inflated steps",
+                interior_steps);
+        }
+        return planning_goal_p_;
+    }
+
     Planner::Planner
             (const std::string &cfg_path,
              const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
@@ -124,8 +246,14 @@ namespace navigation_planning_backend {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
             planner_context_->warn(
-                " -- [planner] command rejected by latest WorldModel at trajectory time {}",
-                validation.first_blocked_tt);
+                " -- [planner] command rejected by latest WorldModel: "
+                "time={} reason={} role={} cell_state={} position=({}, {}, {})",
+                validation.first_blocked_tt,
+                sweptValidationFailureName(validation.failure),
+                static_cast<int>(validation.blocked_role),
+                static_cast<int>(validation.blocked_cell_state),
+                validation.blocked_position.x(), validation.blocked_position.y(),
+                validation.blocked_position.z());
             return false;
         }
         CommandCertificate certificate{
@@ -239,7 +367,11 @@ namespace navigation_planning_backend {
         candidate.goal_epoch = goal_epoch;
         candidate.request_id = request_id;
         candidate.bundle_generation = generation;
-        candidate.start_wall_time_s = command.start_wall_time;
+        // The trajectory object is the authoritative producer of the wall
+        // clock used by both the evaluator and the execution lease. Do not
+        // copy the construction-time mirror: a stale/default mirror would
+        // make the exported candidate lose its declared endpoint metadata.
+        candidate.start_wall_time_s = start_wall_time_s;
         candidate.duration_s = command.position.getTotalDuration();
         candidate.backup_start_time_s = command.backup_start_tt;
         candidate.backup_available = command.backup_suffix_available;
@@ -298,12 +430,13 @@ namespace navigation_planning_backend {
             navigation_world_model::WorldCommitDecision::kNotAttempted));
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, solve_state_);
+        const Vec3f planning_goal = resolveGoalForPlanning(goal_p);
         if (solve_state_.rcv == false) {
             planner_context_->warn(" -- [planner] in [PlanFromRest]: No odom, force return.");
             latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_ODOM);
             return FAILED;
         }
-        gi_.goal_p = goal_p;
+        gi_.goal_p = planning_goal;
         gi_.goal_yaw = goal_yaw;
         gi_.new_goal = new_goal;
         gi_.goal_valid = true;
@@ -316,16 +449,32 @@ namespace navigation_planning_backend {
         }
 
 
-        /// 1) First, shift the start_point to free space.
-        const auto nearest_start = map_ptr_->nearestNotOccupied(
-                solve_state_.p, navigation_world_model::GridLayer::kEvidence, 3.0);
-        if (!nearest_start) {
-            planner_context_->error(
-                    " -- [planner] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
-            latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_START_POINT);
-            return FAILED;
+        /// 1) First, shift the start_point to free space only when necessary.
+        // Keep the measured pose as the planner start when it is already
+        // traversable. Snapping a valid pose to the centre of its nearest
+        // inflated voxel can move the command toward a nearby obstacle and
+        // make the backup CIRI seed fail even though the measured pose has
+        // clearance. The fallback remains on the inflated layer so a truly
+        // occupied or out-of-map pose is still corrected before planning.
+        const auto measured_start_is_traversable =
+                map_ptr_->contains(solve_state_.p) &&
+                navigation_world_model::isCellTraversable(
+                        map_ptr_->classify(
+                                solve_state_.p,
+                                navigation_world_model::GridLayer::kInflated),
+                        unknownPolicy());
+        Vec3f local_star_pt = solve_state_.p;
+        if (!measured_start_is_traversable) {
+            const auto nearest_start = map_ptr_->nearestNotOccupied(
+                    solve_state_.p, navigation_world_model::GridLayer::kInflated, 3.0);
+            if (!nearest_start) {
+                planner_context_->error(
+                        " -- [planner] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_START_POINT);
+                return FAILED;
+            }
+            local_star_pt = *nearest_start;
         }
-        Vec3f local_star_pt = *nearest_start;
         latest_replan.setLocalStartP(local_star_pt);
 
         /// 2) Generate Exp traj
@@ -455,7 +604,8 @@ namespace navigation_planning_backend {
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
 
-        gi_.goal_p = goal_p;
+        const Vec3f planning_goal = resolveGoalForPlanning(goal_p);
+        gi_.goal_p = planning_goal;
         gi_.goal_yaw = goal_yaw;
         gi_.new_goal = new_goal;
         gi_.goal_valid = true;
@@ -563,10 +713,46 @@ namespace navigation_planning_backend {
             return FAILED;
         }
 
+        // A map revision can make a previously exploratory trajectory unsafe
+        // immediately after this solve. If backup visibility says the new EXP
+        // is entirely known-free, blindly committing it as a main-only bundle
+        // would erase the older bundle's braking suffix at exactly the
+        // boundary where it is needed. Retain that suffix until the runtime
+        // validates the old bundle and/or a later solve produces another
+        // atomic backup bundle. A new goal is excluded because the old suffix
+        // belongs to a different command boundary; an active backup is kept
+        // until its finite stop endpoint.
+        const double command_time_now = planner_context_->getSimTime() -
+                cmd_traj_info_.getStartWallTime();
+        const bool retain_backup_capable_command =
+                shouldRetainBackupCapableCommand(
+                    new_goal, cmd_traj_info_.backupTrajAvilibale());
+        if ((back_ret_code == NO_NEED || back_ret_code == FINISH) &&
+            retain_backup_capable_command) {
+            latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
+            planner_context_->info(
+                " -- [planner] retaining backup-capable command instead of replacing it "
+                "with a main-only candidate elapsed={} backup_start={} result={}",
+                command_time_now, cmd_traj_info_.getBackupTrajStartTT(),
+                RET_CODE_STR[back_ret_code].c_str());
+            return NO_NEED;
+        }
+
         if (back_ret_code == SUCCESS) {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate) {
+                planner_context_->warn(
+                    " -- [planner] rejected malformed main+backup candidate: "
+                    "exp_durations={} backup_durations={} backup_start={}",
+                    trajectoryDurationSummary(exp_traj_info.posTraj()),
+                    trajectoryDurationSummary(back_traj_info.posTraj()),
+                    back_traj_info.getStartTT());
+                latest_replan.setRetCode(classifySolveFailure(
+                    solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
+                return FAILED;
+            }
+            if (!authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -857,13 +1043,59 @@ namespace navigation_planning_backend {
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
 
+        // A hot replan normally preserves a short prefix of the currently
+        // committed command so PVAJ remains continuous.  That prefix is not
+        // authoritative when the vehicle has fallen behind it: stitching it
+        // again would keep reproducing the same command-ahead error until the
+        // PX4 boundary rejects the bundle.  Rebase the next plan on the fresh
+        // measured propagated state once the existing tracking-error budget is
+        // exceeded.  This is a planner-side recovery, not a relaxation of the
+        // command-anchor safety gate.
+        if (!last_exp_traj_info.empty()) {
+            cmd_traj_info_.lock();
+            const double committed_start_WT = cmd_traj_info_.getStartWallTime();
+            const double committed_duration = cmd_traj_info_.getTotalDuration();
+            const double committed_tt = std::clamp(
+                    replan_process_start_WT - committed_start_WT,
+                    0.0, std::max(0.0, committed_duration));
+            const StatePVAJ committed_state = cmd_traj_info_.posTraj().getState(committed_tt);
+            cmd_traj_info_.unlock();
+            const double command_anchor_error =
+                    (committed_state.col(0) - solve_state_.p).norm();
+            if (!committed_state.allFinite() || !std::isfinite(command_anchor_error) ||
+                command_anchor_error > cfg_.tracking_error_budget_m) {
+                const bool measured_start_traversable =
+                        solve_state_.p.allFinite() && map_ptr_->contains(solve_state_.p) &&
+                        navigation_world_model::isCellTraversable(
+                                map_ptr_->classify(
+                                        solve_state_.p,
+                                        navigation_world_model::GridLayer::kInflated),
+                                unknownPolicy());
+                if (!measured_start_traversable) {
+                    planner_context_->warn(
+                            " -- [planner] cannot rebase hot replan on measured state: "
+                            "measured start is not traversable error={} budget={}",
+                            command_anchor_error, cfg_.tracking_error_budget_m);
+                    return FAILED;
+                }
+                last_exp_traj_info.setEmpty();
+                local_start_p_ = solve_state_.p;
+                planner_context_->warn(
+                        " -- [planner] rebasing hot replan on measured state: "
+                        "command_anchor_error={} budget={}",
+                        command_anchor_error, cfg_.tracking_error_budget_m);
+            }
+        }
+
         /* 2) Check last exp traj */
         if (last_exp_traj_info.empty()) {
             /* 2.1) Generate from the latest measured state. */
             // A route reset must not silently become a kinematic reset. The
             // execution state may still carry motion when a local trajectory
-            // ends at a sensing frontier; preserve the measured derivatives
-            // and only shift position to the collision-free map start.
+            // ends at a sensing frontier; preserve the latest propagated PVAJ
+            // state (A/J are explicitly marked as estimates when the
+            // odometry interface does not measure them) and only shift
+            // position to the collision-free map start.
             pos_init_state.col(0) = solve_state_.p;
             pos_init_state.col(1) = solve_state_.v;
             pos_init_state.col(2) = solve_state_.a;
@@ -883,8 +1115,11 @@ namespace navigation_planning_backend {
             vector<double> last_exp_traj_vel;
 
 
-            // check early exit condition
-            // 1) if the replan state is beyond the last cmd traj, return NO_NEED
+            // Check the executable command boundary, not the planner-history
+            // boundary. If the command has actually ended while still on its
+            // MAIN portion, ask the runtime to restart from the measured
+            // state; retaining an ended command would only let its finite
+            // execution lease expire.
             if (replan_state_TT >= cmd_traj_info_.getTotalDuration()) {
                 out_exp_traj_info = last_exp_traj_info;
 
@@ -897,67 +1132,30 @@ namespace navigation_planning_backend {
 
                 if (cfg_.print_log) {
                     planner_context_->warn(
-                            " -- [generateExpTraj] replan_state_TT >= cmd_traj_info_.pos_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
+                            " -- [generateExpTraj] committed command ended before hot replan; "
+                            "requesting PlanFromRest.");
                 }
-                return NO_NEED;
+                return NEW_TRAJ;
             }
 
             if (!last_exp_traj_info.empty()) {
-                if (replan_state_TT >= last_exp_traj.getTotalDuration()) {
-                    out_exp_traj_info = last_exp_traj_info;
-                    if (cfg_.print_log)
-                        planner_context_->warn(
-                                " -- [generateExpTraj] replan_state_TT >= last_exp_traj.getTotalDuration(), return NONEED and wait for plan form rest.");
-                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
-                        if (cfg_.print_log)
-                            planner_context_->warn(
-                                    " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
-                        return FAILED;
-                    } else {
-                        return NO_NEED;
-                    }
-                }
+                // last_exp_traj_info is only the previous EXP planning
+                // history; it deliberately does not include the committed
+                // backup suffix.  Its endpoint can therefore be earlier than
+                // cmd_traj_info_'s executable endpoint.  Treating that
+                // historical endpoint as a completed command returns NO_NEED
+                // while a valid committed bundle is still running, preventing
+                // renewal of its finite command lease and causing a false
+                // execution-boundary expiry.  The command trajectory check
+                // above is the sole completion boundary for hot replanning.
 
-                /// 1) Check a series of early termination conditions.
-                if (!gi_.new_goal && last_exp_traj_info.getSFCSize() == 1 && last_exp_traj_info.connectedToGoal()) {
-                    if (cfg_.print_log) {
-                        planner_context_->warn(
-                                " -- [planner] Replan, last exp have only one corridor and connected to goal return NONEED.");
-                    }
-
-                    out_exp_traj_info = last_exp_traj_info;
-                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
-                        if (cfg_.print_log)
-                            planner_context_->warn(
-                                    " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
-                        return FAILED;
-                    } else {
-                        return NO_NEED;
-                    }
-                }
-
-                const bool near_goal_shortcut =
-                    !gi_.new_goal &&
-                    (gi_.goal_p - last_exp_traj.getPos(replan_state_TT)).norm() <=
-                        navigation_world_model::kNearGoalShortcutToleranceM &&
-                    navigation_world_model::isGoalSegmentTraversable(
-                        *map_ptr_,
-                        last_exp_traj.getPos(replan_state_TT).cast<double>(),
-                        gi_.goal_p.cast<double>());
-                if (near_goal_shortcut) {
-                    // Return if the traj close to goal
-                    out_exp_traj_info = last_exp_traj_info;
-                    out_exp_traj_info.setGoalConnectedFlag(true);
-
-                    planner_context_->warn(" -- [planner] Replan, close to goal and return NONEED.");
-                    if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
-                        planner_context_->warn(
-                                " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
-                        return FAILED;
-                    } else {
-                        return NO_NEED;
-                    }
-                }
+                // Do not return NO_NEED merely because the previous EXP was
+                // connected to the goal or geometrically near it.  The
+                // committed command may still have a backup suffix and its
+                // caller-owned validity window must be renewed by a fresh,
+                // latest-world-certified candidate.  The mission controller
+                // observes completion from the committed endpoint and can
+                // then advance the waypoint.
             }
             /// Ready for replan.
             out_exp_traj_info.setGoalConnectedFlag(false);
@@ -1229,7 +1427,7 @@ namespace navigation_planning_backend {
 
         replan_process_start_TT = replan_process_start_WT - guide_pos_traj.start_WT;
         Trajectory temp_exp_traj;
-        if (!last_exp_traj_info_.empty() &&
+        if (!last_exp_traj_info.empty() &&
             !guide_pos_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
                                                        temp_exp_traj)) {
             planner_context_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
@@ -1300,7 +1498,14 @@ namespace navigation_planning_backend {
             ExpTraj &ref_exp_traj,
             BackupTraj &back_traj_info,
             const AbsoluteDeadline &solve_deadline) {
-        back_traj_info.setRobotPos(solve_state_.p);
+        // The executable candidate starts at the first sample of the newly
+        // generated EXP trajectory.  PlanFromRest may have moved that sample
+        // by one inflated voxel when the measured pose lies in an occupied
+        // raster cell.  Building the backup visibility ray from solve_state_
+        // in that case creates an artificial blocked first segment and makes
+        // CIRI fail on a degenerate seed.  Use the actual command boundary;
+        // authorizeAndStage() still validates the complete main+backup bundle
+        // against the latest immutable world before publication.
         TimeConsuming t_back_frontend("t_back_frontend", false);
         double total_dur = ref_exp_traj.getTotalDuration();
         double start_t = planner_context_->getSimTime() - ref_exp_traj.getStartWallTime();
@@ -1311,6 +1516,32 @@ namespace navigation_planning_backend {
                 planner_context_->info(" -- [planner] in [generateBackupTrajectory]: start_t > total_dur, return NO_NEED");
             }
             return NO_NEED;
+        }
+
+        const double command_start_t = std::clamp(start_t, 0.0, total_dur);
+        const Vec3f command_start = ref_exp_traj.getPos(command_start_t);
+        if (!command_start.allFinite() || !map_ptr_->contains(command_start) ||
+            !map_ptr_->isSegmentTraversable(
+                command_start, command_start,
+                navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+            planner_context_->warn(
+                    " -- [planner] backup command boundary is not KNOWN_FREE; "
+                    "rejecting backup origin command=({}, {}, {}) measured=({}, {}, {})",
+                    command_start.x(), command_start.y(), command_start.z(),
+                    solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z());
+            return FAILED;
+        }
+        back_traj_info.setRobotPos(command_start);
+        if (cfg_.print_log &&
+            (command_start - solve_state_.p).norm() > cfg_.resolution * 0.5) {
+            planner_context_->info(
+                    " -- [planner] backup visibility origin follows executable "
+                    "command boundary command=({}, {}, {}) measured=({}, {}, {}) "
+                    "offset_m={}",
+                    command_start.x(), command_start.y(), command_start.z(),
+                    solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z(),
+                    (command_start - solve_state_.p).norm());
         }
 
         Vec3f temp_point;
@@ -1446,18 +1677,14 @@ namespace navigation_planning_backend {
 
         Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
 
-        Vec3f shifted_robot_p = shifted_sfc_start_pt_.norm()> 999?solve_state_.p:shifted_sfc_start_pt_;
-        const auto nearest_start = map_ptr_->nearestNotOccupied(
-                shifted_robot_p, navigation_world_model::GridLayer::kEvidence, 3.0);
-        if (!nearest_start) {
-            planner_context_->error(
-                    " -- [planner] in [PlanFromRest] Local start point is deeply occupied, which should not happened.");
-            latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_START_POINT);
-            return FAILED;
-        }
-        shifted_robot_p = *nearest_start;
-
-        Line line{shifted_robot_p, seed_point};
+        // Do not re-snap this point through the Evidence grid.  The command
+        // boundary has already been selected by PlanFromRest/corridor
+        // generation and the Evidence-grid centre can move it back toward an
+        // obstacle or collapse the first CIRI line to zero length.  The
+        // command-boundary KNOWN_FREE check above plus the full candidate
+        // validator are the authority here.
+        const Vec3f backup_origin = back_traj_info.getRobotPos();
+        Line line{backup_origin, seed_point};
         Polytope temp_poly;
         if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly, &solve_deadline)) {
             planner_context_->warn(" -- [planner] GeneratePolytopeFromLine failed, force return");
@@ -1537,6 +1764,41 @@ namespace navigation_planning_backend {
         StatePVAJ switch_state;
         BackupBrakingSeed braking_seed;
         bool braking_seed_inside_sfc = false;
+
+        // The geometric SFC is generated under the mission's exploratory
+        // UNKNOWN policy, but a BACKUP suffix is certified under
+        // KNOWN_FREE.  A minimum-snap seed can fit inside that SFC while its
+        // swept tube still bends into an UNKNOWN cell.  Check the actual seed
+        // at each candidate switch time before accepting the switch; moving
+        // the switch earlier gives the vehicle more braking distance and
+        // preserves a known-free recovery suffix without weakening the
+        // backup contract.
+        const auto minimum_snap_backup_is_known_free =
+                [this, &ref_exp_traj](const StatePVAJ &state,
+                                      const double candidate_ts,
+                                      const double duration) {
+            if (solve_cancelled_.load() || !std::isfinite(candidate_ts) ||
+                !std::isfinite(duration) || duration <= 0.0) {
+                return false;
+            }
+            const double backup_start_wall_time =
+                    ref_exp_traj.getStartWallTime() + candidate_ts;
+            if (!std::isfinite(backup_start_wall_time) ||
+                backup_start_wall_time <= 0.0) {
+                return false;
+            }
+            CandidateCommandBundle backup_candidate;
+            backup_candidate.position.emplace_back(
+                    minimumSnapStopPiece(state, duration));
+            backup_candidate.position.start_WT = backup_start_wall_time;
+            backup_candidate.start_wall_time = backup_start_wall_time;
+            backup_candidate.roles.push_back(
+                    {0.0, duration, CandidateTrajectoryRole::BACKUP});
+            const auto validation = validateExecutableCandidate(
+                    *map_ptr_, backup_candidate, planner_context_->getSimTime(),
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+            return validation.valid;
+        };
         const double initial_switch_guess = heu_ts;
         // The latest visibility-derived switch is desirable for progress, but
         // its braking endpoint may lie outside the generated safety corridor.
@@ -1563,6 +1825,10 @@ namespace navigation_planning_backend {
                 }
             }
             if (braking_seed_inside_sfc) {
+                braking_seed_inside_sfc = minimum_snap_backup_is_known_free(
+                        switch_state, candidate_ts, braking_seed.duration_s);
+            }
+            if (braking_seed_inside_sfc) {
                 heu_ts = candidate_ts;
                 break;
             }
@@ -1571,7 +1837,8 @@ namespace navigation_planning_backend {
         }
         if (!braking_seed_inside_sfc) {
             planner_context_->warn(
-                    " -- [planner] no dynamically feasible minimum-snap backup hull inside SFC");
+                    " -- [planner] no dynamically feasible KNOWN_FREE minimum-snap "
+                    "backup hull inside SFC");
             return OPT_FAILED;
         }
         if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt_s * 0.5) {
@@ -1643,6 +1910,54 @@ namespace navigation_planning_backend {
                     "backup_refinement_success={} backup_refinement_fallback={}",
                     backup_refinement_success_count_, backup_refinement_fallback_count_);
         }
+        const auto backupCandidateIsKnownFree = [this](
+                const Trajectory& backup_position, const double backup_start_wall_time) {
+            if (!map_ptr_ || backup_position.empty() ||
+                !std::isfinite(backup_start_wall_time) || backup_start_wall_time <= 0.0) {
+                return false;
+            }
+            CandidateCommandBundle backup_candidate;
+            backup_candidate.position = backup_position;
+            backup_candidate.start_wall_time = backup_start_wall_time;
+            const double duration = backup_position.getTotalDuration();
+            if (!std::isfinite(duration) || duration <= 0.0) return false;
+            backup_candidate.roles.push_back(
+                    {0.0, duration, CandidateTrajectoryRole::BACKUP});
+            const auto validation = validateExecutableCandidate(
+                    *map_ptr_, backup_candidate, planner_context_->getSimTime(),
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+            return validation.valid;
+        };
+        // The backup optimizer is constrained by the geometric SFC, while
+        // the execution certificate is stricter: every swept cell in the
+        // backup tube must be KNOWN_FREE. A successful numerical refinement
+        // can still bend through an UNKNOWN cell inside an allow-unknown
+        // mission corridor. Reject that refinement locally and retain the
+        // already checked minimum-snap braking seed; never let
+        // authorizeAndStage discover this only after the full mission solve.
+        if (!backupCandidateIsKnownFree(
+                    temp_pos_traj,
+                    ref_exp_traj.getStartWallTime() + opt_ts)) {
+            if (temp_ret) {
+                ++backup_refinement_fallback_count_;
+                planner_context_->warn(
+                        " -- [planner] backup refinement crossed UNKNOWN; "
+                        "using certified minimum-snap seed "
+                        "backup_refinement_success={} backup_refinement_fallback={}",
+                        backup_refinement_success_count_, backup_refinement_fallback_count_);
+                temp_pos_traj.clear();
+                temp_pos_traj.emplace_back(braking_piece);
+                opt_ts = heu_ts;
+            }
+            if (!backupCandidateIsKnownFree(
+                        temp_pos_traj,
+                        ref_exp_traj.getStartWallTime() + opt_ts)) {
+                planner_context_->warn(
+                        " -- [planner] minimum-snap backup seed is not KNOWN_FREE; "
+                        "rejecting backup candidate");
+                return OPT_FAILED;
+            }
+        }
         Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
         Vec4f yaw_goal{0, 0, 0, 0};
         bool free_end{true};
@@ -1677,15 +1992,13 @@ namespace navigation_planning_backend {
             return OPT_FAILED;
         }
         double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
-        const double committed_start_wt = cmd_traj_info_.getStartWallTime();
-        const double new_ts_TT = new_ts_WT - committed_start_wt;
-        const double committed_ts_TT = cmd_traj_info_.getBackupTrajStartTT();
-        if (committed_ts_TT < cmd_traj_info_.getTotalDuration() &&
-            new_ts_TT < committed_ts_TT) {
-            planner_context_->error(" -- [planner] new_ts_TT {} < committed_ts_TT {}",
-                           new_ts_TT, committed_ts_TT);
-            return OPT_FAILED;
-        }
+        // The switch estimate is allowed to move earlier between hot replans.
+        // An earlier switch is the more conservative backup choice; rejecting
+        // it here can deadlock recovery after a map revision has invalidated
+        // the old execution bundle while the backend still owns its history.
+        // The new complete main+backup candidate is still checked by
+        // authorizeAndStage() against the newest immutable world before it can
+        // replace the committed command.
 
 
         {
@@ -1929,7 +2242,40 @@ namespace navigation_planning_backend {
                     " -- [planner] Path search failed with empty segments, force return.");
             return false;
         }
+
+        // A* and corridor generation must consume the same continuous
+        // traversability contract.  A grid-connected edge that fails this
+        // check is an invariant failure, not a safe executable prefix: trim
+        // would hide a world-revision, quantization, or oracle mismatch and
+        // can create repeated replanning churn.
+        for (std::size_t index = 1; index < path.size(); ++index) {
+            if (map_ptr_->isSegmentTraversable(
+                    path[index - 1], path[index],
+                    navigation_world_model::GridLayer::kInflated,
+                    unknownPolicy())) {
+                continue;
+            }
+            planner_context_->warn(
+                    " -- [planner] A* path contains a blocked continuous edge "
+                    "index={} from {} to {}; invariant failure",
+                    index, path[index - 1].transpose(), path[index].transpose());
+            return false;
+        }
+
         path.insert(path.begin(), start_pt);
+        for (std::size_t index = 1; index < path.size(); ++index) {
+            if (map_ptr_->isSegmentTraversable(
+                    path[index - 1], path[index],
+                    navigation_world_model::GridLayer::kInflated,
+                    unknownPolicy())) {
+                continue;
+            }
+            planner_context_->warn(
+                    " -- [planner] A* escape prefix contains a blocked continuous edge "
+                    "from {} to {}; force return",
+                    path[index - 1].transpose(), path[index].transpose());
+            return false;
+        }
         if (ret_code == REACH_GOAL && !trimmed_to_corridor_map &&
             inside_corridor_map(goal)) {
             path.push_back(goal);

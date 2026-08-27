@@ -18,6 +18,7 @@
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/planner_recovery.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
@@ -46,11 +47,16 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       state_stale_after_s_(node.declare_parameter<double>(
           "navigation.state_stale_after_s", 0.5)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
-          "navigation.trajectory_wait_timeout_s", 2.0)) {
+          "navigation.trajectory_wait_timeout_s", 2.0)),
+      planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
+          "navigation.planner_recovery_wait_timeout_s", 0.5)) {
   if (navigation_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
       !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
       !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
-      !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0) {
+      !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
+      !std::isfinite(planner_recovery_wait_timeout_s_) ||
+      planner_recovery_wait_timeout_s_ <= 0.0 ||
+      planner_recovery_wait_timeout_s_ > trajectory_wait_timeout_s_) {
     throw std::invalid_argument("invalid PX4 navigation external mode parameters");
   }
   navigation_command_subscription_ = node.create_subscription<
@@ -167,6 +173,8 @@ void NavigationMode::onActivate() {
     mode_active_ = true;
     mission_terminal_ = false;
     handover_requested_ = false;
+    planner_recovery_pending_ = false;
+    planner_recovery_deadline_ns_ = 0;
     last_completed_waypoint_index_ = 0U;
     last_completed_request_id_ = 0U;
     completion_position_.reset();
@@ -263,6 +271,9 @@ void NavigationMode::onNavigationCommand(
   bool accepted = false;
   bool anchor_invalid = false;
   bool odometry_stale = false;
+  bool completed_command = false;
+  bool terminal_backup_hold_inside_acceptance = false;
+  bool terminal_main_hold_inside_acceptance = false;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
   TrackingEnvelopeResult tracking_envelope;
   std::optional<RejectProvenance> reject_provenance;
@@ -320,27 +331,41 @@ void NavigationMode::onNavigationCommand(
     const bool terminal_failure =
         message->status ==
             navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
-    const bool completed_main_command =
+    completed_command =
         message->status ==
-            navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
-        message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+        navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
     bool terminal_hold_inside_acceptance = false;
     // The final COMPLETED PVA can arrive after MissionController has already
     // advanced its checkpoint past the last waypoint.  Do not dereference
     // activeWaypoint() for that late terminal notification.
-    if (completed_main_command && !mission_terminal_ && mission_controller_ &&
+    if (completed_command && !mission_terminal_ && mission_controller_ &&
         odometry_.has_value()) {
       const auto& waypoint = mission_controller_->activeWaypoint();
       const auto& point = odometry_->pose.pose.position;
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{message->position.x, message->position.y,
                                              message->position.z};
+      const bool measured_finite = measured.allFinite();
+      const bool command_finite = command_position.allFinite();
+      const bool measured_inside_acceptance =
+          measured_finite && (measured - waypoint.position_enu).norm() <=
+              waypoint.acceptance_radius_m;
+      const bool command_inside_acceptance =
+          command_finite && (command_position - waypoint.position_enu).norm() <=
+              waypoint.acceptance_radius_m;
+      terminal_backup_hold_inside_acceptance =
+          message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+          backupEndpointHoldIsAnchored(
+              command_inside_acceptance, measured_finite, command_finite,
+              (measured - command_position).norm(),
+              navigation_contracts::kCommandAnchorErrorLimitM);
       terminal_hold_inside_acceptance =
-          waypoint.behavior == MissionWaypoint::Behavior::Stop &&
-          (measured - waypoint.position_enu).allFinite() &&
-          (command_position - waypoint.position_enu).allFinite() &&
-          (measured - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m &&
-          (command_position - waypoint.position_enu).norm() <= waypoint.acceptance_radius_m;
+          terminal_backup_hold_inside_acceptance ||
+          (waypoint.behavior == MissionWaypoint::Behavior::Stop &&
+           measured_inside_acceptance && command_inside_acceptance);
+      terminal_main_hold_inside_acceptance =
+          message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+          measured_inside_acceptance && command_inside_acceptance;
     }
     if (!odometry_stale && !terminal_failure && !terminal_hold_inside_acceptance &&
         odometry_.has_value()) {
@@ -452,14 +477,86 @@ void NavigationMode::onNavigationCommand(
     safetyStopNavigation("planner backend PVA command anchor is not near vehicle");
     return;
   }
-  if (accepted && mission_controller_) mission_controller_->onNativeTrajectoryReady();
+  if (accepted && completed_command && message->role ==
+      navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+      !terminal_backup_hold_inside_acceptance) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (!planner_recovery_pending_) {
+      const auto now_ns = node().get_clock()->now().nanoseconds();
+      planner_recovery_pending_ = true;
+      planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
+          planner_recovery_wait_timeout_s_ * 1.0e9);
+      RCLCPP_WARN(node().get_logger(),
+                  "planner backend backup endpoint is outside waypoint acceptance; "
+                  "holding for bounded planner recovery window %.3f s",
+                  planner_recovery_wait_timeout_s_);
+    }
+  } else if (accepted && !completed_command) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    planner_recovery_pending_ = false;
+    planner_recovery_deadline_ns_ = 0;
+  } else if (accepted && (terminal_backup_hold_inside_acceptance ||
+                          terminal_main_hold_inside_acceptance)) {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    planner_recovery_pending_ = false;
+    planner_recovery_deadline_ns_ = 0;
+  }
+  if (accepted && mission_controller_ &&
+      (!completed_command || terminal_backup_hold_inside_acceptance ||
+       terminal_main_hold_inside_acceptance)) {
+    mission_controller_->onNativeTrajectoryReady();
+    if (terminal_main_hold_inside_acceptance) {
+      mission_controller_->onNativeTerminalHoldObserved();
+    }
+  }
+  if (accepted && completed_command && mission_controller_) {
+    const auto waypoint = mission_controller_->activeWaypoint();
+    const auto state = mission_controller_->state();
+    const Eigen::Vector3d measured = odometry_
+        ? Eigen::Vector3d{odometry_->pose.pose.position.x, odometry_->pose.pose.position.y,
+                          odometry_->pose.pose.position.z}
+        : Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+    const Eigen::Vector3d command_position{message->position.x, message->position.y,
+                                           message->position.z};
+    const double measured_speed = odometry_
+        ? Eigen::Vector3d{odometry_->twist.twist.linear.x, odometry_->twist.twist.linear.y,
+                          odometry_->twist.twist.linear.z}
+              .norm()
+        : -1.0;
+    RCLCPP_INFO_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "Native completed command accepted: role=%u wp=%u request=%lu state=%u "
+        "measured_error_m=%.3f command_error_m=%.3f measured_speed_mps=%.3f "
+        "main_hold_inside=%s backup_hold_inside=%s trajectory_ready=%s "
+        "terminal_hold_pending=%s",
+        static_cast<unsigned>(message->role), static_cast<unsigned>(message->waypoint_index),
+        static_cast<unsigned long>(message->request_id), static_cast<unsigned>(state),
+        (measured - waypoint.position_enu).norm(),
+        (command_position - waypoint.position_enu).norm(), measured_speed,
+        terminal_main_hold_inside_acceptance ? "true" : "false",
+        terminal_backup_hold_inside_acceptance ? "true" : "false",
+        mission_controller_->nativeTrajectoryReady() ? "true" : "false",
+        mission_controller_->terminalHoldPending() ? "true" : "false");
+  }
 }
 
 void NavigationMode::updateMission() {
   if (!mission_controller_ || !goal_publisher_) return;
+  bool recovery_expired = false;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (failure_reported_ || mission_terminal_ || handover_requested_) return;
+    recovery_expired = plannerRecoveryWaitExpired(
+        planner_recovery_pending_, node().get_clock()->now().nanoseconds(),
+        planner_recovery_deadline_ns_);
+    if (recovery_expired) {
+      planner_recovery_pending_ = false;
+      planner_recovery_deadline_ns_ = 0;
+    }
+  }
+  if (recovery_expired) {
+    safetyStopNavigation("planner backend backup trajectory completed before bounded planner recovery");
+    return;
   }
   std::optional<Eigen::Vector3d> position;
   {
@@ -479,7 +576,34 @@ void NavigationMode::updateMission() {
     }
   }
   const bool airborne = isArmed() && position.has_value() && position->z() > 0.5;
-  handleMissionEvent(mission_controller_->update(now_s, position, airborne, velocity), now_s);
+  const auto active_waypoint = mission_controller_->activeWaypoint();
+  const auto state = mission_controller_->state();
+  const auto native_ready = mission_controller_->nativeTrajectoryReady();
+  const auto terminal_hold_pending = mission_controller_->terminalHoldPending();
+  const double position_error = position.has_value()
+                                    ? (*position - active_waypoint.position_enu).norm()
+                                    : -1.0;
+  const double speed = velocity.has_value() ? velocity->norm() : -1.0;
+  RCLCPP_INFO_THROTTLE(
+      node().get_logger(), *node().get_clock(), 1000,
+      "Mission gate: wp=%zu request=%lu state=%u position_error_m=%.3f radius_m=%.3f "
+      "speed_mps=%.3f acceptance_speed_mps=%.3f airborne=%s trajectory_ready=%s "
+      "terminal_hold_pending=%s",
+      mission_controller_->activeWaypointIndex(),
+      static_cast<unsigned long>(mission_controller_->activeRequestId()),
+      static_cast<unsigned>(state), position_error, active_waypoint.acceptance_radius_m, speed,
+      mission_controller_->acceptanceSpeedMps(), airborne ? "true" : "false",
+      native_ready ? "true" : "false", terminal_hold_pending ? "true" : "false");
+  const auto event = mission_controller_->update(now_s, position, airborne, velocity);
+  if (event.waypoint_accepted) {
+    RCLCPP_INFO(node().get_logger(),
+                "Mission waypoint accepted: wp=%zu position_error_m=%.3f speed_mps=%.3f "
+                "next_wp=%zu next_request=%lu",
+                event.accepted_waypoint_index, event.acceptance_position_error_m,
+                event.acceptance_speed_mps, event.waypoint_index,
+                static_cast<unsigned long>(event.request_id));
+  }
+  handleMissionEvent(event, now_s);
 }
 
 void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, double now_s) {
@@ -596,7 +720,7 @@ void NavigationMode::onOdometry(
       (last_propagated_state_stamp_ns_ > 0 &&
        source_stamp_ns <= last_propagated_state_stamp_ns_)) {
     RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
-                         "Rejecting propagated odometry at or before estimator epoch barrier");
+                         "Rejecting non-increasing propagated odometry source timestamp");
     return;
   }
   if (last_odometry_receive_ns_ > 0 && receive_ns >= last_odometry_receive_ns_) {
@@ -624,6 +748,13 @@ void NavigationMode::onEstimatorHealth(
       message->propagation_valid;
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
   typed_health_seen_ = true;
+  last_health_state_ = message->state;
+  last_health_navigation_valid_ = message->navigation_valid;
+  last_health_covariance_valid_ = message->covariance_valid;
+  last_health_observability_valid_ = message->observability_valid;
+  last_health_correction_fresh_ = message->correction_fresh;
+  last_health_propagation_valid_ = message->propagation_valid;
+  last_health_source_stamp_ns_ = source_stamp_ns;
   if (source_stamp_ns <= 0 ||
       (last_lio_diagnostics_ns_ > 0 && source_stamp_ns <= last_lio_diagnostics_ns_)) {
     lio_health_valid_ = false;
@@ -875,6 +1006,40 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       lio_diagnostics_age_ns > static_cast<std::int64_t>(state_stale_after_s_ * 1e9) ||
       (diagnostics_missing &&
        (typed_health_seen || since_activation_s > diagnostics_wait_s))) {
+    std::uint8_t health_state = 0U;
+    bool health_navigation_valid = false;
+    bool health_covariance_valid = false;
+    bool health_observability_valid = false;
+    bool health_correction_fresh = false;
+    bool health_propagation_valid = false;
+    std::int64_t health_source_stamp_ns = 0;
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      health_state = last_health_state_;
+      health_navigation_valid = last_health_navigation_valid_;
+      health_covariance_valid = last_health_covariance_valid_;
+      health_observability_valid = last_health_observability_valid_;
+      health_correction_fresh = last_health_correction_fresh_;
+      health_propagation_valid = last_health_propagation_valid_;
+      health_source_stamp_ns = last_health_source_stamp_ns_;
+    }
+    RCLCPP_ERROR(node().get_logger(),
+                 "FAST-LIO health gate details: typed_seen=%s healthy=%s "
+                 "diagnostics_missing=%s diagnostics_age_ms=%.3f state=%u "
+                 "navigation_valid=%s covariance_valid=%s observability_valid=%s "
+                 "correction_fresh=%s propagation_valid=%s health_stamp_ns=%ld",
+                 typed_health_seen ? "true" : "false", lio_healthy ? "true" : "false",
+                 diagnostics_missing ? "true" : "false",
+                 diagnostics_missing
+                     ? -1.0
+                     : static_cast<double>(lio_diagnostics_age_ns) / 1e6,
+                 static_cast<unsigned>(health_state),
+                 health_navigation_valid ? "true" : "false",
+                 health_covariance_valid ? "true" : "false",
+                 health_observability_valid ? "true" : "false",
+                 health_correction_fresh ? "true" : "false",
+                 health_propagation_valid ? "true" : "false",
+                 static_cast<long>(health_source_stamp_ns));
     failNavigation("FAST-LIO navigation health invalid or stale");
     return;
   }
@@ -914,6 +1079,25 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                                        command.velocity.z};
     const Eigen::Vector3d acceleration_enu{command.acceleration.x, command.acceleration.y,
                                             command.acceleration.z};
+    bool terminal_hold_inside_acceptance = false;
+    if (command.status ==
+            navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+        command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+        !mission_terminal_ && mission_controller_ && odometry.has_value()) {
+      const auto waypoint = mission_controller_->activeWaypoint();
+      const auto& point = odometry->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      const Eigen::Vector3d command_position{command.position.x, command.position.y,
+                                             command.position.z};
+      const bool command_inside_acceptance =
+          command_position.allFinite() &&
+          (command_position - waypoint.position_enu).norm() <=
+              waypoint.acceptance_radius_m;
+      terminal_hold_inside_acceptance = backupEndpointHoldIsAnchored(
+          command_inside_acceptance, measured.allFinite(), command_position.allFinite(),
+          (measured - command_position).norm(),
+          navigation_contracts::kCommandAnchorErrorLimitM);
+    }
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_REJECTED) {
       safetyStopNavigation("planner backend planner failed without a valid backup trajectory");
@@ -922,8 +1106,24 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED) {
       publishPositionHold(position_enu);
-      if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
-        safetyStopNavigation("planner backend backup trajectory completed before planner recovery");
+      if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+          !terminal_hold_inside_acceptance) {
+        // The command publisher and PX4 setpoint callback are independent
+        // executor paths. A replacement PlanFromRest command can therefore
+        // arrive immediately after this completed sample. Keep publishing
+        // the exact endpoint hold for one bounded recovery window; the mission
+        // timer performs the fail-closed handover if no replacement arrives.
+        std::lock_guard<std::mutex> lock(trajectory_mutex_);
+        if (!planner_recovery_pending_) {
+          const auto now_ns = now.nanoseconds();
+          planner_recovery_pending_ = true;
+          planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
+              planner_recovery_wait_timeout_s_ * 1.0e9);
+          RCLCPP_WARN(node().get_logger(),
+                      "planner backend backup endpoint reached; holding for bounded "
+                      "planner recovery window %.3f s",
+                      planner_recovery_wait_timeout_s_);
+        }
         return;
       }
       std::lock_guard<std::mutex> lock(trajectory_mutex_);

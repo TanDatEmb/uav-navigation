@@ -170,8 +170,10 @@ class MappingActor::Impl final {
  public:
   Impl(const std::string& config_path, std::function<double()> wall_clock_seconds,
        MappingFrameContract frame_contract)
-      : map_(std::make_unique<internal::RuntimeMappingMap>(std::move(wall_clock_seconds))) {
-    map_->loadConfigAndInit(config_path);
+      : config_path_(config_path),
+        wall_clock_seconds_(std::move(wall_clock_seconds)),
+        map_(std::make_unique<internal::RuntimeMappingMap>(wall_clock_seconds_)) {
+    map_->loadConfigAndInit(config_path_);
     expected_world_frame_id_ = std::move(frame_contract.world_frame_id);
     expected_body_frame_id_ = std::move(frame_contract.body_frame_id);
   }
@@ -221,7 +223,15 @@ class MappingActor::Impl final {
     try {
       MappingUpdateResult result;
       if (observation.localization_epoch > localization_epoch_) {
-        map_->init();
+        // ROGMap::init() is intentionally one-shot for each instance. Build
+        // and initialize a replacement before swapping it in so a public
+        // localization-frame transition cannot double-init the live map. If
+        // construction fails, the old map remains untouched until the actor's
+        // existing fail-stop path poisons it.
+        auto replacement = std::make_unique<internal::RuntimeMappingMap>(
+            wall_clock_seconds_);
+        replacement->loadConfigAndInit(config_path_);
+        map_ = std::move(replacement);
         localization_epoch_ = observation.localization_epoch;
         ++world_generation_;
         world_revision_ = 0;
@@ -393,6 +403,8 @@ class MappingActor::Impl final {
     }
   }
 
+  std::string config_path_;
+  std::function<double()> wall_clock_seconds_;
   std::unique_ptr<internal::RuntimeMappingMap> map_;
   rog_map::PointCloud backend_cloud_;
   std::shared_ptr<const std::vector<navigation_world_model::GridIndex3>> nearest_offsets_;

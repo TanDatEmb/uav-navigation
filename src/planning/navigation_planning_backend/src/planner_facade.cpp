@@ -212,6 +212,10 @@ void PlannerFacade::setWorldModelView(navigation_world_model::WorldModelViewPtr 
   impl_->planner->setWorldModelView(std::move(world));
 }
 
+void PlannerFacade::setGoalAcceptanceRadius(const double radius_m) noexcept {
+  if (impl_ && impl_->planner) impl_->planner->setGoalAcceptanceRadius(radius_m);
+}
+
 bool PlannerFacade::setState(const navigation_planning::KinematicState& state) {
   return impl_->planner->setState(state);
 }
@@ -297,6 +301,8 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   output.valid = validation.valid;
   output.begin_time_s = validation.begin_tt;
   output.first_blocked_time_s = validation.first_blocked_tt;
+  output.failure_code = static_cast<int>(validation.failure);
+  output.blocked_role = static_cast<int>(validation.blocked_role);
   output.sample_count = validation.sample_count;
   output.segment_count = validation.segment_count;
   if (!validation.valid) {
@@ -351,6 +357,14 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   output.latest_guide_max = toVector3d(impl_->planner->latestGuideMax());
   output.latest_guide_path_length_m = impl_->planner->latestGuidePathLengthMeters();
   output.latest_guide_duration_s = impl_->planner->latestGuideDurationSeconds();
+  output.requested_goal = toVector3d(impl_->planner->requestedGoal());
+  output.planning_goal = toVector3d(impl_->planner->planningGoal());
+  output.goal_acceptance_radius_m = impl_->planner->goalAcceptanceRadiusMeters();
+  output.goal_endpoint_adjusted = impl_->planner->goalEndpointAdjusted();
+  output.requested_goal_inflated_state = static_cast<int>(
+      impl_->planner->requestedGoalInflatedState());
+  output.planning_goal_inflated_state = static_cast<int>(
+      impl_->planner->planningGoalInflatedState());
   output.optimization = toProductDiagnostics(impl_->planner->latestExpOptimizationDiagnostics());
   return output;
 }

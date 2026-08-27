@@ -10,7 +10,7 @@ profiles:
     expected_outcome: mission_complete
     stochastic: false
     seed: 0
-    collision_truth: [occluder, hidden_obstacle, side_wall, feature_mid_east, feature_low_west, feature_tall_south, feature_corner_east, feature_pole_north]
+    collision_truth: [occluder, hidden_obstacle, side_wall, feature_mid_east, feature_low_west, feature_route_north, feature_route_south, feature_route_west, feature_tall_south, feature_corner_east, feature_pole_north]
   occlusion_degenerate:
     family: occlusion
     world: occlusion_degenerate

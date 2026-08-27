@@ -271,6 +271,14 @@ def _odom_payload(message: Any) -> dict[str, Any]:
     }
 
 
+def _propagated_odom_payload(message: Any) -> dict[str, Any]:
+    """Decode the typed propagated-state envelope for stream accounting."""
+    payload = _odom_payload(message.odometry)
+    payload["localization_epoch"] = _integer(message.localization_epoch)
+    payload["sequence"] = _integer(message.sequence)
+    return payload
+
+
 def _px4_odom_payload(message: Any) -> dict[str, Any]:
     return {
         "timestamp_us": int(getattr(message, "timestamp", 0)),
@@ -429,6 +437,7 @@ class RuntimeMonitor:
     def _specs(self) -> list[TopicSpec]:
         from diagnostic_msgs.msg import DiagnosticArray
         from nav_msgs.msg import Odometry
+        from navigation_contracts.msg import PropagatedOdometry
         from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import Imu, PointCloud2
 
@@ -441,7 +450,12 @@ class RuntimeMonitor:
             }),
             TopicSpec("lidar", str(self.config["fast_lio"]["ros__parameters"]["input"]["lidar_topic"]), PointCloud2, lambda m: _pointcloud_payload(m)[0]),
             TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
-            TopicSpec("propagated_odometry", "/lio/odometry_propagated", Odometry, _odom_payload),
+            TopicSpec(
+                "propagated_odometry",
+                "/lio/odometry_propagated",
+                PropagatedOdometry,
+                _propagated_odom_payload,
+            ),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
             TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]

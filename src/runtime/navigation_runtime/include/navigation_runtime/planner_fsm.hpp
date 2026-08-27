@@ -35,6 +35,40 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
                 : RetainedValidationTransition::FailClosed;
 }
 
+// Once the command publisher has observed a certified endpoint inside the
+// active waypoint acceptance ball, a rest-to-rest retry must not revoke the
+// terminal hold merely because the world advanced during a replacement solve.
+// The hold remains limited to that exact bundle generation and is still
+// revalidated by the mapping publication boundary.
+inline bool terminalHoldIsPending(
+    bool command_available, bool reaches_goal,
+    std::uint64_t terminal_bundle_generation) noexcept {
+  return command_available && reaches_goal && terminal_bundle_generation != 0U;
+}
+
+// The publisher can miss the single wall-clock tick at which a finite bundle
+// returns its finished sample.  It may still publish that exact declared
+// endpoint after the execution interval, but only when the endpoint is a
+// finite, current known-free sample and remains inside the active goal
+// acceptance ball.  This authorizes no future trajectory sample.
+inline bool terminalEndpointHoldIsCertified(
+    bool endpoint_valid, bool endpoint_reaches_goal,
+    bool endpoint_known_free) noexcept {
+  return endpoint_valid && endpoint_reaches_goal && endpoint_known_free;
+}
+
+// A finite local trajectory may end at a known-free sensing frontier rather
+// than at the mission goal.  If the publisher misses its finished tick, it
+// may replay that exact endpoint only while the measured execution state is
+// still close enough to the endpoint for the command-anchor contract.  The
+// planner then observes completion and starts a new PlanFromRest; this does
+// not authorize any future sample or claim waypoint acceptance.
+inline bool expiredEndpointMayBeReplayed(
+    bool endpoint_valid, bool endpoint_known_free,
+    bool endpoint_near_execution_state) noexcept {
+  return endpoint_valid && endpoint_known_free && endpoint_near_execution_state;
+}
+
 // Bounds consecutive rest-to-rest solve failures for one logical waypoint.
 // This state belongs to the mission/planner FSM, not to the optimizer: a
 // transient startup miss may be retried, but an unreachable goal must not be

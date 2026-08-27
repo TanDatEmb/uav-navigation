@@ -196,7 +196,7 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_publish_rate_hz, 50.0);
   EXPECT_EQ(parameters.propagated_odometry_imu_ingress_capacity, 4096);
   EXPECT_DOUBLE_EQ(parameters.propagated_odometry_imu_history_duration_s, 1.0);
-  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_maximum_correction_age_s, 0.25);
+  EXPECT_DOUBLE_EQ(parameters.propagated_odometry_maximum_correction_age_s, 0.50);
 }
 
 TEST_F(ParameterLoaderTest, CanonicalFrameContractRejectsAliasedInputFrames) {

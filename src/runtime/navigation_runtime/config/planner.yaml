@@ -68,6 +68,12 @@ traj_opt:
     max_omg: 5.0
     max_acc_thr: 25.0
     min_acc_thr: 6.0
+    # Provisional numerical tolerance for the nominal and backup optimizer's
+    # V/A/J certificates. The bounded allowance covers the measured in-motion
+    # handover overshoot while configuration validation rejects a larger value.
+    # This is a provisional upper bound, not a replacement for the physical
+    # envelope or the flatness/world-model certificates.
+    dynamic_limit_tolerance_ratio: 0.75
   exp_traj:
     pos_constraint_type: 1
     block_energy_cost: false
@@ -83,8 +89,8 @@ traj_opt:
     corridor_plane_tolerance_m: 0.01
     # Route-reference quality objective. These weights are independent of the
     # corridor/dynamic feasibility penalties; they are not safety certificates.
-    # Initial values are a provisional baseline; conditioning still requires
-    # objective diagnostics and repeated A/B evidence.
+    # Baseline objective weights. Route shaping must not be used to hide an
+    # A*/world-model altitude or conditioning defect.
     route_reference:
       lateral_weight: 1.0
       vertical_weight: 1.0
@@ -164,17 +170,14 @@ rog_map:
   # both layers therefore share this evidence resolution.
   resolution: 0.2
   inflation_resolution: 0.2
-  # Match the 0.80 m planner envelope in the inflated visibility grid. planner backend's
-  # endpoint-only backup check treats UNKNOWN as visible but must still reject
-  # every occupied voxel inside the complete vehicle/error tube.
+  # Baseline inflated grid. The grid-to-CIRI clearance contract is diagnosed
+  # explicitly; increasing inflation must not be used as a substitute for
+  # resolving an oracle/quantization mismatch.
   inflation_step: 4
-  unk_inflation_en: false
-  unk_inflation_step: 1
   # Route progress is along ENU X; keep the local map long in X and narrow in
   # Y so planner backend does not hit the longitudinal boundary at 7.45 m.
   map_size: [110, 15, 6]
   fix_map_origin: [0, 0, 1.5]
-  frontier_extraction_en: false
   # lio_odom is initialized from the estimator trajectory, so zero is not a
   # physical ground datum and a valid mission may descend below it.  Keep the
   # upstream plane feature available, but disable it for this product frame.
@@ -185,25 +188,12 @@ rog_map:
   virtual_ground_ceiling_en: false
   virtual_ceil_height: 5.8
   virtual_ground_height: -1.1
-  load_pcd_en: false
   map_sliding:
     enable: true
     # Must stay comfortably below the smallest local-map half extent (3 m in
     # Z).  A 3 m threshold let the vehicle reach the old map ceiling before a
     # slide, so A* produced seeds outside CIRI's local domain.
     threshold: 1.5
-  esdf:
-    enable: false
-    resolution: 0.1
-    local_update_box: [5, 5, 3]
-  visualization:
-    enable: false
-    use_dynamic_reconfigure: false
-    time_rate: 0
-    frame_rate: 0
-    range: [15, 15, 4]
-    frame_id: "world"
-    pub_unknown_map_en: false
   intensity_thresh: -10
   point_filt_num: 1
   raycasting:

@@ -541,7 +541,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             self.assertNotIn("frontend_in_known_free", planner["planner"])
             self.assertTrue(planner["rog_map"]["raycasting"]["enable"])
-            self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+            self.assertNotIn("unk_inflation_en", planner["rog_map"])
 
             self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
             self.assertEqual(planner["rog_map"]["raycasting"]["ray_range"][0], 0.7)
@@ -722,7 +722,7 @@ class RuntimeContractTest(unittest.TestCase):
             planner = yaml.safe_load(planner_path.read_text(encoding="utf-8"))
             self.assertNotIn("frontend_in_known_free", planner["planner"])
             self.assertTrue(planner["rog_map"]["raycasting"]["enable"])
-            self.assertFalse(planner["rog_map"]["unk_inflation_en"])
+            self.assertNotIn("unk_inflation_en", planner["rog_map"])
 
     def test_runtime_rejects_mission_limits_above_x500_envelope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1016,7 +1016,11 @@ class RuntimeContractTest(unittest.TestCase):
 
         source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
         dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
-        self.assertEqual(dataset_body.count('"use_sim_time:=true"'), 2)
+        self.assertEqual(dataset_body.count('"use_sim_time:=true"'), 1)
+        self.assertIn(
+            "_navigation_runtime_launch_command(mapping_config, shadow_mission_file)",
+            dataset_body,
+        )
         self.assertNotIn('"use_sim_time:=false"', dataset_body)
 
     def test_dataset_shadow_goal_is_horizontal_finite_and_distance_bounded(self) -> None:
@@ -1040,6 +1044,10 @@ class RuntimeContractTest(unittest.TestCase):
         helper_source = (ROOT / "tools/runtime/dataset_shadow_planning.py").read_text(
             encoding="utf-8"
         )
+        self.assertIn("PropagatedOdometry", helper_source)
+        self.assertIn("on_propagated_odometry", helper_source)
+        self.assertIn("message.odometry", helper_source)
+        self.assertNotIn('create_subscription(Odometry, "/lio/odometry_propagated"', helper_source)
         self.assertIn("EMER before committing a READY shadow command", helper_source)
         self.assertIn("publish_teardown(latest_odom)", helper_source)
         self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", helper_source)
@@ -1113,6 +1121,27 @@ class RuntimeContractTest(unittest.TestCase):
             ),
             [],
         )
+
+    def test_dataset_replay_passes_one_explicit_main_backup_mission_contract(self) -> None:
+        source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
+        dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
+        self.assertIn("DATASET_SHADOW_MISSION", source)
+        self.assertIn("shadow_mission_file = _resolved_mission_file(", dataset_body)
+        self.assertIn("mission_file=shadow_mission_file", dataset_body)
+        self.assertIn("_navigation_runtime_launch_command(mapping_config, shadow_mission_file)", dataset_body)
+        self.assertIn('"main_unknown_policy": "allow_unknown"', dataset_body)
+        self.assertIn('"backup_unknown_policy": "require_known_free"', dataset_body)
+
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/recorded_replay.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        planning = mission["mission"]["planning"]
+        self.assertEqual(planning["unknown_policy"], "allow_unknown")
+        self.assertEqual(planning["max_velocity_mps"], 12.0)
+        self.assertEqual(planning["max_acceleration_mps2"], 12.0)
+        self.assertEqual(planning["max_jerk_mps3"], 30.0)
 
     def test_dataset_raw_observers_use_reliable_product_capacity(self) -> None:
         config = runner.load_config("dataset.yaml")
@@ -1604,7 +1633,7 @@ class RuntimeContractTest(unittest.TestCase):
         propagated = config["propagated_odometry"]
         self.assertNotIn("enabled", propagated)
         self.assertEqual(propagated["imu_history_duration_s"], 1.0)
-        self.assertEqual(propagated["maximum_correction_age_s"], 0.25)
+        self.assertEqual(propagated["maximum_correction_age_s"], 0.50)
 
     def test_simulation_bridge_gates_are_explicit_profile_parameters(self) -> None:
         config = runner.load_config("sim.yaml")
@@ -1788,7 +1817,7 @@ class RuntimeContractTest(unittest.TestCase):
         for config_name in ("sim.yaml", "dataset.yaml"):
             propagated = runner.load_config(config_name)["fast_lio"]["ros__parameters"]["propagated_odometry"]
             self.assertNotIn("enabled", propagated)
-            self.assertEqual(propagated["maximum_correction_age_s"], 0.25)
+            self.assertEqual(propagated["maximum_correction_age_s"], 0.50)
             self.assertGreater(
                 propagated["imu_history_duration_s"] - propagated["maximum_correction_age_s"],
                 0,
@@ -1805,7 +1834,10 @@ class RuntimeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('constexpr char kLioPropagatedOdometryTopic[] = "/lio/odometry_propagated"', source)
-        self.assertEqual(source.count("create_subscription<nav_msgs::msg::Odometry>"), 1)
+        self.assertIn(
+            "create_subscription<navigation_contracts::msg::PropagatedOdometry>",
+            source,
+        )
         self.assertIn("kLioPropagatedOdometryTopic", source)
         self.assertNotIn("/sim/ground_truth/odometry", source)
 
@@ -1813,7 +1845,9 @@ class RuntimeContractTest(unittest.TestCase):
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("from navigation_contracts.msg import NavigationGoal, NavigationModeStatus", source)
+        self.assertIn("PropagatedOdometry", source)
+        self.assertIn('"/lio/odometry_propagated"', source)
+        self.assertNotIn('create_subscription(Odometry, "/lio/odometry_propagated"', source)
         self.assertIn('"/navigation/navigation_command"', source)
         self.assertNotIn('"/navigation/trajectory_bundle"', source)
         self.assertNotIn('"/navigation/trajectory"', source)
@@ -2047,6 +2081,23 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertLess(arm, takeoff)
         self.assertLess(takeoff, activate)
         self.assertIn("pre_activation_odometry_stable_s", source[arm:activate])
+        self.assertIn("prepare_takeoff_hold", source[takeoff:activate])
+        self.assertIn("NAVIGATION_STATE_AUTO_LOITER", source[takeoff:activate])
+
+    def test_initial_takeoff_handover_is_not_terminal_mission_pause(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8")
+        paused = source.index(
+            'if self.mode_status_state == int(self.NavigationModeStatus.PAUSED):')
+        self.assertIn("if (self.post_takeoff_mode_entered", source[paused:])
+
+    def test_mission_timeout_precedes_stability_window_return(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8")
+        timeout = source.index(
+            'if mode_elapsed_s > float(self.config.get("mission_timeout_s", 90.0))')
+        stability_return = source.index("if stable_elapsed_s < stable_s:")
+        self.assertLess(timeout, stability_return)
 
     def test_manual_takeoff_path_sends_neither_arm_nor_takeoff(self) -> None:
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
@@ -2240,6 +2291,31 @@ class RuntimeContractTest(unittest.TestCase):
         runtime_monitor._callback(spec)(SimpleNamespace())
         self.assertEqual(runtime_monitor._sample_stream.getvalue(), "")
         self.assertEqual(runtime_monitor.streams["simulation_clock"].received, 1)
+
+    def test_monitor_decodes_typed_propagated_odometry_envelope(self) -> None:
+        stamp = SimpleNamespace(sec=12, nanosec=345)
+        nested = SimpleNamespace(
+            header=SimpleNamespace(stamp=stamp, frame_id="world"),
+            child_frame_id="base_link",
+            pose=SimpleNamespace(
+                pose=SimpleNamespace(
+                    position=SimpleNamespace(x=1.0, y=2.0, z=3.0),
+                    orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+                )
+            ),
+            twist=SimpleNamespace(
+                twist=SimpleNamespace(
+                    linear=SimpleNamespace(x=4.0, y=5.0, z=6.0),
+                    angular=SimpleNamespace(x=0.1, y=0.2, z=0.3),
+                )
+            ),
+        )
+        message = SimpleNamespace(odometry=nested, localization_epoch=7, sequence=9)
+        payload = monitor._propagated_odom_payload(message)
+        self.assertEqual(payload["stamp_ns"], 12_000_000_345)
+        self.assertEqual(payload["localization_epoch"], 7)
+        self.assertEqual(payload["sequence"], 9)
+        self.assertEqual(payload["position"], [1.0, 2.0, 3.0])
 
     def test_clock_interval_history_is_disabled_but_max_and_gap_count_remain_exact(self) -> None:
         stats = StreamStats(

@@ -6,6 +6,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include <iostream>
 #include <fstream>
 #include <cstdint>
@@ -26,6 +30,7 @@
 #include "traj_opt/backup_trajectory_optimizer.hpp"
 #include "path_search/astar.h"
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_world_model/goal_contract.hpp>
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_world_model/world_commit_authorizer.hpp>
 #include "planner_core/corridor_generator.h"
@@ -83,6 +88,21 @@ namespace navigation_planning_backend {
 
         Vec3f local_start_p_;
 
+        // Keep the mission target for diagnostics, but allow the geometric
+        // planner to use a certified free cell inside the waypoint acceptance
+        // ball when the exact inflated voxel is occupied.
+        double goal_acceptance_radius_m_{
+            navigation_world_model::kGoalCompletionToleranceM};
+        Vec3f requested_goal_p_{Vec3f::Constant(
+            std::numeric_limits<float>::quiet_NaN())};
+        Vec3f planning_goal_p_{Vec3f::Constant(
+            std::numeric_limits<float>::quiet_NaN())};
+        navigation_world_model::CellState requested_goal_inflated_state_{
+            navigation_world_model::CellState::kUndefined};
+        navigation_world_model::CellState planning_goal_inflated_state_{
+            navigation_world_model::CellState::kUndefined};
+        bool goal_endpoint_adjusted_{false};
+
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
 
@@ -139,6 +159,8 @@ namespace navigation_planning_backend {
             const AbsoluteDeadline &solve_deadline,
             bool elapsed_budget_exceeded = false,
             PlannerResultCode fallback = PLANNER_BACKUP_FAILED) const;
+
+        [[nodiscard]] Vec3f resolveGoalForPlanning(const Vec3f& requested_goal);
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -208,6 +230,18 @@ namespace navigation_planning_backend {
         Vec3f latestGuideMax() const { return latest_guide_max_; }
         double latestGuidePathLengthMeters() const { return latest_guide_path_length_m_; }
         double latestGuideDurationSeconds() const { return latest_guide_duration_s_; }
+        Vec3f requestedGoal() const { return requested_goal_p_; }
+        Vec3f planningGoal() const { return planning_goal_p_; }
+        double goalAcceptanceRadiusMeters() const noexcept {
+            return goal_acceptance_radius_m_;
+        }
+        bool goalEndpointAdjusted() const noexcept { return goal_endpoint_adjusted_; }
+        navigation_world_model::CellState requestedGoalInflatedState() const noexcept {
+            return requested_goal_inflated_state_;
+        }
+        navigation_world_model::CellState planningGoalInflatedState() const noexcept {
+            return planning_goal_inflated_state_;
+        }
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();
             return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;
@@ -267,6 +301,17 @@ namespace navigation_planning_backend {
             map_ptr_ = std::move(view);
             astar_ptr_->setWorldModelView(map_ptr_);
             cg_ptr_->setWorldModelView(map_ptr_);
+        }
+
+        // Runtime supplies the mission-owned waypoint acceptance radius before
+        // each solve. This never changes collision, UNKNOWN or OUT_OF_MAP
+        // policy; it only bounds endpoint representation.
+        void setGoalAcceptanceRadius(const double radius_m) noexcept {
+            goal_acceptance_radius_m_ =
+                std::isfinite(radius_m) && radius_m > 0.0
+                    ? std::max(radius_m,
+                               navigation_world_model::kGoalCompletionToleranceM)
+                    : navigation_world_model::kGoalCompletionToleranceM;
         }
 
         void cancelActiveSolve() {

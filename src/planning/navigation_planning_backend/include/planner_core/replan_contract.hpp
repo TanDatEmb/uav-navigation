@@ -21,6 +21,15 @@ inline bool backupResultMayBuildCommandCandidate(navigation_math::RET_CODE resul
          result == navigation_math::FINISH;
 }
 
+// A visible main-only replacement must not erase a still-future certified
+// safety suffix.  The existing bundle remains subject to the runtime's latest
+// world recertification; this predicate only decides whether the backend may
+// replace that bundle at all.
+inline bool shouldRetainBackupCapableCommand(
+    bool new_goal, bool backup_available) noexcept {
+  return !new_goal && backup_available;
+}
+
 // Preserve the first actionable backup failure at the planner boundary.  The
 // raw optimizer enum is still logged, but a generic BACKUP_FAILED must not hide
 // a timeout, initialization error, or explicit no-path result.

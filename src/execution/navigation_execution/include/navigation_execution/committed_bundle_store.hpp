@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <limits>
 
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_world_model/world_model_view.hpp>
@@ -59,7 +61,8 @@ class CommittedBundleStore final {
       const navigation_world_model::WorldSnapshotIdentity& identity,
       const std::shared_ptr<const navigation_planning::CandidateBundle>&
           expected_bundle,
-      bool retain_validated_bundle) noexcept {
+      bool retain_validated_bundle,
+      std::int64_t refreshed_valid_until_ns = 0) noexcept {
     if (identity.localization_epoch == 0 || identity.generation == 0 ||
         identity.revision == 0 || identity.observation_stamp_ns <= 0) {
       return false;
@@ -74,6 +77,25 @@ class CommittedBundleStore final {
       auto recertified = std::make_shared<navigation_planning::CandidateBundle>(
           *committed_);
       recertified->world_identity = identity;
+      if (refreshed_valid_until_ns > recertified->valid_until_ns) {
+        // A revalidated bundle may continue to be sampled only for the new
+        // fresh-world window. Never extend it beyond the declared trajectory
+        // endpoint, and never widen the interval without a successful full
+        // candidate validation in the caller.
+        auto renewed_until_ns = refreshed_valid_until_ns;
+        if (recertified->hasDeclaredEndpointMetadata()) {
+          const double end_wall_time_s = recertified->start_wall_time_s +
+              recertified->duration_s;
+          if (!std::isfinite(end_wall_time_s) || end_wall_time_s <= 0.0 ||
+              end_wall_time_s > static_cast<double>(
+                  std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
+            return false;
+          }
+          const auto endpoint_ns = static_cast<std::int64_t>(end_wall_time_s * 1.0e9);
+          renewed_until_ns = std::min(renewed_until_ns, endpoint_ns);
+        }
+        recertified->valid_until_ns = renewed_until_ns;
+      }
       committed_ = recertified->valid()
           ? std::shared_ptr<const navigation_planning::CandidateBundle>(
                 std::move(recertified))

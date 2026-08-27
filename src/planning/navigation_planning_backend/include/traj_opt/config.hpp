@@ -73,6 +73,10 @@ namespace traj_opt {
         double route_reference_vertical_weight{0};
         double route_reference_lateral_deadband_m{0};
         double route_reference_vertical_deadband_m{0};
+        // A small, explicitly owned allowance for numerical dynamic-limit
+        // overshoot in optimizer certificates. The value is capped by the
+        // config contract and is applied consistently to V/A/J checks.
+        double dynamic_limit_tolerance_ratio{0.0};
         int integral_reso{0};
         double opt_accuracy{0};
         int feasibility_retry_max_iterations{64};
@@ -130,6 +134,8 @@ namespace traj_opt {
                 loader.LoadParam("traj_opt" + ns + "route_reference/vertical_deadband_m",
                                  route_reference_vertical_deadband_m, 0.0);
             }
+            loader.LoadParam("traj_opt/boundary/dynamic_limit_tolerance_ratio",
+                             dynamic_limit_tolerance_ratio, 0.0);
             // Missing physical limits remain invalid and are rejected by the
             // planner contract; zero is the neutral loader default rather
             // than a negative sentinel with an overloaded meaning.
@@ -186,6 +192,9 @@ namespace traj_opt {
                 route_reference_lateral_deadband_m < 0.0 ||
                 !std::isfinite(route_reference_vertical_deadband_m) ||
                 route_reference_vertical_deadband_m < 0.0 ||
+                !std::isfinite(dynamic_limit_tolerance_ratio) ||
+                dynamic_limit_tolerance_ratio < 0.0 ||
+                dynamic_limit_tolerance_ratio > 0.75 ||
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||

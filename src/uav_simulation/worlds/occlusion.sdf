@@ -14,6 +14,20 @@
          Mid360 observability.  The degenerate variant intentionally omits
          these models. -->
     <model name="feature_low_west"><static>true</static><pose>-1.0 -5.0 0.75 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>1.2 0.8 1.5</size></box></geometry></collision><visual name="visual"><geometry><box><size>1.2 0.8 1.5</size></box></geometry></visual></link></model>
+    <!-- Observation scaffold beyond the northbound opening leg. Its upper
+         face is outside the flight tube but intersects the MID-360
+         horizontal beams, so raycasting can certify the free tube before the
+         first occlusion checkpoint. It is not a route obstacle. -->
+    <model name="feature_route_north"><static>true</static><pose>-1.0 8.0 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>4.0 0.3 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>4.0 0.3 5.0</size></box></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material></visual></link></model>
+    <!-- Matching return surface for the initial southbound leg to
+         observe_front. Keep it separate from the north surface so both
+         directions of the opening route have measured free evidence. -->
+    <model name="feature_route_south"><static>true</static><pose>-1.0 -3.5 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>4.0 0.3 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>4.0 0.3 5.0</size></box></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material></visual></link></model>
+    <!-- Return surface beyond the west detour leg. The route and its full
+         inflated braking tube remain at least 1.6 m east of this wall, while
+         the horizontal scan can certify the lateral braking tube before the
+         hidden obstacle is revealed. -->
+    <model name="feature_route_west"><static>true</static><pose>-8.5 4.0 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.3 12.0 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.3 12.0 5.0</size></box></geometry><material><ambient>0.35 0.35 0.35 1</ambient><diffuse>0.45 0.45 0.45 1</diffuse></material></visual></link></model>
     <model name="feature_tall_south"><static>true</static><pose>2.5 -7.5 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.7 0.7 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.7 0.7 5.0</size></box></geometry></visual></link></model>
     <model name="feature_corner_east"><static>true</static><pose>8.5 8.0 1.6 0 0 0.35</pose><link name="link"><collision name="collision"><geometry><box><size>2.8 0.6 3.2</size></box></geometry></collision><visual name="visual"><geometry><box><size>2.8 0.6 3.2</size></box></geometry></visual></link></model>
     <model name="feature_pole_north"><static>true</static><pose>12.0 -6.0 1.8 0 0 0</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>0.35</radius><length>3.6</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>0.35</radius><length>3.6</length></cylinder></geometry></visual></link></model>

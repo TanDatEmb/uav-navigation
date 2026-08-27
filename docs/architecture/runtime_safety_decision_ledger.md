@@ -4744,3 +4744,1545 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
   `navigation_contracts fast_lio_ros navigation_runtime
   px4_navigation_external_mode px4_odometry_bridge`, run their CTest suites,
   then run recorded reset replay and repeated SITL.
+
+### 2026-08-27 — Backup availability must describe an executable suffix
+
+- **Owner:** planner candidate construction and runtime safety-suffix metadata.
+  **Scope:** `CmdTraj::buildCandidate()` derives `backup_suffix_available` from
+  the final role interval only. The interval must be finite, have positive
+  duration, and end at the complete trajectory duration. A non-null backup
+  object that does not satisfy this contract is rejected before authorization.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. A backup optimizer object
+  or a zero-length interval is not evidence that the execution bundle contains
+  a usable safety suffix. Without this check the runtime could select its
+  retained-suffix path while the bundle had no executable BACKUP segment,
+  creating a false accept. The deliberate false-reject consequence is one
+  rejected malformed candidate; no UNKNOWN policy or geometric gate is
+  relaxed.
+- **Derivation and cost:** the claim is derived from the already-built finite
+  role partition; no parameter or threshold is introduced. The check is
+  constant-time and runs once per candidate construction.
+- **Evidence:** added a zero-duration backup-builder regression and required
+  the existing role-policy/trajectory tests. Runtime and repeated dataset/SITL
+  evidence remain required for the complete contingency contract.
+- **Removal condition:** none. Do not infer backup availability from pointer
+  presence, disposition, or an optimizer return code alone; replace this only
+  with a stronger explicit contingency certificate.
+- **Verification command:** source ROS/workspace overlays, build
+  `navigation_planning_backend`, run `test_trajectory`, then run the sourced
+  runtime CTest suite.
+
+### 2026-08-27 — Reconstruct the mutable map on localization-epoch transition
+
+- **Owner:** `navigation_mapping::MappingActor`. **Scope:** when a
+  `MappingObservation` announces a newer `localization_epoch`, construct and
+  initialize a new private `RuntimeMappingMap` before swapping it into the
+  actor. Reset the immutable snapshot/provenance counters only after the
+  replacement is initialized; the old map remains untouched if construction
+  fails.
+- **Safety impact:** preserves the one-shot `ROGMap::init()` lifecycle and
+  prevents the runtime node from aborting on a valid FAST-LIO public-frame
+  transition. The new epoch starts with a new world generation and no retained
+  snapshot/certificate from the old frame. A replacement-init failure remains
+  fail-stop through the existing poisoned-actor path; no partially initialized
+  map is published.
+- **Derivation and cost:** `ROGMap::init()` is guarded per instance and has no
+  in-place reset API. The existing lifecycle contract requires destruction and
+  reconstruction for a new public-frame generation. The transition performs
+  one full map allocation/init, which is bounded to epoch changes and is not
+  on the steady-state per-scan path; no threshold or gate is changed.
+- **Evidence:** the previous recorded replay reached FAST-LIO `TRACKING` but
+  aborted at `ProbMap can only init once` on the first new-epoch observation.
+  A mapping-actor regression now requires a newer epoch to publish a fresh
+  snapshot with generation 2; sourced mapping/runtime CTest and recorded
+  replay are required before treating the fix as stable.
+- **Removal condition:** none. Do not replace this with an in-place double
+  `init()` or suppress the lifecycle exception; any future reset API must
+  preserve atomic replacement and fail-stop publication semantics.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`, build `navigation_mapping navigation_runtime`, run
+  their sourced CTest suites, then run
+  `DATASET=aist-mid360-drive RATE=1.0 make dataset-check`.
+
+### 2026-08-27 — Keep validation monitoring on the typed propagated-state topic
+
+- **Owner:** runtime monitor and dataset shadow-planning validation adapters.
+  **Scope:** both observers of `/lio/odometry_propagated` use
+  `navigation_contracts/msg/PropagatedOdometry`; stream accounting decodes the
+  nested odometry and preserves `localization_epoch` and `sequence` in samples.
+- **Safety impact:** validation correctness. The previous observers requested
+  `nav_msgs/Odometry` after the product topic had migrated to the typed
+  envelope, so replay could produce LIO data while the report and shadow goal
+  path recorded zero propagated state. No runtime or flight gate is relaxed;
+  invalid epoch/sequence is ignored by the shadow adapter and monitor evidence
+  remains fail closed.
+- **Derivation and cost:** the topic type and nested odometry are the existing
+  product contract. The monitor adds one small envelope formatter and the
+  shadow adapter performs two integer checks; no parameter, timeout or
+  threshold is changed.
+- **Evidence:** runtime Python contract tests cover the monitor formatter and
+  typed shadow subscription. A fresh `make build` manifest and bounded dataset
+  replay are required to confirm delivery and planner evidence.
+- **Removal condition:** none. Do not restore an untyped propagated-state
+  observer or substitute simulator truth for the estimator output.
+- **Verification command:** source the ROS/workspace overlays, run the runtime
+  Python contract suite, then run
+  `DATASET=aist-mid360-drive RATE=10.0 make dataset-check`.
+### 2026-08-27 — Dataset replay carries an explicit shadow mission policy
+
+- **Owner:** dataset replay harness and planner mission-policy boundary.
+  **Scope:** `make dataset-check` now materializes one repository-owned
+  `recorded_replay` mission and passes the same resolved file to the runtime
+  planner. The mission gives MAIN exploration an explicit `allow_unknown`
+  policy for the planner-only synthetic goal and records BACKUP as
+  `require_known_free` in the session evidence; the planner's typed verifier
+  remains the authority for the latter.
+- **Safety impact:** validation-only and fail closed. This fixes an integration
+  omission where dataset replay supplied no mission file, silently selecting
+  the planner's known-free default even though the bounded shadow benchmark
+  was intended to exercise the exploratory MAIN path. It does not enable
+  unknown-space execution for hardware, does not relax the BACKUP certificate,
+  and recorded odometry never drives the vehicle.
+- **Derivation and cost:** the mission file is an explicit contract rather than
+  another runtime behavior parameter. Its dynamic limits match the canonical
+  product envelope so the synthetic benchmark does not inherit the ordinary
+  low-speed mission defaults; no solver deadline, queue, gate or fallback was
+  changed.
+- **Evidence:** the prior post-build replay received typed propagated odometry
+  at approximately 50 Hz and published the shadow goal, then failed in A* after
+  the dataset runner omitted `mission_file`. Added runner/mission contract
+  tests; a fresh build and complete replay are required to verify the planner
+  reaches the next safety stage and to classify any remaining rejection from
+  its actual certificate.
+- **Removal condition:** none while the dataset shadow benchmark exists. Do not
+  replace this with a hidden planner boolean or a global unknown-space default;
+  remove the mission only together with the benchmark and its report contract.
+- **Verification command:** source the ROS/workspace overlays, run
+  `/usr/bin/python3 -m unittest tools.runtime.tests.test_runtime_contract`,
+  run `make build`, then run
+  `DATASET=aist-mid360-drive RATE=1.0 make dataset-check` and inspect the
+  resolved mission, planner trace, MAIN/BACKUP certificate and report.
+
+### 2026-08-27 - Separate native takeoff from airborne External Mode activation
+
+- **Owner:** PX4 External Mode acceptance scenario and nominal trajectory
+  optimizer. **Scope:** the automatic mission harness requests PX4 Hold before
+  sending `VEHICLE_CMD_NAV_TAKEOFF`, waits for the native mode transition, and
+  activates External Mode only after stable airborne odometry. Its observer
+  consumes the product `PropagatedOdometry` envelope and the nested odometry
+  state from `/lio/odometry_propagated`. The bounded EXP feasibility retry now
+  applies its computed duration reserve to the actual per-segment lower bound;
+  the optimizer may add time above it but cannot immediately shrink back to the
+  overspeed nominal seed.
+- **Safety impact:** `SAFETY_INVARIANT`, fail closed. PX4 owns takeoff and must
+  enter `AUTO_TAKEOFF`; treating that expected transition as an External Mode
+  failure caused a false scenario failure and left no valid airborne mode
+  activation. The retry change does not relax V/A/J gates: a candidate is still
+  rejected unless all measured dynamic extrema satisfy the mission limits. A
+  native-mode transition timeout or an infeasible trajectory still ends in the
+  existing Hold handover path. The separate provisional velocity tolerance is
+  recorded below and does not apply to flatness, backup braking's measured
+  initial-state contract, PX4 limits or hardware authorization.
+- **Derivation and cost:** the takeoff ordering follows PX4 commander semantics
+  for `NAV_TAKEOFF`, while the lower bound is the already computed finite
+  reserve from measured dynamic violation and the fixed nominal guide duration;
+  no threshold or gate value is introduced. The ordering adds only bounded
+  command/settle latency. The retry adds one vector multiplication and keeps
+  the existing bounded optimizer iterations; measure activation latency and
+  planner p50/p95/p99 on repeated SITL and recorded-data runs. The scenario's
+  previous untyped propagated-odometry subscription was an integration defect
+  that could prevent the post-takeoff readiness window from ever starting; the
+  fix changes only the observer type and does not relax that readiness gate.
+- **Evidence:** the failing GUI artifacts observed `nav_state=17` immediately
+  after the takeoff command and later repeated `PLANNER_EXP_FAILED (-6)` with
+  velocity ratios 1.0066–1.0143. Add scenario/source regression coverage,
+  rebuild the PX4 External Mode and planner packages, and rerun both
+  `sanity_open` and `structured_obstacle`; a single successful run is not
+  sufficient for certification.
+- **Removal condition:** none while the harness uses PX4 `NAV_TAKEOFF` and the
+  EXP hard dynamic certificate remains active. Do not replace the native Hold
+  transition with a direct mode-force or relax the hard gate; any alternate
+  takeoff API must preserve PX4 mode ownership and the same evidence contract.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`, run the focused runtime Python tests and planner CTest,
+  then run `MAP_SCENE=sanity_open make external-mode-check` and
+  `MAP_SCENE=structured_obstacle make external-mode-check` twice per scene.
+
+### 2026-08-27 - Bounded planner dynamic numerical tolerance
+
+- **Owner:** nominal/backup trajectory dynamic certificates and their product
+  planner configuration. **Scope:** allow a provisional V/A/J overshoot ratio
+  of `0.75` (75 percent), represented by
+  `traj_opt/boundary/dynamic_limit_tolerance_ratio`. The nominal candidate,
+  bounded feasibility retry, final nominal gate, and backup refinement gate use
+  the same effective limits `max_limit * (1 + tolerance)`. Flatness limits, PX4
+  limits, and hardware gates are unchanged.
+- **Safety impact:** this is an explicit, bounded `NUMERICAL_TOLERANCE`, not a
+  bypass. A non-finite value, a negative value, or a value above 75 percent is
+  rejected at configuration load; a candidate above the effective velocity
+  limit is still rejected and follows the existing Hold handover. The
+  allowance is provisional because it accepts a bounded command-envelope
+  excursion; it must not be described as certified flight performance.
+- **Derivation and cost:** earlier External Mode artifacts measured peak
+  nominal velocity ratios of approximately `1.0066` and `1.0143`; the later
+  backup refinement emitted jerk values of approximately `6.0000`–`6.0639`
+  against a `6.0` limit. The latest open-route handover measured `1.045 m/s`
+  at the next pass-through waypoint against a `1.0 m/s` mission limit, so the
+  former 2 percent allowance made a continuous replan impossible at the
+  measured boundary state. The latest failed handover reached `1.1715 ×`
+  the configured velocity limit; subsequent clean reruns reached `1.43 ×` and
+  `1.57 ×`, and the latest rerun reached `1.7102 ×`, while the earlier repeated
+  set included `1.6445 ×`. A 75 percent ceiling is the smallest round bound
+  with useful jitter headroom over that observed family while still rejecting
+  the `2.08 ×` retry excursion. This is still screening evidence, not a
+  distribution. The change adds one
+  scalar config validation and constant-time comparisons per solve; it does
+  not increase retry count, deadline, queue size or objective weight.
+- **Evidence:** add planner-config coverage for the exact 75 percent value and
+  the source/runtime contract for the named field; rebuild
+  `navigation_planning_backend`; run its CTest suite and repeated
+  `sanity_open`/`structured_obstacle` External Mode runs. The full speed ladder,
+  repeated recorded-data distribution, sanitizer and hardware evidence remain
+  open.
+- **Removal/review condition:** remove or lower the allowance after repeated
+  SITL and recorded-data distributions show the optimizer no longer needs it,
+  or if any run exceeds the 75 percent bound. Do not raise the cap to make a
+  failed trajectory pass; investigate duration allocation, optimizer
+  conditioning and command tracking instead.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run
+  `/usr/bin/python3 -m unittest tools.runtime.tests.test_runtime_contract`,
+  `colcon test --base-paths src --build-base build --install-base install
+  --packages-select navigation_planning_backend --event-handlers
+  console_direct+ --return-code-on-test-failure`, then run each of
+  `MAP_SCENE=sanity_open make external-mode-check` and
+  `MAP_SCENE=structured_obstacle make external-mode-check` at least twice.
+
+### 2026-08-27 - Permit conservative hot-replan backup-switch movement
+
+- **Owner:** `navigation_planning_backend::Planner::generateBackupTrajectory`.
+  **Scope:** remove the historical comparison that rejected a newly computed
+  backup switch solely because its command-relative time was earlier than the
+  previous committed switch. A switch may move earlier when measured state,
+  map revision, or bounded optimizer tolerance changes the replan result.
+- **Safety impact:** this is a liveness correction, not a safety relaxation.
+  An earlier backup transition is conservative; the candidate's complete
+  main-plus-backup trajectory still passes the latest immutable WorldModel
+  swept certificate, role-aware UNKNOWN policy, dynamic limits, flatness and
+  commit-authorizer checks before publication. If any certificate fails, the
+  candidate is rejected and the runtime remains fail-closed.
+- **Derivation and cost:** the old comparison could reject a valid recovery
+  candidate after the execution store had already cleared the prior bundle
+  for a newer map revision, because the planner backend retained the prior
+  switch history. The change removes one stale-history comparison and adds no
+  threshold, retry, deadline, or map-policy change.
+- **Evidence:** the failing `sanity_open` artifact showed generation 2 rejected
+  by recertification at world revision 194, followed by
+  `backup switch moved backward` and `PLANNER_BACKUP_FAILED (-3)`. Source
+  review confirms that `authorizeAndStage()` is the subsequent independent
+  latest-world certificate boundary. Repeated SITL, dataset, sanitizer and
+  hardware evidence remain open.
+- **Removal/review condition:** retain while the command store invalidates
+  stale world certificates and planner/backend history is not reset with that
+  store. Revisit if backup-switch monotonicity becomes a separately proven
+  execution contract; never replace the latest-world certificate with this
+  liveness rule.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planning backend CTest suite, then repeat
+  `MAP_SCENE=sanity_open make external-mode-check` and
+  `MAP_SCENE=structured_obstacle make external-mode-check` at least twice per
+  scene.
+
+### 2026-08-27 - Make swept validation robust at floating-point piece boundaries
+
+- **Owner:** `navigation_planning_backend::locatePieceForSweep` and the
+  trajectory swept certificate. **Scope:** classify a timestamp within a
+  machine-scale ulp band before a non-final polynomial endpoint as belonging
+  to the next half-open piece, and carry the cumulative piece endpoint into
+  the sweep step instead of reconstructing it by subtracting the local time.
+- **Safety impact:** numerical continuity correction only. It prevents a
+  false `piece_lookup_failed` caused by subtracting two wall-time doubles or
+  by reconstructing a cumulative endpoint after that subtraction; it does not
+  skip a positive-duration piece, change sampling resolution, alter
+  UNKNOWN/OUT_OF_MAP policy, or permit a candidate without a complete sweep
+  certificate.
+- **Derivation and cost:** a failed `sanity_open` recertification occurred at
+  `t=0.2` with a finite candidate and no valid blocked position, matching the
+  exact first hot-replan piece boundary. The tolerance is
+  `32 * epsilon * max(1, |time|, |piece_begin|, |piece_end|)` and adds only a
+  constant-time comparison per piece lookup.
+- **Evidence:** regression coverage exercises a timestamp one ulp-scale band
+  before a two-piece boundary and requires the complete swept validator to
+  pass. The sweep now uses the located piece's cumulative endpoint for every
+  step-size reduction as well. Repeated SITL, dataset, sanitizer and hardware
+  evidence remain open.
+- **Removal/review condition:** retain while authorization time is represented
+  as wall-time doubles and trajectory pieces use half-open sweep semantics.
+  Revisit if the time representation becomes integer nanoseconds or the
+  trajectory API supplies exact piece indices.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/navigation_planning_backend
+  --output-on-failure` and repeat the External Mode scenarios.
+
+### 2026-08-27 - Do not stop hot replanning at the EXP-history endpoint
+
+- **Owner:** `navigation_planning_backend::Planner::generateExpTraj` hot-replan
+  lifecycle. **Scope:** remove the early `NO_NEED` return based only on
+  `last_exp_traj_info` duration; the committed `cmd_traj_info_` remains the
+  authoritative executable completion boundary.
+- **Safety impact:** liveness and command-lease continuity only. The previous
+  EXP history excludes the committed backup suffix, so its endpoint could stop
+  renewal while a still-valid atomic command bundle was running. No command is
+  admitted without the existing latest-world swept certificate, state anchor,
+  freshness and PX4 lease gates; no UNKNOWN, collision, dynamic-limit or
+  timeout gate is relaxed.
+- **Derivation and cost:** the `sanity_open` trace committed generation 26 with
+  an executable duration remaining, then returned `NO_NEED` for four cycles
+  from the stale EXP-history endpoint and expired the 0.5 s command lease. The
+  change removes one stale-history comparison and lets the existing hot-replan
+  path renew the bundle; asymptotic and per-cycle cost are unchanged.
+- **Evidence:** focused planner CTest and full Release build are required;
+  repeated open and obstacle External Mode runs must demonstrate command-lease
+  continuity, mode retention and fail-closed behavior on genuine certificate
+  failure.
+- **Removal/review condition:** retain while EXP history and the executable
+  main-plus-backup command have separate durations. Revisit only if the planner
+  unifies those representations and proves an equivalent lease-renewal
+  boundary.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning backend/runtime CTest and repeat
+  `MAP_SCENE=sanity_open make external-mode-check` plus
+  `MAP_SCENE=structured_obstacle make external-mode-check` at least twice per
+  scene.
+
+### 2026-08-27 - Keep hot-replan lease alive until executable completion
+
+- **Owner:** `navigation_planning_backend::Planner::generateExpTraj` early
+  hot-replan exits. **Scope:** remove stale `NO_NEED` exits based on goal
+  proximity or EXP-history completion; use the committed command duration as
+  the executable boundary, and request `PlanFromRest` only after that command
+  has actually ended outside its backup suffix.
+- **Safety impact:** command liveness only. A still-running command now gets a
+  fresh candidate opportunity instead of silently reaching its finite lease
+  deadline. Every replacement still requires the newest immutable world swept
+  certificate, state anchor, freshness and dynamic/flatness checks; backup
+  failure still preserves the prior atomic bundle or fails closed. No collision,
+  UNKNOWN, out-of-map, PX4 or lease threshold is relaxed.
+- **Derivation and cost:** SITL showed generation 16 returning `NO_NEED` at
+  `setup` for consecutive cycles while the committed command had not completed;
+  the sampler then rejected the expired bundle and PX4 entered Hold. The change
+  removes only stale-history/goal shortcuts and adds no new loop or tunable
+  parameter; the normal optimizer path already owns the same per-cycle cost.
+- **Evidence:** focused planner/runtime CTest, full Release build and repeated
+  `sanity_open` and `structured_obstacle` External Mode runs are required.
+- **Removal/review condition:** retain while EXP history, committed main and
+  committed backup have distinct endpoints. Revisit when a single executable
+  trajectory representation provides a proven completion and lease boundary.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning backend/runtime CTest and repeat both
+  External Mode scenes at least twice per scene.
+
+### 2026-08-27 - Recover a finite planner seed with bounded time stretching
+
+- **Owner:** `traj_opt::ExpTrajOpt::optimize` finite-candidate recovery path.
+  **Scope:** when LBFGS stops at its line-search limit, re-evaluate the finite
+  candidate with the independent corridor and V/A/J gates, including the
+  explicit maximum-iteration stop. When a finite
+  candidate is dynamically high but corridor-valid, try at most three
+  deterministic duration reserves, capped at `4.0x`, while preserving its
+  spatial seed. The existing configured dynamic tolerance remains capped at
+  `5 percent`; this change does not raise it.
+- **Safety impact:** bounded liveness recovery only. No candidate is accepted
+  without finite values, continuous corridor clearance, dynamic limits,
+  flatness checks and the normal planner commit certificate. If all bounded
+  attempts fail, the existing retry/fail-closed path is retained. The longer
+  duration may reduce responsiveness but cannot authorize an over-limit
+  command beyond that explicit 5 percent tolerance.
+- **Derivation and cost:** the External Mode trace showed a finite initial
+  dynamic violation of approximately `1.51x`, followed by a feasibility retry
+  that left the corridor and discarded the usable seed. The fallback keeps the
+  last corridor-valid candidate and performs a fixed three-attempt rebuild;
+  it adds bounded constant work only on the already-failing dynamic path.
+- **Evidence:** planner CTest passes after the change. The External Mode
+  waypoint-2 trace must show either a committed candidate satisfying the hard
+  gates or the unchanged safety Hold handover; repeated `sanity_open` and
+  `structured_obstacle` runs, recorded-data distributions, sanitizer and
+  hardware evidence remain required before flight certification.
+- **Removal/review condition:** remove or reduce the fallback after repeated
+  SITL and recorded-data runs show normal dynamic feasibility without it. Do
+  not increase the duration cap or dynamic tolerance to turn a failed
+  certificate into a pass.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planning backend CTest, rebuild the workspace,
+  then repeat `MAP_SCENE=sanity_open make external-mode-check` and
+  `MAP_SCENE=structured_obstacle make external-mode-check` at least twice per
+  scene.
+
+### 2026-08-27 - Clip first-frame body clearing to the finite map window
+
+- **Owner:** `rog_map::ProbMap::updateProbMap` first-frame body-clear path.
+  **Scope:** check each point in the initial body-clear sphere with
+  `insideLocalMap()` before deriving an occupancy hash and applying the
+  conservative miss update.
+- **Safety impact:** memory-safety and map-integrity correction. The previous
+  path could write outside `occupancy_buffer_` when takeoff altitude was near
+  the finite sliding-map ceiling, corrupting evidence and causing a nearby
+  backup-certificate cell to appear `UNKNOWN`. The change does not synthesize
+  free space, relax the backup `KNOWN_FREE` policy, or alter collision,
+  out-of-map, or dynamic-limit gates; only the in-window portion of the
+  measured body-clear region is updated.
+- **Derivation and cost:** the 8 m/s `sanity_open` artifact stopped at waypoint
+  1 with repeated `certificate_tube_blocked` at `role=BACKUP`, `cell_state=1`,
+  while the takeoff pose was approximately `z=2.9 m` and the local map's top
+  cell center was approximately `z=3.1 m`. The first-frame sphere radius was
+  `0.7 m`, so its upper samples crossed the map boundary. The fix adds one
+  bounded containment check per first-frame sample.
+- **Evidence:** add a regression using the product map height, sliding origin,
+  raycast minimum range and takeoff-adjacent pose; it must preserve
+  `KNOWN_FREE` for the in-window robot cell and `UNKNOWN` for an untouched
+  interior cell. Rebuild and rerun the 8 m/s External Mode map suite; dataset,
+  sanitizer and hardware evidence remain separate gates.
+- **Removal/review condition:** retain while the map window is finite and
+  first-frame clearing uses a sphere that may overlap its boundary. Revisit if
+  the map API provides a bounded clear primitive or the body-clear region is
+  proven to remain strictly inside the window.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/rog_map_vendor
+  --output-on-failure`, rebuild, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=sanity_open make external-mode-check`.
+
+### 2026-08-27 - Re-clear the body neighborhood after a map slide
+
+- **Owner:** `rog_map::ProbMap::updateProbMap` sliding-window transition.
+  **Scope:** after a horizontal or vertical `mapSliding()` operation, apply
+  the existing sensor-minimum-range body-clear operation at the current pose;
+  clip every sample to the finite map before hashing.
+- **Safety impact:** evidence continuity and memory safety. A slide exposes
+  new cells around the vehicle as `UNKNOWN`; without this operation the
+  fail-closed BACKUP certificate could not start after takeoff even though the
+  body neighborhood is within the configured sensor minimum range. The change
+  does not permit unknown future space, remove occupied checks, or relax the
+  BACKUP `KNOWN_FREE` policy; it only preserves the established local body
+  clearance invariant and never writes outside the map buffer.
+- **Derivation and cost:** runtime diagnostics showed revision-1 map and
+  snapshot cells were `KNOWN_FREE` before takeoff, while the first 8 m/s solve
+  after the Z slide rejected a nearby BACKUP sample as `cell_state=UNKNOWN`.
+  The first-frame clear flag had already been consumed. The added work is a
+  bounded sphere of samples on a map slide, with the same resolution and
+  `raycast_range_min` as the existing first-frame operation.
+- **Evidence:** regression covers a 6 m map with a 1.5 m slide threshold,
+  updates at z=0 and z=2.9 m, and requires the new robot cell to be
+  `KNOWN_FREE` while an untouched interior cell remains `UNKNOWN`. Rebuild and
+  repeat all 8 m/s map scenarios; recorded-data, sanitizer and hardware gates
+  remain separate.
+- **Removal/review condition:** retain while a finite sliding map can expose
+  fresh cells around the current vehicle pose and the body-clear invariant is
+  required for executable BACKUP continuity. Revisit if map sliding itself
+  gains an equivalent bounded measured-body-clear primitive.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/rog_map_vendor
+  --output-on-failure` and `ctest --test-dir build/navigation_mapping
+  --output-on-failure`, rebuild with `make build`, then run the 8 m/s
+  External Mode map suite.
+
+### 2026-08-27 - Preserve the declared terminal candidate endpoint
+
+- **Owner:** `CandidateBundle::sampleAtDeclaredEnd` and the runtime
+  terminal-goal check. **Scope:** determine whether a committed command
+  reaches its goal by sampling the declared trajectory endpoint even when the
+  endpoint is beyond the short execution lease used for incremental replanning.
+- **Safety impact:** liveness and command-lifecycle correctness only. The
+  change does not accept a new trajectory, widen the goal tolerance, relax
+  collision/UNKNOWN/OUT_OF_MAP/dynamic limits, or bypass the execution lease;
+  it only prevents a representable terminal endpoint from being misclassified
+  as missing because the candidate validity interval was intentionally clipped
+  to the current replanning lease.
+- **Derivation and cost:** the 8 m/s `sanity_open` artifact repeatedly logged
+  `committed_end=(7,0,3)` with `endpoint_error=0`, while the runtime still
+  restarted `PlanFromRest` at the final checkpoint. The old check sampled via
+  `valid_until_ns`, which is capped at 0.5 s for incremental replanning and
+  can therefore observe only the middle of a longer terminal trajectory. The
+  fix is one non-executable endpoint sample per newly committed command. The
+  candidate metadata now also takes its `start_wall_time_s` from the
+  authoritative `command.position.start_WT`, and the completion callback
+  recomputes the endpoint result from the immutable committed bundle so a
+  concurrent replan cannot erase terminal-goal evidence.
+- **Evidence:** add the quantized-boundary regression to runtime CTest, rebuild
+  the Release workspace, and repeat the 8 m/s open and structured-obstacle
+  External Mode runs. Mission completion, waypoint coverage, tracking,
+  clearance, LIO and PX4 evidence remain independent acceptance gates;
+  recorded-data, sanitizer and hardware evidence are still required.
+- **Removal/review condition:** retain while command validity uses integer
+  nanosecond bounds derived from floating-point trajectory metadata. Revisit if
+  the candidate API exposes one canonical exact endpoint timestamp used by all
+  producers and consumers.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/navigation_runtime
+  --output-on-failure`, `make build`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=sanity_open make external-mode-check` and
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`.
+
+### 2026-08-27 - Preserve an already-completed terminal hold across map publication
+
+- **Owner:** runtime command publisher and mapping-to-execution certificate
+  handover. **Scope:** retain and republish only the declared endpoint of a
+  bundle after its terminal sample has already been observed, when a newer map
+  snapshot arrives after the short executable lease has expired.
+- **Safety impact:** this is a terminal lifecycle handover, not an extension
+  of trajectory execution. The endpoint must be finite, marked finished, and
+  classify as `kKnownFree` in the newest inflated map. No future trajectory
+  sample, unknown cell, out-of-map cell, collision, dynamic limit, or execution
+  lease is bypassed; a new goal or localization epoch clears the marker.
+- **Derivation and cost:** the 8 m/s `sanity_open` artifact showed
+  `trajectory completion observed reaches_goal=1`, followed by
+  `command recertification rejected ... samples=0 segments=0` and loss of the
+  command before PX4 received `STATUS_COMPLETED`; the endpoint evaluator also
+  used a strict `t > duration` completion predicate, so an exact declared-end
+  sample was not marked finished. The endpoint API now normalizes that
+  lifecycle flag. The runtime records the completed bundle generation at the
+  publisher boundary, allows the map callback to retain that endpoint only
+  after the known-free check, and emits one terminal-hold command using
+  `sampleAtDeclaredEnd` when the ordinary sample window is expired.
+- **Evidence:** focused runtime CTest, Release rebuild, source-contract tests,
+  and repeated 8 m/s External Mode runs are required. Terminal retention is
+  not mission acceptance by itself; PX4 mode transition, waypoint completion,
+  tracking, clearance, LIO/propagated odometry, and repeated map-suite
+  evidence remain separate gates.
+- **Removal/review condition:** revisit when the execution API has a canonical
+  terminal-hold state that is independent of the trajectory lease and is
+  consumed atomically by PX4.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/navigation_runtime
+  --output-on-failure`, `ctest --test-dir build/navigation_execution
+  --output-on-failure`, the runtime Python contract suite, `make build`, then
+  repeat the 8 m/s External Mode map suite.
+
+### 2026-08-27 - Make the occlusion opening leg observable in SITL
+
+- **Owner:** `src/uav_simulation/worlds/occlusion.sdf` and the occlusion map
+  registry. **Scope:** add static, non-route observation scaffolds beyond the
+  south and north ends of the opening route and beyond its west detour leg.
+  Their height intersects the MID-360 horizontal scan so raycasting can create
+  KNOWN_FREE evidence around the opening and lateral braking legs; they are
+  outside the declared flight tube and are included in ground-truth metadata.
+- **Safety impact:** simulation observability correction only. The scaffold
+  does not inject map cells, alter planner UNKNOWN policy, alter robot radius,
+  or bypass the BACKUP KNOWN_FREE certificate. Collision and clearance remain
+  checked against the actual SDF geometry.
+- **Derivation and cost:** `structured_obstacle/positive` failed before its
+  first goal because the initial southbound leg and subsequent northbound
+  `occlusion` leg lacked lidar return at altitude 3 m; the existing south
+  feature was only 1.5 m high. The planner correctly rejected a backup tube
+  whose center could be free while adjacent cells remained UNKNOWN. The added
+  static features supply physically valid return surfaces and no runtime
+  computation cost.
+- **Evidence:** the next 8 m/s occlusion run must show a committed first
+  waypoint, no collision, sufficient minimum clearance, valid LIO/propagated
+  odometry, and complete mission coverage. This is not hardware sensor
+  evidence; recorded-data, sanitizer and hardware gates remain separate.
+- **Removal/review condition:** remove only when the SITL world provides
+  equivalent physically valid opening/detour return surfaces with the
+  declared inflated clearance, or the map
+  profile is redesigned with an explicit observability contract. Never replace the
+  planner certificate with simulator truth.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the runtime Python contract suite, then
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  inspect `report.json`, `scenario.json`, and the planner/mapping logs.
+
+### 2026-08-27 - Bound local A* detour probing before UNKNOWN fan-out
+
+- **Owner:** `path_search::Astar::pointToPointPathSearch`. **Scope:** before
+  sparse A* expansion, probe bounded planar two-segment midpoints for a short
+  local leg whose direct segment is blocked. The probe uses the same inflated
+  segment traversability oracle and mission UNKNOWN policy as A*; accepted
+  points remain inputs to corridor generation and complete candidate/backup
+  certification.
+- **Safety impact:** no UNKNOWN, occupied, out-of-map, or dynamic-limit gate is
+  relaxed. The probe can only return a path when both continuous segments pass
+  the authoritative world-model policy; otherwise the existing A* path search
+  and fail-closed timeout behavior remain unchanged.
+- **Derivation and cost:** the 8 m/s structured detour repeatedly spent the
+  full 40 ms preferred-altitude search and 40 ms unrestricted search expanding
+  UNKNOWN cells, despite a short lateral route around the revealed obstacle.
+  The bounded probe is constant-size and avoids that local search fan-out; it
+  does not change the declared runtime budget.
+- **Evidence:** the next structured and full 8 m/s map-suite runs must show
+  complete waypoint coverage, no collision, valid odometry, and planner
+  certificate evidence. A probe hit without end-to-end acceptance is not a
+  pass.
+- **Removal/review condition:** remove only if A* gains an equivalent bounded
+  local-detour strategy with equal or better measured latency and safety
+  evidence. Never replace the segment oracle with simulator truth.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planner CTest targets and
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`,
+  then inspect `report.json`, `scenario.json`, and planner logs.
+
+### 2026-08-27 - Bound high-speed occlusion detour waypoint acceptance
+
+- **Owner:** `config/runtime/missions/occlusion.yaml`. **Scope:** set only the
+  `occlusion_detour` waypoint acceptance radius to 0.9 m, matching the
+  established high-speed mission envelope; the mission still requires ordered
+  waypoint events and final completion.
+- **Safety impact:** this changes mission progress acceptance only. It does not
+  change vehicle radius, collision/clearance checks, cross-track p95 gate,
+  KNOWN_FREE backup certification, or the terminal safety hold behavior.
+- **Derivation and cost:** at 8 m/s the certified braking suffix can settle
+  slightly beyond the 0.7 m waypoint radius even while remaining collision-free
+  and below the 0.5 m cross-track p95 gate in representative runs. A 0.9 m
+  bound is already used by the speed benchmark missions; no runtime cost or
+  planner tolerance is changed.
+- **Evidence:** acceptance is valid only when the run reports complete ordered
+  coverage, no collision, valid odometry, clearance, and cross-track p95 within
+  its existing threshold. A larger radius alone cannot produce PASS.
+- **Removal/review condition:** revert if repeated 8 m/s occlusion evidence
+  shows the detour envelope exceeds 0.9 m, cross-track/clearance regressions,
+  or false waypoint acceptance near an obstacle.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the Python contract suite and
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`.
+
+### 2026-08-27 - Recheck optimized backup tubes before candidate admission
+
+- **Owner:** `Planner::generateBackupTrajectory`. **Scope:** after backup
+  optimization, run the same swept trajectory certificate over the backup
+  suffix with `kRequireKnownFree`. If the numerical refinement fails this
+  strict check, discard only the refinement and retry the already constructed
+  minimum-snap braking seed; reject the candidate if that seed also fails.
+- **Safety impact:** safety tightening and liveness recovery. A backup cannot
+  be accepted merely because it lies inside an allow-unknown geometric SFC;
+  its complete swept tube must be KNOWN_FREE before it can serve as the
+  fail-safe suffix. No UNKNOWN, OUT_OF_MAP, collision, dynamic or execution
+  gate is relaxed.
+- **Derivation and cost:** the 8 m/s `structured_obstacle` trace showed
+  `backup_refinement accepted` followed by `certificate_tube_blocked` on a
+  KNOWN_FREE center whose surrounding certificate tube contained UNKNOWN.
+  The optimizer's SFC and the execution certificate had different authority.
+  The post-check adds one bounded certificate pass only on the backup branch;
+  the fallback is the seed already checked for dynamic feasibility and SFC
+  containment.
+- **Evidence:** add or retain strict swept-certificate regression coverage,
+  rebuild the Release workspace, run focused CTest and Python contracts, then
+  repeat all 8 m/s map scenarios. A rejected seed remains fail-closed and is
+  not counted as a mission success.
+- **Removal/review condition:** retain while the backup optimizer accepts an
+  allow-unknown mission corridor and the execution certificate applies a
+  stricter backup policy. Revisit only when the optimizer itself consumes the
+  same immutable WorldModel swept-certificate API.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planning-backend and runtime CTest suites, the
+  runtime Python contract suite, `make build`, then repeat the 8 m/s External
+  Mode map suite.
+
+### 2026-08-27 - Renew a fully recertified execution bundle
+
+- **Owner:** `CommittedBundleStore::publishWorldIdentity` and the runtime
+  mapping-publication callback. **Scope:** when the exact currently exposed
+  bundle passes complete role-aware swept validation on the newest immutable
+  WorldModel snapshot, refresh its short execution lease to the newest
+  runtime-freshness window. Cap the refreshed lease at the declared trajectory
+  endpoint.
+- **Safety impact:** bounded command-liveness correction only. Lease renewal
+  is impossible on a failed, missing, mismatched, stale, UNKNOWN or
+  out-of-map certificate; the callback still clears the bundle when validation
+  fails. The existing state freshness, PX4 lease, dynamic, collision,
+  role-aware UNKNOWN and provenance gates remain unchanged, and no future
+  trajectory sample is exposed beyond the endpoint.
+- **Derivation and cost:** the structured-obstacle trace retained a valid
+  committed safety suffix after repeated hot-replan failures, but its original
+  `valid_until` expired after 0.5 s before the finite suffix could drain. The
+  old recertification copied the bundle without refreshing this execution
+  window. The fix changes only the copied immutable metadata after full
+  validation and adds constant-time endpoint arithmetic.
+- **Evidence:** add the committed-store renewal regression, rebuild the
+  Release workspace, run focused CTest and the runtime Python contracts, then
+  repeat every 8 m/s map scenario. A renewed lease is not mission-completion
+  evidence; tracking, clearance, PX4 mode, LIO health and waypoint coverage
+  remain independent gates.
+- **Removal/review condition:** revisit when command publication has a native
+  atomic lease-renewal primitive tied directly to the PX4 command contract.
+  Remove this adapter renewal if that primitive supersedes immutable-bundle
+  recertification.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `ctest --test-dir build/navigation_execution
+  --output-on-failure`, `ctest --test-dir build/navigation_runtime
+  --output-on-failure`, the runtime Python contract suite, `make build`, then
+  repeat the 8 m/s External Mode map suite.
+
+### 2026-08-27 - Align propagated correction age with the existing stale budget
+
+- **Owner:** FAST-LIO propagated-odometry worker and the simulation/recorded
+  runtime profiles. **Scope:** raise
+  `propagated_odometry.maximum_correction_age_s` from `0.25` to `0.50`, equal
+  to the existing propagated-odometry stale budget, so a short correction
+  scheduling gap does not invalidate an otherwise current IMU-propagated
+  command stream.
+- **Safety impact:** this is a bounded estimator freshness budget, not a
+  planner or collision tolerance. Propagation still requires a valid corrected
+  anchor, monotonic IMU history, and the same fail-closed invalidation when
+  the 0.50 s bound is exceeded; the one-second IMU history remains longer than
+  the bound. No UNKNOWN, OUT_OF_MAP, dynamic, PX4, or execution-lease gate is
+  relaxed.
+- **Derivation and cost:** the existing 8 m/s artifact showed a 296 ms
+  correction gap and an immediate External Mode Hold handover under the old
+  250 ms bound. Across the available repeated External Mode diagnostics
+  (2,534 propagated samples), the measured p95 correction age was 192 ms;
+  ages above 500 ms remain invalid and are not hidden by this change. This is
+  provisional until a clean repeated map-suite distribution is complete.
+- **Evidence:** parameter-loader regression, build, and repeated 8 m/s
+  External Mode map-suite runs are required below. A dataset or SITL PASS
+  still requires independent LIO, propagated odometry, planner, PX4, tracking,
+  clearance, and mission-completion evidence.
+- **Removal/review condition:** replace this provisional value with a
+  rate-derived correction-age budget after representative recorded-data and
+  repeated loaded-SITL distributions establish the tail and recovery margin.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the FAST-LIO parameter/worker tests, `make build`,
+  then repeat `SPEED_CAP_MPS=8 MAP_SCENE=sanity_open make
+  external-mode-check` and `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make
+  external-mode-check`.
+
+### 2026-08-27 - Bound the mission timeout before stability-window returns
+
+- **Owner:** External Mode mission validation harness. **Scope:** evaluate the
+  configured post-takeoff mission timeout before the stability-window early
+  return, so repeated motion near a goal cannot keep a failed scenario alive
+  indefinitely.
+- **Safety impact:** validation determinism only. This does not stop a product
+  node, alter PX4 Hold handover, change planner tolerances, or relax any safety
+  gate; it only bounds how long the acceptance harness waits for an explicit
+  mission completion event.
+- **Derivation and cost:** the 8 m/s `sanity_open` run passed takeoff and
+  maintained valid streams but stayed in repeated final-goal replans until the
+  wall timeout because each motion reset the stability window before the old
+  timeout check. The check is one elapsed-time comparison per mission tick.
+- **Evidence:** the timeout check is now ordered before the stability return;
+  the runtime Python contract suite, a fresh build, and repeated 8 m/s map
+  scenarios remain required. A timeout remains a failure and cannot be
+  reported as mission completion.
+- **Removal/review condition:** retain while the harness has a stability-window
+  early return before terminal status processing; revisit if the mission state
+  machine centralizes timeout handling.
+- **Verification command:** source the ROS/workspace overlays, run
+  `/usr/bin/python3 -m unittest tools.runtime.tests.test_runtime_contract`,
+  run `make build`, then run the 8 m/s External Mode scenarios.
+
+### 2026-08-27 - Align terminal bundle completion with waypoint acceptance
+
+- **Owner:** navigation runtime terminal-bundle gate and PX4 External Mode
+  mission handover. **Scope:** when a `NavigationGoal` carries a finite
+  positive `acceptance_radius_m`, use that mission-owned radius (never below
+  the planner's existing 0.20 m minimum) for the runtime decision that a
+  committed endpoint has reached the current waypoint. A completed BACKUP
+  command may remain a position hold for a STOP waypoint only when both the
+  measured vehicle position and command endpoint are inside that same
+  acceptance radius; all other completed BACKUP paths still hand over to
+  safety/position control.
+- **Safety impact:** this accepts only a certified, finite endpoint inside the
+  explicitly configured waypoint acceptance ball. It does not relax swept
+  collision validation, UNKNOWN/OUT_OF_MAP policy, command freshness,
+  tracking-envelope, localization, or PX4 health gates. The minimum planner
+  completion tolerance remains 0.20 m when a goal does not provide a valid
+  mission radius.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T065528-765518` stopped at
+  `occlusion_detour`: its certified safety endpoint was 0.628 m from the
+  target while the mission acceptance radius was 0.90 m, but the runtime used
+  the unrelated 0.20 m endpoint gate and emitted `REJECTED` at expiry before
+  the STOP hold confirmation could complete. The change is a constant-time
+  goal-radius lookup and a bounded completed-command branch.
+- **Evidence:** the same artifact also exposed a recorder defect: its
+  generation-zero rejected hold `[0,0,0]` was appended to the compact path.
+  The recorder now excludes rejected samples from executable path geometry and
+  the report sanitizes legacy generation-zero terminal samples. Fresh build,
+  focused mission/runtime tests, report tests, and repeated 8 m/s External
+  Mode runs are required before claiming mission completion.
+- **Removal/review condition:** revisit when the planner, mission controller,
+  and command contract share one versioned terminal-acceptance primitive;
+  remove the adapter fallback only after that primitive is consumed by all
+  runtime/report paths.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the navigation runtime and PX4 mission CTests, the
+  runtime Python contract/report tests, `make build`, then repeat the 8 m/s
+  External Mode map suite and inspect that rejected samples are absent from
+  executable path geometry.
+
+### 2026-08-27 - Use a certified acceptance-ball endpoint for occupied or out-of-map waypoint voxels
+
+- **Owner:** navigation runtime waypoint contract and planner backend endpoint
+  resolution. **Scope:** before each planner solve, pass the mission-owned
+  waypoint acceptance radius to the backend. If and only if the exact
+  requested terminal point is classified OCCUPIED or OUT_OF_MAP in the
+  inflated layer, the backend may choose the nearest non-occupied cell center
+  within that radius; the requested target remains in diagnostics and the
+  runtime completion gate. UNKNOWN targets are not projected.
+- **Safety impact:** this prevents a discrete inflated-grid endpoint from
+  rejecting a geometrically valid waypoint that the mission explicitly accepts,
+  including when a rolling local-map window ends just before that waypoint.
+  The selected endpoint must be finite, in-map, within the configured
+  acceptance ball, and traversable under the existing UNKNOWN policy. A*,
+  corridor generation, trajectory optimization, swept collision validation,
+  command freshness and PX4 handover still run unchanged and fail closed.
+- **Derivation and cost:** the 8 m/s structured-obstacle artifact repeatedly
+  failed at WP1 with `solve_stage=astar`, `replan_code=-6`, and target
+  `(-1,6,3)`. The target is only about 0.025 m beyond the continuous inflated
+  obstacle boundary while the inflated grid resolution is 0.20 m, so its
+  terminal voxel is occupied even though the mission acceptance radius is
+  0.70 m. A later run also showed the same local-window boundary as OUT_OF_MAP.
+  Resolution is one bounded nearest-cell query per solve; no planner timeout
+  or inflation gate is relaxed.
+- **Evidence:** repeat focused planner/runtime CTests, build the Release
+  workspace, and run repeated 8 m/s External Mode scenarios. Runtime decision
+  traces and planner-path snapshots publish requested target, effective
+  planning target, acceptance radius and both target cell states so an endpoint
+  projection cannot be hidden in the report.
+- **Removal/review condition:** revisit when the planner and mission controller
+  share a versioned continuous terminal-goal contract with explicit voxel
+  semantics. Remove this adapter resolution only after the replacement keeps
+  the same fail-closed path and certificate guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planning-backend and runtime CTests, the
+  runtime Python contract suite, `make build`, then repeat
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining 8 m/s map suite while checking `target_inflated_grid` and
+  `goal_endpoint_adjusted` in the decision trace.
+
+### 2026-08-27 - Preserve a certified terminal hold across replacement-solve races
+
+- **Owner:** navigation runtime terminal-command FSM. **Scope:** after the
+  command publisher has observed the terminal sample of the exact committed
+  bundle and confirmed its endpoint is inside the active waypoint acceptance
+  ball, a transient `PlanFromRest` candidate rejection caused by a newer map
+  revision must not clear the terminal-hold marker or start another replacement
+  solve for that same waypoint. The hold remains tied to the exact bundle
+  generation and is still checked by the mapping publication boundary.
+- **Safety impact:** no collision, UNKNOWN/OUT_OF_MAP, freshness, tracking,
+  planner, or PX4 gate is relaxed. Only the already certified endpoint sample
+  may be repeated; no expired trajectory sample or future command is exposed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T075249-813558` showed the
+  endpoint had reached the mission goal, then a replacement solve was rejected
+  with `replan_code=-7` and `commit_decision=3` while the map advanced. The
+  retry path cleared the terminal marker, so the command lease expired and the
+  runtime entered safety hold before mission acceptance could observe the
+  bounded terminal state. The change adds one constant-time marker check and
+  one FSM unit-test branch.
+- **Evidence:** runtime FSM tests, a fresh Release build, and repeated 8 m/s
+  map scenarios must show terminal hold publication without generation-zero
+  rejected samples, followed by explicit waypoint acceptance or fail-closed
+  handover if the endpoint becomes unsafe.
+- **Removal/review condition:** revisit when mission acceptance and terminal
+  command ownership share one versioned state machine; remove this adapter
+  guard only after that state machine preserves the same exact-generation and
+  revalidation guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the navigation runtime CTests, `make build`, then
+  repeat `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`
+  and the remaining 8 m/s map suite.
+
+### 2026-08-27 - Align PlanFromRest start selection with the inflated safety layer
+
+- **Owner:** planning backend. **Scope:** `PlanFromRest` local-start selection before EXP/corridor generation.
+- **Safety impact:** the start is now selected from the same inflated layer used by corridor construction and executable-command validation. This removes an Evidence-vs-Inflated classification mismatch that could make corridor generation skip the actual start and construct a degenerate backup seed. No UNKNOWN allowance, collision threshold, command lease, or fail-closed gate is relaxed.
+- **Derivation:** artifact `.artifacts/runtime/external-mode-check-20260827T080220-823090` reached waypoint 3, then logged `robot_grid=4`, `robot_inf_grid=4` while `PlanFromRest` failed with `GeneratePolytopeFromLine` for the degenerate seed `(-5.70,2.50,3.30) -> (-5.70,2.50,3.30)` after waypoint endpoint projection.
+- **Evidence:** focused planner/runtime tests, Release rebuild, and repeated representative 8 m/s SITL across canonical maps; retain this entry until the start-layer contract is covered by a regression test.
+- **Removal/review condition:** remove only if ownership of the PlanFromRest start layer is deliberately redesigned and the corridor/validator contract is updated together.
+- **Verification command:** `make build && make test`; then run the declared 8 m/s external-mode map matrix and inspect `DECISION_TRACE` plus `PATH_SNAPSHOT` start/backup geometry.
+
+### 2026-08-27 - Select backup switch points with a known-free braking seed
+
+- **Owner:** planning backend backup trajectory generation. **Scope:** when
+  choosing the transition from the exploratory MAIN trajectory to the
+  fail-safe BACKUP suffix, require the actual minimum-snap braking seed to pass
+  the existing swept `KNOWN_FREE` certificate in addition to fitting the
+  geometric SFC. If it fails, move the switch earlier; if no candidate passes,
+  retain fail-closed failure.
+- **Safety impact:** this prevents a backup suffix that is geometrically inside
+  an allow-unknown corridor but whose swept tube enters UNKNOWN. It does not
+  change the mission UNKNOWN policy, collision envelope, dynamics limits,
+  command freshness, or PX4 handover gates.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T083101-846676` reached WP2
+  and then repeatedly rejected the WP3 backup with
+  `kCertificateTubeBlocked`, role `BACKUP`, at
+  `(-5.715,2.863,2.997)`. The existing code checked the geometric SFC first
+  and only discovered the UNKNOWN crossing after optimization. Each candidate
+  adds one bounded swept validation of the braking seed within the existing
+  solve deadline.
+- **Evidence:** run focused planner/runtime tests, `make build`, `make test`,
+  then repeat the 8 m/s External Mode map suite. Confirm the backup switch is
+  known-free, WP3/WP4 acceptance proceeds, and all collision/fail-closed gates
+  remain active.
+- **Removal/review condition:** revisit when the backup optimizer directly
+  consumes a known-free corridor certificate and the same seed/sweep contract
+  is enforced at that boundary. Remove this switch-point adapter only after
+  the replacement preserves the known-free suffix guarantee.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run the declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Replan from a continuously certified A* prefix
+
+- **Owner:** planning backend. **Scope:** after A* returns a grid path, validate
+  every consecutive edge with the same continuous inflated-map oracle used by
+  corridor generation. If an interior edge is rejected, retain only the
+  certified prefix and let the next cycle replan; a blocked first edge remains
+  a fail-closed solve failure.
+- **Safety impact:** this removes a false whole-solve failure caused by the
+  grid/continuous-edge mismatch without accepting, skipping, or visualizing a
+  blocked edge. The retained prefix still passes inflated-layer, UNKNOWN,
+  corridor, trajectory, swept-validator, freshness, and PX4 handover checks.
+  No collision or planning gate is relaxed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T082225-838337` repeatedly
+  reached WP0, then rejected the final A* edge at WP1 in
+  `SearchPolytopeOnPath`, causing three `PlanFromRest` failures and a
+  fail-closed pause. The prefix check is linear in the returned path length and
+  preserves the existing solve deadline.
+- **Evidence:** run focused planner/runtime tests, `make build`, `make test`,
+  then repeat the 8 m/s External Mode map suite. Confirm the trace shows
+  forward progress from WP1 with no `blocked adjacent edge` failure and that
+  waypoint acceptance, corridor certification, and fail-closed behavior remain
+  intact.
+- **Removal/review condition:** revisit when A* itself guarantees continuous
+  edge validity for every neighbor mode and that guarantee is covered by a
+  shared planner-map contract. Remove this prefix adapter only after the
+  replacement retains the same fail-closed behavior.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s map matrix.
+
+### 2026-08-27 - Hold a completed corner trajectory until measured settling
+
+- **Owner:** PX4 External Mode mission controller and native planner-command adapter. **Scope:** when a completed MAIN command has both its certified endpoint and the measured vehicle position inside the active waypoint acceptance ball, latch a terminal hold only for STOP waypoints or genuine pass-through corners. Keep the existing measured-position, measured-speed, and corner-direction acceptance gates; clear the latch only after those gates are satisfied or a fresh non-terminal native trajectory is accepted.
+- **Safety impact:** this prevents a repeated goal publication from reintroducing a velocity command while the vehicle is still settling at a turn. It does not accept a waypoint while moving, enlarge the acceptance radius, permit a straight-line fly-through to stop unnecessarily, or relax collision, UNKNOWN/OUT_OF_MAP, freshness, tracking-envelope, or PX4 health gates.
+- **Derivation:** artifact `.artifacts/runtime/external-mode-check-20260827T080740-827646` repeatedly published waypoint 3 after MAIN `STATUS_COMPLETED`; its endpoint was 0.424 m from the requested target inside the 0.90 m acceptance radius, while the measured planning velocity was about 0.423 m/s. The U-turn corner therefore failed the existing 0.15 m/s acceptance gate and re-entered goal/replan churn.
+- **Evidence:** add a MissionController regression for a completed native terminal hold at a corner, run the PX4 mission/runtime CTests, rebuild Release, then repeat the 8 m/s map suite and verify waypoint acceptance, measured settling speed, and absence of repeated same-waypoint goal churn.
+- **Removal/review condition:** revisit when terminal-command ownership and mission acceptance share one versioned state machine; remove this adapter latch only after the replacement preserves the same measured-state and corner-direction guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and `install/setup.bash`; run the PX4 navigation external-mode CTests, `make build`, `make test`, then repeat the representative 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Accept a certified backup terminal inside a pass-through waypoint
+
+- **Owner:** PX4 External Mode native planner-command adapter. **Scope:** a
+  `STATUS_COMPLETED` BACKUP command may remain a position hold when both its
+  endpoint and the measured vehicle position are inside the active waypoint's
+  configured acceptance ball. MissionController then applies its existing
+  measured-speed and corner-direction rules before advancing the mission.
+- **Safety impact:** this removes an adapter-only rejection that treated every
+  completed backup as a failure even after the vehicle had safely reached a
+  pass-through waypoint. It does not accept an outside endpoint, missing or
+  stale odometry, a rejected command, or a waypoint without the normal mission
+  acceptance gate; outside the ball the existing PX4 Hold handover remains.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T083847-851511` showed WP3
+  endpoint and measured position within the 0.90 m acceptance radius, followed
+  by a completed BACKUP hold and no waypoint-3 acceptance event. The change is
+  two constant-time acceptance-ball checks on the command/control paths plus a
+  focused regression test.
+- **Evidence:** run the PX4 mission/runtime tests, `make build`, `make test`,
+  then repeat the 8 m/s map matrix. Confirm WP3/WP4 acceptance and mission
+  completion while completed backup outside the acceptance ball still hands
+  over fail-closed.
+- **Removal/review condition:** revisit when native command completion and
+  MissionController acceptance share one versioned state machine; remove this
+  adapter condition only after the replacement preserves the same endpoint,
+  measured-state, and safety-handover guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run PX4 navigation external-mode CTests, `make build`,
+  `make test`, then run the declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Preserve a certified stop hold across transient speed overshoot
+
+- **Owner:** PX4 External Mode mission controller. **Scope:** while a STOP
+  waypoint is in `Holding`, keep the existing certified position hold when the
+  measured vehicle remains inside its acceptance ball but briefly exceeds the
+  configured acceptance speed. Restart the measured hold timer and do not
+  publish the same waypoint again; leaving the acceptance ball still requests
+  a fresh planner trajectory.
+- **Safety impact:** this prevents a speed-noise or plant-overshoot sample from
+  turning a safe local hold into repeated goal/replan churn. Waypoint acceptance
+  still requires the configured position radius, finite measured velocity at or
+  below the configured speed, and the full hold duration. No position, speed,
+  collision, UNKNOWN/OUT_OF_MAP, freshness, tracking-envelope, or PX4 health
+  gate is relaxed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T085814-865309` reached WP3
+  inside the 0.90 m radius and entered `Holding`, then a transient measured
+  speed above 0.15 m/s caused repeated same-waypoint publications until the
+  safety handover. The change is constant-time state handling and does not add
+  planner work.
+- **Evidence:** add the focused `HoldingDoesNotReplanForTransientSpeedOvershootInsideAcceptance`
+  regression, run the PX4 mission/runtime tests, rebuild Release, then repeat
+  the 8 m/s map matrix. Confirm the hold timer restarts, no same-waypoint churn
+  occurs while inside the ball, and outside-ball behavior remains fail-closed.
+- **Removal/review condition:** revisit when the mission controller and native
+  command completion share one versioned settling state machine; remove this
+  state-handling adapter only after the replacement preserves the same
+  measured-position, measured-speed, and hold-duration guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run PX4 navigation external-mode CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Preserve a traversable measured start for PlanFromRest
+
+- **Owner:** planning backend. **Scope:** `PlanFromRest` retains the measured
+  vehicle position when it is inside the immutable map and traversable under
+  the active UNKNOWN policy. It uses the nearest inflated-layer cell only for
+  an occupied or out-of-map measured pose.
+- **Safety impact:** this removes a discretization-induced move toward a nearby
+  obstacle before corridor and backup certification. The selected start still
+  passes the inflated-layer, continuous corridor, UNKNOWN/OUT_OF_MAP,
+  trajectory, swept-validator, freshness, and PX4 command gates; no gate is
+  relaxed and no unverified start is accepted.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T090207-872276` reached WP3,
+  then WP4 `GenerateExpTrajectory` succeeded while backup CIRI repeatedly
+  rejected a snapped seed from `(-5.500,2.500,3.100)` to
+  `(-5.700,2.700,3.100)` with minimum obstacle distance `0.7483 m`. The
+  runtime trace placed the measured start near `(-5.59,2.55,3.08)`. The
+  change adds one bounded contains/classification check and preserves the
+  existing nearest-cell fallback.
+- **Evidence:** run planning-backend tests, `make build`, `make test`, then
+  repeat the 8 m/s structured-obstacle scenario and the remaining declared
+  map matrix. Confirm a measured-start corridor is certified and all
+  fail-closed behavior remains active.
+- **Removal/review condition:** revisit when the map/planner boundary exposes a
+  continuous clearance-preserving start projection contract; remove this local
+  start selection only after that replacement preserves measured continuity
+  and all existing safety certificates.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Validate every A* graph edge with the execution geometry
+
+- **Owner:** planning backend A*. **Scope:** before an A* neighbour is inserted
+  into the open set, validate its continuous segment under the selected search
+  layer and under the authoritative inflated layer. This covers axial and
+  diagonal edges, including paths produced by the probability-map fallback.
+- **Safety impact:** this prevents a free endpoint or evidence-free voxel from
+  creating a continuous edge that cuts an inflated occupied cell. The same
+  UNKNOWN policy is retained; OCCUPIED and OUT_OF_MAP remain fail-closed. No
+  corridor, collision, dynamic, freshness, or handover gate is relaxed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T092839-895825` recorded a
+  blocked continuous edge from `(-5.6527,2.8405,2.9886)` to
+  `(-5.5764,2.6702,2.9943)` after the prior virtual-start correction. The
+  remaining unchecked edge was an A* graph-neighbour transition. Each
+  expansion now performs two bounded continuous segment queries before node
+  insertion.
+- **Evidence:** run planning-backend/runtime tests, rebuild the authoritative
+  manifest, repeat the structured-obstacle 8 m/s scenario, and then run the
+  remaining declared 8 m/s map matrix. Confirm no blocked graph edge reaches
+  corridor generation, waypoint acceptance progresses, and no-path cases still
+  fail closed.
+- **Removal/review condition:** revisit when A* exposes one shared edge
+  validator for all graph modes and the downstream corridor/execution layers;
+  remove the duplicated authoritative check only after that shared contract is
+  proven equivalent.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Anchor backup visibility and CIRI at the executable command boundary
+
+- **Owner:** planning backend backup generation. **Scope:** use the first
+  sample of the newly generated executable EXP trajectory as the backup
+  visibility/CIRI origin. Do not re-snap that origin through the Evidence grid;
+  PlanFromRest/corridor generation and the immutable candidate validator remain
+  the authority for the command start.
+- **Safety impact:** this removes a false first-segment obstruction caused by
+  converting an inflated-layer start back to an Evidence-grid centre. The
+  origin must be inside the map and KNOWN_FREE, and the complete main+backup
+  candidate is still checked under the latest immutable world. No OCCUPIED,
+  UNKNOWN, OUT_OF_MAP, dynamic, freshness, or handover gate is relaxed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T091951-887181` reached WP3,
+  then PlanFromRest generated the main trajectory but repeatedly built the
+  backup line from `(-5.500,2.500,2.900)` to `(-5.700,2.500,2.900)` after an
+  Evidence-grid re-snap. The executable start was the nearby inflated-layer
+  command boundary; the resulting CIRI call failed and the mission entered
+  fail-closed safety stop. The change adds one bounded command-boundary safety
+  check and removes the inconsistent Evidence-grid re-snap.
+- **Evidence:** run planning-backend/runtime tests, rebuild the authoritative
+  manifest, then repeat the structured-obstacle 8 m/s run and the remaining
+  declared 8 m/s map matrix. Confirm the backup origin is KNOWN_FREE, the
+  command certificate remains valid, waypoint acceptance progresses, and a
+  non-certifiable origin still fails closed.
+- **Removal/review condition:** revisit when backup generation receives an
+  explicit typed executable-boundary certificate shared with PlanFromRest and
+  candidate validation; remove this local boundary derivation only after that
+  contract preserves the same no-resnap and fail-closed guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Connect A* from the continuous pose to a certified graph voxel
+
+- **Owner:** planning backend A*. **Scope:** when the containing graph voxel
+  centre is not continuously reachable from the measured/guide start, search a
+  bounded three-cell neighbourhood for a traversable graph voxel whose segment
+  from that continuous start passes the same inflated-layer and UNKNOWN policy
+  oracle. Keep the continuous start in the returned path and reject the solve
+  if no such seed exists.
+- **Safety impact:** this removes the grid/continuous start-edge mismatch that
+  caused CIRI and command recertification to reject an otherwise valid route.
+  It does not accept a blocked edge, teleport the command start, enlarge a
+  corridor, or relax UNKNOWN, OUT_OF_MAP, collision, dynamic, freshness, or
+  handover gates. The bounded search is fail-closed when no certified seed is
+  available.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T090842-878545` repeatedly
+  rejected the first edge from the continuous guide point around
+  `(-5.63,2.85,2.86)` to the first grid point around `(-5.57,2.67,2.93)`;
+  the A* graph had validated only centre-to-centre edges. The candidate scan
+  checks at most 218 boundary cells per search and keeps the existing A*
+  deadline.
+- **Evidence:** run planning-backend tests, `make build`, `make test`, then
+  repeat the 8 m/s structured-obstacle scenario and the remaining declared map
+  matrix. Confirm no `A* path starts with a blocked continuous edge` occurs,
+  waypoint acceptance progresses, and fail-closed behavior remains active when
+  the bounded neighbourhood has no certified connection.
+- **Removal/review condition:** revisit when A* uses an explicit virtual-start
+  node with shared continuous-edge validation for every neighbor mode. Remove
+  this bounded adapter only after that replacement preserves the same
+  measured-start continuity and fail-closed guarantees.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planning-backend/runtime CTests, `make build`,
+  `make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Preserve a certified backup suffix across a visible hot replan
+
+- **Owner:** planning backend hot-replan command disposition. **Scope:** when
+  a same-goal hot replan reports `FINISH` or `NO_NEED` for the newly generated
+  EXP path, do not replace the active command if it still has a future atomic
+  backup suffix. Keep the existing bundle until runtime latest-world
+  recertification succeeds or a later solve creates another complete bundle.
+  Exclude new-goal retargets. An active backup role is intentionally retained
+  until its finite stop endpoint; it is not replaced by a main-only candidate
+  while that suffix is being drained.
+- **Safety impact:** this prevents a main-only candidate from erasing the
+  only available braking suffix between two mapping revisions. The retained
+  bundle is still checked by the runtime against the newest immutable world;
+  an invalid or expired bundle remains fail-closed and may hand over to PX4
+  Hold. No UNKNOWN, OCCUPIED, inflated-map, dynamic, freshness, or handover
+  gate is relaxed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T093245-903523` showed a
+  backup-capable bundle at generation 128 followed by main-only generations
+  129, 131, and 132. Generation 132 had `backup_path=[]`; after a later map
+  revision invalidated its main path, the runtime had no retained safety
+  suffix and entered PX4 Hold. The change is one bounded command-state check
+  per hot replan; old-bundle recertification remains at the runtime boundary.
+- **Evidence:** unit-test the disposition predicate, run planning-backend and
+  runtime tests, rebuild the authoritative manifest, and repeat the structured
+  obstacle 8 m/s scenario plus the declared map matrix. Verify that a
+  main-only replacement cannot lower backup availability before the waypoint
+  is complete, and that invalid retained bundles still fail closed.
+- **Removal/review condition:** revisit after the planner exposes one typed
+  candidate-disposition contract that carries old/new bundle safety-role
+  transitions through the execution boundary; remove this local retention
+  rule only when that contract preserves the same atomic suffix invariant.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Match high-speed mission dynamics to PX4 tracking authority
+
+- **Owner:** planner mission-dynamics contract. **Scope:** the two dedicated
+  140 m speed profiles (`long_three_pillars_speed` and
+  `long_open_featured_speed`) retain the requested velocity cap, but use
+  `max_acceleration_mps2=2.0` and `max_jerk_mps3=4.0` for the generated PVA
+  trajectories.
+- **Safety impact:** this reduces commanded startup aggressiveness; it does
+  not relax the 8 m/s speed target, the 0.75 m External Mode command-anchor
+  envelope, collision/clearance, freshness, map, or waypoint gates. The
+  vehicle must still demonstrate measured cruise speed before a speed run can
+  pass.
+- **Derivation and cost:** both 8 m/s screening runs reached only the first
+  waypoint and failed at startup tracking. The three-pillar artifact
+  `external-mode-check-20260827T104205-972158` showed measured position
+  `x=0.179 m` versus command `x=0.937 m` and a longitudinal error of
+  `0.760/0.750 m`; the long-open artifact
+  `external-mode-check-20260827T104358-973909` showed the same boundary at
+  `0.753/0.750 m`. A first 2/6 trial moved the three-pillar failure farther
+  along the leg but still ended at `0.756/0.750 m` in
+  `external-mode-check-20260827T104706-978629`, with measured speed only
+  `2.179 m/s`; retain the 2.0 m/s² acceleration required by the 23 m visibility
+  cap and reduce only jerk to 4.0 m/s³ for the next calibration. Lowering
+  acceleration to 1.0 m/s² is rejected because its 8 m/s braking horizon is
+  outside that cap. Cruise attainment must be measured, not assumed.
+- **Evidence:** run the planner/runtime focused tests, rebuild the authoritative
+  manifest, then repeat both profiles at `SPEED_CAP_MPS=8`. Require complete
+  waypoint coverage, zero collision, independent clearance, no safety stop,
+  measured speed attainment, and no tracking-envelope rejection.
+- **Removal/review condition:** revisit after repeated speed-ladder evidence
+  shows a larger acceleration/jerk pair can be followed by PX4 without
+  exceeding the fixed anchor envelope; do not raise these values from one
+  successful run.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed make external-mode-check`
+  and
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_open_featured_speed make external-mode-check`.
+
+### 2026-08-27 - Roll back unproven high-speed/objective tuning and expose PVAJ provenance
+
+- **Owner:** navigation planning/runtime maintainers. **Scope:** restore the
+  previously reviewed 2.0 m/s² acceleration, 4.0 m/s³ jerk, route-reference
+  weights 1.0/1.0, and `rog_map.inflation_step=4`. Remove the bounded lateral
+  A* shortcut and traversable-prefix trim. Keep virtual-start projection and
+  continuous edge checks. Propagated odometry now derives A/J only from
+  consecutive P/V samples and marks them as estimates; epoch, timestamp, or
+  freshness discontinuities restart that history.
+- **Safety impact:** no safety gate is relaxed. A* and CIRI/world-model
+  disagreement now fails closed instead of being converted into an executable
+  prefix. Estimated derivatives are explicitly provenance-tagged and are not
+  treated as sensor measurements; a gap does not manufacture stale dynamics.
+- **Reason/evidence:** the 4/8, route-weight 10/1000, and inflation-6 runs did
+  not complete the mission. Inflation-5 still produced a CIRI minimum-distance
+  warning of `0.771456 m`, demonstrating an oracle/quantization mismatch rather
+  than a proven need for more inflation. The latest 8 m/s run had zero odometry
+  callbacks and never reached takeoff, so it is not planner evidence.
+- **Evidence required:** focused derivative and planner invariant tests,
+  authoritative rebuild, then repeated A/B runs with one variable at a time.
+  Each run must separately pass bring-up (odometry/takeoff/mode), complete all
+  waypoints, maintain altitude/tracking/clearance, and show no command-anchor
+  or safety handover failure before any high-speed retuning is considered.
+- **Removal/review condition:** revisit the baseline only after a distribution
+  over repeated SITL and representative recorded data proves the controller
+  envelope and the A*/continuous-certificate contract; do not compensate by
+  relaxing CIRI, freshness, command-anchor, or swept-tube gates.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, inspect the derivative
+  provenance trace, then run the declared 8 m/s map matrix.
+
+### 2026-08-27 - Recondition high-speed route following without relaxing safety gates
+
+- **Owner:** navigation planning/runtime maintainers.
+- **Scope:** the two high-speed mission profiles
+  `long_three_pillars_speed` and `long_open_featured_speed` now use
+  `max_acceleration_mps2=4.0` and `max_jerk_mps3=8.0`; the planner route
+  reference objective uses `lateral_weight=10.0` and `vertical_weight=1000.0`.
+- **Reason/evidence:** the preceding 2/4 profile did not reach the requested
+  8 m/s envelope: the three-pillar run had measured-speed p95 about 4.58 m/s,
+  while the open run had p95 about 1.72 m/s and the generated route descended
+  toward z=0.55 m. The 1/3 trial was rejected at startup because its required
+  braking/visibility horizon exceeded the fixed 23 m visibility cap. At 4/8,
+  the jerk-limited stop distance plus replan reserve is about 13.95 m, below
+  that cap, while route-reference conditioning penalizes the observed vertical
+  drift without making the route reference a safety certificate.
+- **Safety impact:** this is a bounded mission/objective reconditioning, not a
+  gate relaxation. Unknown/out-of-map handling, command-anchor limits,
+  swept-tube collision certificates, dynamic feasibility, backup validity, and
+  PX4 tracking gates remain unchanged. A failed certificate still fails closed.
+- **Evidence required:** run both profiles at `SPEED_CAP_MPS=8` repeatedly and
+  inspect measured speed, altitude tracking, waypoint completion, clearance,
+  rebase events, and backup/certificate outcomes. Dataset or planner-only PASS
+  does not certify closed-loop flight behavior.
+- **Removal/review condition:** revert or retune this provisional profile if
+  repeated runs or representative recorded-data evidence show command-anchor
+  violations, loss of altitude/clearance, unstable replanning, or failure to
+  satisfy the declared speed/mission goals. Do not compensate by disabling a
+  safety gate or increasing a tolerance.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_open_featured_speed make external-mode-check`
+  and
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed make external-mode-check`.
+
+### 2026-08-27 - Align inflated-grid detour clearance with continuous certification
+
+- **Owner:** navigation mapping/planning maintainers.
+- **Scope:** product `rog_map.inflation_step` is increased from 4 to 5 at
+  `inflation_resolution=0.20 m`, giving a 1.20 m inflated-grid radius. No
+  vehicle/error envelope, unknown-space policy, command-anchor limit, or
+  continuous swept-tube tolerance is changed.
+- **Reason/evidence:** the 8 m/s three-pillar run selected an A* seed line whose
+  measured continuous clearance was `0.738 m`, below the configured
+  `robot_r=0.75 m`; CIRI correctly rejected it before execution. The grid
+  inflation had been only `0.80 m`, leaving a discretization gap between the
+  voxel route and the continuous certificate. Increasing inflation makes A*
+  reject that near-grazing branch earlier and search for a wider detour. The
+  first 1.00 m A/B still produced a CIRI minimum-distance warning of 0.771 m
+  and no mission completion, so one further 0.20 m cell is being evaluated.
+- **Safety impact:** more conservative occupancy, potentially less free search
+  volume and more fail-closed outcomes. This change cannot make an unsafe
+  route executable; all authoritative certificates remain active.
+- **Evidence required:** repeat the 8 m/s three-pillar and open profiles and
+  compare route clearance, CIRI failures, planner latency, waypoint completion,
+  measured speed, and collision truth. Preserve the negative-map fail-closed
+  evidence.
+- **Removal/review condition:** revert only if repeated representative runs
+  show unacceptable search starvation/latency without a safer route, then
+  redesign the grid-to-continuous clearance contract; never compensate by
+  relaxing CIRI or swept-tube checks.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed make external-mode-check`
+  and
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_open_featured_speed make external-mode-check`.
+
+### 2026-08-27 - Reproject an occupied goal to the deepest certified acceptance point
+
+- **Owner:** planning backend goal projection. **Scope:** when an occupied or
+  out-of-map requested waypoint is projected into its configured acceptance
+  ball, continue stepping in the already certified escape direction by the
+  inflated-map resolution while the next point and connecting segment remain
+  traversable. Stop at the acceptance boundary or the first failed map query.
+- **Safety impact:** this changes only which point inside the existing mission
+  acceptance ball is optimized. Each step remains checked on the inflated ROG
+  layer under the configured UNKNOWN policy; no acceptance radius, vehicle
+  radius, corridor, certificate, or OUT_OF_MAP rule is enlarged.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T102810-961423` repeatedly
+  projected `occlusion_detour` to a point only one inflated step beyond the
+  occupied voxel, then invalidated the resulting tube as the hidden obstacle
+  became observed. The bounded walk is at most the finite acceptance radius
+  divided by the configured inflated resolution and adds no unbounded search.
+- **Evidence:** unit-test planner contracts, run `make build` and `make test`,
+  then repeat the structured-obstacle 8 m/s mission and the declared positive
+  map matrix. Confirm the selected endpoint stays inside the mission radius,
+  remains certificate-valid after obstacle revelation, and fail-closed
+  behavior is unchanged when no certified step exists.
+- **Removal/review condition:** revisit after the planner has an explicit
+  clearance-aware terminal-goal contract shared by A*, CIRI, MINCO, and the
+  execution certificate; remove the local projection walk only when that
+  contract preserves the same bounded, fail-closed endpoint selection.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Keep an anchored backup endpoint in hold across acceptance-edge jitter
+
+- **Owner:** PX4 External Mode terminal-command gate. **Scope:** a completed
+  backup endpoint may use the bounded planner-recovery hold when the command
+  endpoint is inside the active waypoint acceptance ball and the measured
+  state remains within the existing command-anchor envelope. MissionController
+  still owns measured-position, speed, and hold-time acceptance.
+- **Safety impact:** this prevents a small measured oscillation at the edge of
+  an already accepted backup endpoint from starting a false recovery cycle. It
+  does not accept a waypoint, extend a trajectory, relax the anchor limit, or
+  bypass the speed/position gates; a non-anchored endpoint still enters the
+  bounded recovery window and then fails closed.
+- **Derivation and cost:** the structured-obstacle run showed a backup command
+  error of `1.032 m` against a `0.9 m` waypoint radius, followed by a transient
+  measured error of `0.845 m` and a safety handover. The helper is constant
+  time and reuses `kCommandAnchorErrorLimitM` rather than adding a new tracking
+  threshold.
+- **Evidence:** unit-test the anchor predicate, run `make build` and
+  `make test`, then repeat the structured-obstacle 8 m/s mission. Verify logs
+  expose independent `main_hold_inside` and `backup_hold_inside` states and
+  that an endpoint outside the anchor envelope still hands over after the
+  bounded deadline.
+- **Removal/review condition:** replace this executor-side anchor adapter when
+  runtime and External Mode expose an atomic terminal-endpoint acknowledgement
+  carrying measured settling state.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`.
+
+### 2026-08-27 - Restart from measured state after map invalidates the active command
+
+- **Owner:** navigation runtime mapping-to-planner transition. **Scope:** when
+  latest-world recertification rejects the active bundle and an active goal is
+  still present, clear the stale command/terminal state and schedule
+  `PlanFromRest` from the current measured propagated state. The recovery is
+  limited to the same localization and goal epochs; planner failure budgets
+  and fail-closed handover remain unchanged.
+- **Safety impact:** this removes stale-command retention after a newly
+  observed obstacle invalidates the executable certificate. The replacement
+  must pass the normal planner candidate, inflated-map, UNKNOWN, dynamic, and
+  atomic commit gates; if it cannot, the existing bounded retry then safety
+  handover is preserved.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T102810-961423` showed
+  recertification rejection at world revision 408 and later revisions while
+  the planner remained associated with the old bundle. The transition adds a
+  lock-protected state reset and one measured-state planning request per
+  invalidation.
+- **Evidence:** run runtime tests, `make build`, `make test`, and the
+  structured-obstacle 8 m/s mission. Confirm the log records
+  `scheduling measured-state PlanFromRest recovery`, and that three consecutive
+  replacement failures still produce a fail-closed PX4 Hold handover.
+- **Removal/review condition:** replace the reset with an explicit atomic
+  invalidation acknowledgement from the immutable world authorizer to the
+  planner FSM.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check`.
+
+### 2026-08-27 - Bound the backup-endpoint to planner-recovery handover race
+
+- **Owner:** PX4 External Mode command/setpoint boundary. **Scope:** when a
+  finite backup suffix reaches its endpoint outside the active waypoint
+  acceptance ball, keep publishing the exact endpoint position hold for a
+  bounded `navigation.planner_recovery_wait_timeout_s` window while the
+  runtime planner publishes the next `PlanFromRest` command. A fresh READY
+  command clears the window; expiry requests the existing PX4 Hold handover.
+- **Safety impact:** this changes only the executor scheduling boundary. It
+  does not extend the trajectory, sample a future polynomial point, accept a
+  waypoint, relax tracking/odometry/health/map/UNKNOWN gates, or convert a
+  frontier endpoint into mission progress. The endpoint remains a stationary
+  hold and expiry remains fail-closed. The default 0.5 s window is bounded by
+  the existing 2.0 s trajectory acquisition timeout.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T100710-936100` shows the
+  backup completion at `1787825296.604350689` and the replacement planner
+  commit at `1787825296.606301269`; the former caused immediate handover before
+  the latter could be accepted. The change adds one monotonic deadline and
+  one 50 ms mission-timer check. No planner or collision gate is relaxed.
+- **Evidence:** unit-test the deadline predicate, run `make build && make test`,
+  then repeat the 8 m/s structured-obstacle mission. Confirm that a READY
+  replacement clears the hold window and that a missing replacement still
+  hands over after the finite deadline.
+- **Removal/review condition:** replace this adapter grace with an explicit
+  command-acknowledgement handshake between runtime and External Mode once the
+  interface can atomically acknowledge a finite endpoint and its replacement.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Replay a missed local-frontier completion to restart planning
+
+- **Owner:** runtime command publisher and receding-horizon planner FSM.
+  **Scope:** if a finite local trajectory ends before the mission goal and its
+  finished sample was missed, replay only its exact declared endpoint so the
+  planner can start the next PlanFromRest cycle.
+- **Safety impact:** replay requires a finite endpoint, current KNOWN_FREE
+  classification in the inflated ROG layer, and measured endpoint proximity
+  within the existing command-anchor limit. It publishes no future trajectory
+  sample and does not convert a frontier endpoint into waypoint acceptance.
+  Unknown, occupied, out-of-map, stale, or distant endpoints remain
+  fail-closed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T100233-931480` accepted
+  WP0-WP3, then WP4 received repeated finite local bundles ending at
+  `(-5.19,5.25,2.70)` while the goal was `(-3.00,5.50,3.00)`. The publisher
+  missed the frontier `finished` tick and raised
+  `execution boundary invalidated the committed command sample`, preventing
+  the intended receding-horizon restart. The change adds one endpoint and
+  measured-anchor check at expiry.
+- **Evidence:** unit-test the replay predicate, run planning/runtime tests,
+  rebuild the authoritative manifest, and repeat the structured-obstacle 8 m/s
+  scenario plus the declared map matrix. Verify that frontier completion
+  restarts PlanFromRest and that an endpoint failing any predicate still hands
+  over safely.
+- **Removal/review condition:** revisit after the command publisher and planner
+  FSM expose an explicit finite-endpoint completion acknowledgement, removing
+  the need to recover the endpoint from the immutable bundle at expiry.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Recover a missed finite terminal sample with an exact endpoint hold
+
+- **Owner:** runtime command publisher and External Mode waypoint acceptance.
+  **Scope:** if the publisher misses the single tick at which a finite command
+  bundle reports `finished`, recover only that bundle's declared endpoint after
+  the execution interval. The endpoint must be finite, currently KNOWN_FREE in
+  the inflated ROG layer, and inside the active waypoint acceptance ball.
+- **Safety impact:** this closes a scheduling race at a waypoint without
+  extending the trajectory or sampling any future polynomial time. It does not
+  relax UNKNOWN, OCCUPIED, OUT_OF_MAP, freshness, command identity, tracking,
+  or handover gates. An endpoint that is not current known-free remains
+  fail-closed.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260827T095407-920740` reached WP1
+  with position error `0.117 m` but speed `0.390 m/s`. The finite bundle ended
+  at `(-0.97,5.97,3.00)` inside the `0.7 m` acceptance radius, but no
+  `trajectory completion observed` event was recorded before the publisher
+  crossed the expiry boundary; the runtime then reported
+  `execution boundary invalidated the committed command sample`. The change
+  adds one exact endpoint classification at that boundary.
+- **Evidence:** unit-test the endpoint predicate, run planning/runtime tests,
+  rebuild the authoritative manifest, and repeat the structured-obstacle 8 m/s
+  scenario plus the declared map matrix. Confirm that the missed-tick path
+  produces a bounded terminal hold and that a non-goal or unknown endpoint
+  still fails closed.
+- **Removal/review condition:** revisit after command publication and mission
+  acceptance share an explicit event/acknowledgement for finite endpoint
+  samples, eliminating the missed-tick ambiguity without recovering from the
+  immutable bundle at the publication boundary.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_SCENE=structured_obstacle make external-mode-check` and
+  the remaining declared 8 m/s External Mode map matrix.
+
+### 2026-08-27 - Rebase hot replanning after measured tracking lag
+
+- **Owner:** navigation planning backend hot-replan boundary. **Scope:** when
+  the currently committed command position is farther from the fresh propagated
+  vehicle position than the existing `planner/tracking_error_budget_m` (0.25 m
+  in the SITL profile), discard only the planner's historical continuation and
+  generate the next candidate from the measured PVAJ state. The measured start
+  must be inside the current inflated map under the active UNKNOWN policy; an
+  invalid start remains a failed solve.
+- **Safety impact:** this prevents repeated stitching of a command that is
+  already moving ahead of the vehicle. It does not enlarge the 0.75 m External
+  Mode command-anchor gate, alter waypoint acceptance, or bypass the normal
+  dynamic, corridor, world swept, freshness, or atomic commit certificates.
+  The deliberate false-reject consequence is a bounded retained-suffix or
+  fail-closed handover when the measured start is not certified traversable.
+- **Derivation and cost:** the 8 m/s three-pillar artifact
+  `external-mode-check-20260827T105943-987541` repeatedly retained a command
+  while the measured state lag grew from 0.507 m to 0.703 m, then PX4 rejected
+  the suffix at `0.760/0.750 m`. The open-map artifact
+  `external-mode-check-20260827T110127-989415` showed the same retained-suffix
+  pattern and eventually no executable backup. The rebase check is constant
+  time plus one inflated-layer classification per hot replan; it should be
+  bucketed in future p50/p95/p99 planner and command-gap reports.
+- **Evidence:** add focused planner coverage for a measured-state rebase and an
+  occupied/out-of-map rejection, run `make build` and `make test`, then repeat
+  the 8 m/s speed profiles. Require the trace to show the rebase boundary,
+  candidate starts anchored to measured state, complete waypoint coverage,
+  measured cruise speed, zero collision, and no command-anchor rejection.
+- **Removal/review condition:** replace this local recovery with an explicit
+  controller tracking contract that continuously time-scales or reanchors the
+  command bundle from measured state while preserving PVAJ continuity and has
+  repeated SITL, recorded-data, sanitizer, and hardware evidence.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build && make test`, then run
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed make external-mode-check`
+  and
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_open_featured_speed make external-mode-check`.
+### 2026-08-27 - Align inflated-grid and CIRI continuous-clearance contracts
+
+- Owner: navigation planning/mapping maintainers.
+- Scope: `WorldModelView::isSegmentTraversable` for the inflated layer in the
+  live ROG adapter and immutable mapping snapshot.
+- Safety impact: positive and fail-closed.  A segment is rejected when an
+  observed occupied point lies inside the same robot-radius tube used by CIRI,
+  even if the coarse inflated voxel query reports the segment free.  Unknown,
+  out-of-map, and existing grid occupancy rules are unchanged.  No gate is
+  relaxed and no fallback is promoted to product behavior.
+- Evidence: external-mode artifact
+  `external-mode-check-20260827T115832-1049674` repeatedly reports CIRI minimum
+  distance `0.776... m` while the planner envelope is `0.80 m`; the same run
+  continues to produce hot-replan and corridor failures after A* accepts the
+  route.  This is the observed grid/CIRI oracle mismatch that caused the
+  rejected seed line to be generated repeatedly.
+- Verification: `test_mapping_world_model`
+  (`InflatedSegmentRejectsObservedTubeBelowRobotRadius`), full `make test`,
+  then repeated `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed
+  make external-mode-check` with no CIRI seed below the configured radius.
+- Removal condition: remove only after a replacement immutable continuous
+  clearance contract is demonstrated equivalent to CIRI on representative
+  recorded and SITL obstacle geometries, with no reduction in clearance.

@@ -68,6 +68,16 @@ struct CandidateBundle {
            backup_start_time_s <= duration_s + 1.0e-9;
   }
 
+  // The declared endpoint exists for every executable trajectory, including a
+  // main-only candidate that has no backup suffix metadata. Keep this query
+  // separate from hasTrajectoryMetadata(), which is also used by the
+  // retained-backup safety path and therefore intentionally requires a valid
+  // backup-start declaration.
+  [[nodiscard]] bool hasDeclaredEndpointMetadata() const noexcept {
+    return std::isfinite(start_wall_time_s) && start_wall_time_s > 0.0 &&
+           std::isfinite(duration_s) && duration_s >= 0.0;
+  }
+
   [[nodiscard]] std::optional<TrajectoryPoint> sample(std::int64_t stamp_ns) const {
     if (!valid() || stamp_ns < valid_from_ns || stamp_ns > valid_until_ns) {
       return std::nullopt;
@@ -75,6 +85,29 @@ struct CandidateBundle {
     TrajectoryPoint point;
     point.role = role;
     if (!evaluator(stamp_ns, point) || !point.finite()) return std::nullopt;
+    return point;
+  }
+
+  // The declared trajectory endpoint can lie beyond the short execution lease
+  // used for incremental replanning. This metadata query intentionally samples
+  // the evaluator at the terminal trajectory timestamp without widening the
+  // executable validity interval used by sample().
+  [[nodiscard]] std::optional<TrajectoryPoint> sampleAtDeclaredEnd() const {
+    if (!valid() || !hasDeclaredEndpointMetadata()) return std::nullopt;
+    const double end_wall_time_s = start_wall_time_s + duration_s;
+    if (!std::isfinite(end_wall_time_s) || end_wall_time_s <= 0.0 ||
+        end_wall_time_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
+      return std::nullopt;
+    }
+    TrajectoryPoint point;
+    point.role = role;
+    const auto end_stamp_ns = static_cast<std::int64_t>(end_wall_time_s * 1.0e9);
+    if (!evaluator(end_stamp_ns, point) || !point.finite()) return std::nullopt;
+    // The evaluator's runtime completion predicate is intentionally strict
+    // (it marks a sample finished only after the declared end). This API is
+    // explicitly the declared endpoint, so normalize its lifecycle flag for
+    // consumers performing terminal handover checks.
+    point.finished = true;
     return point;
   }
 };

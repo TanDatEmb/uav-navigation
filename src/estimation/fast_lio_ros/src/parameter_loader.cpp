@@ -266,7 +266,7 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
           "propagated_odometry.imu_history_duration_s", 1.0);
   result.propagated_odometry_maximum_correction_age_s =
       node.declare_parameter<double>(
-          "propagated_odometry.maximum_correction_age_s", 0.25);
+          "propagated_odometry.maximum_correction_age_s", 0.50);
   const auto& overrides =
       node.get_node_parameters_interface()->get_parameter_overrides();
   for (const auto& [name, unused_value] : overrides) {

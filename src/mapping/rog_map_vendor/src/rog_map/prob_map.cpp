@@ -369,11 +369,13 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
     }
 
     bool slid_before_update = false;
+    bool slid_for_current_observation = false;
     if (cfg_.map_sliding_en && !insideLocalMap(pos) && raycast_data_.batch_update_counter == 0) {
         std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << std::endl;
         slideAllMap(pos);
         slid_before_update = true;
+        slid_for_current_observation = true;
         // The current observation is already expressed in the new local
         // window.  Continue processing it instead of silently discarding the
         // first cloud after every slide.
@@ -385,6 +387,7 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
         (map_empty_ || (pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh)
         ) {
         slideAllMap(pos);
+        slid_for_current_observation = true;
     }
 
     updateLocalBox(pos);
@@ -417,21 +420,11 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
         esdf_map_->updateESDF3D(pos);
     }
 
-    /* For the first frame, clear all unknown around the robot */
-    if (first_frame_clear_pending_) {
+    /* Clear the body neighborhood on the first frame and after every map
+       slide. Sliding exposes fresh unknown cells at the new vehicle pose. */
+    if (first_frame_clear_pending_ || slid_for_current_observation) {
         first_frame_clear_pending_ = false;
-        for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min; dx += cfg_.resolution) {
-            for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min; dy += cfg_.resolution) {
-                for (double dz = -cfg_.raycast_range_min; dz <= cfg_.raycast_range_min; dz += cfg_.resolution) {
-                    Vec3f p(dx, dy, dz);
-                    if (p.norm() <= cfg_.raycast_range_min) {
-                        Vec3f pp = pos + p;
-                        int hash_id = getHashIndexFromPos(pp);
-                        missPointUpdate(pp, hash_id, 999);
-                    }
-                }
-            }
-        }
+        clearRobotNeighborhood(pos);
     }
 
     if (!last_diagnostics_.changed_region_covers_world) {
@@ -451,6 +444,26 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
         : (slid_before_update ? MapUpdateOutcome::SLIDE_ONLY
                               : MapUpdateOutcome::ACCUMULATED);
     return last_diagnostics_.update_outcome;
+}
+
+void ProbMap::clearRobotNeighborhood(const Vec3f& pos) {
+    for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min;
+         dx += cfg_.resolution) {
+        for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min;
+             dy += cfg_.resolution) {
+            for (double dz = -cfg_.raycast_range_min; dz <= cfg_.raycast_range_min;
+                 dz += cfg_.resolution) {
+                const Vec3f offset(dx, dy, dz);
+                if (offset.norm() > cfg_.raycast_range_min) continue;
+                const Vec3f point = pos + offset;
+                // The body-clear sphere may straddle a finite sliding-map
+                // boundary.  Do not derive a hash for an out-of-window point;
+                // only the in-window, sensor-minimum neighborhood is cleared.
+                if (!insideLocalMap(point)) continue;
+                missPointUpdate(point, getHashIndexFromPos(point), 999);
+            }
+        }
+    }
 }
 
 GridType ProbMap::getGridType(Vec3i& id_g) const {

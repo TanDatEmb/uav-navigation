@@ -100,6 +100,24 @@ class CurvedCellWorld final : public SweepWorld {
   }
 };
 
+class DiagonalNeighborWorld final : public SweepWorld {
+ public:
+  explicit DiagonalNeighborWorld(
+      const navigation_world_model::Point3& unknown_center)
+      : unknown_center_(unknown_center) {}
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (point - unknown_center_).norm() < 1.0e-9
+        ? navigation_world_model::CellState::kUnknown
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+ private:
+  navigation_world_model::Point3 unknown_center_;
+};
+
 geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 6) = 1.0;
@@ -180,6 +198,99 @@ TEST(PlannerTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   EXPECT_TRUE(partial.getPos(0.0).allFinite());
 }
 
+TEST(PlannerTrajectory, PartialSliceUsesHalfOpenStartAtPieceBoundary) {
+  std::vector<double> durations{1.0, 1.0};
+  std::vector<Eigen::MatrixXd> coefficients;
+  for (double offset : {0.0, 1.0}) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix(0, 4) = 1.0;
+    matrix(0, 5) = offset;
+    coefficients.push_back(matrix);
+  }
+
+  geometry_utils::Trajectory source(durations, coefficients);
+  geometry_utils::Trajectory partial;
+  ASSERT_TRUE(source.getPartialTrajectoryByTime(1.0, 1.5, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial[0].getDuration(), 0.5);
+  EXPECT_DOUBLE_EQ(partial.start_WT, source.start_WT + 1.0);
+  EXPECT_NEAR(partial.getPos(0.0).x(), 1.0, 1.0e-12);
+  EXPECT_NEAR(partial.getPos(0.5).x(), 1.5, 1.0e-12);
+  EXPECT_TRUE(partial.getState(0.0).allFinite());
+}
+
+TEST(PlannerTrajectory, PartialSliceEndingAtPieceBoundaryKeepsLocalDuration) {
+  std::vector<double> durations{1.0, 1.0};
+  std::vector<Eigen::MatrixXd> coefficients;
+  for (double offset : {0.0, 1.0}) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix(0, 4) = 1.0;
+    matrix(0, 5) = offset;
+    coefficients.push_back(matrix);
+  }
+
+  geometry_utils::Trajectory source(durations, coefficients);
+  geometry_utils::Trajectory partial;
+  ASSERT_TRUE(source.getPartialTrajectoryByTime(0.0, 1.0, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial[0].getDuration(), 1.0);
+  EXPECT_NEAR(partial.getPos(partial.getTotalDuration()).x(), 1.0, 1.0e-12);
+  EXPECT_TRUE(partial.getState(partial.getTotalDuration()).allFinite());
+}
+
+TEST(PlannerTrajectory, SweepUsesNextPieceAtExactBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({0.5, 0.5}, {coefficients, coefficients});
+  geometry_utils::Trajectory yaw({0.5, 0.5}, {coefficients, coefficients});
+  position.start_WT = yaw.start_WT = 10.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = position;
+  candidate.yaw = yaw;
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  const auto location = navigation_planning_backend::locatePieceForSweep(
+      candidate.position, 0.5);
+  ASSERT_TRUE(location);
+  EXPECT_EQ(location->index, 1);
+  EXPECT_DOUBLE_EQ(location->local_time, 0.0);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      SweepWorld{}, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, SweepAdvancesAcrossNumericalPieceBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({0.2, 0.8}, {coefficients, coefficients});
+  geometry_utils::Trajectory yaw({0.2, 0.8}, {coefficients, coefficients});
+  position.start_WT = yaw.start_WT = 10.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = position;
+  candidate.yaw = yaw;
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  const double just_before_boundary = 0.2 - 1.0e-15;
+  const auto location = navigation_planning_backend::locatePieceForSweep(
+      candidate.position, just_before_boundary);
+  ASSERT_TRUE(location);
+  EXPECT_EQ(location->index, 1);
+  EXPECT_DOUBLE_EQ(location->local_time, 0.0);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      SweepWorld{}, candidate, 10.2 - 1.0e-15,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
 TEST(PlannerTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemantics) {
   const auto before = navigation_planning_backend::commandTrajectoryTime(9.75, 10.0, 2.0);
   EXPECT_FALSE(before.finished);
@@ -211,6 +322,15 @@ TEST(PlannerTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
   EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::FAILED));
   EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::OPT_FAILED));
   EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::EMER));
+}
+
+TEST(PlannerTrajectory, VisibleReplacementDoesNotEraseFutureBackupSuffix) {
+  EXPECT_TRUE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      false, true));
+  EXPECT_FALSE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      true, true));
+  EXPECT_FALSE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      false, false));
 }
 
 TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
@@ -512,6 +632,25 @@ TEST(PlannerTrajectory, CandidateBuilderPreservesInheritedAndNewBackupRoles) {
   EXPECT_DOUBLE_EQ(candidate->roles[3].begin_tt, 0.6);
   EXPECT_DOUBLE_EQ(candidate->roles[3].end_tt, 1.1);
   EXPECT_EQ(candidate->roles[3].role, navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_TRUE(candidate->backup_suffix_available);
+}
+
+TEST(PlannerTrajectory, CandidateBuilderDoesNotAdvertiseZeroLengthBackupSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+
+  navigation_planning_backend::BackupTraj backup;
+  auto empty_position = linearTrajectory(0.0, 11.0);
+  auto empty_yaw = linearTrajectory(0.0, 11.0);
+  backup.setTrajectory(11.0, 1.0, empty_position, empty_yaw);
+
+  // A non-null backup object is not sufficient evidence.  The executable
+  // bundle must either contain a positive-duration final BACKUP interval or
+  // reject construction before it can reach authorization.
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS));
 }
 
 TEST(PlannerTrajectory, InheritedBackupIntersectionNeverCrossesNewSuffix) {
@@ -579,6 +718,18 @@ TEST(PlannerTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
   ASSERT_EQ(emergency->roles.size(), 1U);
   EXPECT_EQ(emergency->roles.front().role,
             navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+}
+
+TEST(PlannerTrajectory, CandidateRejectsZeroDurationPiece) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  geometry_utils::Trajectory malformed_position(
+      {0.0, 1.0}, {position[0].getCoeffMat(), position[0].getCoeffMat()});
+  geometry_utils::Trajectory malformed_yaw(
+      {0.0, 1.0}, {yaw[0].getCoeffMat(), yaw[0].getCoeffMat()});
+
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildEmergencyCandidate(
+      malformed_position, malformed_yaw));
 }
 
 TEST(PlannerTrajectory, LatestWorldSweepAllowsUnknownAndRejectsFutureObstacle) {
@@ -666,6 +817,31 @@ TEST(PlannerTrajectory, ContinuousTubeIgnoresOccupiedCellOutsideCurveTube) {
   EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
       world, candidate, 10.0,
       navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeDoesNotClassifyDiagonalCellOutsideTube) {
+  const navigation_world_model::Point3 start(0.1, 0.21, 0.21);
+  const navigation_world_model::Point3 end(1.1, 0.21, 0.21);
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+
+  // The old center-distance-plus-half-diagonal approximation included this
+  // diagonal neighbour even though its voxel box is separated from the
+  // zero-radius centerline by sqrt(0.01^2 + 0.01^2).
+  EXPECT_TRUE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2));
+}
+
+TEST(PlannerTrajectory, ContinuousTubeClassifiesCellTouchedByCenterline) {
+  const navigation_world_model::Point3 start(0.1, 0.2, 0.2);
+  const navigation_world_model::Point3 end(1.1, 0.2, 0.2);
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+
+  // The same neighbour is now touched at the voxel corner and must remain a
+  // fail-closed UNKNOWN for a BACKUP certificate.
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2));
 }
 
 TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {

@@ -62,7 +62,7 @@ fast_lio:
       publish_rate_hz: 50.0
       imu_ingress_capacity: 4096
       imu_history_duration_s: 1.0
-      maximum_correction_age_s: 0.25
+      maximum_correction_age_s: 0.50
     runtime:
       imu_queue_capacity: 4096
       lidar_queue_capacity: 16

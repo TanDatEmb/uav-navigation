@@ -39,6 +39,7 @@ from runtime_environment import (
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_CONFIG = ROOT / "config/runtime"
+DATASET_SHADOW_MISSION = RUNTIME_CONFIG / "missions/recorded_replay.yaml"
 
 
 def _shared_artifact_root(root: Path = ROOT) -> Path:
@@ -1298,6 +1299,20 @@ def run_dataset(
             failures=[],
         )
         _capture_build_provenance(session)
+        shadow_mission_file = _resolved_mission_file(
+            session, DATASET_SHADOW_MISSION, None
+        )
+        _write_runtime(
+            session,
+            dataset_shadow_planning={
+                "enabled": shadow_planning_goal_distance_m > 0.0,
+                "goal_distance_m": shadow_planning_goal_distance_m,
+                "contract": "planner/runtime benchmark only; recorded odometry does not execute commands",
+                "mission_file": str(shadow_mission_file),
+                "main_unknown_policy": "allow_unknown",
+                "backup_unknown_policy": "require_known_free",
+            },
+        )
         context, counts = _dataset_context(dataset)
         expected_stream_counts = _expected_dataset_stream_counts(context, counts)
         _write_runtime(session, dataset_context={
@@ -1311,6 +1326,7 @@ def run_dataset(
         mapping_config = _mapping_params(
             session,
             RUNTIME_CONFIG / "mapping.yaml",
+            mission_file=shadow_mission_file,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor_process = session.start(
@@ -1323,10 +1339,10 @@ def run_dataset(
         )
         session.start(
             "mapping",
-            _ros_shell([
-                "ros2", "launch", "navigation_bringup", "navigation_runtime.launch.py",
-                f"config_file:={mapping_config}", "use_sim_time:=true",
-            ], enable_rviz=enable_rviz),
+            _ros_shell(
+                _navigation_runtime_launch_command(mapping_config, shadow_mission_file),
+                enable_rviz=enable_rviz,
+            ),
             cwd=ROOT,
         )
         lio = session.start(

@@ -348,6 +348,41 @@ TEST_F(MappingWorldModelTest, SegmentCertificateIsSymmetricAtVoxelCorners) {
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
 }
 
+TEST_F(MappingWorldModelTest, InflatedSegmentRejectsObservedTubeBelowRobotRadius) {
+  auto grid = productGrid(map->exportPlanningGrid());
+  std::fill(grid.base_state.begin(), grid.base_state.end(),
+            static_cast<std::uint8_t>(navigation_world_model::CellState::kKnownFree));
+  std::fill(grid.inflated.occupied.begin(), grid.inflated.occupied.end(), 0U);
+  grid.unknown_inflation_enabled = false;
+  grid.virtual_ground_ceiling_enabled = false;
+
+  const auto obstacle_index = grid.base_layout.global_min_index +
+      navigation_world_model::GridIndex3{4, 8, 4};
+  const auto local = obstacle_index - grid.base_layout.global_min_index;
+  const auto obstacle_offset =
+      (static_cast<std::size_t>(local.x()) *
+           static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
+       static_cast<std::size_t>(local.y())) *
+          static_cast<std::size_t>(grid.base_layout.dimensions.z()) +
+      static_cast<std::size_t>(local.z());
+  ASSERT_LT(obstacle_offset, grid.base_state.size());
+  grid.base_state[obstacle_offset] =
+      static_cast<std::uint8_t>(navigation_world_model::CellState::kOccupied);
+
+  navigation_mapping::MappingWorldSnapshot obstacle_snapshot(
+      std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
+  const auto start = obstacle_snapshot.indexToPosition(
+      obstacle_index + navigation_world_model::GridIndex3{-4, -4, 0},
+      navigation_world_model::GridLayer::kEvidence);
+  const auto end = obstacle_snapshot.indexToPosition(
+      obstacle_index + navigation_world_model::GridIndex3{4, -4, 0},
+      navigation_world_model::GridLayer::kEvidence);
+
+  EXPECT_FALSE(obstacle_snapshot.isSegmentTraversable(
+      start, end, navigation_world_model::GridLayer::kInflated,
+      navigation_world_model::UnknownPolicy::kAllowUnknown));
+}
+
 TEST_F(MappingWorldModelTest, NearestCellPreservesBaseGridOrderingForBothLayers) {
   const auto center = view->geometry().local_center_m;
   for (const auto layer : {navigation_world_model::GridLayer::kEvidence,

@@ -31,6 +31,7 @@
 #include <navigation_execution/committed_bundle_store.hpp>
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
+#include "navigation_runtime/kinematic_derivative_estimator.hpp"
 
 namespace navigation_planning_backend {
 class PlannerFacade;
@@ -200,6 +201,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t last_registered_scan_sequence_{0U};
   std::atomic_int64_t last_propagated_state_stamp_ns_{0};
   std::atomic_uint64_t last_propagated_state_sequence_{0U};
+  std::mutex propagated_derivative_mutex_;
+  KinematicDerivativeEstimator propagated_derivative_estimator_;
   bool new_goal_{false};
   // PASS_THROUGH waypoint transitions retarget planner backend through ReplanOnce so the
   // committed polynomial supplies the future PVA initial state.
@@ -243,6 +246,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // finishes instead of holding the completed old trajectory forever.
   std::atomic_bool trajectory_finished_{false};
   std::atomic_bool trajectory_reaches_goal_{false};
+  // Non-zero only after the command publisher has observed the terminal sample
+  // of a bundle whose endpoint reaches the active mission goal. This is a
+  // lifecycle marker for one terminal hold; it never authorizes future samples
+  // from an expired trajectory.
+  std::atomic_uint64_t terminal_bundle_generation_{0U};
   std::uint64_t cycle_count_{0};
   std::atomic_uint64_t cycle_success_count_{0};
   std::atomic_uint64_t command_publish_count_{0};

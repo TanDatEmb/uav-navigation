@@ -136,6 +136,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_navigation_runtime_shutdown navigation_runtime_core)
   ament_add_gtest(test_mapping_fail_stop test/test_mapping_fail_stop.cpp)
   target_link_libraries(test_mapping_fail_stop navigation_runtime_core)
+  ament_add_gtest(test_kinematic_derivative_estimator
+    test/test_kinematic_derivative_estimator.cpp)
+  target_include_directories(test_kinematic_derivative_estimator PRIVATE include)
+  target_link_libraries(test_kinematic_derivative_estimator
+    navigation_planning::navigation_planning)
 endif()
 
 ament_package()

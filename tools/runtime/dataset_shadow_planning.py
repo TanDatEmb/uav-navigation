@@ -71,8 +71,12 @@ def main() -> int:
 
     # Keep unit tests independent of ROS installation/import state.
     import rclpy
-    from navigation_contracts.msg import NavigationCommand, NavigationGoal, NavigationModeStatus
-    from nav_msgs.msg import Odometry
+    from navigation_contracts.msg import (
+        NavigationCommand,
+        NavigationGoal,
+        NavigationModeStatus,
+        PropagatedOdometry,
+    )
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
@@ -140,7 +144,19 @@ def main() -> int:
         elif int(message.status) == int(NavigationCommand.STATUS_REJECTED):
             emergency_command_count += 1
 
-    node.create_subscription(Odometry, "/lio/odometry_propagated", on_odometry, best_effort)
+    def on_propagated_odometry(message: Any) -> None:
+        # The propagated topic carries the product-owned epoch/sequence
+        # envelope.  The nested odometry is the state used for goal geometry.
+        if int(message.localization_epoch) <= 0 or int(message.sequence) <= 0:
+            return
+        on_odometry(message.odometry)
+
+    node.create_subscription(
+        PropagatedOdometry,
+        "/lio/odometry_propagated",
+        on_propagated_odometry,
+        best_effort,
+    )
     node.create_subscription(NavigationCommand, "/navigation/navigation_command", on_command, best_effort)
 
     def publish_teardown(odometry: Any) -> None:

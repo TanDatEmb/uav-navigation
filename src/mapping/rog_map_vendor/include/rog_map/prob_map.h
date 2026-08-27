@@ -264,6 +264,13 @@ namespace rog_map {
 
         void missPointUpdate(const Vec3f &pos, const int &hash_id, const int &hit_num);
 
+        // The finite sliding window can expose fresh unknown cells around the
+        // vehicle after a vertical or horizontal slide.  Clear only the
+        // sensor-minimum body neighborhood; this is the same conservative
+        // evidence used for the first frame and never authorizes unknown
+        // future space.
+        void clearRobotNeighborhood(const Vec3f &pos);
+
         void raycastProcess(const PointCloud &input_cloud, const Vec3f &cur_odom);
 
         void insertUpdateCandidate(const Vec3i &id_g, bool is_hit);

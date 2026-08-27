@@ -21,6 +21,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
@@ -69,6 +70,20 @@ const geometry_msgs::msg::Point& plannerTarget(
   return goal.target;
 }
 
+double goalCompletionTolerance(
+    const navigation_contracts::msg::NavigationGoal& goal) {
+  // MissionController owns the waypoint acceptance contract.  The planner's
+  // smaller geometric connection tolerance is intentionally not reused for
+  // the runtime terminal decision: a certified local endpoint inside the
+  // requested acceptance ball is a valid waypoint hold, including a safety
+  // suffix that stopped short of the exact coordinate.
+  if (std::isfinite(goal.acceptance_radius_m) && goal.acceptance_radius_m > 0.0) {
+    return std::max(navigation_world_model::kGoalCompletionToleranceM,
+                    goal.acceptance_radius_m);
+  }
+  return navigation_world_model::kGoalCompletionToleranceM;
+}
+
 void addObservationAccountingValues(
     diagnostic_msgs::msg::DiagnosticStatus& status,
     const navigation_mapping::ObservationAccounting::Snapshot& accounting) {
@@ -103,6 +118,150 @@ void addObservationAccountingValues(
   add_value("mapping_in_flight_count", accounting.in_flight);
   add_value("observation_accounting_valid", accounting.allInvariantsHold() ? 1U : 0U);
   add_value("observation_accounting_violation_count", accounting.violation_count);
+}
+
+void appendJsonString(std::ostringstream& output, const std::string_view value) {
+  output << '"';
+  for (const char character : value) {
+    switch (character) {
+      case '"': output << "\\\""; break;
+      case '\\': output << "\\\\"; break;
+      case '\n': output << "\\n"; break;
+      case '\r': output << "\\r"; break;
+      case '\t': output << "\\t"; break;
+      default: output << character; break;
+    }
+  }
+  output << '"';
+}
+
+void appendJsonNumber(std::ostringstream& output, const double value) {
+  if (std::isfinite(value)) {
+    output << std::setprecision(17) << value;
+  } else {
+    output << "null";
+  }
+}
+
+void appendJsonVector(std::ostringstream& output, const Eigen::Vector3d& value) {
+  output << '[';
+  appendJsonNumber(output, value.x());
+  output << ',';
+  appendJsonNumber(output, value.y());
+  output << ',';
+  appendJsonNumber(output, value.z());
+  output << ']';
+}
+
+void appendJsonPath(std::ostringstream& output,
+                    const std::vector<Eigen::Vector3d>& points) {
+  output << '[';
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    if (index != 0U) output << ',';
+    appendJsonVector(output, points[index]);
+  }
+  output << ']';
+}
+
+std::string plannerPathSnapshotJson(
+    const navigation_planning::CommittedTrajectorySnapshot& snapshot,
+    const std::uint64_t planning_cycle_id,
+    const std::uint64_t solve_generation,
+    const int planner_result,
+    const int replan_code,
+    const int commit_decision,
+    const std::string_view solve_stage_name,
+    const Eigen::Vector3d& target,
+    const Eigen::Vector3d& planning_target,
+    const double goal_acceptance_radius_m,
+    const bool goal_endpoint_adjusted,
+    const navigation_world_model::CellState robot_grid,
+    const navigation_world_model::CellState robot_inflated_grid,
+    const navigation_world_model::CellState target_grid,
+    const navigation_world_model::CellState target_inflated_grid,
+    const bool safety_suffix_active) {
+  const auto& trajectory = snapshot.position;
+  const bool has_committed_bundle = snapshot.generation > 0U && !trajectory.empty();
+  std::vector<Eigen::Vector3d> nominal_path;
+  std::vector<Eigen::Vector3d> backup_path;
+  std::vector<Eigen::Vector3d> emergency_path;
+  if (has_committed_bundle && std::isfinite(trajectory.duration_s) &&
+      trajectory.duration_s > 0.0) {
+    constexpr std::size_t kMaximumPathPoints = 64U;
+    const auto point_count = std::min(
+        kMaximumPathPoints,
+        std::max<std::size_t>(2U, static_cast<std::size_t>(
+            std::ceil(trajectory.duration_s / 0.08)) + 1U));
+    nominal_path.reserve(point_count);
+    backup_path.reserve(point_count);
+    emergency_path.reserve(point_count);
+    for (std::size_t index = 0; index < point_count; ++index) {
+      const double trajectory_time = trajectory.duration_s * static_cast<double>(index) /
+                                     static_cast<double>(point_count - 1U);
+      navigation_planning::TrajectoryPoint point;
+      if (!trajectory.sample(trajectory_time, point)) continue;
+      switch (point.role) {
+        case navigation_planning::CandidateRole::kMain:
+          nominal_path.push_back(point.position_world);
+          break;
+        case navigation_planning::CandidateRole::kBackup:
+          backup_path.push_back(point.position_world);
+          break;
+        case navigation_planning::CandidateRole::kEmergency:
+          emergency_path.push_back(point.position_world);
+          break;
+      }
+    }
+  }
+
+  std::ostringstream output;
+  output << '{';
+  output << "\"schema_version\":1";
+  output << ",\"source\":";
+  appendJsonString(output, has_committed_bundle ? "committed_bundle" : "none");
+  output << ",\"path_available\":" << (has_committed_bundle ? "true" : "false");
+  output << ",\"absence_reason\":";
+  appendJsonString(output, has_committed_bundle ? "" : "no_committed_executable_candidate");
+  output << ",\"terminal_command_semantics\":";
+  appendJsonString(output, has_committed_bundle ? "trajectory_sample" : "no_path_origin_hold");
+  output << ",\"planning_cycle_id\":" << planning_cycle_id;
+  output << ",\"solve_generation\":" << solve_generation;
+  output << ",\"bundle_generation\":" << snapshot.generation;
+  output << ",\"planner_result\":" << planner_result;
+  output << ",\"replan_code\":" << replan_code;
+  output << ",\"commit_decision\":" << commit_decision;
+  output << ",\"solve_stage_name\":";
+  appendJsonString(output, solve_stage_name);
+  output << ",\"selected_role\":";
+  appendJsonString(output, safety_suffix_active ? "backup" : "nominal");
+  output << ",\"target\" :";
+  appendJsonVector(output, target);
+  output << ",\"planning_target\" :";
+  appendJsonVector(output, planning_target);
+  output << ",\"goal_acceptance_radius_m\":";
+  appendJsonNumber(output, goal_acceptance_radius_m);
+  output << ",\"goal_endpoint_adjusted\":"
+         << (goal_endpoint_adjusted ? "true" : "false");
+  output << ",\"robot_grid_state\":" << static_cast<int>(robot_grid);
+  output << ",\"robot_inflated_grid_state\":" << static_cast<int>(robot_inflated_grid);
+  output << ",\"target_grid_state\":" << static_cast<int>(target_grid);
+  output << ",\"target_inflated_grid_state\":" << static_cast<int>(target_inflated_grid);
+  output << ",\"certificate_world_generation\":" << snapshot.certificate.validated_world.generation;
+  output << ",\"certificate_world_revision\":" << snapshot.certificate.validated_world.revision;
+  output << ",\"certificate_world_stamp_ns\":" << snapshot.certificate.validated_world.observation_stamp_ns;
+  output << ",\"duration_s\":";
+  appendJsonNumber(output, trajectory.duration_s);
+  output << ",\"backup_available\":" << (snapshot.backup_available ? "true" : "false");
+  output << ",\"backup_start_time_s\":";
+  appendJsonNumber(output, snapshot.backup_start_time_s);
+  output << ",\"nominal_path\":";
+  appendJsonPath(output, nominal_path);
+  output << ",\"backup_path\":";
+  appendJsonPath(output, backup_path);
+  output << ",\"emergency_path\":";
+  appendJsonPath(output, emergency_path);
+  output << '}';
+  return output.str();
 }
 
 }  // namespace
@@ -251,7 +410,36 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       if (result.snapshot) {
         const auto expected_bundle = command_store->load();
         bool retain_validated_bundle = false;
-        if (expected_bundle && planner_) {
+        const auto terminal_generation = terminal_bundle_generation_.load(
+            std::memory_order_acquire);
+        const bool terminal_bundle_observed = expected_bundle &&
+            terminal_generation != 0U &&
+            expected_bundle->bundle_generation == terminal_generation;
+        if (terminal_bundle_observed) {
+          // The executable lease may have ended by the time this map callback
+          // runs. An already observed terminal command needs one final safe
+          // handover sample, not a revalidation of future trajectory time.
+          // Keep this exception narrow: only the declared endpoint is sampled,
+          // and it must still be finite and known-free in the new snapshot.
+          const auto terminal_endpoint = expected_bundle->sampleAtDeclaredEnd();
+          const auto terminal_state = terminal_endpoint
+              ? result.snapshot->classify(
+                    terminal_endpoint->position_world,
+                    navigation_world_model::GridLayer::kInflated)
+              : navigation_world_model::CellState::kOutOfMap;
+          retain_validated_bundle = terminal_endpoint.has_value() &&
+              terminal_endpoint->finished && terminal_endpoint->finite() &&
+              navigation_world_model::isCellTraversable(
+                  terminal_state,
+                  navigation_world_model::UnknownPolicy::kRequireKnownFree);
+          if (!retain_validated_bundle) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "terminal command retention rejected generation=%lu state=%d endpoint=%d",
+                static_cast<unsigned long>(expected_bundle->bundle_generation),
+                static_cast<int>(terminal_state), terminal_endpoint.has_value() ? 1 : 0);
+          }
+        } else if (expected_bundle && planner_) {
           const auto committed_before = planner_->committedSnapshot();
           // The execution bundle is exported from this backend generation. Do
           // not require the backend's historical certificate to equal the
@@ -268,6 +456,22 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 committed_after.generation == expected_bundle->bundle_generation &&
                 navigation_world_model::sameWorldSnapshotIdentity(
                     validation.validated_world, result.snapshot->identity());
+            if (!validation.valid) {
+              RCLCPP_WARN(
+                  this->get_logger(),
+                  "command recertification rejected generation=%lu on world revision=%lu "
+                "at t=%.3f cell=%d position=(%.3f,%.3f,%.3f) "
+                "failure_code=%d role=%d samples=%zu segments=%zu",
+                  static_cast<unsigned long>(expected_bundle->bundle_generation),
+                  static_cast<unsigned long>(result.snapshot->identity().revision),
+                  validation.first_blocked_time_s,
+                  validation.first_blocked_cell_state,
+                  validation.first_blocked_position.x(),
+                  validation.first_blocked_position.y(),
+                  validation.first_blocked_position.z(),
+                  validation.failure_code, validation.blocked_role,
+                  validation.sample_count, validation.segment_count);
+            }
           }
         }
         // The immutable world publication and the dependent execution
@@ -277,9 +481,17 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         const bool finalized = store->publishAndFinalize(
             result.snapshot,
             [command_store, expected_bundle, retain_validated_bundle,
-             identity = result.snapshot->identity()] {
+             identity = result.snapshot->identity(),
+             refreshed_valid_until_ns = [&] {
+               const auto now_ns = ros_clock->now().nanoseconds();
+               return now_ns > std::numeric_limits<std::int64_t>::max() -
+                          data_freshness_window_ns_
+                          ? std::numeric_limits<std::int64_t>::max()
+                          : now_ns + data_freshness_window_ns_;
+             }()] {
               return command_store->publishWorldIdentity(
-                  identity, expected_bundle, retain_validated_bundle);
+                  identity, expected_bundle, retain_validated_bundle,
+                  refreshed_valid_until_ns);
             });
         if (!finalized) {
           command_store->invalidate();
@@ -294,6 +506,42 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               "mapping worker will fail-stop because the new world was not published");
           throw std::runtime_error(
               "world snapshot publication could not finalize its execution certificate");
+        }
+        if (expected_bundle && !retain_validated_bundle &&
+            expected_bundle->localization_epoch ==
+                active_localization_epoch_.load(std::memory_order_acquire) &&
+            expected_bundle->goal_epoch == active_goal_epoch_.load(std::memory_order_acquire)) {
+          // The latest immutable map invalidated the currently exposed
+          // command. This is recoverable only through a new measured-state
+          // PlanFromRest solve; allowing the next timer tick to enter
+          // ReplanOnce with no committed bundle turns a map change into an
+          // unconditional emergency result and prevents recovery.
+          {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            if (active_goal_ &&
+                active_goal_->request_id == expected_bundle->request_id) {
+              restart_from_rest_ = true;
+              hot_goal_transition_ = false;
+              skip_replan_once_ = false;
+            }
+          }
+          {
+            std::lock_guard<std::mutex> command_lock(
+                command_execution_lease_failure_latch_.transitionMutex());
+            planner_command_available_.store(false);
+            planner_failure_latched_.store(false);
+            safety_suffix_active_.store(false);
+            command_goal_epoch_.store(0U);
+            trajectory_finished_.store(false);
+            trajectory_reaches_goal_.store(false);
+            terminal_bundle_generation_.store(0U);
+          }
+          RCLCPP_WARN(
+              this->get_logger(),
+              "world revision=%lu invalidated active command generation=%lu; "
+              "scheduling measured-state PlanFromRest recovery",
+              static_cast<unsigned long>(result.world_revision),
+              static_cast<unsigned long>(expected_bundle->bundle_generation));
         }
         epoch_ready->store(true, std::memory_order_release);
         next.world_generation = result.world_generation;
@@ -553,6 +801,10 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
   active_localization_epoch_.store(localization_epoch, std::memory_order_release);
   last_propagated_state_stamp_ns_.store(0, std::memory_order_release);
   last_propagated_state_sequence_.store(0U, std::memory_order_release);
+  {
+    std::lock_guard<std::mutex> derivative_lock(propagated_derivative_mutex_);
+    propagated_derivative_estimator_.reset();
+  }
   execution_state_store_.resetForLocalizationEpoch(localization_epoch);
   command_bundle_store_.invalidate();
   last_registered_scan_epoch_.store(localization_epoch, std::memory_order_release);
@@ -568,6 +820,7 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
     skip_replan_once_ = false;
     trajectory_finished_.store(false);
     trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
   }
   {
     std::lock_guard<std::mutex> command_lock(
@@ -715,6 +968,15 @@ void NavigationRuntimeNode::onPropagatedOdometry(
   typed_state.velocity_world = typed_state.orientation_world_body * Eigen::Vector3d{
       odometry.twist.twist.linear.x, odometry.twist.twist.linear.y,
       odometry.twist.twist.linear.z};
+  {
+    std::lock_guard<std::mutex> derivative_lock(propagated_derivative_mutex_);
+    const auto derivative = propagated_derivative_estimator_.update(
+        stamp_ns, message->localization_epoch, typed_state.velocity_world);
+    typed_state.acceleration_world = derivative.acceleration_world;
+    typed_state.jerk_world = derivative.jerk_world;
+    typed_state.acceleration_estimated = derivative.acceleration_estimated;
+    typed_state.jerk_estimated = derivative.jerk_estimated;
+  }
   typed_state.source_stamp_ns = stamp_ns;
   typed_state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
   typed_state.localization_epoch = message->localization_epoch;
@@ -803,6 +1065,7 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     skip_replan_once_ = false;
     trajectory_finished_.store(false);
     trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
   }
 }
 
@@ -844,6 +1107,7 @@ void NavigationRuntimeNode::onModeStatus(
   plan_from_rest_first_failure_steady_ns_ = 0;
   trajectory_finished_.store(false);
   trajectory_reaches_goal_.store(false);
+  terminal_bundle_generation_.store(0U);
 }
 
 bool NavigationRuntimeNode::commitPlannerCandidate(
@@ -998,6 +1262,12 @@ void NavigationRuntimeNode::runCycle() {
   add_value("invalid_corrected_pose_count",
             invalid_corrected_pose_count_.load() + mapping.discarded_invalid);
   add_value("invalid_execution_state_count", invalid_execution_state_count_);
+  if (propagated_state) {
+    add_value("execution_acceleration_estimated",
+              propagated_state->state.acceleration_estimated ? 1U : 0U);
+    add_value("execution_jerk_estimated",
+              propagated_state->state.jerk_estimated ? 1U : 0U);
+  }
   add_value("world_snapshot_freshness_rejection_count",
             world_snapshot_freshness_rejection_count_.load());
   add_value("command_execution_lease_rejection_count",
@@ -1102,14 +1372,45 @@ void NavigationRuntimeNode::runCycle() {
   // restart PlanFromRest for the same logical goal so newly observed map
   // cells can extend the route. Mapping has already published this cycle.
   const bool completed_trajectory = trajectory_finished_.exchange(false);
-  if (completed_trajectory && goal && trajectory_reaches_goal_.load()) return;
-  if (completed_trajectory && goal && !trajectory_reaches_goal_.load()) {
+  bool completed_trajectory_reaches_goal = trajectory_reaches_goal_.load();
+  if (completed_trajectory && goal) {
+    // The completion flag can be cleared by a concurrent replan before this
+    // callback observes the publisher's terminal sample. Recompute it from
+    // the immutable committed candidate so a terminal command is not
+    // mistaken for a frontier trajectory and restarted indefinitely.
+    const auto committed_bundle = command_bundle_store_.load();
+    const auto& target_message = plannerTarget(*goal);
+    const Eigen::Vector3d target_position{
+      pointFromMessage(target_message, 0),
+      pointFromMessage(target_message, 1),
+      pointFromMessage(target_message, 2)};
+    const auto endpoint = committed_bundle &&
+        committed_bundle->hasDeclaredEndpointMetadata()
+        ? committed_bundle->sampleAtDeclaredEnd()
+        : std::nullopt;
+    const double completion_tolerance = goalCompletionTolerance(*goal);
+    completed_trajectory_reaches_goal = endpoint.has_value() &&
+        (endpoint->position_world - target_position).norm() <= completion_tolerance;
+    trajectory_reaches_goal_.store(completed_trajectory_reaches_goal);
+    terminal_bundle_generation_.store(
+        completed_trajectory_reaches_goal && committed_bundle
+            ? committed_bundle->bundle_generation
+            : 0U,
+        std::memory_order_release);
+    RCLCPP_INFO(get_logger(),
+                "planner backend trajectory completion observed reaches_goal=%d goal=(%.2f,%.2f,%.2f)",
+                completed_trajectory_reaches_goal ? 1 : 0,
+                pointFromMessage(plannerTarget(*goal), 0),
+                pointFromMessage(plannerTarget(*goal), 1),
+                pointFromMessage(plannerTarget(*goal), 2));
+  }
+  if (completed_trajectory && goal && completed_trajectory_reaches_goal) return;
+  if (completed_trajectory && goal && !completed_trajectory_reaches_goal) {
     const auto& target_message = plannerTarget(*goal);
     const double dx = pointFromMessage(target_message, 0) - execution_state.position_world.x();
     const double dy = pointFromMessage(target_message, 1) - execution_state.position_world.y();
     const double dz = pointFromMessage(target_message, 2) - execution_state.position_world.z();
-    if (std::sqrt(dx * dx + dy * dy + dz * dz) >
-        navigation_world_model::kGoalCompletionToleranceM) {
+    if (std::sqrt(dx * dx + dy * dy + dz * dz) > goalCompletionTolerance(*goal)) {
       std::lock_guard<std::mutex> lock(input_mutex_);
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
           active_goal_->waypoint_index == goal->waypoint_index &&
@@ -1129,6 +1430,22 @@ void NavigationRuntimeNode::runCycle() {
   }
 
   if (!goal) return;
+  // A terminal bundle already observed by the command publisher is a bounded
+  // endpoint hold, not a frontier trajectory.  Do not start another
+  // PlanFromRest while that exact bundle is waiting for mission acceptance.
+  if (terminalHoldIsPending(
+          planner_command_available_.load(std::memory_order_acquire),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          terminal_bundle_generation_.load(std::memory_order_acquire))) {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
+        active_goal_->waypoint_index == goal->waypoint_index &&
+        active_goal_->request_id == goal->request_id) {
+      restart_from_rest_ = false;
+      hot_goal_transition_ = false;
+    }
+    return;
+  }
   // A terminal planner failure remains terminal for this request until the
   // mission controller acknowledges it and cancels the goal. Without this
   // gate the next planning timer could perform a fourth solve and overwrite
@@ -1166,6 +1483,7 @@ void NavigationRuntimeNode::runCycle() {
     planner_command_available_.store(false);
     planner_failure_latched_.store(false);
     trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
   }
   if (!plan_from_rest && !replan_for_new_goal && skip_replan_once_) {
     skip_replan_once_ = false;
@@ -1183,6 +1501,7 @@ void NavigationRuntimeNode::runCycle() {
     return;
   }
   planner_->setWorldModelView(pinned_world.view);
+  planner_->setGoalAcceptanceRadius(goalCompletionTolerance(*goal));
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
@@ -1253,12 +1572,14 @@ void NavigationRuntimeNode::runCycle() {
   if (disposition == PlannerResultDisposition::FailClosed) {
     planner_failure_latched_.store(true);
     trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
                          "planner backend planning failed (%d)", static_cast<int>(result));
   }
   if (disposition == PlannerResultDisposition::RestartFromRest) {
     planner_failure_latched_.store(false);
     trajectory_reaches_goal_.store(false);
+    terminal_bundle_generation_.store(0U);
     trajectory_finished_.store(true);
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
@@ -1271,7 +1592,14 @@ void NavigationRuntimeNode::runCycle() {
                 "planner backend local trajectory boundary reached; scheduling PlanFromRest");
   }
   if (disposition == PlannerResultDisposition::RetryFromRest) {
-    trajectory_reaches_goal_.store(false);
+    const bool terminal_hold_pending = terminalHoldIsPending(
+        planner_command_available_.load(std::memory_order_acquire),
+        trajectory_reaches_goal_.load(std::memory_order_acquire),
+        terminal_bundle_generation_.load(std::memory_order_acquire));
+    if (!terminal_hold_pending) {
+      trajectory_reaches_goal_.store(false);
+      terminal_bundle_generation_.store(0U);
+    }
     bool failure_budget_exhausted = false;
     std::uint32_t failure_count = 0U;
     {
@@ -1529,6 +1857,7 @@ void NavigationRuntimeNode::runCycle() {
       planner_failure_latched_.store(false);
       safety_suffix_active_.store(false);
       trajectory_finished_.store(false);
+      terminal_bundle_generation_.store(0U);
     }
     if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
                                 now().nanoseconds())) {
@@ -1560,14 +1889,26 @@ void NavigationRuntimeNode::runCycle() {
     }
     const auto committed_bundle = command_bundle_store_.load();
     const auto committed_end_sample = committed_bundle &&
-        committed_bundle->hasTrajectoryMetadata()
-        ? committed_bundle->sample(static_cast<std::int64_t>(
-            (committed_bundle->start_wall_time_s + committed_bundle->duration_s) * 1.0e9))
+        committed_bundle->hasDeclaredEndpointMetadata()
+        ? committed_bundle->sampleAtDeclaredEnd()
         : std::nullopt;
+    const double completion_tolerance = goalCompletionTolerance(*goal);
     trajectory_reaches_goal_.store(
         committed_end_sample.has_value() &&
-        (committed_end_sample->position_world - target).norm() <=
-            navigation_world_model::kGoalCompletionToleranceM);
+        (committed_end_sample->position_world - target).norm() <= completion_tolerance);
+    if (committed_bundle && committed_bundle->hasDeclaredEndpointMetadata() &&
+        (!committed_end_sample ||
+         (committed_end_sample->position_world - target).norm() > completion_tolerance)) {
+      RCLCPP_WARN(get_logger(),
+                  "planner backend terminal endpoint check failed sample=%d start=%.9f "
+                  "duration=%.9f backup_start=%.9f valid_from=%ld valid_until=%ld target=(%.2f,%.2f,%.2f)",
+                  committed_end_sample.has_value() ? 1 : 0,
+                  committed_bundle->start_wall_time_s, committed_bundle->duration_s,
+                  committed_bundle->backup_start_time_s,
+                  static_cast<long>(committed_bundle->valid_from_ns),
+                  static_cast<long>(committed_bundle->valid_until_ns),
+                  target.x(), target.y(), target.z());
+    }
     if (plan_from_rest) skip_replan_once_ = true;
     std::lock_guard<std::mutex> lock(input_mutex_);
     plan_from_rest_failure_budget_.reset();
@@ -1610,6 +1951,16 @@ void NavigationRuntimeNode::runCycle() {
         execution_state.position_world, navigation_world_model::GridLayer::kEvidence);
     const auto robot_inflated_grid_type = pinned_world.view->classify(
         execution_state.position_world, navigation_world_model::GridLayer::kInflated);
+    const Eigen::Vector3d planning_target = planner_diagnostics.planning_goal.allFinite()
+        ? planner_diagnostics.planning_goal : target;
+    const auto target_grid_type = pinned_world.view->classify(
+        target, navigation_world_model::GridLayer::kEvidence);
+    const auto target_inflated_grid_type = pinned_world.view->classify(
+        target, navigation_world_model::GridLayer::kInflated);
+    const auto planning_target_grid_type = pinned_world.view->classify(
+        planning_target, navigation_world_model::GridLayer::kEvidence);
+    const auto planning_target_inflated_grid_type = pinned_world.view->classify(
+        planning_target, navigation_world_model::GridLayer::kInflated);
     // WorldModel deliberately has no nearest-known-free or nearest-occupied
     // query. Keep these optional diagnostics unavailable rather than reaching
     // back into worker-owned mutable map state.
@@ -1638,6 +1989,9 @@ void NavigationRuntimeNode::runCycle() {
                 "state_age_ms=%.3f mode=%s result=%d replan_code=%d commit_decision=%d "
                 "solve_stage=%d solve_stage_name=%s solve_elapsed_ms=%.3f "
                 "solve_deadline_exceeded=%d target=(%.2f,%.2f,%.2f) "
+                "planning_target=(%.2f,%.2f,%.2f) goal_radius=%.3f goal_adjusted=%d "
+                "target_grid=%d target_inf_grid=%d "
+                "planning_target_grid=%d planning_target_inf_grid=%d "
                 "committed_end=(%.2f,%.2f,%.2f) endpoint_error=%.3f command=%d failure=%d "
                 "exp_frontend_ms=%.3f exp_opt_ms=%.3f backup_frontend_ms=%.3f "
                 "backup_opt_ms=%.3f robot_grid=%d robot_inf_grid=%d nearest_free_m=%.3f "
@@ -1658,7 +2012,13 @@ void NavigationRuntimeNode::runCycle() {
                 replan_return_code, commit_decision, solve_stage,
                 planner_diagnostics.solve_stage_name.c_str(), planner_elapsed_ms,
                 solve_deadline_exceeded, target.x(), target.y(),
-                target.z(), committed_end.x(), committed_end.y(), committed_end.z(),
+                target.z(), planning_target.x(), planning_target.y(), planning_target.z(),
+                planner_diagnostics.goal_acceptance_radius_m,
+                planner_diagnostics.goal_endpoint_adjusted ? 1 : 0,
+                static_cast<int>(target_grid_type), static_cast<int>(target_inflated_grid_type),
+                static_cast<int>(planning_target_grid_type),
+                static_cast<int>(planning_target_inflated_grid_type),
+                committed_end.x(), committed_end.y(), committed_end.z(),
                 endpoint_error, planner_command_available_.load(), planner_failure_latched_.load(),
                 planner_diagnostics.module_time_us[0] * 1.0e-3,
                 planner_diagnostics.module_time_us[1] * 1.0e-3,
@@ -1747,6 +2107,20 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("state_age_at_trace_ms", execution_age_at_trace_ms);
     add_trace_vector("planning_state_position", execution_state.position_world);
     add_trace_vector("planning_state_velocity", execution_state.velocity_world);
+    add_trace_vector("planning_state_acceleration", execution_state.acceleration_world);
+    add_trace_vector("planning_state_jerk", execution_state.jerk_world);
+    add_trace_value("planning_state_acceleration_estimated",
+                    execution_state.acceleration_estimated ? 1 : 0);
+    add_trace_value("planning_state_jerk_estimated",
+                    execution_state.jerk_estimated ? 1 : 0);
+    add_trace_vector("requested_goal", target);
+    add_trace_vector("planning_goal", planning_target);
+    add_trace_value("goal_acceptance_radius_m",
+                    planner_diagnostics.goal_acceptance_radius_m);
+    add_trace_value("goal_endpoint_adjusted",
+                    planner_diagnostics.goal_endpoint_adjusted ? 1 : 0);
+    add_trace_value("target_grid_state", static_cast<int>(target_grid_type));
+    add_trace_value("target_inflated_grid_state", static_cast<int>(target_inflated_grid_type));
     if (commit_observed_this_cycle) {
       add_trace_value("commit_previous_generation",
                       commit_diagnostics.previous_generation);
@@ -1860,6 +2234,31 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("command_available", planner_command_available_.load() ? 1 : 0);
     add_trace_value("planner_failure_latched", planner_failure_latched_.load() ? 1 : 0);
     trace_diagnostics.status.push_back(std::move(trace_status));
+
+    // Publish the actual immutable bundle geometry used by the command
+    // sampler.  A rejected command is deliberately represented as
+    // path_available=false; its terminal hold sample must never be rendered
+    // as a safety trajectory at the takeoff origin.  The report can therefore
+    // show nominal and backup on one common map without reconstructing paths
+    // from repeated NavigationCommand samples.
+    diagnostic_msgs::msg::DiagnosticStatus path_status;
+    path_status.name = "navigation_runtime/planner_path";
+    path_status.level = has_committed_bundle
+                            ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                            : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    path_status.message = has_committed_bundle ? "PATH_SNAPSHOT" : "NO_EXECUTABLE_PATH";
+    diagnostic_msgs::msg::KeyValue path_item;
+    path_item.key = "planner_path_snapshot_json";
+    path_item.value = plannerPathSnapshotJson(
+        committed_snapshot, cycle_count_, solve_generation,
+        static_cast<int>(result), replan_return_code, commit_decision,
+        planner_diagnostics.solve_stage_name, target, planning_target,
+        planner_diagnostics.goal_acceptance_radius_m,
+        planner_diagnostics.goal_endpoint_adjusted, robot_grid_type,
+        robot_inflated_grid_type, target_grid_type, target_inflated_grid_type,
+        safety_suffix_active_.load());
+    path_status.values.push_back(std::move(path_item));
+    trace_diagnostics.status.push_back(std::move(path_status));
     diagnostics_publisher_->publish(trace_diagnostics);
   }
 
@@ -2117,14 +2516,77 @@ void NavigationRuntimeNode::publishCommand() {
         safety_suffix_active_.store(false);
         return;
       }
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(true);
-      safety_suffix_active_.store(false);
-      planner_failed = true;
-      safety_suffix_active = false;
-      RCLCPP_ERROR_THROTTLE(
-          get_logger(), *get_clock(), 1000,
-          "execution boundary invalidated the committed command sample");
+      const auto terminal_endpoint = sample.bundle->sampleAtDeclaredEnd();
+      const auto terminal_generation = terminal_bundle_generation_.load(
+          std::memory_order_acquire);
+      const auto latest_terminal_world = world_snapshot_store_.load();
+      const bool endpoint_valid = terminal_endpoint.has_value() &&
+                                  terminal_endpoint->finished &&
+                                  terminal_endpoint->finite();
+      bool endpoint_reaches_goal = false;
+      if (endpoint_valid && command_goal) {
+        const auto& target_message = plannerTarget(*command_goal);
+        const Eigen::Vector3d target_position{
+            pointFromMessage(target_message, 0),
+            pointFromMessage(target_message, 1),
+            pointFromMessage(target_message, 2)};
+        endpoint_reaches_goal =
+            (terminal_endpoint->position_world - target_position).norm() <=
+            goalCompletionTolerance(*command_goal);
+      }
+      const bool endpoint_known_free = endpoint_valid && latest_terminal_world &&
+          navigation_world_model::isCellTraversable(
+              latest_terminal_world.view->classify(
+                  terminal_endpoint->position_world,
+                  navigation_world_model::GridLayer::kInflated),
+              navigation_world_model::UnknownPolicy::kRequireKnownFree);
+      const bool endpoint_near_execution_state = endpoint_valid && execution_state &&
+          execution_freshness.valid() &&
+          (terminal_endpoint->position_world -
+           execution_state->state.position_world).norm() <=
+          navigation_contracts::kCommandAnchorErrorLimitM;
+      const bool observed_terminal_bundle =
+          terminal_generation != 0U &&
+          terminal_generation == sample.bundle->bundle_generation;
+      const bool can_replay_expired_endpoint = expiredEndpointMayBeReplayed(
+          endpoint_valid, endpoint_known_free, endpoint_near_execution_state);
+      if (can_replay_expired_endpoint) {
+        // The normal lease has expired. Publish only this bundle's exact
+        // declared endpoint as STATUS_COMPLETED; never extend the trajectory's
+        // executable interval or expose a future sample. A goal endpoint is a
+        // bounded hold; a non-goal endpoint is a local-frontier completion
+        // signal that causes the planner to start PlanFromRest again.
+        const auto& point = *terminal_endpoint;
+        pvaj.col(0) = point.position_world;
+        pvaj.col(1) = point.velocity_world;
+        pvaj.col(2) = point.acceleration_world;
+        pvaj.col(3) = point.jerk_world;
+        yaw = point.yaw;
+        yaw_dot = point.yaw_rate;
+        trajectory_generation = sample.bundle->bundle_generation;
+        trajectory_time_s = point.trajectory_time_s;
+        command_world_identity = sample.bundle->world_identity;
+        sampled_bundle = sample.bundle;
+        on_backup_traj = point.role != navigation_planning::CandidateRole::kMain;
+        traj_finish = true;
+        sampled_command_valid = true;
+        RCLCPP_DEBUG_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "publishing exact endpoint for expired completed bundle generation=%lu "
+            "goal=%d observed=%d known_free=%d near_execution=%d",
+            static_cast<unsigned long>(trajectory_generation), endpoint_reaches_goal ? 1 : 0,
+            observed_terminal_bundle ? 1 : 0,
+            endpoint_known_free ? 1 : 0, endpoint_near_execution_state ? 1 : 0);
+      } else {
+        planner_command_available_.store(false);
+        planner_failure_latched_.store(true);
+        safety_suffix_active_.store(false);
+        planner_failed = true;
+        safety_suffix_active = false;
+        RCLCPP_ERROR_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "execution boundary invalidated the committed command sample");
+      }
     } else {
       const auto& point = *sample.point;
       pvaj.col(0) = point.position_world;
@@ -2140,6 +2602,22 @@ void NavigationRuntimeNode::publishCommand() {
       on_backup_traj = point.role != navigation_planning::CandidateRole::kMain;
       traj_finish = point.finished;
       sampled_command_valid = true;
+      if (traj_finish) {
+        bool endpoint_reaches_goal = false;
+        if (command_goal) {
+          const auto& target_message = plannerTarget(*command_goal);
+          const Eigen::Vector3d target_position{
+              pointFromMessage(target_message, 0),
+              pointFromMessage(target_message, 1),
+              pointFromMessage(target_message, 2)};
+          endpoint_reaches_goal =
+              (point.position_world - target_position).norm() <=
+              goalCompletionTolerance(*command_goal);
+        }
+        terminal_bundle_generation_.store(
+            endpoint_reaches_goal ? sample.bundle->bundle_generation : 0U,
+            std::memory_order_release);
+      }
     }
     // The safety suffix contains the dynamically continuous main prefix up to
     // planner backend's backup switch plus the braking polynomial. Once frozen by a

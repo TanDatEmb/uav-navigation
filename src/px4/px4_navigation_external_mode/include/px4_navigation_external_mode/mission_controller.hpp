@@ -49,6 +49,12 @@ class MissionController final {
   // callback that races activate()/update() cannot strand the mission on the
   // first waypoint.
   void onNativeTrajectoryReady();
+  // A completed native MAIN trajectory may end inside a corner waypoint's
+  // acceptance ball while the measured vehicle velocity is still non-zero.
+  // Keep the certified terminal hold until the measured state satisfies the
+  // normal acceptance gate; do not re-publish the same goal and restart the
+  // planner in the meantime.
+  void onNativeTerminalHoldObserved();
 
   [[nodiscard]] MissionControllerEvent update(double now_s,
                                                const std::optional<Eigen::Vector3d>& position,
@@ -62,6 +68,9 @@ class MissionController final {
   [[nodiscard]] std::uint64_t activeRequestId() const;
   [[nodiscard]] MissionWaypoint activeWaypoint() const;
   [[nodiscard]] std::optional<MissionWaypoint> nextWaypoint() const;
+  [[nodiscard]] bool nativeTrajectoryReady() const;
+  [[nodiscard]] bool terminalHoldPending() const;
+  [[nodiscard]] double acceptanceSpeedMps() const;
 
  private:
   static constexpr double kSafetyStopSpeedMps = 0.15;
@@ -85,6 +94,7 @@ class MissionController final {
   bool pending_position_control_{false};
   bool checkpoint_valid_{false};
   bool trajectory_ready_{false};
+  bool terminal_hold_pending_{false};
 };
 
 }  // namespace px4_navigation_external_mode
