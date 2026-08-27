@@ -6718,6 +6718,39 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Make the active pass-through waypoint the trajectory boundary
+
+- **Owner:** Navigation planning and PX4 mission-controller maintainers.
+  **Scope:** a nominal solve for a pass-through goal terminates at the active
+  waypoint. The outgoing direction is still supplied as the terminal velocity
+  tangent, and the mission controller publishes the next goal only after the
+  measured vehicle enters the active waypoint acceptance ball.
+- **Safety impact:** waypoint-order and continuity correction. This removes a
+  planner-only guide extension that allowed an unconstrained MINCO polynomial
+  to bow around the active mission boundary. It does not relax waypoint
+  acceptance, V/A/J, corridor, world, UNKNOWN/OUT_OF_MAP, freshness, or
+  atomic-commit gates. The PX4-facing PVA command retains a nonzero tangent for
+  pass-through goals; stop goals remain zero-terminal-velocity.
+- **Reason/evidence:** the 3 m/s multiwaypoint A/B with guide extension had an
+  active target `(20,5,3)` but a committed endpoint near `(34.8,4.8,3)`, and
+  recorded ground truth passed the target with a minimum distance of `1.48 m`
+  against the `0.9 m` acceptance radius. This prevented waypoint handoff and
+  caused the later safety stop. The replacement preserves continuous velocity
+  through the controller's measured waypoint transition instead of relying on
+  an intermediate exact MINCO node that previously destabilized corridor/
+  dynamic solving.
+- **Evidence required:** focused planner/mission-controller tests, authoritative
+  rebuild, then repeated 3/4/5 m/s multiwaypoint SITL and recorded-data replay.
+  Inspect waypoint order/coverage, velocity continuity at handoff, speed
+  recovery, altitude, clearance, strict backup outcomes, and planner latency.
+- **Removal condition:** revert only if repeated representative evidence shows
+  a regression in waypoint coverage, continuity, clearance, safety-stop rate,
+  or latency. Do not reintroduce blind guide extension to hide missed
+  acceptance.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.
+
 ### 2026-08-28 - Align body-clear radius with the planner safety envelope
 
 - **Owner:** Mapping and navigation planning maintainers. **Scope:** the
