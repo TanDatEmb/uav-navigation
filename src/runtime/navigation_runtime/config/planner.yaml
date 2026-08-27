@@ -4,6 +4,10 @@ planner:
   print_log: false
   goal_yaw_en: false
   goal_vel_en: false
+  # A strict backup stop keeps the measured handover PVAJ but biases its free
+  # terminal position toward the active waypoint altitude. The candidate is
+  # used only when its exact dynamic and KNOWN_FREE certificates still pass.
+  preserve_backup_altitude: true
   # Keep the convex search box local to the collision-checked A* guide. A
   # 3 m half-width is clipped asymmetrically by the vertical map envelope at
   # nominal altitude, moving the initialization toward z~=2.1 m and feeding

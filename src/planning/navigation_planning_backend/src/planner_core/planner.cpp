@@ -1875,9 +1875,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return false;
         };
         const auto minimum_snap_backup_validation =
-                [this, &ref_exp_traj](const StatePVAJ &state,
-                                      const double candidate_ts,
-                                      const double duration) {
+                [this, &ref_exp_traj](const double candidate_ts,
+                                      const double duration,
+                                      const geometry_utils::Piece &backup_piece) {
             if (solve_cancelled_.load() || !std::isfinite(candidate_ts) ||
                 !std::isfinite(duration) || duration <= 0.0) {
                 return SweptValidationResult{};
@@ -1889,8 +1889,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 return SweptValidationResult{};
             }
             CandidateCommandBundle backup_candidate;
-            backup_candidate.position.emplace_back(
-                    minimumSnapStopPiece(state, duration));
+            if (!backup_piece.getCoeffMat().allFinite() ||
+                std::abs(backup_piece.getDuration() - duration) > 1.0e-9) {
+                return SweptValidationResult{};
+            }
+            backup_candidate.position.emplace_back(backup_piece);
             backup_candidate.position.start_WT = backup_start_wall_time;
             backup_candidate.start_wall_time = backup_start_wall_time;
             backup_candidate.roles.push_back(
@@ -1901,6 +1904,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return validation;
         };
         const double initial_switch_guess = heu_ts;
+        const double backup_altitude_target_m = planning_goal_p_.z();
+        geometry_utils::Piece selected_braking_piece;
+        bool selected_braking_piece_ready = false;
         const auto build_candidate_backup_sfc =
             [this, &solve_deadline](const StatePVAJ &state,
                                     const BackupBrakingSeed &seed,
@@ -1951,6 +1957,39 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
                     0.0);
+            geometry_utils::Piece candidate_braking_piece;
+            if (braking_seed.feasible &&
+                std::isfinite(braking_seed.duration_s) &&
+                braking_seed.duration_s > 0.0) {
+                candidate_braking_piece = minimumSnapStopPiece(
+                    switch_state, braking_seed.duration_s);
+                if (cfg_.preserve_backup_altitude &&
+                    std::isfinite(backup_altitude_target_m)) {
+                    const auto altitude_piece =
+                        minimumSnapStopPieceWithTerminalAltitude(
+                            switch_state, braking_seed.duration_s,
+                            backup_altitude_target_m);
+                    const double altitude_peak_velocity = altitude_piece.getMaxVelRate();
+                    const double altitude_peak_acceleration = altitude_piece.getMaxAccRate();
+                    const double altitude_peak_jerk = altitude_piece.getMaxJerRate();
+                    const bool altitude_piece_feasible =
+                        altitude_piece.getPos(braking_seed.duration_s).allFinite() &&
+                        std::isfinite(altitude_peak_velocity) &&
+                        std::isfinite(altitude_peak_acceleration) &&
+                        std::isfinite(altitude_peak_jerk) &&
+                        altitude_peak_velocity <= braking_seed.allowed_peak_velocity_mps &&
+                        altitude_peak_acceleration <= cfg_.back_traj_cfg.max_acc &&
+                        altitude_peak_jerk <= cfg_.back_traj_cfg.max_jerk;
+                    if (altitude_piece_feasible) {
+                        candidate_braking_piece = altitude_piece;
+                        braking_seed.endpoint =
+                            altitude_piece.getPos(braking_seed.duration_s);
+                        braking_seed.maximum_velocity_mps = altitude_peak_velocity;
+                        braking_seed.maximum_acceleration_mps2 = altitude_peak_acceleration;
+                        braking_seed.maximum_jerk_mps3 = altitude_peak_jerk;
+                    }
+                }
+            }
             certificate_diagnostics.last_seed_switch_time_s = candidate_ts;
             certificate_diagnostics.last_seed_duration_s = braking_seed.duration_s;
             certificate_diagnostics.last_seed_initial_velocity_mps =
@@ -1972,7 +2011,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             if (braking_seed_inside_sfc) {
                 const auto braking_control_points = minimumSnapStopBezierControlPoints(
-                    switch_state, braking_seed.duration_s);
+                    candidate_braking_piece);
                 for (int i = 0;
                      braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
                     braking_seed_inside_sfc =
@@ -1998,7 +2037,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     ++certificate_diagnostics.aligned_sfc_built_count;
                     const auto braking_control_points =
                         minimumSnapStopBezierControlPoints(
-                            switch_state, braking_seed.duration_s);
+                            candidate_braking_piece);
                     braking_seed_inside_sfc = true;
                     for (int i = 0;
                          braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
@@ -2019,7 +2058,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             if (braking_seed_inside_sfc) {
                 const auto validation = minimum_snap_backup_validation(
-                    switch_state, candidate_ts, braking_seed.duration_s);
+                    candidate_ts, braking_seed.duration_s, candidate_braking_piece);
                 braking_seed_inside_sfc = record_known_free_validation(
                     validation,
                     navigation_planning::BackupCertificateRejectStage::kKnownFree);
@@ -2036,6 +2075,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                         braking_seed.endpoint.z());
                 }
                 heu_ts = candidate_ts;
+                selected_braking_piece = candidate_braking_piece;
+                selected_braking_piece_ready = true;
                 break;
             }
             if (candidate_ts <= t0 + 1.0e-9) break;
@@ -2080,6 +2121,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 certificate_diagnostics.last_seed_endpoint.z());
             return OPT_FAILED;
         }
+        if (!selected_braking_piece_ready) {
+            planner_context_->error(
+                " -- [planner] backup certificate selected without a braking polynomial");
+            return OPT_FAILED;
+        }
         if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt_s * 0.5) {
             planner_context_->info(
                     " -- [planner] moved backup switch backward from {} to {} for certified hull",
@@ -2100,7 +2146,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         seed_times.setConstant(heu_dur / cfg_.back_traj_cfg.piece_num);
         vec_Vec3f seed_points;
         seed_points.reserve(cfg_.back_traj_cfg.piece_num);
-        const auto braking_piece = minimumSnapStopPiece(switch_state, heu_dur);
+        const auto &braking_piece = selected_braking_piece;
         for (int i = 1; i <= cfg_.back_traj_cfg.piece_num; ++i) {
             seed_points.emplace_back(braking_piece.getPos(
                     heu_dur * static_cast<double>(i) /

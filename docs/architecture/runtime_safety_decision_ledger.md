@@ -6775,3 +6775,34 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check`, checking body-clear diagnostics, snapshot revisions,
   strict backup certificate outcomes, clearance, and callback latency.
+
+### 2026-08-28 - Preserve active-waypoint altitude in certified backup braking
+
+- **Owner:** Navigation planning maintainers.
+- **Scope:** the minimum-snap backup seed may add a degree-7 C^3 smoothstep
+  only in the altitude axis so its terminal position approaches the active
+  planning waypoint altitude. The measured handover PVAJ, terminal V/A/J=0,
+  SFC hull containment, exact dynamic limits, and strict KNOWN_FREE swept
+  certificate remain required.
+- **Safety impact:** quality/continuity conditioning only. The altitude-held
+  seed is selected only when its analytic velocity, acceleration and jerk
+  extrema satisfy the existing backup envelope. If it does not, the existing
+  free-end seed is retained; no gate, map policy, or waypoint acceptance
+  threshold is relaxed.
+- **Reason/evidence:** the authoritative 3 m/s multiwaypoint trace showed
+  repeated certified backup commits with terminal altitude roughly 1.5--4.1 m
+  while the active route stayed near 3 m, so the vehicle did not enter the
+  next waypoint acceptance region. The change addresses that recovery path
+  without replacing the braking or MINCO architecture.
+- **Evidence required:** focused braking/config tests, authoritative build,
+  then repeated 3/4/5 m/s multiwaypoint SITL and representative recorded-data
+  shadow planning. Inspect terminal altitude residual, speed recovery,
+  waypoint coverage, clearance, exact V/A/J certificate outcomes, backup
+  refinement fallback, and latency.
+- **Removal condition:** revert or retune only from a distribution showing
+  worse clearance, dynamic margin, numerical stability, waypoint coverage,
+  altitude recovery, or latency. Never compensate for a failed altitude-held
+  seed by relaxing a hard gate.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.

@@ -87,9 +87,44 @@ inline geometry_utils::Piece minimumSnapStopPiece(
   return geometry_utils::Piece(duration_s, coefficients);
 }
 
+inline geometry_utils::Piece minimumSnapStopPieceWithTerminalAltitude(
+    const navigation_math::StatePVAJ &initial_state, double duration_s,
+    double terminal_altitude_m) {
+  const auto free_end_piece = minimumSnapStopPiece(initial_state, duration_s);
+  if (!std::isfinite(duration_s) || duration_s <= 0.0 ||
+      !std::isfinite(terminal_altitude_m) || !initial_state.allFinite()) {
+    return free_end_piece;
+  }
+
+  const double free_end_altitude_m = free_end_piece.getPos(duration_s).z();
+  const double altitude_delta_m = terminal_altitude_m - free_end_altitude_m;
+  const double t2 = duration_s * duration_s;
+  const double t4 = t2 * t2;
+  const double t5 = t4 * duration_s;
+  const double t6 = t5 * duration_s;
+  const double t7 = t6 * duration_s;
+  if (!std::isfinite(altitude_delta_m) || !std::isfinite(t4) ||
+      !std::isfinite(t5) || !std::isfinite(t6) || !std::isfinite(t7) ||
+      t4 <= 0.0 || t5 <= 0.0 || t6 <= 0.0 || t7 <= 0.0) {
+    return free_end_piece;
+  }
+
+  // Add a C^3 smoothstep to the free-end minimum-snap polynomial. The
+  // smoothstep and its first three derivatives vanish at both endpoints, so
+  // the measured PVAJ handover and terminal V/A/J=0 remain exact while only
+  // the terminal altitude is changed. Piece stores descending powers
+  // [t^7 ... t 1].
+  auto coefficients = free_end_piece.getCoeffMat();
+  coefficients(2, 0) += -20.0 * altitude_delta_m / t7;
+  coefficients(2, 1) += 70.0 * altitude_delta_m / t6;
+  coefficients(2, 2) += -84.0 * altitude_delta_m / t5;
+  coefficients(2, 3) += 35.0 * altitude_delta_m / t4;
+  return geometry_utils::Piece(duration_s, coefficients);
+}
+
 inline Eigen::Matrix<double, 3, 8> minimumSnapStopBezierControlPoints(
-    const navigation_math::StatePVAJ &initial_state, double duration_s) {
-  const auto piece = minimumSnapStopPiece(initial_state, duration_s);
+    const geometry_utils::Piece &piece) {
+  const double duration_s = piece.getDuration();
   const auto &coefficients = piece.getCoeffMat();
   Eigen::Matrix<double, 3, 8> power;
   double duration_power = 1.0;
@@ -117,6 +152,12 @@ inline Eigen::Matrix<double, 3, 8> minimumSnapStopBezierControlPoints(
     }
   }
   return control_points;
+}
+
+inline Eigen::Matrix<double, 3, 8> minimumSnapStopBezierControlPoints(
+    const navigation_math::StatePVAJ &initial_state, double duration_s) {
+  return minimumSnapStopBezierControlPoints(
+      minimumSnapStopPiece(initial_state, duration_s));
 }
 
 inline BackupBrakingSeed makeBackupBrakingSeed(

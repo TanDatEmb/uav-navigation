@@ -86,6 +86,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.optimization_dynamic_reserve_ratio, 0.98);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
+  EXPECT_TRUE(planner.preserve_backup_altitude);
   EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
@@ -301,6 +302,33 @@ TEST(PlannerBackupBraking, RejectsNonFiniteState) {
   initial(0, 1) = std::numeric_limits<double>::quiet_NaN();
   EXPECT_FALSE(navigation_planning_backend::makeBackupBrakingSeed(
       0.0, initial, 3.0, 2.0, 8.0, 0.05, 0.05).feasible);
+}
+
+TEST(PlannerBackupBraking, PreservesTerminalAltitudeWithoutBreakingPVAJStop) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) << 1.0, -2.0, 2.4;
+  initial.col(1) << 1.0, 0.0, 0.0;
+  initial.col(2) << 0.1, -0.05, 0.0;
+  initial.col(3) << 0.02, 0.01, 0.0;
+
+  constexpr double duration_s = 2.0;
+  constexpr double target_altitude_m = 3.0;
+  const auto piece =
+      navigation_planning_backend::minimumSnapStopPieceWithTerminalAltitude(
+          initial, duration_s, target_altitude_m);
+  const auto control_points =
+      navigation_planning_backend::minimumSnapStopBezierControlPoints(piece);
+
+  EXPECT_TRUE(piece.getState(0.0).isApprox(initial, 1.0e-9));
+  EXPECT_NEAR(piece.getPos(duration_s).z(), target_altitude_m, 1.0e-9);
+  EXPECT_NEAR(piece.getVel(duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getAcc(duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getJer(duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_TRUE(control_points.col(0).isApprox(initial.col(0), 1.0e-9));
+  EXPECT_NEAR(control_points.col(7).z(), target_altitude_m, 1.0e-9);
+  EXPECT_TRUE(piece.getMaxVelRate() < 3.0);
+  EXPECT_TRUE(piece.getMaxAccRate() < 2.0);
+  EXPECT_TRUE(piece.getMaxJerRate() < 8.0);
 }
 
 TEST(PlannerBackupBraking, PreservesMeasuredOverspeedWithoutIncreasingIt) {

@@ -38,6 +38,7 @@ namespace navigation_planning_backend {
         bool print_log{false};
         bool goal_vel_en{false};
         bool goal_yaw_en{false};
+        bool preserve_backup_altitude{true};
         navigation_world_model::UnknownPolicy unknown_space_policy{
             navigation_world_model::UnknownPolicy::kRequireKnownFree};
 
@@ -112,6 +113,8 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/visualization_en", visualization_en, false);
             loader.LoadParam("planner/goal_vel_en", goal_vel_en, false);
             loader.LoadParam("planner/goal_yaw_en", goal_yaw_en, false);
+            loader.LoadParam("planner/preserve_backup_altitude",
+                             preserve_backup_altitude, true);
             loader.LoadParam("planner/use_fov_cut", use_fov_cut, false);
             if (mission_limits.has_value()) {
                 unknown_space_policy =
