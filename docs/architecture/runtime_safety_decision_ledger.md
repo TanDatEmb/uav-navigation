@@ -6556,3 +6556,38 @@ release profiles must not use the former allowance.
   `install/setup.bash`; run `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
   PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, then run the declared 8 m/s
   External Mode map matrix.
+
+### 2026-08-28 - Align backup SFC certification with the braking hull
+
+- **Owner:** planning backend backup-generation and corridor-certification
+  maintainers. **Scope:** retain the visibility SFC for the exploratory EXP
+  prefix, but when its convex hull check rejects a feasible minimum-snap stop,
+  build a bounded candidate SFC from the selected `switch_state` to the
+  strict-limit braking endpoint. The selected candidate must still pass the
+  complete Bezier-hull containment check, KNOWN_FREE swept validation, flatness,
+  and final atomic command authorization.
+- **Safety impact:** positive and fail-closed. This removes a geometry mismatch
+  between an SFC generated for `command_start -> visibility seed_point` and a
+  braking suffix generated for `switch_state -> braking endpoint`. It does not
+  permit UNKNOWN, occupied, out-of-map, clearance, dynamic-limit, freshness,
+  or deadline violations. If the candidate-aligned SFC or any later certificate
+  fails, the existing backup rejection and safety-handover path remain active.
+- **Derivation and cost:** the audit and SITL artifacts showed EXP success
+  followed by rejection before or during backup at both a 5 m/s multi-waypoint
+  mission and the two-waypoint baseline. The change adds a bounded corridor
+  construction only when the original hull check fails; it may consume extra
+  CIRI time on that recovery path and therefore remains subject to the same
+  absolute solve deadline.
+- **Evidence:** focused planner/runtime tests, Release rebuild, and repeated
+  recorded-data shadow planning plus the 3/4/5 m/s three-pillar multi-waypoint
+  SITL matrix. Keep this entry open until artifacts show strict backup READY
+  candidates, complete waypoint acceptance, mission completion, command-anchor
+  continuity, clearance, and latency distributions.
+- **Removal condition:** replace only with a stronger candidate-hull
+  certificate that preserves the same KNOWN_FREE and strict dynamic gates; do
+  not revert to certifying a braking suffix solely against the visibility SFC.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planner/runtime CTest and `make test`, then run
+  repeated `SPEED_CAP_MPS=3`, `4`, and `5` with
+  `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check` and
+  the representative dataset shadow-planning replay.

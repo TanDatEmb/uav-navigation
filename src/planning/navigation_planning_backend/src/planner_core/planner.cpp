@@ -1730,19 +1730,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return FAILED;
         }
 
-        back_traj_info.setSFC(temp_poly);
-
-        {
-            TimeConsuming t_viz("tviz", false);
-            planner_context_->vizBackupSfc(temp_poly);
-            time_consuming_[VISUALIZATION] += t_viz.stop();
-        }
+        // Keep the visibility corridor separate from the optimizer corridor.
+        // The former certifies the EXP prefix up to the first invisible sample;
+        // the latter must certify the actual braking hull selected below.
+        const Polytope visibility_poly = temp_poly;
 
 //        Vec3f out_p = temp_point;
 //        double t_R = 0.0;
         double eval_t = eval_ps.back().first + cfg_.sample_traj_dt_s;
         last_pos = eval_ps.back().second;
-        while (temp_poly.PointIsInside(eval_ps.back().second) && eval_t < total_dur) {
+        while (visibility_poly.PointIsInside(eval_ps.back().second) && eval_t < total_dur) {
             Vec3f cur_pos = ref_exp_traj.getPos(eval_t);
 
             if ((cur_pos - last_pos).norm() < cfg_.resolution * 0.8) {
@@ -1816,6 +1813,39 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return validation.valid;
         };
         const double initial_switch_guess = heu_ts;
+        const auto build_candidate_backup_sfc =
+            [this, &solve_deadline](const StatePVAJ &state,
+                                    const BackupBrakingSeed &seed,
+                                    Polytope &candidate_poly) {
+            if (!seed.feasible || !state.allFinite() || !seed.endpoint.allFinite()) {
+                return false;
+            }
+            Line braking_line{state.col(0), seed.endpoint};
+            if (!braking_line.first.allFinite() || !braking_line.second.allFinite() ||
+                (braking_line.second - braking_line.first).norm() <= cfg_.resolution) {
+                return false;
+            }
+            if (!cg_ptr_->GeneratePolytopeFromLine(
+                    braking_line, candidate_poly, &solve_deadline)) {
+                return false;
+            }
+            Eigen::Vector3d inner;
+            if (!geometry_utils::findInterior(candidate_poly.GetPlanes(), inner)) {
+                return false;
+            }
+            if (cfg_.use_fov_cut &&
+                !fov_checker_->cutPolyByFov(
+                    solve_state_.p, solve_state_.q, seed.endpoint, candidate_poly)) {
+                return false;
+            }
+            if (cfg_.sensing_horizon_m > 0 &&
+                !fov_checker_->cutPolyBySensingHorizon(
+                    solve_state_.p, seed.endpoint, cfg_.sensing_horizon_m,
+                    candidate_poly)) {
+                return false;
+            }
+            return true;
+        };
         // The latest visibility-derived switch is desirable for progress, but
         // its braking endpoint may lie outside the generated safety corridor.
         // Search backward on the EXP trajectory until the complete Bezier
@@ -1823,9 +1853,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // This retains the latest certifiable switch instead of either
         // disabling backup or imposing an unrelated fixed replan horizon.
         for (double candidate_ts = heu_ts;;) {
+            Polytope candidate_sfc = visibility_poly;
+            bool candidate_aligned_sfc = false;
             switch_state = ref_exp_traj.posTraj().getState(candidate_ts);
             braking_seed = makeBackupBrakingSeed(
-                    candidate_ts, switch_state,
+                candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
                     0.0);
@@ -1833,18 +1865,49 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     braking_seed.duration_s > cfg_.sample_traj_dt_s;
             if (braking_seed_inside_sfc) {
                 const auto braking_control_points = minimumSnapStopBezierControlPoints(
-                        switch_state, braking_seed.duration_s);
+                    switch_state, braking_seed.duration_s);
                 for (int i = 0;
                      braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
                     braking_seed_inside_sfc =
-                            temp_poly.PointIsInside(braking_control_points.col(i));
+                            candidate_sfc.PointIsInside(braking_control_points.col(i));
+                }
+            }
+            // The visibility SFC is built from the command origin to the EXP
+            // visibility seed.  It is not the authority for a braking curve
+            // whose endpoint and curvature are selected later.  If that
+            // legacy corridor rejects the complete hull, rebuild one from the
+            // actual switch state to the certified braking endpoint.  The
+            // candidate still has to pass the strict KNOWN_FREE swept check
+            // and the final full-bundle authorization below.
+            if (!braking_seed_inside_sfc) {
+                if (build_candidate_backup_sfc(
+                        switch_state, braking_seed, candidate_sfc)) {
+                    const auto braking_control_points =
+                        minimumSnapStopBezierControlPoints(
+                            switch_state, braking_seed.duration_s);
+                    braking_seed_inside_sfc = true;
+                    for (int i = 0;
+                         braking_seed_inside_sfc && i < braking_control_points.cols(); ++i) {
+                        braking_seed_inside_sfc =
+                            candidate_sfc.PointIsInside(braking_control_points.col(i));
+                    }
+                    candidate_aligned_sfc = braking_seed_inside_sfc;
                 }
             }
             if (braking_seed_inside_sfc) {
                 braking_seed_inside_sfc = minimum_snap_backup_is_known_free(
-                        switch_state, candidate_ts, braking_seed.duration_s);
+                    switch_state, candidate_ts, braking_seed.duration_s);
             }
             if (braking_seed_inside_sfc) {
+                temp_poly = candidate_sfc;
+                if (candidate_aligned_sfc) {
+                    planner_context_->info(
+                        " -- [planner] selected braking-hull-aligned backup SFC "
+                        "switch_t={} duration={} endpoint=({}, {}, {})",
+                        candidate_ts, braking_seed.duration_s,
+                        braking_seed.endpoint.x(), braking_seed.endpoint.y(),
+                        braking_seed.endpoint.z());
+                }
                 heu_ts = candidate_ts;
                 break;
             }
