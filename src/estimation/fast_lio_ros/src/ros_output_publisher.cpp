@@ -98,8 +98,10 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
   if (cloud.header.frame_id != parameters_.lidar_frame ||
       cloud.header.stamp != stamp || cloud.height == 0U ||
       cloud.width == 0U || cloud.point_step < sizeof(float) * 3U ||
-      cloud.row_step < cloud.point_step * cloud.width ||
-      cloud.data.size() < cloud.row_step * cloud.height ||
+      static_cast<std::size_t>(cloud.row_step) <
+          static_cast<std::size_t>(cloud.point_step) * cloud.width ||
+      cloud.data.size() <
+          static_cast<std::size_t>(cloud.row_step) * cloud.height ||
       cloud.width * static_cast<std::size_t>(cloud.height) > 262144U ||
       !base_link_converter_) {
     return makeCloud(endpoints, stamp);
