@@ -6718,6 +6718,35 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Limit pass-through terminal velocity change by local time
+
+- **Owner:** Navigation planning maintainers. **Scope:** pass-through terminal
+  velocity now blends the outgoing tangent toward the measured incoming
+  velocity when the current guide duration cannot support the full vector
+  change under a conservative jerk/acceleration S-curve bound. The active
+  waypoint remains the geometric endpoint and the outgoing direction remains
+  toward the next mission target.
+- **Safety impact:** continuity conditioning only. The bound does not alter
+  the configured V/A/J limits or authorize a trajectory; MINCO's exact
+  continuous V/A/J, corridor, flatness, world, cancellation and transactional
+  commit gates remain authoritative. Invalid transition timing falls back to
+  the existing bounded outgoing-velocity rule.
+- **Reason/evidence:** orthogonal 10 m pass-through legs at `v=5 m/s`,
+  `a=2 m/s^2`, `jerk=4 m/s^3` cannot rotate an incoming 5 m/s tangent into a
+  full-speed orthogonal tangent within the local route. The old terminal
+  condition repeatedly drove EXP hard-gate rejection and backup fallback.
+- **Evidence required:** focused transition/config tests, authoritative build,
+  and repeated 3/4/5 m/s multiwaypoint SITL plus recorded-data replay. Inspect
+  velocity residual at waypoint handover, speed recovery, altitude, waypoint
+  coverage, clearance, exact certificates, and latency.
+- **Removal condition:** revert only if repeated evidence shows worse progress,
+  clearance, smoothness, or processing tails than the prior checkpoint. Never
+  restore an infeasible tangent by relaxing a hard gate.
+- **Verification:** `source install/setup.bash && ctest --test-dir
+  build/navigation_planning_backend --output-on-failure`; then repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.
+
 ### 2026-08-28 - Keep nominal dynamic search inside the physical envelope
 
 - **Owner:** Navigation planning maintainers. **Scope:** nominal EXP soft

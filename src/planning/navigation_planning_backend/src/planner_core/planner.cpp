@@ -1446,8 +1446,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const auto terminal_velocity = passThroughTerminalVelocity(
                     pos_fina_state.col(0).cast<double>(),
                     *pass_through_next_target_,
+                    pos_init_state.col(1).cast<double>(),
+                    guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                         : guide_stamp.back(),
                     cfg_.exp_traj_cfg.max_vel,
-                    cfg_.exp_traj_cfg.max_acc);
+                    cfg_.exp_traj_cfg.max_acc,
+                    cfg_.exp_traj_cfg.max_jerk);
             if (terminal_velocity.has_value()) {
                 pos_fina_state.col(1) = *terminal_velocity;
             }

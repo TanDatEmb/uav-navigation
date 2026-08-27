@@ -116,6 +116,24 @@ TEST(PlannerPassThrough, UsesBoundedOutgoingTerminalVelocity) {
       Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 5.0, 2.0));
 }
 
+TEST(PlannerPassThrough, LimitsOrthogonalVelocityChangeByTransitionTime) {
+  const Eigen::Vector3d incoming_velocity{5.0, 0.0, 0.0};
+  const auto terminal_velocity =
+      navigation_planning_backend::passThroughTerminalVelocity(
+          Eigen::Vector3d::Zero(), Eigen::Vector3d{0.0, 10.0, 0.0},
+          incoming_velocity, 2.0, 5.0, 2.0, 4.0);
+  ASSERT_TRUE(terminal_velocity.has_value());
+
+  const double expected_delta =
+      navigation_planning_backend::passThroughMaximumVelocityChange(
+          2.0, 2.0, 4.0);
+  EXPECT_NEAR((*terminal_velocity - incoming_velocity).norm(), expected_delta,
+              1.0e-12);
+  EXPECT_GT(terminal_velocity->y(), 0.0);
+  EXPECT_GT(terminal_velocity->x(), 0.0);
+  EXPECT_LE(terminal_velocity->norm(), 5.0);
+}
+
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
