@@ -385,7 +385,7 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
-TEST(MissionController, PassThroughCornerWaitsForOutgoingVelocityAlignment) {
+TEST(MissionController, PassThroughCornerAdvancesOnMeasuredAcceptance) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -426,19 +426,13 @@ mission:
   const auto incoming_velocity = controller.update(
       0.4, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d{1.0, 0.0, 0.0});
   EXPECT_EQ(incoming_velocity.type,
-            px4_navigation_external_mode::MissionControllerEvent::Type::None);
-  EXPECT_FALSE(incoming_velocity.waypoint_accepted);
-  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
-
-  const auto outgoing_velocity = controller.update(
-      0.5, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d{0.0, 1.0, 0.0});
-  EXPECT_EQ(outgoing_velocity.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
-  EXPECT_TRUE(outgoing_velocity.waypoint_accepted);
-  EXPECT_EQ(outgoing_velocity.accepted_waypoint_index, 1U);
+  EXPECT_TRUE(incoming_velocity.waypoint_accepted);
+  EXPECT_EQ(incoming_velocity.accepted_waypoint_index, 1U);
+  EXPECT_EQ(incoming_velocity.waypoint_index, 2U);
 }
 
-TEST(MissionController, NativeTerminalHoldWaitsForCornerToSettle) {
+TEST(MissionController, NativeTerminalHoldCanAdvanceCornerOnMeasuredAcceptance) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
@@ -476,16 +470,9 @@ mission:
   const auto moving = controller.update(0.2, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
                                         Eigen::Vector3d{1.0, 0.0, 0.0});
   EXPECT_EQ(moving.type,
-            px4_navigation_external_mode::MissionControllerEvent::Type::None);
-  EXPECT_FALSE(moving.waypoint_accepted);
-  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
-
-  const auto settled = controller.update(0.3, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
-                                         Eigen::Vector3d::Zero());
-  EXPECT_EQ(settled.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
-  expectWaypointAccepted(settled, 1U);
-  EXPECT_EQ(settled.waypoint_index, 2U);
+  expectWaypointAccepted(moving, 1U);
+  EXPECT_EQ(moving.waypoint_index, 2U);
 }
 
 TEST(MissionController, TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius) {

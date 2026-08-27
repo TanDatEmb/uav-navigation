@@ -7140,3 +7140,40 @@ release profiles must not use the former allowance.
   then repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
   make external-mode-check` and the declared speed ladder. Do not convert a
   single successful run into acceptance.
+
+### 2026-08-28 - Let the next hot-replan own pass-through corner rotation
+
+- **Owner:** Mission controller and planning maintainers.
+- **Scope:** For a pass-through waypoint whose incoming and outgoing route
+  tangents form a genuine corner, the current MINCO solve keeps an incoming
+  tangent terminal velocity instead of forcing the outgoing tangent at the
+  same endpoint. The mission controller advances on finite measured velocity
+  plus measured position acceptance; the newly published next goal owns the
+  continuous turn through the existing nominal hot-replan path. Stop waypoints
+  retain the measured low-speed hold contract.
+- **Safety impact:** `SAFETY_INVARIANT` preservation, not a collision or
+  UNKNOWN-policy relaxation. Waypoint acceptance is still position-measured,
+  no future waypoint is accepted from look-ahead alone, and every replacement
+  trajectory still requires dynamic, corridor, backup, and immutable-world
+  certification. The false-reject consequence is a temporary stop/replan;
+  the false-accept risk is bounded by the measured acceptance-radius check and
+  exact goal-identity handoff.
+- **Derivation and cost:** The existing corner classification is retained in
+  the planner with the current tangent comparison; no new hard threshold is
+  introduced. Removing the outgoing terminal vector from the incoming solve
+  prevents a single polynomial from simultaneously reaching a sharp corner
+  and rotating its velocity at that same boundary. The next solve pays the
+  existing hot-replan cost; no extra planning pass is added.
+- **Evidence:** Focused mission tests (31/31), planner configuration tests
+  (25/25), and trajectory tests (55/55) pass. The subsequent structured SITL
+  must check whether corner acceptance and speed continuity improve without
+  reducing clearance; repeated SITL, dataset shadow planning, sanitizer, and
+  hardware evidence remain open.
+- **Removal/review condition:** Revert or redesign if measured acceptance
+  skips a waypoint, command-anchor or velocity continuity breaks, clearance or
+  altitude worsens, or the hot-replan latency tail exceeds its budget. Do not
+  reintroduce outgoing endpoint velocity merely to increase mission PASS rate.
+- **Verification:** `make build`; sourced focused mission/planner tests; then
+  repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check` with waypoint coverage, speed, altitude, clearance,
+  command generations, and p50/p95/p99 planning latency.

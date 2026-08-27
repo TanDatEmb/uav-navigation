@@ -1404,16 +1404,39 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     terminal_velocity_cap,
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk);
-            if (terminal_velocity.has_value()) {
-                Eigen::Vector3d guide_tangent = Eigen::Vector3d::Zero();
-                for (std::size_t index = guide_path.size(); index > 1U; --index) {
-                    const Eigen::Vector3d delta =
-                        (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
-                    if (delta.norm() > 1.0e-6) {
-                        guide_tangent = delta.normalized();
-                        break;
-                    }
+            Eigen::Vector3d guide_tangent = Eigen::Vector3d::Zero();
+            for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                const Eigen::Vector3d delta =
+                    (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
+                if (delta.norm() > 1.0e-6) {
+                    guide_tangent = delta.normalized();
+                    break;
                 }
+            }
+            const Eigen::Vector3d outgoing_delta =
+                    *pass_through_next_target_ - pos_fina_state.col(0).cast<double>();
+            const bool genuine_corner = guide_tangent.norm() > 0.5 &&
+                    outgoing_delta.allFinite() && outgoing_delta.norm() > 1.0e-6 &&
+                    guide_tangent.dot(outgoing_delta.normalized()) <= 0.7;
+            if (genuine_corner && guide_path.size() >= 2U) {
+                // A corner is a hard route boundary, not a request to rotate
+                // the velocity vector at the endpoint of the incoming MINCO
+                // solve. Keep the incoming tangent at the waypoint and let
+                // the next measured handoff solve the outgoing leg.
+                const auto incoming_corner_velocity = frontierContinuationVelocity(
+                    pos_fina_state.col(0).cast<double>(),
+                    guide_path[guide_path.size() - 2U].cast<double>(),
+                    pos_init_state.col(1).cast<double>(),
+                    terminal_velocity_cap,
+                    terminal_velocity_cap,
+                    cfg_.exp_traj_cfg.max_acc,
+                    cfg_.exp_traj_cfg.max_jerk,
+                    guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                         : guide_stamp.back());
+                if (incoming_corner_velocity.has_value()) {
+                    pos_fina_state.col(1) = *incoming_corner_velocity;
+                }
+            } else if (terminal_velocity.has_value()) {
                 const double incoming_speed_along_path =
                     guide_tangent.dot(pos_init_state.col(1).cast<double>());
                 const double path_terminal_speed_cap = terminalSpeedCapForPath(

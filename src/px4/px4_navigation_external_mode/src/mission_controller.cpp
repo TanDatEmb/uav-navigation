@@ -313,30 +313,13 @@ MissionControllerEvent MissionController::update(
            velocity->norm() <= mission_.control.acceptance_speed_mps;
   };
   const auto passThroughCornerReady = [&]() {
-    // A pass-through waypoint may be accepted at flight speed on a straight
-    // leg, but an orthogonal handover must not publish the next request while
-    // the vehicle is still travelling along the incoming leg. Otherwise the
-    // runtime has to fall back to a braking stop using the old tangent and
-    // the vehicle can travel several metres beyond the next waypoint.
+    // Position acceptance is still measured and velocity must be finite. The
+    // planner owns the incoming leg up to this boundary; the next hot-replan
+    // owns the outgoing turn. Requiring outgoing velocity alignment here
+    // couples mission progress to one MINCO endpoint and can force a braking
+    // stop exactly at a sharp corner.
     if (!velocity.has_value() || !velocity->allFinite()) return false;
-    if (active_waypoint_index_ == 0U ||
-        active_waypoint_index_ + 1U >= mission_.waypoints.size()) {
-      return true;
-    }
-    const auto& previous = mission_.waypoints[active_waypoint_index_ - 1U];
-    const auto& next = mission_.waypoints[active_waypoint_index_ + 1U];
-    const auto incoming = waypoint.position_enu - previous.position_enu;
-    const auto outgoing = next.position_enu - waypoint.position_enu;
-    if (!incoming.allFinite() || !outgoing.allFinite() || incoming.norm() <= 1e-6 ||
-        outgoing.norm() <= 1e-6) {
-      return true;
-    }
-    // Only gate a genuine corner. A value above 0.7 is approximately a
-    // turn below 45 degrees and should retain the normal fly-through rule.
-    if (incoming.normalized().dot(outgoing.normalized()) > 0.7) return true;
-    const double speed = velocity->norm();
-    if (!std::isfinite(speed) || speed <= mission_.control.acceptance_speed_mps) return true;
-    return velocity->normalized().dot(outgoing.normalized()) >= 0.25;
+    return true;
   };
 
   if (state_ == MissionControllerState::ExecutingWaypoint) {
