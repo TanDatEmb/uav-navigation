@@ -2436,42 +2436,68 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return false;
         }
 
+        // A* returns a grid route whose one-cell turns are safe but needlessly
+        // inject high-frequency curvature into the MINCO guide.  Collapse only
+        // shortcuts that pass the same continuous inflated-map oracle used by
+        // the final certificate.  The bounded look-ahead keeps this
+        // optimization linear in route length and avoids a quadratic raycast
+        // tail on long local paths.
+        const auto continuous_edge_is_safe = [this](
+                const Vec3f& start, const Vec3f& end) {
+            return map_ptr_->isSegmentTraversable(
+                start, end, navigation_world_model::GridLayer::kInflated,
+                unknownPolicy());
+        };
+        const std::size_t original_path_size = path.size();
+        constexpr std::size_t kShortcutLookAheadPoints = 24U;
+        vec_Vec3f simplified_path;
+        simplified_path.reserve(path.size());
+        simplified_path.push_back(path.front());
+        std::size_t anchor = 0U;
+        while (anchor + 1U < path.size()) {
+            const std::size_t last_candidate = std::min(
+                path.size() - 1U, anchor + kShortcutLookAheadPoints);
+            std::size_t selected = anchor + 1U;
+            for (std::size_t candidate = last_candidate;
+                 candidate > anchor + 1U; --candidate) {
+                if (continuous_edge_is_safe(path[anchor], path[candidate])) {
+                    selected = candidate;
+                    break;
+                }
+            }
+            simplified_path.push_back(path[selected]);
+            anchor = selected;
+        }
+        path = std::move(simplified_path);
+        if (cfg_.print_log && path.size() < original_path_size) {
+            planner_context_->info(
+                " -- [Astar] continuous shortcut reduced guide points {} -> {}",
+                original_path_size, path.size());
+        }
+
+        // A REACH_GOAL result may already contain the goal, but the explicit
+        // endpoint is still needed when the search terminates at a nearby
+        // graph representative.  Add it before the single final validation
+        // pass; previously this edge was appended after validation.
+        if (ret_code == REACH_GOAL && !trimmed_to_corridor_map &&
+            inside_corridor_map(goal) &&
+            (path.back() - goal).norm() > 1.0e-6) {
+            path.push_back(goal);
+        }
+        path.insert(path.begin(), start_pt);
+
         // A* and corridor generation must consume the same continuous
-        // traversability contract.  A grid-connected edge that fails this
+        // traversability contract. A grid-connected edge that fails this
         // check is an invariant failure, not a safe executable prefix: trim
         // would hide a world-revision, quantization, or oracle mismatch and
         // can create repeated replanning churn.
         for (std::size_t index = 1; index < path.size(); ++index) {
-            if (map_ptr_->isSegmentTraversable(
-                    path[index - 1], path[index],
-                    navigation_world_model::GridLayer::kInflated,
-                    unknownPolicy())) {
-                continue;
-            }
+            if (continuous_edge_is_safe(path[index - 1], path[index])) continue;
             planner_context_->warn(
                     " -- [planner] A* path contains a blocked continuous edge "
                     "index={} from {} to {}; invariant failure",
                     index, path[index - 1].transpose(), path[index].transpose());
             return false;
-        }
-
-        path.insert(path.begin(), start_pt);
-        for (std::size_t index = 1; index < path.size(); ++index) {
-            if (map_ptr_->isSegmentTraversable(
-                    path[index - 1], path[index],
-                    navigation_world_model::GridLayer::kInflated,
-                    unknownPolicy())) {
-                continue;
-            }
-            planner_context_->warn(
-                    " -- [planner] A* escape prefix contains a blocked continuous edge "
-                    "from {} to {}; force return",
-                    path[index - 1].transpose(), path[index].transpose());
-            return false;
-        }
-        if (ret_code == REACH_GOAL && !trimmed_to_corridor_map &&
-            inside_corridor_map(goal)) {
-            path.push_back(goal);
         }
         return true;
     }

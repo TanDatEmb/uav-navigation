@@ -6636,3 +6636,25 @@ release profiles must not use the former allowance.
   expose equivalent blocker provenance and the rejection-stage contract no
   longer needs the diagnostic.
 - **Verification:** `make build`; `make test`.
+
+### 2026-08-28 - Shortcut A* route geometry before MINCO
+
+- **Owner:** Navigation planning maintainers.
+- **Scope:** A* grid routes are reduced with a bounded continuous
+  inflated-map shortcut pass before guide-time allocation and corridor/MINCO
+  generation. The explicit REACH_GOAL endpoint is added before the final
+  continuous edge validation.
+- **Safety impact:** Behavior change intended to remove grid-induced zig-zag
+  curvature and latency. Every shortcut and every retained edge uses the
+  existing mission UNKNOWN policy and inflated-layer traversability oracle;
+  no collision, UNKNOWN, OUT_OF_MAP, dynamic, or deadline gate is relaxed.
+- **Evidence:** The 3 m/s multiwaypoint baseline reached waypoint 1 then
+  produced repeated dynamic/nominal failures while guide paths were at the
+  30 m geometric horizon. Focused source review found the goal edge was also
+  appended after the prior validation pass.
+- **Removal condition:** Remove only if repeated representative SITL and
+  recorded-data distributions show no reduction in route smoothness/latency
+  or reveal a regression in obstacle clearance.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` with route/clearance evidence.
