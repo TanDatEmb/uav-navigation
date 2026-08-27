@@ -17,18 +17,24 @@ inline bool canHotRetargetAtWaypointTransition(
          !planner_failure_latched && !safety_suffix_active;
 }
 
-// A pass-through goal transition may arrive while the previous command is
-// already at its terminal boundary. Hot-replanning from that historical
-// command would ask the optimizer to stitch through an endpoint that has no
-// remaining temporal support. Rebase on the newest measured PVA state when
-// less than one planning interval remains; the interval is supplied by the
-// runtime timer rather than introduced as a second safety threshold.
+// A pass-through goal transition changes the route boundary. Rebase on the
+// newest measured PVA state rather than hot-stitching through the previous
+// endpoint. The remaining-time rule also covers an expired command when the
+// identity is not available; its interval is supplied by the runtime timer
+// rather than introduced as a second safety threshold.
 inline bool hotRetargetNeedsMeasuredStatePlan(
     bool hot_goal_transition, bool command_available,
+    bool goal_identity_changed,
     double command_elapsed_s, double command_duration_s,
     double planning_interval_s) noexcept {
-  if (!hot_goal_transition || !command_available ||
-      !std::isfinite(command_elapsed_s) || !std::isfinite(command_duration_s) ||
+  if (!hot_goal_transition || !command_available) {
+    return false;
+  }
+  // A goal transition changes the route boundary. The previous command is
+  // still allowed to bridge the publication race, but it is not a valid
+  // geometric history for the new waypoint, even when it has time remaining.
+  if (goal_identity_changed) return true;
+  if (!std::isfinite(command_elapsed_s) || !std::isfinite(command_duration_s) ||
       !std::isfinite(planning_interval_s) || planning_interval_s <= 0.0 ||
       command_duration_s <= 0.0) {
     return false;

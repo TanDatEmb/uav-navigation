@@ -6752,6 +6752,36 @@ release profiles must not use the former allowance.
   tests; repeated `MAP_PROFILE=long_three_pillars_multiwaypoint
   SPEED_CAP_MPS=3 make external-mode-check`.
 
+### 2026-08-28 - Make every hot waypoint retarget measured-state based
+
+- **Owner:** Navigation runtime and planning maintainers.
+- **Scope:** a hot transition between distinct waypoint request identities
+  now enters the existing measured-state `PlanFromRest` path even if the old
+  command still has nominal time remaining. The old bundle may bridge the
+  publication race, but it is not used as geometric history for the new
+  route boundary.
+- **Safety impact:** removes an endpoint-reuse path that could keep the new
+  waypoint attached to an old terminal polynomial. The existing propagated
+  PVA freshness, atomic world/goal/lease, command-anchor, dynamic, corridor,
+  and strict `KNOWN_FREE` checks remain unchanged. No unknown-space allowance,
+  acceptance-radius change, or command validity extension is introduced.
+- **Reason/evidence:** the latest 3 m/s run showed waypoint 1 accepted, then
+  waypoint 2 was published while the backend still returned `ReplanOnce` with
+  `committed_end=(20,5,3)` and entered a safety stop. The identity boundary is
+  the correct handoff point for a measured-state solve; the independent map
+  evidence gap remains open.
+- **Evidence required:** FSM identity/remaining-time tests, sourced build and
+  PX4 contract tests, then repeated 3-column SITL checking the transition
+  mode, command gap, P/V/A continuity, waypoint order, strict backup outcome,
+  altitude, clearance, and latency distributions.
+- **Removal/review condition:** replace only after certified piecewise route
+  assembly owns the boundary. Revert if repeated evidence shows a larger
+  command gap, anchor discontinuity, waypoint regression, clearance
+  regression, or worse fail-closed behavior.
+- **Verification:** `make build`; focused runtime FSM and PX4 tests; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check`.
+
 ### 2026-08-28 - Make the active pass-through waypoint the trajectory boundary
 
 - **Owner:** Navigation planning and PX4 mission-controller maintainers.
