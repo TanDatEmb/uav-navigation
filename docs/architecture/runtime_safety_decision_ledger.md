@@ -7177,3 +7177,33 @@ release profiles must not use the former allowance.
   repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
   external-mode-check` with waypoint coverage, speed, altitude, clearance,
   command generations, and p50/p95/p99 planning latency.
+
+### 2026-08-28 - Bound short-corner terminal speed by remaining guide distance
+
+- **Owner:** Planning maintainer.
+- **Scope:** A pass-through corner keeps the incoming tangent, but its terminal
+  speed is additionally bounded by the existing path-length/time feasibility
+  estimate before MINCO initialization. The bound applies only to the active
+  guide endpoint; it does not alter mission acceptance, product velocity,
+  acceleration, jerk, corridor, backup, or immutable-world gates.
+- **Safety impact:** Removes an impossible P/V seed that caused repeated main
+  optimizer rejection and command drain near a sharp waypoint. The fallback is
+  fail-closed: if the resulting candidate is not dynamically and world
+  certified, it is not published. No UNKNOWN, clearance, or acceptance gate is
+  relaxed.
+- **Derivation and cost:** For path length `L`, guide duration `T`, and measured
+  incoming tangent speed `v0`, use the existing conservative cap
+  `clamp(2L/T-v0, 0, vmax)`. The guide scan is linear in the existing path
+  samples and adds no planning pass.
+- **Evidence:** Focused planner configuration test covers the short-boundary
+  cap. Full build and structured SITL are required before treating the corner
+  handoff as stable; repeated runs, dataset shadow planning, sanitizer, and
+  hardware evidence remain open.
+- **Removal/review condition:** Revisit if the cap creates a measurable stop,
+  lowers speed on long feasible legs, causes route skipping, worsens altitude or
+  clearance, or fails to remove repeated `PLANNER_EXP_FAILED` at short corner
+  boundaries.
+- **Verification:** `make build`; sourced planner/mission/trajectory tests;
+  repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check` with waypoint, speed, altitude, clearance, and planner
+  latency evidence.

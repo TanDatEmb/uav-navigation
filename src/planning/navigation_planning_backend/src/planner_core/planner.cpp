@@ -1423,18 +1423,39 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 // the velocity vector at the endpoint of the incoming MINCO
                 // solve. Keep the incoming tangent at the waypoint and let
                 // the next measured handoff solve the outgoing leg.
+                const double guide_duration_s = guide_stamp.empty()
+                    ? std::numeric_limits<double>::quiet_NaN()
+                    : guide_stamp.back();
+                const double corner_speed_cap = std::max(
+                    1.0e-3,
+                    std::min(
+                        terminal_velocity_cap,
+                        terminalSpeedCapForPath(
+                            geometry_utils::computePathLength(guide_path),
+                            guide_duration_s,
+                            guide_tangent.dot(pos_init_state.col(1).cast<double>()),
+                            terminal_velocity_cap)));
                 const auto incoming_corner_velocity = frontierContinuationVelocity(
                     pos_fina_state.col(0).cast<double>(),
                     guide_path[guide_path.size() - 2U].cast<double>(),
                     pos_init_state.col(1).cast<double>(),
-                    terminal_velocity_cap,
+                    corner_speed_cap,
                     terminal_velocity_cap,
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk,
-                    guide_stamp.empty() ? std::numeric_limits<double>::quiet_NaN()
-                                         : guide_stamp.back());
+                    guide_duration_s);
                 if (incoming_corner_velocity.has_value()) {
                     pos_fina_state.col(1) = *incoming_corner_velocity;
+                    // The jerk-limited blend above preserves continuity when
+                    // the guide is long enough. On a short final leg it can
+                    // still exceed the displacement-derived terminal-speed
+                    // cap because the measured initial velocity is fixed.
+                    // Prefer the attainable incoming tangent cap in that
+                    // case; the MINCO and immutable-world certificates remain
+                    // authoritative for the complete command.
+                    if (pos_fina_state.col(1).norm() > corner_speed_cap + 1.0e-6) {
+                        pos_fina_state.col(1) = guide_tangent * corner_speed_cap;
+                    }
                 }
             } else if (terminal_velocity.has_value()) {
                 const double incoming_speed_along_path =

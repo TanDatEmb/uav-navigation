@@ -185,6 +185,18 @@ TEST(PlannerPassThrough, FrontierRejectsDegenerateGuideTail) {
       Eigen::Vector3d{3.0, 0.0, 0.0}, 3.0, 5.0, 2.0, 4.0, 0.2));
 }
 
+TEST(PlannerPassThrough, ShortCornerBoundaryRequiresLowerIncomingTerminalSpeed) {
+  const Eigen::Vector3d incoming{0.0, -2.7, 0.0};
+  const Eigen::Vector3d tangent{0.0, -1.0, 0.0};
+  const double path_length = 1.99;
+  const double duration = 1.04;
+  const double terminal_cap =
+      navigation_planning_backend::terminalSpeedCapForPath(
+          path_length, duration, tangent.dot(incoming), 2.94);
+  EXPECT_NEAR(terminal_cap, 1.126923076923077, 1.0e-12);
+  EXPECT_LT(terminal_cap, incoming.norm());
+}
+
 TEST(PlannerPassThrough, TerminalSpeedCapRejectsImpossibleShortBoundary) {
   EXPECT_NEAR(
       navigation_planning_backend::terminalSpeedCapForPath(1.0, 1.0, 2.4, 2.94),
