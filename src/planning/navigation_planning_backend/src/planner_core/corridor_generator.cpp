@@ -54,8 +54,7 @@ namespace navigation_planning_backend {
     CorridorGenerator::SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                             Vec3f &shifted_start_pt,
                                             bool cut_first_poly,
-                                            const AbsoluteDeadline* deadline,
-                                            const int forced_break_index) {
+                                            const AbsoluteDeadline* deadline) {
         // https://whimsical.com/flow-3TASJFwe1dASYYY2xHEmze
         // password: wtr
         //	TimeConsuming t___("SearchPolytopeOnPath");
@@ -64,14 +63,6 @@ namespace navigation_planning_backend {
         solve_stage_.store(1);
         solve_point_count_.store(0);
         if (path.empty()) {
-            solve_stage_.store(0);
-            return false;
-        }
-        if (forced_break_index < -1 ||
-            forced_break_index >= static_cast<int>(path.size())) {
-            planner_context_->warn(
-                " -- [planner] invalid forced corridor break index {} for path size {}",
-                forced_break_index, path.size());
             solve_stage_.store(0);
             return false;
         }
@@ -122,14 +113,6 @@ namespace navigation_planning_backend {
             solve_stage_.store(1);
             second_id = first_id;
             for (int j = first_id + 1; j < path.size(); j++) {
-                // A pass-through waypoint is a mission boundary, not merely
-                // a guide sample. Split the corridor at that exact sample so
-                // the downstream optimizer can retain an intermediate
-                // position node there while still extending the route.
-                if (j == forced_break_index) {
-                    second_id = j;
-                    break;
-                }
                 bool reach_segment = false;
                 const double seed_length = (path[j] - path[first_id]).norm();
                 // Use one deterministic collision oracle throughout A*, main
@@ -223,7 +206,7 @@ namespace navigation_planning_backend {
                     }
                 } else {
                     int temp_id = sfcs.size() - 2;
-                    if (temp_id > 0 && first_id != forced_break_index) {
+                    if (temp_id > 0) {
                         overlap = sfcs[temp_id].CrossWith(temp_poly);
                         interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                         if (interior_depth > sfcs[temp_id + 1].overlap_depth_with_last_one * 0.25) {

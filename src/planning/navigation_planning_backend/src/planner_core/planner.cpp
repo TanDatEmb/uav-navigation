@@ -1400,32 +1400,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         const bool connected_goal = resolved_endpoint.goal_connected;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
-        // A pass-through waypoint may be followed by a look-ahead extension,
-        // but it remains a mission boundary. Preserve its exact guide sample
-        // as a corridor split so MINCO can represent it as an intermediate
-        // position node instead of bowing around it toward the extension.
-        int forced_waypoint_break_index = -1;
-        std::optional<Vec3f> required_waypoint;
-        if (pass_through_next_target_.has_value()) {
-            double nearest_waypoint_distance = std::numeric_limits<double>::infinity();
-            int nearest_waypoint_index = -1;
-            for (int index = 0; index < static_cast<int>(guide_path.size()); ++index) {
-                const double distance =
-                        (guide_path[static_cast<std::size_t>(index)] - gi_.goal_p).norm();
-                if (distance < nearest_waypoint_distance) {
-                    nearest_waypoint_distance = distance;
-                    nearest_waypoint_index = index;
-                }
-            }
-            if (nearest_waypoint_index > 0 &&
-                nearest_waypoint_distance <= 1.0e-4 &&
-                nearest_waypoint_index + 1 < static_cast<int>(guide_path.size())) {
-                forced_waypoint_break_index = nearest_waypoint_index;
-                required_waypoint = gi_.goal_p;
-            }
-        }
-        exp_traj_opt_->setRequiredWaypoint(required_waypoint);
-
         latest_guide_start_ = guide_path.front();
         latest_guide_end_ = guide_path.back();
         latest_guide_min_ = guide_path.front();
@@ -1448,8 +1422,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         shifted_sfc_start_pt_ = Vec3f(9999,9999,9999);
         solve_stage_.store(3);
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(
-            guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut, &solve_deadline,
-            forced_waypoint_break_index);
+            guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut, &solve_deadline);
 
         if (!bool_ret_code) {
             planner_context_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");

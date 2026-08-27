@@ -11,7 +11,6 @@
 #include <atomic>
 #include <cstdint>
 #include <limits>
-#include <optional>
 #include <vector>
 
 #include <traj_opt/config.hpp>
@@ -114,10 +113,6 @@ namespace traj_opt {
             double route_reference_vertical_weight{0.0};
             double route_reference_lateral_deadband_m{0.0};
             double route_reference_vertical_deadband_m{0.0};
-            Vec3f required_waypoint{Vec3f::Constant(
-                    std::numeric_limits<double>::quiet_NaN())};
-            int required_waypoint_guide_index{-1};
-            int required_waypoint_junction_index{-1};
             VecDf magnitudeBounds, penaltyWeights;
 
             PolyhedraV vPolytopes; // the original sfc and intersecting sfc
@@ -218,17 +213,6 @@ namespace traj_opt {
         }
 
         void resetDiagnostics() noexcept { diagnostics_ = ExpOptimizationDiagnostics{}; }
-
-        // A pass-through goal that is present inside an extended guide must
-        // remain an exact intermediate MINCO node. Clear this for stop goals
-        // and for horizons that do not contain the active goal.
-        void setRequiredWaypoint(const std::optional<Vec3f>& waypoint) noexcept {
-            opt_vars.required_waypoint = waypoint.has_value()
-                    ? *waypoint
-                    : Vec3f::Constant(std::numeric_limits<double>::quiet_NaN());
-            opt_vars.required_waypoint_guide_index = -1;
-            opt_vars.required_waypoint_junction_index = -1;
-        }
 
         ExpOptimizationDiagnostics diagnostics() const noexcept { return diagnostics_; }
 

@@ -498,31 +498,6 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     opt_vars.hOverlapPolytopes.resize(sizeCorridor);
     opt_vars.waypoint_attractor_dead_d.resize(sizeCorridor);
     opt_vars.route_reference_points.resize(3, sizeCorridor);
-    const bool has_required_waypoint = opt_vars.required_waypoint.allFinite();
-    int required_guide_index = -1;
-    if (has_required_waypoint) {
-        double nearest_distance = std::numeric_limits<double>::infinity();
-        for (int i = 0; i < static_cast<int>(opt_vars.guide_path.size()); ++i) {
-            const double distance =
-                    (opt_vars.guide_path[static_cast<std::size_t>(i)] -
-                     opt_vars.required_waypoint).norm();
-            if (distance < nearest_distance) {
-                nearest_distance = distance;
-                required_guide_index = i;
-            }
-        }
-        if (required_guide_index < 0 || nearest_distance > 1.0e-4) {
-            planner_context_->warn(
-                " -- [ExpOpt] required pass-through waypoint is not an exact guide sample: "
-                "distance={} point=({},{},{})",
-                nearest_distance,
-                opt_vars.required_waypoint.x(),
-                opt_vars.required_waypoint.y(),
-                opt_vars.required_waypoint.z());
-            return false;
-        }
-        opt_vars.required_waypoint_guide_index = required_guide_index;
-    }
     // * 2) Process the corridor
     for (int i = 0; i < sizeCorridor; i++) {
         // * 2.1) Get current vertex
@@ -622,48 +597,6 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                 ? guide_point
                 : interior;
         time_stamps(j + 1) = opt_vars.guide_t[nearest_index];
-
-        if (has_required_waypoint && nearest_index == required_guide_index) {
-            // The corridor parameterization represents a junction as a
-            // convex combination of one base vertex and offsets. A zero-
-            // offset vertex polytope therefore makes this junction exactly
-            // equal to the collision-checked mission waypoint.
-            const auto &previous_polytope = opt_vars.hPolytopes[j];
-            const auto &next_polytope = opt_vars.hPolytopes[j + 1];
-            const auto point_is_inside = [&](const PolyhedronH &polytope) {
-                Eigen::Vector4d homogeneous;
-                homogeneous.head<3>() = opt_vars.required_waypoint;
-                homogeneous(3) = 1.0;
-                return polytope.rows() > 0 &&
-                       (polytope * homogeneous).maxCoeff() <=
-                               cfg_.corridor_plane_tolerance_m;
-            };
-            if (!point_is_inside(previous_polytope) ||
-                !point_is_inside(next_polytope)) {
-                planner_context_->warn(
-                    " -- [ExpOpt] required pass-through waypoint is outside its corridor overlap: "
-                    "junction={} point=({},{},{})",
-                    j,
-                    opt_vars.required_waypoint.x(),
-                    opt_vars.required_waypoint.y(),
-                    opt_vars.required_waypoint.z());
-                return false;
-            }
-            PolyhedronV fixed_waypoint(3, 2);
-            fixed_waypoint.col(0) = opt_vars.required_waypoint;
-            fixed_waypoint.col(1).setZero();
-            opt_vars.vPolytopes[static_cast<std::size_t>(2 * j + 1)] =
-                    std::move(fixed_waypoint);
-            opt_vars.points.col(j) = opt_vars.required_waypoint;
-            opt_vars.required_waypoint_junction_index = j;
-        }
-    }
-
-    if (has_required_waypoint && opt_vars.required_waypoint_junction_index < 0) {
-        planner_context_->warn(
-            " -- [ExpOpt] required pass-through waypoint has no MINCO junction: guide_index={}",
-            required_guide_index);
-        return false;
     }
 
     for (int i = 1; i < time_stamps.size(); i++) {
@@ -1679,11 +1612,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         sfcs[i].SetPlanes(std::move(planes));
     }
 
-    // Terminal-goal simplification may remove an intermediate boundary that
-    // is required for a pass-through waypoint. Preserve the full SFC in that
-    // mode; corridor and dynamic gates remain independent authorities.
-    if (!opt_vars.required_waypoint.allFinite() &&
-        !SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
+    if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
         cout << YELLOW << " -- [TrajOpt] Cannot simplify sfcs." << RESET << endl;
         return false;
     }
