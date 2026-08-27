@@ -5,6 +5,7 @@
 #include <limits>
 
 #include <data_structure/base/piece.h>
+#include <navigation_planning/planning_limits.hpp>
 #include <utils/header/eigen_alias.hpp>
 
 namespace navigation_planning_backend {
@@ -211,9 +212,12 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
         std::isfinite(result.maximum_velocity_mps) &&
         std::isfinite(result.maximum_acceleration_mps2) &&
         std::isfinite(result.maximum_jerk_mps3) &&
-        result.maximum_velocity_mps <= gate * result.allowed_peak_velocity_mps &&
-        result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
-        result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_velocity_mps, gate * result.allowed_peak_velocity_mps) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_jerk_mps3, gate * max_jerk_mps3);
     if (result.feasible) {
       return result;
     }
@@ -250,9 +254,12 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
         std::isfinite(maximum_velocity_mps) &&
         std::isfinite(maximum_acceleration_mps2) &&
         std::isfinite(maximum_jerk_mps3) &&
-        maximum_velocity_mps <= gate * result.allowed_peak_velocity_mps &&
-        maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
-        maximum_jerk_mps3 <= gate * max_jerk_mps3) {
+        navigation_planning::withinNumericalDynamicLimit(
+            maximum_velocity_mps, gate * result.allowed_peak_velocity_mps) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            maximum_acceleration_mps2, gate * max_acc_mps2) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            maximum_jerk_mps3, gate * max_jerk_mps3)) {
       result.duration_s = duration_s;
       result.endpoint = altitude_piece.getPos(duration_s);
       result.maximum_velocity_mps = maximum_velocity_mps;

@@ -10,7 +10,20 @@
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/pass_through_terminal_velocity.hpp>
+#include <navigation_planning/planning_limits.hpp>
 #include <utils/optimization/optimization_utils.h>
+
+TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
+  const double limit = 3.0;
+  EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+      std::nextafter(limit, std::numeric_limits<double>::infinity()), limit));
+  EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+      limit + 32.0 * std::numeric_limits<double>::epsilon() * limit, limit));
+  EXPECT_FALSE(navigation_planning::withinNumericalDynamicLimit(
+      limit + 1.0e-9, limit));
+  EXPECT_FALSE(navigation_planning::withinNumericalDynamicLimit(
+      std::numeric_limits<double>::infinity(), limit));
+}
 
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
   navigation_math::VecDf tau(5);

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <navigation_world_model/world_model_view.hpp>
 
@@ -22,5 +24,23 @@ struct DynamicLimits {
            max_acceleration_mps2 > 0.0 && max_jerk_mps3 > 0.0;
   }
 };
+
+// A trajectory extremum is evaluated through several polynomial transforms
+// and can land a handful of ULPs above a limit that it reaches exactly. This
+// is numerical boundary accounting, not a physical allowance: the accepted
+// margin is bounded to a fixed number of representable double values and is
+// far below any mission-configurable unit. Material overspeed or
+// over-acceleration remains rejected.
+inline bool withinNumericalDynamicLimit(const double value,
+                                        const double limit) noexcept {
+  if (!std::isfinite(value) || !std::isfinite(limit) || limit < 0.0) {
+    return false;
+  }
+  constexpr double kBoundaryUlps = 64.0;
+  const double scale = std::max({1.0, std::abs(value), std::abs(limit)});
+  const double numerical_margin =
+      kBoundaryUlps * std::numeric_limits<double>::epsilon() * scale;
+  return value <= limit + numerical_margin;
+}
 
 }  // namespace navigation_planning

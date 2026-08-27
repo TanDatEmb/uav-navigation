@@ -7,6 +7,7 @@
 #include <traj_opt/nominal_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
+#include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <utils/optimization/lbfgs.h>
@@ -989,9 +990,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return std::isfinite(maximum_velocity) &&
                std::isfinite(maximum_acceleration) &&
                std::isfinite(maximum_jerk) &&
-               maximum_velocity <= cfg_.max_vel &&
-               maximum_acceleration <= cfg_.max_acc &&
-               maximum_jerk <= cfg_.max_jerk;
+               navigation_planning::withinNumericalDynamicLimit(
+                   maximum_velocity, cfg_.max_vel) &&
+               navigation_planning::withinNumericalDynamicLimit(
+                   maximum_acceleration, cfg_.max_acc) &&
+               navigation_planning::withinNumericalDynamicLimit(
+                   maximum_jerk, cfg_.max_jerk);
     };
     const auto acceptFiniteLineSearchCandidate = [&]() {
         // L-BFGS can exhaust its line-search trials after leaving a finite,
@@ -1424,9 +1428,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         // penalties. The hard gate is the physical mission/product envelope.
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
-            maximum_velocity > cfg_.max_vel ||
-            maximum_acceleration > cfg_.max_acc ||
-            maximum_jerk > cfg_.max_jerk) {
+            !navigation_planning::withinNumericalDynamicLimit(
+                maximum_velocity, cfg_.max_vel) ||
+            !navigation_planning::withinNumericalDynamicLimit(
+                maximum_acceleration, cfg_.max_acc) ||
+            !navigation_planning::withinNumericalDynamicLimit(
+                maximum_jerk, cfg_.max_jerk)) {
             planner_context_->warn(
                     " -- [ExpOpt] physical hard gate rejected trajectory: "
                     "vel={}/{} acc={}/{} jerk={}/{}",

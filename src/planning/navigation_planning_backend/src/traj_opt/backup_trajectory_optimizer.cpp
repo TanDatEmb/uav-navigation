@@ -7,6 +7,7 @@
 #include <traj_opt/backup_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
+#include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
@@ -633,20 +634,21 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
 bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
     const double maximum_jerk = out_traj.getMaxJerRate();
     const double jerk_gate = cfg_.max_jerk;
-    if (!std::isfinite(maximum_jerk) || maximum_jerk > jerk_gate) {
+    if (!navigation_planning::withinNumericalDynamicLimit(
+            maximum_jerk, jerk_gate)) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup hard jerk gate failed: "
                   << maximum_jerk << " > " << jerk_gate << RESET << std::endl;
         return false;
     }
-    if (!std::isfinite(out_traj.getMaxVelRate()) ||
-        out_traj.getMaxVelRate() > cfg_.max_vel) {
+    if (!navigation_planning::withinNumericalDynamicLimit(
+            out_traj.getMaxVelRate(), cfg_.max_vel)) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max vel:\t" << out_traj.getMaxVelRate() << " m/s" << RESET
                   << std::endl;
         return false;
     }
-    if (!std::isfinite(out_traj.getMaxAccRate()) ||
-        out_traj.getMaxAccRate() > cfg_.max_acc) {
+    if (!navigation_planning::withinNumericalDynamicLimit(
+            out_traj.getMaxAccRate(), cfg_.max_acc)) {
         std::cout << YELLOW << " -- [TrajOpt] Minco backup opt failed." << RESET << std::endl;
         std::cout << YELLOW << "\t\tBackend Max Acc:\t" << out_traj.getMaxAccRate() << " m/s" << RESET
                   << std::endl;

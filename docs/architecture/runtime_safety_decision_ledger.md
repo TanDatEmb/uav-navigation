@@ -6718,6 +6718,39 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
 
+### 2026-08-28 - Account for floating-point boundary ULPs in dynamic certificates
+
+- **Owner:** nominal/backup trajectory certificate maintainers.
+- **Scope:** shared V/A/J limit comparisons accept only a bounded numerical
+  boundary of 64 double-precision ULPs at the configured limit. The helper
+  rejects non-finite values and material violations; it is used by nominal
+  MINCO, backup refinement, and analytic braking-seed checks.
+- **Safety impact:** correctness/continuity improvement. This does not change
+  a physical limit, the mission envelope, the backup UNKNOWN policy, or any
+  waypoint/execution gate. It prevents a candidate that reaches a limit
+  exactly from being rejected solely because chained polynomial arithmetic
+  produced values such as `3.0000000000000018`.
+- **Reason/evidence:** the current 3 m/s trace showed bounded time-stretch
+  candidates with acceleration and jerk inside the declared limits rejected
+  at the final gate by sub-ULP velocity overshoot, forcing unnecessary backup
+  handovers and replanning churn. The focused contract test proves that one
+  ULP and a bounded 32-ULP boundary pass while a `1e-9` overshoot fails.
+- **Evidence required:** repeat the same 3 m/s scenario and the 3/4/5 m/s
+  ladder after the authoritative rebuild. Inspect accepted main-candidate
+  ratio, speed/altitude continuity, waypoint coverage, clearance, strict
+  backup certificates, and latency distributions. The change remains open
+  until repeated representative evidence confirms that only numerical-boundary
+  rejections are removed.
+- **Removal condition:** replace only with an equivalent or stronger
+  representation-aware certificate; never replace this bounded accounting with
+  a configurable physical tolerance.
+- **Verification:** `make build`; source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run
+  `ctest --test-dir build/navigation_planning_backend --output-on-failure`,
+  then repeated
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check` and the declared speed ladder.
+
 ### 2026-08-28 - Limit pass-through terminal velocity change by local time
 
 - **Owner:** Navigation planning maintainers. **Scope:** pass-through terminal
