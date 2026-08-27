@@ -6690,3 +6690,30 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` with endpoint, role, speed, waypoint, and clearance
   evidence.
+
+### 2026-08-28 - Recondition MINCO altitude and lateral route following
+
+- **Owner:** Navigation planning maintainers. **Scope:** the nominal MINCO
+  route-reference quality objective uses `lateral_weight=1.0` and
+  `vertical_weight=10.0`; deadbands and all hard limits are unchanged.
+- **Safety impact:** behavior/conditioning change only. The route reference
+  remains a soft quality objective and cannot authorize a trajectory. Corridor
+  containment, V/A/J, flatness, UNKNOWN/OUT_OF_MAP policy, command-anchor
+  validation, swept-tube certification, and strict KNOWN_FREE backup
+  certification remain unchanged.
+- **Reason/evidence:** the latest 3 m/s multiwaypoint trace showed the
+  collision-checked guide near z=3 m while the committed nominal/backup
+  command bowed to z=1.4--2.0 m, preventing waypoint entry and reducing
+  recovery speed. Earlier 10/1000 conditioning trials were inconclusive while
+  the route/backup architecture was still failing; this change must be
+  re-evaluated after the current route fixes.
+- **Evidence required:** focused config/optimizer tests, authoritative build,
+  then repeated 3/4/5 m/s multiwaypoint SITL and representative recorded-data
+  replay. Inspect continuous altitude residual, speed recovery, waypoint
+  coverage, clearance, backup/certificate outcomes, and planner latency.
+- **Removal/review condition:** revert or retune only from a distribution that
+  shows worse altitude, waypoint completion, clearance, latency, or numerical
+  stability. Never compensate for a failed certificate by relaxing a gate.
+- **Verification:** `make build`; `make test`; repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check` followed by the declared speed ladder.

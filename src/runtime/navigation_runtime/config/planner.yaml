@@ -90,11 +90,13 @@ traj_opt:
     corridor_plane_tolerance_m: 0.01
     # Route-reference quality objective. These weights are independent of the
     # corridor/dynamic feasibility penalties; they are not safety certificates.
-    # Baseline objective weights. Route shaping must not be used to hide an
-    # A*/world-model altitude or conditioning defect.
+    # The route objective is deliberately anisotropic: vertical tracking is
+    # much more sensitive to PX4 command quality than lateral guide shaping.
+    # These terms only condition the MINCO search; corridor, dynamic, flatness
+    # and world certificates remain independent authorities.
     route_reference:
       lateral_weight: 1.0
-      vertical_weight: 1.0
+      vertical_weight: 10.0
       lateral_deadband_m: 0.05
       vertical_deadband_m: 0.05
     # Objective weights shape numerical search only. Hard corridor and dynamic

@@ -80,7 +80,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt_s);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.corridor_plane_tolerance_m, 0.01);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_weight, 1.0);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_weight, 1.0);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_weight, 10.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
