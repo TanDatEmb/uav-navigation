@@ -8,6 +8,8 @@
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
+#include <planner_core/kinematic_state_boundary.hpp>
+#include <planner_core/pass_through_terminal_velocity.hpp>
 #include <utils/optimization/optimization_utils.h>
 
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
@@ -47,6 +49,7 @@ TEST(PlannerDurationParameterization, RoundTripsFreeDurationSeed) {
 
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  EXPECT_EQ(planner.exp_traj_cfg.pos_constraint_type, traj_opt::CORRIDOR);
   EXPECT_EQ(planner.unknown_space_policy,
             navigation_world_model::UnknownPolicy::kRequireKnownFree);
   const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
@@ -80,10 +83,35 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_weight, 1.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_deadband_m, 0.05);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.75);
-  EXPECT_DOUBLE_EQ(planner.back_traj_cfg.dynamic_limit_tolerance_ratio, 0.75);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
+  EXPECT_DOUBLE_EQ(planner.back_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
   EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
+}
+
+TEST(PlannerProductConfig, RejectsDynamicLimitToleranceThatWeakensPhysicalEnvelope) {
+  EXPECT_NO_THROW(traj_opt::validateDynamicLimitToleranceRatio(0.0));
+  EXPECT_THROW(traj_opt::validateDynamicLimitToleranceRatio(0.01), std::invalid_argument);
+  EXPECT_THROW(
+      traj_opt::validateDynamicLimitToleranceRatio(std::numeric_limits<double>::infinity()),
+      std::invalid_argument);
+}
+
+TEST(PlannerPassThrough, UsesBoundedOutgoingTerminalVelocity) {
+  const auto terminal_velocity = navigation_planning_backend::passThroughTerminalVelocity(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{9.0, 0.0, 0.0}, 5.0, 2.0);
+  ASSERT_TRUE(terminal_velocity.has_value());
+  EXPECT_NEAR(terminal_velocity->x(), std::sqrt(18.0), 1.0e-12);
+  EXPECT_DOUBLE_EQ(terminal_velocity->y(), 0.0);
+  EXPECT_DOUBLE_EQ(terminal_velocity->z(), 0.0);
+
+  const auto capped_velocity = navigation_planning_backend::passThroughTerminalVelocity(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{100.0, 0.0, 0.0}, 5.0, 2.0);
+  ASSERT_TRUE(capped_velocity.has_value());
+  EXPECT_DOUBLE_EQ(capped_velocity->norm(), 5.0);
+
+  EXPECT_FALSE(navigation_planning_backend::passThroughTerminalVelocity(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 5.0, 2.0));
 }
 
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
@@ -118,6 +146,18 @@ TEST(PlannerProductConfig, RejectsMapThatCannotContainConfiguredPlanningHorizon)
   world_geometry.local_size_m = Eigen::Vector3d{10.0, 10.0, 6.0};
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
+  EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
+}
+
+TEST(PlannerProductConfig, RejectsTallOnlyMapWithoutHorizontalPlanningExtent) {
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = 0.2;
+  world_geometry.inflated_resolution_m = 0.2;
+  world_geometry.occupied_inflation_radius_m = 1.0;
+  world_geometry.local_size_m = Eigen::Vector3d{10.0, 10.0, 40.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 30.0;
   EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
 }
 
@@ -296,4 +336,30 @@ TEST(PlannerBackupBraking, RefinementDurationCannotUndercutCertifiedSeed) {
   EXPECT_FALSE(navigation_planning_backend::refinementDurationRespectsCertifiedFloor(1.99, 2.0));
   EXPECT_FALSE(navigation_planning_backend::refinementDurationRespectsCertifiedFloor(
       std::numeric_limits<double>::quiet_NaN(), 2.0));
+}
+
+TEST(PlannerKinematicStateBoundary, BoundsOnlyEstimatedHighOrderDerivatives) {
+  const Eigen::Vector3d raw{0.0, 40.0, 0.0};
+  const auto bounded = navigation_planning_backend::boundEstimatedDerivative(
+      raw, true, 30.0);
+  EXPECT_NEAR(bounded.norm(), 30.0, 1.0e-12);
+  EXPECT_TRUE(bounded.isApprox(Eigen::Vector3d{0.0, 30.0, 0.0}, 1.0e-12));
+
+  const auto measured = navigation_planning_backend::boundEstimatedDerivative(
+      raw, false, 30.0);
+  EXPECT_TRUE(measured.isApprox(raw, 1.0e-12));
+
+  const auto already_bounded = navigation_planning_backend::boundEstimatedDerivative(
+      Eigen::Vector3d{0.0, 2.0, 0.0}, true, 30.0);
+  EXPECT_TRUE(already_bounded.isApprox(Eigen::Vector3d{0.0, 2.0, 0.0}, 1.0e-12));
+
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(1) << 0.0, 2.0, 0.0;
+  initial.col(3) = raw;
+  EXPECT_FALSE(navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, initial, 3.0, 5.0, 30.0, 0.05, 0.0).feasible);
+  initial.col(3) = bounded;
+  const auto bounded_seed = navigation_planning_backend::makeBackupBrakingSeed(
+      0.0, initial, 3.0, 5.0, 30.0, 0.05, 0.0);
+  EXPECT_TRUE(bounded_seed.feasible);
 }

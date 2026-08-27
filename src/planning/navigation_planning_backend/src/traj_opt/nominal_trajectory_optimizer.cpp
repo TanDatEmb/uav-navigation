@@ -961,17 +961,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                          maximum_acceleration / cfg_.max_acc,
                          maximum_jerk / cfg_.max_jerk});
     };
-    const double velocity_gate_margin =
-            1.0 + cfg_.dynamic_limit_tolerance_ratio;
-    const double acceleration_gate_margin = velocity_gate_margin;
-    const double jerk_gate_margin = velocity_gate_margin;
     const auto dynamic_gate_satisfied = [&]() {
         return std::isfinite(maximum_velocity) &&
                std::isfinite(maximum_acceleration) &&
                std::isfinite(maximum_jerk) &&
-               maximum_velocity <= cfg_.max_vel * velocity_gate_margin &&
-               maximum_acceleration <= cfg_.max_acc * acceleration_gate_margin &&
-               maximum_jerk <= cfg_.max_jerk * jerk_gate_margin;
+               maximum_velocity <= cfg_.max_vel &&
+               maximum_acceleration <= cfg_.max_acc &&
+               maximum_jerk <= cfg_.max_jerk;
     };
     const auto acceptFiniteLineSearchCandidate = [&]() {
         // L-BFGS can exhaust its line-search trials after leaving a finite,
@@ -990,9 +986,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         planner_context_->warn(
                 " -- [ExpOpt] accepted finite candidate after line-search stop: "
                 "vel={}/{} acc={}/{} jerk={}/{}",
-                maximum_velocity, cfg_.max_vel * velocity_gate_margin,
-                maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
-                maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
+                maximum_velocity, cfg_.max_vel,
+                maximum_acceleration, cfg_.max_acc,
+                maximum_jerk, cfg_.max_jerk);
         ret = lbfgs::LBFGS_STOP;
         return true;
     };
@@ -1187,9 +1183,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                         "vel={} acc={} jerk={} limits={}/{}/{}",
                         duration_reserve_scale, maximum_velocity,
                         maximum_acceleration, maximum_jerk,
-                        cfg_.max_vel * velocity_gate_margin,
-                        cfg_.max_acc * acceleration_gate_margin,
-                        cfg_.max_jerk * jerk_gate_margin);
+                        cfg_.max_vel,
+                        cfg_.max_acc,
+                        cfg_.max_jerk);
                 continue;
             }
             diagnostics_.retry_duration_lower_bound_min_s = reserved_duration_s.minCoeff();
@@ -1200,9 +1196,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     " -- [ExpOpt] accepted bounded time-stretched guide: "
                     "scale={} vel={}/{} acc={}/{} jerk={}/{}",
                     duration_reserve_scale,
-                    maximum_velocity, cfg_.max_vel * velocity_gate_margin,
-                    maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
-                    maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
+                    maximum_velocity, cfg_.max_vel,
+                    maximum_acceleration, cfg_.max_acc,
+                    maximum_jerk, cfg_.max_jerk);
             ret = lbfgs::LBFGS_STOP;
             return true;
         }
@@ -1233,11 +1229,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
         const bool velocity_violated =
-                maximum_velocity > cfg_.max_vel * velocity_gate_margin;
+                maximum_velocity > cfg_.max_vel;
         const bool acceleration_violated =
-                maximum_acceleration > cfg_.max_acc * acceleration_gate_margin;
+                maximum_acceleration > cfg_.max_acc;
         const bool jerk_violated =
-                maximum_jerk > cfg_.max_jerk * jerk_gate_margin;
+                maximum_jerk > cfg_.max_jerk;
         diagnostics_.retry_violation_mask |=
                 (velocity_violated ? 1 : 0) |
                 (acceleration_violated ? 2 : 0) |
@@ -1401,19 +1397,18 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if (ret >= 0) {
         // Mission V/A/J values are command limits, not soft optimizer
-        // penalties. The explicitly configured, bounded numerical tolerance
-        // applies consistently to all three dynamic components.
+        // penalties. The hard gate is the physical mission/product envelope.
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
-            maximum_velocity > cfg_.max_vel * velocity_gate_margin ||
-            maximum_acceleration > cfg_.max_acc * acceleration_gate_margin ||
-            maximum_jerk > cfg_.max_jerk * jerk_gate_margin) {
+            maximum_velocity > cfg_.max_vel ||
+            maximum_acceleration > cfg_.max_acc ||
+            maximum_jerk > cfg_.max_jerk) {
             planner_context_->warn(
                     " -- [ExpOpt] physical hard gate rejected trajectory: "
                     "vel={}/{} acc={}/{} jerk={}/{}",
-                    maximum_velocity, cfg_.max_vel * velocity_gate_margin,
-                    maximum_acceleration, cfg_.max_acc * acceleration_gate_margin,
-                    maximum_jerk, cfg_.max_jerk * jerk_gate_margin);
+                    maximum_velocity, cfg_.max_vel,
+                    maximum_acceleration, cfg_.max_acc,
+                    maximum_jerk, cfg_.max_jerk);
             traj.clear();
             ret = -1;
             minCostFunctional = INFINITY;

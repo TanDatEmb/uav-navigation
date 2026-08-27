@@ -62,11 +62,9 @@ double pointFromMessage(const geometry_msgs::msg::Point& point, int axis) {
 
 const geometry_msgs::msg::Point& plannerTarget(
     const navigation_contracts::msg::NavigationGoal& goal) {
-  // planner backend accepts one terminal target per solve.  next_target is directional
-  // metadata for the mission controller; using it as the terminal target
-  // would remove the current checkpoint from the geometric problem entirely.
-  // PASS_THROUGH continuity is provided by accepting the current checkpoint
-  // before its trajectory ends and hot-retargeting the committed PVA state.
+  // The current checkpoint remains the geometric endpoint. For pass-through
+  // continuity, the runtime separately forwards next_target as an outgoing
+  // tangent; it must never replace this waypoint in the geometric problem.
   return goal.target;
 }
 
@@ -1126,7 +1124,15 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   const auto candidate = planner_->exportCommandCandidate(
       localization_epoch, goal_epoch, goal.request_id, now_ns,
       now_ns + maximum_age_ns);
-  if (!candidate) return false;
+  if (!candidate) {
+    RCLCPP_WARN(get_logger(),
+                "execution boundary rejected candidate export mission=%s waypoint=%u "
+                "request=%lu now_ns=%lld",
+                goal.mission_id.c_str(), goal.waypoint_index,
+                static_cast<unsigned long>(goal.request_id),
+                static_cast<long long>(now_ns));
+    return false;
+  }
   const auto latest_world = world_snapshot_store_.load();
   const auto world_freshness = latest_world
       ? navigation_execution::classifyTimestampFreshness(
@@ -1152,18 +1158,49 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
             now_ns, measured_state->state.source_stamp_ns, data_freshness_window_ns_)
       : navigation_execution::TimestampFreshness::INVALID;
   const auto candidate_sample = candidate_ptr->sample(now_ns);
+  const bool candidate_awaiting_activation =
+      candidate_ptr->valid() && now_ns < candidate_ptr->valid_from_ns;
   const double candidate_anchor_error_m = measured_state && candidate_sample
       ? (candidate_sample->position_world - measured_state->state.position_world).norm()
       : std::numeric_limits<double>::infinity();
   if (!measured_state || state_freshness != navigation_execution::TimestampFreshness::VALID ||
-      !measured_state->state.finite() || !candidate_sample ||
-      !std::isfinite(candidate_anchor_error_m) ||
-      candidate_anchor_error_m > navigation_contracts::kCommandAnchorErrorLimitM) {
+      !measured_state->state.finite() ||
+      (!candidate_sample && !candidate_awaiting_activation) ||
+      (!candidate_awaiting_activation &&
+       (!std::isfinite(candidate_anchor_error_m) ||
+        candidate_anchor_error_m > navigation_contracts::kCommandAnchorErrorLimitM))) {
     planner_->discardCommandCandidate();
+    const char* rejection_reason = !measured_state
+        ? "MISSING_EXECUTION_STATE"
+        : state_freshness != navigation_execution::TimestampFreshness::VALID
+        ? "EXECUTION_STATE_NOT_FRESH"
+        : !measured_state->state.finite()
+        ? "EXECUTION_STATE_NONFINITE"
+        : !candidate_sample && !candidate_awaiting_activation
+        ? "CANDIDATE_SAMPLE_INVALID"
+        : !candidate_awaiting_activation && !std::isfinite(candidate_anchor_error_m)
+        ? "ANCHOR_ERROR_NONFINITE"
+        : "ANCHOR_ERROR_OVER_LIMIT";
     RCLCPP_WARN(get_logger(),
-                "execution boundary rejected candidate with stale or discontinuous state "
-                "anchor error=%.3f m",
-                candidate_anchor_error_m);
+                "execution boundary rejected candidate reason=%s anchor_error=%.3f m "
+                "state_present=%d state_finite=%d state_freshness=%d candidate_valid=%d "
+                "candidate_sample=%d now_ns=%lld valid_from_ns=%lld valid_until_ns=%lld "
+                "start_wall_time=%.9f duration=%.9f measured=(%.3f,%.3f,%.3f) "
+                "candidate=(%.3f,%.3f,%.3f)",
+                rejection_reason, candidate_anchor_error_m,
+                measured_state ? 1 : 0,
+                measured_state && measured_state->state.finite() ? 1 : 0,
+                static_cast<int>(state_freshness), candidate_ptr->valid() ? 1 : 0,
+                candidate_sample ? 1 : 0, static_cast<long long>(now_ns),
+                static_cast<long long>(candidate_ptr->valid_from_ns),
+                static_cast<long long>(candidate_ptr->valid_until_ns),
+                candidate_ptr->start_wall_time_s, candidate_ptr->duration_s,
+                measured_state ? measured_state->state.position_world.x() : 0.0,
+                measured_state ? measured_state->state.position_world.y() : 0.0,
+                measured_state ? measured_state->state.position_world.z() : 0.0,
+                candidate_sample ? candidate_sample->position_world.x() : 0.0,
+                candidate_sample ? candidate_sample->position_world.y() : 0.0,
+                candidate_sample ? candidate_sample->position_world.z() : 0.0);
     return false;
   }
   const navigation_execution::CommitToken token{
@@ -1238,6 +1275,12 @@ void NavigationRuntimeNode::runCycle() {
     item.value = std::to_string(value);
     status.values.push_back(std::move(item));
   };
+  const auto add_signed_value = [&status](const std::string& key, std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
   const auto add_duration = [&status](const std::string& key, std::int64_t value) {
     diagnostic_msgs::msg::KeyValue item;
     item.key = key;
@@ -1277,10 +1320,10 @@ void NavigationRuntimeNode::runCycle() {
   add_value("command_execution_lease_failed",
             command_execution_lease_failure_latch_.latched() ? 1U : 0U);
   add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
-  add_value("command_execution_source_age_us",
-            command_execution_source_age_us_.load());
-  add_value("command_execution_receive_age_us",
-            command_execution_receive_age_us_.load());
+  add_signed_value("command_execution_source_age_us",
+                   command_execution_source_age_us_.load());
+  add_signed_value("command_execution_receive_age_us",
+                   command_execution_receive_age_us_.load());
   add_value("processing_exception_count", map_update_exception_count_);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
@@ -1461,8 +1504,8 @@ void NavigationRuntimeNode::runCycle() {
   // Planner execution state is independently owned by propagated odometry;
   // ROG-Map's corrected scan-epoch pose is mapping-only.
   // Always retain the current mission checkpoint as planner backend's geometric target.
-  // PASS_THROUGH is implemented by hot-retargeting while the committed
-  // trajectory still carries non-zero PVA, not by skipping to next_target.
+  // PASS_THROUGH additionally supplies next_target as a bounded terminal
+  // tangent; it is never used as a replacement geometric endpoint.
   const auto& planner_target = plannerTarget(*goal);
   const Eigen::Vector3d target{
       pointFromMessage(planner_target, 0),
@@ -1502,6 +1545,16 @@ void NavigationRuntimeNode::runCycle() {
   }
   planner_->setWorldModelView(pinned_world.view);
   planner_->setGoalAcceptanceRadius(goalCompletionTolerance(*goal));
+  std::optional<Eigen::Vector3d> pass_through_next_target;
+  if (goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH &&
+      goal->has_next_target) {
+    const Eigen::Vector3d candidate_next_target{
+        goal->next_target.x, goal->next_target.y, goal->next_target.z};
+    if (candidate_next_target.allFinite()) {
+      pass_through_next_target = candidate_next_target;
+    }
+  }
+  planner_->setPassThroughNextTarget(pass_through_next_target);
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP

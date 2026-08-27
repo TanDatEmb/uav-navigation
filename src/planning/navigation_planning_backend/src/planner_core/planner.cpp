@@ -9,6 +9,7 @@
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/command_time.hpp>
 #include <planner_core/guide_endpoint.hpp>
+#include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <navigation_world_model/goal_contract.hpp>
@@ -1376,8 +1377,23 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (cfg_.goal_vel_en && (gi_.goal_p - solve_state_.p).norm() > cfg_.planning_horizon_m / 2) {
             pos_fina_state.col(1) = (gi_.goal_p - solve_state_.p).normalized() * cfg_.exp_traj_cfg.max_vel / 2;
         }
+        if (pass_through_next_target_.has_value()) {
+            const auto terminal_velocity = passThroughTerminalVelocity(
+                    pos_fina_state.col(0).cast<double>(),
+                    *pass_through_next_target_,
+                    cfg_.exp_traj_cfg.max_vel,
+                    cfg_.exp_traj_cfg.max_acc);
+            if (terminal_velocity.has_value()) {
+                pos_fina_state.col(1) = *terminal_velocity;
+            }
+        }
         if (connected_goal) {
-            pos_fina_state.col(1).setZero();
+            // A pass-through endpoint must retain its outgoing tangent even
+            // when the geometric endpoint is snapped inside the acceptance
+            // ball. Stop goals clear the look-ahead before every solve.
+            if (!pass_through_next_target_.has_value()) {
+                pos_fina_state.col(1).setZero();
+            }
         }
 
         // optimize and update exp traj
@@ -2288,11 +2304,30 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (!state.finite()) {
             return false;
         }
+        const double acceleration_limit = std::min(
+            cfg_.exp_traj_cfg.max_acc, cfg_.back_traj_cfg.max_acc);
+        const double jerk_limit = std::min(
+            cfg_.exp_traj_cfg.max_jerk, cfg_.back_traj_cfg.max_jerk);
+        const auto bounded_acceleration = boundEstimatedDerivative(
+            state.acceleration_world, state.acceleration_estimated, acceleration_limit);
+        const auto bounded_jerk = boundEstimatedDerivative(
+            state.jerk_world, state.jerk_estimated, jerk_limit);
+        const bool acceleration_bounded =
+            !bounded_acceleration.isApprox(state.acceleration_world, 0.0);
+        const bool jerk_bounded = !bounded_jerk.isApprox(state.jerk_world, 0.0);
+        if ((acceleration_bounded || jerk_bounded) && !estimated_boundary_warning_emitted_) {
+            planner_context_->warn(
+                " -- [planner] bounded estimated command-boundary derivatives: "
+                "acceleration={}/{} jerk={}/{}; raw estimates remain in runtime diagnostics",
+                state.acceleration_world.norm(), acceleration_limit,
+                state.jerk_world.norm(), jerk_limit);
+            estimated_boundary_warning_emitted_ = true;
+        }
         navigation_math::RobotState internal;
         internal.p = state.position_world;
         internal.v = state.velocity_world;
-        internal.a = state.acceleration_world;
-        internal.j = state.jerk_world;
+        internal.a = bounded_acceleration;
+        internal.j = bounded_jerk;
         const double quaternion_scale =
             state.orientation_world_body.coeffs().cwiseAbs().maxCoeff();
         if (!std::isfinite(quaternion_scale) || quaternion_scale <= 1.0e-9) {

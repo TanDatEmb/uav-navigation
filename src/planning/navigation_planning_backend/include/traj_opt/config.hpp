@@ -19,6 +19,14 @@ namespace traj_opt {
     using std::string;
     using std::vector;
 
+    inline void validateDynamicLimitToleranceRatio(const double ratio) {
+        if (!std::isfinite(ratio) || ratio != 0.0) {
+            throw std::invalid_argument(
+                "dynamic_limit_tolerance_ratio must be exactly zero; "
+                "physical V/A/J certificates cannot be relaxed");
+        }
+    }
+
     enum PosConstrainType {
         WAYPOINT = 1,
         CORRIDOR = 2,
@@ -73,9 +81,9 @@ namespace traj_opt {
         double route_reference_vertical_weight{0};
         double route_reference_lateral_deadband_m{0};
         double route_reference_vertical_deadband_m{0};
-        // A small, explicitly owned allowance for numerical dynamic-limit
-        // overshoot in optimizer certificates. The value is capped by the
-        // config contract and is applied consistently to V/A/J checks.
+        // Retained as a compatibility field so stale YAML fails explicitly at
+        // validation instead of silently changing the physical certificate.
+        // Product behavior is strict: this value must be exactly zero.
         double dynamic_limit_tolerance_ratio{0.0};
         int integral_reso{0};
         double opt_accuracy{0};
@@ -181,6 +189,7 @@ namespace traj_opt {
                         "use zero to disable an objective term");
                 }
             }
+            validateDynamicLimitToleranceRatio(dynamic_limit_tolerance_ratio);
             if (!std::isfinite(smooth_eps) || smooth_eps <= 0.0 ||
                 !std::isfinite(corridor_plane_tolerance_m) ||
                 corridor_plane_tolerance_m < 0.0 ||
@@ -192,9 +201,6 @@ namespace traj_opt {
                 route_reference_lateral_deadband_m < 0.0 ||
                 !std::isfinite(route_reference_vertical_deadband_m) ||
                 route_reference_vertical_deadband_m < 0.0 ||
-                !std::isfinite(dynamic_limit_tolerance_ratio) ||
-                dynamic_limit_tolerance_ratio < 0.0 ||
-                dynamic_limit_tolerance_ratio > 0.75 ||
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||

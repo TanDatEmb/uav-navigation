@@ -597,6 +597,7 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
         "occlusion": "occlusion", "occlusion_featured": "occlusion",
         "long_open_featured_core_60": "long_open_featured_speed",
         "long_open_featured_core_60_pv": "long_open_featured_speed",
+        "long_three_pillars_multiwaypoint": "long_three_pillars_speed",
         "single_pillar_speed": "long_three_pillars_speed",
         "single_pillar_speed_pv": "long_three_pillars_speed",
     }.get(map_profile, map_profile)
@@ -1200,6 +1201,7 @@ def _dataset_outputs_drained(session: Session, expected: dict[str, int]) -> bool
 
 _SPEED_CERTIFICATION_PROFILES = {
     "long_three_pillars_speed",
+    "long_three_pillars_multiwaypoint",
     "long_open_featured_speed",
 }
 
@@ -1621,6 +1623,7 @@ def _run_sim_unlocked(
             "long_open_slow": -1,
             "long_featured": -1,
             "long_three_pillars": -1,
+            "long_three_pillars_multiwaypoint": -1,
             "long_open_featured_speed": -1,
             # The bounded open-world checkpoint is deliberately obstacle-free
             # in the mission corridor; its gate is LIO/PX4 long-leg stability,
@@ -1676,9 +1679,9 @@ def _run_sim_unlocked(
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv"}:
+        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
-        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "single_pillar_speed", "single_pillar_speed_pv"}:
+        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "single_pillar_speed", "single_pillar_speed_pv"}:
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
@@ -2371,7 +2374,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -2419,7 +2422,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),

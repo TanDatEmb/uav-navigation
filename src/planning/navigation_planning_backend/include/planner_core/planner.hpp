@@ -35,6 +35,7 @@
 #include <navigation_world_model/world_commit_authorizer.hpp>
 #include "planner_core/corridor_generator.h"
 #include "planner_core/fov_checker.h"
+#include "planner_core/pass_through_terminal_velocity.hpp"
 
 #include "traj_opt/yaw_traj_opt.h"
 #include "planner_core/planner_result.hpp"
@@ -102,6 +103,7 @@ namespace navigation_planning_backend {
         navigation_world_model::CellState planning_goal_inflated_state_{
             navigation_world_model::CellState::kUndefined};
         bool goal_endpoint_adjusted_{false};
+        std::optional<Vec3f> pass_through_next_target_;
 
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
@@ -127,6 +129,7 @@ namespace navigation_planning_backend {
         std::atomic_bool solve_cancelled_{false};
         std::atomic<int> latest_commit_decision_{
             static_cast<int>(navigation_world_model::WorldCommitDecision::kNotAttempted)};
+        bool estimated_boundary_warning_emitted_{false};
         std::uint64_t backup_refinement_success_count_{0};
         std::uint64_t backup_refinement_fallback_count_{0};
 
@@ -312,6 +315,19 @@ namespace navigation_planning_backend {
                     ? std::max(radius_m,
                                navigation_world_model::kGoalCompletionToleranceM)
                     : navigation_world_model::kGoalCompletionToleranceM;
+        }
+
+        // Planning-thread-only mission look-ahead. A pass-through goal uses
+        // this only to shape its terminal velocity; the current waypoint
+        // remains the geometric endpoint and all safety certificates remain
+        // authoritative.
+        void setPassThroughNextTarget(
+                const std::optional<Eigen::Vector3d>& next_target) noexcept {
+            if (next_target.has_value() && next_target->allFinite()) {
+                pass_through_next_target_ = *next_target;
+            } else {
+                pass_through_next_target_.reset();
+            }
         }
 
         void cancelActiveSolve() {

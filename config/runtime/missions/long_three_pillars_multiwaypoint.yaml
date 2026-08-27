@@ -1,0 +1,52 @@
+mission:
+  version: 1
+  id: external_mode_long_three_pillars_multiwaypoint
+  frame: lio_odom
+  # Nine checkpoints force the planner and mission controller to preserve
+  # outgoing velocity through alternating detours around all three columns.
+  waypoints:
+    - id: multi_start
+      position: [0.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_one_entry
+      position: [20.0, 5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_one_exit
+      position: [50.0, 5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_two_entry
+      position: [50.0, -5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_two_exit
+      position: [85.0, -5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_three_entry
+      position: [85.0, 5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: bypass_three_exit
+      position: [120.0, 5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: recovery_leg
+      position: [120.0, -5.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: multi_finish
+      position: [140.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: stop
+      hold_s: 0.5
+  planning:
+    max_velocity_mps: 5.0
+    max_acceleration_mps2: 2.0
+    max_jerk_mps3: 4.0
+    unknown_policy: allow_unknown
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

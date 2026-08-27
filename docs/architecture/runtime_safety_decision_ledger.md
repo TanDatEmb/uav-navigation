@@ -4910,6 +4910,9 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 
 ### 2026-08-27 - Bounded planner dynamic numerical tolerance
 
+This historical entry is superseded by the strict-gate entry below; supported
+release profiles must not use the former allowance.
+
 - **Owner:** nominal/backup trajectory dynamic certificates and their product
   planner configuration. **Scope:** allow a provisional V/A/J overshoot ratio
   of `0.75` (75 percent), represented by
@@ -6286,3 +6289,270 @@ frontier. Dataset PASS never substitutes for closed-loop SITL or hardware gates.
 - Removal condition: remove only after a replacement immutable continuous
   clearance contract is demonstrated equivalent to CIRI on representative
   recorded and SITL obstacle geometries, with no reduction in clearance.
+
+### 2026-08-27 - Use corridor-constrained nominal MINCO variables
+
+- Owner: navigation planning backend nominal trajectory optimizer.
+- Scope: `traj_opt/exp_traj/pos_constraint_type` in the product planner
+  configuration.  Nominal MINCO now uses the corridor parameterization
+  (`type=2`) instead of direct waypoint variables (`type=1`).
+- Safety impact: positive geometric ownership change.  The optimizer's
+  position variables are represented by the generated convex corridor, so
+  the polynomial control-point hull cannot be authorized solely by a soft
+  plane penalty.  The independent continuous corridor, dynamic, flatness,
+  swept-world, and atomic commit gates remain mandatory.  This does not relax
+  UNKNOWN, clearance, timing, or execution gates.
+- Derivation and cost: artifact
+  `external-mode-check-20260827T115832-1049674` shows nominal MINCO retries
+  leaving the corridor with violations up to 267.99 m while direct waypoint
+  variables were used.  The change adds the corridor mapping/back-propagation
+  cost to each optimizer evaluation and may reject degenerate SFC overlaps
+  that cannot parameterize a feasible control point.
+- Evidence: run `test_exp_optimizer_seed`, the planner configuration and
+  trajectory tests, `make build`, `make test`, then repeated
+  `SPEED_CAP_MPS=8` SITL missions on the declared map matrix.  Require zero
+  continuous corridor violations for every committed main/backup bundle and
+  complete waypoint/mission acceptance before treating the change as closed.
+- Removal/review condition: remove only if a future optimizer formulation
+  provides an equivalent hard corridor parameterization and independent
+  continuous certificate with stronger measured evidence.
+- Verification command: source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
+  PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, then run the declared 8 m/s
+  External Mode map matrix.
+
+### 2026-08-28 - Record dataset performance evidence separately from flight acceptance
+
+- **Owner:** dataset replay harness, mapping/planner observability, and External
+  Mode acceptance boundary. **Scope:** a prepared AIST Mid-360 ROS 2 bag is the
+  authoritative recorded-data input. `DATASET_SHADOW_GOAL_M=0` is an explicit
+  mapping/processing benchmark mode: recorded odometry feeds the estimator and
+  map, but no synthetic navigation command is executed. The mode does not waive
+  any product gate or certify navigation quality.
+- **Safety impact:** positive and fail-closed. Dataset processing evidence is
+  reported independently from closed-loop PX4 tracking and from shadow-planner
+  quality. The raw PX4 `.ulg` supplied separately is not accepted as a ROS 2
+  sensor bag and remains outside the replay contract; it is not converted or
+  treated as a successful dataset run.
+- **Evidence:** full authoritative Release build completed 22 packages and
+  captured a valid manifest for the current source fingerprint. Mapping-only
+  replay at `RATE=2` passed in
+  `.artifacts/runtime/dataset-20260827T171713-4` with 55,435 IMU and 2,772
+  LiDAR samples, LIO `TRACKING`, 0 callback/dispatch stalls, and playback
+  `1.9409x` of the requested `2x`. Mapping callback p50/p95/p99 were
+  `15.254/20.659/23.002 ms`; total map update was
+  `5.187/12.408/14.397 ms`; world-snapshot export was
+  `10.148/14.496/16.330 ms`. The bounded shadow-planning replay at 1x remains
+  `FAIL` in `.artifacts/runtime/dataset-20260827T171200-4` because one EMER
+  was emitted after ten READY samples; that is planner evidence, not a reason
+  to discard the complete mapping timing result. External Mode could not enter
+  SITL because this environment denied the XRCE UDP socket probe with
+  `Operation not permitted`.
+- **Removal/closure condition:** keep the two evidence levels separate. Close
+  dataset performance only after repeated prepared-bag rate sweeps preserve
+  exact source counts and bounded timing distributions; close flight acceptance
+  only after repeated three-pillar multi-waypoint External Mode runs show
+  waypoint/mission completion, continuity, speed recovery, clearance, PX4 and
+  propagated-odometry health. Do not infer either closure from the single
+  mapping-only PASS.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the full Release build/test, then
+  `DATASET=aist-mid360-drive RATE=2 DATASET_SHADOW_GOAL_M=0 make dataset-check`
+  and repeated
+  `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` when the host permits XRCE/Gazebo sockets.
+
+### 2026-08-28 - Retain a committed candidate during its activation lead
+
+- **Owner:** runtime execution-boundary candidate exposure. **Scope:**
+  `commitPlannerCandidate` accepts a valid immutable candidate whose
+  `valid_from_ns` is only just ahead of the current publication tick; the
+  command lease is committed and the command timer waits for activation. A
+  candidate that is active is still sampled and checked against the latest
+  execution state before it is accepted.
+- **Safety impact:** positive and fail-closed. This removes a false rejection
+  caused by scheduler lead without relaxing freshness, anchor-error, world,
+  candidate-validity, evaluator, or lease gates. Invalid candidates and
+  evaluator failures remain rejected; the timer's explicit
+  `awaiting_activation` path remains the only pre-activation behavior.
+- **Derivation and cost:** dataset shadow artifact
+  `.artifacts/runtime/dataset-20260827T171200-4` showed `valid_from_ns` only
+  80 ns after the commit tick, followed by `CANDIDATE_SAMPLE_INVALID` and a
+  terminal EMER before the next timer sample. The change adds one validity and
+  timestamp comparison in the exposure boundary; it does not extend the
+  freshness lease or alter a safety threshold.
+- **Evidence:** the runtime source-contract regression passes, and the fresh
+  full-bag replay `.artifacts/runtime/dataset-20260827T172508-4` no longer
+  reports `CANDIDATE_SAMPLE_INVALID`; it fails earlier because the strict
+  KNOWN_FREE minimum-snap backup hull is not feasible in the observed SFC.
+  Keep the pre-fix artifact as causal evidence and require a future run with a
+  committed candidate to verify active-sample anchoring as well.
+- **Removal/closure condition:** retain until the exposure and timer paths
+  share one typed activation-state helper with equivalent tests; do not remove
+  the explicit pre-activation state or replace it with a grace timeout.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `make build`, `make test`, the runtime contract
+  suite, then
+  `DATASET=aist-mid360-drive RATE=1 DATASET_SHADOW_GOAL_M=5 make dataset-check`
+  and inspect the candidate sample/commit trace.
+
+### 2026-08-28 - Require horizontal map extent for the planner horizon
+
+- **Owner:** planner/world-model geometry binding. **Scope:**
+  `Config::bindWorldGeometry` checks the planner's configured horizon against
+  the larger of the two horizontal local-map extents, while every axis still
+  must contain the derived safety envelope plus one world-resolution cell.
+  A tall map with short horizontal axes is therefore rejected instead of
+  satisfying the horizon check through its Z extent.
+- **Safety impact:** positive and fail-closed. No map is enlarged, clipped,
+  or treated as known free. This closes the axis-ownership error identified by
+  the audit and preserves the existing minimum extent, inflation, UNKNOWN,
+  out-of-map, corridor, and world-swept gates.
+- **Derivation and cost:** the product route and planning horizon are
+  horizontal; using `local_size_m.maxCoeff()` could incorrectly authorize a
+  map whose only long axis was vertical. The change is one two-element maximum
+  and does not alter the product map or any threshold.
+- **Evidence:** focused config coverage rejects `{10,10,40}` for the current
+  horizon while the product `{110,15,6}` geometry remains accepted. Repeat
+  planner CTest and the three-pillar SITL matrix after rebuilding.
+- **Removal condition:** only if the planner gains an explicit, independently
+  owned 3-D horizon contract with separate horizontal/vertical budgets and
+  corresponding repeated evidence.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the planner CTest suite and full build/test before
+  any SITL or recorded-data acceptance run.
+
+### 2026-08-28 - Certify flatness at exact polynomial junctions
+
+- **Owner:** nominal/backup trajectory flatness certificate. **Scope:**
+  `evaluateTrajectoryDynamics` retains its uniform maximum-sample-period scan
+  and additionally evaluates every internal MINCO piece boundary exactly,
+  including the corresponding yaw sample when present.
+- **Safety impact:** positive and fail-closed. A body-rate or thrust peak at a
+  polynomial junction can no longer be skipped solely because uniform samples
+  fall on either side. The check does not relax V/A/J, flatness, corridor,
+  world, freshness, or execution gates.
+- **Derivation and cost:** the audit identified sampled flatness as weaker
+  than the continuous geometry contract. The added work is bounded by the
+  number of trajectory pieces per certificate and is outside the optimizer's
+  search loop.
+- **Evidence:** add/retain trajectory flatness unit coverage, rebuild planner
+  and runtime, then repeat the declared high-speed multi-waypoint three-pillar
+  mission. The entry remains open until repeated artifacts show all committed
+  main/backup candidates passing the exact-junction certificate.
+- **Removal condition:** replace only with a stronger analytic extrema
+  certificate over each polynomial piece and preserve the same fail-closed
+  result for non-finite evaluations.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run planner/runtime CTest, then repeated
+  `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` and recorded-data replay.
+
+### 2026-08-27 - Feed mission look-ahead into pass-through terminal tangent
+
+- **Owner:** navigation runtime/planner boundary and mission pass-through
+  continuity. **Scope:** when a `BEHAVIOR_PASS_THROUGH` goal carries a finite
+  `next_target`, the runtime forwards it to the planner. The planner keeps the
+  current waypoint as its geometric endpoint but seeds the terminal velocity
+  in the normalized outgoing direction, capped by `max_vel` and
+  `sqrt(max_acc * distance_to_next_target)`. STOP goals and missing/invalid
+  look-ahead retain zero terminal velocity at a connected endpoint.
+- **Safety impact:** positive/quality improvement with fail-closed behavior.
+  This removes the known zero-terminal-velocity discontinuity without
+  bypassing the mission controller's corner gate. The complete polynomial is
+  still checked by strict V/A/J, flatness, continuous corridor, swept-world,
+  freshness, and atomic commit certificates. Invalid look-ahead is ignored;
+  it cannot become a geometric target or authorize an unknown route.
+- **Derivation and cost:** the audit identified `next_target` as already
+  present in the contract but unused by the planner, while `goal_vel_en=false`
+  forced every pass-through endpoint to stop. The new seed uses one vector
+  normalization and a bounded square-root calculation per solve; it does not
+  change a hard limit, planner deadline, acceptance radius, or corner gate.
+- **Evidence:** add focused helper coverage for direction, acceleration-based
+  speed cap, maximum-speed cap, and degenerate look-ahead. Rebuild runtime and
+  planner packages, then repeat the multi-waypoint three-pillar mission and
+  recorded-data shadow-planning performance replay. This entry remains open
+  until waypoint acceptance, mission completion, command-anchor continuity,
+  clearance, and planner latency are measured repeatedly.
+- **Removal condition:** revisit only after the mission controller/planner
+  boundary exposes an equivalent, explicitly acknowledged outgoing-tangent
+  contract; do not remove the current waypoint endpoint or corner safety gate.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the focused planner/runtime tests followed by
+  `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
+  PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, then run repeated
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` and the declared dataset replay.
+
+### 2026-08-27 - Remove the dynamic-limit certificate allowance
+
+- **Owner:** nominal and backup trajectory dynamic certificates, planner
+  configuration, and runtime product profile. **Scope:**
+  `traj_opt/boundary/dynamic_limit_tolerance_ratio` remains only as a
+  compatibility field for detecting stale configuration and must be exactly
+  `0.0`; nominal line-search acceptance and backup refinement compare V/A/J
+  extrema directly with the mission/product limits.
+- **Safety impact:** positive and fail-closed. The previous `0.75` value made
+  the optimizer certificate accept up to `1.75 * max_vel`, `1.75 * max_acc`,
+  and `1.75 * max_jerk`, while braking and visibility derivation used the raw
+  limits. Non-finite or non-zero values are rejected at config load. No
+  physical, flatness, PX4, UNKNOWN, corridor, freshness, or commit gate is
+  relaxed, and no new tolerance is introduced.
+- **Derivation and cost:** this is a contract correction from the audit's P0
+  finding; the product has no repeated distribution that justifies a relaxed
+  hard gate. The change removes one multiplier from each certificate path and
+  adds one scalar validation. A numerical candidate that marginally exceeds a
+  physical limit may now be rejected and follow the existing backup or
+  fail-closed path; this is an expected safety tradeoff, not a reason to tune
+  the gate from one SITL run.
+- **Evidence:** source inspection identified the inconsistent multiplier in
+  `nominal_trajectory_optimizer.cpp` and `backup_trajectory_optimizer.cpp`;
+  the previous external artifacts reported overspeed and remain open evidence,
+  not certification. Focused config coverage now checks zero and rejects a
+  non-zero override. Rebuild the planner, run its CTest suite, then repeat the
+  declared three-pillar speed matrix and recorded-data performance replay.
+- **Removal condition:** remove the compatibility key and its loader only
+  after all supported profiles and artifact schemas have migrated away from
+  it, with a config-contract test proving stale non-zero overrides cannot be
+  accepted through another path.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run
+  `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
+  PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, then run the declared repeated
+  `SPEED_CAP_MPS=8 MAP_PROFILE=long_three_pillars_speed
+  make external-mode-check` matrix and the dataset replay command.
+
+### 2026-08-27 - Bound finite-difference derivatives at the planner boundary
+
+- Owner: navigation runtime and planning backend maintainers.
+- Scope: `Planner::setState` when propagated odometry marks acceleration or
+  jerk as estimated. Position and velocity remain the measured execution
+  state; only estimated acceleration/jerk supplied to the planner's PVAJ
+  boundary are norm-bounded by the product envelope shared by EXP and backup.
+  Raw estimates remain in runtime diagnostics and decision traces.
+- Safety impact: positive and fail-closed. This prevents noisy finite
+  differences from making the strict minimum-snap backup seed infeasible while
+  preserving the measured position/velocity handover and all dynamic,
+  corridor, swept-world, freshness, and atomic-commit certificates. It does
+  not relax a limit or convert an estimate into a measurement. A non-finite
+  state is still rejected before this boundary.
+- Derivation and cost: the dataset shadow artifact
+  `dataset-20260827T154025-4` recorded a candidate-boundary jerk estimate of
+  `[-39.919141]` with a 30 m/s^3 mission limit. Nominal EXP accepted the
+  configured 75% optimization tolerance, while the strict KNOWN_FREE backup
+  seed rejected the same boundary, producing `no dynamically feasible
+  KNOWN_FREE minimum-snap backup hull inside SFC`. The boundary adds two norm
+  checks and at most two vector scales per planning cycle.
+- Evidence: focused boundary test, `make build`, `make test`, then repeated
+  8 m/s SITL runs and representative recorded-data replay. Require raw and
+  bounded derivatives to be visible in the artifact, executable main and
+  backup candidates, no command-anchor rejection, and completed waypoint/
+  mission acceptance before closing this entry.
+- Removal/review condition: replace finite-difference derivatives with a
+  measured or validated filtered A/J interface whose error distribution is
+  bounded against the same command-boundary contract; remove the clamp only
+  after repeated SITL, recorded-data, sanitizer, and hardware evidence.
+- Verification command: source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run `PARALLEL_WORKERS=1 MAKE_JOBS=1 make build &&
+  PARALLEL_WORKERS=1 MAKE_JOBS=1 make test`, then run the declared 8 m/s
+  External Mode map matrix.

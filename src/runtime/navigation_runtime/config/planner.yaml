@@ -68,14 +68,15 @@ traj_opt:
     max_omg: 5.0
     max_acc_thr: 25.0
     min_acc_thr: 6.0
-    # Provisional numerical tolerance for the nominal and backup optimizer's
-    # V/A/J certificates. The bounded allowance covers the measured in-motion
-    # handover overshoot while configuration validation rejects a larger value.
-    # This is a provisional upper bound, not a replacement for the physical
-    # envelope or the flatness/world-model certificates.
-    dynamic_limit_tolerance_ratio: 0.75
+    # Dynamic certificates are strict physical limits. This compatibility key
+    # is intentionally zero; non-zero stale overrides are rejected at load.
+    dynamic_limit_tolerance_ratio: 0.0
   exp_traj:
-    pos_constraint_type: 1
+    # Parameterize nominal MINCO control points inside the generated SFC.
+    # Direct waypoint variables (type=1) only apply a soft plane penalty and
+    # can leave the corridor between optimizer iterations; the independent
+    # continuous corridor certificate then rejects the whole candidate.
+    pos_constraint_type: 2
     block_energy_cost: false
     opt_accuracy: 5.0e-6
     # Feasibility retries disable relative-cost stopping but remain bounded;

@@ -555,6 +555,7 @@ class RuntimeContractTest(unittest.TestCase):
             speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             speed_planner = yaml.safe_load(Path(speed_parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 5.0)
+            self.assertEqual(speed_planner["traj_opt"]["exp_traj"]["pos_constraint_type"], 2)
 
             capped_target = runner._mapping_params(
                 session,
@@ -677,6 +678,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_speed_certification_requirement_tracks_each_requested_sweep_cap(self) -> None:
         for profile in (
             "long_three_pillars_speed",
+            "long_three_pillars_multiwaypoint",
             "long_open_featured_speed",
         ):
             self.assertEqual(
@@ -752,6 +754,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_featured": 1.5,
             "long_three_pillars": 3.0,
             "long_three_pillars_speed": 5.0,
+            "long_three_pillars_multiwaypoint": 5.0,
             "long_open_featured_speed": 5.0,
             "single_pillar_speed": 8.0,
             "no_path": 1.0,
@@ -782,7 +785,7 @@ class RuntimeContractTest(unittest.TestCase):
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
-            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "single_pillar_speed", "no_path",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
             self.assertTrue(obstacles, profile)
@@ -794,7 +797,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_open_featured_speed", "single_pillar_speed", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "no_path"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -907,6 +910,18 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(len(mission["waypoints"]), 2)
         self.assertEqual(mission["waypoints"][1]["position"], [140.0, 0.0, 3.0])
         self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+
+    def test_long_three_pillars_multiwaypoint_is_a_nine_checkpoint_speed_contract(self) -> None:
+        descriptor = runner._map_registry()["long_three_pillars_multiwaypoint"]
+        self.assertEqual(descriptor["world"], "long_three_pillars_speed")
+        self.assertEqual(descriptor["route_segment_waypoints"], [0, 8])
+        self.assertEqual(descriptor["benchmark"]["waypoint_count"], 9)
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/long_three_pillars_multiwaypoint.yaml").read_text()
+        )["mission"]
+        self.assertEqual(len(mission["waypoints"]), 9)
+        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+        self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(
@@ -2124,6 +2139,19 @@ class RuntimeContractTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("new_goal_", source)
         self.assertIn("ReplanOnce", source)
+
+    def test_candidate_exposure_retains_pre_activation_lease(self) -> None:
+        source = (
+            ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+        ).read_text(encoding="utf-8")
+        export = source.index("bool NavigationRuntimeNode::commitPlannerCandidate")
+        sampling = source.index("const auto candidate_sample", export)
+        commit = source.index("const navigation_execution::CommitToken token", sampling)
+        boundary = source[sampling:commit]
+        self.assertIn("candidate_awaiting_activation", boundary)
+        self.assertIn("now_ns < candidate_ptr->valid_from_ns", boundary)
+        self.assertIn("!candidate_sample && !candidate_awaiting_activation", boundary)
+        self.assertIn("!candidate_awaiting_activation &&", boundary)
 
     def test_lio_diagnostics_expose_map_guard_and_propagation_latency(self) -> None:
         source = (ROOT / "src/estimation/fast_lio_ros/src/ros_output_publisher.cpp").read_text(

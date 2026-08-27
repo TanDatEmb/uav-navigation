@@ -260,8 +260,9 @@ namespace navigation_planning_backend {
                     "inflation at least as large as the planner safety envelope");
             }
             const double minimum_map_extent = 2.0 * robot_r + world_resolution;
+            const double horizontal_extent = world_geometry.local_size_m.head<2>().maxCoeff();
             if (world_geometry.local_size_m.minCoeff() < minimum_map_extent - 1.0e-9 ||
-                world_geometry.local_size_m.maxCoeff() + 1.0e-9 < planning_horizon_m) {
+                horizontal_extent + 1.0e-9 < planning_horizon_m) {
                 throw std::invalid_argument(
                     "world map extent is insufficient for the configured planning horizon "
                     "and safety envelope");

@@ -13,7 +13,9 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -59,6 +61,82 @@ def integer(value: Any) -> str:
 def percent(value: Any, digits: int = 1) -> str:
     number = finite(value)
     return "—" if number is None else f"{number * 100:.{digits}f}%"
+
+
+def _session_experiment_time(session_name: str) -> str:
+    """Render the UTC session-name stamp in local system time as well."""
+    match = re.search(r"(\d{8}T\d{6})", session_name)
+    if match is None:
+        return "not encoded in session name"
+    try:
+        stamp_utc = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return "not encoded in session name"
+    local = stamp_utc.astimezone()
+    offset = local.strftime("%z")
+    offset = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset or "local"
+    return (
+        f"{local.strftime('%d/%m/%Y %H:%M:%S')} (UTC{offset}, local system time) · "
+        f"session stamp {stamp_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+    )
+
+
+def _mission_target_speed_mps(session: Path) -> float | None:
+    """Read the resolved mission speed contract used by the run."""
+    document = _yaml_mapping(session / "resolved_mission.yaml")
+    mission = document.get("mission", {}) if isinstance(document.get("mission"), dict) else {}
+    planning = mission.get("planning", {}) if isinstance(mission.get("planning"), dict) else {}
+    target = finite(planning.get("max_velocity_mps"))
+    if target is not None:
+        return target
+    scenario = _yaml_mapping(session / "scenario_config.yaml").get("scenario", {})
+    return finite(scenario.get("expected_max_velocity_mps")) if isinstance(scenario, dict) else None
+
+
+def _dimension_text(value: Any, digits: int = 1) -> str:
+    if not isinstance(value, (list, tuple)) or not value:
+        return "—"
+    return " × ".join(fmt(item, digits) for item in value)
+
+
+def _coordinate_text(value: Any, digits: int = 1) -> str:
+    if not isinstance(value, (list, tuple)) or not value:
+        return "—"
+    return ", ".join(fmt(item, digits) for item in value)
+
+
+def _replay_map_context_html(spatial: dict[str, Any]) -> str:
+    """Describe planner/map sensing extents below the replay, not over it."""
+    map_size = spatial.get("planning_map_size_xyz_m") or spatial.get("planning_map_size_xy_m")
+    map_origin = spatial.get("planning_map_origin_xyz_m") or spatial.get("planning_map_origin_xy_m")
+    visibility_floor = finite(spatial.get("visibility_horizon_floor_m"))
+    visibility_cap = finite(spatial.get("visibility_horizon_cap_m"))
+    visibility = (
+        f"{fmt(visibility_floor, 1)}–{fmt(visibility_cap, 1)} m"
+        if visibility_floor is not None and visibility_cap is not None else "—"
+    )
+    ray_range = spatial.get("ray_range_m")
+    lidar_range = (
+        f"{fmt(spatial.get('lidar_min_range_m'), 1)}–{fmt(spatial.get('lidar_max_range_m'), 1)} m"
+        if finite(spatial.get("lidar_min_range_m")) is not None and finite(spatial.get("lidar_max_range_m")) is not None
+        else "—"
+    )
+    ray_range_text = (
+        f"{fmt(ray_range[0], 1)}–{fmt(ray_range[1], 1)} m"
+        if isinstance(ray_range, (list, tuple)) and len(ray_range) >= 2
+        else _dimension_text(ray_range)
+    )
+    return (
+        '<div class="replay-map-context" aria-label="Replay map and sensing context">'
+        f'<span><strong>ROG-Map planner window</strong> {_dimension_text(map_size)} m; '
+        f'origin ({_coordinate_text(map_origin)}) m; resolution {fmt(spatial.get("planning_resolution_m"), 2)} m</span>'
+        f'<span><strong>Planner visibility</strong> {visibility}; '
+        f'raycast update box {_dimension_text(spatial.get("rog_local_update_box_m"))} m; '
+        f'ray range {ray_range_text}</span>'
+        f'<span><strong>LiDAR input</strong> {lidar_range}; frame {esc(spatial.get("lidar_frame") or "—")}; '
+        f'ROG-Map raycasting {"enabled" if spatial.get("raycasting_enabled") else "disabled"}</span>'
+        '</div>'
+    )
 
 
 def _yaml_mapping(path: Path) -> dict[str, Any]:
@@ -133,6 +211,12 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         x, y = number(value[0]), number(value[1])
         return (x, y) if x is not None and y is not None else None
 
+    def vector_xyz(value: Any) -> tuple[float, float, float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) < 3:
+            return None
+        xyz = tuple(number(value[index]) for index in range(3))
+        return xyz if all(item is not None for item in xyz) else None
+
     return {
         "source": [planner_file.name, lio_file.name],
         "lidar_max_range_m": number(preprocessing.get("maximum_range_m")),
@@ -141,7 +225,9 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         "lio_half_extent_xy_m": lio_half_extent_xy,
         "lio_crop_trigger_m": number(local_map.get("crop_trigger_distance_m")),
         "planning_map_size_xy_m": map_size_xy,
+        "planning_map_size_xyz_m": vector_xyz(rog_cfg.get("map_size")),
         "planning_map_origin_xy_m": vector_pair(rog_cfg.get("fix_map_origin")),
+        "planning_map_origin_xyz_m": vector_xyz(rog_cfg.get("fix_map_origin")),
         "planning_resolution_m": number(rog_cfg.get("resolution")),
         "inflation_radius_m": inflation_radius,
         "visibility_horizon_floor_m": number(planner_cfg.get("visibility_horizon_floor_m")),
@@ -153,6 +239,7 @@ def _configured_spatial_envelopes(session: Path) -> dict[str, Any]:
         "map_sliding_enabled": bool((rog_cfg.get("map_sliding") or {}).get("enable", False)) if isinstance(rog_cfg.get("map_sliding"), dict) else False,
         "map_sliding_threshold_m": number((rog_cfg.get("map_sliding") or {}).get("threshold")) if isinstance(rog_cfg.get("map_sliding"), dict) else None,
         "raycasting_enabled": bool(raycasting.get("enable", False)),
+        "rog_local_update_box_m": vector_xyz(raycasting.get("local_update_box")),
         "ray_range_m": vector_xy(raycasting.get("ray_range")),
         "parameter_updates_recorded": _parameter_updates_recorded(session),
     }
@@ -895,10 +982,11 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
             duration = max(0.01, finite(snapshot.get("duration_s")) or 0.01)
             if start_time is None:
                 continue
-            for key, role, label in (
-                ("nominal_path", 0, "nominal / main"),
-                ("backup_path", 1, "safety / backup"),
-                ("emergency_path", 1, "emergency / backup"),
+            selected_role = str(snapshot.get("selected_role") or "").lower()
+            for key, role, label, role_name in (
+                ("nominal_path", 0, "nominal / main", "nominal"),
+                ("backup_path", 1, "safety / backup", "backup"),
+                ("emergency_path", 1, "emergency / backup", "backup"),
             ):
                 positions = [
                     point for point in (_replay_point(value) for value in snapshot.get(key, []))
@@ -911,6 +999,7 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
                     "duration": duration,
                     "role": role,
                     "role_label": label,
+                    "selected": selected_role == role_name if selected_role else None,
                     "safety_kind": "bundle path snapshot",
                     "waypoint": 0,
                     "world_revision": int(finite(snapshot.get("certificate_world_revision")) or 0),
@@ -1022,6 +1111,8 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         key: finite(envelopes.get(key))
         for key in (
             "lidar_max_range_m",
+            "visibility_horizon_floor_m",
+            "visibility_horizon_cap_m",
             "safe_corridor_max_m",
             "safe_corridor_nominal_m",
             "robot_radius_m",
@@ -1156,7 +1247,6 @@ _REPLAY_SCRIPT = r"""
     }, parent);
     const title = svgNode("title", {}, ring);
     title.textContent = `${label}: ${fmt(radius, 2)} m around UAV at replay cursor`;
-    svgText(parent, point[0] + 7, point[1] - displayRadius - 5, `${label} ${fmt(radius, 1)} m`, "replay-map-label");
   }
 
   const staticLayer = svgNode("g", {}, svg);
@@ -1211,7 +1301,14 @@ _REPLAY_SCRIPT = r"""
     document.getElementById("replay-position").textContent = ground ? `${fmt(ground.p[0], 2)}, ${fmt(ground.p[1], 2)}, ${fmt(ground.p[2], 2)} m` : "—";
     document.getElementById("replay-speed").textContent = ground && ground.s != null ? `${fmt(ground.s, 2)} m/s` : "—";
     const plan = plans.length ? plans[0] : null;
-    document.getElementById("replay-plan").textContent = plans.length ? `${plans.map(item => item.role_label).join(" + ")} · ${plans.length} planner path(s)` : "No generated executable path";
+    const nominalCount = plans.filter(item => item.role !== 1).length;
+    const safetyCount = plans.filter(item => item.role === 1).length;
+    const pathSummary = [];
+    if (nominalCount) pathSummary.push(`nominal / main ×${nominalCount}`);
+    if (safetyCount) pathSummary.push(`safety / backup ×${safetyCount}`);
+    const selectedRoles = [...new Set(plans.filter(item => item.selected === true).map(item => item.role === 1 ? "safety / backup" : "nominal / main"))];
+    const selectedSummary = selectedRoles.length ? ` · selected ${selectedRoles.join(" + ")}` : "";
+    document.getElementById("replay-plan").textContent = plans.length ? `${pathSummary.join(" + ")} · ${plans.length} planner path(s)${selectedSummary}` : "No generated executable path";
     document.getElementById("replay-plan-meta").textContent = plan ? `bundle ${plan.bundle_generation || "—"} · world revision ${plan.world_revision} · ${plan.safety_kind}` : "Rejected/hold samples are not paths";
     document.getElementById("replay-planner").textContent = planner ? `${planner.reason} · horizon ${fmt(planner.horizon, 2)} m · known-free ${fmt(planner.known_free, 2)} m` : "No planner diagnostic yet";
     const waypoint = latestAt(data.waypoint_events, time);
@@ -1221,7 +1318,8 @@ _REPLAY_SCRIPT = r"""
     document.getElementById("replay-vehicle-state").textContent = vehicle ? `nav=${vehicle.nav_state ?? "—"} · armed=${vehicle.arming_state ?? "—"} · failsafe=${vehicle.failsafe ?? "—"}` : "—";
     const lidar = latestAt(data.lidar_observations || [], time);
     document.getElementById("replay-lidar").textContent = lidar ? `scan ${lidar.scan_index ?? "—"} · ${lidar.roi_points ?? 0} ROI points · range ${fmt(lidar.min_range_m, 2)}–${fmt(lidar.max_range_m, 2)} m` : "No LiDAR observation yet";
-    const envelopes = Object.entries(data.spatial_envelopes || {}).map(([name, radius]) => `${name.replaceAll("_m", "")}: ${fmt(radius, 2)} m`);
+    const envelopeLabels = {lidar_max_range_m: "LiDAR max range", visibility_horizon_floor_m: "ROG-Map visibility floor", visibility_horizon_cap_m: "ROG-Map visibility cap", robot_radius_m: "vehicle radius"};
+    const envelopes = Object.entries(data.spatial_envelopes || {}).map(([name, radius]) => `${envelopeLabels[name] || name.replace(/_m$/, "").replaceAll("_", " ")}: ${fmt(radius, 2)} m`);
     document.getElementById("replay-envelopes").textContent = envelopes.length ? `${envelopes.join(" · ")} · centered on UAV` : "No configured replay envelopes";
   }
 
@@ -1232,12 +1330,11 @@ _REPLAY_SCRIPT = r"""
     clear(trailLayer); clear(activeLayer); clear(vehicleLayer);
     const trail = data.ground_truth.filter(item => item.t <= currentTime + 1e-9).map(item => item.p);
     polyline(trailLayer, trail, {stroke: "#1f6feb", "stroke-width": 3});
-    plans.forEach(plan => {
+    plans.slice().sort((left, right) => right.role - left.role).forEach(plan => {
       const color = plan.role === 1 ? "#c0392b" : "#0f8b8d";
-      polyline(activeLayer, plan.points, {stroke: color, "stroke-width": 3, "stroke-dasharray": "7 5", "stroke-opacity": .86});
+      polyline(activeLayer, plan.points, {stroke: color, "stroke-width": plan.selected === true ? 3.5 : 2.5, "stroke-dasharray": plan.selected === true ? "" : "7 5", "stroke-opacity": plan.selected === true ? .92 : .48});
       const end = world(plan.points[plan.points.length - 1]);
       svgNode("circle", {cx: end[0], cy: end[1], r: 5, fill: color, stroke: "#ffffff", "stroke-width": 2}, activeLayer);
-      svgText(activeLayer, end[0] + 8, end[1] - 8, `${plan.role_label} path`, "replay-map-label");
     });
     (data.lidar_observations || []).filter(item => item.t <= currentTime + 1e-9).slice(-180).forEach(observation => {
       const vehicle = observation.vehicle_position, yaw = Number(observation.vehicle_yaw_rad);
@@ -1253,8 +1350,8 @@ _REPLAY_SCRIPT = r"""
     if (ground) {
       const point = world(ground.p);
       drawEnvelope(vehicleLayer, point, data.spatial_envelopes.robot_radius_m, "#c0392b", "", "vehicle radius");
-      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.safe_corridor_nominal_m, "#7650a8", "2 3", "planner nominal visibility");
-      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.safe_corridor_max_m, "#7650a8", "6 4", "planner max visibility");
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.visibility_horizon_floor_m || data.spatial_envelopes.safe_corridor_nominal_m, "#7650a8", "2 3", "ROG-Map planner visibility floor");
+      drawEnvelope(vehicleLayer, point, data.spatial_envelopes.visibility_horizon_cap_m || data.spatial_envelopes.safe_corridor_max_m, "#7650a8", "6 4", "ROG-Map planner visibility cap");
       drawEnvelope(vehicleLayer, point, data.spatial_envelopes.lidar_max_range_m, "#0f8b8d", "5 4", "LiDAR max range");
       const previous = nearestGround(currentTime - .15);
       let heading = Number(ground.heading_rad);
@@ -1311,10 +1408,11 @@ def replay_section(data: dict[str, Any]) -> str:
         return ""
     if payload["plans"]:
         replay_description = (
-            "Scrub or play the recorded timeline. Blue is observed ground truth; "
-            "solid/dashed colored lines are the nominal and backup paths from the same planner bundle. "
-            "Configured LiDAR/planner envelopes are drawn as rings around the cursor UAV; purple points are projected LiDAR observations. "
-            "Click a marker to jump to a path publication."
+            "Scrub or play the recorded timeline. Blue is the observed UAV path; "
+            "teal/red lines are nominal/safety path candidates from the same planner bundle. "
+            "A solid line is selected at the cursor and a dashed line is another candidate. "
+            "Purple rings show the ROG-Map planner visibility window; the teal dashed ring is the LiDAR max range. "
+            "Purple points are projected LiDAR observations. Click a timeline marker to jump to a path publication."
         )
     else:
         replay_description = (
@@ -1331,11 +1429,38 @@ def replay_section(data: dict[str, Any]) -> str:
       <button id="replay-play" type="button">Play</button><button id="replay-reset" type="button">Reset</button>
       <label class="replay-time-control" for="replay-time">simulation time <output id="replay-time-value">—</output><input id="replay-time" type="range" aria-label="Replay simulation time"></label>
     </div>
-    <div class="replay-event-caption"><span>path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal <i class="replay-swatch safety"></i> safety</span></div>
+    <div class="replay-event-caption"><span>candidate path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal (lower lane) <i class="replay-swatch safety"></i> safety (upper lane)</span></div>
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
-      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> active nominal path</span><span><i class="replay-swatch safety"></i> active safety path</span><span>◌ waypoint acceptance radius</span><span>○ configured LiDAR/planner envelope around UAV</span><span>• LiDAR observation</span></div></div>
-      <aside class="replay-status"><h3>State at cursor</h3><dl><dt>Time</dt><dd id="replay-time-value-side">—</dd><dt>UAV position</dt><dd id="replay-position">—</dd><dt>UAV speed</dt><dd id="replay-speed">—</dd><dt>Vehicle state</dt><dd id="replay-vehicle-state">—</dd><dt>Waypoint state</dt><dd id="replay-waypoint">—</dd><dt>Acceptance</dt><dd id="replay-acceptance">—</dd><dt>Active planner paths</dt><dd id="replay-plan">—</dd><dt>Path metadata</dt><dd id="replay-plan-meta">—</dd><dt>Planner</dt><dd id="replay-planner">—</dd><dt>LiDAR / obstacle evidence</dt><dd id="replay-lidar">—</dd><dt>Spatial envelopes</dt><dd id="replay-envelopes">—</dd></dl><p class="small">The replay shows recorded planner geometry, sensor evidence and vehicle state at the cursor; it is not a physics re-simulation.</p></aside>
+      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> nominal path candidate</span><span><i class="replay-swatch safety"></i> safety path candidate</span><span>solid = selected · dashed = other candidate</span><span>◌ waypoint acceptance radius</span><span><i class="replay-swatch planner"></i> ROG-Map planner visibility</span><span><i class="replay-swatch lidar"></i> LiDAR max range</span><span>• LiDAR observation</span></div>{_replay_map_context_html(data.get("spatial_envelopes", {}))}</div>
+      <aside class="replay-status"><h3>State at cursor</h3>
+        <div class="replay-status-metrics">
+          <div class="replay-status-metric"><span class="replay-status-metric-label">Time</span><strong id="replay-time-value-side" class="replay-status-metric-value">—</strong></div>
+          <div class="replay-status-metric"><span class="replay-status-metric-label">UAV speed</span><strong id="replay-speed" class="replay-status-metric-value">—</strong></div>
+        </div>
+        <div class="replay-status-group">
+          <div class="replay-status-group-title">Flight state</div>
+          <div class="replay-field"><span class="replay-field-label">Position</span><strong id="replay-position" class="replay-field-value">—</strong></div>
+          <div class="replay-field"><span class="replay-field-label">Vehicle</span><strong id="replay-vehicle-state" class="replay-field-value">—</strong></div>
+        </div>
+        <div class="replay-status-group">
+          <div class="replay-status-group-title">Mission progress</div>
+          <div class="replay-field"><span class="replay-field-label">Waypoint</span><strong id="replay-waypoint" class="replay-field-value">—</strong></div>
+          <div class="replay-field"><span class="replay-field-label">Acceptance</span><strong id="replay-acceptance" class="replay-field-value">—</strong></div>
+        </div>
+        <div class="replay-status-group">
+          <div class="replay-status-group-title">Planner output</div>
+          <div class="replay-field"><span class="replay-field-label">Active paths</span><strong id="replay-plan" class="replay-field-value">—</strong></div>
+          <div class="replay-field"><span class="replay-field-label">Bundle</span><strong id="replay-plan-meta" class="replay-field-value">—</strong></div>
+          <div class="replay-field"><span class="replay-field-label">Diagnostic</span><strong id="replay-planner" class="replay-field-value">—</strong></div>
+        </div>
+        <div class="replay-status-group">
+          <div class="replay-status-group-title">Sensors and envelopes</div>
+          <div class="replay-field"><span class="replay-field-label">LiDAR</span><strong id="replay-lidar" class="replay-field-value">—</strong></div>
+          <div class="replay-field"><span class="replay-field-label">Envelopes</span><strong id="replay-envelopes" class="replay-field-value">—</strong></div>
+        </div>
+        <p class="small">The replay shows recorded planner geometry, sensor evidence and vehicle state at the cursor; it is not a physics re-simulation.</p>
+      </aside>
     </div>
     <script>
       {script}
@@ -2173,6 +2298,9 @@ def render(session: Path, output: Path) -> Path:
     replay_html = replay_section(data)
 
     session_name = session.name
+    experiment_time = _session_experiment_time(session_name)
+    target_speed_mps = _mission_target_speed_mps(session)
+    measured_peak_speed_mps = finite(tracking.get("speed_mps", {}).get("maximum"))
     sim_duration_s = finite(mission.get("duration_sim_s"))
     wall_elapsed_s = finite(mission.get("wall_elapsed_s"))
     sim_samples = data.get("ground_truth", [])
@@ -2312,8 +2440,9 @@ def render(session: Path, output: Path) -> Path:
     .chart {{ width:100%; height:auto; display:block; }} .chart-legend-toggle {{ cursor:pointer; }} .chart-legend-toggle:focus {{ outline:2px solid {BLUE}; outline-offset:2px; }} .chart-legend-toggle.off {{ opacity:.32; }}
     .axis-label {{ fill:#617284; font-size:11px; }} .axis-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .legend-label {{ fill:#53677b; font-size:11px; }} .threshold-label {{ fill:{RED}; font-size:11px; font-weight:700; }} .end-label {{ font-size:11px; font-weight:800; }} .map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }} .bar-value {{ fill:#29435d; font-size:12px; font-weight:800; }} .bar-note {{ fill:#68778a; font-size:10px; }}
     .replay-toolbar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 8px; }} .replay-toolbar button {{ border:1px solid #b9c9d6; border-radius:6px; background:#fff; color:#1f4f78; padding:7px 13px; font-weight:800; cursor:pointer; }} .replay-toolbar button:hover {{ background:#edf5fb; }} .replay-time-control {{ display:flex; align-items:center; gap:10px; flex:1; min-width:280px; color:#53677b; font-size:12px; font-weight:700; }} .replay-time-control input {{ flex:1; accent-color:{BLUE}; }} .replay-time-control output {{ min-width:62px; color:#18324b; font-variant-numeric:tabular-nums; }}
-    .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:18px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 65%,#edf2f6 65%,#edf2f6 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:11px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ background:{TEAL}; }} .replay-marker.safety {{ background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
-    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:12px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:8px 8px 6px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:12px; }} .replay-status h3 {{ margin-bottom:10px; }} .replay-status dl {{ margin:0; }} .replay-status dt {{ margin-top:9px; color:#68778a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }} .replay-status dd {{ margin:2px 0 0; color:#1f3c56; font-size:13px; font-weight:700; overflow-wrap:anywhere; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
+    .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:30px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 46%,#edf2f6 46%,#edf2f6 54%,transparent 54%,transparent 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:10px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ bottom:0; background:{TEAL}; }} .replay-marker.safety {{ bottom:14px; background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
+    .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:12px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:8px 8px 6px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:14px; }} .replay-status h3 {{ margin-bottom:12px; }} .replay-status-metrics {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:12px; }} .replay-status-metric {{ min-width:0; padding:10px; border:1px solid #dce6ed; border-radius:8px; background:#fff; }} .replay-status-metric-label {{ display:block; color:#68778a; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }} .replay-status-metric-value {{ display:block; margin-top:4px; color:#18324b; font-size:17px; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }} .replay-status-group {{ padding:11px 0 2px; border-top:1px solid #e1e9ef; }} .replay-status-group:first-of-type {{ padding-top:0; border-top:0; }} .replay-status-group-title {{ margin-bottom:3px; color:#29435d; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }} .replay-field {{ display:grid; grid-template-columns:minmax(76px,.42fr) minmax(0,1fr); gap:8px; align-items:baseline; padding:7px 0; border-bottom:1px solid #edf1f4; }} .replay-field:last-child {{ border-bottom:0; }} .replay-field-label {{ color:#68778a; font-size:11px; font-weight:700; }} .replay-field-value {{ min-width:0; color:#1f3c56; font-size:12px; line-height:1.35; font-weight:700; overflow-wrap:anywhere; }} .replay-status > .small {{ margin-top:12px; line-height:1.5; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
+    .replay-swatch.planner {{ background:{PURPLE}; height:2px; border-top:1px dashed {PURPLE}; }} .replay-swatch.lidar {{ background:{TEAL}; height:2px; border-top:1px dashed {TEAL}; }} .replay-map-context {{ display:flex; flex-wrap:wrap; gap:7px 16px; margin:8px 4px 2px; padding-top:8px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; line-height:1.45; }} .replay-map-context span {{ min-width:240px; flex:1 1 240px; }} .replay-map-context strong {{ color:#29435d; }}
     .evidence {{ width:100%; border-collapse:collapse; font-size:13px; }} .evidence th,.evidence td {{ padding:10px 9px; border-bottom:1px solid #e5ebef; text-align:left; vertical-align:middle; }} .evidence th {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }} .evidence .observed {{ font-weight:800; color:#1f3c56; }}
     .two-col {{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; align-items:start; }}
     .callout {{ padding:13px 15px; background:#f7fafc; border-left:4px solid var(--blue); border-radius:6px; }} .callout p {{ color:#385169; font-size:13px; }}
@@ -2332,7 +2461,7 @@ def render(session: Path, output: Path) -> Path:
     <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
   </header>
 
-  <div class="run-log" aria-label="Simulation runtime"><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
+  <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>Target speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
   <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 

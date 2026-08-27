@@ -216,6 +216,11 @@ void PlannerFacade::setGoalAcceptanceRadius(const double radius_m) noexcept {
   if (impl_ && impl_->planner) impl_->planner->setGoalAcceptanceRadius(radius_m);
 }
 
+void PlannerFacade::setPassThroughNextTarget(
+    const std::optional<Eigen::Vector3d>& next_target) noexcept {
+  if (impl_ && impl_->planner) impl_->planner->setPassThroughNextTarget(next_target);
+}
+
 bool PlannerFacade::setState(const navigation_planning::KinematicState& state) {
   return impl_->planner->setState(state);
 }

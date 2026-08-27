@@ -43,9 +43,8 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
     const std::size_t intervals = std::max<std::size_t>(
             1U, static_cast<std::size_t>(std::ceil(duration / maximum_sample_period_s)));
     flatness::FlatnessMap flatness = config.quadrotot_flatness;
-    for (std::size_t sample = 0; sample <= intervals; ++sample) {
-        const double time = duration * static_cast<double>(sample) /
-                            static_cast<double>(intervals);
+    const auto evaluate_sample = [&](const double time) {
+        if (!std::isfinite(time) || time < 0.0 || time > duration) return false;
         const Eigen::Vector3d velocity = trajectory.getVel(time);
         const Eigen::Vector3d acceleration = trajectory.getAcc(time);
         const Eigen::Vector3d jerk = trajectory.getJer(time);
@@ -64,12 +63,37 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
             !std::isfinite(yaw) || !std::isfinite(yaw_rate) ||
             !std::isfinite(thrust) || !quaternion.allFinite() || !body_rate.allFinite()) {
             report.finite = false;
-            return report;
+            return false;
         }
         report.maximum_body_rate_rad_s =
                 std::max(report.maximum_body_rate_rad_s, body_rate.norm());
         report.minimum_thrust_n = std::min(report.minimum_thrust_n, thrust);
         report.maximum_thrust_n = std::max(report.maximum_thrust_n, thrust);
+        return true;
+    };
+    for (std::size_t sample = 0; sample <= intervals; ++sample) {
+        const double time = duration * static_cast<double>(sample) /
+                            static_cast<double>(intervals);
+        if (!evaluate_sample(time)) {
+            report.finite = false;
+            return report;
+        }
+    }
+    // Uniform samples need not land on internal MINCO piece boundaries. Add
+    // every exact junction explicitly because flatness can peak there even
+    // when both neighboring uniform samples are below the limit.
+    double boundary_time = 0.0;
+    for (int piece = 0; piece + 1 < trajectory.getPieceNum(); ++piece) {
+        const double piece_duration = trajectory[piece].getDuration();
+        if (!std::isfinite(piece_duration) || piece_duration <= 0.0) {
+            report.finite = false;
+            return report;
+        }
+        boundary_time += piece_duration;
+        if (!evaluate_sample(boundary_time)) {
+            report.finite = false;
+            return report;
+        }
     }
     return report;
 }

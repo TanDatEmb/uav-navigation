@@ -11,8 +11,10 @@ from flight_review_report import (
     _configured_spatial_envelopes,
     _evaluation,
     _map_bounds,
+    _mission_target_speed_mps,
     _obstacle_footprint_points,
     _replay_payload,
+    _session_experiment_time,
     replay_section,
     _safety_stop_status,
     _timing_distribution_chart,
@@ -265,6 +267,7 @@ rog_map:
   raycasting:
     enable: true
     ray_range: [0.8, 55.0]
+    local_update_box: [50.0, 50.0, 5.0]
 """,
                 encoding="utf-8",
             )
@@ -287,13 +290,27 @@ rog_map:
 
         self.assertEqual(envelopes["lidar_frame"], "configured_lidar")
         self.assertEqual(envelopes["planning_map_size_xy_m"], (80.0, 20.0))
+        self.assertEqual(envelopes["planning_map_size_xyz_m"], (80.0, 20.0, 6.0))
         self.assertEqual(envelopes["planning_map_origin_xy_m"], (0.0, 0.0))
+        self.assertEqual(envelopes["planning_map_origin_xyz_m"], (0.0, 0.0, 1.5))
         self.assertEqual(envelopes["lio_half_extent_xy_m"], (24.0, 18.0))
         self.assertEqual(envelopes["inflation_radius_m"], 0.75)
         self.assertEqual(envelopes["robot_radius_m"], 0.87)
         self.assertEqual(envelopes["planning_margin_m"], 0.07)
         self.assertTrue(envelopes["raycasting_enabled"])
         self.assertEqual(envelopes["ray_range_m"], (0.8, 55.0))
+        self.assertEqual(envelopes["rog_local_update_box_m"], (50.0, 50.0, 5.0))
+
+    def test_report_context_reads_target_speed_and_session_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "resolved_mission.yaml").write_text(
+                "mission:\n  planning:\n    max_velocity_mps: 8.0\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_mission_target_speed_mps(session), 8.0)
+        timestamp = _session_experiment_time("external-mode-check-20260827T115832-1234")
+        self.assertIn("session stamp 2026-08-27 11:58:32 UTC", timestamp)
 
     def test_map_focus_uses_obstacle_footprint_and_configured_padding(self) -> None:
         obstacle = {
@@ -359,6 +376,32 @@ rog_map:
         self.assertIn("drawEnvelope", replay)
         self.assertIn("centered on UAV", replay)
         self.assertEqual(payload["spatial_envelopes"]["robot_radius_m"], 0.8)
+
+    def test_replay_keeps_path_identity_in_legend_and_status_not_on_map(self) -> None:
+        replay = replay_section({
+            "ground_truth": [
+                {"t": 0.0, "position": [0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]},
+                {"t": 1.0, "position": [1.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]},
+            ],
+            "waypoints": [],
+            "metrics": {"obstacles": [], "route_obstacles": []},
+            "observability": {
+                "trajectory_paths": [{
+                    "t_start": 0.0,
+                    "t_end": 1.0,
+                    "trajectory_flag": 0,
+                    "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                }],
+            },
+            "spatial_envelopes": {},
+        })
+        self.assertNotIn("svgText(activeLayer, end[0] + 8", replay)
+        self.assertNotIn("svgText(parent, point[0] + 7", replay)
+        self.assertIn("nominal path candidate", replay)
+        self.assertIn("solid = selected", replay)
+        self.assertIn("ROG-Map planner visibility", replay)
+        self.assertIn("replay-status-group-title", replay)
+        self.assertIn('id="replay-plan"', replay)
 
     def test_line_chart_wraps_a_fifth_legend_entry_inside_the_svg(self) -> None:
         chart = line_chart(

@@ -100,6 +100,23 @@ profiles:
       open_zone_min_m: 15.0
       bypass_zone_expected_m: 12.0
       max_cross_track_m: 8.0
+  long_three_pillars_multiwaypoint:
+    family: long_route_multiwaypoint
+    world: long_three_pillars_speed
+    mission: long_three_pillars_multiwaypoint
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03, speed_feature_tree_01, speed_feature_tree_02, speed_feature_tree_03, speed_feature_tree_04, speed_feature_tree_05, speed_feature_tree_06, speed_feature_tree_07, speed_feature_tree_08, speed_feature_tree_09, speed_feature_tree_10, speed_feature_tree_13, speed_feature_tree_14, speed_feature_panel_01, speed_feature_panel_02, speed_feature_panel_03, speed_feature_panel_04, speed_feature_panel_05, speed_feature_panel_06, speed_feature_corner_01, speed_feature_corner_02, speed_feature_corner_03, speed_feature_overhead_01, speed_feature_overhead_02, speed_feature_overhead_03, speed_feature_overhead_04, speed_feature_overhead_05, speed_feature_overhead_06]
+    route_obstacles: [long_three_speed_pillar_01, long_three_speed_pillar_02, long_three_speed_pillar_03]
+    route_segment_waypoints: [0, 8]
+    benchmark:
+      objective: high_speed_multiwaypoint_three_pillar_completion
+      route_length_m: 160.0
+      pillar_spacing_m: 35.0
+      waypoint_count: 9
+      speed_sweep_mps: [3.0, 4.0, 5.0]
+      max_cross_track_m: 6.0
   long_open_featured_speed:
     family: long_route
     world: long_open_featured_speed
