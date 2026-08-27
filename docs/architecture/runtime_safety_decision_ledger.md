@@ -6746,3 +6746,32 @@ release profiles must not use the former allowance.
   repeated
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` followed by the declared speed ladder.
+
+### 2026-08-28 - Refresh the sensor-minimum body neighborhood per observation
+
+- **Owner:** Mapping and navigation runtime maintainers.
+- **Scope:** ROG-Map refreshes the existing sensor-minimum body-clear
+  neighborhood around every accepted corrected-odometry observation, and the
+  immutable snapshot changed-region certificate includes that local volume.
+  The clear radius remains the configured `raycast_range_min`; no unknown
+  future space is classified as free.
+- **Safety impact:** This repairs the evidence handoff between the moving map
+  pose and the execution anchor. It does not allow UNKNOWN for backup,
+  change obstacle inflation, change the raycast radius, or relax any planner
+  or execution gate. A body-clear update remains bounded to the in-window
+  sensor-minimum neighborhood and is visible to snapshot patch publication.
+- **Reason/evidence:** Repeated 2/3 m/s SITL traces were blocked at the first
+  backup anchor by `UNKNOWN` cells within approximately 0.5 m of the current
+  command start, while mapping otherwise published fresh observations. The
+  prior implementation only refreshed this neighborhood on the first frame or
+  after a map slide, so a pose shift within the sliding window could leave the
+  strict KNOWN_FREE certificate stale.
+- **Removal condition:** Revert only if repeated representative SITL and
+  recorded-data distributions show a regression in obstacle clearance,
+  mapping latency, or map provenance. Do not replace this with an UNKNOWN
+  allowance.
+- **Verification:** `make build`; focused `rog_map_vendor` and
+  `navigation_mapping` tests; authoritative repeated
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
+  external-mode-check`, checking body-clear diagnostics, snapshot revisions,
+  strict backup certificate outcomes, clearance, and callback latency.

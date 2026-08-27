@@ -647,6 +647,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("observation_accounting_violation_count", lifecycle.violation_count);
         add_value("mapping_input_point_count", map.endpoint_count);
         add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
+        add_value("mapping_body_neighborhood_cells_cleared",
+                  map.body_neighborhood_cells_cleared);
         add_value("world_snapshot_freshness_rejection_count",
                   freshness_rejection_count->load());
         add_value("world_snapshot_bytes", mapping.snapshot_bytes);
@@ -1327,6 +1329,8 @@ void NavigationRuntimeNode::runCycle() {
   add_value("processing_exception_count", map_update_exception_count_);
   add_value("mapping_input_point_count", map_diagnostics.endpoint_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
+  add_value("mapping_body_neighborhood_cells_cleared",
+            map_diagnostics.body_neighborhood_cells_cleared);
   add_value("localization_epoch",
             active_localization_epoch_.load(std::memory_order_acquire));
   add_value("localization_epoch_ready",

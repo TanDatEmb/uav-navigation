@@ -86,6 +86,7 @@ struct RaycastDiagnostics {
   std::int64_t map_slide_voxel_shift_y{0};
   std::int64_t map_slide_voxel_shift_z{0};
   std::uint64_t map_slide_cells_cleared{0};
+  std::uint64_t body_neighborhood_cells_cleared{0};
   std::uint64_t inflation_update_count{0};
   std::int64_t map_update_us{0};
   std::int64_t raycast_us{0};

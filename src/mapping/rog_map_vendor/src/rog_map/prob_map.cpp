@@ -350,7 +350,6 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
     TimeConsuming tc("updateMap", false);
     const Vec3f& pos = pose.first;
-    const bool clears_first_frame = first_frame_clear_pending_;
     time_consuming_[4] = cloud.size();
     if (cfg_.map_sliding_en) {
         last_diagnostics_.map_slide_check_count = 1;
@@ -369,13 +368,11 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
     }
 
     bool slid_before_update = false;
-    bool slid_for_current_observation = false;
     if (cfg_.map_sliding_en && !insideLocalMap(pos) && raycast_data_.batch_update_counter == 0) {
         std::cout << YELLOW << " -- [ROGMapCore] cur_pose out of map range, reset the map." << RESET << std::endl;
         std::cout << YELLOW << " -- [ROGMapCore] Sliding to map center at: " << pos.transpose() << RESET << std::endl;
         slideAllMap(pos);
         slid_before_update = true;
-        slid_for_current_observation = true;
         // The current observation is already expressed in the new local
         // window.  Continue processing it instead of silently discarding the
         // first cloud after every slide.
@@ -387,7 +384,6 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
         (map_empty_ || (pos - local_map_origin_d_).norm() > cfg_.map_sliding_thresh)
         ) {
         slideAllMap(pos);
-        slid_for_current_observation = true;
     }
 
     updateLocalBox(pos);
@@ -420,24 +416,22 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
         esdf_map_->updateESDF3D(pos);
     }
 
-    /* Clear the body neighborhood on the first frame and after every map
-       slide. Sliding exposes fresh unknown cells at the new vehicle pose. */
-    if (first_frame_clear_pending_ || slid_for_current_observation) {
-        first_frame_clear_pending_ = false;
+    /* Refresh the sensor-minimum body neighborhood on every observation.
+       The execution anchor can move between map slides, and strict backup
+       certification must see the same local evidence as the live map. */
+    first_frame_clear_pending_ = false;
+    last_diagnostics_.body_neighborhood_cells_cleared =
         clearRobotNeighborhood(pos);
-    }
 
     if (!last_diagnostics_.changed_region_covers_world) {
         last_diagnostics_.changed_region_min = raycast_data_.cache_box_min;
         last_diagnostics_.changed_region_max = raycast_data_.cache_box_max;
-        if (clears_first_frame) {
-            const auto first_frame_extent = Vec3f::Constant(
-                static_cast<float>(cfg_.raycast_range_min));
-            last_diagnostics_.changed_region_min =
-                last_diagnostics_.changed_region_min.cwiseMin(pos - first_frame_extent);
-            last_diagnostics_.changed_region_max =
-                last_diagnostics_.changed_region_max.cwiseMax(pos + first_frame_extent);
-        }
+        const auto body_extent = Vec3f::Constant(
+            static_cast<float>(cfg_.raycast_range_min));
+        last_diagnostics_.changed_region_min =
+            last_diagnostics_.changed_region_min.cwiseMin(pos - body_extent);
+        last_diagnostics_.changed_region_max =
+            last_diagnostics_.changed_region_max.cwiseMax(pos + body_extent);
     }
     last_diagnostics_.update_outcome = applies_probability_update
         ? MapUpdateOutcome::UPDATED
@@ -446,7 +440,8 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
     return last_diagnostics_.update_outcome;
 }
 
-void ProbMap::clearRobotNeighborhood(const Vec3f& pos) {
+std::uint64_t ProbMap::clearRobotNeighborhood(const Vec3f& pos) {
+    std::uint64_t cleared_cells = 0U;
     for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min;
          dx += cfg_.resolution) {
         for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min;
@@ -461,9 +456,11 @@ void ProbMap::clearRobotNeighborhood(const Vec3f& pos) {
                 // only the in-window, sensor-minimum neighborhood is cleared.
                 if (!insideLocalMap(point)) continue;
                 missPointUpdate(point, getHashIndexFromPos(point), 999);
+                ++cleared_cells;
             }
         }
     }
+    return cleared_cells;
 }
 
 GridType ProbMap::getGridType(Vec3i& id_g) const {

@@ -282,3 +282,30 @@ TEST(RogMapPlanningGridExport, MapSlideClearsFreshBodyNeighborhood) {
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 1.5}),
             rog_map::GridType::UNKNOWN);
 }
+
+TEST(RogMapPlanningGridExport, RefreshesBodyNeighborhoodAsPoseMovesWithinWindow) {
+  TestRogMap map;
+  map.loadConfigAndInit(raycastingBoundaryConfigPath());
+
+  const Eigen::Vector3d initial_pose{0.0, 0.0, 0.0};
+  ASSERT_EQ(map.updateMap(
+                singlePointCloud(Eigen::Vector3d{0.0, 2.0, 0.0}),
+                rog_map::Pose{initial_pose, Eigen::Quaterniond::Identity()}),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{1.0, 0.0, 0.0}),
+            rog_map::GridType::UNKNOWN);
+
+  // This pose remains inside the existing sliding window. Its sensor-minimum
+  // neighborhood was not cleared by the first frame, so a one-metre motion
+  // must refresh the execution anchor without relying on a map slide.
+  const Eigen::Vector3d moved_pose{1.0, 0.0, 0.0};
+  ASSERT_EQ(map.updateMap(
+                singlePointCloud(Eigen::Vector3d{1.0, 2.0, 0.0}),
+                rog_map::Pose{moved_pose, Eigen::Quaterniond::Identity()}),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(moved_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getInfGridType(moved_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_GT(map.lastDiagnostics().body_neighborhood_cells_cleared, 0U);
+  EXPECT_LE(map.lastDiagnostics().changed_region_min.x(), moved_pose.x() - 0.7 + 1.0e-5);
+  EXPECT_GE(map.lastDiagnostics().changed_region_max.x(), moved_pose.x() + 0.7 - 1.0e-5);
+}

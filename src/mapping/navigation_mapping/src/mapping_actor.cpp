@@ -67,6 +67,7 @@ namespace {
   result.map_slide_voxel_shift_y = source.map_slide_voxel_shift_y;
   result.map_slide_voxel_shift_z = source.map_slide_voxel_shift_z;
   result.map_slide_cells_cleared = source.map_slide_cells_cleared;
+  result.body_neighborhood_cells_cleared = source.body_neighborhood_cells_cleared;
   result.inflation_update_count = source.inflation_update_count;
   result.map_update_us = source.rog_total_update_us;
   result.raycast_us = source.rog_raycast_us;
