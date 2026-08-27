@@ -6642,8 +6642,9 @@ release profiles must not use the former allowance.
 - **Owner:** Navigation planning maintainers.
 - **Scope:** A* grid routes are reduced with a bounded continuous
   inflated-map shortcut pass before guide-time allocation and corridor/MINCO
-  generation. The explicit REACH_GOAL endpoint is added before the final
-  continuous edge validation.
+  generation. Shortcuts preserve the start escape prefix and never exceed the
+  corridor seed-segment limit. The explicit REACH_GOAL endpoint is added
+  before the final continuous edge validation.
 - **Safety impact:** Behavior change intended to remove grid-induced zig-zag
   curvature and latency. Every shortcut and every retained edge uses the
   existing mission UNKNOWN policy and inflated-layer traversability oracle;
@@ -6655,6 +6656,11 @@ release profiles must not use the former allowance.
 - **Removal condition:** Remove only if repeated representative SITL and
   recorded-data distributions show no reduction in route smoothness/latency
   or reveal a regression in obstacle clearance.
+- **Correction:** The initial implementation allowed a safe shortcut longer
+  than the corridor seed-segment limit, which made corridor generation reject
+  it as a blocked adjacent edge. The correction bounds each shortcut by the
+  existing corridor contract and keeps the escape prefix intact; no safety
+  gate is relaxed.
 - **Verification:** `make build`; `make test`; repeated
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make
   external-mode-check` with route/clearance evidence.

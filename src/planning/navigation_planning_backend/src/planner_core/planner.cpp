@@ -2450,17 +2450,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         };
         const std::size_t original_path_size = path.size();
         constexpr std::size_t kShortcutLookAheadPoints = 24U;
+        const std::size_t protected_prefix_size = std::min(
+            start_point_escape_path.size(), path.size());
         vec_Vec3f simplified_path;
         simplified_path.reserve(path.size());
-        simplified_path.push_back(path.front());
-        std::size_t anchor = 0U;
+        simplified_path.insert(
+            simplified_path.end(), path.begin(),
+            path.begin() + static_cast<std::ptrdiff_t>(protected_prefix_size));
+        std::size_t anchor = protected_prefix_size == 0U
+            ? 0U
+            : protected_prefix_size - 1U;
+        if (simplified_path.empty()) {
+            simplified_path.push_back(path.front());
+        }
         while (anchor + 1U < path.size()) {
             const std::size_t last_candidate = std::min(
                 path.size() - 1U, anchor + kShortcutLookAheadPoints);
             std::size_t selected = anchor + 1U;
             for (std::size_t candidate = last_candidate;
                  candidate > anchor + 1U; --candidate) {
-                if (continuous_edge_is_safe(path[anchor], path[candidate])) {
+                const double shortcut_length =
+                    (path[candidate] - path[anchor]).norm();
+                if (shortcut_length <= cfg_.corridor_segment_max_length_m &&
+                    continuous_edge_is_safe(path[anchor], path[candidate])) {
                     selected = candidate;
                     break;
                 }
