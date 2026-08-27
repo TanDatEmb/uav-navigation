@@ -769,6 +769,25 @@ def _map_registry() -> dict[str, Any]:
     return profiles
 
 
+def _world_name_for_profile(map_profile: str) -> str:
+    """Resolve a CLI profile to the concrete SDF asset used by the simulator."""
+    canonical = "occlusion_featured" if map_profile == "occlusion" else map_profile
+    profile = _map_registry().get(canonical)
+    if isinstance(profile, dict) and profile.get("world"):
+        return str(profile["world"])
+    return {
+        "smoke": "px4_lio_smoke",
+        "speed": "open",
+        "long_open_slow": "long_open",
+        "occlusion_featured": "occlusion",
+        "occlusion_degenerate": "occlusion_degenerate",
+        "long_open_featured_core_60": "long_open_featured_speed",
+        "long_open_featured_core_60_pv": "long_open_featured_speed",
+        "single_pillar_speed": "long_three_pillars_speed",
+        "single_pillar_speed_pv": "long_three_pillars_speed",
+    }.get(map_profile, map_profile)
+
+
 def _scene_registry() -> dict[str, Any]:
     """Return the compact public scene registry used by Make/CI.
 
@@ -1541,18 +1560,7 @@ def _run_sim_unlocked(
     map_profile, scene_descriptor = _resolve_scene_profile(
         map_scene, test_case, motion_preset, map_profile
     )
-    world_name = "px4_lio_smoke" if map_profile == "smoke" else {
-        "speed": "open",
-        "long_open": "long_open",
-        "long_open_slow": "long_open",
-        "long_featured": "long_featured",
-        "long_open_featured_core_60": "long_open_featured_speed",
-        "long_open_featured_core_60_pv": "long_open_featured_speed",
-        "single_pillar_speed": "long_three_pillars_speed",
-        "single_pillar_speed_pv": "long_three_pillars_speed",
-        "occlusion_featured": "occlusion",
-        "occlusion_degenerate": "occlusion_degenerate",
-    }.get(map_profile, map_profile)
+    world_name = _world_name_for_profile(map_profile)
     world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
     if not world_path.is_file():
         raise ValueError(f"map profile world does not exist: {world_path}")

@@ -923,6 +923,14 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
         self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
 
+    def test_simulator_uses_registry_world_for_multiwaypoint_profile(self) -> None:
+        self.assertEqual(
+            runner._world_name_for_profile("long_three_pillars_multiwaypoint"),
+            "long_three_pillars_speed",
+        )
+        self.assertEqual(runner._world_name_for_profile("speed"), "open")
+        self.assertEqual(runner._world_name_for_profile("smoke"), "px4_lio_smoke")
+
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(
             runner._resolve_scene_profile("structured_obstacle", "positive", "nominal", None)[0],
