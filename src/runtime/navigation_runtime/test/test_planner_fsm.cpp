@@ -206,7 +206,7 @@ TEST(PlannerFsm, PassThroughHotRetargetsOnlyFromNominalCommand) {
 TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {
   EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 1.0, 1.1, 0.1));
   EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 1.2, 1.1, 0.1));
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, true, 0.8, 1.1, 0.1));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, true, 0.8, 1.1, 0.1));
   EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 0.8, 1.1, 0.1));
   EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(false, true, true, 1.2, 1.1, 0.1));
   EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, false, true, 1.2, 1.1, 0.1));

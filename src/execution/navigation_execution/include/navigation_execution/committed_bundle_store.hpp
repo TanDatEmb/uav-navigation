@@ -47,6 +47,36 @@ class CommittedBundleStore final {
     return true;
   }
 
+  // A measured pass-through acceptance changes the mission identity without
+  // changing the physical command that is already being executed. Rebind a
+  // retained immutable bundle to that new identity only when the caller
+  // supplies the exact previous identity. The world certificate, executable
+  // interval and evaluator are copied unchanged; this operation does not
+  // extend or otherwise alter the certified command.
+  bool rebindRetainedBundle(std::uint64_t new_goal_epoch,
+                            std::uint64_t new_request_id,
+                            std::uint64_t previous_goal_epoch) noexcept {
+    if (new_goal_epoch == 0U || new_request_id == 0U ||
+        previous_goal_epoch == 0U) {
+      return false;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ != new_goal_epoch || !committed_ ||
+        committed_->goal_epoch != previous_goal_epoch) {
+      return false;
+    }
+    auto rebound = std::make_shared<navigation_planning::CandidateBundle>(*committed_);
+    rebound->goal_epoch = new_goal_epoch;
+    rebound->request_id = new_request_id;
+    if (!rebound->valid()) {
+      committed_.reset();
+      return false;
+    }
+    committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
+        std::move(rebound));
+    return true;
+  }
+
   bool publishWorldIdentity(
       const navigation_world_model::WorldSnapshotIdentity& identity) noexcept {
     return publishWorldIdentity(identity, {}, false);

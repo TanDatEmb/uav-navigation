@@ -30,10 +30,12 @@ inline bool hotRetargetNeedsMeasuredStatePlan(
   if (!hot_goal_transition || !command_available) {
     return false;
   }
-  // A goal transition changes the route boundary. The previous command is
-  // still allowed to bridge the publication race, but it is not a valid
-  // geometric history for the new waypoint, even when it has time remaining.
-  if (goal_identity_changed) return true;
+  // A measured pass-through acceptance is the route-boundary proof. Keep the
+  // existing nominal command as the hot-replan history while it still has
+  // time remaining; forcing PlanFromRest here discards the very velocity
+  // continuity that pass-through semantics are intended to preserve. The
+  // caller still rebases when the retained command is at its lease boundary.
+  (void)goal_identity_changed;
   if (!std::isfinite(command_elapsed_s) || !std::isfinite(command_duration_s) ||
       !std::isfinite(planning_interval_s) || planning_interval_s <= 0.0 ||
       command_duration_s <= 0.0) {

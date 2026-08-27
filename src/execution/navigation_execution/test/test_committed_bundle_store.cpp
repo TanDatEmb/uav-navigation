@@ -85,6 +85,29 @@ TEST(CommandSampler, RejectsRetainedBundleFromPreviousGoal) {
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
 }
 
+TEST(CommittedBundleStore, RebindsRetainedBundleOnlyAcrossExactGoalIdentity) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
+  EXPECT_FALSE(store.rebindRetainedBundle(8, 20, 6));
+  EXPECT_TRUE(store.rebindRetainedBundle(8, 20, 7));
+
+  const auto rebound = store.load();
+  ASSERT_TRUE(rebound);
+  EXPECT_EQ(rebound->goal_epoch, 8U);
+  EXPECT_EQ(rebound->request_id, 20U);
+  navigation_execution::CommandSampler sampler(store);
+  EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
+  EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 7)));
+}
+
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

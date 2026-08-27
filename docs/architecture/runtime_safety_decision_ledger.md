@@ -7101,3 +7101,42 @@ release profiles must not use the former allowance.
   `rog_map_vendor`; then repeated structured SITL while checking
   `mapping_free_space_*`, process liveness, waypoint completion, clearance,
   altitude, and latency tails.
+
+### 2026-08-28 - Preserve nominal command continuity across measured pass-through handoff
+
+- **Owner:** Runtime execution and mission/planning maintainers.
+- **Scope:** When the mission controller has measured acceptance of a
+  pass-through waypoint and the current command is nominal, the runtime may
+  atomically rebind the retained immutable command bundle to the next
+  `(goal_epoch, request_id)` and call `ReplanOnce` using the existing command
+  history. The bundle evaluator, executable interval, world certificate, and
+  safety suffix are copied unchanged. `PlanFromRest` remains selected when the
+  retained command is at its execution boundary, unavailable, or not an exact
+  previous-goal identity match.
+- **Safety impact:** `SAFETY_INVARIANT` preservation, not a gate relaxation.
+  Rebinding is permitted only after measured position acceptance and only for
+  a nominal bundle with no planner failure or safety suffix. An exact previous
+  goal-epoch check prevents relabeling an unrelated command. A false reject
+  causes a bounded measured-state replan; a false accept would expose a
+  command after an unproven waypoint transition, so the store rejects all
+  mismatched identities and never extends the certified interval.
+- **Derivation and cost:** The transition proof is the existing mission
+  acceptance contract plus `canHotRetargetAtWaypointTransition`; no new
+  safety threshold or UNKNOWN policy is introduced. Rebinding is one immutable
+  candidate copy and constant-time pointer replacement. The old policy forced
+  every identity change through `PlanFromRest`, discarding valid velocity
+  continuity and producing a stop/replan loop on the 3 m/s structured route.
+- **Evidence:** `CommittedBundleStore` and planner-FSM focused tests pass after
+  the change. The first post-change SITL still blocked at waypoint 2, with
+  357/357 mapping updates, LIO TRACKING, and `main_minco` dynamic failures;
+  this entry therefore does not claim mission acceptance. Repeated SITL,
+  dataset shadow planning, sanitizer, and hardware evidence remain open.
+- **Removal/review condition:** Revert or redesign only if repeated runtime
+  traces show identity leakage, command-anchor discontinuity, worse clearance,
+  dynamic violations, or latency tails. The next review must inspect waypoint
+  acceptance coverage, command generation continuity, speed recovery, altitude,
+  clearance, and p50/p95/p99 planning latency.
+- **Verification:** `make build`; sourced focused execution/runtime tests;
+  then repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` and the declared speed ladder. Do not convert a
+  single successful run into acceptance.

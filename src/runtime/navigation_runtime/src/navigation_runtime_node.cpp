@@ -1038,6 +1038,8 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
               navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
       planner_command_available_.load(), planner_failure_latched_.load(),
       safety_suffix_active_.load());
+  const auto previous_goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+  bool effective_hot_retarget = can_hot_retarget;
   if (!same_logical_goal) {
     // Cancel before exposing the new waypoint identity. The planner commit gate
     // guarantees that a solve for the previous waypoint cannot publish a new
@@ -1046,9 +1048,19 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     // execution store never relabels a stale-world certificate as current.
     planner_->cancelActiveSolve();
     ++active_goal_epoch_;
-    (void)command_bundle_store_.setActiveGoalEpoch(
-        active_goal_epoch_.load(std::memory_order_acquire),
-        reuse_completed_stop || can_hot_retarget);
+    const auto next_goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+    const bool retain_bundle = reuse_completed_stop || can_hot_retarget;
+    if (!command_bundle_store_.setActiveGoalEpoch(next_goal_epoch, retain_bundle)) {
+      effective_hot_retarget = false;
+    }
+    if (effective_hot_retarget &&
+        !command_bundle_store_.rebindRetainedBundle(
+            next_goal_epoch, message->request_id, previous_goal_epoch)) {
+      // The physical command was not proven to belong to the exact previous
+      // goal identity. Clear it and use the measured-state PlanFromRest path.
+      effective_hot_retarget = false;
+      command_bundle_store_.invalidate();
+    }
   }
   active_goal_ = *message;
   if (reuse_completed_stop) {
@@ -1087,8 +1099,8 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     }
     plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
-    hot_goal_transition_ = can_hot_retarget;
-    new_goal_ = !can_hot_retarget;
+    hot_goal_transition_ = effective_hot_retarget;
+    new_goal_ = !effective_hot_retarget;
     restart_from_rest_ = false;
     skip_replan_once_ = false;
     trajectory_finished_.store(false);
