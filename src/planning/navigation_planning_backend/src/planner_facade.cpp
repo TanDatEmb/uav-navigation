@@ -56,6 +56,10 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.retry_stop_reason = source.retry_stop_reason;
   output.first_lbfgs_return_code = source.first_lbfgs_return_code;
   output.last_lbfgs_return_code = source.last_lbfgs_return_code;
+  output.bounded_time_stretch_attempt_count =
+      source.bounded_time_stretch_attempt_count;
+  output.bounded_time_stretch_selected_reserve_scale =
+      source.bounded_time_stretch_selected_reserve_scale;
   output.cancelled = source.cancelled;
   output.valid = source.valid;
   output.used_certified_seed = source.used_certified_seed;

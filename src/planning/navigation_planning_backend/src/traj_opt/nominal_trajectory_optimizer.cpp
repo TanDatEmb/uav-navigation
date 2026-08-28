@@ -12,6 +12,7 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/bounded_time_stretch.hpp>
 #include <planner_core/corridor_bezier_seed.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
 #include <utils/optimization/lbfgs.h>
@@ -1486,11 +1487,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         // fixed-boundary MINCO polynomial marginally outside the envelope.
         // Try only two larger, deterministic reserves; never relax the hard
         // certificate and never allow an unbounded retry loop.
-        const std::array<double, 3> duration_reserve_scales = {
-                initial_duration_reserve_scale,
-                std::min(4.0, initial_duration_reserve_scale * 1.5),
-                4.0};
+        const auto duration_reserve_scales =
+                navigation_planning_backend::boundedTimeStretchReserveScales(
+                        initial_duration_reserve_scale);
         for (const double duration_reserve_scale : duration_reserve_scales) {
+            ++diagnostics_.bounded_time_stretch_attempt_count;
             const VecDf reserved_duration_s = nominal_duration_s * duration_reserve_scale;
             const VecDf free_duration_seed_s = nominal_duration_s *
                     (duration_reserve_scale - 1.0);
@@ -1534,6 +1535,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             diagnostics_.retry_duration_lower_bound_max_s = reserved_duration_s.maxCoeff();
             diagnostics_.retry_free_duration_seed_min_s = free_duration_seed_s.minCoeff();
             diagnostics_.retry_free_duration_seed_max_s = free_duration_seed_s.maxCoeff();
+            diagnostics_.bounded_time_stretch_selected_reserve_scale =
+                    duration_reserve_scale;
             planner_context_->warn(
                     " -- [ExpOpt] accepted bounded time-stretched guide: "
                     "scale={} vel={}/{} acc={}/{} jerk={}/{}",

@@ -183,6 +183,8 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_retry_stop_reason": "5",
                                     "exp_lbfgs_first_return_code": "0",
                                     "exp_lbfgs_last_return_code": "-1",
+                                    "exp_bounded_time_stretch_attempt_count": "3",
+                                    "exp_bounded_time_stretch_selected_reserve_scale": "1.32",
                                     "exp_lbfgs_cancelled": "0",
                                     "exp_initial_normalized_dynamic_violation": "1.25",
                                     "exp_best_normalized_dynamic_violation": "1.01",
@@ -286,6 +288,10 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_retry_stop_reason"], 5)
         self.assertEqual(records[0]["exp_lbfgs_first_return_code"], 0)
         self.assertEqual(records[0]["exp_lbfgs_last_return_code"], -1)
+        self.assertEqual(records[0]["exp_bounded_time_stretch_attempt_count"], 3)
+        self.assertEqual(
+            records[0]["exp_bounded_time_stretch_selected_reserve_scale"], 1.32
+        )
         self.assertFalse(records[0]["exp_lbfgs_cancelled"])
         self.assertEqual(records[0]["exp_best_normalized_dynamic_violation"], 1.01)
         self.assertEqual(records[0]["maximum_velocity_mps"], 4.95)
