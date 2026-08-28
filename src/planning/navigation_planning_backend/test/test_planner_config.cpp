@@ -6,6 +6,7 @@
 
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
+#include <planner_core/backup_prefix_reachability.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
 #include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/config.hpp>
@@ -27,6 +28,38 @@ TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
       limit + 1.0e-9, limit));
   EXPECT_FALSE(navigation_planning::withinNumericalDynamicLimit(
       std::numeric_limits<double>::infinity(), limit));
+}
+
+TEST(PlannerBackupPrefix, FollowsKnownFreeCurveInsteadOfOriginRay) {
+  const Eigen::Vector3d origin{0.0, 0.0, 0.0};
+  const Eigen::Vector3d corner{1.0, 0.0, 0.0};
+  const Eigen::Vector3d around_obstacle{1.0, 1.0, 0.0};
+  auto known_free_segment = [](const Eigen::Vector3d& begin,
+                               const Eigen::Vector3d& end) {
+    return (end - begin).norm() <= 1.01;
+  };
+  const auto first = navigation_planning_backend::advanceBackupReachablePrefix(
+      origin, corner, 0.0, 3.0, 0.0, known_free_segment);
+  ASSERT_TRUE(first.admissible);
+  const auto second = navigation_planning_backend::advanceBackupReachablePrefix(
+      corner, around_obstacle, first.accumulated_length_m,
+      3.0, 0.0, known_free_segment);
+  EXPECT_TRUE(second.admissible);
+  EXPECT_DOUBLE_EQ(second.accumulated_length_m, 2.0);
+  EXPECT_FALSE(known_free_segment(origin, around_obstacle));
+}
+
+TEST(PlannerBackupPrefix, FailsClosedOnBlockedSegmentOrLengthBudget) {
+  const Eigen::Vector3d begin{0.0, 0.0, 0.0};
+  const Eigen::Vector3d end{1.0, 0.0, 0.0};
+  EXPECT_FALSE(navigation_planning_backend::advanceBackupReachablePrefix(
+                   begin, end, 0.0, 10.0, 0.0,
+                   [](const auto&, const auto&) { return false; })
+                   .admissible);
+  EXPECT_FALSE(navigation_planning_backend::advanceBackupReachablePrefix(
+                   begin, end, 1.5, 2.0, 0.0,
+                   [](const auto&, const auto&) { return true; })
+                   .admissible);
 }
 
 TEST(GuideVerticalEnvelope, UsesOneInflatedVoxelAroundCertifiedGuide) {
