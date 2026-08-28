@@ -9536,3 +9536,18 @@ release profiles must not use the former allowance.
   suspend/recovery pairs, no command-validity expiry caused solely by a
   successfully recertified bundle, and no regression in clearance, collision,
   anchor, freshness or PX4 handover gates.
+
+#### Exact-HEAD screening result
+
+- Artifact `.artifacts/runtime/external-mode-check-20260828T132546-1159975`
+  on `49f69ca` observed the intended recovery for bundle generation 21 and did
+  not reproduce the prior command-validity expiry. It progressed to about
+  82 m, committed `99/163` solves, emitted 1852 finite setpoints, and retained
+  4.419 m minimum truth clearance with zero collisions.
+- This is not mission acceptance. PX4 handed over to Hold when the unchanged
+  generation 99 command exceeded the existing tracking envelope by 3 mm
+  longitudinally (`0.753/0.750 m`) while the runtime was retaining its
+  certified safety suffix after replacement-plan failures. The mission did not
+  reach waypoint 1 and speed p95 was 4.408 m/s. Keep the tracking gate and
+  mission threshold unchanged; review repeated tracking-error evidence and the
+  main/backup trajectory contract before any threshold decision.
