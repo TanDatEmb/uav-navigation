@@ -13,11 +13,10 @@ inline bool plannerRecoveryWaitExpired(
   return pending && deadline_ns > 0 && now_ns >= deadline_ns;
 }
 
-// A completed backup endpoint may sit close to the edge of the waypoint
-// acceptance disk.  Treat it as a hold candidate when the command itself is
-// accepted and the measured state is still within the existing command-anchor
-// envelope.  MissionController continues to require the measured position and
-// speed gates before advancing the mission.
+// A completed backup endpoint is geometrically anchored only when the command
+// itself is accepted and the measured state remains within the existing
+// command-anchor envelope. The caller must independently require measured
+// waypoint acceptance before treating this as a settled terminal hold.
 inline bool backupEndpointHoldIsAnchored(
     bool command_inside_acceptance, bool measured_finite, bool command_finite,
     double measured_command_error_m, double max_anchor_error_m) noexcept {

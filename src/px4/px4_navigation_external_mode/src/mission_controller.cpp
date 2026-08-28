@@ -42,6 +42,7 @@ void MissionController::activate(double now_s) {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
+  terminal_recovery_requested_ = false;
   previous_position_.reset();
   previous_position_time_s_ = 0.0;
 }
@@ -60,6 +61,7 @@ void MissionController::deactivate() {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
+  terminal_recovery_requested_ = false;
   previous_position_.reset();
   previous_position_time_s_ = 0.0;
 }
@@ -209,6 +211,22 @@ void MissionController::onNativeTerminalHoldObserved() {
   }
 }
 
+void MissionController::requestNativeTerminalRecovery(const double now_s) {
+  if (!std::isfinite(now_s)) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (state_ != MissionControllerState::ExecutingWaypoint ||
+      active_waypoint_index_ >= mission_.waypoints.size() ||
+      terminal_recovery_requested_) {
+    return;
+  }
+  terminal_recovery_requested_ = true;
+  checkpoint_valid_ = true;
+  trajectory_ready_ = false;
+  terminal_hold_pending_ = false;
+  arrival_start_time_s_.reset();
+  next_goal_time_s_ = std::min(next_goal_time_s_, now_s);
+}
+
 MissionControllerEvent MissionController::update(
     double now_s, const std::optional<Eigen::Vector3d>& position, bool airborne,
     const std::optional<Eigen::Vector3d>& velocity) {
@@ -263,6 +281,7 @@ MissionControllerEvent MissionController::update(
             (*position - braking_waypoint.position_enu).norm();
         const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
+        terminal_recovery_requested_ = false;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
@@ -397,6 +416,7 @@ MissionControllerEvent MissionController::update(
         }
         const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
+        terminal_recovery_requested_ = false;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
@@ -460,6 +480,7 @@ MissionControllerEvent MissionController::update(
       const double acceptance_error = (*position - waypoint.position_enu).norm();
       const double acceptance_speed = velocity->norm();
       ++active_waypoint_index_;
+      terminal_recovery_requested_ = false;
       if (active_waypoint_index_ >= mission_.waypoints.size()) {
         state_ = MissionControllerState::Complete;
         checkpoint_valid_ = false;

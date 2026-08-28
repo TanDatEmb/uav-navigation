@@ -283,6 +283,7 @@ void NavigationMode::onNavigationCommand(
   bool completed_command = false;
   bool terminal_backup_hold_inside_acceptance = false;
   bool terminal_main_hold_inside_acceptance = false;
+  bool terminal_recovery_needed = false;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
   TrackingEnvelopeResult tracking_envelope;
   std::optional<RejectProvenance> reject_provenance;
@@ -354,6 +355,7 @@ void NavigationMode::onNavigationCommand(
               waypoint.acceptance_radius_m;
       terminal_backup_hold_inside_acceptance =
           message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+          measured_inside_acceptance &&
           backupEndpointHoldIsAnchored(
               command_inside_acceptance, measured_finite, command_finite,
               (measured - command_position).norm(),
@@ -365,6 +367,11 @@ void NavigationMode::onNavigationCommand(
       terminal_main_hold_inside_acceptance =
           message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
           measured_inside_acceptance && command_inside_acceptance;
+      terminal_recovery_needed =
+          (message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+           !terminal_backup_hold_inside_acceptance) ||
+          (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+           !terminal_main_hold_inside_acceptance);
     }
     if (!odometry_stale && !terminal_failure && !terminal_hold_inside_acceptance &&
         odometry_.has_value()) {
@@ -477,19 +484,23 @@ void NavigationMode::onNavigationCommand(
     safetyStopNavigation("planner backend PVA command anchor is not near vehicle");
     return;
   }
-  if (accepted && completed_command && message->role ==
-      navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
-      !terminal_backup_hold_inside_acceptance) {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (!planner_recovery_pending_) {
-      const auto now_ns = node().get_clock()->now().nanoseconds();
-      planner_recovery_pending_ = true;
-      planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
-          planner_recovery_wait_timeout_s_ * 1.0e9);
-      RCLCPP_WARN(node().get_logger(),
-                  "planner backend backup endpoint is outside waypoint acceptance; "
-                  "holding for bounded planner recovery window %.3f s",
-                  planner_recovery_wait_timeout_s_);
+  if (accepted && completed_command && terminal_recovery_needed) {
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      if (!planner_recovery_pending_) {
+        const auto now_ns = node().get_clock()->now().nanoseconds();
+        planner_recovery_pending_ = true;
+        planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
+            planner_recovery_wait_timeout_s_ * 1.0e9);
+        RCLCPP_WARN(node().get_logger(),
+                    "planner backend terminal endpoint has not settled waypoint acceptance; "
+                    "holding for bounded planner recovery window %.3f s",
+                    planner_recovery_wait_timeout_s_);
+      }
+    }
+    if (mission_controller_) {
+      mission_controller_->requestNativeTerminalRecovery(
+          node().get_clock()->now().seconds());
     }
   } else if (accepted && !completed_command) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -1182,7 +1193,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     bool terminal_hold_inside_acceptance = false;
     if (command.status ==
             navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
-        command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+        (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP ||
+         command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) &&
         !mission_terminal_ && mission_controller_ && odometry.has_value()) {
       const auto waypoint = mission_controller_->activeWaypoint();
       const auto& point = odometry->pose.pose.position;
@@ -1193,10 +1205,20 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
           command_position.allFinite() &&
           (command_position - waypoint.position_enu).norm() <=
               waypoint.acceptance_radius_m;
-      terminal_hold_inside_acceptance = backupEndpointHoldIsAnchored(
-          command_inside_acceptance, measured.allFinite(), command_position.allFinite(),
-          (measured - command_position).norm(),
-          navigation_contracts::kCommandAnchorErrorLimitM);
+      const bool measured_inside_acceptance =
+          measured.allFinite() &&
+          (measured - waypoint.position_enu).norm() <=
+              waypoint.acceptance_radius_m;
+      if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+        terminal_hold_inside_acceptance = measured_inside_acceptance &&
+            backupEndpointHoldIsAnchored(
+                command_inside_acceptance, measured.allFinite(),
+                command_position.allFinite(), (measured - command_position).norm(),
+                navigation_contracts::kCommandAnchorErrorLimitM);
+      } else {
+        terminal_hold_inside_acceptance =
+            measured_inside_acceptance && command_inside_acceptance;
+      }
     }
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_REJECTED) {
@@ -1206,8 +1228,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED) {
       publishPositionHold(position_enu);
-      if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
-          !terminal_hold_inside_acceptance) {
+      if ((command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP ||
+           command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) &&
+          !terminal_hold_inside_acceptance && !mission_terminal_) {
         // The command publisher and PX4 setpoint callback are independent
         // executor paths. A replacement PlanFromRest command can therefore
         // arrive immediately after this completed sample. Keep publishing
@@ -1220,7 +1243,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
           planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
               planner_recovery_wait_timeout_s_ * 1.0e9);
           RCLCPP_WARN(node().get_logger(),
-                      "planner backend backup endpoint reached; holding for bounded "
+                      "planner backend terminal endpoint reached; holding for bounded "
                       "planner recovery window %.3f s",
                       planner_recovery_wait_timeout_s_);
         }

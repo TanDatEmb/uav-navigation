@@ -56,6 +56,12 @@ class MissionController final {
   // normal acceptance gate; do not re-publish the same goal and restart the
   // planner in the meantime.
   void onNativeTerminalHoldObserved();
+  // A completed certified command may stop while the measured vehicle remains
+  // outside the waypoint acceptance ball. Re-issue the same mission checkpoint
+  // once so runtime plans a measured-state terminal connector; the executor
+  // keeps the endpoint hold during its existing bounded recovery window. A
+  // waypoint can request this retry only once.
+  void requestNativeTerminalRecovery(double now_s);
 
   [[nodiscard]] MissionControllerEvent update(double now_s,
                                                const std::optional<Eigen::Vector3d>& position,
@@ -100,6 +106,7 @@ class MissionController final {
   bool checkpoint_valid_{false};
   bool trajectory_ready_{false};
   bool terminal_hold_pending_{false};
+  bool terminal_recovery_requested_{false};
   std::optional<Eigen::Vector3d> previous_position_;
   double previous_position_time_s_{0.0};
 };

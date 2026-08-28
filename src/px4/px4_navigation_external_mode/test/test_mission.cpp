@@ -836,6 +836,46 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
+TEST(MissionController, CompletedBackupOutsideMeasuredAcceptanceRequestsConnector) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: terminal_connector_retry
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.9
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  const auto initial = controller.update(0.0, std::nullopt);
+  ASSERT_EQ(initial.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onNativeTrajectoryReady();
+  ASSERT_TRUE(controller.nativeTrajectoryReady());
+
+  controller.requestNativeTerminalRecovery(1.0);
+  EXPECT_FALSE(controller.nativeTrajectoryReady());
+  const auto retry = controller.update(
+      1.0, Eigen::Vector3d{3.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
+  EXPECT_EQ(retry.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  EXPECT_EQ(retry.waypoint_index, 0U);
+  EXPECT_GT(retry.request_id, initial.request_id);
+  controller.requestNativeTerminalRecovery(1.01);
+  EXPECT_EQ(controller.update(
+                1.01, Eigen::Vector3d{3.0, 0.0, 3.0}, true,
+                Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+}
+
 TEST(MissionController, SafetyStopAllowsRollingRouteReplacement) {
   const auto path = writeMission(R"yaml(
 mission:

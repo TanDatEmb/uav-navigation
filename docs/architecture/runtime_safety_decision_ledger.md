@@ -8431,7 +8431,43 @@ release profiles must not use the former allowance.
   `rebuildInitialCandidate()` or any reconstruction after optimizer mutation.
 - **Verification:** Build and test `navigation_planning_backend`, rebuild the
   clean release manifest, and repeat
-  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
+`MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
+
+### 2026-08-28 - Replan unsettled terminal holds from measured state
+
+- **Owner:** PX4 External Mode mission-to-runtime recovery boundary. **Scope:**
+  a completed MAIN or BACKUP endpoint counts as a settled terminal hold only
+  when both command and measured vehicle are inside the waypoint acceptance
+  ball (BACKUP also retains its command-anchor requirement). Otherwise retain
+  the exact certified endpoint hold, start the existing bounded recovery timer,
+  and re-publish the same mission checkpoint with a new request identity for a
+  measured-state connector. Only one such retry is allowed per active waypoint;
+  a second unsettled completion reaches the unchanged bounded fail-closed
+  handover instead of creating a same-goal retry loop.
+- **Safety impact:** waypoint radius, acceptance speed, command-anchor limit,
+  collision certificates, and recovery timeout are unchanged. The old behavior
+  could suppress replanning indefinitely at an acceptance-edge backup endpoint;
+  the replacement either commits a normally certified connector or performs
+  the existing fail-closed PX4 Hold handover when the bounded window expires.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260828T100206-949033` first stopped
+  at command error `0.883 m` inside a `0.9 m` radius while measured error stayed
+  around `0.99-1.11 m`. No planning cycles occurred for roughly 53 seconds;
+  eventual recovery was incidental to a later world change. The change adds
+  one same-waypoint publication per completed-outside BACKUP and no periodic
+  planner work while the hold remains settled.
+- **Evidence:** MissionController unit tests require one monotonic request and
+  no publication loop. External Mode/backend/runtime tests must preserve the
+  bounded timeout and command identity rules. Repeated long-three-pillars SITL
+  must show immediate connector planning, measured waypoint completion, and no
+  gate relaxation.
+- **Removal/review condition:** replace when planner/runtime expose an atomic
+  terminal-settling state machine that owns BRAKE, HOLD, REJOIN and measured
+  acceptance explicitly. Do not restore command-only acceptance-edge hold.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run PX4 External Mode, runtime, and backend tests,
+  `make build`, then repeat the 3 m/s three-column mission and inspect the
+  terminal request/commit timeline.
   If blocked, re-review planner, mapping, PX4, mission, and report artifacts at
   the first causal boundary; do not tune the corridor gate from one run.
 
