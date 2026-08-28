@@ -72,6 +72,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-026 | Curved MAIN backup reachability (`SAFETY_INVARIANT`) | rejected experiment: consecutive inflated-map segments remained KNOWN_FREE within the finite visibility-distance budget; braking suffix retained independent SFC and swept certificate | REJECTED / REVERTED | Artifact `external-mode-check-20260828T154306-1288519` completed safely but retained 21 local-boundary restarts, frequently exported only 0.24-1.5 s of MAIN, and worsened cross-track p95 to 7.36 m. Commit `36b292e` was reverted by `e012298`; the straight-ray limitation remains an open M7 debt. | Preserve the rejected evidence. A replacement must explain the remaining certificate truncation and improve prefix length/restarts without worsening clearance, tracking, or latency over repeated scenario-matrix SITL and recorded data. |
 | HG-027 | Condition-aware deterministic-seed PVAJ equality (`NUMERICAL_TOLERANCE`) | component-wise power-basis roundoff bound derived from coefficient term sums, polynomial degree and IEEE-754 epsilon; no fixed flight-tuned tolerance | PROVISIONAL | Replaces one dimensionally mixed absolute `1e-8` test that rejected corridor-contained seeds when endpoint evaluation suffered cancellation. A mismatch larger than the computed representation bound still fails before route, dynamics, flatness, world and execution certificates. | Unit-test ill-conditioned representation and physical mismatch; compare residual/bound distributions over historical artifacts, then require repeated scenario-matrix SITL with no clearance, tracking, latency or command-continuity regression. |
 | HG-028 | STOP-only terminal endpoint hold (`MISSION_PROGRESS_INVARIANT`) | terminal bundle generation and planner suppression require `BEHAVIOR_STOP`; a completed `PASS_THROUGH` endpoint restarts from current measured PVA | PROVISIONAL | A pass-through endpoint inside its acceptance ball no longer suppresses planning while waiting for measured mission handoff. Failed replacement solves still retain only the existing finite latest-world-certified command; STOP endpoint hold, waypoint acceptance radius, route order, world, dynamics and execution gates are unchanged. | Unit-test STOP/PASS_THROUGH policy, then repeat collinear and corner scenario-matrix SITL. Require ordered measured acceptance, continued command renewal, no endpoint-induced mode exit, and no STOP hold regression. |
+| HG-029 | A* distinct-layer edge validation (`PERFORMANCE_POLICY`) | one ray certificate on the active inflated search layer; a second inflated certificate only when the active search layer is evidence/probability | PROVISIONAL | Removes an identical immutable inflated-grid query from every expanded neighbor when A* already searches inflated occupancy. It does not cache across world revisions, skip an edge, change unknown policy, alter search deadlines, or weaken the separate inflated check for probability-map fallback. | Unit-test query identity and detour success, then compare A* iterations/latency/timeouts on repeated transverse-wall SITL and recorded snapshots without clearance regression. |
 
 ## Temporary-bypass register
 
@@ -10033,3 +10034,60 @@ release profiles must not use the former allowance.
   Bernstein-basis certificate if seed provenance exposes its control points.
 - **Verification:** Focused backend build and 8/8 test executables, full Release
   build, the cited artifact, and repeated exact-HEAD SITL.
+
+### 2026-08-28 - Restrict terminal endpoint hold to STOP waypoints
+
+- **Owner/status:** Runtime planner FSM and command publisher, `PROVISIONAL`;
+  implementation commit `79ef2f9`.
+- **Scope:** A finite endpoint inside the active acceptance ball records a
+  terminal bundle generation and suppresses replacement planning only for
+  `BEHAVIOR_STOP`. A completed `PASS_THROUGH` bundle instead restarts from the
+  current measured PVA while MissionController remains the sole owner of the
+  measured waypoint transition.
+- **Safety impact:** No acceptance radius, waypoint order, collision policy,
+  command lease or planner deadline changes. A failed replacement retains only
+  the existing finite latest-world-certified command under the unchanged
+  swept-world and anchor checks; expiration still causes fail-closed hold and
+  PX4 handover.
+- **Evidence:** Runtime FSM tests cover STOP and PASS_THROUGH truth tables; 6/6
+  runtime executables passed. Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T160722-1308625` exercised the
+  new continuation at waypoint 45 m and accepted it at 1.74 m/s instead of the
+  prior 0.63 m/s, then progressed to 83 m. The run remained `BLOCKED` because
+  subsequent A* attempts timed out before the 105 m waypoint, so this evidence
+  validates the causal boundary but not M7 or mission acceptance.
+- **Removal/review condition:** Replace only with a shared mission/runtime FSM
+  that preserves STOP terminal ownership and measured-only waypoint progress.
+  Revert if repeated STOP tests lose bounded endpoint hold or pass-through
+  continuation can relabel an expired/uncertified command.
+- **Verification:** Build and test `navigation_runtime`; rebuild the
+  authoritative Release manifest; repeat collinear and corner scenario-matrix
+  SITL and require ordered acceptance, command renewal and no STOP regression.
+
+### 2026-08-28 - Remove duplicate inflated A* edge queries
+
+- **Owner/status:** A* edge validation and planner performance policy,
+  `PROVISIONAL`.
+- **Scope:** Each expanded edge is checked once on the active search layer. If
+  that layer is evidence/probability, A* still performs the distinct inflated
+  execution-clearance check. If the active layer is already inflated, the
+  second call with identical endpoints, layer, policy and immutable world is
+  omitted.
+- **Safety impact:** No edge is admitted without its existing continuous ray
+  certificate. UNKNOWN, OCCUPIED and OUT_OF_MAP semantics, diagonal checking,
+  preferred-altitude fallback, 40/80 ms A* budgets and the final corridor/world
+  certificates remain unchanged. The optimization cannot reuse evidence across
+  a world revision because one solve still pins one immutable view.
+- **Evidence:** Artifact `external-mode-check-20260828T160722-1308625` showed
+  repeated transverse-wall attempts exhausting both 40 ms searches after only
+  roughly 300-600 node expansions. A deterministic detour mock verifies A*
+  reaches the goal/horizon and performs zero consecutive identical inflated
+  edge queries. All 8 backend test executables pass.
+- **Removal/review condition:** Revert if the active-layer query and the
+  authoritative inflated query cease to be semantically identical for
+  inflated search. Any future caching across edges or revisions requires a new
+  explicit provenance contract.
+- **Verification:** Build and test `navigation_planning_backend`; repeat the
+  transverse-wall phase and compare A* iterations, attempt latency, timeout
+  rate, clearance and final command availability. Dataset snapshots remain
+  required before promoting the runtime budget.

@@ -13,6 +13,7 @@
 #include "data_structure/base/trajectory.h"
 #include <navigation_world_model/goal_contract.hpp>
 #include "planner_core/planner.hpp"
+#include "path_search/astar.h"
 #include "planner_core/absolute_deadline.hpp"
 #include "planner_core/command_time.hpp"
 #include "planner_core/ciri.h"
@@ -125,6 +126,94 @@ class DiagonalNeighborWorld final : public SweepWorld {
 
  private:
   navigation_world_model::Point3 unknown_center_;
+};
+
+class CountingAstarWorld final : public SweepWorld {
+ public:
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry value;
+    value.evidence_resolution_m = 1.0;
+    value.inflated_resolution_m = 1.0;
+    value.local_center_m = Eigen::Vector3d{4.5, 4.5, 1.5};
+    value.local_size_m = Eigen::Vector3d{20.0, 20.0, 3.0};
+    value.evidence_bounds.global_min_index = Eigen::Vector3i{-5, -5, 0};
+    value.evidence_bounds.dimensions = Eigen::Vector3i{20, 20, 3};
+    value.inflated_bounds = value.evidence_bounds;
+    return value;
+  }
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return occupied(point)
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+  bool contains(
+      const navigation_world_model::Point3& point) const noexcept override {
+    return point.x() >= -5.0 && point.x() < 15.0 &&
+           point.y() >= -5.0 && point.y() < 15.0 &&
+           point.z() >= 0.0 && point.z() < 3.0;
+  }
+
+  navigation_world_model::GridIndex3 positionToIndex(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return point.array().floor().cast<int>();
+  }
+
+  navigation_world_model::Point3 indexToPosition(
+      const navigation_world_model::GridIndex3& index,
+      navigation_world_model::GridLayer) const noexcept override {
+    return index.cast<double>() + Eigen::Vector3d::Constant(0.5);
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy) const noexcept override {
+    const bool identical_to_previous = previous_query_valid_ &&
+        previous_layer_ == layer && previous_start_.isApprox(start, 1.0e-12) &&
+        previous_end_.isApprox(end, 1.0e-12);
+    if (identical_to_previous) {
+      ++consecutive_duplicate_queries_;
+    }
+    previous_query_valid_ = true;
+    previous_layer_ = layer;
+    previous_start_ = start;
+    previous_end_ = end;
+    const int samples = std::max(
+        1, static_cast<int>(std::ceil((end - start).norm() * 10.0)));
+    for (int sample = 0; sample <= samples; ++sample) {
+      const double ratio = static_cast<double>(sample) /
+                           static_cast<double>(samples);
+      if (occupied(start + ratio * (end - start))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::uint64_t consecutiveDuplicateQueries() const noexcept {
+    return consecutive_duplicate_queries_;
+  }
+
+ private:
+  static bool occupied(const navigation_world_model::Point3& point) noexcept {
+    return point.x() >= 2.0 && point.x() < 3.0 &&
+           point.y() >= -0.5 && point.y() < 1.5;
+  }
+
+  mutable bool previous_query_valid_{false};
+  mutable navigation_world_model::GridLayer previous_layer_{
+      navigation_world_model::GridLayer::kEvidence};
+  mutable navigation_world_model::Point3 previous_start_{
+      navigation_world_model::Point3::Zero()};
+  mutable navigation_world_model::Point3 previous_end_{
+      navigation_world_model::Point3::Zero()};
+  mutable std::uint64_t consecutive_duplicate_queries_{0U};
 };
 
 geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
@@ -1586,6 +1675,31 @@ TEST(PlannerTrajectory, BoundsRemoteAstarBeforeExpandingPastVisibility) {
   EXPECT_TRUE(std::isnan(
       geometry_utils::localRouteSearchHorizon(
           std::numeric_limits<double>::infinity(), 14.0)));
+}
+
+TEST(PlannerTrajectory, InflatedAstarDoesNotRepeatIdenticalEdgeCertificates) {
+  auto world = std::make_shared<CountingAstarWorld>();
+  path_search::PathSearchConfig config;
+  config.allow_diag = true;
+  config.heu_type = 2;
+  config.heuristic_weight = 1.5;
+  auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  path_search::Astar astar(config, context, world, 1.0);
+  navigation_math::vec_Vec3f path;
+  const int flags = path_search::ON_INF_MAP |
+                    path_search::UNKNOWN_AS_FREE |
+                    path_search::DONT_USE_INF_NEIGHBOR;
+
+  const auto result = astar.pointToPointPathSearch(
+      navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+      navigation_math::Vec3f{5.5F, 0.5F, 1.5F},
+      flags, 20.0, path, 1.0, true);
+
+  EXPECT_TRUE(result == navigation_math::REACH_GOAL ||
+              result == navigation_math::REACH_HORIZON);
+  EXPECT_GT(path.size(), 2U);
+  EXPECT_EQ(world->consecutiveDuplicateQueries(), 0U);
 }
 
 TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {

@@ -696,7 +696,16 @@ namespace path_search {
                                 : UnknownPolicy::kAllowUnknown;
                         if (!map_ptr_->isSegmentTraversable(
                                     current_pos, neighborPos,
-                                    search_layer, search_policy) ||
+                                    search_layer, search_policy)) {
+                            continue;
+                        }
+                        // When A* already searches the inflated layer, the
+                        // first query is the authoritative execution-clearance
+                        // certificate for this exact edge. Repeating the same
+                        // immutable ray query doubles the dominant inner-loop
+                        // work without adding evidence. Probability-map search
+                        // still receives the separate inflated-layer check.
+                        if (search_layer != GridLayer::kInflated &&
                             !map_ptr_->isSegmentTraversable(
                                     current_pos, neighborPos,
                                     GridLayer::kInflated, search_policy)) {
