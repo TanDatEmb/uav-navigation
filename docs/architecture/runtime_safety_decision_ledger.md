@@ -10489,3 +10489,51 @@ release profiles must not use the former allowance.
   invalid-input handling and the supported-order contract.
 - **Verification:** Repeat the focused commands above after changes to
   `RootFinder`, polynomial extrema certification or trajectory-rate tests.
+
+### 2026-08-29 - Bound Piece rate-certificate root-search expansion
+
+- **Owner/status:** `geometry_utils::Piece` maximum velocity, acceleration and
+  jerk-rate certificates; planning numerical boundary, `PROVISIONAL`.
+- **Scope:** The auxiliary root-search interval used by
+  `getMaxVelRate()`, `getMaxAccRate()` and `getMaxJerRate()` starts at the
+  existing `[-0.0625, 1.0625]` domain, but now moves each endpoint away from a
+  near-zero derivative value with a maximum of 128 iterations. A non-finite
+  polynomial value, floating-point no-progress, or exhausted bound returns a
+  non-finite rate so the caller cannot authorize an uncertified candidate.
+- **Physical meaning and unsafe outcome:** The interval is a normalized
+  piece-local time domain; the derivative coefficients represent squared
+  velocity, acceleration or jerk-rate extrema. Before this fix, an exact root
+  at an initial endpoint could keep the `while` loop expanding until floating
+  point stagnation, and the velocity path only logged after 100 iterations
+  without terminating. That could consume unbounded planner time and prevent
+  a complete rate certificate. The new behavior fails closed at the numerical
+  utility boundary rather than allowing an incomplete certificate to pass.
+- **False-accept/false-reject consequences:** No false accept is introduced:
+  every successful path still runs the existing root solver and checks both
+  normalized endpoints. A valid polynomial whose boundary value remains below
+  the existing `DBL_EPSILON` criterion for all 128 representable expansion
+  steps can now be rejected as non-finite; this is an explicit false-reject
+  trade-off for bounded execution and must not be changed by silently raising
+  the limit. The physical V/A/J limits and root-solver tolerance are unchanged.
+- **Derivation and runtime cost:** `DBL_EPSILON` remains the existing
+  near-zero boundary criterion. The value 128 is an implementation bound,
+  not a flight-tuned physical threshold; it bounds the two endpoint searches
+  to at most 256 polynomial evaluations, each linear in derivative degree.
+  No new planner budget or configurable safety gate was added. Measure
+  certificate latency distributions if this path is exercised by a future
+  high-degree or adversarial workload.
+- **Evidence:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2` and `./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no` passed 88/88. The regression constructs a piece whose
+  velocity derivative is exactly zero at the former left endpoint and verifies
+  the finite maximum-rate result. Full Release, sanitizer, dataset, SITL and
+  hardware evidence are not implied by this focused result.
+- **Removal/review condition:** Retain the bounded, fail-closed behavior. Only
+  replace the bound after a typed numerical-result contract can distinguish
+  endpoint-root handling from non-finite or non-progressing evaluation and
+  after adversarial degree/scale tests show an equivalent or stronger latency
+  ceiling. Never restore an unbounded loop or convert the diagnostic into a
+  successful certificate.
+- **Verification:** Repeat the focused commands above after any change to
+  `Piece` rate certificates, `RootFinder` endpoint handling or normalized
+  polynomial evaluation.
