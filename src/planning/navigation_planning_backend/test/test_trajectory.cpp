@@ -565,6 +565,66 @@ TEST(PlannerTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemanti
   EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
 }
 
+TEST(PlannerTrajectory, HotReplanUsesExecutableCommandClock) {
+  constexpr double history_start_wall_time_s = 41.116;
+  constexpr double command_start_wall_time_s = 43.520;
+  constexpr double replan_start_wall_time_s = 43.720;
+  constexpr double forward_time_s = 0.18;
+  constexpr double emergency_duration_s = 1.468;
+
+  const auto executable = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s,
+      forward_time_s, emergency_duration_s);
+  ASSERT_TRUE(executable.valid);
+  EXPECT_FALSE(executable.reaches_command_end);
+  EXPECT_NEAR(executable.start_tt_s, 0.2, 1.0e-12);
+  EXPECT_NEAR(executable.state_tt_s, 0.38, 1.0e-12);
+
+  const auto stale_history = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, history_start_wall_time_s,
+      forward_time_s, emergency_duration_s);
+  ASSERT_TRUE(stale_history.valid);
+  EXPECT_TRUE(stale_history.reaches_command_end);
+}
+
+TEST(PlannerTrajectory, HotReplanClockFailsClosedAtInvalidBoundaries) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      nan, 10.0, 0.18, 1.0).valid);
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      9.9, 10.0, 0.18, 1.0).valid);
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      10.1, 10.0, -0.18, 1.0).valid);
+
+  const auto ended = navigation_planning_backend::hotReplanWindow(
+      10.9, 10.0, 0.18, 1.0);
+  ASSERT_TRUE(ended.valid);
+  EXPECT_TRUE(ended.reaches_command_end);
+}
+
+TEST(PlannerTrajectory, InheritedBackupIntervalClipsToCandidateClock) {
+  const auto window = navigation_planning_backend::hotReplanWindow(
+      43.720, 43.520, 0.18, 1.468);
+  ASSERT_TRUE(window.valid);
+
+  const auto already_on_backup =
+      navigation_planning_backend::inheritedBackupInterval(0.0, window, 2.0);
+  ASSERT_TRUE(already_on_backup.valid);
+  ASSERT_TRUE(already_on_backup.present);
+  EXPECT_DOUBLE_EQ(already_on_backup.begin_tt_s, 0.0);
+  EXPECT_NEAR(already_on_backup.end_tt_s, 0.18, 1.0e-12);
+
+  const auto enters_backup =
+      navigation_planning_backend::inheritedBackupInterval(0.3, window, 2.0);
+  ASSERT_TRUE(enters_backup.valid);
+  ASSERT_TRUE(enters_backup.present);
+  EXPECT_NEAR(enters_backup.begin_tt_s, 0.1, 1.0e-12);
+  EXPECT_NEAR(enters_backup.end_tt_s, 0.18, 1.0e-12);
+
+  EXPECT_FALSE(navigation_planning_backend::inheritedBackupInterval(
+      0.0, window, 0.1).valid);
+}
+
 TEST(PlannerTrajectory, StateTransitionPiecePreservesCompletePvajBoundary) {
   navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
   initial.col(0) = Eigen::Vector3d(1.0, -2.0, 3.0);

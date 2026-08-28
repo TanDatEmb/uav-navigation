@@ -10709,3 +10709,46 @@ release profiles must not use the former allowance.
   test_planner_fsm -j2 && ./build/navigation_runtime/test_planner_fsm
   --gtest_color=no`; then `make build && make test`; then repeat 5 m/s
   `long_three_pillars_multiwaypoint` SITL and compare to both artifacts above.
+
+### 2026-08-29 - Keep hot-replan continuity on the executable command clock
+
+- **Owner/status:** Planner command lifecycle and inherited trajectory-role
+  provenance, correctness fix, `PROVISIONAL` pending repeated SITL.
+- **Scope:** Convert the hot-replan wall time using the start time of the
+  currently executable command, not the older EXP-history trajectory. Reject
+  non-finite, future-start, negative-forward or non-positive-duration timing
+  inputs. When the retained prefix is already on BACKUP, clip its role interval
+  to zero in the new candidate clock instead of emitting a negative begin time.
+- **Safety impact:** No dynamics, collision, freshness, route, tracking,
+  deadline or waypoint gate is relaxed. A command that actually reaches its
+  end keeps the existing emergency-failure or measured-state restart behavior;
+  an invalid clock fails closed. The change only prevents a still-valid
+  emergency prefix from being classified as expired against an unrelated
+  historical clock.
+- **Behavioral reason:** In artifact
+  `external-mode-check-20260828T191726-1487080`, EXP history started at about
+  `41.116 s`, while emergency command generation 12 started at `43.520 s`.
+  The next replan near `43.720 s` was therefore about `0.200 s` into the
+  executable command, but the early lifecycle check used the history start and
+  obtained about `2.604 s`, beyond the emergency duration `1.468 s`. It
+  returned `NEW_TRAJ`, discarded the certified prefix, and entered repeated
+  PlanFromRest recovery.
+- **False-accept/false-reject consequences:** The executable command remains
+  immutable and all candidate certificates still run. Using its own clock
+  removes the false expiration; malformed or future clocks are newly rejected.
+  BACKUP ownership is preserved over exactly the retained prefix and cannot
+  extend beyond the candidate duration.
+- **Runtime cost and evidence required:** Constant-time finite checks and role
+  clipping only. Focused tests use the artifact timestamps and adversarial
+  invalid/expired inputs. Release build and full tests must pass. Repeated
+  5 m/s SITL must show that a replan immediately after emergency commit retains
+  the BACKUP prefix instead of reporting `local trajectory boundary reached`,
+  without collision, clearance, waypoint, yaw, altitude or latency regression.
+- **Removal/review condition:** Keep while planner history and executable
+  commands have separate lifecycles. Replace only if one authoritative command
+  timeline owns both planning history and execution provenance.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`; then `make build && make test`; then repeat the exact
+  `long_three_pillars_multiwaypoint` scenario and compare against
+  `external-mode-check-20260828T191726-1487080`.

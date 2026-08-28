@@ -1144,6 +1144,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // record the wall time (WT) and the trajectory time (TT) at the start of the replan.
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
+        HotReplanWindow replan_window;
 
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
@@ -1267,8 +1268,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             guide_yaw_traj = cmd_traj_info_.yawTraj(); //last_exp_traj_info.exp_yaw_traj;
             last_exp_traj = last_exp_traj_info.posTraj();
 
-            replan_process_start_TT = replan_process_start_WT - last_exp_traj.start_WT;
-            replan_state_TT = replan_process_start_TT + cfg_.replan_forward_dt_s;
+            replan_window = hotReplanWindow(
+                    replan_process_start_WT, guide_pos_traj.start_WT,
+                    cfg_.replan_forward_dt_s, cmd_traj_info_.getTotalDuration());
+            if (!replan_window.valid) {
+                planner_context_->error(
+                        " -- [generateExpTraj] invalid executable-command clock for hot replan");
+                return FAILED;
+            }
+            replan_process_start_TT = replan_window.start_tt_s;
+            replan_state_TT = replan_window.state_tt_s;
             /* 2.2) Perform collision check on last exp traj*/
             vector<TimePosPair> last_exp_traj_time_pos;
             vector<double> last_exp_traj_vel;
@@ -1279,7 +1288,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // MAIN portion, ask the runtime to restart from the measured
             // state; retaining an ended command would only let its finite
             // execution lease expire.
-            if (replan_state_TT >= cmd_traj_info_.getTotalDuration()) {
+            if (replan_window.reaches_command_end) {
                 out_exp_traj_info = last_exp_traj_info;
 
                 if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
@@ -2108,7 +2117,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                  ? planner_context_->getSimTime()
                                  : replan_process_start_WT;
 
-        replan_process_start_TT = replan_process_start_WT - guide_pos_traj.start_WT;
         Trajectory temp_exp_traj;
         if (!last_exp_traj_info.empty() &&
             !guide_pos_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
@@ -2178,9 +2186,20 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
         // check if part of the exp on last backup
         double on_backup_end_TT{-1}, on_backup_start_TT{-1};
-        if (!last_exp_traj_info.empty() && replan_state_TT > cmd_traj_info_.getBackupTrajStartTT()) {
-            on_backup_start_TT = cmd_traj_info_.getBackupTrajStartTT() - replan_process_start_TT;
-            on_backup_end_TT = replan_state_TT - replan_process_start_TT;
+        if (!last_exp_traj_info.empty()) {
+            const auto inherited_backup = inheritedBackupInterval(
+                    cmd_traj_info_.getBackupTrajStartTT(),
+                    replan_window,
+                    temp_exp_traj.getTotalDuration());
+            if (!inherited_backup.valid) {
+                planner_context_->error(
+                        " -- [generateExpTraj] invalid inherited BACKUP interval");
+                return FAILED;
+            }
+            if (inherited_backup.present) {
+                on_backup_start_TT = inherited_backup.begin_tt_s;
+                on_backup_end_TT = inherited_backup.end_tt_s;
+            }
         }
         out_exp_traj_info.setTrajectory(new_traj_WT, temp_exp_traj, temp_yaw_traj, on_backup_start_TT,
                                         on_backup_end_TT);
