@@ -72,11 +72,11 @@ inline std::array<Eigen::Vector3d, kDegree + 1> controlPoints(
   controls[3] = start.col(0) + 3.0 * start.col(1) * duration_s / n +
       3.0 * start.col(2) * duration_squared / acceleration_denominator +
       start.col(3) * duration_cubed / jerk_denominator;
-  controls[7] = end.col(0);
-  controls[6] = end.col(0) - end.col(1) * duration_s / n;
-  controls[5] = end.col(0) - 2.0 * end.col(1) * duration_s / n +
+  controls[kDegree] = end.col(0);
+  controls[kDegree - 1] = end.col(0) - end.col(1) * duration_s / n;
+  controls[kDegree - 2] = end.col(0) - 2.0 * end.col(1) * duration_s / n +
       end.col(2) * duration_squared / acceleration_denominator;
-  controls[4] = end.col(0) - 3.0 * end.col(1) * duration_s / n +
+  controls[kDegree - 3] = end.col(0) - 3.0 * end.col(1) * duration_s / n +
       3.0 * end.col(2) * duration_squared / acceleration_denominator -
       end.col(3) * duration_cubed / jerk_denominator;
   return controls;

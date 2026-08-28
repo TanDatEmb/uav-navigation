@@ -116,16 +116,6 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             }
             double nearest_distance = std::numeric_limits<double>::infinity();
             std::size_t nearest_index = 0U;
-            for (std::size_t index = 0; index < path.size(); ++index) {
-                const double distance =
-                    (path[index] - route_boundary_gate->point).norm();
-                if (distance < nearest_distance) {
-                    nearest_distance = distance;
-                    nearest_index = index;
-                }
-            }
-            nearest_distance = std::numeric_limits<double>::infinity();
-            nearest_index = 0U;
             for (std::size_t index = 0; index < corridor_path.size(); ++index) {
                 const double distance =
                     (corridor_path[index] - route_boundary_gate->point).norm();
@@ -151,22 +141,22 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         }
 
         vector<Line> seed_lines;
-        int first_id, second_id;
+        std::size_t first_id, second_id;
         Polytope overlap;
         Vec3f interior_pt;
         double interior_depth;
         Polytope temp_poly, temp_poly_fix_p;
         int max_loop = 1000;
         int cnt_loop = 0;
-        first_id = 0;
+        first_id = 0U;
 
-        while(first_id < corridor_path.size() &&
+        while (first_id < corridor_path.size() &&
               map_ptr_->classify(corridor_path[first_id], navigation_world_model::GridLayer::kInflated) ==
                   navigation_world_model::CellState::kOccupied) {
             first_id++;
         }
 
-        if (first_id >= static_cast<int>(corridor_path.size())) {
+        if (first_id >= corridor_path.size()) {
             planner_context_->warn(" -- [planner] Corridor path is entirely inside inflated occupancy");
             solve_stage_.store(0);
             return false;
@@ -196,9 +186,9 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             solve_stage_.store(1);
             second_id = first_id;
             bool reached_route_boundary = false;
-            for (int j = first_id + 1; j < corridor_path.size(); j++) {
+            for (std::size_t j = first_id + 1; j < corridor_path.size(); ++j) {
                 if (route_boundary_index.has_value() &&
-                    static_cast<std::size_t>(j) == *route_boundary_index) {
+                    j == *route_boundary_index) {
                     // Stop the line corridor exactly at the mission boundary,
                     // but do not make the final line seed exceed the bounded
                     // CIRI length. If the boundary is still too far away,
@@ -233,15 +223,15 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                 }
                 if (reach_segment) {
                     second_id = j - 1;
-                    if (second_id - 1 > first_id) {
-                        second_id -= 1;
+                    if (second_id > first_id + 1U) {
+                        --second_id;
                     }
                     break;
                 }
                 second_id = j;
             }
 
-            if (second_id == first_id && second_id + 1 < corridor_path.size()) {
+            if (second_id == first_id && second_id + 1U < corridor_path.size()) {
                 planner_context_->warn(
                         " -- [planner] Frontend path contains a blocked adjacent edge at index {}",
                         first_id);
@@ -311,8 +301,8 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                         return false;
                     }
                 } else {
-                    int temp_id = sfcs.size() - 2;
-                    if (temp_id > 0 && !sfcs.back().IsRouteBoundaryGate()) {
+                    if (sfcs.size() >= 2U && !sfcs.back().IsRouteBoundaryGate()) {
+                        const std::size_t temp_id = sfcs.size() - 2U;
                         overlap = sfcs[temp_id].CrossWith(temp_poly);
                         interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                         if (interior_depth > sfcs[temp_id + 1].overlap_depth_with_last_one * 0.25) {
@@ -379,7 +369,7 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                     second_id, route_boundary_gate->radius_m,
                     incoming_overlap);
             }
-            if (second_id == corridor_path.size() - 1) {
+            if (second_id == corridor_path.size() - 1U) {
                 break;
             }
             first_id = second_id;

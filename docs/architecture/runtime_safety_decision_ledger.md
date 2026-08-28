@@ -10257,3 +10257,12 @@ release profiles must not use the former allowance.
   moving main-only candidate, a positive BACKUP suffix for every moving finite
   MAIN, zero ground-truth collision, and replacement command renewal before
   the suffix reaches rest. Recorded-data shadow planning remains required.
+
+### 2026-08-29 - Fail closed on malformed trajectory and MVIE numeric inputs
+
+- **Owner/status:** Planning geometry utilities and corridor optimizer, implementation fix; no new configurable gate.
+- **Scope:** Trajectory construction now rejects mismatched duration/coefficients, invalid trajectory evaluation returns non-finite values instead of indexing an empty or malformed piece, partial-by-ID accepts its documented exclusive end sentinel, and the waypoint parameter is named `waypoint_id`. MVIE callback state now uses a typed Eigen-owning struct instead of unaligned/strict-aliasing casts, and rejects non-finite, degenerate or failed optimization inputs before constructing an ellipsoid. Corridor and MINCO index loops use size-compatible types and avoid a size_t underflow.
+- **Safety impact:** Positive and fail-closed. The change removes undefined behavior, silent duration/coefficient truncation, polynomial extrapolation past the final piece, and invalid optimizer arithmetic. Existing trajectory formulas, corridor geometry, optimizer constants, collision policy and hard-gate values are unchanged; no bypass, relaxed validation or test-only behavior was added.
+- **Evidence:** Release planning backend target rebuilt successfully after the Eigen array-expression correction. Focused tests passed 85/85, including malformed trajectory evaluation, mismatched input rejection and the `end_id=-1` partial contract; mission contract tests passed 10/10. The compiler no longer emits the previously observed signed/unsigned warnings in the touched corridor/MINCO/nominal-optimizer paths.
+- **Removal/review condition:** Keep the typed callback and fail-closed validation. Revisit only if a future public API replaces the legacy trajectory scalar getters with an explicit result type while preserving non-finite rejection at every execution boundary.
+- **Verification:** `cmake --build build/navigation_planning_backend --target test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`; `cmake --build build/navigation_mission --target test_mission_contract -j2`; `./build/navigation_mission/test_mission_contract --gtest_color=no`.

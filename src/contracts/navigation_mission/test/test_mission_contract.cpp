@@ -12,11 +12,11 @@ namespace {
 
 class TemporaryMission {
  public:
-  explicit TemporaryMission(const char* contents) {
-    path_ = std::filesystem::temp_directory_path() /
-            ("navigation_mission_" +
-             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-             ".yaml");
+  explicit TemporaryMission(const char* contents)
+      : path_(std::filesystem::temp_directory_path() /
+              ("navigation_mission_" +
+               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+               ".yaml")) {
     std::ofstream stream(path_);
     stream << contents;
   }

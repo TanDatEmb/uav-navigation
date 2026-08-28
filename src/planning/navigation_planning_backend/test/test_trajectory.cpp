@@ -371,6 +371,41 @@ TEST(PlannerTrajectory, PartialSliceEndingAtPieceBoundaryKeepsLocalDuration) {
   EXPECT_TRUE(partial.getState(partial.getTotalDuration()).allFinite());
 }
 
+TEST(PlannerTrajectory, TrajectoryRejectsMismatchedDurationAndCoefficientInputs) {
+  const std::vector<double> durations{1.0};
+  const std::vector<Eigen::MatrixXd> coefficients;
+  EXPECT_THROW((geometry_utils::Trajectory(durations, coefficients)),
+               std::invalid_argument);
+}
+
+TEST(PlannerTrajectory, InvalidTrajectoryEvaluationFailsClosed) {
+  geometry_utils::Trajectory empty;
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  EXPECT_FALSE(empty.getState(0.0, state));
+  EXPECT_FALSE(empty.getPos(0.0).allFinite());
+  EXPECT_FALSE(empty.getState(0.0).allFinite());
+  EXPECT_FALSE(std::isfinite(empty.getWaypointTT(-1)));
+
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory malformed({0.0}, {coefficients});
+  EXPECT_FALSE(malformed.getState(0.0, state));
+  EXPECT_FALSE(malformed.getPos(0.0).allFinite());
+}
+
+TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  coefficients(0, 4) = 1.0;
+  geometry_utils::Trajectory source({1.0, 2.0}, {coefficients, coefficients});
+  source.start_WT = 10.0;
+  geometry_utils::Trajectory partial;
+
+  ASSERT_TRUE(source.getPartialTrajectoryByID(1, -1, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial.start_WT, 11.0);
+  EXPECT_DOUBLE_EQ(partial.getTotalDuration(), 2.0);
+  EXPECT_FALSE(source.getPartialTrajectoryByID(0, 3, partial));
+}
+
 TEST(PlannerTrajectory, SweepUsesNextPieceAtExactBoundary) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 6) = 1.0;

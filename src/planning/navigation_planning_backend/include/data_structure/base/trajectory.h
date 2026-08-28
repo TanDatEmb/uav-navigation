@@ -59,9 +59,8 @@ namespace geometry_utils {
             Trajectory new_traj;
             new_traj.pieces.reserve(pieces.size() + traj_in.pieces.size());
             new_traj.pieces.insert(new_traj.pieces.end(), pieces.begin(), pieces.end());
-            new_traj.pieces.insert(new_traj.pieces.end(),
-                                   std::make_move_iterator(traj_in.pieces.begin()),
-                                   std::make_move_iterator(traj_in.pieces.end()));
+            new_traj.pieces.insert(new_traj.pieces.end(), traj_in.pieces.begin(),
+                                   traj_in.pieces.end());
             new_traj.start_WT = start_WT;
             return new_traj;
         }
@@ -118,7 +117,7 @@ namespace geometry_utils {
 
         int locatePieceIdx(double& t) const;
 
-        double getWaypointTT(const int& watpoint_id) const;
+        double getWaypointTT(const int& waypoint_id) const;
 
         Eigen::Vector3d getPos(double t) const;
 

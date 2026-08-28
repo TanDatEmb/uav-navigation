@@ -8,10 +8,23 @@
 #include "utils/optimization/sdlp.h"
 #include "utils/optimization/lbfgs.h"
 #include <cfloat>
+#include <cmath>
+#include <limits>
 
 namespace optimization_utils {
     using namespace math_utils;
     using namespace geometry_utils;
+
+    namespace {
+
+    struct MvieCostData {
+        int constraint_count;
+        double smooth_epsilon;
+        double penalty_weight;
+        Eigen::MatrixX3d normalized_planes;
+    };
+
+    }  // namespace
 
     void MVIE::chol3d(const Eigen::Matrix3d &A, Eigen::Matrix3d &L) {
         L(0, 0) = sqrt(A(0, 0));
@@ -45,15 +58,22 @@ namespace optimization_utils {
 
 
     double MVIE::costMVIE(void *data, const Eigen::VectorXd &x, Eigen::VectorXd &grad) {
-        const int64_t *pM = (int64_t *) data;
-        const double *pSmoothEps = (double *) (pM + 1);
-        const double *pPenaltyWt = pSmoothEps + 1;
-        const double *pA = pPenaltyWt + 1;
-
-        const int M = *pM;
-        const double smoothEps = *pSmoothEps;
-        const double penaltyWt = *pPenaltyWt;
-        Eigen::Map<const Eigen::MatrixX3d> A(pA, M, 3);
+        if (data == nullptr || x.size() != 9 || grad.size() != 9) {
+            grad.setZero();
+            return std::numeric_limits<double>::infinity();
+        }
+        const auto &parameters = *static_cast<const MvieCostData *>(data);
+        const int M = parameters.constraint_count;
+        const double smoothEps = parameters.smooth_epsilon;
+        const double penaltyWt = parameters.penalty_weight;
+        const auto &A = parameters.normalized_planes;
+        if (M <= 0 || A.rows() != M || A.cols() != 3 ||
+            !std::isfinite(smoothEps) || smoothEps <= 0.0 ||
+            !std::isfinite(penaltyWt) || penaltyWt < 0.0 ||
+            !x.allFinite() || !A.allFinite()) {
+            grad.setZero();
+            return std::numeric_limits<double>::infinity();
+        }
         Eigen::Map<const Eigen::Vector3d> p(x.data());
         Eigen::Map<const Eigen::Vector3d> rtd(x.data() + 3);
         Eigen::Map<const Eigen::Vector3d> cde(x.data() + 6);
@@ -118,32 +138,47 @@ namespace optimization_utils {
         Vec3f p = ellipsoid.d();
         // Find the deepest interior point
         const int M = hPoly.rows();
+        if (M <= 0 || hPoly.cols() != 4 || !hPoly.allFinite() ||
+            !R.allFinite() || !r.allFinite() || !p.allFinite() ||
+            (r.array() <= 0.0).any()) {
+            return false;
+        }
         Eigen::MatrixX4d Alp(M, 4);
         Eigen::VectorXd blp(M);
         Eigen::Vector4d clp, xlp;
         const Eigen::ArrayXd hNorm = hPoly.leftCols<3>().rowwise().norm();
+        if (!hNorm.allFinite() || (hNorm <= DBL_EPSILON).any()) {
+            return false;
+        }
         Alp.leftCols<3>() = hPoly.leftCols<3>().array().colwise() / hNorm;
         Alp.rightCols<1>().setConstant(1.0);
         blp = -hPoly.rightCols<1>().array() / hNorm;
         clp.setZero();
         clp(3) = -1.0;
         const double maxdepth = -sdlp::linprog<4>(clp, Alp, blp, xlp);
-        if (!(maxdepth > 0.0) || std::isinf(maxdepth)) {
+        if (!(maxdepth > 0.0) || !std::isfinite(maxdepth) || !xlp.allFinite()) {
             return false;
         }
         const Eigen::Vector3d interior = xlp.head<3>();
+        const Eigen::VectorXd interior_margins =
+            blp - Alp.leftCols<3>() * interior;
+        if (!interior_margins.allFinite() ||
+            (interior_margins.array() <= DBL_EPSILON).any()) {
+            return false;
+        }
 
         // Prepare the data for MVIE optimization
-        uint8_t *optData = new uint8_t[sizeof(int64_t) + (2 + 3 * M) * sizeof(double)];
-        int64_t *pM = (int64_t *) optData;
-        double *pSmoothEps = (double *) (pM + 1);
-        double *pPenaltyWt = pSmoothEps + 1;
-        double *pA = pPenaltyWt + 1;
-
-        *pM = M;
-        Eigen::Map<Eigen::MatrixX3d> A(pA, M, 3);
-        A = Alp.leftCols<3>().array().colwise() /
+        MvieCostData cost_data{
+            M,
+            1.0e-2,
+            1.0e+3,
+            Eigen::MatrixX3d(M, 3),
+        };
+        cost_data.normalized_planes = Alp.leftCols<3>().array().colwise() /
             (blp - Alp.leftCols<3>() * interior).array();
+        if (!cost_data.normalized_planes.allFinite()) {
+            return false;
+        }
 
         Eigen::VectorXd x(9);
         const Eigen::Matrix3d Q = R * (r.cwiseProduct(r)).asDiagonal() * R.transpose();
@@ -165,19 +200,19 @@ namespace optimization_utils {
         paramsMVIE.min_step = 1.0e-32;
         paramsMVIE.past = 3;
         paramsMVIE.delta = 1.0e-2;
-        *pSmoothEps = 1.0e-2;
-        *pPenaltyWt = 1.0e+3;
-
         int ret = lbfgs::lbfgs_optimize(x,
                                         minCost,
                                         &costMVIE,
                                         nullptr,
                                         nullptr,
-                                        optData,
+                                        &cost_data,
                                         paramsMVIE);
 
-        if (ret < 0) {
+        if (ret < 0 || !std::isfinite(minCost) || !x.allFinite()) {
+            if (ret < 0) {
             printf("FIRI WARNING: %s\n", lbfgs::lbfgs_strerror(ret));
+            }
+            return false;
         }
 
         p = x.head<3>() + interior;
@@ -205,7 +240,6 @@ namespace optimization_utils {
             r = S;
         }
         ellipsoid = Ellipsoid(R, r, p);
-        delete[] optData;
-        return ret >= 0;
+        return true;
     }
 }

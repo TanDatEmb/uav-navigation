@@ -688,7 +688,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                 time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
     }
 
-    for (int i = 1; i < time_stamps.size(); i++) {
+    for (Eigen::Index i = 1; i < time_stamps.size(); ++i) {
         opt_vars.times(i - 1) = time_stamps(i) - time_stamps(i - 1);
         opt_vars.times(i - 1) = std::max(0.01, opt_vars.times(i - 1));
     }
@@ -789,10 +789,10 @@ bool ExpTrajOpt::setupProblemAndCheck() {
 bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &init_ts) {
     opt_vars.default_init = false;
     if (opt_vars.times.size() == 0 || init_ts.empty() ||
-        opt_vars.times.size() != init_ts.size()) {
+        opt_vars.times.size() != static_cast<Eigen::Index>(init_ts.size())) {
         return false;
     }
-    if (opt_vars.points.cols() != init_ps.size()) {
+    if (opt_vars.points.cols() != static_cast<Eigen::Index>(init_ps.size())) {
         return false;
     }
     for (std::size_t i = 0; i < init_ts.size(); ++i) {
@@ -853,8 +853,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 
     if (opt_vars.given_init_ts_and_ps) {
         opt_vars.times = opt_vars.init_ts;
-        for (int i = 0; i < opt_vars.init_ps.size(); i++) {
-            opt_vars.points.col(i) = opt_vars.init_ps[i];
+        for (std::size_t i = 0; i < opt_vars.init_ps.size(); ++i) {
+            opt_vars.points.col(static_cast<Eigen::Index>(i)) = opt_vars.init_ps[i];
         }
     }
     // Use a conservative interior target for the optimizer's soft dynamic
@@ -1991,7 +1991,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         return false;
     }
 
-    for (long i = 0; i < sfcs.size(); i++) {
+    for (std::size_t i = 0; i < sfcs.size(); ++i) {
         auto planes = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(planes)) {
             planner_context_->warn(
@@ -2023,8 +2023,8 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
 
-    for (long i = 0; i < sfcs.size(); i++) {
-        opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
+    for (std::size_t i = 0; i < sfcs.size(); ++i) {
+        opt_vars.route_boundary_gates[i] =
                 sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
         if (sfcs[i].IsRouteBoundaryGate()) {
             const auto &boundary_point = sfcs[i].GetRouteBoundaryPoint();
@@ -2036,9 +2036,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                     i);
                 return false;
             }
-            opt_vars.route_boundary_points[static_cast<std::size_t>(i)] =
+            opt_vars.route_boundary_points[i] =
                     boundary_point;
-            opt_vars.route_boundary_radii[static_cast<std::size_t>(i)] =
+            opt_vars.route_boundary_radii[i] =
                     boundary_radius;
         }
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
@@ -2081,7 +2081,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
             failed_traj_log << i.transpose() << " ";
         }
         failed_traj_log << endl;
-        for (long i = 0; i < sfcs.size(); i++) {
+        for (std::size_t i = 0; i < sfcs.size(); ++i) {
             failed_traj_log << i << endl;
             failed_traj_log << sfcs[i].GetPlanes() << endl;
         }
@@ -2103,7 +2103,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     vector<double> guide_t;
     guide_t.emplace_back(0);
     double accumulate_t = 0;
-    for (int i = 0; i < init_ts.size(); i++) {
+    for (Eigen::Index i = 0; i < init_ts.size(); ++i) {
         accumulate_t += init_ts[i];
         guide_t.emplace_back(accumulate_t);
     }
@@ -2119,7 +2119,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         return false;
     }
 
-    for (long i = 0; i < sfcs.size(); i++) {
+    for (std::size_t i = 0; i < sfcs.size(); ++i) {
         auto planes = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(planes)) {
             planner_context_->warn(
@@ -2153,8 +2153,8 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
 
-    for (long i = 0; i < sfcs.size(); i++) {
-        opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
+    for (std::size_t i = 0; i < sfcs.size(); ++i) {
+        opt_vars.route_boundary_gates[i] =
                 sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
         if (sfcs[i].IsRouteBoundaryGate()) {
             const auto &boundary_point = sfcs[i].GetRouteBoundaryPoint();
@@ -2166,9 +2166,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                     i);
                 return false;
             }
-            opt_vars.route_boundary_points[static_cast<std::size_t>(i)] =
+            opt_vars.route_boundary_points[i] =
                     boundary_point;
-            opt_vars.route_boundary_radii[static_cast<std::size_t>(i)] =
+            opt_vars.route_boundary_radii[i] =
                     boundary_radius;
         }
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
@@ -2210,7 +2210,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
             failed_traj_log << i.transpose() << " ";
         }
         failed_traj_log << endl;
-        for (long i = 0; i < sfcs.size(); i++) {
+        for (std::size_t i = 0; i < sfcs.size(); ++i) {
             failed_traj_log << i << endl;
             failed_traj_log << sfcs[i].GetPlanes() << endl;
         }

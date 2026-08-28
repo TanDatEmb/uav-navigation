@@ -6,12 +6,38 @@
 
 #include <data_structure/base/trajectory.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
 using namespace geometry_utils;
 using namespace navigation_math;
 using namespace color_text;
 // Trasjectory==================================================
 
 namespace {
+
+Eigen::Vector3d invalidVector() {
+    return Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+}
+
+Vec3f invalidVec3f() {
+    return Vec3f::Constant(std::numeric_limits<double>::quiet_NaN());
+}
+
+Mat3Df invalidState() {
+    Mat3Df state(3, 4);
+    state.setConstant(std::numeric_limits<double>::quiet_NaN());
+    return state;
+}
+
+bool validPiece(const Piece& piece) {
+    const auto& coefficients = piece.getCoeffMat();
+    return std::isfinite(piece.getDuration()) && piece.getDuration() > 0.0 &&
+           coefficients.rows() == 3 && coefficients.cols() > 0 &&
+           coefficients.allFinite();
+}
 
 bool locateSliceStart(const Trajectory& trajectory, const double time_s,
                       int& piece_index, double& local_time_s) {
@@ -59,7 +85,11 @@ bool locateSliceEnd(const Trajectory& trajectory, const double time_s,
 
 Trajectory::Trajectory(const std::vector<double> &durs,
                        const std::vector<Eigen::MatrixXd> &cMats) {
-    int N = std::min(durs.size(), cMats.size());
+    if (durs.size() != cMats.size()) {
+        throw std::invalid_argument(
+            "trajectory durations and coefficient matrices must have equal sizes");
+    }
+    const int N = static_cast<int>(durs.size());
     pieces.reserve(N);
     for (int i = 0; i < N; i++) {
         pieces.emplace_back(durs[i], cMats[i]);
@@ -68,6 +98,10 @@ Trajectory::Trajectory(const std::vector<double> &durs,
 
 vec_Vec3f Trajectory::getWaypoints() const {
     vec_Vec3f pts;
+    if (pieces.empty() ||
+        !std::all_of(pieces.begin(), pieces.end(), validPiece)) {
+        return pts;
+    }
     for (size_t i = 0; i < pieces.size(); i++) {
         pts.push_back(pieces[i].getPos(0));
     }
@@ -96,7 +130,13 @@ double Trajectory::getTotalDuration() const {
     int N = getPieceNum();
     double totalDuration = 0.0;
     for (int i = 0; i < N; i++) {
+        if (!validPiece(pieces[i])) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
         totalDuration += pieces[i].getDuration();
+        if (!std::isfinite(totalDuration)) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
     }
     return totalDuration;
 }
@@ -128,25 +168,38 @@ void Trajectory::append(const Trajectory &traj) {
 }
 
 int Trajectory::locatePieceIdx(double &t) const {
-    int N = getPieceNum();
-    int idx;
-    double dur;
-    for (idx = 0;
-         idx < N &&
-         t > (dur = pieces[idx].getDuration());
-         idx++) {
-        t -= dur;
+    const int N = getPieceNum();
+    if (N == 0 || !std::isfinite(t) || t < 0.0) {
+        return -1;
     }
-    if (idx == N) {
-        idx--;
-        t += pieces[idx].getDuration();
+
+    for (int idx = 0; idx < N; ++idx) {
+        const Piece& piece = pieces[idx];
+        if (!validPiece(piece)) {
+            return -1;
+        }
+        const double duration = piece.getDuration();
+        if (t <= duration) {
+            return idx;
+        }
+        t -= duration;
     }
-    return idx;
+
+    // Preserve the established endpoint semantics while preventing
+    // extrapolation beyond the final polynomial piece.
+    t = pieces.back().getDuration();
+    return N - 1;
 }
 
-double Trajectory::getWaypointTT(const int &watpoint_id) const {
+double Trajectory::getWaypointTT(const int &waypoint_id) const {
+    if (waypoint_id < 0 || waypoint_id >= getPieceNum()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     double t = 0.0;
-    for (int i = 0; i <= watpoint_id; i++) {
+    for (int i = 0; i <= waypoint_id; i++) {
+        if (!validPiece(pieces[i])) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
         t += pieces[i].getDuration();
     }
     return t;
@@ -155,136 +208,128 @@ double Trajectory::getWaypointTT(const int &watpoint_id) const {
 Eigen::Vector3d Trajectory::getPos(double t) const {
 
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidVector();
     return pieces[pieceIdx].getPos(t);
 }
 
 Eigen::Vector3d Trajectory::getVel(double t) const {
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidVector();
     return pieces[pieceIdx].getVel(t);
 }
 
 Eigen::Vector3d Trajectory::getAcc(double t) const {
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidVector();
     return pieces[pieceIdx].getAcc(t);
 }
 
 Eigen::Vector3d Trajectory::getJer(double t) const {
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidVector();
     return pieces[pieceIdx].getJer(t);
 }
 
 
 Vec3f Trajectory::getSnap(double t) const {
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidVec3f();
     return pieces[pieceIdx].getSnap(t);
 }
 
 Mat3Df Trajectory::getState(double t) const {
     int pieceIdx = locatePieceIdx(t);
+    if (pieceIdx < 0) return invalidState();
     return pieces[pieceIdx].getState(t);
 }
 
 bool Trajectory::getState(double t, StatePVAJ& out_state) const {
-    const double & dur = getTotalDuration();
-    if (t < 0) {
+    const double dur = getTotalDuration();
+    if (!std::isfinite(t) || t < 0.0 || !std::isfinite(dur) || dur <= 0.0) {
         return false;
     }
-    t = t > dur ? dur : t;
+    t = std::min(t, dur);
     out_state.col(0) = getPos(t);
     out_state.col(1) = getVel(t);
     out_state.col(2) = getAcc(t);
     out_state.col(3) = getJer(t);
-    return true;
+    return out_state.allFinite();
 }
 
 
 Eigen::Vector3d Trajectory::getJuncPos(int juncIdx) const {
-    if (juncIdx != getPieceNum()) {
+    if (juncIdx < 0 || juncIdx > getPieceNum()) return invalidVector();
+    if (juncIdx != getPieceNum() && validPiece(pieces[juncIdx])) {
         return pieces[juncIdx].getCoeffMat().col(pieces[juncIdx].getDegree());
-    } else {
+    } else if (juncIdx == getPieceNum() && juncIdx > 0 && validPiece(pieces[juncIdx - 1])) {
         return pieces[juncIdx - 1].getPos(pieces[juncIdx - 1].getDuration());
     }
+    return invalidVector();
 }
 
 Eigen::Vector3d Trajectory::getJuncVel(int juncIdx) const {
-    if (juncIdx != getPieceNum()) {
+    if (juncIdx < 0 || juncIdx > getPieceNum()) return invalidVector();
+    if (juncIdx != getPieceNum() && validPiece(pieces[juncIdx]) &&
+        pieces[juncIdx].getDegree() >= 1) {
         return pieces[juncIdx].getCoeffMat().col(pieces[juncIdx].getDegree() - 1);
-    } else {
+    } else if (juncIdx == getPieceNum() && juncIdx > 0 && validPiece(pieces[juncIdx - 1])) {
         return pieces[juncIdx - 1].getVel(pieces[juncIdx - 1].getDuration());
     }
+    return invalidVector();
 }
 
 Eigen::Vector3d Trajectory::getJuncAcc(int juncIdx) const {
-    if (juncIdx != getPieceNum()) {
+    if (juncIdx < 0 || juncIdx > getPieceNum()) return invalidVector();
+    if (juncIdx != getPieceNum() && validPiece(pieces[juncIdx]) &&
+        pieces[juncIdx].getDegree() >= 2) {
         return pieces[juncIdx].getCoeffMat().col(pieces[juncIdx].getDegree() - 2) * 2.0;
-    } else {
+    } else if (juncIdx == getPieceNum() && juncIdx > 0 && validPiece(pieces[juncIdx - 1])) {
         return pieces[juncIdx - 1].getAcc(pieces[juncIdx - 1].getDuration());
     }
+    return invalidVector();
 }
 
-bool Trajectory::getPartialTrajectoryByID(const int &start_id, const int &end_id, Trajectory &out_traj) const {
+bool Trajectory::getPartialTrajectoryByID(const int &start_id, const int &end_id,
+                                          Trajectory &out_traj) const {
     out_traj.clear();
+    const int piece_count = getPieceNum();
     int end_id_ = end_id;
     if (end_id_ == -1) {
-        end_id_ = pieces.size();
+        end_id_ = piece_count;
     }
 
-    if (start_id < 0 || end_id_ >= pieces.size() || start_id >= end_id_) {
+    if (start_id < 0 || end_id_ > piece_count || start_id >= end_id_) {
         return false;
     }
 
-    for (int i = start_id; i < end_id_; i++) {
+    double start_time = 0.0;
+    for (int i = 0; i < end_id_; ++i) {
+        if (!validPiece(pieces[i])) return false;
+        if (i < start_id) start_time += pieces[i].getDuration();
+    }
+    for (int i = start_id; i < end_id_; ++i) {
         out_traj.emplace_back(pieces[i]);
     }
+    out_traj.start_WT = start_WT + start_time;
     return true;
 }
 
 bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double &end_TT,
                                             Trajectory &out_traj) const {
-    /*
-     * syms c0 c1 c2 c3 c4 c5 c6 c7 real;
-          syms tn t0 real;
-
-          C = [c0 c1 c2 c3 c4 c5];
-          t = (tn+t0);
-          T = [1 t t^2 t^3 t^4 t^5];
-          p = C*T'
-          pe = expand(p)
-
-
-          [c,t]=coeffs(pe,tn)%
-          c'
-
-          C = [c0 c1 c2 c3 c4 c5 c6 c7];
-          t = (tn+t0);
-          T = [1 t t^2 t^3 t^4 t^5 t^6 t^7];
-          p = C*T'
-          pe = expand(p)
-
-
-          [c,t]=coeffs(pe,tn)%
-          c'
-     * */
-    double total_dur = getTotalDuration();
-    if (!std::isfinite(start_TT) || start_TT < 0 || start_TT >= total_dur) {
-        std::cout << YELLOW << "Partial traj end_t error. [Start_TT]: " << start_TT
-                  << " [Total Dur]: " << total_dur << RESET << std::endl;
-    }
-    if (!std::isfinite(end_TT) || end_TT <= 0 || end_TT > total_dur) {
-        std::cout << YELLOW << "Partial traj end_t error. [end_TT]: " << end_TT
-                  << " [Total Dur]: " << total_dur <<
-                  RESET << std::endl;
+    const double total_dur = getTotalDuration();
+    out_traj.clear();
+    if (!std::isfinite(total_dur) || total_dur <= 0.0 ||
+        !std::isfinite(start_TT) || start_TT < 0.0 || start_TT >= total_dur ||
+        !std::isfinite(end_TT) || end_TT <= 0.0 || end_TT > total_dur) {
         return false;
     }
     if (end_TT <= start_TT) {
-        std::cout << YELLOW << "Time duration wrong: start_t: " << start_TT <<
-                  "; end_t: " << end_TT << RESET << std::endl;
         return false;
     }
 
-    out_traj.clear();
     if (start_TT == 0) {
-        // 只需要修改终点时间即可
+        // Only the final piece duration changes; its local polynomial remains
+        // expressed from the original piece start.
         double end_local_t = 0.0;
         int pieceEndIdx = -1;
         if (!locateSliceEnd(*this, end_TT, pieceEndIdx, end_local_t)) {
@@ -305,7 +350,8 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
     int pieceEndIdx = -1;
     if (!locateSliceStart(*this, start_TT, pieceIdx, t0) ||
         !locateSliceEnd(*this, end_TT, pieceEndIdx, local_end_t) ||
-        pieceIdx > pieceEndIdx) {
+        pieceIdx > pieceEndIdx ||
+        pieces[pieceIdx].getDegree() != pieces[pieceEndIdx].getDegree()) {
         return false;
     }
     if (pieces[pieceIdx].getDegree() == 5) {
@@ -313,7 +359,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         double t03 = t02 * t0;
         double t04 = t03 * t0;
         double t05 = t04 * t0;
-        // Cut current traj;
+        // Re-express the selected polynomial around the requested slice start.
         Eigen::MatrixXd coef_mat = pieces[pieceIdx].getCoeffMat();
         Eigen::Matrix<double, 6, 6> cvt_M;
         cvt_M << 1, 0, 0, 0, 0, 0,
@@ -331,7 +377,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
             out_traj.start_WT = start_WT + start_TT;
             return true;
         }
-        // input the rest traj;
+        // Append the untouched interior pieces and a truncated final piece.
         for (int i = pieceIdx + 1; i < pieceEndIdx; i++) {
             out_traj.pieces.push_back(pieces[i]);
         }
@@ -348,7 +394,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         double t06 = t03 * t03;
         double t07 = t03 * t04;
 
-        // Cut current traj;
+        // Re-express the selected polynomial around the requested slice start.
         Eigen::MatrixXd coef_mat = pieces[pieceIdx].getCoeffMat();
         Eigen::Matrix<double, 8, 8> cvt_M;
         cvt_M << 1, 0, 0, 0, 0, 0, 0, 0,
@@ -368,7 +414,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
             out_traj.start_WT = start_WT + start_TT;
             return true;
         }
-        // input the rest traj;
+        // Append the untouched interior pieces and a truncated final piece.
         for (int i = pieceIdx + 1; i < pieceEndIdx; i++) {
             out_traj.pieces.push_back(pieces[i]);
         }
@@ -379,8 +425,6 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         return true;
 
     } else {
-        std::cout << "[getPartialTrajectory] ERROR, the piece degree is neither 5 n or 7" << std::endl;
-        Trajectory out_empty;
         return false;
     }
 }
