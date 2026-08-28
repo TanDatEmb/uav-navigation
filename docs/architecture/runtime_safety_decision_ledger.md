@@ -8149,3 +8149,39 @@ release profiles must not use the former allowance.
   tests and repeat `MAP_PROFILE=long_three_pillars_multiwaypoint
   make external-mode-check`, checking waypoint coverage, route order, speed
   recovery, junction distances, and all hard certificates.
+
+### 2026-08-28 - Make sharp pass-through corners measured handoffs
+
+- **Owner:** Navigation planning backend / pass-through trajectory maintainers.
+- **Scope:** When the outgoing leg forms a genuine heading change, the current
+  MINCO solve terminates at the active mission waypoint with an incoming
+  tangent terminal-speed cap. It does not extend the same solve through the
+  outgoing leg or use the acceptance-ball fillet endpoint. The following solve,
+  initialized from measured state after waypoint acceptance, owns the outgoing
+  leg. Straight and shallow pass-through legs retain the certified look-ahead
+  continuity path.
+- **Safety impact:** `SAFETY_INVARIANT` and route-progress correctness. This
+  removes an overconstrained cross-boundary P/V request that was repeatedly
+  committing a safe backup suffix beyond the still-unaccepted waypoint. It
+  does not relax the acceptance radius, UNKNOWN/OUT_OF_MAP policy, corridor,
+  swept-world, V/A/J, yaw, backup, freshness, lease, or immutable-world
+  authorization gates. The transition may reduce speed at a sharp corner by
+  design; the next measured handoff is responsible for speed recovery.
+- **Evidence:** The clean-manifest artifact
+  `.artifacts/runtime/external-mode-check-20260828T055010-782186` passed the
+  widened map boundary through waypoint 3, then at waypoint 4 repeatedly
+  failed the corner solve while the route look-ahead target moved to
+  `y=0.38..0.97`. A committed bundle ended at `(84.99,0.83,3.00)` while the
+  active waypoint remained `(85,-5,3)` (`endpoint_error=5.825`), followed by
+  repeated EXP hard-gate/yaw and KNOWN_FREE backup failures and a safety stop.
+- **Removal/review condition:** Revisit only after repeated representative
+  three-column runs show that direct corner handoffs cause waypoint skips,
+  corridor/world/dynamic/yaw failures, altitude loss, or unacceptable speed
+  recovery. Do not restore cross-corner look-ahead merely to hide an EXP or
+  backup rejection, enlarge the acceptance radius, or weaken a certificate.
+- **Verification:** `make build`; run the planner/backend/runtime/PX4 contract
+  tests; then repeat
+  `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check` and
+  compare waypoint order/coverage, measured speed recovery, corner terminal
+  speed, altitude, clearance, planner p50/p95/p99/max, EXP/backup reject
+  stages, command continuity, and fail-closed mode outcome.

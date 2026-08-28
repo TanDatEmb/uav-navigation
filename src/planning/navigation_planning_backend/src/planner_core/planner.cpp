@@ -1377,6 +1377,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // MissionController advance the checkpoint while the same command is live.
         bool route_lookahead_active = false;
         bool route_lookahead_is_corner = false;
+        bool route_transition_is_corner = false;
         double route_terminal_speed_cap_mps =
             cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
@@ -1413,6 +1414,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
+            route_transition_is_corner = genuine_corner;
             const double required_lookahead_envelope =
                 passThroughRequiredLookaheadDistance(
                     planning_speed, cfg_.exp_traj_cfg.max_vel,
@@ -1427,7 +1429,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             const double search_distance = remaining_horizon;
-            if (std::isfinite(desired_lookahead) && desired_lookahead > 1.0e-6 &&
+            // A sharp turn is a measured route-boundary handoff. Do not ask a
+            // single MINCO solve to carry the incoming state through an exact
+            // boundary cell and also own the outgoing heading change. That
+            // overconstrained problem repeatedly falls into a certified
+            // backup suffix before the active waypoint is accepted. The
+            // current solve therefore owns only the incoming leg; the next
+            // measured handoff owns the outgoing leg. Straight and shallow
+            // pass-through legs retain the long look-ahead continuity path.
+            if (!genuine_corner &&
+                std::isfinite(desired_lookahead) && desired_lookahead > 1.0e-6 &&
                 std::isfinite(outgoing_distance) &&
                 outgoing_distance > 1.0e-6 &&
                 std::isfinite(search_distance) && search_distance > cfg_.resolution * 2.0) {
@@ -1547,11 +1558,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
-        // If no route lookahead is certified, a bounded acceptance-ball
-        // endpoint remains available for genuine corners. It is intentionally
-        // skipped once the outgoing route is already present in the guide.
+        // If no route lookahead is certified on a straight or shallow leg, a
+        // bounded acceptance-ball endpoint remains available. Genuine corners
+        // deliberately keep the exact active waypoint as the endpoint so the
+        // next measured handoff owns the outgoing turn.
         bool route_window_endpoint = false;
-        if (!route_lookahead_active && pass_through_next_target_.has_value() &&
+        if (!route_lookahead_active && !route_transition_is_corner &&
+            pass_through_next_target_.has_value() &&
             guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
             (guide_path.back() - gi_.goal_p).norm() <=
