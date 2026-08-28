@@ -6,6 +6,7 @@
 
 #include <planner_core/planner.hpp>
 #include <planner_core/route_regression_certificate.hpp>
+#include <planner_core/route_backbone.hpp>
 #include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/absolute_deadline.hpp>
@@ -1398,8 +1399,18 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 const double local_search_horizon =
                     geometry_utils::localRouteSearchHorizon(
                         temp_horizon, cfg_.visibility_horizon_m);
+                Vec3f local_search_goal = gi_.goal_p;
+                RouteBackboneTarget route_backbone_target;
+                if (route_snapshot_.has_value()) {
+                    route_backbone_target = selectRouteBackboneTarget(
+                        *route_snapshot_, guide_path.back().cast<double>(),
+                        local_search_horizon);
+                    if (route_backbone_target.valid) {
+                        local_search_goal = route_backbone_target.point;
+                    }
+                }
                 if (!std::isfinite(local_search_horizon) ||
-                    !PathSearch(guide_path.back(), gi_.goal_p,
+                    !PathSearch(guide_path.back(), local_search_goal,
                                 local_search_horizon,
                                 new_path, solve_deadline)) {
                     planner_context_->warn(" -- [planner] PathSearch for new path failed");
@@ -1466,12 +1477,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     planner_context_->info(
                         " -- [planner] bounded remote goal to certified route prefix: "
                         "route_distance={} prefix_limit={} prefix_length={} "
-                        "mission_goal=({}, {}, {}) prefix_goal=({}, {}, {})",
+                        "mission_goal=({}, {}, {}) prefix_goal=({}, {}, {}) "
+                        "route_backbone={} route_backbone_arc={}",
                         route_distance, local_prefix_limit,
                         geometry_utils::computePathLength(new_path),
                         requested_goal_p_.x(), requested_goal_p_.y(),
                         requested_goal_p_.z(), gi_.goal_p.x(), gi_.goal_p.y(),
-                        gi_.goal_p.z());
+                        gi_.goal_p.z(), route_backbone_target.valid,
+                        route_backbone_target.valid
+                            ? route_backbone_target.target_arc_m
+                            : std::numeric_limits<double>::quiet_NaN());
                 }
 
                 geometry_utils::GuideTimeAllocation allocation;

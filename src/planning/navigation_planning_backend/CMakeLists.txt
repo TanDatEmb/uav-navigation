@@ -147,6 +147,14 @@ if(BUILD_TESTING)
   target_link_libraries(test_route_yaw_reference ${PROJECT_NAME})
   configure_backend_test(test_route_yaw_reference)
 
+  ament_add_gtest(test_route_backbone
+    test/test_route_backbone.cpp)
+  target_compile_definitions(test_route_backbone PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER)
+  target_link_libraries(test_route_backbone ${PROJECT_NAME})
+  configure_backend_test(test_route_backbone)
+
   ament_add_gtest(test_exp_optimizer_seed
     test/test_exp_optimizer_seed.cpp)
   target_compile_definitions(test_exp_optimizer_seed PRIVATE

@@ -9238,3 +9238,42 @@ release profiles must not use the former allowance.
   mapping/backend tests and Release build. Repeat recorded Mid-360 and
   three-column SITL, requiring identical accounting/mission safety with lower
   snapshot and callback p95/p99 plus bounded peak live bytes.
+
+### 2026-08-28 - Anchor local route search to the active mission leg
+
+- **Owner:** Mission-route geometry, local A* target selection and receding-
+  horizon planner integration.
+- **Scope:** Select a deterministic target on the active route segment from the
+  larger of measured progress and planning-start projection. Bound that target
+  by the current executable visibility radius and active waypoint boundary.
+  Continue to let A* deform the local prefix around sensed obstacles, followed
+  by the existing inflated-map, corridor, dynamics, backup and latest-world
+  certification gates.
+- **Safety impact:** This does not create a remote executable trajectory through
+  UNKNOWN space, rotate the ROG-Map voxel grid, skip A*, weaken collision
+  semantics, enlarge waypoint acceptance or accept planned state as mission
+  progress. It replaces a changing remote-goal heuristic with a stable local
+  route-spine target while all existing fail-closed certificates remain
+  authoritative. If route evidence is invalid or the active leg has no forward
+  support, target selection fails closed to the existing bounded search path.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T114150-1042798` completed the
+  140 m mission but produced 91 commits from 228 solves, 119 failed solves and
+  repeated multi-second commit gaps aligned with seven-to-eight speed recovery
+  waves. Guide prefixes were commonly 22--25 m, while each solve still used the
+  remote waypoint as A* target and only bounded the returned path afterwards.
+  Artifact `.artifacts/runtime/external-mode-check-20260828T120327-1058786`
+  reproduced the ownership failure more severely: 42 commits, 53 failed solves
+  and an External Mode exit near 57 m, despite complete mapping observation
+  accounting. A stable route-spine target is therefore separated from local
+  obstacle deformation instead of tuning planner frequency or safety limits.
+- **Removal/review condition:** Replace only with an explicit global-route/local-
+  deformation hierarchy that preserves monotonic measured progress, active
+  waypoint boundaries and equal-or-stronger local certification. Do not replace
+  it with one remote MINCO command through unobserved space or a planner endpoint
+  as waypoint acceptance evidence.
+- **Verification:** Unit-test straight, cross-track, active-boundary, high-water
+  and invalid-route geometry; run all backend tests and Release build. Then run
+  repeated three-column SITL and representative recorded data, requiring fewer
+  solve/commit gaps and speed waves without degraded clearance, map accounting,
+  ordered measured acceptance, altitude or External Mode retention.
