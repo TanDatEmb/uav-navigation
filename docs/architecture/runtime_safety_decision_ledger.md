@@ -9678,3 +9678,36 @@ release profiles must not use the former allowance.
   optimizer from trading repeated deceleration for feasibility.
 - **Verification:** `git show e33c40d`, `git show 7df9c6f`, and the cited
   artifacts preserve the implementation, rollback and A/B evidence.
+
+### 2026-08-28 - Rejected experiment: exclude BACKUP geometry from recovery guide
+
+- **Owner:** Hot-replan MAIN/BACKUP boundary experiment, reverted by
+  `7a81a83`.
+- **Scope:** Commit `0ccc993` preserved the exact sampled BACKUP PVAJ splice
+  state but retained zero metres of the committed braking suffix as nominal
+  spatial guidance. MAIN replans continued to retain the configured 3 m
+  continuity prefix. A* rebuilt route geometry immediately from a sampled
+  BACKUP state.
+- **Safety impact:** No hard gate was relaxed and the mission completed without
+  collision, but removing the certified geometric prefix made recovery solves
+  less reliable and shortened the next accepted MAIN prefix. The experiment
+  was reverted in full; product behavior again retains the configured prefix
+  regardless of the sampled trajectory role.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T141445-1215801` is compared
+  with baseline `.artifacts/runtime/external-mode-check-20260828T134232-1181253`.
+  Committed bundles fell from 142 to 124, replan code `-6` rose from 62 to 88,
+  MAIN/BACKUP command-role transitions rose from 75 to 89, and BACKUP commands
+  exceeded MAIN commands (1640 versus 1398). Median accepted switch time fell
+  from 1.512 s to 0.995 s, the longest central-route episode below 3 m/s grew
+  from 3.468 s to 5.200 s, and measured speed p95 fell from 4.818 m/s to
+  4.650 m/s. Planner p95 improved from 79.226 ms to 72.080 ms, proving that the
+  lower latency did not repair behavioral continuity.
+- **Removal/review condition:** Historical rejected-experiment record. A future
+  recovery design must preserve dynamically and geometrically feasible
+  continuity while preventing a braking branch from becoming the nominal route
+  objective. It requires an explicit branched trajectory/recovery contract,
+  not deletion of the only certified geometric prefix.
+- **Verification:** `git show 0ccc993`, `git show 7a81a83`, focused/full tests,
+  Release build, and the cited A/B artifacts preserve implementation, rollback
+  and runtime evidence.
