@@ -1520,8 +1520,19 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 route_lookahead_is_corner = genuine_corner;
                                 certified_lookahead_m_ = allocation.path_length_m;
                                 lookahead_complete_ = complete;
-                                route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
-                                    current_endpoint, goal_acceptance_radius_m_};
+                                // Preserve a hard route-boundary cell only when the
+                                // outgoing leg is a genuine heading change. A
+                                // straight or shallow pass-through leg already
+                                // contains the waypoint in its continuous guide;
+                                // forcing an exact MINCO junction there adds a
+                                // needless dynamic kink and can starve the solve
+                                // budget. The mission acceptance gate and all
+                                // corridor/world/dynamic certificates remain
+                                // authoritative in either case.
+                                if (genuine_corner) {
+                                    route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
+                                        current_endpoint, goal_acceptance_radius_m_};
+                                }
                                 planner_context_->info(
                                     " -- [planner] pass-through route lookahead distance={:.3f} "
                                     "required={:.3f} complete={} terminal_speed_cap={:.3f} "

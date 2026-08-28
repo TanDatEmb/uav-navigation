@@ -8080,3 +8080,31 @@ release profiles must not use the former allowance.
   the same 3-column trace and compare callback/export p50/p95/p99,
   published/deferred counts, snapshot age, world identity, memory, command
   recertification, and mission outcome.
+
+### 2026-08-28 - Reserve hard route-boundary cells for genuine turns
+
+- **Owner:** Navigation planning backend / pass-through route-window policy.
+- **Scope:** A pass-through look-ahead on a straight or shallow bend keeps the
+  waypoint in the continuous guide but does not insert an exact route-boundary
+  corridor cell. The hard route-boundary contract remains enabled for a
+  genuine heading change, where corridor simplification could otherwise cut
+  the turn. This is a policy distinction, not a waypoint or corridor bypass.
+- **Safety impact:** No acceptance radius, unknown-space policy, dynamic limit,
+  flatness gate, yaw gate, or swept-world certificate changes. Every exposed
+  candidate still requires continuous corridor and world authorization; the
+  mission controller still owns measured waypoint acceptance.
+- **Evidence:** The reverted junction-unpin experiment
+  `.artifacts/runtime/external-mode-check-20260828T053330-757562` showed that
+  the initial shallow pass-through solve failed three times with EXP final
+  normalized dynamic violation about 1.54-1.55 and no executable trajectory.
+  The preceding pinned run also spent about 177.6 ms in EXP and advanced only
+  three waypoints, motivating removal of unnecessary hard junctions without
+  weakening the genuine-turn contract.
+- **Removal/review condition:** Revert if a straight/shallow route skips a
+  mission acceptance event, violates route order, or increases continuous
+  corridor/world/dynamic/yaw failures in repeated 3-column runs. Revisit the
+  genuine-turn geometry separately if sharp corners still stop or jitter.
+- **Verification:** Rebuild with a clean manifest; run planner/backend/runtime
+  tests and repeat `MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check`, checking waypoint coverage, route order, speed
+  recovery, junction distances, and all hard certificates.
