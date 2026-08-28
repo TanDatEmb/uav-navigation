@@ -1340,9 +1340,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // A pass-through waypoint is a measured mission boundary, not the end
         // of the executable route. Extend the guide through the next route
         // segment when the current solve has enough certified map horizon.
-        // This gives MINCO geometric room to turn and lets MissionController
-        // advance the checkpoint while the same command is still live.
+        // This gives MINCO geometric room to turn or continue and lets
+        // MissionController advance the checkpoint while the same command is live.
         bool route_lookahead_active = false;
+        bool route_lookahead_is_corner = false;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
         if (gi_.new_goal && pass_through_next_target_.has_value()) {
             planner_context_->info(
@@ -1377,18 +1378,17 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
-            const double desired_lookahead = genuine_corner
-                ? passThroughLookaheadDistance(
-                    planning_speed, cfg_.exp_traj_cfg.max_vel,
-                    cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
-                    cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
-                    outgoing_distance)
-                : 0.0;
+            const double desired_lookahead = passThroughLookaheadDistance(
+                planning_speed, cfg_.exp_traj_cfg.max_vel,
+                cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
+                cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
+                outgoing_distance);
             // The A* query must be allowed to reach the next mission target;
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             const double search_distance = remaining_horizon;
-            if (genuine_corner && std::isfinite(outgoing_distance) &&
+            if (std::isfinite(desired_lookahead) && desired_lookahead > 1.0e-6 &&
+                std::isfinite(outgoing_distance) &&
                 outgoing_distance > 1.0e-6 &&
                 std::isfinite(search_distance) && search_distance > cfg_.resolution * 2.0) {
                 vec_Vec3f next_path;
@@ -1457,13 +1457,14 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 planning_goal_p_ = gi_.goal_p;
                                 goal_endpoint_adjusted_ = true;
                                 route_lookahead_active = true;
+                                route_lookahead_is_corner = genuine_corner;
                                 route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
                                     current_endpoint, goal_acceptance_radius_m_};
                                 planner_context_->info(
                                     " -- [planner] pass-through route lookahead distance={:.3f} "
-                                    "required={:.3f} remaining_horizon={:.3f}",
+                                    "required={:.3f} remaining_horizon={:.3f} corner={}",
                                     allocation.path_length_m, desired_lookahead,
-                                    remaining_horizon);
+                                    remaining_horizon, genuine_corner);
                             }
                         }
                     }
@@ -1727,7 +1728,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     cfg_.exp_traj_cfg.max_vel *
                     cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
             double preferred_terminal_speed = guide_path_end_vel;
-            if (route_lookahead_active && pass_through_next_target_.has_value()) {
+            if (route_lookahead_active && route_lookahead_is_corner &&
+                pass_through_next_target_.has_value()) {
                 // The route-boundary corridor is intentionally local to the
                 // acceptance region. Do not request full cruise speed at its
                 // far endpoint: the next measured handoff will own recovery

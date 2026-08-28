@@ -1,8 +1,9 @@
 # Continuous waypoint trajectory architecture plan
 
 **Status:** implementation in staged checkpoints; route/progress, command
-continuity, explicit visibility evidence, native 3D visibility production, and
-bounded pass-through corner route-window endpoint are implemented. Full
+continuity, explicit visibility evidence, native 3D visibility production,
+adaptive pass-through look-ahead on certified outgoing legs, and bounded
+pass-through corner route-window endpoint are implemented. Full
 multiwaypoint SITL and dataset evidence remain open.
 
 This document is the implementation plan for the high-speed, multi-waypoint
@@ -124,11 +125,13 @@ already accepted boundary piece, subject to whole-candidate recertification.
 The existing `Trajectory`/MINCO implementation can be reused as the piece
 solver. The current checkpoint introduces the first route-window boundary:
 when a pass-through guide reaches a genuine corner, the terminal point may be
-placed inside the active acceptance ball on the outgoing tangent. The measured
-mission acceptance contract remains authoritative, and the route-window
-segment is checked before the existing corridor/MINCO/backup certificates.
-The required long-term change is still route-aware piece assembly, not an
-immediate optimizer replacement.
+placed inside the active acceptance ball on the outgoing tangent. Straight or
+shallow pass-through legs instead receive a bounded certified outgoing guide
+prefix while retaining the active waypoint as an explicit route-boundary gate.
+The measured mission acceptance contract remains authoritative, and the
+route-window segment is checked before the existing corridor/MINCO/backup
+certificates. The required long-term change is still route-aware piece
+assembly, not an immediate optimizer replacement.
 
 ### 3.4 Mapping evidence contract
 
@@ -214,10 +217,14 @@ Do not repeatedly solve an endpoint whose remaining distance is shorter than
 the continuity/braking requirement. A retained command is allowed only while
 the existing world/anchor/lease certificate is still valid.
 
-The current corner checkpoint uses the acceptance ball as a bounded route
-window, rather than extending a trajectory beyond the active waypoint. It
-must be replaced or subsumed by a measured, route-aware look-ahead policy that
-handles arbitrary corner radius, obstacle detours, and multi-piece handoff.
+The current checkpoint applies the look-ahead envelope to every pass-through
+outgoing leg whose next route prefix is certified, including the straight
+three-column case. The active waypoint remains a hard route-boundary gate;
+only a genuine corner uses the acceptance-room terminal-speed cap. The
+acceptance-ball route window remains the fallback for a corner when the longer
+outgoing prefix cannot be certified. This guide-level policy must still be
+subsumed by measured, route-aware piece assembly that handles arbitrary corner
+radius, obstacle detours, and multi-piece handoff.
 
 Validate speed recovery, reduced hot-replan churn, continuous velocity, and no
 regression in measured waypoint acceptance.

@@ -7581,3 +7581,50 @@ release profiles must not use the former allowance.
   switch time versus prefix duration, generation P/V/A/J residuals, speed,
   altitude, clearance, waypoint order, strict backup, and p50/p95/p99
   planning latency.
+
+### 2026-08-28 - Apply adaptive pass-through lookahead to straight outgoing legs
+
+- **Owner:** Navigation planner route-window and pass-through handoff
+  maintainers. **Scope:** When a pass-through goal has a finite next target,
+  derive the same bounded outgoing look-ahead from measured/planned speed,
+  stopping distance, replan-forward time, and receding distance for straight,
+  shallow-bend, and genuine-corner legs. Append only the prefix returned by a
+  bounded A* query and preserve the active waypoint as an explicit route-
+  boundary gate. Genuine corners retain the existing acceptance-room terminal
+  speed cap; straight/shallow legs keep the outgoing guide tangent for cruise
+  continuity.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This removes the
+  artificial exact-waypoint endpoint that caused a straight three-column leg
+  to shrink as the vehicle accelerated. It does not change waypoint identity
+  or measured acceptance, and does not relax UNKNOWN, OUT_OF_MAP, corridor,
+  swept-world, dynamic, flatness, backup, freshness, command-anchor, lease, or
+  deadline gates. If the outgoing prefix is not independently certified, the
+  planner retains the existing exact-boundary/fallback behavior.
+- **Derivation and cost:** The route prefix length is the existing
+  `passThroughLookaheadDistance` envelope clamped by the available outgoing
+  route and planning horizon. The change removes only the corner predicate
+  from look-ahead eligibility; it adds at most one bounded outgoing A* query
+  and segment-certificate pass per pass-through solve, with no new optimizer
+  pass or threshold. Planning-tail impact must be measured before release.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T024937-611666` confirmed
+  `behavior=0` with `next_target=(50,5,3)` and an input trace at
+  `guide_end=(20,5,3)`, but no route-lookahead activation because the leg was
+  collinear. The run reached approximately 3.1 m/s and later failed closed
+  when repeated hot replans could not produce a fresh certified command; it
+  is not mission-acceptance evidence. The new collinear policy test, clean
+  manifest, and repeated valid SITL/dataset evidence are required.
+- **Removal/review condition:** Revisit if straight/shallow look-ahead causes
+  waypoint skips, route-boundary corridor failures, bowing outside the
+  acceptance ball, more optimizer or backup failures, worse altitude or
+  clearance, increased p95/p99 latency, or no reduction in command
+  exhaustion/replan churn. Do not raise look-ahead or relax a certificate from
+  a single run.
+- **Verification:** `make build`; source `install/setup.bash` and run the
+  planner backend, trajectory, runtime, mission, and PX4 contract tests; then
+  repeat `SPEED_CAP_MPS=3
+  MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check`,
+  accepting results only with valid sensor freshness and a clean manifest.
+  Inspect route-lookahead activation, boundary-gate evidence, waypoint order,
+  speed recovery, altitude, clearance, strict backup, connector/PVAJ
+  continuity, and p50/p95/p99 planning latency.
