@@ -8080,3 +8080,36 @@ release profiles must not use the former allowance.
   the same 3-column trace and compare callback/export p50/p95/p99,
   published/deferred counts, snapshot age, world identity, memory, command
   recertification, and mission outcome.
+
+### 2026-08-28 - Free pass-through junctions inside the acceptance contract
+
+- **Owner:** Navigation planning backend / EXP nominal trajectory optimizer
+  and pass-through route-boundary maintainers.
+- **Scope:** Stop overwriting a route-boundary control point with the exact
+  waypoint on every objective evaluation. The point remains initialized at the
+  waypoint and constrained by its generated collision corridor; the existing
+  acceptance-ball penalty and independent `route_boundary_satisfied()` gate
+  control the final junction. The optimizer may therefore shape a continuous
+  turn inside the declared acceptance region.
+- **Safety impact:** `PERFORMANCE_POLICY` and trajectory-continuity
+  improvement; no acceptance radius is increased. The final junction must
+  still enter the mission-owned radius, every continuous corridor plane,
+  strict V/A/J and flatness envelope, yaw certificate, and world certificate.
+  Removing the pin only restores the degrees of freedom already represented by
+  the acceptance contract; uncertified candidates remain rejected.
+- **Evidence:** The 3-column multi-waypoint run
+  `.artifacts/runtime/external-mode-check-20260828T051528-732736` accepted only
+  waypoints `[0,1,2]`, entered `PAUSED_SAFETY_STOP`, and had EXP p95 177.6 ms
+  with final dynamic-violation p95 1.65. A fixed exact waypoint at each
+  pass-through corner is incompatible with maintaining velocity through a
+  sharp turn under the declared acceleration limit; the existing unit and
+  external trace must verify the free-junction behavior.
+- **Removal/review condition:** Revert if any candidate can pass a route
+  boundary without entering its acceptance ball, if continuous corridor or
+  world certificates regress, or if repeated 3-column traces show increased
+  stops/collisions/yaw excursions. Do not enlarge acceptance radii to mask a
+  failed certificate.
+- **Verification:** `make build`; run planner-backend/runtime/PX4 tests and
+  repeat the same 3-column profile, checking junction distances to each
+  waypoint, continuous V/A/J/flatness/yaw certificates, speed recovery,
+  waypoint coverage, and mission outcome.
