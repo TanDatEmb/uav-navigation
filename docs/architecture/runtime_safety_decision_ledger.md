@@ -9343,6 +9343,20 @@ release profiles must not use the former allowance.
   containment reductions retained. A regression case proves that unequal
   straight pieces with equal `5 m/s` secants reproduce constant velocity with
   negligible acceleration and jerk rather than injecting a speed spike.
+  Exact-HEAD follow-up artifact
+  `.artifacts/runtime/external-mode-check-20260828T124328-1112739` again
+  completed both waypoints without collision (`4.499 m` minimum clearance),
+  and improved commit ratio from `133/245` (54.3 percent) to `131/220`
+  (59.5 percent), but still selected the baseline zero times. Of 220 solves,
+  169 baseline certificates failed at dynamics stage 5. A geometrically valid
+  baseline may therefore make at most three deterministic rebuild attempts
+  with a uniform duration multiplier derived from
+  `max(v/v_max, sqrt(a/a_max), cbrt(j/j_max))`, 5 percent reserve and an
+  unchanged upper bound of 4.0. Every rebuild repeats corridor, boundary,
+  route-boundary, V/A/J and flatness certification; a finite retry cannot
+  publish merely because its duration was increased. Unit evidence begins
+  with a dynamically invalid but corridor-contained trajectory and verifies
+  that only a fully recertified bounded-duration rebuild is accepted.
 - **Removal/review condition:** Replace only with an equal-or-stronger
   corridor-contained baseline such as a formally bounded B-spline/Bezier or
   direct convex trajectory program that preserves endpoint and junction state

@@ -940,7 +940,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     Trajectory immutable_nominal_seed;
     opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
     opt_vars.minco.getTrajectory(immutable_nominal_seed);
-    const auto corridor_seed_result =
+    auto corridor_seed_result =
             navigation_planning_backend::buildCorridorContainedBezierSeed(
                 opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.points,
                 opt_vars.times, opt_vars.hPolytopes, opt_vars.hPolyIdx,
@@ -950,6 +950,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     navigation_planning_backend::DeterministicNominalSeedCertificate
             deterministic_seed_certificate;
     bool deterministic_seed_uses_corridor_bezier = false;
+    double deterministic_seed_duration_scale = 1.0;
     if (corridor_seed_result.valid) {
         deterministic_seed_certificate =
                 navigation_planning_backend::certifyDeterministicNominalSeed(
@@ -965,6 +966,44 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         if (deterministic_seed_certificate.valid) {
             deterministic_nominal_seed = corridor_seed_result.trajectory;
             deterministic_seed_uses_corridor_bezier = true;
+        } else {
+            // Corridor construction has already established geometry.  If the
+            // only failure is V/A/J, rebuild it with a finite set of uniform
+            // duration reserves.  Endpoint P/V/A/J remain immutable, so every
+            // rebuilt candidate still requires the complete certificate.
+            const auto retry_scales = navigation_planning_backend::
+                    boundedDynamicDurationRetryScales(
+                        deterministic_seed_certificate, cfg_);
+            for (const double duration_scale : retry_scales) {
+                const VecDf retry_times = opt_vars.times * duration_scale;
+                auto retry_seed = navigation_planning_backend::
+                        buildCorridorContainedBezierSeed(
+                            opt_vars.headPVAJ, opt_vars.tailPVAJ,
+                            opt_vars.points, retry_times,
+                            opt_vars.hPolytopes, opt_vars.hPolyIdx,
+                            cfg_.max_vel *
+                                cfg_.optimization_dynamic_reserve_ratio,
+                            cfg_.corridor_plane_tolerance_m);
+                if (!retry_seed.valid) continue;
+                const auto retry_certificate = navigation_planning_backend::
+                        certifyDeterministicNominalSeed(
+                            retry_seed.trajectory,
+                            opt_vars.hPolytopes,
+                            opt_vars.hPolyIdx,
+                            opt_vars.route_boundary_gates,
+                            opt_vars.route_boundary_points,
+                            opt_vars.route_boundary_radii,
+                            opt_vars.headPVAJ,
+                            opt_vars.tailPVAJ,
+                            cfg_);
+                if (!retry_certificate.valid) continue;
+                corridor_seed_result = std::move(retry_seed);
+                deterministic_nominal_seed = corridor_seed_result.trajectory;
+                deterministic_seed_certificate = retry_certificate;
+                deterministic_seed_uses_corridor_bezier = true;
+                deterministic_seed_duration_scale = duration_scale;
+                break;
+            }
         }
     }
     // Preserve the historical exact MINCO interpolation only as a secondary
@@ -1732,11 +1771,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             planner_context_->warn(
                     " -- [ExpOpt] MINCO refinement unavailable; selected exact "
                     "pre-LBFGS certified seed: source={} duration={} "
-                    "corridor_violation={} boundary_residual={} vel={}/{} "
+                    "duration_scale={} corridor_violation={} "
+                    "boundary_residual={} vel={}/{} "
                     "acc={}/{} jerk={}/{}",
                     deterministic_seed_uses_corridor_bezier
                         ? "corridor_bezier" : "minco_interpolation",
                     diagnostics_.final_duration_s,
+                    deterministic_seed_duration_scale,
                     deterministic_seed_certificate.maximum_corridor_violation_m,
                     deterministic_seed_certificate.maximum_boundary_residual,
                     maximum_velocity, cfg_.max_vel,

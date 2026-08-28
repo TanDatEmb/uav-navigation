@@ -38,6 +38,39 @@ struct DeterministicNominalSeedCertificate {
   traj_opt::TrajectoryDynamicReport flatness_report{};
 };
 
+// Return a finite set of uniform duration multipliers for a geometrically
+// certified seed that failed only its V/A/J certificate.  Uniform time scaling
+// reduces derivative orders by s, s^2 and s^3 respectively when boundary
+// derivatives scale with the path timing.  The rebuilt trajectory must still
+// pass the complete certificate because endpoint derivatives remain immutable.
+inline std::vector<double> boundedDynamicDurationRetryScales(
+    const DeterministicNominalSeedCertificate& certificate,
+    const traj_opt::Config& config,
+    const double maximum_scale = 4.0) {
+  if (certificate.failure_stage !=
+          DeterministicNominalSeedFailureStage::kDynamics ||
+      !std::isfinite(maximum_scale) || maximum_scale <= 1.0 ||
+      !std::isfinite(config.max_vel) || config.max_vel <= 0.0 ||
+      !std::isfinite(config.max_acc) || config.max_acc <= 0.0 ||
+      !std::isfinite(config.max_jerk) || config.max_jerk <= 0.0) {
+    return {};
+  }
+  const double required_scale = std::max({
+      1.0,
+      certificate.maximum_velocity_mps / config.max_vel,
+      std::sqrt(certificate.maximum_acceleration_mps2 / config.max_acc),
+      std::cbrt(certificate.maximum_jerk_mps3 / config.max_jerk)});
+  if (!std::isfinite(required_scale) || required_scale <= 1.0) return {};
+
+  const double first = std::min(maximum_scale, required_scale * 1.05);
+  const double second = std::min(maximum_scale, first * 1.5);
+  std::vector<double> scales;
+  if (first > 1.0) scales.push_back(first);
+  if (second > first + 1.0e-9) scales.push_back(second);
+  if (maximum_scale > second + 1.0e-9) scales.push_back(maximum_scale);
+  return scales;
+}
+
 enum class NominalCandidateSelection {
   kOptimized,
   kCertifiedSeed,
