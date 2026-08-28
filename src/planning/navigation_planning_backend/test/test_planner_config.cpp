@@ -810,14 +810,3 @@ TEST(PlannerKinematicStateBoundary, BoundsOnlyEstimatedHighOrderDerivatives) {
       0.0, initial, 3.0, 5.0, 30.0, 0.05, 0.0);
   EXPECT_TRUE(bounded_seed.feasible);
 }
-
-TEST(PlannerKinematicStateBoundary, Px4BoundaryPreservesPvaAndReleasesJerk) {
-  navigation_math::StatePVAJ state;
-  state << 1.0, 2.0, 3.0, 4.0,
-           5.0, 6.0, 7.0, 8.0,
-           9.0, 10.0, 11.0, 12.0;
-  const auto conditioned =
-      navigation_planning_backend::px4ExecutableBoundaryState(state);
-  EXPECT_TRUE(conditioned.leftCols(3).isApprox(state.leftCols(3), 0.0));
-  EXPECT_TRUE(conditioned.col(3).isZero(0.0));
-}

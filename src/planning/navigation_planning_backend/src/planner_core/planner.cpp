@@ -2013,13 +2013,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
-        // The command transport changes generations on a P/V/A setpoint
-        // boundary. Jerk is not transmitted to PX4, so carrying the previous
-        // polynomial's instantaneous jerk into MINCO as a hard equality adds
-        // a C3 constraint with no execution owner. Preserve exact PVA while
-        // allowing the new certified segment to shape its own jerk.
-        pos_init_state = px4ExecutableBoundaryState(pos_init_state);
-
         // optimize and update exp traj
         bool temp_ret;
         Trajectory out_traj;
