@@ -123,6 +123,26 @@ TEST(RouteYawReference, ReversalDoesNotTurnBeforeStopTurnGoBoundary) {
   EXPECT_LE(approaching.target_point.x(), 10.0);
 }
 
+TEST(RouteYawReference, ReversalTurnsTowardOutgoingLegOnlyAfterTransition) {
+  auto route = makeSnapshot({
+      Eigen::Vector3d{0.0, 0.0, 3.0},
+      Eigen::Vector3d{10.0, 0.0, 3.0},
+      Eigen::Vector3d{0.0, 0.0, 3.0}}, 2U);
+  route.measured_progress.progress_arc_m = 10.0;
+  route.measured_progress.projection.valid = true;
+  route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.arc_length_m = 10.0;
+  route.measured_progress.projection.point = Eigen::Vector3d{10.0, 0.0, 3.0};
+  route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
+
+  const auto turning = navigation_planning_backend::computeRouteYawReference(
+      route, Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0);
+  ASSERT_TRUE(turning.valid);
+  EXPECT_EQ(turning.source,
+            navigation_planning_backend::RouteYawSource::kRouteTurnInPlace);
+  EXPECT_NEAR(std::abs(turning.target_yaw_rad), M_PI, 1.0e-9);
+}
+
 TEST(RouteYawReference, CrossingGeometryCannotJumpBeyondActiveWaypoint) {
   auto route = makeSnapshot({
       Eigen::Vector3d{-10.0, 0.0, 3.0},

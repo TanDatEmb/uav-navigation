@@ -8490,3 +8490,38 @@ release profiles must not use the former allowance.
   `test_route_yaw_reference` plus the complete backend CTest set. Runtime MAIN
   and BACKUP integration, PX4-limit capture, and open-map SITL are required in
   later M2 commits.
+
+### 2026-08-28 - Execute MAIN route yaw and BACKUP heading hold with hard dynamics
+
+- **Owner:** Planner MAIN/BACKUP yaw generation and final candidate admission.
+- **Scope:** MAIN yaw now tracks the semantic route-lookahead target and no
+  longer samples bearing from each optimized MINCO position trajectory. BACKUP
+  decelerates its incoming yaw rate toward the incoming heading instead of
+  following braking-path shape. Yaw trajectories preserve duration and initial
+  yaw/rate, unwrap by shortest angle, and project only angular excursion when
+  the requested turn cannot fit. The obsolete `goal_yaw_en` and path-derived
+  free-yaw implementation are removed.
+- **Safety impact:** Every generated and concatenated command now has final
+  hard certificates for both yaw rate and yaw acceleration. Initial operating
+  limits are 1.0 rad/s and 0.3 rad/s2, conservatively below PX4 upstream
+  autonomous defaults of 60 deg/s and 20 deg/s2. Those upstream values are a
+  design reference, not proof of the active airframe; M2 SITL acceptance stays
+  open until the runner records `MPC_YAWRAUTO_MAX`, `MPC_YAWRAUTO_ACC`, and the
+  lower-level `MC_YAWRATE_MAX` for the tested vehicle.
+- **Evidence:** Semantic-yaw tests prove full feasible turns and bounded
+  partial turns, shortest-angle behavior, rate/acceleration ceilings, heading
+  hold, corner lookahead, and post-transition reversal rotation. All backend
+  tests and all mission/contracts/runtime/PX4 package tests must pass before
+  commit. PX4 source references are the official
+  `multicopter_autonomous_params.yaml` and `mc_att_control_params.yaml` on the
+  PX4-Autopilot main branch.
+- **Removal/review condition:** Replace only with an equal or stronger explicit
+  yaw state machine whose target is mission-owned and whose complete executable
+  bundle remains rate/acceleration certified. Never restore local optimizer
+  tangent as an implicit mission-heading source or weaken the hard dynamics to
+  make a short-duration turn complete.
+- **Verification:** Release-build through `navigation_runtime` and
+  `px4_navigation_external_mode`; run their complete CTest dependency set.
+  Then capture active PX4 limits and run open-map component SITL covering
+  straight flight, 90-degree pass-through, standstill, and reversal before M2
+  can be marked accepted.

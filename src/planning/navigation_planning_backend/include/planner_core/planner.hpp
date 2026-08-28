@@ -48,6 +48,7 @@
 #include <data_structure/backup_traj.h>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_mission/route_progress.hpp>
+#include <planner_core/route_yaw_reference.hpp>
 
 
 namespace navigation_planning_backend {
@@ -107,6 +108,8 @@ namespace navigation_planning_backend {
         bool goal_endpoint_adjusted_{false};
         std::optional<Vec3f> pass_through_next_target_;
         std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
+        RouteYawReference route_yaw_reference_{};
+        std::optional<double> last_route_yaw_target_rad_;
 
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
@@ -352,7 +355,13 @@ namespace navigation_planning_backend {
             if (!route.valid()) {
                 route_snapshot_.reset();
                 pass_through_next_target_.reset();
+                last_route_yaw_target_rad_.reset();
                 return false;
+            }
+            if (!route_snapshot_.has_value() ||
+                route_snapshot_->mission_id != route.mission_id ||
+                route_snapshot_->route_revision != route.route_revision) {
+                last_route_yaw_target_rad_.reset();
             }
             route_snapshot_ = route;
             const std::size_t next_index = route.active_waypoint_index + 1U;
@@ -366,6 +375,8 @@ namespace navigation_planning_backend {
             }
             return true;
         }
+
+        bool updateRouteYawReference() noexcept;
 
         void cancelActiveSolve() {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);

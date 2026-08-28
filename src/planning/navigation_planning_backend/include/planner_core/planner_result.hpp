@@ -27,6 +27,7 @@ namespace navigation_planning_backend {
         PLANNER_BACKUP_OPTIMIZATION_FAILED = -8,
         PLANNER_BACKUP_INITIALIZATION_FAILED = -9,
         PLANNER_BACKUP_NO_PATH = -10,
+        PLANNER_INVALID_ROUTE = -11,
 
     };
 
@@ -60,6 +61,8 @@ namespace navigation_planning_backend {
             return "Backup trajectory initialization failed";
         case PLANNER_BACKUP_NO_PATH:
             return "Backup path search found no admissible path";
+        case PLANNER_INVALID_ROUTE:
+            return "Immutable mission route or semantic yaw reference is invalid";
         }
         return "Unknown planner return code (" + std::to_string(ret) + ")";
     };

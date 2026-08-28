@@ -23,7 +23,8 @@ enum class RouteYawSource : std::uint8_t {
   kRouteLookahead = 0U,
   kHoldLowSpeed = 1U,
   kHoldNoHorizontalSupport = 2U,
-  kInvalidRoute = 3U,
+  kRouteTurnInPlace = 3U,
+  kInvalidRoute = 4U,
 };
 
 struct RouteYawReference {

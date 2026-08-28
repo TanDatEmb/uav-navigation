@@ -176,7 +176,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         planner_context_->setVisualizationEn(cfg_.visualization_en);
         exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, planner_context_);
         back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, planner_context_);
-        yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_rate_max_rad_s);
+        yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(
+            cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
         const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;
         if (occupied_inflation_radius + 1.0e-9 < cfg_.robot_r) {
             throw std::invalid_argument(
@@ -217,6 +218,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return false;
         }
         const double maximum_yaw_rate = candidate.yaw.getMaxVelRate();
+        const double maximum_yaw_acceleration = candidate.yaw.getMaxAccRate();
         if (!candidateYawRateWithinLimit(candidate, cfg_.yaw_rate_max_rad_s)) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -224,6 +226,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 " -- [planner] command rejected by final yaw-rate certificate: "
                 "maximum={} limit={}",
                 maximum_yaw_rate, cfg_.yaw_rate_max_rad_s);
+            return false;
+        }
+        if (!std::isfinite(maximum_yaw_acceleration) ||
+            maximum_yaw_acceleration > cfg_.yaw_acceleration_max_rad_s2 + 1.0e-6) {
+            latest_commit_decision_.store(static_cast<int>(
+                navigation_world_model::WorldCommitDecision::kCandidateRejected));
+            planner_context_->warn(
+                " -- [planner] command rejected by final yaw-acceleration certificate: "
+                "maximum={} limit={}",
+                maximum_yaw_acceleration, cfg_.yaw_acceleration_max_rad_s2);
             return false;
         }
         const auto command_identity = commandIdentitySnapshot();
@@ -426,6 +438,27 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             std::move(candidate)} : std::nullopt;
     }
 
+    bool Planner::updateRouteYawReference() noexcept {
+        if (!route_snapshot_.has_value()) {
+            route_yaw_reference_ = {};
+            return false;
+        }
+        route_yaw_reference_ = computeRouteYawReference(
+            *route_snapshot_, solve_state_.p, solve_state_.v, solve_state_.yaw,
+            cfg_.route_yaw_config);
+        if (!route_yaw_reference_.valid) return false;
+        if (route_yaw_reference_.source == RouteYawSource::kRouteLookahead ||
+            route_yaw_reference_.source == RouteYawSource::kRouteTurnInPlace) {
+            last_route_yaw_target_rad_ = route_yaw_reference_.target_yaw_rad;
+        } else if (last_route_yaw_target_rad_.has_value()) {
+            route_yaw_reference_.target_yaw_rad = solve_state_.yaw + std::remainder(
+                *last_route_yaw_target_rad_ - solve_state_.yaw, 2.0 * M_PI);
+        } else {
+            last_route_yaw_target_rad_ = route_yaw_reference_.target_yaw_rad;
+        }
+        return route_yaw_reference_.valid;
+    }
+
     RET_CODE
     Planner::PlanFromRest(const Vec3f &goal_p,
                                const double &goal_yaw,
@@ -446,6 +479,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (solve_state_.rcv == false) {
             planner_context_->warn(" -- [planner] in [PlanFromRest]: No odom, force return.");
             latest_replan.setRetCode(PlannerResultCode::PLANNER_NO_ODOM);
+            return FAILED;
+        }
+        if (!updateRouteYawReference()) {
+            planner_context_->warn(
+                " -- [planner] in [PlanFromRest]: invalid semantic route-yaw reference");
+            latest_replan.setRetCode(PlannerResultCode::PLANNER_INVALID_ROUTE);
             return FAILED;
         }
         gi_.goal_p = planning_goal;
@@ -623,6 +662,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         gi_.goal_valid = true;
         latest_replan.reset();
         latest_replan.setGoal(goal_p, goal_yaw, solve_state_);
+        if (!updateRouteYawReference()) {
+            planner_context_->warn(
+                " -- [planner] in [ReplanOnce]: invalid semantic route-yaw reference");
+            latest_replan.setRetCode(PlannerResultCode::PLANNER_INVALID_ROUTE);
+            return FAILED;
+        }
 
         vec_Vec3f viz_pts{goal_p, solve_state_.p};
 
@@ -1048,9 +1093,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         lookahead_complete_ = false;
 
         Vec4f init_yaw{solve_state_.yaw, 0, 0, 0};
-        Vec4f fina_yaw{0, 0, 0, 0};
-
-
         // alias for last_exp_traj_info
         Trajectory guide_pos_traj, guide_yaw_traj, last_exp_traj;
 
@@ -1983,14 +2025,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
 
 
-        bool free_end{true};
-        if (cfg_.goal_yaw_en && !isnan(gi_.goal_yaw) && connected_goal) {
-            free_end = false;
-            fina_yaw[0] = gi_.goal_yaw;
-        }
         Trajectory new_traj, old_traj;
 
-        if (!yaw_traj_opt_->optimize(init_yaw, fina_yaw, out_traj, new_traj, 3, false, free_end)) {
+        if (!yaw_traj_opt_->optimizeToTarget(
+                init_yaw, route_yaw_reference_.target_yaw_rad,
+                out_traj, new_traj)) {
             planner_context_->error(" -- [planner] in [generateExpTraj]: YawTrajOpt failed, force return");
             return FAILED;
         }
@@ -2878,17 +2917,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
         Vec4f yaw_init_vec = ref_exp_traj.getYawState(opt_ts).row(0);
-        Vec4f yaw_goal{0, 0, 0, 0};
-        bool free_end{true};
-        if (cfg_.goal_yaw_en) {
-            if (!isnan(gi_.goal_yaw)) {
-                free_end = false;
-                yaw_goal[0] = gi_.goal_yaw;
-            }
-        }
         Trajectory temp_yaw_traj;
-        if (!yaw_traj_opt_->optimize(yaw_init_vec, yaw_goal, temp_pos_traj,
-                                     temp_yaw_traj, 3, false, free_end)) {
+        if (!yaw_traj_opt_->optimizeToTarget(
+                yaw_init_vec, yaw_init_vec(0), temp_pos_traj,
+                temp_yaw_traj)) {
             planner_context_->error(" -- [planner] in [generateBackupTrajectory] YawTrajOpt FAILD.");
             return OPT_FAILED;
         }

@@ -75,11 +75,20 @@ bool activeWaypointIsReversal(
   return std::acos(cosine) >= threshold_rad;
 }
 
+bool previousWaypointWasReversal(
+    const navigation_mission::ImmutableRouteSnapshot& route,
+    const double threshold_rad) noexcept {
+  if (route.active_waypoint_index == 0U) return false;
+  auto previous = route;
+  previous.active_waypoint_index = route.active_waypoint_index - 1U;
+  return activeWaypointIsReversal(previous, threshold_rad);
+}
+
 RouteYawReference holdReference(
     const double yaw, const double progress, const Eigen::Vector3d& point,
     const RouteYawSource source) noexcept {
   RouteYawReference output;
-  output.valid = std::isfinite(yaw);
+  output.valid = std::isfinite(yaw) && source != RouteYawSource::kInvalidRoute;
   output.target_yaw_rad = std::isfinite(yaw) ? yaw : 0.0;
   output.progress_arc_m = progress;
   output.target_point = point;
@@ -120,8 +129,11 @@ RouteYawReference computeRouteYawReference(
     return holdReference(measured_yaw_rad, progress, measured_position,
                          RouteYawSource::kInvalidRoute);
   }
-  if (!std::isfinite(horizontal_speed) ||
-      horizontal_speed < config.minimum_horizontal_speed_mps) {
+  const bool reversal_turn_in_place =
+      previousWaypointWasReversal(route, config.reversal_threshold_rad);
+  if ((!std::isfinite(horizontal_speed) ||
+       horizontal_speed < config.minimum_horizontal_speed_mps) &&
+      !reversal_turn_in_place) {
     return holdReference(measured_yaw_rad, progress, *progress_point,
                          RouteYawSource::kHoldLowSpeed);
   }
@@ -155,7 +167,10 @@ RouteYawReference computeRouteYawReference(
   output.lookahead_m = lookahead;
   output.progress_arc_m = progress;
   output.target_point = *target_point;
-  output.source = RouteYawSource::kRouteLookahead;
+  output.source = reversal_turn_in_place &&
+          horizontal_speed < config.minimum_horizontal_speed_mps
+      ? RouteYawSource::kRouteTurnInPlace
+      : RouteYawSource::kRouteLookahead;
   return output;
 }
 

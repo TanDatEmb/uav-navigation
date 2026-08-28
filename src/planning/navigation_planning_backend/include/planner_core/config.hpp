@@ -9,6 +9,7 @@
 #define PLANNER_CONFIG_HPP
 
 #include <planner_core/backup_braking.hpp>
+#include <planner_core/route_yaw_reference.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 #include <path_search/config.hpp>
@@ -37,7 +38,6 @@ namespace navigation_planning_backend {
         bool use_fov_cut{false};
         bool print_log{false};
         bool goal_vel_en{false};
-        bool goal_yaw_en{false};
         bool preserve_backup_altitude{true};
         navigation_world_model::UnknownPolicy unknown_space_policy{
             navigation_world_model::UnknownPolicy::kRequireKnownFree};
@@ -70,6 +70,8 @@ namespace navigation_planning_backend {
         int iris_iter_num{0};
 
         double yaw_rate_max_rad_s{0.0};
+        double yaw_acceleration_max_rad_s2{0.0};
+        RouteYawConfig route_yaw_config{};
         // Recovery trigger for a committed yaw state that the vehicle did
         // not track. This is a continuity/rebase envelope, not a waypoint or
         // safety acceptance gate.
@@ -116,7 +118,6 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/print_log", print_log, false);
             loader.LoadParam("planner/visualization_en", visualization_en, false);
             loader.LoadParam("planner/goal_vel_en", goal_vel_en, false);
-            loader.LoadParam("planner/goal_yaw_en", goal_yaw_en, false);
             loader.LoadParam("planner/preserve_backup_altitude",
                              preserve_backup_altitude, true);
             loader.LoadParam("planner/use_fov_cut", use_fov_cut, false);
@@ -151,6 +152,21 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/planning_margin_m", planning_margin_m, 0.05);
             loader.LoadParam("planner/iris_iter_num", iris_iter_num, 1);
             loader.LoadParam("planner/yaw_rate_max_rad_s", yaw_rate_max_rad_s, 3.14);
+            loader.LoadParam("planner/yaw_acceleration_max_rad_s2",
+                             yaw_acceleration_max_rad_s2, 0.3);
+            loader.LoadParam("planner/route_yaw/minimum_lookahead_m",
+                             route_yaw_config.minimum_lookahead_m, 2.0);
+            loader.LoadParam("planner/route_yaw/maximum_lookahead_m",
+                             route_yaw_config.maximum_lookahead_m, 12.0);
+            loader.LoadParam("planner/route_yaw/lookahead_time_s",
+                             route_yaw_config.lookahead_time_s, 1.5);
+            loader.LoadParam("planner/route_yaw/minimum_horizontal_speed_mps",
+                             route_yaw_config.minimum_horizontal_speed_mps, 0.3);
+            loader.LoadParam("planner/route_yaw/minimum_horizontal_support_m",
+                             route_yaw_config.minimum_horizontal_support_m, 0.5);
+            loader.LoadParam("planner/route_yaw/reversal_threshold_rad",
+                             route_yaw_config.reversal_threshold_rad,
+                             2.6179938779914944);
             loader.LoadParam("planner/yaw_tracking_error_budget_rad",
                              yaw_tracking_error_budget_rad, 0.35);
 
@@ -215,6 +231,9 @@ namespace navigation_planning_backend {
                 corridor_segment_max_length_m <= 0.0 ||
                 iris_iter_num <= 0 || !std::isfinite(yaw_rate_max_rad_s) ||
                 yaw_rate_max_rad_s <= 0.0 ||
+                !std::isfinite(yaw_acceleration_max_rad_s2) ||
+                yaw_acceleration_max_rad_s2 <= 0.0 ||
+                !route_yaw_config.valid() ||
                 !std::isfinite(yaw_tracking_error_budget_rad) ||
                 yaw_tracking_error_budget_rad <= 0.0 ||
                 yaw_tracking_error_budget_rad > M_PI) {

@@ -2,7 +2,6 @@ planner:
   visualization_en: false
   use_fov_cut: false
   print_log: false
-  goal_yaw_en: false
   goal_vel_en: false
   # A strict backup stop keeps the measured handover PVAJ but biases its free
   # terminal position toward the active waypoint altitude. The candidate is
@@ -60,7 +59,18 @@ planner:
   localization_error_budget_m: 0.05
   mapping_error_budget_m: 0.10
   planning_margin_m: 0.05
-  yaw_rate_max_rad_s: 3.0
+  # Conservative initial envelope below PX4 upstream autonomous defaults
+  # (60 deg/s, 20 deg/s^2). Acceptance still requires the runner to capture
+  # the active vehicle parameters; these are not hardware certification.
+  yaw_rate_max_rad_s: 1.0
+  yaw_acceleration_max_rad_s2: 0.3
+  route_yaw:
+    minimum_lookahead_m: 2.0
+    maximum_lookahead_m: 12.0
+    lookahead_time_s: 1.5
+    minimum_horizontal_speed_mps: 0.3
+    minimum_horizontal_support_m: 0.5
+    reversal_threshold_rad: 2.6179938779914944
   # Rebase a hot trajectory when measured yaw no longer follows its committed
   # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
   # acceptance threshold; calibrate it from repeated tracking distributions.

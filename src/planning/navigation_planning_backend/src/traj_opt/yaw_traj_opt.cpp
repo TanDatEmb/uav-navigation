@@ -5,258 +5,77 @@
  */
 
 #include "traj_opt/yaw_traj_opt.h"
-#include <algorithm>
+
 #include <cmath>
-#include <optional>
+#include <utility>
+
 #include <utils/optimization/polynomial_interpolation.h>
+
 using namespace geometry_utils;
+
 namespace traj_opt {
-namespace {
 
-constexpr double kMinimumHorizontalDirectionM = 0.1;
-constexpr double kFreeYawDirectionM = 0.5;
+YawTrajOpt::YawTrajOpt(const double &maximum_yaw_rate_rad_s,
+                       const double &maximum_yaw_acceleration_rad_s2)
+    : yaw_rate_max_rad_s_(maximum_yaw_rate_rad_s),
+      yaw_acceleration_max_rad_s2_(maximum_yaw_acceleration_rad_s2) {}
 
-std::optional<double> horizontalYaw(const Vec3f& direction,
-                                    const double minimum_distance_m) {
-    const double horizontal_distance =
-        std::hypot(static_cast<double>(direction.x()),
-                   static_cast<double>(direction.y()));
-    if (!std::isfinite(horizontal_distance) ||
-        horizontal_distance < minimum_distance_m || !direction.allFinite()) {
-        return std::nullopt;
+bool YawTrajOpt::optimizeToTarget(
+    const Vec4f &initial_state_in, double target_yaw_rad,
+    const Trajectory &position_trajectory,
+    Trajectory &output_trajectory) {
+  const double duration = position_trajectory.getTotalDuration();
+  if (!initial_state_in.allFinite() || !std::isfinite(target_yaw_rad) ||
+      !std::isfinite(duration) || duration <= 0.0 ||
+      !std::isfinite(yaw_rate_max_rad_s_) || yaw_rate_max_rad_s_ <= 0.0 ||
+      !std::isfinite(yaw_acceleration_max_rad_s2_) ||
+      yaw_acceleration_max_rad_s2_ <= 0.0 ||
+      std::abs(initial_state_in(1)) > yaw_rate_max_rad_s_ + 1.0e-6 ||
+      std::abs(initial_state_in(2)) >
+          yaw_acceleration_max_rad_s2_ + 1.0e-6) {
+    return false;
+  }
+  Vec4f initial_state = initial_state_in;
+  normalizeNextYaw(initial_state(0), target_yaw_rad);
+  const double requested_delta = target_yaw_rad - initial_state(0);
+  const VecDf times = VecDf::Constant(1, duration);
+  const VecDf no_waypoints;
+  const auto interpolate = [&](const double scale) {
+    const navigation_math::Vec3f initial = initial_state.head(3);
+    navigation_math::Vec3f terminal;
+    terminal << initial_state(0) + scale * requested_delta, 0.0, 0.0;
+    return poly_interpo::minimumJerkInterpolation<1>(
+        initial, terminal, no_waypoints, times);
+  };
+  const auto feasible = [&](const Trajectory &candidate) {
+    const double rate = candidate.getMaxVelRate();
+    const double acceleration = candidate.getMaxAccRate();
+    return !candidate.empty() && std::isfinite(rate) &&
+           std::isfinite(acceleration) &&
+           rate <= yaw_rate_max_rad_s_ + 1.0e-6 &&
+           acceleration <= yaw_acceleration_max_rad_s2_ + 1.0e-6;
+  };
+
+  Trajectory selected = interpolate(1.0);
+  if (!feasible(selected)) {
+    selected = interpolate(0.0);
+    if (!feasible(selected)) return false;
+    double feasible_scale = 0.0;
+    double infeasible_scale = 1.0;
+    for (int iteration = 0; iteration < 32; ++iteration) {
+      const double scale = 0.5 * (feasible_scale + infeasible_scale);
+      Trajectory candidate = interpolate(scale);
+      if (feasible(candidate)) {
+        feasible_scale = scale;
+        selected = std::move(candidate);
+      } else {
+        infeasible_scale = scale;
+      }
     }
-    const double yaw = std::atan2(static_cast<double>(direction.y()),
-                                  static_cast<double>(direction.x()));
-    return std::isfinite(yaw) ? std::optional<double>{yaw} : std::nullopt;
+  }
+  selected.start_WT = position_trajectory.start_WT;
+  output_trajectory = std::move(selected);
+  return true;
 }
 
-}  // namespace
-
-    using namespace color_text;
-    void YawTrajOpt::getYawTimeAllocation(const double &duration, VecDf &times) const {
-        double interp_dt = M_PI / yaw_rate_max_rad_s_;
-        if (duration < interp_dt * 2) {
-            /// if the duration less than 2 interp, then no waypoint need.
-            times.resize(1);
-            times[0] = duration;
-        } else {
-            /// use ceil to make the seg num non-zero and, make sure the last seg
-            /// have time to turn to the goal yaw.
-            int interp_num = ceil((duration - 2 * interp_dt) / interp_dt);
-            double interp_t = (duration - 2 * interp_dt) / (interp_num);
-            times.resize(2 + interp_num);
-            for (int i = 0; i < interp_num; i++) {
-                times(i + 1) = interp_t;
-            }
-            times(times.size() - 1) = interp_dt;
-            times(0) = interp_dt;
-        }
-        if (times.size() == 3 && times(1) < times(0) / 3) {
-            times.resize(2);
-            times.setConstant(duration / 2);
-        }
-    }
-
-    void YawTrajOpt::getYawWaypointAllocation(const Vec4f &init_state, Vec4f &goal_state, VecDf &way_pts, VecDf &times,
-                                              const Trajectory &pos_traj) {
-        double eval_t = 0;
-        vec_Vec3f debug1, debug2;
-        double last_yaw = init_state(0);
-        way_pts.resize(times.size() - 1);
-        const double pos_traj_duration = pos_traj.getTotalDuration();
-        for (long int i = 0; i < times.size() - 1; i++) {
-            eval_t += times(i);
-            double cur_yaw;
-            Vec3f pt_i = pos_traj.getPos(eval_t);
-            Vec3f pt_g;
-            if (eval_t + 0.5 >= pos_traj_duration) {
-                pt_g = pos_traj.getPos(pos_traj_duration);
-                pt_i = pos_traj.getPos(pos_traj_duration - 0.5 > 0 ? pos_traj_duration - 0.5 : 0);
-            } else {
-                pt_g = pos_traj.getPos(eval_t + 0.5);
-            }
-
-
-            Vec3f dir = pt_g - pt_i;
-            if (const auto direction_yaw =
-                    horizontalYaw(dir, kMinimumHorizontalDirectionM);
-                direction_yaw.has_value()) {
-                cur_yaw = *direction_yaw;
-                normalizeNextYaw(last_yaw, cur_yaw);
-            } else {
-//                    print(fg(color::indian_red),
-//                          " -- [planner] Yaw planning failed, the goal yaw is too close to the current yaw.\n");
-                cur_yaw = last_yaw;
-            }
-            way_pts(i) = cur_yaw;
-            last_yaw = cur_yaw;
-        }
-        if (way_pts.size() == 0) {
-            geometry_utils::normalizeNextYaw(init_state[0], goal_state[0]);
-        } else {
-            geometry_utils::normalizeNextYaw(way_pts(way_pts.size() - 1), goal_state[0]);
-        }
-//            print("Remain dis = {}.\n", (cur_drone_state_.position - gi_.mission_waypoints.back()).norm());
-//            print("Yaw way_pts init = {}\n", init_state(0));
-//            for (long unsigned int i = 0; i < way_pts.size(); i++) {
-//                print("Yaw way_pts[{}] = {}\n", i, way_pts[i]);
-//            }
-//            print("Yaw way_pts goal = {}\n", goal_state(0));
-//            cout << times.transpose() << endl;
-    }
-
-    YawTrajOpt::YawTrajOpt(const double &max_yaw_rate_rad_s)
-        : yaw_rate_max_rad_s_(max_yaw_rate_rad_s) {
-    }
-
-    bool YawTrajOpt::optimize(const Vec4f &istate_in,
-                              const Vec4f &gstate_in,
-                              const Trajectory &pos_traj,
-                              Trajectory &out_traj,
-                              const int & order,
-                              const bool &free_start,
-                              const bool &free_goal) {
-        free_goal_ = free_goal;
-        Vec4f init_state = istate_in;
-        Vec4f goal_state = gstate_in;
-        double pos_traj_dur = pos_traj.getTotalDuration();
-        if (free_start) {
-            Vec3f pt_i = pos_traj.getPos(0);
-
-            double t_g = std::min(0.5, pos_traj_dur);
-            Vec3f pt_g = pos_traj.getPos(t_g);
-            Vec3f dir = pt_g - pt_i;
-            while (dir.norm() < 0.5 && t_g < pos_traj_dur) {
-                t_g += 0.1;
-                pt_g = pos_traj.getPos(t_g);
-                dir = pt_g - pt_i;
-            }
-            if (const auto direction_yaw = horizontalYaw(dir, kFreeYawDirectionM);
-                direction_yaw.has_value()) {
-                init_state(0) = *direction_yaw;
-                normalizeNextYaw(istate_in(0), init_state(0));
-            }
-        }
-        if (free_goal_) {
-            Vec3f pt_g = pos_traj.getPos(pos_traj_dur);
-            double t_i = pos_traj_dur - 0.5 > 0 ? pos_traj_dur - 0.5 : 0;
-            Vec3f pt_i = pos_traj.getPos(t_i);
-            Vec3f dir = pt_g - pt_i;
-            while (dir.norm() < 0.5 && t_i > 0) {
-                t_i -= 0.1;
-                pt_i = pos_traj.getPos(t_i);
-                dir = pt_g - pt_i;
-            }
-            if (const auto direction_yaw = horizontalYaw(dir, kFreeYawDirectionM);
-                direction_yaw.has_value()) {
-                goal_state(0) = *direction_yaw;
-                normalizeNextYaw(init_state(0), goal_state(0));
-            } else {
-                // A stationary or vertical terminal segment has no heading
-                // information. Holding the incoming yaw is safer than
-                // atan2(0, 0), which previously injected an arbitrary
-                // 0-radian target and could trigger a large replan turn.
-                goal_state(0) = init_state(0);
-            }
-        }
-
-        VecDf times;
-        getYawTimeAllocation(pos_traj_dur, times);
-        VecDf way_pts;
-        getYawWaypointAllocation(init_state, goal_state, way_pts, times, pos_traj);
-        const auto interpolate = [&](const Vec4f &candidate_goal,
-                                     const VecDf &candidate_waypoints) {
-            Trajectory candidate;
-            switch (order) {
-            case 3: {
-                const navigation_math::Vec2f init_state3 = init_state.head(2);
-                const navigation_math::Vec2f goal_state3 = candidate_goal.head(2);
-                candidate = poly_interpo::minimumAccInterpolation<1>(
-                    init_state3, goal_state3, candidate_waypoints, times);
-                break;
-            }
-            case 5: {
-                Vec3f init_state3 = init_state.head(3);
-                Vec3f goal_state3 = candidate_goal.head(3);
-                candidate = poly_interpo::minimumJerkInterpolation<1>(
-                    init_state3, goal_state3, candidate_waypoints, times);
-                break;
-            }
-            case 7: {
-                candidate = poly_interpo::minimumSnapInterpolation<1>(
-                    init_state, candidate_goal, candidate_waypoints, times);
-                break;
-            }
-            default: {
-                break;
-            }
-            }
-            return candidate;
-        };
-
-        if (order != 3 && order != 5 && order != 7) {
-            cout << "Unsupported order for yaw trajectory optimization." << endl;
-            return false;
-        }
-
-        Trajectory yaw_traj = interpolate(goal_state, way_pts);
-
-//            for (double eval_t = 0; eval_t < yaw_traj.getTotalDuration(); eval_t += 0.01) {
-//                cout << yaw_traj.getPos(eval_t)[0] << " ";
-//            }
-//            cout << ";" << endl;
-//            for (double eval_t = 0; eval_t < yaw_traj.getTotalDuration(); eval_t += 0.01) {
-//                cout << yaw_traj.getVel(eval_t)[0] << " ";
-//            }
-//            cout << endl;
-//
-//            yaw_traj.printProfile();
-        double max_yaw_rate = yaw_traj.getMaxVelRate();
-        // A free-yaw trajectory is guidance, not a terminal attitude contract.
-        // Project its angular excursion onto the configured rate envelope while
-        // preserving the position trajectory duration and the initial yaw/rate.
-        // This avoids rejecting a position-feasible candidate merely because a
-        // sharp guide-path corner asks the unconstrained interpolant to rotate
-        // faster than the vehicle contract. Fixed terminal yaw remains fail-closed.
-        if (free_goal_ && std::isfinite(max_yaw_rate) &&
-            max_yaw_rate > yaw_rate_max_rad_s_ + 1.0e-6 &&
-            std::abs(init_state(1)) <= yaw_rate_max_rad_s_ + 1.0e-6) {
-            const VecDf requested_waypoints = way_pts;
-            const double requested_goal_yaw = goal_state(0);
-            double feasible_scale = 0.0;
-            double infeasible_scale = 1.0;
-            Trajectory feasible_traj;
-            for (int iteration = 0; iteration < 24; ++iteration) {
-                const double scale = 0.5 * (feasible_scale + infeasible_scale);
-                VecDf projected_waypoints = requested_waypoints;
-                projected_waypoints.array() = init_state(0) +
-                    scale * (requested_waypoints.array() - init_state(0));
-                Vec4f projected_goal = goal_state;
-                projected_goal(0) = init_state(0) +
-                    scale * (requested_goal_yaw - init_state(0));
-                Trajectory projected = interpolate(projected_goal, projected_waypoints);
-                const double projected_rate = projected.getMaxVelRate();
-                if (std::isfinite(projected_rate) &&
-                    projected_rate <= yaw_rate_max_rad_s_ + 1.0e-6) {
-                    feasible_scale = scale;
-                    feasible_traj = std::move(projected);
-                } else {
-                    infeasible_scale = scale;
-                }
-            }
-            if (!feasible_traj.empty()) {
-                yaw_traj = std::move(feasible_traj);
-                max_yaw_rate = yaw_traj.getMaxVelRate();
-                cout << YELLOW << " Projected free yaw by scale " << feasible_scale
-                     << ", max rate " << max_yaw_rate << RESET << endl;
-            }
-        }
-        if (!std::isfinite(max_yaw_rate) || max_yaw_rate > yaw_rate_max_rad_s_ + 1.0e-6) {
-            cout << YELLOW << " Yaw rate too large, " << max_yaw_rate << RESET << endl;
-            return false;
-        }
-        out_traj = yaw_traj;
-        out_traj.start_WT = pos_traj.start_WT;
-        return true;
-    }
-}
+}  // namespace traj_opt
