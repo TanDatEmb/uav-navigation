@@ -9397,3 +9397,37 @@ release profiles must not use the former allowance.
 - **Verification:** Run `tools.runtime.tests.test_planner_trace`; re-render the
   cited session and require the report summary to equal the raw decision-trace
   counts. Run the complete runtime-contract suite before commit.
+
+### 2026-08-28 - Match corridor baseline PVAJ to nonuniform guide timing
+
+- **Owner:** Deterministic corridor-Bezier junction-state construction.
+- **Scope:** Compute each internal velocity from adjacent position/time
+  secants, acceleration from their centered finite difference and jerk from
+  adjacent acceleration slopes. Apply the existing finite containment scale
+  to all three internal derivatives together. Test only the four Bernstein
+  controls owned by that junction while selecting its scale, then verify every
+  control of every complete piece before coefficient conversion.
+- **Safety impact:** Endpoint P/V/A/J remains immutable and every accepted
+  polynomial still has all Bernstein controls inside its assigned convex
+  corridor, C3 continuity, continuous route-boundary checks and complete
+  V/A/J/flatness certification. This changes a deterministic fallback shape;
+  it does not weaken MINCO, UNKNOWN, map freshness, backup or PX4 gates.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T125006-1120692` exposed 195
+  dynamics-stage fallback failures in 244 solves. The previous builder forced
+  acceleration and jerk to zero at every short corridor junction even when
+  adjacent path secants were turning or accelerating, so each degree-seven
+  piece had to recreate the derivative change internally. Exact polynomial
+  regression now reproduces constant-velocity motion across unequal piece
+  times and constant-acceleration motion across a junction with negligible
+  spurious jerk. A corner case still proves deterministic derivative reduction
+  when the full timed state would leave either adjacent convex corridor.
+- **Removal/review condition:** Replace only with an equal-or-stronger
+  nonuniform spline/QP state construction that keeps analytic convex-hull
+  containment and complete post-construction certification. Do not return to
+  zero derivatives at every subdivision or sampled-only containment.
+- **Verification:** Run the six focused corridor baseline tests, optimizer
+  fallback tests, all backend/workspace tests and Release build. Then compare
+  explicit fallback use and failure-stage distributions on repeated
+  three-column SITL and recorded data, requiring no clearance, route, altitude,
+  anchor, dynamics or latency regression.

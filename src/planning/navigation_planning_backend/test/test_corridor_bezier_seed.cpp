@@ -20,10 +20,14 @@ navigation_math::PolyhedronH box(
 
 navigation_math::StatePVAJ state(
     const Eigen::Vector3d& position,
-    const Eigen::Vector3d& velocity = Eigen::Vector3d::Zero()) {
+    const Eigen::Vector3d& velocity = Eigen::Vector3d::Zero(),
+    const Eigen::Vector3d& acceleration = Eigen::Vector3d::Zero(),
+    const Eigen::Vector3d& jerk = Eigen::Vector3d::Zero()) {
   navigation_math::StatePVAJ output = navigation_math::StatePVAJ::Zero();
   output.col(0) = position;
   output.col(1) = velocity;
+  output.col(2) = acceleration;
+  output.col(3) = jerk;
   return output;
 }
 
@@ -95,7 +99,7 @@ TEST(CorridorBezierSeed, MatchesStraightJunctionVelocityToPieceTiming) {
           corridors, mapping, 8.0, 1.0e-8);
 
   ASSERT_TRUE(result.valid);
-  EXPECT_NEAR(result.minimum_internal_velocity_scale, 1.0, 1.0e-12);
+  EXPECT_NEAR(result.minimum_internal_derivative_scale, 1.0, 1.0e-12);
   EXPECT_NEAR(result.trajectory[0].getVel(0.2).x(), 5.0, 1.0e-9);
   EXPECT_NEAR(result.trajectory.getMaxVelRate(), 5.0, 1.0e-7);
   EXPECT_NEAR(result.trajectory.getMaxAccRate(), 0.0, 1.0e-6);
@@ -117,7 +121,7 @@ TEST(CorridorBezierSeed, ReducesJunctionVelocityToContainACorner) {
           state({0.0, 0.0, 3.0}), state({9.0, 10.0, 3.0}),
           junctions, durations, corridors, mapping, 8.0, 1.0e-8);
   ASSERT_TRUE(result.valid);
-  EXPECT_LT(result.minimum_internal_velocity_scale, 1.0);
+  EXPECT_LT(result.minimum_internal_derivative_scale, 1.0);
   for (int piece = 0; piece < result.trajectory.getPieceNum(); ++piece) {
     for (int sample = 0; sample <= 100; ++sample) {
       const double time = durations(piece) * sample / 100.0;
@@ -126,6 +130,29 @@ TEST(CorridorBezierSeed, ReducesJunctionVelocityToContainACorner) {
           result.trajectory[piece].getPos(time), 1.0e-7));
     }
   }
+}
+
+TEST(CorridorBezierSeed, ReproducesConstantAccelerationAcrossJunction) {
+  navigation_math::PolyhedraH corridors{
+      box({-1.0, -1.0, 2.0}, {2.0, 1.0, 4.0}),
+      box({0.0, -1.0, 2.0}, {5.0, 1.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 1.0, 1.0;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}),
+          state({4.0, 0.0, 3.0}, {4.0, 0.0, 0.0}, {2.0, 0.0, 0.0}),
+          junctions, durations, corridors, mapping, 5.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  EXPECT_NEAR(result.minimum_internal_derivative_scale, 1.0, 1.0e-12);
+  EXPECT_NEAR(result.trajectory[0].getVel(1.0).x(), 2.0, 1.0e-8);
+  EXPECT_NEAR(result.trajectory.getMaxVelRate(), 4.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxAccRate(), 2.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxJerRate(), 0.0, 1.0e-6);
 }
 
 TEST(CorridorBezierSeed, BoundedDurationRetryCanRecoverDynamicCertificate) {

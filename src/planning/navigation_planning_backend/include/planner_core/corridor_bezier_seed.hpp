@@ -26,7 +26,7 @@ struct CorridorBezierSeedResult {
   bool valid{false};
   CorridorBezierSeedFailureStage failure_stage{
       CorridorBezierSeedFailureStage::kInput};
-  double minimum_internal_velocity_scale{0.0};
+  double minimum_internal_derivative_scale{0.0};
   geometry_utils::Trajectory trajectory;
 };
 
@@ -128,7 +128,8 @@ inline Eigen::MatrixXd powerCoefficients(
 // Build a C3 piecewise degree-seven baseline whose Bernstein control points
 // are all inside each piece's assigned convex corridor. Internal velocity is
 // reduced deterministically until both adjacent pieces retain convex-hull
-// containment. Endpoint PVAJ is immutable and never scaled.
+// containment. Internal PVAJ derivatives follow the nonuniform path timing;
+// endpoint PVAJ is immutable and never scaled.
 inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
     const navigation_math::StatePVAJ& head_state,
     const navigation_math::StatePVAJ& tail_state,
@@ -185,9 +186,10 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
     }
   }
 
-  output.minimum_internal_velocity_scale = 1.0;
-  constexpr std::array<double, 8> velocity_scales{
-      1.0, 0.75, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0};
+  // A secant-consistent velocity and acceleration reproduce straight and
+  // constant-acceleration motion instead of forcing every corridor junction
+  // to zero acceleration.  Jerk is the centered slope of those accelerations.
+  // This substantially reduces the derivative ringing of short septic pieces.
   for (int junction = 1; junction < piece_count; ++junction) {
     const Eigen::Vector3d incoming_secant =
         (states[static_cast<std::size_t>(junction)].col(0) -
@@ -197,16 +199,39 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
         (states[static_cast<std::size_t>(junction + 1)].col(0) -
          states[static_cast<std::size_t>(junction)].col(0)) /
         durations_s(junction);
-    Eigen::Vector3d desired_velocity =
-        0.5 * (incoming_secant + outgoing_secant);
-    const double desired_norm = desired_velocity.norm();
-    if (desired_norm > desired_internal_speed_mps && desired_norm > 1.0e-9) {
-      desired_velocity *= desired_internal_speed_mps / desired_norm;
+    Eigen::Vector3d velocity = 0.5 * (incoming_secant + outgoing_secant);
+    const double velocity_norm = velocity.norm();
+    if (velocity_norm > desired_internal_speed_mps && velocity_norm > 1.0e-9) {
+      velocity *= desired_internal_speed_mps / velocity_norm;
     }
+    states[static_cast<std::size_t>(junction)].col(1) = velocity;
+    states[static_cast<std::size_t>(junction)].col(2) =
+        2.0 * (outgoing_secant - incoming_secant) /
+        (durations_s(junction - 1) + durations_s(junction));
+  }
+  for (int junction = 1; junction < piece_count; ++junction) {
+    const Eigen::Vector3d incoming_slope =
+        (states[static_cast<std::size_t>(junction)].col(2) -
+         states[static_cast<std::size_t>(junction - 1)].col(2)) /
+        durations_s(junction - 1);
+    const Eigen::Vector3d outgoing_slope =
+        (states[static_cast<std::size_t>(junction + 1)].col(2) -
+         states[static_cast<std::size_t>(junction)].col(2)) /
+        durations_s(junction);
+    states[static_cast<std::size_t>(junction)].col(3) =
+        0.5 * (incoming_slope + outgoing_slope);
+  }
+
+  output.minimum_internal_derivative_scale = 1.0;
+  constexpr std::array<double, 8> derivative_scales{
+      1.0, 0.75, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0};
+  for (int junction = 1; junction < piece_count; ++junction) {
+    const auto desired_derivatives =
+        states[static_cast<std::size_t>(junction)].rightCols(3).eval();
     bool found = false;
-    for (const double scale : velocity_scales) {
-      states[static_cast<std::size_t>(junction)].col(1) =
-          scale * desired_velocity;
+    for (const double scale : derivative_scales) {
+      states[static_cast<std::size_t>(junction)].rightCols(3) =
+          scale * desired_derivatives;
       const int previous_corridor = piece_to_corridor(junction - 1);
       const int next_corridor = piece_to_corridor(junction);
       const auto previous_controls = corridor_bezier_detail::controlPoints(
@@ -215,16 +240,23 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
       const auto next_controls = corridor_bezier_detail::controlPoints(
           states[static_cast<std::size_t>(junction)],
           states[static_cast<std::size_t>(junction + 1)], durations_s(junction));
-      if (corridor_bezier_detail::controlsInside(
-              previous_controls,
-              normalized_corridors[static_cast<std::size_t>(previous_corridor)],
-              corridor_tolerance_m) &&
-          corridor_bezier_detail::controlsInside(
-              next_controls,
-              normalized_corridors[static_cast<std::size_t>(next_corridor)],
-              corridor_tolerance_m)) {
-        output.minimum_internal_velocity_scale = std::min(
-            output.minimum_internal_velocity_scale, scale);
+      const auto previous_derivatives_inside = std::all_of(
+          previous_controls.begin() + 4, previous_controls.end(),
+          [&](const Eigen::Vector3d& point) {
+            return corridor_bezier_detail::pointInsideNormalized(
+                normalized_corridors[static_cast<std::size_t>(previous_corridor)],
+                point, corridor_tolerance_m);
+          });
+      const auto next_derivatives_inside = std::all_of(
+          next_controls.begin(), next_controls.begin() + 4,
+          [&](const Eigen::Vector3d& point) {
+            return corridor_bezier_detail::pointInsideNormalized(
+                normalized_corridors[static_cast<std::size_t>(next_corridor)],
+                point, corridor_tolerance_m);
+          });
+      if (previous_derivatives_inside && next_derivatives_inside) {
+        output.minimum_internal_derivative_scale = std::min(
+            output.minimum_internal_derivative_scale, scale);
         found = true;
         break;
       }
