@@ -10323,3 +10323,47 @@ release profiles must not use the former allowance.
   measured-state restart before an envelope violation, bounded P/V handoff,
   zero collision, no tracking-envelope exit, complete waypoint order and
   planner/mapping p50/p95/p99 evidence.
+
+### 2026-08-29 - Fail closed on malformed Piece inputs and low-degree derivatives
+
+- **Owner/status:** `geometry_utils::Piece` direct evaluation and rate
+  certificate API, implementation fix; no new configurable gate or motion
+  limit.
+- **Scope:** A `Piece` is accepted by its direct numerical methods only when
+  duration is finite and positive, coefficients are finite with exactly three
+  rows, and the stored degree matches the coefficient count. Position and
+  derivative evaluation reject non-finite time; derivative normalization and
+  maximum-rate queries handle constant/linear/quadratic pieces without passing
+  empty vectors or negative matrix dimensions to Eigen. Maximum-rate checks
+  reject non-finite, non-positive limits and overflowing squared limits.
+- **Physical meaning and unsafe outcome:** Duration is seconds, coefficients
+  describe a 3-D position polynomial, and velocity/acceleration/jerk limits
+  are positive physical magnitudes. Before this fix, a constant polynomial
+  could create an invalid zero-length `polySqr` input (and acceleration
+  normalization could request three rows by minus one column), while malformed
+  coefficient rows could reach unchecked Eigen column access. Negative or NaN
+  rate limits could also be squared and treated as valid. The new behavior
+  returns non-finite vectors/rates, empty derivative coefficients, or `false`
+  before unsafe arithmetic; valid low-degree pieces retain their exact zero
+  derivative behavior.
+- **False-accept/false-reject consequences:** Rejecting malformed data prevents
+  undefined Eigen operations and invalid certificates from reaching planner
+  validation. A valid constant/linear/quadratic piece remains accepted for a
+  strictly positive corresponding limit; existing strict boundary comparison
+  and all physical limits are unchanged.
+- **Runtime cost:** Direct calls now perform a finite coefficient scan and shape
+  check, O(3D) in coefficient count. This is bounded validation before the
+  existing O(D) evaluation/certificate work; no planner threshold or algorithm
+  was changed. No new p50/p95/p99 runtime distribution is claimed because the
+  focused API has no independent flight-time budget.
+- **Evidence:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2` and `./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no` passed 86/86, including malformed rows, low-degree
+  derivatives, non-finite time and invalid maximum-rate inputs. Full build,
+  sanitizer, dataset, SITL and hardware evidence are not implied by this
+  component result.
+- **Removal/review condition:** Keep the fail-closed domain validation. Revisit
+  only if the public API gains typed numerical-result errors while preserving
+  rejection of malformed pieces at every execution boundary.
+- **Verification:** Repeat the focused commands above after any future change
+  to `Piece` evaluation, coefficient normalization or rate certificates.
