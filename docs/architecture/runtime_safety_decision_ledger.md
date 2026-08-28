@@ -8624,3 +8624,28 @@ release profiles must not use the former allowance.
   run the runtime report contract tests, then capture a representative
   recorded-data or SITL distribution containing the new fields before choosing
   an optimization.
+
+### 2026-08-28 - Export snapshot patches in row-linear circular-map order
+
+- **Owner:** ROG-Map planning-grid export adapter.
+- **Scope:** Preserve the exact patch bounds and X/Y/Z logical ordering while
+  precomputing circular X/Y hashes and walking contiguous Z rows. Apply the
+  same indexing strategy to evidence and inflated layers.
+- **Safety impact:** Performance implementation only. No changed region,
+  occupancy threshold, virtual-plane rule, UNKNOWN policy, map size, snapshot
+  cadence, freshness window, or fail-closed gate changes. Patch output remains
+  detached and is still validated by `MappingWorldSnapshot` before publication.
+- **Evidence:** Exact-HEAD 3 m/s artifact
+  `external-mode-check-20260828T091412-909377` recorded 465 patches with mean
+  1.95M base and 2.34M inflated cells. All patches covered 52.9--88.6 percent
+  of the base grid and averaged 45.96 ms, while 116 full exports averaged
+  11.82 ms. Source review found patch export repeated circular index conversion
+  per voxel, whereas full export amortized X/Y conversion per row.
+- **Removal/review condition:** Revert if patch/full cell semantics differ at
+  any index, including after signed map slides or at virtual ground/ceiling.
+  Revisit the patch architecture if repeated representative distributions do
+  not materially lower export p95/p99 or if snapshot memory/query tails grow.
+- **Verification:** Compare every patch cell with the same region in a full
+  export before and after signed-axis slides; build and run vendor, mapping and
+  runtime tests; then repeat representative recorded-data/SITL and compare
+  full/patch export and callback distributions without changing hard gates.

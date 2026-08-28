@@ -122,13 +122,31 @@ namespace rog_map {
         output.occupied.resize(count);
         if (cfg_.unk_inflation_en) output.unknown.resize(count);
 
+        const auto logical_coordinate = [this](int global, int axis) {
+            int local = global % sc_.map_size_i(axis);
+            if (local > sc_.half_map_size_i(axis)) local -= sc_.map_size_i(axis);
+            if (local < -sc_.half_map_size_i(axis)) local += sc_.map_size_i(axis);
+            return local + sc_.half_map_size_i(axis);
+        };
+        std::vector<int> hash_x(static_cast<std::size_t>(output.layout.dimensions.x()));
+        std::vector<int> hash_y(static_cast<std::size_t>(output.layout.dimensions.y()));
+        for (int i = 0; i < output.layout.dimensions.x(); ++i) {
+            hash_x[static_cast<std::size_t>(i)] =
+                logical_coordinate(patch_min.x() + i, 0) *
+                sc_.map_size_i.y() * sc_.map_size_i.z();
+        }
+        for (int i = 0; i < output.layout.dimensions.y(); ++i) {
+            hash_y[static_cast<std::size_t>(i)] =
+                logical_coordinate(patch_min.y() + i, 1) * sc_.map_size_i.z();
+        }
+
         std::size_t offset = 0U;
-        for (std::int64_t x = patch_min.x(); x <= patch_max.x(); ++x) {
-            for (std::int64_t y = patch_min.y(); y <= patch_max.y(); ++y) {
-                for (std::int64_t z = patch_min.z(); z <= patch_max.z(); ++z) {
-                    const Vec3i index{static_cast<int>(x), static_cast<int>(y),
-                                      static_cast<int>(z)};
-                    const int hash = getHashIndexFromGlobalIndex(index);
+        for (int x = patch_min.x(), xi = 0; x <= patch_max.x(); ++x, ++xi) {
+            for (int y = patch_min.y(), yi = 0; y <= patch_max.y(); ++y, ++yi) {
+                const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
+                                    hash_y[static_cast<std::size_t>(yi)];
+                for (int z = patch_min.z(); z <= patch_max.z(); ++z) {
+                    const int hash = hash_xy + logical_coordinate(z, 2);
                     output.occupied[offset] = imd_.occ_inflate_cnt[hash] > 0 ? 1U : 0U;
                     if (cfg_.unk_inflation_en) {
                         output.unknown[offset] = imd_.unk_inflate_cnt[hash] > 0 ? 1U : 0U;

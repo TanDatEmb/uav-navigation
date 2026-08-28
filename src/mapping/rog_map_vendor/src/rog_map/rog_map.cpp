@@ -179,12 +179,46 @@ PlanningGridPatchExport ROGMap::exportPlanningGridRegion(
   }
   output.base_state.resize(count);
 
+  // Match the full export's logical ordering, but compute circular-buffer
+  // coordinates once per X/Y row instead of once per voxel. Typical LiDAR
+  // changed-region unions span millions of Z-contiguous cells; calling
+  // getGridType() for every cell repeated three modulo/index conversions and
+  // made a patch materially slower than a full export.
+  const auto logical_coordinate = [this](int global, int axis) {
+    int local = global % sc_.map_size_i(axis);
+    if (local > sc_.half_map_size_i(axis)) local -= sc_.map_size_i(axis);
+    if (local < -sc_.half_map_size_i(axis)) local += sc_.map_size_i(axis);
+    return local + sc_.half_map_size_i(axis);
+  };
+  std::vector<int> hash_x(static_cast<std::size_t>(output.base_layout.dimensions.x()));
+  std::vector<int> hash_y(static_cast<std::size_t>(output.base_layout.dimensions.y()));
+  for (int i = 0; i < output.base_layout.dimensions.x(); ++i) {
+    hash_x[static_cast<std::size_t>(i)] =
+        logical_coordinate(patch_min.x() + i, 0) *
+        sc_.map_size_i.y() * sc_.map_size_i.z();
+  }
+  for (int i = 0; i < output.base_layout.dimensions.y(); ++i) {
+    hash_y[static_cast<std::size_t>(i)] =
+        logical_coordinate(patch_min.y() + i, 1) * sc_.map_size_i.z();
+  }
+
   std::size_t offset = 0U;
-  for (std::int64_t x = patch_min.x(); x <= patch_max.x(); ++x) {
-    for (std::int64_t y = patch_min.y(); y <= patch_max.y(); ++y) {
-      for (std::int64_t z = patch_min.z(); z <= patch_max.z(); ++z) {
-        Vec3i index{static_cast<int>(x), static_cast<int>(y), static_cast<int>(z)};
-        output.base_state[offset++] = static_cast<std::uint8_t>(getGridType(index));
+  for (int x = patch_min.x(), xi = 0; x <= patch_max.x(); ++x, ++xi) {
+    for (int y = patch_min.y(), yi = 0; y <= patch_max.y(); ++y, ++yi) {
+      const int hash_xy = hash_x[static_cast<std::size_t>(xi)] +
+                          hash_y[static_cast<std::size_t>(yi)];
+      for (int z = patch_min.z(); z <= patch_max.z(); ++z) {
+        GridType state = GridType::OCCUPIED;
+        if (!cfg_.virtual_ground_ceiling_en ||
+            (z > sc_.virtual_ground_height_id_g &&
+             z < sc_.virtual_ceil_height_id_g - sc_.safe_margin_i)) {
+          const float probability = occupancy_buffer_[
+              hash_xy + logical_coordinate(z, 2)];
+          state = isKnownFree(probability)
+              ? GridType::KNOWN_FREE
+              : (isOccupied(probability) ? GridType::OCCUPIED : GridType::UNKNOWN);
+        }
+        output.base_state[offset++] = static_cast<std::uint8_t>(state);
       }
     }
   }

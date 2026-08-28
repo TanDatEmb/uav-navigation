@@ -48,6 +48,44 @@ Eigen::Vector3d centerOf(const rog_map::PlanningGridLayoutExport& layout,
   return (index.cast<double>() + Eigen::Vector3d::Constant(0.5)) * layout.resolution_m;
 }
 
+void expectPatchMatchesFull(const rog_map::PlanningGridPatchExport& patch,
+                            const rog_map::PlanningGridExport& full) {
+  ASSERT_FALSE(patch.base_state.empty());
+  ASSERT_FALSE(patch.inflated.occupied.empty());
+  const Eigen::Vector3i base_max =
+      patch.base_layout.global_min_index + patch.base_layout.dimensions;
+  for (int x = patch.base_layout.global_min_index.x(); x < base_max.x(); ++x) {
+    for (int y = patch.base_layout.global_min_index.y(); y < base_max.y(); ++y) {
+      for (int z = patch.base_layout.global_min_index.z(); z < base_max.z(); ++z) {
+        const Eigen::Vector3i index{x, y, z};
+        EXPECT_EQ(patch.base_state[offsetOf(patch.base_layout, index)],
+                  full.base_state[offsetOf(full.base_layout, index)])
+            << "base index=" << index.transpose();
+      }
+    }
+  }
+  const Eigen::Vector3i inflated_max =
+      patch.inflated.layout.global_min_index + patch.inflated.layout.dimensions;
+  for (int x = patch.inflated.layout.global_min_index.x(); x < inflated_max.x(); ++x) {
+    for (int y = patch.inflated.layout.global_min_index.y(); y < inflated_max.y(); ++y) {
+      for (int z = patch.inflated.layout.global_min_index.z(); z < inflated_max.z(); ++z) {
+        const Eigen::Vector3i index{x, y, z};
+        const auto patch_offset = offsetOf(patch.inflated.layout, index);
+        const auto full_offset = offsetOf(full.inflated.layout, index);
+        EXPECT_EQ(patch.inflated.occupied[patch_offset],
+                  full.inflated.occupied[full_offset])
+            << "inflated occupied index=" << index.transpose();
+        if (!patch.inflated.unknown.empty()) {
+          ASSERT_FALSE(full.inflated.unknown.empty());
+          EXPECT_EQ(patch.inflated.unknown[patch_offset],
+                    full.inflated.unknown[full_offset])
+              << "inflated unknown index=" << index.transpose();
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 TEST(RogMapPlanningGridExport, UpdateOutcomeTruthTableIsExplicit) {
@@ -148,6 +186,26 @@ TEST(RogMapPlanningGridExport, EarlierValueDoesNotAliasLaterMapUpdate) {
   EXPECT_EQ(before.nearest_offsets.get(), after.nearest_offsets.get());
   EXPECT_NE(static_cast<const void*>(before.nearest_offsets.get()),
             static_cast<const void*>(&map.getMapConfig().spherical_neighbor));
+}
+
+TEST(RogMapPlanningGridExport, RegionMatchesFullExportAfterSignedAxisSlides) {
+  TestRogMap map;
+  map.loadConfigAndInit(testConfigPath());
+  const std::array<Eigen::Vector3d, 6> slide_poses{
+      Eigen::Vector3d{2.1, 0.0, 0.0}, Eigen::Vector3d{-2.1, 0.0, 0.0},
+      Eigen::Vector3d{0.0, 2.1, 0.0}, Eigen::Vector3d{0.0, -2.1, 0.0},
+      Eigen::Vector3d{0.0, 0.0, 2.1}, Eigen::Vector3d{0.0, 0.0, -2.1}};
+  for (const auto& position : slide_poses) {
+    const auto cloud = singlePointCloud(position + Eigen::Vector3d{1.0, 0.3, 0.2});
+    EXPECT_EQ(map.updateMap(
+                  cloud, rog_map::Pose{position, Eigen::Quaterniond::Identity()}),
+              rog_map::MapUpdateOutcome::UPDATED);
+    const auto full = map.exportPlanningGrid();
+    const auto patch = map.exportPlanningGridRegion(
+        position - Eigen::Vector3d{1.35, 1.15, 1.05},
+        position + Eigen::Vector3d{1.25, 1.45, 1.35});
+    expectPatchMatchesFull(patch, full);
+  }
 }
 
 TEST(RogMapPlanningGridExport, CircularLogicalOrderingMatchesAfterSignedAxisSlides) {
