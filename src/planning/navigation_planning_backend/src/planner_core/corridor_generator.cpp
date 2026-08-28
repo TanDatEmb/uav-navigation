@@ -68,6 +68,12 @@ namespace navigation_planning_backend {
             return false;
         }
 
+        // A* allocation can leave one long final segment before the active
+        // waypoint. The normal corridor search deliberately rejects line
+        // seeds beyond its bounded length; split only that incoming segment
+        // so the mandatory gate remains representable without allowing a
+        // long unbounded CIRI seed.
+        vec_Vec3f corridor_path = path;
         std::optional<std::size_t> route_boundary_index;
         if (route_boundary_gate.has_value()) {
             if (!route_boundary_gate->point.allFinite() ||
@@ -88,15 +94,52 @@ namespace navigation_planning_backend {
                     nearest_index = index;
                 }
             }
+            const double max_seed_length = std::max(1.0e-6, seed_line_max_length_);
+            if (nearest_index > 0U) {
+                const double incoming_length =
+                    (path[nearest_index] - path[nearest_index - 1U]).norm();
+                if (std::isfinite(incoming_length) &&
+                    incoming_length > max_seed_length + 1.0e-6) {
+                    const std::size_t segment_count = static_cast<std::size_t>(
+                        std::ceil(incoming_length / max_seed_length));
+                    corridor_path.clear();
+                    corridor_path.reserve(path.size() + segment_count);
+                    for (std::size_t index = 0; index < path.size(); ++index) {
+                        if (index == nearest_index) {
+                            const Vec3f start = path[index - 1U];
+                            const Vec3f delta = path[index] - start;
+                            for (std::size_t segment = 1U;
+                                 segment < segment_count; ++segment) {
+                                const double fraction = static_cast<double>(segment) /
+                                    static_cast<double>(segment_count);
+                                corridor_path.emplace_back(
+                                    start + static_cast<float>(fraction) * delta);
+                            }
+                        }
+                        corridor_path.emplace_back(path[index]);
+                    }
+                }
+            }
+            nearest_distance = std::numeric_limits<double>::infinity();
+            nearest_index = 0U;
+            for (std::size_t index = 0; index < corridor_path.size(); ++index) {
+                const double distance =
+                    (corridor_path[index] - route_boundary_gate->point).norm();
+                if (distance < nearest_distance) {
+                    nearest_distance = distance;
+                    nearest_index = index;
+                }
+            }
             const double matching_tolerance = std::max(
                 1.0e-4, std::min(0.25, route_boundary_gate->radius_m * 0.25));
             if (!std::isfinite(nearest_distance) ||
                 nearest_distance > matching_tolerance ||
-                nearest_index == 0U || nearest_index + 1U >= path.size()) {
+                nearest_index == 0U || nearest_index + 1U >= corridor_path.size()) {
                 planner_context_->warn(
                     " -- [planner] route-boundary gate is not an interior guide sample "
                     "distance={} tolerance={} index={} path_size={}",
-                    nearest_distance, matching_tolerance, nearest_index, path.size());
+                    nearest_distance, matching_tolerance, nearest_index,
+                    corridor_path.size());
                 solve_stage_.store(0);
                 return false;
             }
@@ -113,19 +156,19 @@ namespace navigation_planning_backend {
         int cnt_loop = 0;
         first_id = 0;
 
-        while(first_id < path.size() &&
-              map_ptr_->classify(path[first_id], navigation_world_model::GridLayer::kInflated) ==
+        while(first_id < corridor_path.size() &&
+              map_ptr_->classify(corridor_path[first_id], navigation_world_model::GridLayer::kInflated) ==
                   navigation_world_model::CellState::kOccupied) {
             first_id++;
         }
 
-        if (first_id >= static_cast<int>(path.size())) {
+        if (first_id >= static_cast<int>(corridor_path.size())) {
             planner_context_->warn(" -- [planner] Corridor path is entirely inside inflated occupancy");
             solve_stage_.store(0);
             return false;
         }
         if (!navigation_world_model::isCellTraversable(
-                map_ptr_->classify(path[first_id],
+                map_ptr_->classify(corridor_path[first_id],
                                    navigation_world_model::GridLayer::kInflated),
                 unknown_policy_)) {
             planner_context_->warn(
@@ -135,9 +178,9 @@ namespace navigation_planning_backend {
         }
 
         if(first_id!=0){
-            shifted_start_pt = path[first_id];
-            double dis = (path[first_id] - path[0]).norm() * 1.2;
-            GenerateEmptyPolytope(path[0], dis, temp_poly);
+            shifted_start_pt = corridor_path[first_id];
+            double dis = (corridor_path[first_id] - corridor_path[0]).norm() * 1.2;
+            GenerateEmptyPolytope(corridor_path[0], dis, temp_poly);
             sfcs.emplace_back(temp_poly);
         }
 
@@ -149,7 +192,7 @@ namespace navigation_planning_backend {
             solve_stage_.store(1);
             second_id = first_id;
             bool reached_route_boundary = false;
-            for (int j = first_id + 1; j < path.size(); j++) {
+            for (int j = first_id + 1; j < corridor_path.size(); j++) {
                 if (route_boundary_index.has_value() &&
                     static_cast<std::size_t>(j) == *route_boundary_index) {
                     // Stop the line corridor exactly at the mission boundary.
@@ -160,7 +203,8 @@ namespace navigation_planning_backend {
                     break;
                 }
                 bool reach_segment = false;
-                const double seed_length = (path[j] - path[first_id]).norm();
+                const double seed_length =
+                    (corridor_path[j] - corridor_path[first_id]).norm();
                 // Use one deterministic collision oracle throughout A*, main
                 // trajectory truncation and corridor generation.  The map's
                 // inflated layer includes the continuous vehicle radius plus
@@ -169,7 +213,8 @@ namespace navigation_planning_backend {
                 // and can stall for seconds around an obstacle boundary.
                 const bool line_free = seed_length <= seed_line_max_length_ &&
                     map_ptr_->isSegmentTraversable(
-                        path[first_id], path[j], navigation_world_model::GridLayer::kInflated,
+                        corridor_path[first_id], corridor_path[j],
+                        navigation_world_model::GridLayer::kInflated,
                         unknown_policy_);
                 if (!line_free) {
                     reach_segment = true;
@@ -184,7 +229,7 @@ namespace navigation_planning_backend {
                 second_id = j;
             }
 
-            if (second_id == first_id && second_id + 1 < path.size()) {
+            if (second_id == first_id && second_id + 1 < corridor_path.size()) {
                 planner_context_->warn(
                         " -- [planner] Frontend path contains a blocked adjacent edge at index {}",
                         first_id);
@@ -192,10 +237,12 @@ namespace navigation_planning_backend {
                 return false;
             }
 
-            seed_lines.emplace_back(path[first_id], path[second_id]);
-            if ((path[first_id] - path[second_id]).norm() > seed_line_max_length_ * 1.5) {
-                fmt::print("first: {}\n second: {}\n seed line max: {}\n", path[first_id].transpose(),
-                           path[second_id].transpose(), seed_line_max_length_);
+            seed_lines.emplace_back(corridor_path[first_id], corridor_path[second_id]);
+            if ((corridor_path[first_id] - corridor_path[second_id]).norm() >
+                seed_line_max_length_ * 1.5) {
+                fmt::print("first: {}\n second: {}\n seed line max: {}\n",
+                           corridor_path[first_id].transpose(),
+                           corridor_path[second_id].transpose(), seed_line_max_length_);
                 solve_stage_.store(0);
                 return false;
             }
@@ -216,7 +263,8 @@ namespace navigation_planning_backend {
                 temp_poly.overlap_depth_with_last_one = interior_depth;
                 temp_poly.interior_pt_with_last_one = interior_pt;
                 if (interior_depth < min_overlap_threshold_) {
-                    if (!GeneratePolytopeFromPoint(path[first_id], temp_poly_fix_p, deadline)) {
+                    if (!GeneratePolytopeFromPoint(
+                            corridor_path[first_id], temp_poly_fix_p, deadline)) {
                         cout << YELLOW << " -- [planner] GeneratePolytopeFromPoint failed." << RESET << endl;
                         solve_stage_.store(0);
                         return false;
@@ -268,7 +316,7 @@ namespace navigation_planning_backend {
             if (reached_route_boundary) {
                 Polytope boundary_poly;
                 if (!GeneratePolytopeFromPoint(
-                        path[second_id], boundary_poly, deadline)) {
+                        corridor_path[second_id], boundary_poly, deadline)) {
                     planner_context_->warn(
                         " -- [planner] failed to construct route-boundary point corridor");
                     solve_stage_.store(0);
@@ -278,14 +326,14 @@ namespace navigation_planning_backend {
                     std::sqrt(3.0);
                 Polytope acceptance_box;
                 if (!GenerateEmptyPolytope(
-                        path[second_id], half_extent, acceptance_box)) {
+                        corridor_path[second_id], half_extent, acceptance_box)) {
                     planner_context_->warn(
                         " -- [planner] failed to construct route-boundary acceptance box");
                     solve_stage_.store(0);
                     return false;
                 }
                 boundary_poly = boundary_poly.CrossWith(acceptance_box);
-                if (!boundary_poly.PointIsInside(path[second_id], 1.0e-6)) {
+                if (!boundary_poly.PointIsInside(corridor_path[second_id], 1.0e-6)) {
                     planner_context_->warn(
                         " -- [planner] route-boundary corridor excludes its waypoint");
                     solve_stage_.store(0);
@@ -313,7 +361,7 @@ namespace navigation_planning_backend {
                     second_id, route_boundary_gate->radius_m, half_extent,
                     incoming_overlap);
             }
-            if (second_id == path.size() - 1) {
+            if (second_id == corridor_path.size() - 1) {
                 break;
             }
             first_id = second_id;

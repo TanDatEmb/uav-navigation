@@ -7331,8 +7331,9 @@ release profiles must not use the former allowance.
   box whose half extent is `acceptance_radius / sqrt(3)`, and marks that
   corridor as a route-boundary gate. The gate is matched to an interior guide
   sample and the incoming overlap is checked before the corridor is published.
-  SFC simplification preserves the complete corridor sequence whenever the
-  marker is present.
+  If A* allocation leaves a long incoming edge, only that edge is subdivided
+  into bounded seed segments before gate construction. SFC simplification
+  preserves the complete corridor sequence whenever the marker is present.
 - **Safety impact:** `SAFETY_INVARIANT` preservation. This closes the route
   adherence hole where a single convex free-space corridor allowed MINCO to
   cut a genuine waypoint corner without entering the mission acceptance ball.
@@ -7341,10 +7342,12 @@ release profiles must not use the former allowance.
   deadline gates remain unchanged and authoritative. Invalid or unmatchable
   gate geometry fails closed.
 - **Derivation and cost:** The cube half extent is selected so every point in
-  the gate is inside the spherical mission acceptance radius. One bounded
-  point-corridor construction is added only for an active look-ahead boundary;
-  no second optimizer or planner is introduced. The marker is retained as
-  metadata so generic SFC simplification cannot erase the contract.
+  the gate is inside the spherical mission acceptance radius. Any added seed
+  samples are linear interpolation with segment length no greater than the
+  configured corridor seed limit. One bounded point-corridor construction is
+  added only for an active look-ahead boundary; no second optimizer or planner
+  is introduced. The marker is retained as metadata so generic SFC
+  simplification cannot erase the contract.
 - **Evidence:** The SFC preservation unit test passes with the existing planner
   and trajectory suites. The next authoritative build/manifest and repeated
   3 m/s multi-waypoint SITL must verify that the gate is constructed, waypoint
