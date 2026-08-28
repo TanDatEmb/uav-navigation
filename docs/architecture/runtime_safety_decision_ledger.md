@@ -75,6 +75,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-029 | A* distinct-layer edge validation (`PERFORMANCE_POLICY`) | one ray certificate on the active inflated search layer; a second inflated certificate only when the active search layer is evidence/probability | PROVISIONAL | Removes an identical immutable inflated-grid query from every expanded neighbor when A* already searches inflated occupancy. It does not cache across world revisions, skip an edge, change unknown policy, alter search deadlines, or weaken the separate inflated check for probability-map fallback. | Unit-test query identity and detour success, then compare A* iterations/latency/timeouts on repeated transverse-wall SITL and recorded snapshots without clearance regression. |
 | HG-030 | Route-backbone partial AABB support (`SAFETY_INVARIANT`) | only a valid immutable forward route backbone may project a remote local-search target to the current map boundary; executable prefix remains bounded by the 14 m horizon and continuously certified | PROVISIONAL | Preserves the remote mission waypoint and measured route progress while allowing receding motion in ±X/±Y on an axis-aligned anisotropic map. The boundary is never reported as waypoint completion; goals without valid route provenance still fail closed, and UNKNOWN, OUT_OF_MAP, corridor, world, dynamics and execution gates are unchanged. | Unit-test axis-independent backbone selection; repeat ±X/±Y and diagonal SITL. Require monotonic measured waypoint progress, explicit partial-frontier evidence, no OUT_OF_MAP solve loop, clearance, command renewal, and mapping/planner latency distributions. |
 | HG-031 | A* closed/occupied pre-ray pruning (`PERFORMANCE_POLICY`) | discard CLOSED neighbours and non-traversable endpoint cells before continuous edge queries within one immutable search round | PROVISIONAL | Removes reverse-edge and doomed endpoint raycasts without admitting any edge that lacks the existing search-layer/inflated certificate. It assumes CLOSED nodes are never reopened and does not reuse evidence across rounds or world revisions. | Unit-test zero repeated undirected edge queries; compare wall-detour expansions, timeout rate, clearance and p50/p95/p99 on repeated SITL and recorded snapshots. |
+| HG-032 | Speed-derived local visibility (`PERFORMANCE_POLICY`) | 14 m measured floor; effective horizon increases from the jerk-limited mission envelope up to the existing 23 m cap | PROVISIONAL | Rejects the fixed 23 m-at-all-speeds experiment after five exact-configuration runs pinned planner p95 near 180 ms and starved command renewal. Global route length, map support and every safety certificate remain unchanged. | Repeat low/high-speed structured SITL and recorded snapshots; require p99 scheduling margin, sufficient stopping support, longer command renewal and no clearance regression before certification. |
 
 ## Temporary-bypass register
 
@@ -10188,3 +10189,37 @@ release profiles must not use the former allowance.
   +Y wall phase and compare iterations per 40 ms, A* timeout rate, committed
   prefix renewal, clearance and planning p50/p95/p99. Recorded-data shadow
   planning remains required before changing any budget.
+
+### 2026-08-28 - Reject fixed full-horizon optimization at low speed
+
+- **Owner/status:** Planner visibility/performance policy, `PROVISIONAL`;
+  rejects the experiment introduced by `aec9479` while preserving its 23 m
+  physical cap.
+- **Scope:** Restore the 14 m low-speed visibility floor. The effective local
+  horizon is still derived as the larger of this floor and the mission's
+  jerk-limited stopping/replan envelope, then bounded by 23 m. The immutable
+  global route, 45 m route look-ahead and ROG-Map geometry are unchanged.
+- **Safety impact:** No collision radius, UNKNOWN/OUT_OF_MAP, V/A/J, flatness,
+  corridor, latest-world, backup, command lease, waypoint or PX4 gate changes.
+  At speeds whose physical stopping envelope exceeds 14 m, config still raises
+  the horizon and rejects any envelope above the cap. The change reduces only
+  low-speed A*/CIRI/MINCO problem size.
+- **Evidence:** Before `aec9479`, representative same-day artifacts commonly
+  measured planner p95 45-99 ms; its cited 14 m baseline `132546-1159975` was
+  45.975 ms. Five consecutive 23 m artifacts `155928-1302964` through
+  `162352-1320577` pinned planner p95 at 180.05-180.14 ms and EXP optimization
+  p95 at 138-177 ms. Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T163450-1332733` again had
+  planner p95 180.059 ms, EXP p95 162.596 ms, only 126 successful candidates
+  out of 362 solves, and exhausted its command 16.7 m before waypoint 2.
+  Its successful guide paths were already 25.7 m p50 despite the nominal 23 m
+  local visibility, confirming that fixed floor length was not equivalent to
+  a durable executable MAIN prefix.
+- **Removal/review condition:** Do not promote 14 or 23 m from one run. Replace
+  both fixed values with a bounded latency-and-physics policy only after
+  repeated per-stage distributions demonstrate sufficient command duration,
+  stopping support and p99 scheduler margin at each speed class.
+- **Verification:** Build/test planner config and backend; run matched 14/23 m
+  low-speed A/B on the generalization map, then high-speed and recorded-data
+  matrices. Compare guide/MAIN/backup durations, commit ratio, A*/CIRI/MINCO
+  p50/p95/p99, speed continuity, waypoint order, clearance and LIO health.

@@ -518,7 +518,7 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 5.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk, 12.0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.max_vel, 7.0);
-  EXPECT_DOUBLE_EQ(planner.visibility_horizon_m, 23.0);
+  EXPECT_DOUBLE_EQ(planner.visibility_horizon_m, 14.0);
   EXPECT_THROW(
       (navigation_planning_backend::Config(
           PLANNER_PRODUCT_CONFIG_PATH,
