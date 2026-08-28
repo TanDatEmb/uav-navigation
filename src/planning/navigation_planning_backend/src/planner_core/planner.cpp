@@ -1688,8 +1688,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     }
                     if (!lookahead_points.empty()) {
                         geometry_utils::GuideTimeAllocation allocation;
-                        if (geometry_utils::allocateGuideElapsedTimes(
+                        if (geometry_utils::allocateGuideContinuationElapsedTimes(
                                 cfg_.exp_traj_cfg.max_acc,
+                                cfg_.exp_traj_cfg.max_jerk,
                                 cfg_.exp_traj_cfg.max_vel,
                                 guide_path_end_vel, guide_path.back(),
                                 lookahead_points, allocation)) {

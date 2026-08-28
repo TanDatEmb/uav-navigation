@@ -10923,3 +10923,56 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Preserve moving-state timing across pass-through lookahead
+
+- **Owner/status:** Planner guide-time allocation and pass-through lookahead,
+  correctness/behavior fix, `PROVISIONAL` pending repeated SITL and recorded
+  data evaluation.
+- **Scope:** Use the jerk-limited continuation allocator for outgoing
+  pass-through lookahead instead of restarting the legacy terminal-stop
+  profile at each waypoint. Correct the terminal-stop profile so nonzero
+  initial velocity contributes to acceleration time and distance; reject a
+  requested stop when the remaining path is shorter than the physical
+  stopping distance under the declared acceleration limit.
+- **Safety impact:** No mission radius, V/A/J limit, corridor, tracking,
+  deadline, world or commit gate changes. Pass-through paths retain positive
+  bounded terminal speed; true stop paths end at zero speed or fail closed
+  when stopping is physically impossible. Overspeed and non-finite inputs are
+  rejected before arithmetic.
+- **Behavioral reason:** Outgoing lookahead called the rest-to-rest allocator
+  even though its initial speed was commonly near `4.9 m/s`. That allocator's
+  acceleration branch used `sqrt(2s/a)` and `v=at`, implicitly resetting
+  `v0` to zero. The resulting timestamps disagreed with the moving boundary
+  and fed the route-gate/Bezier pipeline short high-derivative pieces. Exact
+  artifact `external-mode-check-20260828T200546-1558461` then repeatedly
+  produced the deterministic `15.237669/95.634650/1800.647889` V/A/J seed.
+- **Derivation:** For a triangular stop profile,
+  `v_peak^2 = a*distance + v0^2/2`; acceleration distance is
+  `(v_peak^2-v0^2)/(2a)` and deceleration distance is
+  `v_peak^2/(2a)`. The trapezoidal case uses the same distances at `v_max`.
+  Point time is recovered from `v^2=v0^2+2as` during acceleration and the
+  corresponding deceleration relation after cruise.
+- **False-accept/false-reject consequences:** A short terminal path that
+  cannot stop under the configured acceleration now fails rather than
+  advertising a nonzero terminal speed against a zero-velocity endpoint.
+  Pass-through lookahead no longer manufactures that stop contract. Complete
+  trajectory corridor, dynamic, flatness, route and world certificates remain
+  authoritative.
+- **Runtime cost and evidence required:** Constant-time scalar arithmetic per
+  stop sample; the continuation path keeps its existing bounded bisections.
+  Focused tests verify exact nonzero-`v0` distance/time consistency, terminal
+  zero speed, impossible stopping distance rejection and planner facade
+  construction. Repeated 5 m/s SITL must show disappearance of the waypoint
+  speed reset and compare seed V/A/J, MAIN commit ratio, waypoint completion,
+  clearance, yaw, altitude and p50/p95/p99 planner time.
+- **Removal/review condition:** Keep the stop/continuation distinction. This
+  checkpoint is the first stage of the unified timed-guide contract; replace
+  the scalar profiles only when a single path-parameterized S-curve/TOPP-J
+  implementation carries equivalent PVAJ and fail-closed invariants.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory test_planner_facade -j2 &&
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no &&
+  ./build/navigation_planning_backend/test_planner_facade --gtest_color=no`;
+  then `make build && make test`; then repeated exact 5 m/s
+  `long_three_pillars_multiwaypoint` SITL.
