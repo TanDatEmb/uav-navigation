@@ -51,6 +51,22 @@ namespace navigation_planning_backend {
         BackupDisposition backup_disposition{BackupDisposition::SUCCESS};
     };
 
+    // This is the final command-boundary check for every trajectory role.  A
+    // yaw optimizer validates its own output, but concatenating an inherited
+    // prefix with a newly optimized MAIN and BACKUP suffix is a separate
+    // executable object and must be checked again before world authorization.
+    inline bool candidateYawRateWithinLimit(
+            const CandidateCommandBundle& candidate,
+            const double max_yaw_rate_rad_s) noexcept {
+        if (!std::isfinite(max_yaw_rate_rad_s) || max_yaw_rate_rad_s <= 0.0 ||
+            candidate.yaw.empty()) {
+            return false;
+        }
+        const double maximum_yaw_rate = candidate.yaw.getMaxVelRate();
+        return std::isfinite(maximum_yaw_rate) &&
+               maximum_yaw_rate <= max_yaw_rate_rad_s + 1.0e-6;
+    }
+
     struct CommandIdentity {
         std::uint64_t localization_epoch{0};
         std::uint64_t goal_epoch{0};

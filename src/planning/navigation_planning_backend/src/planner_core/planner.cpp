@@ -216,6 +216,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             planner_context_->error(" -- [planner] command rejected: no WorldModel commit authorizer");
             return false;
         }
+        const double maximum_yaw_rate = candidate.yaw.getMaxVelRate();
+        if (!candidateYawRateWithinLimit(candidate, cfg_.yaw_rate_max_rad_s)) {
+            latest_commit_decision_.store(static_cast<int>(
+                navigation_world_model::WorldCommitDecision::kCandidateRejected));
+            planner_context_->warn(
+                " -- [planner] command rejected by final yaw-rate certificate: "
+                "maximum={} limit={}",
+                maximum_yaw_rate, cfg_.yaw_rate_max_rad_s);
+            return false;
+        }
         const auto command_identity = commandIdentitySnapshot();
         if (!command_identity.valid()) {
             latest_commit_decision_.store(static_cast<int>(

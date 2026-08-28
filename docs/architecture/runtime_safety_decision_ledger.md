@@ -7977,6 +7977,40 @@ release profiles must not use the former allowance.
   callback gaps, command age, waypoint order, altitude, clearance, and
   fail-closed behavior in a fresh 3-column run.
 
+### 2026-08-28 - Certify yaw rate on the composed command bundle
+
+- **Owner:** Navigation planner command composition and execution-boundary
+  maintainers.
+- **Scope:** Before any candidate enters the immutable-world authorization
+  gate, evaluate the maximum yaw rate of the composed yaw trajectory. This
+  covers inherited prefix, newly optimized MAIN, BACKUP suffix, splice
+  boundaries, and measured-state emergency-brake candidates. The optimizer's
+  local yaw check remains in place; this is the final bundle-level check.
+- **Safety impact:** `SAFETY_INVARIANT` strengthening. A non-finite or
+  over-limit composed yaw trajectory is rejected and cannot be staged,
+  world-certified, or sampled by the command timer. No yaw-rate limit is
+  increased and no trajectory is clamped after certification. Position,
+  V/A/J, flatness, corridor, swept-world, UNKNOWN/OUT_OF_MAP, freshness,
+  backup, lease, and command-identity gates remain unchanged.
+- **Evidence:** The exact 5 Hz artifact
+  `.artifacts/runtime/external-mode-check-20260828T044208-708993` recorded a
+  yaw-rate peak of 4.699 rad/s while the planner configuration limit was
+  3.0 rad/s. `Planner::sampleCommand()` previously checked only finiteness;
+  local `YawTrajOpt` validation did not protect a composed trajectory after
+  concatenation/inheritance. The final certificate closes that boundary.
+- **Removal/review condition:** Never remove the check while the 3.0 rad/s
+  command contract is active. Revisit only if the vehicle contract changes
+  with a separately owned dynamic/body-rate certificate and repeated evidence.
+  Any increase in candidate rejection, safety hold, yaw discontinuity,
+  waypoint loss, altitude loss, or command exhaustion must be traced to the
+  composing segment and fixed there; do not bypass this certificate.
+- **Verification:** `make build`; run the planner trajectory/config tests,
+  runtime and PX4 contract tests; assert that composed MAIN+BACKUP and
+  emergency yaw trajectories over the limit are rejected while finite
+  in-limit trajectories pass; then repeat yaw-versus-velocity and 3-column
+  traces and report maximum yaw rate, yaw continuity, role, mode, waypoint,
+  altitude, clearance, and fail-closed outcome.
+
 ### 2026-08-28 - Coalesce immutable mapping snapshot publication at 10 Hz
 
 - **Owner:** Navigation mapping actor and runtime world-snapshot publication

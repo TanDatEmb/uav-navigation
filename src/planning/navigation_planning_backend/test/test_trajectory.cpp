@@ -442,6 +442,27 @@ TEST(PlannerTrajectory, EmergencyBundleIsAtomicallyOwnedByBackup) {
   EXPECT_NEAR(command.getYaw(0.5).x(), 0.4, 1.0e-12);
 }
 
+TEST(PlannerTrajectory, FinalCommandYawRateCertificateCoversComposedBundle) {
+  Eigen::MatrixXd slow_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  slow_yaw_coefficients(0, 6) = 1.0;
+  geometry_utils::Trajectory slow_yaw({1.0}, {slow_yaw_coefficients});
+
+  navigation_planning_backend::CandidateCommandBundle slow_candidate;
+  slow_candidate.yaw = slow_yaw;
+  EXPECT_TRUE(navigation_planning_backend::candidateYawRateWithinLimit(
+      slow_candidate, 2.0));
+
+  Eigen::MatrixXd fast_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  fast_yaw_coefficients(0, 6) = 4.0;
+  geometry_utils::Trajectory fast_yaw({1.0}, {fast_yaw_coefficients});
+  navigation_planning_backend::CandidateCommandBundle fast_candidate;
+  fast_candidate.yaw = fast_yaw;
+  EXPECT_FALSE(navigation_planning_backend::candidateYawRateWithinLimit(
+      fast_candidate, 3.0));
+  EXPECT_FALSE(navigation_planning_backend::candidateYawRateWithinLimit(
+      fast_candidate, std::numeric_limits<double>::quiet_NaN()));
+}
+
 TEST(PlannerTrajectory, RobotStateHasDeterministicFiniteDefaults) {
   const navigation_math::RobotState state;
   EXPECT_TRUE(state.p.isZero());
