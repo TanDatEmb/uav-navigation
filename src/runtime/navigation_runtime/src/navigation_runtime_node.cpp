@@ -1203,6 +1203,7 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
       message->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP &&
       planner_command_available_.load() && trajectory_reaches_goal_.load() &&
       !planner_failure_latched_.load() && !safety_suffix_active_.load();
+  const bool previous_safety_suffix_active = safety_suffix_active_.load();
   const bool can_hot_retarget = canHotRetargetAtWaypointTransition(
       same_logical_goal,
       active_goal_.has_value() &&
@@ -1261,8 +1262,9 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
           command_execution_lease_failure_latch_.transitionMutex());
       command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
       planner_failure_latched_.store(false);
-      safety_suffix_active_.store(false);
-      if (can_hot_retarget) {
+      safety_suffix_active_.store(
+          effective_hot_retarget && previous_safety_suffix_active);
+      if (effective_hot_retarget) {
         command_goal_epoch_.store(active_goal_epoch_.load());
       } else {
         planner_command_available_.store(false);

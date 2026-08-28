@@ -194,13 +194,13 @@ TEST(PlannerFsm, RetainsVisibleMainOnlyTrajectoryAfterTransientReplanFailure) {
       false, 1.395, 1.395, 1.395, 0.187, 0.75, true));
 }
 
-TEST(PlannerFsm, PassThroughHotRetargetsOnlyFromNominalCommand) {
+TEST(PlannerFsm, PassThroughHotRetargetsFromCertifiedFiniteCommand) {
   EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(true, true, true, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, false, true, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, false, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, true, false));
-  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
+  EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
 }
 
 TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {

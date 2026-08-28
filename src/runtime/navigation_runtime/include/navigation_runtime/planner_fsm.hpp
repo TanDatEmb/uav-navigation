@@ -13,8 +13,14 @@ namespace navigation_runtime {
 inline bool canHotRetargetAtWaypointTransition(
     bool same_logical_goal, bool previous_goal_was_pass_through,
     bool command_available, bool planner_failure_latched, bool safety_suffix_active) {
+  // A committed safety suffix is a world-certified braking command, not a
+  // goal-geometry claim. At a measured pass-through transition it may retain
+  // physical command ownership while the exact bundle identity is rebound to
+  // the new epoch. It remains safety-owned and finite; the planner must still
+  // replace it with a new-goal candidate before its declared end.
+  (void)safety_suffix_active;
   return !same_logical_goal && previous_goal_was_pass_through && command_available &&
-         !planner_failure_latched && !safety_suffix_active;
+         !planner_failure_latched;
 }
 
 // A pass-through goal transition changes the route boundary. Rebase on the
