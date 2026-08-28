@@ -149,17 +149,19 @@ inline PlannerResultDisposition classifyPlannerResult(
   if (result == navigation_planning::PlannerStatus::kRestartFromRest) {
     return PlannerResultDisposition::RestartFromRest;
   }
-  // planner backend's native FSM retries a failed rest-to-rest solve.  A single
-  // optimizer timeout is not an emergency and no trajectory has been
-  // committed yet for this goal.
-  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
-    return PlannerResultDisposition::RetryFromRest;
-  }
-  // A hot-replan failure leaves the execution bundle untouched. That bundle
-  // contains the planner's main-to-backup switch and remains the only safe
-  // command source while the committed safety suffix is drained.
+  // A failed replacement solve leaves the execution bundle untouched. This is
+  // true even when the planner has intentionally restarted from measured
+  // state: the existing immutable main-to-backup command remains the only
+  // certified source while the replacement is retried. Revalidate/retain it
+  // before charging the no-command PlanFromRest failure budget.
   if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
     return PlannerResultDisposition::RetainCommittedCommand;
+  }
+  // planner backend's native FSM retries a failed rest-to-rest solve when no
+  // executable command exists. A single optimizer timeout is not yet an
+  // emergency, but repeated confirmed failures remain fail-closed.
+  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
+    return PlannerResultDisposition::RetryFromRest;
   }
   return PlannerResultDisposition::FailClosed;
 }

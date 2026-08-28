@@ -66,6 +66,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
 | HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position or yaw exceeds its existing tracking-error budget; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag and yaw error. Require zero generated reverse-rebase connectors, bounded command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
 | HG-022 | Acceptance-region pass-through fillet (`SAFETY_INVARIANT`) | switch route-progress ownership at the closest trajectory junction inside the configured waypoint acceptance ball; do not pin nonzero-speed C3 turns to the exact corner centre | PROVISIONAL | Removes an impossible exact-tangent-change constraint at genuine corners while retaining the mission acceptance radius, continuous corridor/dynamics/flatness gates, analytic regression checks on each route leg, measured waypoint acceptance and latest-world authorization. Stop waypoints do not receive the phase switch. | Repeat 90-degree and arbitrary-bearing missions. Require the measured vehicle to enter the acceptance ball, no admitted fold on either leg, bounded corner speed/clearance, stable yaw, and higher nominal commit availability across more than one run. |
+| HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 
 ## Temporary-bypass register
 
@@ -9062,3 +9063,33 @@ release profiles must not use the former allowance.
   requiring measured entry into the acceptance ball, bounded corner speed and
   clearance, stable yaw, zero admitted folds and improved command renewal over
   more than one run.
+
+### 2026-08-28 - Retain a certified command while restarting from measured state
+
+- **Owner:** Runtime planner-result FSM and immutable command execution store.
+- **Scope:** If a measured-state `PlanFromRest` replacement fails while the
+  same goal still has a committed command, route the result through the
+  existing retained-command validation path. Apply the consecutive
+  rest-to-rest failure budget only when no executable command is available.
+- **Safety impact:** A planner return code never renews a command by itself.
+  Retention still requires finite trajectory metadata, exact goal/localization
+  identity, latest-world swept validation, remaining duration and the existing
+  command-anchor bound. If those checks fail, the runtime builds a
+  measured-state emergency brake or clears command exposure and fails closed.
+- **Evidence:** In artifact
+  `.artifacts/runtime/external-mode-check-20260828T111157-1003608`, generation
+  `88` was still active and certified to continue from about `(44.5,5.1)`
+  through the waypoint toward `(50.2,0.43)`. Three fast PlanFromRest optimizer
+  failures charged the no-command failure budget and handed control to PX4
+  Hold while the UAV was still `3.82 m` before the waypoint. The same failures
+  in hot-replan mode already use current-world/suffix validation instead.
+- **Removal/review condition:** Replace only with a unified supervisor whose
+  states explicitly separate command availability from planner solve mode and
+  preserve equivalent latest-world, anchor and expiry checks. Never suppress
+  the failure budget when no valid command exists or retain a bundle based only
+  on an old certificate.
+- **Verification:** Unit-test failed PlanFromRest with and without a committed
+  command; run runtime/backend tests and Release build. In repeated SITL,
+  inject replacement failures before/after backup switch and after expiry;
+  require no premature mode exit while validation passes and deterministic
+  emergency-stop/fail-closed behavior once it does not.

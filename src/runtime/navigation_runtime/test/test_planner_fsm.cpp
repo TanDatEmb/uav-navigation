@@ -134,6 +134,12 @@ TEST(PlannerFsm, RetriesTransientPlannerFailures) {
             PlannerResultDisposition::RetainCommittedCommand);
 }
 
+TEST(PlannerFsm, MeasuredStateRestartRetainsCurrentCertifiedCommandOnSolveFailure) {
+  EXPECT_EQ(classifyPlannerResult(
+                navigation_planning::PlannerStatus::kFailed, true, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
+}
+
 TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed, false, false, false),
             PlannerResultDisposition::FailClosed);
