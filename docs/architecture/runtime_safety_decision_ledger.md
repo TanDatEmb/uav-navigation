@@ -10923,3 +10923,35 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Rejected experiment: independently retime outgoing lookahead
+
+- **Owner/status:** Planner guide timing, `REJECTED` and reverted by
+  `a09d9b6`; no product behavior retained.
+- **Scope:** Commit `cafbd60` corrected the legacy stop-profile equations for
+  nonzero initial velocity and independently switched outgoing pass-through
+  lookahead to the jerk-limited continuation allocator. It intentionally left
+  route-gate midpoint allocation and Bezier secant-derived PVAJ unchanged to
+  test whether the local speed reset was the dominant failure.
+- **Safety impact:** Hard gates were unchanged and rejected every malformed
+  seed, so no uncertified MAIN was committed. The experiment was reverted
+  because independently parameterizing the outgoing suffix shortened the
+  route-gate piece and amplified the existing PVAJ mismatch.
+- **Evidence:** Exact-SHA artifact
+  `external-mode-check-20260828T202744-1585066` remained `BLOCKED`, accepted
+  only waypoint 0 and ended in `PAUSED_SAFETY_STOP`. The repeated minimum
+  piece duration moved from approximately `0.35 s` to `0.30 s`; representative
+  seed extrema worsened from about
+  `15.24/95.63/1800.65` to `15.80/122.58/2807.87` V/A/J. Across 19 planner
+  records, no corridor seed was selected and every duration retry rebuild
+  remained invalid. Planner p95 improved to roughly `111 ms`, confirming
+  latency was not the causal gate.
+- **Conclusion/removal condition:** Do not reapply a suffix-only allocator or
+  tune a minimum piece duration. Concatenate retained/local/lookahead geometry
+  first, construct one timed-guide arc profile, derive route-gate time from
+  that profile, and pass its junction PVAJ into the deterministic seed. Only a
+  complete certificate may make that baseline executable.
+- **Verification:** Reproduce with `make external-mode-check
+  MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=5` and inspect
+  `report.json` seed extrema, selected-mode counts, waypoint coverage and
+  planner latency distribution.
