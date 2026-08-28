@@ -198,6 +198,19 @@ TEST(PlannerPassThrough, ShortCornerBoundaryRequiresLowerIncomingTerminalSpeed) 
   EXPECT_LT(terminal_cap, incoming.norm());
 }
 
+TEST(PlannerPassThrough, CornerTerminalSpeedUsesAcceptanceRoomEnvelope) {
+  const double cap = navigation_planning_backend::passThroughCornerSpeedCap(
+      0.9, 2.0, 2.94);
+  EXPECT_NEAR(cap, std::sqrt(1.8), 1.0e-12);
+  EXPECT_LT(cap, 2.94);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::passThroughCornerSpeedCap(0.9, 2.0, 1.0),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::passThroughCornerSpeedCap(0.0, 2.0, 3.0),
+      0.0);
+}
+
 TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
   const auto endpoint = navigation_planning_backend::passThroughRouteWindowEndpoint(
       Eigen::Vector3d{50.0, 5.0, 3.0}, Eigen::Vector3d{50.0, -5.0, 3.0},

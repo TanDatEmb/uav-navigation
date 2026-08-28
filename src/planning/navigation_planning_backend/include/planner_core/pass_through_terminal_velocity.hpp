@@ -50,6 +50,26 @@ inline double terminalSpeedCapForPath(
   return std::clamp(cap, 0.0, maximum_velocity_mps);
 }
 
+// A genuine pass-through corner has only the mission acceptance region as
+// local geometric room for changing heading. Bound the terminal seed used
+// until the measured waypoint handoff by the centripetal envelope implied by
+// that room. This is a parameterization guard, not a relaxation of the
+// trajectory certificate; the generated polynomial still has to pass the
+// strict continuous V/A/J and world checks.
+inline double passThroughCornerSpeedCap(
+    const double acceptance_radius_m,
+    const double maximum_acceleration_mps2,
+    const double maximum_velocity_mps) noexcept {
+  if (!std::isfinite(acceptance_radius_m) || acceptance_radius_m <= 0.0 ||
+      !std::isfinite(maximum_acceleration_mps2) ||
+      maximum_acceleration_mps2 <= 0.0 ||
+      !std::isfinite(maximum_velocity_mps) || maximum_velocity_mps <= 0.0) {
+    return 0.0;
+  }
+  const double cap = std::sqrt(acceptance_radius_m * maximum_acceleration_mps2);
+  return std::isfinite(cap) ? std::min(cap, maximum_velocity_mps) : 0.0;
+}
+
 // The next route piece must remain executable while the planner renews the
 // command after a measured waypoint crossing.  Derive its minimum length from
 // the current stopping envelope, two replan-forward intervals, and the

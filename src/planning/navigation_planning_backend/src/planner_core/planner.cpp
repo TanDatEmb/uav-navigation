@@ -1706,11 +1706,30 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const double terminal_velocity_cap =
                     cfg_.exp_traj_cfg.max_vel *
                     cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
+            double preferred_terminal_speed = guide_path_end_vel;
+            if (route_lookahead_active && pass_through_next_target_.has_value()) {
+                // The route-boundary corridor is intentionally local to the
+                // acceptance region. Do not request full cruise speed at its
+                // far endpoint: the next measured handoff will own recovery
+                // on the outgoing leg, while this solve must leave room for
+                // a certified heading change through the boundary.
+                const double corner_speed_cap = passThroughCornerSpeedCap(
+                    goal_acceptance_radius_m_, cfg_.exp_traj_cfg.max_acc,
+                    terminal_velocity_cap);
+                if (corner_speed_cap > 0.0) {
+                    preferred_terminal_speed = std::min(
+                        preferred_terminal_speed, corner_speed_cap);
+                    planner_context_->info(
+                        " -- [planner] pass-through corner terminal speed cap={:.3f} "
+                        "preferred={:.3f}",
+                        corner_speed_cap, guide_path_end_vel);
+                }
+            }
             const auto terminal_velocity = frontierContinuationVelocity(
                     guide_path.back().cast<double>(),
                     guide_path[guide_path.size() - 2U].cast<double>(),
                     pos_init_state.col(1).cast<double>(),
-                    guide_path_end_vel,
+                    preferred_terminal_speed,
                     terminal_velocity_cap,
                     cfg_.exp_traj_cfg.max_acc,
                     cfg_.exp_traj_cfg.max_jerk,

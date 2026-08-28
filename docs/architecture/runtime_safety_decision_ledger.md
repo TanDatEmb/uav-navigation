@@ -7377,3 +7377,41 @@ release profiles must not use the former allowance.
   external-mode-check`, checking route-boundary diagnostics, waypoint order,
   endpoint error, speed, altitude, clearance, strict backup, and planning
   p50/p95/p99.
+
+### 2026-08-28 - Shape corner terminal speed before outgoing recovery
+
+- **Owner:** Navigation planner terminal-state and pass-through handoff
+  maintainers. **Scope:** When a genuine pass-through corner has an active
+  certified route look-ahead, the frontier terminal-state seed is capped by
+  `min(max_velocity, sqrt(acceptance_radius * max_acceleration))` before the
+  measured waypoint handoff. The cap applies only to the look-ahead
+  parameterization; the following replan may recover speed on the outgoing
+  tangent through the existing jerk/acceleration-limited continuity helper.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This removes a
+  physically over-constrained full-cruise terminal request at a sub-metre
+  route-boundary turn. It does not change mission acceptance, product V/A/J
+  limits, collision, UNKNOWN, OUT_OF_MAP, clearance, corridor, backup,
+  freshness, command-anchor, or deadline gates. A candidate remains rejected
+  unless the existing strict continuous certificates pass.
+- **Derivation and cost:** The terminal seed must leave geometric room for a
+  heading change inside the current acceptance region. The bound follows the
+  centripetal envelope `v^2/r <= a` using the existing acceptance radius as a
+  bounded local-room proxy; it is a seed guard, not a new acceptance threshold
+  or a physical-certificate allowance. The change adds one bounded square-root
+  calculation per route-lookahead solve and does not add a planner pass.
+- **Evidence:** Add focused helper coverage for the acceptance-room cap and
+  invalid inputs. Rebuild the authoritative manifest and repeat planner,
+  trajectory, mission, runtime, and structured three-pillar SITL evidence;
+  this entry remains open until waypoint completion, speed recovery, altitude,
+  clearance, optimizer failure/latency tails, strict backup, and command
+  continuity are measured repeatedly.
+- **Removal/review condition:** Revisit if the cap creates a stop or speed
+  deadlock on feasible legs, fails to remove route-boundary optimizer failures,
+  worsens altitude/clearance, increases latency tails, or permits a waypoint
+  skip. Do not raise the cap from a single SITL run.
+- **Verification:** `make build`; source `install/setup.bash` and run focused
+  planner/trajectory/mission/runtime tests; then repeat
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` and the declared dataset shadow-planning replay,
+  inspecting corner cap, route-boundary diagnostics, waypoint order, speed,
+  altitude, clearance, strict backup, and p50/p95/p99 planning latency.
