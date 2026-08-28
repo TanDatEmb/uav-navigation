@@ -69,7 +69,6 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 | HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
-| HG-026 | Curved MAIN backup reachability (`SAFETY_INVARIANT`) | consecutive inflated-map segments must remain KNOWN_FREE within the finite visibility-distance budget; braking suffix keeps independent SFC and swept certificate | PROVISIONAL | Removes the false requirement that every future MAIN point share one obstacle-free ray with the current vehicle. A curved route can remain backup-reachable around an obstacle without admitting UNKNOWN or OUT_OF_MAP. | Unit-test curved/blocked/budget cases; require longer MAIN prefix, fewer boundary restarts, unchanged clearance and bounded planner p95/p99 over repeated scenario-matrix SITL and recorded data. |
 
 ## Temporary-bypass register
 
@@ -9965,35 +9964,3 @@ release profiles must not use the former allowance.
 - **Verification:** `git show d3330da`, `git show e631881`, focused 8/8 backend
   tests, Release build and the cited repeated SITL artifacts preserve the
   implementation, rollback and evidence.
-
-### 2026-08-28 - Certify backup reachability along the curved MAIN prefix
-
-- **Owner/status:** MAIN/BACKUP bundle assembly, `PROVISIONAL`; anchors
-  `backup_prefix_reachability.hpp` and `Planner::generateBackupTrajectory`.
-- **Physical contract:** A backup switch is reachable when every consecutive
-  segment of the MAIN trajectory from the executable command boundary to that
-  switch traverses the inflated map under `kRequireKnownFree`, and cumulative
-  arc length remains inside the configured finite visibility budget. The
-  braking polynomial then receives its own switch-to-endpoint SFC and strict
-  KNOWN_FREE swept validation. UNKNOWN and OUT_OF_MAP remain blocked.
-- **Safety impact:** `SAFETY_INVARIANT`, fail closed. The removed straight-ray
-  predicate was stronger but physically unrelated: a pillar occluding the far
-  side of a safe detour forced an early backup even though the vehicle could
-  reach every point along the known-free curve. False reject still causes an
-  earlier certified stop; false accept is prevented by per-segment inflated
-  traversal, cumulative-distance bound, braking hull/SFC and final full-bundle
-  world authorization.
-- **Derivation:** Baseline artifacts show guide length 23-26 m while exported
-  backup switches commonly occur at 0.8-2.3 s. The implementation traced every
-  future point with a line from the current origin; any curved obstacle detour
-  therefore became invisible at the first occlusion. Linear consecutive
-  segment traversal is O(path samples), replacing the former repeated-origin
-  ray work without adding an unbounded retry.
-- **Evidence required:** Focused curved/blocked/budget tests, Release build,
-  repeated long-three-column SITL and the new ±X/±Y scenario matrix. Compare
-  backup switch time, MAIN prefix length, boundary restart count, EXP/backup
-  failures, planner p50/p95/p99, clearance, route/yaw tracking and completion.
-- **Removal/review condition:** Revert if repeated evidence shortens certified
-  prefixes, worsens clearance/tracking, or raises latency tails. Replace only
-  with an equally fail-closed swept-prefix certificate tied to immutable map
-  provenance; never restore line-of-sight as a proxy for curved reachability.

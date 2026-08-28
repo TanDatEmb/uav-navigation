@@ -11,7 +11,6 @@
 #include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_core/backup_braking.hpp>
-#include <planner_core/backup_prefix_reachability.hpp>
 #include <planner_core/command_time.hpp>
 #include <planner_core/guide_endpoint.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
@@ -2208,12 +2207,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         bool all_traj_visible{true};
         vector<TimePosPair> eval_ps;
 
-        // Collect geometrically distinct samples first. Backup reachability is
-        // a property of the certified MAIN prefix, not of a straight sensor
-        // ray from the current command origin to every future point. The
-        // latter truncates a safe curved route as soon as an obstacle occludes
-        // its far side, even when every consecutive inflated-map segment is
-        // already KNOWN_FREE.
+        // Collect geometrically distinct samples first. A nearly straight
+        // trajectory shares one sensor ray, so checking every longer prefix
+        // from the robot is quadratic in trajectory length at fine map
+        // resolution. In that common open-space case one farthest-endpoint
+        // ray is equivalent for occupied-grid visibility.
         vector<TimePosPair> candidate_ps;
         Vec3f last_pos = ref_exp_traj.getPos(start_t);
         for (out_t = start_t; out_t < total_dur; out_t += cfg_.sample_traj_dt_s) {
@@ -2237,36 +2235,70 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
         candidate_ps.emplace_back(total_dur, temp_point);
 
+        bool shared_visibility_ray{false};
+        const Vec3f visibility_origin = back_traj_info.getRobotPos();
+        if (!candidate_ps.empty()) {
+            const Vec3f farthest_delta = candidate_ps.back().second - visibility_origin;
+            const double farthest_distance = farthest_delta.norm();
+            if (farthest_distance > cfg_.resolution) {
+                const Vec3f ray_direction = farthest_delta / farthest_distance;
+                double last_projection{-1.0};
+                shared_visibility_ray = true;
+                // isLineFree checks the configured robot-radius neighbor tube
+                // around the ray. Any stitched prefix contained by that same
+                // tube is covered by the endpoint check as well.
+                // A single inflated ray may represent another sample only when
+                // their centerlines are the same ray. Merely being within one
+                // robot radius is unsafe: the two radius-r tubes then overlap
+                // but neither contains the other.
+                const double lateral_tolerance =
+                        std::max(1.0e-9, cfg_.resolution * 1.0e-6);
+                for (const auto &sample : candidate_ps) {
+                    const Vec3f delta = sample.second - visibility_origin;
+                    const double projection = delta.dot(ray_direction);
+                    const double lateral_error = (delta - projection * ray_direction).norm();
+                    if (projection + cfg_.resolution < last_projection || projection < 0.0 ||
+                        projection > farthest_distance + cfg_.resolution ||
+                        lateral_error > lateral_tolerance) {
+                        shared_visibility_ray = false;
+                        break;
+                    }
+                    last_projection = projection;
+                }
+            }
+        }
+
         const double visibility_limit =
                 cfg_.sensing_horizon_m > 0 ? std::min(cfg_.sensing_horizon_m, cfg_.visibility_horizon_m)
                                            : cfg_.visibility_horizon_m;
-        eval_ps.clear();
-        eval_ps.emplace_back(start_t, command_start);
-        Vec3f prefix_point = command_start;
-        double certified_prefix_length_m = 0.0;
-        Vec3f first_blocked_point = command_start;
-        for (const auto &sample : candidate_ps) {
-            if (sample.first <= start_t + 1.0e-9) continue;
-            const auto prefix_advance = advanceBackupReachablePrefix(
-                prefix_point.cast<double>(), sample.second.cast<double>(),
-                certified_prefix_length_m, visibility_limit, cfg_.resolution,
-                [this](const Eigen::Vector3d& begin, const Eigen::Vector3d& end) {
-                    return map_ptr_->isSegmentTraversable(
-                        begin, end,
-                        navigation_world_model::GridLayer::kInflated,
-                        navigation_world_model::UnknownPolicy::kRequireKnownFree);
-                });
-            out_t = sample.first;
-            if (!prefix_advance.admissible) {
-                all_traj_visible = false;
-                first_blocked_point = sample.second;
-                break;
+        const auto inflated_line_visible = [&](const Vec3f &endpoint) {
+            if (visibility_limit > 0.0 &&
+                (endpoint - visibility_origin).norm() > visibility_limit) {
+                return false;
             }
-            certified_prefix_length_m = prefix_advance.accumulated_length_m;
-            prefix_point = sample.second;
-            eval_ps.push_back(sample);
+            // A backup is the fail-safe suffix. Its visibility certificate must
+            // be known-free, independent of the exploratory main policy.
+            return map_ptr_->isSegmentTraversable(
+                    visibility_origin, endpoint,
+                    navigation_world_model::GridLayer::kInflated,
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+        };
+        if (shared_visibility_ray &&
+            inflated_line_visible(candidate_ps.back().second)) {
+            eval_ps = candidate_ps;
+            out_t = total_dur;
+        } else {
+            eval_ps.clear();
+            for (const auto &sample : candidate_ps) {
+                out_t = sample.first;
+                eval_ps.push_back(sample);
+                if (!inflated_line_visible(sample.second)) {
+                    all_traj_visible = false;
+                    break;
+                }
+            }
+            if (all_traj_visible) out_t = total_dur;
         }
-        if (all_traj_visible) out_t = total_dur;
         if (all_traj_visible) {
             // No backup trajectory is needed when every remaining EXP sample
             // is visible. The upstream branch generated a long corridor from
@@ -2279,7 +2311,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
             return FINISH;
         }
-        Vec3f invisible_p = first_blocked_point;
+        Vec3f invisible_p = eval_ps.back().second;
         while (out_t > start_t) {
             out_t -= cfg_.sample_traj_dt_s;
             Vec3f out_p = ref_exp_traj.getPos(out_t);
@@ -2309,18 +2341,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // obstacle or collapse the first CIRI line to zero length.  The
         // command-boundary KNOWN_FREE check above plus the full candidate
         // validator are the authority here.
-        // Seed only a local corridor around the end of the certified curved
-        // prefix. The actual braking curve receives a switch-to-endpoint SFC
-        // below and is independently swept-validated under KNOWN_FREE.
-        double local_line_start_t = seed_point_t;
-        Vec3f local_line_start = seed_point;
-        while (local_line_start_t > start_t + 1.0e-9 &&
-               (seed_point - local_line_start).norm() <= cfg_.resolution) {
-            local_line_start_t = std::max(
-                    start_t, local_line_start_t - cfg_.sample_traj_dt_s);
-            local_line_start = ref_exp_traj.getPos(local_line_start_t);
-        }
-        Line line{local_line_start, seed_point};
+        const Vec3f backup_origin = back_traj_info.getRobotPos();
+        Line line{backup_origin, seed_point};
         Polytope temp_poly;
         if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly, &solve_deadline)) {
             planner_context_->warn(" -- [planner] GeneratePolytopeFromLine failed, force return");
