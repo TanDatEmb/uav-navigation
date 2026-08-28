@@ -8749,3 +8749,31 @@ release profiles must not use the former allowance.
   3.0 s feasible state; run all backend tests and repeat representative SITL,
   requiring zero admitted yaw-limit violations and improved MAIN/BACKUP
   availability before acceptance.
+
+### 2026-08-28 - Reject folded MAIN trajectories in active-route coordinates
+
+- **Owner:** Planner final candidate admission and immutable mission route.
+- **Scope:** Before world authorization, analytically evaluate every position
+  extremum of the unexecuted MAIN intervals along the active incoming route
+  tangent. Reject a candidate whose internal high-water regression exceeds the
+  existing route-progress backtrack tolerance (0.5 m). BACKUP is not weakened
+  or reclassified, and no ENU-axis velocity sign is used.
+- **Safety impact:** Prevents a nominal optimizer result from commanding a
+  multi-metre reverse/U-turn while still targeting a waypoint ahead. The gate
+  is role-aware and fail-closed for malformed applicable candidates. Explicit
+  reverse missions still require a separate STOP-TURN-GO/recovery role rather
+  than silently treating reverse translation as ordinary MAIN.
+- **Evidence:** Exact-HEAD artifact
+  `external-mode-check-20260828T094723-936773` commanded about +2.9 m/s then
+  -2.0 m/s on the same incoming leg to waypoint 2; measured waypoint distance
+  grew from about 14.7 m to 21.6 m before recovering. Artifact
+  `external-mode-check-20260828T093028-924584` independently contained a MAIN
+  fold of about 4.17 m on waypoint 5 to 6.
+- **Removal/review condition:** Replace only with a full route-tube progress
+  certificate plus explicit nominal/rejoin/reverse/recovery states. Do not ban
+  negative ENU X/Y velocity, apply the gate to emergency braking, or enlarge
+  waypoint acceptance to hide regression.
+- **Verification:** Unit-test an analytic advance-then-fold polynomial and a
+  forward lateral detour; run all backend tests and repeat the exact
+  three-column mission, requiring rejected folds to retain a valid prior bundle
+  or transition to certified BRAKE without high-speed yaw reversal.

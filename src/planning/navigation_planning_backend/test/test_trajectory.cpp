@@ -20,6 +20,7 @@
 #include "planner_core/guide_endpoint.hpp"
 #include "planner_core/kinematic_state_boundary.hpp"
 #include "planner_core/replan_contract.hpp"
+#include "planner_core/route_regression_certificate.hpp"
 #include "planner_core/planning_stage.hpp"
 #include "planner_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
@@ -1203,6 +1204,97 @@ TEST(PlannerTrajectory, MinimumJerkForwardYawStopHasPhysicalAccelerationPeak) {
   EXPECT_NEAR(stopping.getVel(0.2).x(), 0.0, 1.0e-12);
   EXPECT_NEAR(stopping.getAcc(0.2).x(), 0.0, 1.0e-12);
   EXPECT_NEAR(stopping.getMaxAccRate(), 6.0, 1.0e-8);
+}
+
+navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
+    const Eigen::Vector3d& start_position = Eigen::Vector3d{0.0, 0.0, 3.0},
+    const Eigen::Vector3d& active_position = Eigen::Vector3d{20.0, 0.0, 3.0},
+    const Eigen::Vector3d& measured_position = Eigen::Vector3d{5.0, 0.0, 3.0}) {
+  navigation_mission::Mission mission;
+  mission.id = "route-regression-test";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint start;
+  start.id = "start";
+  start.position_enu = start_position;
+  navigation_mission::MissionWaypoint active;
+  active.id = "active";
+  active.position_enu = active_position;
+  mission.waypoints = {start, active};
+  navigation_mission::RouteProgress progress(mission);
+  const auto measured = progress.update(measured_position);
+  EXPECT_TRUE(measured.valid);
+  return progress.snapshot(mission.id, mission.frame, 1U, 1U, 1U);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldedNominal) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  // x(t)=5+8t-4t^2 advances to x=9 and folds back to x=5.
+  coefficients.row(0) << -4.0, 8.0, 5.0;
+  coefficients(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({2.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_FALSE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 4.0, 1.0e-9);
+  EXPECT_NEAR(certificate.first_violation_time_s, 2.0, 1.0e-9);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateAcceptsForwardDetour) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << 4.0, 2.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({2.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateDoesNotGateBackupBrake) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << -1.0, 0.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::BACKUP}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_FALSE(certificate.applicable);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateAllowsNegativeEnuDirection) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << -4.0, 0.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  const auto reverse_enu_route = makeStraightActiveRouteSnapshot(
+      Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d{0.0, 0.0, 3.0},
+      Eigen::Vector3d{5.0, 0.0, 3.0});
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, reverse_enu_route, 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
 }
 
 TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {

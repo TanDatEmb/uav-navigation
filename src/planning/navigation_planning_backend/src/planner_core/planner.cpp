@@ -5,6 +5,7 @@
  */
 
 #include <planner_core/planner.hpp>
+#include <planner_core/route_regression_certificate.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/command_time.hpp>
@@ -252,6 +253,27 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         candidate.localization_epoch = command_identity.localization_epoch;
         candidate.goal_epoch = command_identity.goal_epoch;
         candidate.request_id = command_identity.request_id;
+        const double authorization_wall_time = planner_context_->getSimTime();
+        if (route_snapshot_.has_value()) {
+            const double begin_tt = std::max(
+                0.0, authorization_wall_time - candidate.start_wall_time);
+            const double route_regression_tolerance_m =
+                navigation_mission::RouteProgressConfig{}.backtrack_tolerance_m;
+            const auto route_certificate = certifyMainRouteRegression(
+                candidate, *route_snapshot_, begin_tt,
+                route_regression_tolerance_m);
+            if (route_certificate.applicable && !route_certificate.valid) {
+                latest_commit_decision_.store(static_cast<int>(
+                    navigation_world_model::WorldCommitDecision::kCandidateRejected));
+                planner_context_->warn(
+                    " -- [planner] command rejected by MAIN route-regression "
+                    "certificate: maximum={} tolerance={} first_time={}",
+                    route_certificate.maximum_regression_m,
+                    route_regression_tolerance_m,
+                    route_certificate.first_violation_time_s);
+                return false;
+            }
+        }
         const auto pinned_identity = map_ptr_->identity();
         const auto lease = commit_authorizer_->latest();
         if (!lease) {
@@ -265,7 +287,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // publication gate. The certificate also carries the conservative
         // swept region; the authorizer may retain it across unrelated map
         // revisions only when immutable change provenance proves disjointness.
-        const double authorization_wall_time = planner_context_->getSimTime();
         const auto validation = validateExecutableCandidate(
             *lease.view, candidate, authorization_wall_time, certificate_policy);
         if (!validation.valid || !validation.protected_region.valid()) {
