@@ -156,10 +156,6 @@ namespace navigation_planning_backend {
 
         bool authorizeAndStage(CandidateCommandBundle&& candidate);
 
-        [[nodiscard]] bool retainCertifiedCurrentMainHorizon(
-            const CandidateCommandBundle& candidate,
-            bool new_goal);
-
         [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
         exportStagedCommandCandidate(
             const CandidateCommandBundle& command,

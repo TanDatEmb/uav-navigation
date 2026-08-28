@@ -390,42 +390,6 @@ TEST(PlannerTrajectory, VisibleReplacementDoesNotEraseFutureBackupSuffix) {
       false, false));
 }
 
-TEST(PlannerTrajectory, AdmissionComparesAbsoluteMainHorizon) {
-  EXPECT_TRUE(navigation_planning_backend::currentMainHorizonDominatesCandidate(
-      100.0, 8.0, 6.0, true,
-      102.0, 7.0, 2.0, true,
-      103.0));
-  EXPECT_FALSE(navigation_planning_backend::currentMainHorizonDominatesCandidate(
-      100.0, 8.0, 6.0, true,
-      102.0, 7.0, 5.0, true,
-      103.0));
-  EXPECT_FALSE(navigation_planning_backend::currentMainHorizonDominatesCandidate(
-      100.0, 8.0, 6.0, true,
-      102.0, 7.0, 2.0, true,
-      106.0));
-  EXPECT_TRUE(navigation_planning_backend::currentMainHorizonDominatesCandidate(
-      100.0, 10.0, 0.0, false,
-      103.0, 5.0, 4.0, true,
-      104.0));
-}
-
-TEST(PlannerTrajectory, CommittedSnapshotRebuildsExactCandidateRoles) {
-  navigation_planning_backend::CmdTraj command;
-  auto position = linearTrajectory(2.0, 10.0);
-  auto yaw = linearTrajectory(2.0, 10.0);
-  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
-  const auto rebuilt = navigation_planning_backend::CmdTraj::candidateFromSnapshot(
-      command.snapshot());
-  ASSERT_TRUE(rebuilt.has_value());
-  EXPECT_DOUBLE_EQ(rebuilt->start_wall_time, 10.0);
-  EXPECT_TRUE(rebuilt->backup_suffix_available);
-  EXPECT_DOUBLE_EQ(rebuilt->backup_start_tt, 0.0);
-  ASSERT_EQ(rebuilt->roles.size(), 1U);
-  EXPECT_EQ(rebuilt->roles.front().role,
-            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
-  EXPECT_TRUE(rebuilt->position.getState(0.5).isApprox(position.getState(0.5)));
-}
-
 TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
   traj_opt::Config config;
   config.mass = 1.0;

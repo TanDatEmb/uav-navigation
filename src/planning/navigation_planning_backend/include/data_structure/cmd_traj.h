@@ -210,31 +210,6 @@ namespace navigation_planning_backend {
             mtx_.unlock();
         }
 
-        static std::optional<CandidateCommandBundle> candidateFromSnapshot(
-                const CommittedTrajectorySnapshot& snapshot) {
-            if (snapshot.empty || snapshot.position.empty() || snapshot.yaw.empty()) {
-                return std::nullopt;
-            }
-            CandidateCommandBundle candidate;
-            candidate.position = snapshot.position;
-            candidate.yaw = snapshot.yaw;
-            candidate.start_wall_time = snapshot.position.start_WT;
-            candidate.roles = snapshot.roles;
-            candidate.localization_epoch = snapshot.identity.localization_epoch;
-            candidate.goal_epoch = snapshot.identity.goal_epoch;
-            candidate.request_id = snapshot.identity.request_id;
-            candidate.backup_suffix_available = snapshot.backup_available;
-            candidate.backup_start_tt = snapshot.backup_start_tt;
-            candidate.backup_disposition = snapshot.backup_available
-                ? BackupDisposition::SUCCESS : BackupDisposition::FINISH;
-            if (!trajectoryFinite(candidate.position) ||
-                !trajectoryFinite(candidate.yaw) ||
-                std::abs(candidate.position.start_WT - candidate.yaw.start_WT) > 1.0e-6) {
-                return std::nullopt;
-            }
-            return candidate;
-        }
-
 
         static std::optional<CandidateCommandBundle> buildCandidate(
             const ExpTraj& exp_traj, const BackupTraj* backup_traj,
