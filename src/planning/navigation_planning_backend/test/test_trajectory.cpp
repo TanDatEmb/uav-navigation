@@ -645,6 +645,16 @@ TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
       hover, config, &hover_report));
   EXPECT_NEAR(hover_report.minimum_thrust_n, 9.81, 1.0e-9);
 
+  // For this representable duration, duration * intervals / intervals rounds
+  // one ulp above duration. The hard gate must sample the exact endpoint.
+  geometry_utils::Trajectory rounded_endpoint_hover(
+      {0.8754185709044305}, {hover_coefficients});
+  traj_opt::TrajectoryDynamicReport rounded_endpoint_report;
+  EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      rounded_endpoint_hover, config, &rounded_endpoint_report, 0.005));
+  EXPECT_TRUE(rounded_endpoint_report.finite);
+  EXPECT_EQ(rounded_endpoint_report.nonfinite_mask, 0U);
+
   // x(t)=10*t^3 creates 60 m/s^3 jerk at t=0, which maps to a body rate far
   // above the configured envelope even though thrust remains finite.
   Eigen::MatrixXd aggressive_coefficients = Eigen::MatrixXd::Zero(3, 6);

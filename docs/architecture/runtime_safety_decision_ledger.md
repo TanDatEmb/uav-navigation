@@ -10412,6 +10412,35 @@ release profiles must not use the former allowance.
   require any rejection to identify its first invalid time/component without
   changing the rejection decision.
 
+### 2026-08-29 - Sample the exact flatness-certificate endpoint
+
+- **Owner/status:** Planner flatness hard-gate sampler, numerical correctness
+  fix; no physical limit or rejection threshold changed.
+- **Scope:** The final uniform sample now uses the trajectory's declared
+  duration exactly. Intermediate samples retain the existing uniform formula.
+  An invalid sample time is also attributed by diagnostic mask bit 8 instead
+  of producing `finite=false` with no component provenance.
+- **Safety impact:** Correctness preserving. For some finite durations,
+  `duration * intervals / intervals` rounds one representable value above the
+  declared domain; strict trajectory evaluation then rejects a physically
+  finite endpoint before any PVAJ component can be marked non-finite. Sampling
+  the exact endpoint removes that arithmetic false reject while all body-rate,
+  thrust, PVAJ, yaw and world gates remain unchanged.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T180021-1408675` repeatedly
+  committed projected-anchor emergency brakes before the 0.25 m tracking
+  allowance, but the final brake failed with finite body rate/thrust,
+  `finite=false`, `first_nonfinite_time=NaN` and mask 0. Duration
+  `0.8754185709044305` independently reproduces the endpoint overshoot by one
+  ulp under the old sampling expression.
+- **Removal/review condition:** Keep exact terminal sampling. Replace only with
+  a typed trajectory-domain sampler that guarantees every generated time lies
+  in `[0, duration]` without widening that interval.
+- **Verification:** Run focused trajectory tests, Release build and repeat the
+  2 m/s generalization mission; require every emergency-brake rejection to
+  carry either an invalid-time or component reason and preserve all physical
+  envelope checks.
+
 ### 2026-08-29 - Fail closed on malformed Piece inputs and low-degree derivatives
 
 - **Owner/status:** `geometry_utils::Piece` direct evaluation and rate

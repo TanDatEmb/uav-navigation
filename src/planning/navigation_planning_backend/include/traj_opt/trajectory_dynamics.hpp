@@ -47,7 +47,14 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
             1U, static_cast<std::size_t>(std::ceil(duration / maximum_sample_period_s)));
     flatness::FlatnessMap flatness = config.quadrotot_flatness;
     const auto evaluate_sample = [&](const double time) {
-        if (!std::isfinite(time) || time < 0.0 || time > duration) return false;
+        if (!std::isfinite(time) || time < 0.0 || time > duration) {
+            report.finite = false;
+            if (!std::isfinite(report.first_nonfinite_time_s)) {
+                report.first_nonfinite_time_s = time;
+                report.nonfinite_mask = 1U << 8U;
+            }
+            return false;
+        }
         const Eigen::Vector3d velocity = trajectory.getVel(time);
         const Eigen::Vector3d acceleration = trajectory.getAcc(time);
         const Eigen::Vector3d jerk = trajectory.getJer(time);
@@ -86,8 +93,13 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
         return true;
     };
     for (std::size_t sample = 0; sample <= intervals; ++sample) {
-        const double time = duration * static_cast<double>(sample) /
-                            static_cast<double>(intervals);
+        // Multiplication followed by division can round the final sample one
+        // ulp past duration. Use the declared endpoint exactly; a finite
+        // polynomial must not fail its hard gate because of sampler arithmetic.
+        const double time = sample == intervals
+                                ? duration
+                                : duration * static_cast<double>(sample) /
+                                      static_cast<double>(intervals);
         if (!evaluate_sample(time)) {
             report.finite = false;
             return report;
