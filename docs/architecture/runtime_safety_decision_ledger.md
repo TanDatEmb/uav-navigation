@@ -9872,3 +9872,30 @@ release profiles must not use the former allowance.
 - **Verification:** `git show a3dd36d`, `git show 207b433`, mission contract
   test, authoritative Release build and the cited artifact preserve the
   implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Rejected experiment: cap BACKUP refinement by seed peak speed
+
+- **Owner:** BACKUP refinement experiment, reverted by `1c38274`.
+- **Scope:** Commit `7c068a8` made the certified minimum-snap seed's analytic
+  peak speed the upper bound for terminal-altitude recovery and optional MINCO
+  refinement. Refinements exceeding the seed peak fell back to the seed. No
+  mission limit or hard safety gate changed.
+- **Safety impact:** All trials remained collision-free and failed closed when
+  necessary, but forcing more seed fallbacks did not improve tracking
+  reliability. The experiment was reverted because only one of three repeated
+  runs completed, versus two of two immediate 5/2/4 baseline runs.
+- **Evidence:** Exact-HEAD artifacts `external-mode-check-20260828T150510-1260767`,
+  `external-mode-check-20260828T150717-1262409`, and
+  `external-mode-check-20260828T150940-1263998` rejected 16, 15 and 4
+  refinements. The middle run completed 140 m with speed p95 4.786 m/s; the
+  first stopped near 125 m in MAIN at longitudinal error 0.754 m and the third
+  near 11 m in BACKUP at 0.755 m, against the unchanged 0.750 m envelope.
+  Clearances were 4.422/4.432/4.412 m with zero collision.
+- **Removal/review condition:** Historical rejected-experiment record. Neither
+  spatial seed proximity nor peak-speed dominance is a sufficient tracking
+  proxy. A replacement BACKUP architecture needs an explicit along-track
+  deceleration/monotonic-progress contract and representative PX4 tracking
+  evidence.
+- **Verification:** `git show 7c068a8`, `git show 1c38274`, 168 backend and 52
+  runtime tests, authoritative Release build and the three cited artifacts
+  preserve implementation, rollback and repeated evidence.
