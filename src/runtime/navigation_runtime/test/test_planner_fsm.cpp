@@ -29,10 +29,18 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
 }
 
 TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
-  EXPECT_TRUE(terminalHoldIsPending(true, true, 17U));
-  EXPECT_FALSE(terminalHoldIsPending(false, true, 17U));
-  EXPECT_FALSE(terminalHoldIsPending(true, false, 17U));
-  EXPECT_FALSE(terminalHoldIsPending(true, true, 0U));
+  EXPECT_TRUE(terminalHoldIsPending(true, true, true, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(false, true, true, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(true, false, true, 17U));
+  EXPECT_FALSE(terminalHoldIsPending(true, true, true, 0U));
+  EXPECT_FALSE(terminalHoldIsPending(true, true, false, 17U));
+}
+
+TEST(PlannerFsm, ContinuesOnlyCompletedPassThroughGoalEndpoints) {
+  EXPECT_TRUE(completedPassThroughRequiresContinuation(true, true, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(false, true, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, false, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, true, false));
 }
 
 TEST(PlannerFsm, CertifiesMissedTerminalTickOnlyAtKnownFreeGoalEndpoint) {

@@ -73,15 +73,26 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
                 : RetainedValidationTransition::FailClosed;
 }
 
-// Once the command publisher has observed a certified endpoint inside the
-// active waypoint acceptance ball, a rest-to-rest retry must not revoke the
-// terminal hold merely because the world advanced during a replacement solve.
-// The hold remains limited to that exact bundle generation and is still
-// revalidated by the mapping publication boundary.
+// Only a STOP waypoint owns a terminal endpoint hold.  A PASS_THROUGH endpoint
+// inside its acceptance ball is a route boundary, not permission to stop
+// extending the executable trajectory.  The hold remains limited to the exact
+// STOP bundle generation and is still revalidated by the mapping publication
+// boundary.
 inline bool terminalHoldIsPending(
-    bool command_available, bool reaches_goal,
+    bool command_available, bool reaches_goal, bool stop_waypoint,
     std::uint64_t terminal_bundle_generation) noexcept {
-  return command_available && reaches_goal && terminal_bundle_generation != 0U;
+  return command_available && reaches_goal && stop_waypoint &&
+         terminal_bundle_generation != 0U;
+}
+
+// Once a finite PASS_THROUGH command has reached its declared endpoint, the
+// planner must continue from measured state while MissionController completes
+// the measured waypoint handoff.  STOP remains terminal and a frontier
+// trajectory follows the existing non-goal completion path.
+inline bool completedPassThroughRequiresContinuation(
+    bool trajectory_completed, bool endpoint_reaches_goal,
+    bool pass_through_waypoint) noexcept {
+  return trajectory_completed && endpoint_reaches_goal && pass_through_waypoint;
 }
 
 // The publisher can miss the single wall-clock tick at which a finite bundle

@@ -1748,6 +1748,11 @@ void NavigationRuntimeNode::runCycle() {
   // cells can extend the route. Mapping has already published this cycle.
   const bool completed_trajectory = trajectory_finished_.exchange(false);
   bool completed_trajectory_reaches_goal = trajectory_reaches_goal_.load();
+  const bool pass_through_goal = goal &&
+      goal->behavior ==
+          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  const bool stop_goal = goal &&
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
   if (completed_trajectory && goal) {
     // The completion flag can be cleared by a concurrent replan before this
     // callback observes the publisher's terminal sample. Recompute it from
@@ -1768,7 +1773,7 @@ void NavigationRuntimeNode::runCycle() {
         (endpoint->position_world - target_position).norm() <= completion_tolerance;
     trajectory_reaches_goal_.store(completed_trajectory_reaches_goal);
     terminal_bundle_generation_.store(
-        completed_trajectory_reaches_goal && committed_bundle
+        completed_trajectory_reaches_goal && stop_goal && committed_bundle
             ? committed_bundle->bundle_generation
             : 0U,
         std::memory_order_release);
@@ -1779,13 +1784,23 @@ void NavigationRuntimeNode::runCycle() {
                 pointFromMessage(plannerTarget(*goal), 1),
                 pointFromMessage(plannerTarget(*goal), 2));
   }
-  if (completed_trajectory && goal && completed_trajectory_reaches_goal) return;
-  if (completed_trajectory && goal && !completed_trajectory_reaches_goal) {
+  const bool continue_completed_pass_through =
+      completedPassThroughRequiresContinuation(
+          completed_trajectory, completed_trajectory_reaches_goal,
+          pass_through_goal);
+  if (completed_trajectory && goal && completed_trajectory_reaches_goal &&
+      !continue_completed_pass_through) {
+    return;
+  }
+  if (completed_trajectory && goal &&
+      (!completed_trajectory_reaches_goal || continue_completed_pass_through)) {
     const auto& target_message = plannerTarget(*goal);
     const double dx = pointFromMessage(target_message, 0) - execution_state.position_world.x();
     const double dy = pointFromMessage(target_message, 1) - execution_state.position_world.y();
     const double dz = pointFromMessage(target_message, 2) - execution_state.position_world.z();
-    if (std::sqrt(dx * dx + dy * dy + dz * dz) > goalCompletionTolerance(*goal)) {
+    if (continue_completed_pass_through ||
+        std::sqrt(dx * dx + dy * dy + dz * dz) >
+            goalCompletionTolerance(*goal)) {
       std::lock_guard<std::mutex> lock(input_mutex_);
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
           active_goal_->waypoint_index == goal->waypoint_index &&
@@ -1796,8 +1811,9 @@ void NavigationRuntimeNode::runCycle() {
         skip_replan_once_ = false;
       }
       RCLCPP_INFO(get_logger(),
-                  "planner backend local trajectory finished before goal; restarting PlanFromRest "
-                  "goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
+                  "planner backend finite trajectory requires continuation; restarting PlanFromRest "
+                  "pass_through=%d goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
+                  continue_completed_pass_through ? 1 : 0,
                   pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
                   pointFromMessage(target_message, 2), execution_state.position_world.x(),
                   execution_state.position_world.y(), execution_state.position_world.z());
@@ -1824,6 +1840,7 @@ void NavigationRuntimeNode::runCycle() {
   if (terminalHoldIsPending(
           planner_command_available_.load(std::memory_order_acquire),
           trajectory_reaches_goal_.load(std::memory_order_acquire),
+          stop_goal,
           terminal_bundle_generation_.load(std::memory_order_acquire))) {
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
@@ -2005,6 +2022,7 @@ void NavigationRuntimeNode::runCycle() {
     const bool terminal_hold_pending = terminalHoldIsPending(
         planner_command_available_.load(std::memory_order_acquire),
         trajectory_reaches_goal_.load(std::memory_order_acquire),
+        stop_goal,
         terminal_bundle_generation_.load(std::memory_order_acquire));
     if (!terminal_hold_pending) {
       trajectory_reaches_goal_.store(false);
@@ -3124,7 +3142,11 @@ void NavigationRuntimeNode::publishCommand() {
               goalCompletionTolerance(*command_goal);
         }
         terminal_bundle_generation_.store(
-            endpoint_reaches_goal ? sample.bundle->bundle_generation : 0U,
+            endpoint_reaches_goal &&
+                    command_goal->behavior ==
+                        navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+                ? sample.bundle->bundle_generation
+                : 0U,
             std::memory_order_release);
       }
     }
