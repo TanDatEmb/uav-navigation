@@ -250,6 +250,15 @@ geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_t
   result.start_WT = start_wall_time;
   return result;
 }
+
+geometry_utils::Trajectory stationaryTrajectory(double duration, double start_wall_time) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 7) = 2.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
 }  // namespace
 
 TEST(CiriGeometry, UsesNonCollinearSeedDirectionWithoutArtificialPerturbation) {
@@ -911,7 +920,7 @@ TEST(PlannerTrajectory, InheritedBackupIntersectionNeverCrossesNewSuffix) {
 }
 
 TEST(PlannerTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
-  auto position = linearTrajectory(1.0, 10.0);
+  auto position = stationaryTrajectory(1.0, 10.0);
   auto yaw = linearTrajectory(1.0, 10.0);
   navigation_planning_backend::ExpTraj exp;
   exp.setTrajectory(10.0, position, yaw, 0.0, 0.2);
@@ -936,6 +945,37 @@ TEST(PlannerTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
   ASSERT_EQ(emergency->roles.size(), 1U);
   EXPECT_EQ(emergency->roles.front().role,
             navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+}
+
+TEST(PlannerTrajectory, MainOnlyMovingTerminalRequiresBackupSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = stationaryTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+
+  for (const auto disposition : {navigation_planning_backend::BackupDisposition::FINISH,
+                                 navigation_planning_backend::BackupDisposition::NO_NEED}) {
+    EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, nullptr, disposition));
+  }
+}
+
+TEST(PlannerTrajectory, MainOnlyRestHasNoFlightTunedTerminalEpsilon) {
+  auto position = stationaryTrajectory(1.0, 10.0);
+  auto yaw = stationaryTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+  EXPECT_TRUE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::FINISH));
+
+  auto moving = position;
+  auto coefficients = moving[0].getCoeffMat();
+  coefficients(0, 6) = std::numeric_limits<double>::epsilon();
+  geometry_utils::Trajectory nonzero_terminal({1.0}, {coefficients});
+  nonzero_terminal.start_WT = 10.0;
+  exp.setTrajectory(10.0, nonzero_terminal, yaw);
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::FINISH));
 }
 
 TEST(PlannerTrajectory, CandidateRejectsZeroDurationPiece) {

@@ -76,6 +76,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-030 | Route-backbone partial AABB support (`SAFETY_INVARIANT`) | only a valid immutable forward route backbone may project a remote local-search target to the current map boundary; executable prefix remains bounded by the 14 m horizon and continuously certified | PROVISIONAL | Preserves the remote mission waypoint and measured route progress while allowing receding motion in ±X/±Y on an axis-aligned anisotropic map. The boundary is never reported as waypoint completion; goals without valid route provenance still fail closed, and UNKNOWN, OUT_OF_MAP, corridor, world, dynamics and execution gates are unchanged. | Unit-test axis-independent backbone selection; repeat ±X/±Y and diagonal SITL. Require monotonic measured waypoint progress, explicit partial-frontier evidence, no OUT_OF_MAP solve loop, clearance, command renewal, and mapping/planner latency distributions. |
 | HG-031 | A* closed/occupied pre-ray pruning (`PERFORMANCE_POLICY`) | discard CLOSED neighbours and non-traversable endpoint cells before continuous edge queries within one immutable search round | PROVISIONAL | Removes reverse-edge and doomed endpoint raycasts without admitting any edge that lacks the existing search-layer/inflated certificate. It assumes CLOSED nodes are never reopened and does not reuse evidence across rounds or world revisions. | Unit-test zero repeated undirected edge queries; compare wall-detour expansions, timeout rate, clearance and p50/p95/p99 on repeated SITL and recorded snapshots. |
 | HG-032 | Speed-derived local visibility (`PERFORMANCE_POLICY`) | 14 m measured floor; effective horizon increases from the jerk-limited mission envelope up to the existing 23 m cap | PROVISIONAL | Rejects the fixed 23 m-at-all-speeds experiment after five exact-configuration runs pinned planner p95 near 180 ms and starved command renewal. Global route length, map support and every safety certificate remain unchanged. | Repeat low/high-speed structured SITL and recorded snapshots; require p99 scheduling margin, sufficient stopping support, longer command renewal and no clearance regression before certification. |
+| HG-033 | Moving MAIN terminal requires certified BRAKE (`SAFETY_INVARIANT`) | a main-only bundle is executable only when terminal velocity, acceleration and jerk are zero within a coefficient-derived IEEE-754 evaluation bound; otherwise backup generation remains mandatory even when all MAIN samples are KNOWN_FREE | PROVISIONAL | Prevents a moving local/pass-through endpoint from becoming an uncertified PX4 position-hold braking segment after command completion. No world, dynamics, timeout, tracking, waypoint or unknown-space gate is relaxed. | Unit-test moving/rest terminal classification and candidate rejection; repeat transverse-wall, open straight and pass-through SITL. Require every moving finite MAIN to own a positive certified BACKUP suffix, zero collision, command renewal before BRAKE, and no stationary-terminal regression. |
 
 ## Temporary-bypass register
 
@@ -10223,3 +10224,36 @@ release profiles must not use the former allowance.
   low-speed A/B on the generalization map, then high-speed and recorded-data
   matrices. Compare guide/MAIN/backup durations, commit ratio, A*/CIRI/MINCO
   p50/p95/p99, speed continuity, waypoint order, clearance and LIO health.
+
+### 2026-08-28 - Require a certified brake after every moving MAIN endpoint
+
+- **Owner/status:** Planner command-bundle and backup generator,
+  `PROVISIONAL`; HG-033 safety-invariant closure.
+- **Scope:** `FINISH`/`NO_NEED` may omit a BACKUP suffix only when the complete
+  MAIN is KNOWN_FREE and its terminal velocity, acceleration and jerk are zero
+  within a forward-error bound computed from the terminal polynomial's own
+  coefficient term sums and IEEE-754 epsilon. A visible MAIN with a moving
+  terminal now proceeds through ordinary certified backup construction.
+  Candidate assembly independently rejects a moving main-only bundle.
+- **Safety impact:** Positive and fail-closed. A collision-free MAIN path says
+  nothing about the unmodelled braking distance after a non-zero terminal
+  state. The old path converted that state into PX4 position hold when the
+  finite command completed, outside the planner's swept certificate. The new
+  invariant adds no configurable tolerance and changes no map, tracking,
+  dynamic, waypoint, deadline, UNKNOWN or OUT_OF_MAP gate.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T163450-1332733` committed
+  generation 126 as `PLANNER_SUCCESS_NO_BACKUP`: endpoint
+  `(88.50,-1.70,2.83)`, backup start equal to the `11.386 s` total duration,
+  and terminal commanded speed about `1.87 m/s`. External Mode accepted the
+  completed MAIN while measured speed was `1.855 m/s`, then held the endpoint.
+  Ground truth breached `gen_cross_wall_x` by `0.136 m`; safety stop occurred
+  at `85.176 s` and the vehicle still moved forward at about `1 m/s`.
+- **Removal/review condition:** Remove only if the execution contract gains an
+  equivalent independently world-certified terminal braking segment. Never
+  infer a stop from path visibility or command completion status.
+- **Verification:** Build and run all planning backend tests; repeat the exact
+  transverse-wall phase and open pass-through cases. Require no committed
+  moving main-only candidate, a positive BACKUP suffix for every moving finite
+  MAIN, zero ground-truth collision, and replacement command renewal before
+  the suffix reaches rest. Recorded-data shadow planning remains required.

@@ -2300,17 +2300,22 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             if (all_traj_visible) out_t = total_dur;
         }
-        if (all_traj_visible) {
-            // No backup trajectory is needed when every remaining EXP sample
-            // is visible. The upstream branch generated a long corridor from
-            // the robot to the terminal point and then immediately discarded
-            // it by returning FINISH. At fine map resolution that dead IRIS
-            // solve dominates ReplanOnce and can make a valid plan miss its
-            // stitching deadline. Keep the observable result identical and
-            // avoid constructing an unused safety corridor.
+        if (all_traj_visible &&
+            trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj())) {
+            // A main-only command is safe to complete only when every
+            // remaining sample is known-free and its terminal PVAJ is a true
+            // rest state. A moving pass-through endpoint still needs an
+            // independently certified braking suffix even when MAIN itself is
+            // wholly visible.
             back_traj_info.setEmpty();
             time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
             return FINISH;
+        }
+        if (all_traj_visible) {
+            planner_context_->info(
+                    " -- [planner] visible MAIN has moving terminal state; "
+                    "building certified backup instead of main-only command");
+            all_traj_visible = false;
         }
         Vec3f invisible_p = eval_ps.back().second;
         while (out_t > start_t) {

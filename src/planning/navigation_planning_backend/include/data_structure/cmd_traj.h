@@ -12,6 +12,7 @@
 #include <data_structure/backup_traj.h>
 #include <data_structure/base/trajectory.h>
 #include <navigation_world_model/world_model_view.hpp>
+#include <utils/geometry/polynomial_state_roundoff.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -240,6 +241,17 @@ namespace navigation_planning_backend {
             }
             if (!trajectoryFinite(candidate.position) || !trajectoryFinite(candidate.yaw) ||
                 std::abs(candidate.position.start_WT - candidate.yaw.start_WT) > 1.0e-6) {
+                return std::nullopt;
+            }
+            // A finite known-free MAIN is not a safety stop when it reaches
+            // its endpoint with non-zero PVAJ. Without a positive BACKUP
+            // suffix the command consumer would turn that moving endpoint
+            // into an uncertified position-hold/braking segment. Accept a
+            // main-only bundle only when its executable terminal derivatives
+            // are zero within the polynomial's computed IEEE-754 evaluation
+            // bound; no flight-tuned epsilon is introduced here.
+            if (backup_traj == nullptr &&
+                !trajectoryTerminalIsRestWithinRoundoff(candidate.position)) {
                 return std::nullopt;
             }
             candidate.start_wall_time = candidate.position.start_WT;
