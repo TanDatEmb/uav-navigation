@@ -311,16 +311,16 @@ namespace geometry_utils {
         return prefix.size() >= 2U && prefix.back().allFinite();
     }
 
-    inline bool allocateGuideElapsedTimes(const double a_max,
-                                           const double v_max,
-                                           const double initial_speed,
+    inline bool allocateGuideElapsedTimes(const double max_acceleration_mps2,
+                                           const double max_velocity_mps,
+                                           const double initial_velocity_mps,
                                            const Vec3f &start,
                                            const vec_Vec3f &path,
                                            GuideTimeAllocation &allocation) {
         allocation = GuideTimeAllocation{};
-        if (!std::isfinite(a_max) || a_max <= 0.0 ||
-            !std::isfinite(v_max) || v_max <= 0.0 ||
-            !std::isfinite(initial_speed) || initial_speed < 0.0 ||
+        if (!std::isfinite(max_acceleration_mps2) || max_acceleration_mps2 <= 0.0 ||
+            !std::isfinite(max_velocity_mps) || max_velocity_mps <= 0.0 ||
+            !std::isfinite(initial_velocity_mps) || initial_velocity_mps < 0.0 ||
             !start.allFinite() || path.empty()) {
             return false;
         }
@@ -358,7 +358,8 @@ namespace geometry_utils {
         for (const double distance_m : cumulative_distance_m) {
             double elapsed_s = std::numeric_limits<double>::quiet_NaN();
             double velocity_mps = std::numeric_limits<double>::quiet_NaN();
-            simplePMTimeAllocator(a_max, v_max, initial_speed,
+            simplePMTimeAllocator(max_acceleration_mps2, max_velocity_mps,
+                                  initial_velocity_mps,
                                   allocation.path_length_m, distance_m,
                                   elapsed_s, velocity_mps);
             if (!std::isfinite(elapsed_s) || !std::isfinite(velocity_mps) ||
@@ -372,7 +373,8 @@ namespace geometry_utils {
 
         double terminal_elapsed_s = std::numeric_limits<double>::quiet_NaN();
         double terminal_velocity_mps = std::numeric_limits<double>::quiet_NaN();
-        simplePMTimeAllocator(a_max, v_max, initial_speed,
+        simplePMTimeAllocator(max_acceleration_mps2, max_velocity_mps,
+                              initial_velocity_mps,
                               allocation.path_length_m, allocation.path_length_m,
                               terminal_elapsed_s, terminal_velocity_mps);
         if (!std::isfinite(terminal_elapsed_s) ||
