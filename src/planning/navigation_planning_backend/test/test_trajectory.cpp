@@ -26,6 +26,7 @@
 #include "planner_core/planning_stage.hpp"
 #include "planner_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
+#include "traj_opt/nominal_trajectory_optimizer.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
@@ -47,6 +48,19 @@ struct CiriGeometryTestAccess {
 }  // namespace navigation_planning_backend
 
 namespace {
+
+TEST(PlannerTrajectory, FeasibilityRetryActivatesDisabledViolatedDynamicPenalty) {
+  navigation_math::VecDf weights(7);
+  weights << 5.0e8, 5.0e5, 5.0e5, 0.0, 0.0, 1.0e5, 1.0e5;
+  EXPECT_DOUBLE_EQ(traj_opt::feasibilityRetryPenaltyWeight(weights, 3), 5.0e5);
+  EXPECT_DOUBLE_EQ(traj_opt::feasibilityRetryPenaltyWeight(weights, 1), 5.0e5);
+
+  weights.segment(1, 3).setZero();
+  EXPECT_TRUE(std::isnan(
+      traj_opt::feasibilityRetryPenaltyWeight(weights, 3)));
+  EXPECT_TRUE(std::isnan(
+      traj_opt::feasibilityRetryPenaltyWeight(weights, 0)));
+}
 
 class SweepWorld : public navigation_world_model::WorldModelView {
  public:

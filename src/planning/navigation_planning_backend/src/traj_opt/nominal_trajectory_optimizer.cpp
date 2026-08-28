@@ -1632,9 +1632,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         diagnostics_.retry_free_duration_seed_max_s =
                 free_duration_seed_s.maxCoeff();
         gcopter::backwardMapTToTau(free_duration_seed_s, tau);
-        // Continue the soft solve toward the hard-feasible set. Disabled
-        // penalties (notably the EXP jerk objective) remain disabled; only
-        // configured dynamic penalties grow within this bounded retry.
+        // Continue the soft solve toward the hard-feasible set. A disabled
+        // nominal shaping penalty remains disabled during ordinary solves,
+        // but a violated hard constraint needs a gradient during this bounded
+        // feasibility-only retry. Reuse the configured translational dynamic
+        // scale rather than introducing another flight-tuned number.
         // The first retry is primarily a bounded time/point re-optimization.
         // Preserve the nominal objective so a tiny hard-gate violation does
         // not immediately turn into a much slower trajectory.  Only the
@@ -1643,10 +1645,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         const std::array<bool, 3> violated = {
                 velocity_violated, acceleration_violated, jerk_violated};
         for (int index = 1; index <= 3; ++index) {
-            if (violated[static_cast<std::size_t>(index - 1)] &&
-                nominal_penalty_weights(index) > 0.0) {
+            if (violated[static_cast<std::size_t>(index - 1)]) {
+                const double feasibility_weight = feasibilityRetryPenaltyWeight(
+                        nominal_penalty_weights, index);
                 opt_vars.penaltyWeights(index) =
-                        nominal_penalty_weights(index) * penalty_scale;
+                        std::isfinite(feasibility_weight)
+                        ? feasibility_weight * penalty_scale
+                        : nominal_penalty_weights(index);
             } else {
                 opt_vars.penaltyWeights(index) = nominal_penalty_weights(index);
             }

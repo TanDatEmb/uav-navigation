@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -108,6 +109,33 @@ namespace traj_opt {
         double first_nonfinite_gradient_norm{
             std::numeric_limits<double>::quiet_NaN()};
     };
+
+    // A zero nominal objective weight means "do not shape this quantity"
+    // during ordinary optimization; it cannot mean "provide no gradient"
+    // after the independent hard gate has already found that exact quantity
+    // infeasible. Reuse the strongest configured translational dynamic weight
+    // only for the bounded feasibility retry. If all dynamic penalties are
+    // disabled, return NaN so the caller keeps failing closed.
+    inline double feasibilityRetryPenaltyWeight(
+            const VecDf& nominal_penalty_weights,
+            const int dynamic_penalty_index) noexcept {
+        if (nominal_penalty_weights.size() < 4 ||
+            dynamic_penalty_index < 1 || dynamic_penalty_index > 3) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        const double requested = nominal_penalty_weights(dynamic_penalty_index);
+        if (std::isfinite(requested) && requested > 0.0) return requested;
+        double fallback = 0.0;
+        for (int index = 1; index <= 3; ++index) {
+            const double candidate = nominal_penalty_weights(index);
+            if (std::isfinite(candidate) && candidate > fallback) {
+                fallback = candidate;
+            }
+        }
+        return fallback > 0.0
+            ? fallback
+            : std::numeric_limits<double>::quiet_NaN();
+    }
 
 
     class ExpTrajOpt {
