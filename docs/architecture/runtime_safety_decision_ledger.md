@@ -10801,3 +10801,42 @@ release profiles must not use the former allowance.
   --gtest_color=no`; then `make build && make test`; then repeat the exact
   `long_three_pillars_multiwaypoint` 5 m/s scenario and compare against
   `external-mode-check-20260828T193725-1510526`.
+
+### 2026-08-29 - Slice retained command prefixes across mixed polynomial degrees
+
+- **Owner/status:** Executable trajectory slicing and MAIN-to-BACKUP hot-replan
+  continuity, correctness fix, `PROVISIONAL` pending repeated SITL.
+- **Scope:** Permit a time slice to start in a supported degree-seven or
+  degree-five piece and end in a later piece of the other supported degree.
+  The start piece is re-expressed around the slice origin; interior pieces and
+  the truncated end piece retain their own coefficient basis.
+- **Safety impact:** No trajectory is extrapolated and no dynamics, world,
+  role, timing or commit gate changes. Existing finite/range/piece validation
+  remains fail-closed. The removed equality check was not a safety proof: the
+  implementation does not apply the start-piece conversion matrix to the end
+  piece, so requiring equal degree rejected a representable safe prefix.
+- **Behavioral reason:** Artifact
+  `external-mode-check-20260828T194521-1523703` contained optimizer retries
+  that reached the hard V/A/J envelope, followed by
+  `getPartialTrajectoryByTime failed`. The retained 0.2 s window crossed a
+  short MAIN piece into the committed BACKUP piece; their polynomial degrees
+  differed, triggering the unrelated equality check and discarding the
+  otherwise feasible candidate.
+- **False-accept/false-reject consequences:** Mixed-degree slices now preserve
+  the exact sampled start/end states and duration in regression. Unsupported
+  start degrees, invalid pieces, reversed/out-of-range times and non-finite
+  inputs remain rejected. Final combined trajectory certificates still run
+  before commit.
+- **Runtime cost and evidence required:** No added runtime work. Focused
+  trajectory tests, Release build and full tests must pass. Repeated 5 m/s SITL
+  must show the mixed MAIN/BACKUP hot-replan no longer fails at slicing, while
+  role provenance, splice residual, collision, clearance and V/A/J remain
+  valid.
+- **Removal/review condition:** Keep while one executable command may compose
+  optimizer outputs of different supported polynomial degree. Replace only
+  with a uniform native segment representation.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`; then `make build && make test`; then repeat
+  `long_three_pillars_multiwaypoint` at 5 m/s and compare against
+  `external-mode-check-20260828T194521-1523703`.

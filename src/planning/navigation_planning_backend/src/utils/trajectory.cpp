@@ -350,8 +350,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
     int pieceEndIdx = -1;
     if (!locateSliceStart(*this, start_TT, pieceIdx, t0) ||
         !locateSliceEnd(*this, end_TT, pieceEndIdx, local_end_t) ||
-        pieceIdx > pieceEndIdx ||
-        pieces[pieceIdx].getDegree() != pieces[pieceEndIdx].getDegree()) {
+        pieceIdx > pieceEndIdx) {
         return false;
     }
     if (pieces[pieceIdx].getDegree() == 5) {

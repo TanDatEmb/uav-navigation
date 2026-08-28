@@ -386,6 +386,27 @@ TEST(PlannerTrajectory, PartialSliceEndingAtPieceBoundaryKeepsLocalDuration) {
   EXPECT_TRUE(partial.getState(partial.getTotalDuration()).allFinite());
 }
 
+TEST(PlannerTrajectory, PartialSliceMayCrossMixedDegreeCommandBoundary) {
+  Eigen::MatrixXd main_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  main_coefficients(0, 6) = 1.0;
+  Eigen::MatrixXd backup_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  backup_coefficients(0, 4) = 0.5;
+  geometry_utils::Trajectory command(
+      {0.243, 1.0}, {main_coefficients, backup_coefficients});
+  command.start_WT = 10.0;
+
+  geometry_utils::Trajectory prefix;
+  ASSERT_TRUE(command.getPartialTrajectoryByTime(0.188, 0.388, prefix));
+  ASSERT_EQ(prefix.getPieceNum(), 2);
+  EXPECT_EQ(prefix[0].getDegree(), 7);
+  EXPECT_EQ(prefix[1].getDegree(), 5);
+  EXPECT_NEAR(prefix[0].getDuration(), 0.055, 1.0e-12);
+  EXPECT_NEAR(prefix[1].getDuration(), 0.145, 1.0e-12);
+  EXPECT_NEAR(prefix.getTotalDuration(), 0.2, 1.0e-12);
+  EXPECT_TRUE(prefix.getState(0.0).isApprox(command.getState(0.188), 1.0e-12));
+  EXPECT_TRUE(prefix.getState(0.2).isApprox(command.getState(0.388), 1.0e-12));
+}
+
 TEST(PlannerTrajectory, TrajectoryRejectsMismatchedDurationAndCoefficientInputs) {
   const std::vector<double> durations{1.0};
   const std::vector<Eigen::MatrixXd> coefficients;
