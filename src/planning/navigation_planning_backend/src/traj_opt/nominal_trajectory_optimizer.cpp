@@ -688,9 +688,25 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                 time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
     }
 
+    std::vector<double> monotonic_time_stamps(
+            time_stamps.data(), time_stamps.data() + time_stamps.size());
+    if (!navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+            monotonic_time_stamps)) {
+        planner_context_->warn(
+                " -- [ExpOpt] guide timestamp allocation is not strictly monotonic");
+        return false;
+    }
     for (Eigen::Index i = 1; i < time_stamps.size(); ++i) {
-        opt_vars.times(i - 1) = time_stamps(i) - time_stamps(i - 1);
-        opt_vars.times(i - 1) = std::max(0.01, opt_vars.times(i - 1));
+        opt_vars.times(i - 1) =
+                monotonic_time_stamps[static_cast<std::size_t>(i)] -
+                monotonic_time_stamps[static_cast<std::size_t>(i - 1)];
+        if (!std::isfinite(opt_vars.times(i - 1)) ||
+            opt_vars.times(i - 1) <= 0.0) {
+            planner_context_->warn(
+                    " -- [ExpOpt] guide duration allocation produced invalid segment {}: {}",
+                    i - 1, opt_vars.times(i - 1));
+            return false;
+        }
     }
 
     if (!geometry_utils::enumerateVs(opt_vars.hPolytopes.back(), curIV)) {

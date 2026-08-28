@@ -546,6 +546,40 @@ TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
       10.0);
 }
 
+TEST(PlannerPassThrough, RepeatedGuideTimesUseNeighbouringTimeAnchors) {
+  std::vector<double> interior_plateau{0.0, 3.0, 3.0, 3.0, 10.0};
+  ASSERT_TRUE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+      interior_plateau));
+  EXPECT_DOUBLE_EQ(interior_plateau.front(), 0.0);
+  EXPECT_DOUBLE_EQ(interior_plateau[1], 3.0);
+  EXPECT_NEAR(interior_plateau[2], 16.0 / 3.0, 1.0e-12);
+  EXPECT_NEAR(interior_plateau[3], 23.0 / 3.0, 1.0e-12);
+  EXPECT_DOUBLE_EQ(interior_plateau.back(), 10.0);
+
+  std::vector<double> terminal_plateau{0.0, 3.0, 10.0, 10.0};
+  ASSERT_TRUE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+      terminal_plateau));
+  EXPECT_DOUBLE_EQ(terminal_plateau.front(), 0.0);
+  EXPECT_DOUBLE_EQ(terminal_plateau[1], 3.0);
+  EXPECT_NEAR(terminal_plateau[2], 6.5, 1.0e-12);
+  EXPECT_DOUBLE_EQ(terminal_plateau.back(), 10.0);
+
+  std::vector<double> initial_plateau{0.0, 0.0, 0.0, 9.0};
+  ASSERT_TRUE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+      initial_plateau));
+  EXPECT_DOUBLE_EQ(initial_plateau.front(), 0.0);
+  EXPECT_NEAR(initial_plateau[1], 3.0, 1.0e-12);
+  EXPECT_NEAR(initial_plateau[2], 6.0, 1.0e-12);
+  EXPECT_DOUBLE_EQ(initial_plateau.back(), 9.0);
+
+  std::vector<double> decreasing{0.0, 3.0, 2.0, 10.0};
+  EXPECT_FALSE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+      decreasing));
+  std::vector<double> degenerate{4.0, 4.0};
+  EXPECT_FALSE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
+      degenerate));
+}
+
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);

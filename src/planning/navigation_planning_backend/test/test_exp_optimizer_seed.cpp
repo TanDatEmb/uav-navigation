@@ -252,6 +252,41 @@ TEST(ExpOptimizer, PassThroughJunctionRemainsInsideAcceptanceBall) {
   EXPECT_LE(closest_junction_distance_m, kAcceptanceRadiusM + 1.0e-6);
 }
 
+TEST(ExpOptimizer, RepeatedSparseGuideProjectionAvoidsTinyClampPieces) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 20.0;
+  config.max_acc = 20.0;
+  config.max_jerk = 100.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(20.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(10.0, 0.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 2.0, 4.0};
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 8.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(4.0, 12.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(8.0, 16.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(12.0, 21.0, -2.0, 2.0, 0.0, 2.0)};
+  corridors[2].SetRouteBoundaryContract(
+      Eigen::Vector3d{10.0, 0.0, 1.0}, 1.0);
+  geometry_utils::Trajectory trajectory;
+
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, corridors, trajectory));
+  const auto diagnostics = optimizer.diagnostics();
+  ASSERT_TRUE(diagnostics.valid);
+  EXPECT_GT(diagnostics.initial_minimum_piece_duration_s, 0.1);
+  EXPECT_DOUBLE_EQ(diagnostics.initial_duration_s, guide_times.back());
+  ASSERT_FALSE(trajectory.empty());
+}
+
 TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;
