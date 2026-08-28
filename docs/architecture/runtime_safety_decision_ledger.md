@@ -9609,3 +9609,18 @@ release profiles must not use the former allowance.
   make external-mode-check`; verify stale pointers are never exposed and map
   recertification races no longer produce a zero-generation emergency while a
   current valid bundle remains in the store.
+
+#### Exact-HEAD screening result
+
+- Commit `e33f4f8` passed 26/26 focused FSM tests, the full workspace test
+  suite (including 184 runtime contract tests), and the 23-package Release
+  build. Artifact
+  `.artifacts/runtime/external-mode-check-20260828T134232-1181253` completed the
+  140 m mission, accepted both waypoints, retained 4.318 m minimum truth
+  clearance with zero collisions, and did not reproduce the generation-102
+  recertification race.
+- This remains screening, not mission acceptance. Speed p95 was 4.818 m/s
+  against the 5.000 m/s profile requirement; all 142 committed trajectories
+  selected BACKUP, while planner total p95/max were 79.226/180.272 ms. The
+  command-store race is closed at unit and one-run screening level, but MAIN
+  feasibility and latency tails remain open and require repeated evidence.
