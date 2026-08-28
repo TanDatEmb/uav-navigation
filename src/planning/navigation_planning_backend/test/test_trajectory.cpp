@@ -21,6 +21,7 @@
 #include "planner_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/yaw_traj_opt.h"
+#include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
 
 namespace navigation_planning_backend {
@@ -1102,6 +1103,39 @@ TEST(PlannerTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {
       guide_endpoint, goal, 0.4);
   EXPECT_TRUE(result.goal_connected);
   EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(PlannerTrajectory, SimplifySfcPreservesRouteBoundaryGate) {
+  using geometry_utils::MatD4f;
+  using geometry_utils::Polytope;
+  using geometry_utils::PolytopeVec;
+  using navigation_math::Vec3f;
+
+  const auto make_box = [](double min_x, double max_x,
+                           double min_y, double max_y,
+                           double min_z, double max_z) {
+    MatD4f planes(6, 4);
+    planes <<
+        1.0, 0.0, 0.0, -max_x,
+       -1.0, 0.0, 0.0, min_x,
+        0.0, 1.0, 0.0, -max_y,
+        0.0,-1.0, 0.0, min_y,
+        0.0, 0.0, 1.0, -max_z,
+        0.0, 0.0,-1.0, min_z;
+    return Polytope(planes);
+  };
+
+  Polytope gate = make_box(0.8, 1.2, -0.2, 0.2, 2.8, 3.2);
+  gate.SetRouteBoundaryGate(true);
+  PolytopeVec sfcs{
+      make_box(-1.0, 2.0, -1.0, 1.0, 2.0, 4.0),
+      gate,
+      make_box(0.0, 3.0, -1.0, 1.0, 2.0, 4.0)};
+
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      Vec3f(0.0, 0.0, 3.0), Vec3f(2.5, 0.0, 3.0), sfcs));
+  ASSERT_EQ(sfcs.size(), 3U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
 }
 
 TEST(PlannerTrajectory, GoalPoliciesRemainNamedAndShareProvisionalValue) {

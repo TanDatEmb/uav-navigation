@@ -1333,6 +1333,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // This gives MINCO geometric room to turn and lets MissionController
         // advance the checkpoint while the same command is still live.
         bool route_lookahead_active = false;
+        std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
         if (pass_through_next_target_.has_value() && guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
             (guide_path.back() - gi_.goal_p).norm() <=
@@ -1436,6 +1437,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 planning_goal_p_ = gi_.goal_p;
                                 goal_endpoint_adjusted_ = true;
                                 route_lookahead_active = true;
+                                route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
+                                    current_endpoint, goal_acceptance_radius_m_};
                                 planner_context_->info(
                                     " -- [planner] pass-through route lookahead distance={:.3f} "
                                     "required={:.3f} remaining_horizon={:.3f}",
@@ -1578,7 +1581,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         shifted_sfc_start_pt_ = Vec3f(9999,9999,9999);
         solve_stage_.store(3);
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(
-            guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut, &solve_deadline);
+            guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut,
+            &solve_deadline, route_boundary_gate);
 
         if (!bool_ret_code) {
             planner_context_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");

@@ -37,6 +37,7 @@ namespace geometry_utils {
         template <class Archive>
         void serialize(Archive& archive) {
             archive(undefined, is_known_free, planes, have_seed_line,
+                    route_boundary_gate_,
                     overlap_depth_with_last_one, interior_pt_with_last_one,
                     ellipsoid_, seed_line.first,seed_line.second, robot_r);
         }
@@ -74,6 +75,18 @@ namespace geometry_utils {
 
         void SetKnownFree(bool is_free);
 
+        // A route-boundary gate is a mission-geometry contract. It prevents
+        // SFC simplification from removing the small corridor that forces a
+        // pass-through trajectory to enter the active waypoint acceptance
+        // region before continuing onto the next leg.
+        void SetRouteBoundaryGate(bool enabled) noexcept {
+            route_boundary_gate_ = enabled;
+        }
+
+        bool IsRouteBoundaryGate() const noexcept {
+            return route_boundary_gate_;
+        }
+
         void SetPlanes(MatD4f _planes);
 
         void SetEllipsoid(const Ellipsoid &ellip);
@@ -86,12 +99,24 @@ namespace geometry_utils {
             return GetVolume();
         }
 
+    private:
+        bool route_boundary_gate_{false};
+
     };
 
     typedef std::vector<Polytope> PolytopeVec;
 
     inline bool SimplifySFC(const Vec3f& head_p, const Vec3f& tail_p,
                                  geometry_utils::PolytopeVec& sfcs) {
+        // A generic simplification may remove an intermediate corridor when
+        // the first and a later corridor overlap. That would allow MINCO to
+        // cut a genuine pass-through corner while remaining collision-free.
+        if (std::any_of(sfcs.begin(), sfcs.end(),
+                        [](const Polytope& polytope) {
+                            return polytope.IsRouteBoundaryGate();
+                        })) {
+            return true;
+        }
         vec_Vec3f path{head_p, tail_p};
         int start_id{-1}, end_id{-1};
         if (sfcs.size() > 2) {

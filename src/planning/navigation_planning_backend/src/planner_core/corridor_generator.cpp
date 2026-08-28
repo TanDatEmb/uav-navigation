@@ -54,7 +54,8 @@ namespace navigation_planning_backend {
     CorridorGenerator::SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                             Vec3f &shifted_start_pt,
                                             bool cut_first_poly,
-                                            const AbsoluteDeadline* deadline) {
+                                            const AbsoluteDeadline* deadline,
+                                            const std::optional<RouteBoundaryGate>& route_boundary_gate) {
         // https://whimsical.com/flow-3TASJFwe1dASYYY2xHEmze
         // password: wtr
         //	TimeConsuming t___("SearchPolytopeOnPath");
@@ -65,6 +66,41 @@ namespace navigation_planning_backend {
         if (path.empty()) {
             solve_stage_.store(0);
             return false;
+        }
+
+        std::optional<std::size_t> route_boundary_index;
+        if (route_boundary_gate.has_value()) {
+            if (!route_boundary_gate->point.allFinite() ||
+                !std::isfinite(route_boundary_gate->radius_m) ||
+                route_boundary_gate->radius_m <= 0.0) {
+                planner_context_->warn(
+                    " -- [planner] invalid route-boundary gate geometry");
+                solve_stage_.store(0);
+                return false;
+            }
+            double nearest_distance = std::numeric_limits<double>::infinity();
+            std::size_t nearest_index = 0U;
+            for (std::size_t index = 0; index < path.size(); ++index) {
+                const double distance =
+                    (path[index] - route_boundary_gate->point).norm();
+                if (distance < nearest_distance) {
+                    nearest_distance = distance;
+                    nearest_index = index;
+                }
+            }
+            const double matching_tolerance = std::max(
+                1.0e-4, std::min(0.25, route_boundary_gate->radius_m * 0.25));
+            if (!std::isfinite(nearest_distance) ||
+                nearest_distance > matching_tolerance ||
+                nearest_index == 0U || nearest_index + 1U >= path.size()) {
+                planner_context_->warn(
+                    " -- [planner] route-boundary gate is not an interior guide sample "
+                    "distance={} tolerance={} index={} path_size={}",
+                    nearest_distance, matching_tolerance, nearest_index, path.size());
+                solve_stage_.store(0);
+                return false;
+            }
+            route_boundary_index = nearest_index;
         }
 
         vector<Line> seed_lines;
@@ -112,7 +148,17 @@ namespace navigation_planning_backend {
             }
             solve_stage_.store(1);
             second_id = first_id;
+            bool reached_route_boundary = false;
             for (int j = first_id + 1; j < path.size(); j++) {
+                if (route_boundary_index.has_value() &&
+                    static_cast<std::size_t>(j) == *route_boundary_index) {
+                    // Stop the line corridor exactly at the mission boundary.
+                    // The point corridor inserted below prevents one convex
+                    // CIRI result from bridging the corner.
+                    second_id = j;
+                    reached_route_boundary = true;
+                    break;
+                }
                 bool reach_segment = false;
                 const double seed_length = (path[j] - path[first_id]).norm();
                 // Use one deterministic collision oracle throughout A*, main
@@ -219,6 +265,54 @@ namespace navigation_planning_backend {
             }
 
             sfcs.push_back(temp_poly);
+            if (reached_route_boundary) {
+                Polytope boundary_poly;
+                if (!GeneratePolytopeFromPoint(
+                        path[second_id], boundary_poly, deadline)) {
+                    planner_context_->warn(
+                        " -- [planner] failed to construct route-boundary point corridor");
+                    solve_stage_.store(0);
+                    return false;
+                }
+                const double half_extent = route_boundary_gate->radius_m /
+                    std::sqrt(3.0);
+                Polytope acceptance_box;
+                if (!GenerateEmptyPolytope(
+                        path[second_id], half_extent, acceptance_box)) {
+                    planner_context_->warn(
+                        " -- [planner] failed to construct route-boundary acceptance box");
+                    solve_stage_.store(0);
+                    return false;
+                }
+                boundary_poly = boundary_poly.CrossWith(acceptance_box);
+                if (!boundary_poly.PointIsInside(path[second_id], 1.0e-6)) {
+                    planner_context_->warn(
+                        " -- [planner] route-boundary corridor excludes its waypoint");
+                    solve_stage_.store(0);
+                    return false;
+                }
+                const Polytope overlap = sfcs.back().CrossWith(boundary_poly);
+                Vec3f boundary_interior;
+                const double incoming_overlap =
+                    geometry_utils::findInteriorDist(
+                        overlap.GetPlanes(), boundary_interior);
+                if (!std::isfinite(incoming_overlap) || incoming_overlap <= 0.01) {
+                    planner_context_->warn(
+                        " -- [planner] route-boundary corridor has insufficient "
+                        "incoming overlap depth={}", incoming_overlap);
+                    solve_stage_.store(0);
+                    return false;
+                }
+                boundary_poly.overlap_depth_with_last_one = incoming_overlap;
+                boundary_poly.interior_pt_with_last_one = boundary_interior;
+                boundary_poly.SetRouteBoundaryGate(true);
+                sfcs.push_back(boundary_poly);
+                planner_context_->info(
+                    " -- [planner] inserted route-boundary gate index={} radius={} "
+                    "half_extent={} overlap_depth={}",
+                    second_id, route_boundary_gate->radius_m, half_extent,
+                    incoming_overlap);
+            }
             if (second_id == path.size() - 1) {
                 break;
             }

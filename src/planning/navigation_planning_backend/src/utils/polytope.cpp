@@ -76,6 +76,7 @@ void Polytope::Reset() {
     undefined = true;
     is_known_free = false;
     have_seed_line = false;
+    route_boundary_gate_ = false;
 }
 
 bool Polytope::IsKnownFree() {

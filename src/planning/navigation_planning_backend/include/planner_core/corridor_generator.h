@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cstddef>
 #include "memory"
+#include <limits>
+#include <optional>
 #include <stdexcept>
 
 #include <planner_core/config.hpp>
@@ -71,6 +73,11 @@ namespace navigation_planning_backend {
         std::atomic<std::size_t> solve_point_count_{0};
         void refreshVerticalBounds();
     public:
+        struct RouteBoundaryGate {
+            Vec3f point{Vec3f::Constant(std::numeric_limits<float>::quiet_NaN())};
+            double radius_m{std::numeric_limits<double>::quiet_NaN()};
+        };
+
         vec_Vec3f getLatestCloud() {
             vec_Vec3f out = latest_pc;
             latest_pc.clear();
@@ -107,7 +114,9 @@ namespace navigation_planning_backend {
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,
                                   bool cut_first_poly = false,
-                                  const AbsoluteDeadline* deadline = nullptr);
+                                  const AbsoluteDeadline* deadline = nullptr,
+                                  const std::optional<RouteBoundaryGate>&
+                                      route_boundary_gate = std::nullopt);
 
         void getSeedBBox(const Vec3f &p1, const Vec3f &p2,
                          Vec3f &box_min, Vec3f &box_max);

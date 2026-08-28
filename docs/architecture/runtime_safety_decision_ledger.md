@@ -7321,3 +7321,41 @@ release profiles must not use the former allowance.
   then repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
   make external-mode-check` with waypoint, speed, altitude, clearance, strict
   backup, and p50/p95/p99 latency evidence.
+
+### 2026-08-28 - Preserve a hard route-boundary gate at pass-through corners
+
+- **Owner:** Navigation planning and corridor-generation maintainers.
+- **Scope:** When a genuine pass-through corner uses certified route look-ahead,
+  the corridor generator stops the incoming line corridor at the active
+  waypoint, inserts a point-derived corridor intersected with an axis-aligned
+  box whose half extent is `acceptance_radius / sqrt(3)`, and marks that
+  corridor as a route-boundary gate. The gate is matched to an interior guide
+  sample and the incoming overlap is checked before the corridor is published.
+  SFC simplification preserves the complete corridor sequence whenever the
+  marker is present.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This closes the route
+  adherence hole where a single convex free-space corridor allowed MINCO to
+  cut a genuine waypoint corner without entering the mission acceptance ball.
+  The gate lies inside the existing mission acceptance region, but collision,
+  UNKNOWN, OUT_OF_MAP, clearance, dynamic, swept-world, backup, identity, and
+  deadline gates remain unchanged and authoritative. Invalid or unmatchable
+  gate geometry fails closed.
+- **Derivation and cost:** The cube half extent is selected so every point in
+  the gate is inside the spherical mission acceptance radius. One bounded
+  point-corridor construction is added only for an active look-ahead boundary;
+  no second optimizer or planner is introduced. The marker is retained as
+  metadata so generic SFC simplification cannot erase the contract.
+- **Evidence:** The SFC preservation unit test passes with the existing planner
+  and trajectory suites. The next authoritative build/manifest and repeated
+  3 m/s multi-waypoint SITL must verify that the gate is constructed, waypoint
+  order is preserved, and optimizer latency/failure tails remain bounded.
+- **Removal/review condition:** Revisit if gate construction rejects a valid
+  route due to numerical overlap, causes repeated optimizer failure or latency
+  tails, permits measured waypoint skipping, or regresses PVA continuity,
+  altitude, clearance, speed, strict backup, or route completion.
+- **Verification:** `make build`; sourced planner, trajectory, mission, and
+  runtime contract tests; then repeated
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check`, checking route-boundary diagnostics, waypoint order,
+  endpoint error, speed, altitude, clearance, strict backup, and planning
+  p50/p95/p99.
