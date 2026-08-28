@@ -966,66 +966,22 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
 
     // Freeze the complete seed before L-BFGS can mutate x, MINCO parameters,
-    // durations, or spatial points. If the guide's time allocation violates
-    // only the dynamic/flatness envelope, try a finite set of slower temporal
-    // seeds. A scale is usable only when the resulting complete polynomial
-    // independently passes every hard certificate, including the continuous
-    // corridor check; scaling time with non-zero PVAJ boundaries is not
-    // assumed to preserve geometry.
+    // durations, or spatial points. A later fallback may copy only this exact
+    // object and only when this independent certificate already passed.
     Trajectory immutable_nominal_seed;
-    navigation_planning_backend::DeterministicNominalSeedCertificate
-            immutable_seed_certificate;
-    const VecDf unscaled_seed_times = opt_vars.times;
-    constexpr std::array<double, 6> kInitialSeedTimeScales = {
-            1.0, 1.25, 1.5, 2.0, 3.0, 4.0};
-    for (const double time_scale : kInitialSeedTimeScales) {
-        const VecDf candidate_times = unscaled_seed_times * time_scale;
-        if (!candidate_times.allFinite() || candidate_times.minCoeff() <= 0.0) {
-            continue;
-        }
-        Trajectory candidate_seed;
-        opt_vars.minco.setParameters(opt_vars.points, candidate_times);
-        opt_vars.minco.getTrajectory(candidate_seed);
-        const auto candidate_certificate =
-                navigation_planning_backend::certifyDeterministicNominalSeed(
-                    candidate_seed,
-                    opt_vars.hPolytopes,
-                    opt_vars.hPolyIdx,
-                    opt_vars.route_boundary_gates,
-                    opt_vars.route_boundary_points,
-                    opt_vars.route_boundary_radii,
-                    opt_vars.headPVAJ,
-                    opt_vars.tailPVAJ,
-                    cfg_);
-        if (time_scale == 1.0) {
-            immutable_nominal_seed = candidate_seed;
-            immutable_seed_certificate = candidate_certificate;
-        }
-        if (candidate_certificate.valid) {
-            immutable_nominal_seed = std::move(candidate_seed);
-            immutable_seed_certificate = candidate_certificate;
-            opt_vars.times = candidate_times;
-            gcopter::backwardMapTToTau(opt_vars.times, tau);
-            if (time_scale > 1.0) {
-                planner_context_->info(
-                        " -- [ExpOpt] selected pre-LBFGS certified time seed: "
-                        "scale={} vel={}/{} acc={}/{} jerk={}/{}",
-                        time_scale,
-                        candidate_certificate.maximum_velocity_mps, cfg_.max_vel,
-                        candidate_certificate.maximum_acceleration_mps2, cfg_.max_acc,
-                        candidate_certificate.maximum_jerk_mps3, cfg_.max_jerk);
-            }
-            break;
-        }
-        if (candidate_certificate.failure_stage !=
-                navigation_planning_backend::
-                    DeterministicNominalSeedFailureStage::kDynamics &&
-            candidate_certificate.failure_stage !=
-                navigation_planning_backend::
-                    DeterministicNominalSeedFailureStage::kFlatness) {
-            break;
-        }
-    }
+    opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
+    opt_vars.minco.getTrajectory(immutable_nominal_seed);
+    const auto immutable_seed_certificate =
+            navigation_planning_backend::certifyDeterministicNominalSeed(
+                immutable_nominal_seed,
+                opt_vars.hPolytopes,
+                opt_vars.hPolyIdx,
+                opt_vars.route_boundary_gates,
+                opt_vars.route_boundary_points,
+                opt_vars.route_boundary_radii,
+                opt_vars.headPVAJ,
+                opt_vars.tailPVAJ,
+                cfg_);
 
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;

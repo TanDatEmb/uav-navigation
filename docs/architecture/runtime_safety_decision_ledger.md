@@ -8434,34 +8434,3 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
   If blocked, re-review planner, mapping, PX4, mission, and report artifacts at
   the first causal boundary; do not tune the corridor gate from one run.
-
-### 2026-08-28 - Certify a bounded temporal seed before L-BFGS
-
-- **Owner:** Nominal MINCO initialization and time-allocation maintainers.
-- **Scope:** When the unmodified guide polynomial fails only its dynamic or
-  flatness certificate, evaluate the fixed scale set
-  `{1.25, 1.5, 2, 3, 4}` against the original segment times before L-BFGS.
-  Start optimization from the first complete polynomial that passes every
-  existing hard certificate; otherwise retain the original fail-closed path.
-- **Safety impact:** Uniform time scaling is not assumed to preserve a MINCO
-  curve with non-zero PVAJ boundaries. Every scaled object is therefore rebuilt
-  and rechecked for exact PVAJ/C3, piece/SFC provenance, continuous corridor,
-  route-boundary, V/A/J, and flatness constraints. Corridor/input/boundary/route
-  failures do not enter the scale search. No physical limit or `0.01 m`
-  corridor tolerance is widened, and all downstream yaw, world, backup, lease,
-  and atomic command gates remain authoritative.
-- **Evidence:** Clean-manifest artifact
-  `.artifacts/runtime/external-mode-check-20260828T080831-860644` reached
-  waypoints `[0,1,2]` but showed certified corridor/interpolation seeds rejected
-  specifically at dynamics: one seed had `3.307/3 m/s`, `13.053/2 m/s^2`, and
-  `69.516/4 m/s^3`; later seeds had acceleration `2.65-2.70 m/s^2` against the
-  unchanged `2 m/s^2` limit. Optimized replacements then exceeded the corridor
-  gate by `0.01188-0.01662 m`, leaving no valid candidate.
-- **Removal/review condition:** Replace this finite initialization search with a
-  route-owned, dynamics-aware time allocator once it produces a directly
-  certified seed for all segments. Do not turn the scale list into an unbounded
-  retry or use it to authorize a scaled curve without full recertification.
-- **Verification:** Build/test `navigation_planning_backend`, rebuild the clean
-  Release manifest, and repeat the three-pillar mission at 3 m/s. Inspect seed
-  scale selection, corridor/dynamic rejection stages, path altitude/forward
-  progress, waypoint coverage, backup lifetime, and latency tails.
