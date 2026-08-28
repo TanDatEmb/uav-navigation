@@ -7333,7 +7333,8 @@ release profiles must not use the former allowance.
   sample and the incoming overlap is checked before the corridor is published.
   If A* allocation leaves a long incoming edge, only that edge is subdivided
   into bounded seed segments before gate construction. SFC simplification
-  preserves the complete corridor sequence whenever the marker is present.
+  preserves the complete corridor sequence whenever the marker is present, and
+  corridor compaction cannot pop a gate while appending the outgoing leg.
 - **Safety impact:** `SAFETY_INVARIANT` preservation. This closes the route
   adherence hole where a single convex free-space corridor allowed MINCO to
   cut a genuine waypoint corner without entering the mission acceptance ball.

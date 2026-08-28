@@ -300,7 +300,7 @@ namespace navigation_planning_backend {
                     }
                 } else {
                     int temp_id = sfcs.size() - 2;
-                    if (temp_id > 0) {
+                    if (temp_id > 0 && !sfcs.back().IsRouteBoundaryGate()) {
                         overlap = sfcs[temp_id].CrossWith(temp_poly);
                         interior_depth = geometry_utils::findInteriorDist(overlap.GetPlanes(), interior_pt);
                         if (interior_depth > sfcs[temp_id + 1].overlap_depth_with_last_one * 0.25) {
