@@ -7666,3 +7666,40 @@ release profiles must not use the former allowance.
   tests. Then repeat the 0/45/90 degree route matrix and inspect mapping
   update, snapshot export, planning, command age, speed, altitude, clearance,
   backup, and waypoint evidence at p50/p95/p99.
+
+### 2026-08-28 - Move anisotropic-map support enforcement to route runtime
+
+- **Owner:** Navigation planner route-query and world-model maintainers.
+  **Scope:** Supersede the product-footprint part of the preceding entry.
+  Keep the measured `110 x 15 x 6 m` ENU baseline instead of making an
+  unbenchmarked `110 x 30` product-map change. Use the shared ray-to-AABB
+  support helper from the measured start toward the requested route in the
+  planner path-search boundary; reject unsupported route progress explicitly.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. The planner no longer
+  treats the longest horizontal side as evidence for every route direction,
+  but short valid goals are not rejected merely because the static AABB is
+  anisotropic. A Y/diagonal request that cannot provide the required route or
+  visibility support fails closed before A* rather than being silently clipped.
+  UNKNOWN, OUT_OF_MAP, collision, backup, dynamic, and freshness gates are
+  unchanged.
+- **Derivation and cost:** Runtime support is the first normalized route ray
+  intersection with the current AABB. The required distance is bounded by the
+  requested route distance and the configured visibility horizon, with the A*
+  inward-cell margin. This adds one constant-time geometry calculation per
+  path-search request and avoids the measured memory/snapshot/slide regression
+  from doubling the Y footprint.
+- **Evidence:** The `110 x 30` experiment artifact
+  `.artifacts/runtime/external-mode-check-20260828T032119-636685` had valid
+  sensor freshness but regressed to waypoint coverage `[0,1,2,3]` and speed
+  p95 `2.326 m/s`, versus the prior `110 x 15` run's `[0,1,2,3,4,5]` and
+  `2.796 m/s`. The experiment is not acceptance evidence; it is the reason
+  the footprint expansion is superseded.
+- **Removal/review condition:** Revisit when a wider or sparse/chunked map
+  has repeated distribution evidence showing lower or equal mapping,
+  snapshot, slide, and planning tails while preserving strict safety and
+  multi-direction route completion. Do not restore max-axis validation or
+  allow endpoint clipping to stand in for route support.
+- **Verification:** `make build`; run planner/world-model/mapping contract
+  tests, then repeat straight, Y, diagonal, yaw-versus-velocity, and 0/45/90
+  degree route scenarios. Inspect support/clipping reason, waypoint order,
+  speed, altitude, backup, clearance, and p50/p95/p99 latency.

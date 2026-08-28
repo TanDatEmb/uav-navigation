@@ -2775,6 +2775,38 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             planner_context_->error(" -- [planner] Goal waypoints empty or searching horizon negative, force return.");
             return false;
         }
+        if (!map_ptr_) {
+            planner_context_->error(" -- [planner] route support check has no world model");
+            return false;
+        }
+
+        // ROG-Map storage is an axis-aligned ENU AABB.  Do not let A* project
+        // a long route onto the nearest map face and report that shortened
+        // path as if the requested route had enough support.  The requirement
+        // is bounded by the requested route distance and the safety horizon:
+        // short in-map goals remain valid, while an unsupported Y/diagonal
+        // route fails closed with an explicit reason.  The two-cell margin
+        // matches the inward endpoint margin in A* below.
+        const Eigen::Vector3d route_delta =
+            goal.cast<double>() - start_pt.cast<double>();
+        const double route_distance = route_delta.norm();
+        if (std::isfinite(route_distance) && route_distance > 1.0e-6) {
+            const auto support = navigation_world_model::directionalSupportToLocalBoundary(
+                start_pt.cast<double>(), route_delta, map_ptr_->geometry());
+            const double required_support =
+                std::min({route_distance, searching_horizon, cfg_.visibility_horizon_m}) +
+                2.0 * cfg_.resolution;
+            if (!support.has_value() || !std::isfinite(required_support) ||
+                *support + 1.0e-9 < required_support) {
+                planner_context_->error(
+                    " -- [planner] route direction lacks AABB support: "
+                    "available={:.3f} required={:.3f} route_distance={:.3f} "
+                    "start=({:.3f},{:.3f},{:.3f}) goal=({:.3f},{:.3f},{:.3f})",
+                    support.value_or(0.0), required_support, route_distance,
+                    start_pt.x(), start_pt.y(), start_pt.z(), goal.x(), goal.y(), goal.z());
+                return false;
+            }
+        }
 
         // 1) check and shift pts
         // 		For start point, must be collision free

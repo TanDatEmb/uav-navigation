@@ -263,29 +263,15 @@ namespace navigation_planning_backend {
                     "inflation at least as large as the planner safety envelope");
             }
             const double minimum_map_extent = 2.0 * robot_r + world_resolution;
-            const auto support_x = navigation_world_model::directionalSupportToLocalBoundary(
-                world_geometry.local_center_m, navigation_world_model::Point3::UnitX(),
-                world_geometry);
-            const auto support_y = navigation_world_model::directionalSupportToLocalBoundary(
-                world_geometry.local_center_m, navigation_world_model::Point3::UnitY(),
-                world_geometry);
-            const double minimum_horizontal_support =
-                support_x.has_value() && support_y.has_value()
-                    ? std::min(*support_x, *support_y)
-                    : 0.0;
-            // The planner may use an oriented route window later, but the
-            // evidence map itself is still an axis-aligned ENU AABB.  Require
-            // every horizontal direction to have the complete visibility
-            // horizon plus one cell of inward margin.  The previous maxCoeff
-            // check allowed a long X side to hide an unsafe narrow Y side.
-            const double required_directional_support =
-                visibility_horizon_m + world_resolution;
-            if (world_geometry.local_size_m.minCoeff() < minimum_map_extent - 1.0e-9 ||
-                !std::isfinite(minimum_horizontal_support) ||
-                minimum_horizontal_support + 1.0e-9 < required_directional_support) {
+            // The local evidence map is intentionally allowed to be
+            // anisotropic. Route-specific support is checked at runtime from
+            // the measured start toward the requested route direction; doing
+            // that here would either reject valid short goals or require an
+            // unbenchmarked square map. Do not use maxCoeff(X,Y) as a claim
+            // that the planning horizon is available in every direction.
+            if (world_geometry.local_size_m.minCoeff() < minimum_map_extent - 1.0e-9) {
                 throw std::invalid_argument(
-                    "world map directional support is insufficient for the visibility horizon "
-                    "and safety envelope");
+                    "world map extent is insufficient for the planner safety envelope");
             }
             if (corridor_bound_distance_m + 1.0e-9 < robot_r ||
                 corridor_segment_max_length_m + 1.0e-9 < world_resolution) {

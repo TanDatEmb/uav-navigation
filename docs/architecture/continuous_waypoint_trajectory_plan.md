@@ -3,10 +3,10 @@
 **Status:** implementation in staged checkpoints; route/progress, command
 continuity, explicit visibility evidence, native 3D visibility production,
 adaptive pass-through look-ahead on certified outgoing legs, bounded
-pass-through corner route-window endpoint, and omnidirectional visibility
-support validation are implemented. The ROG evidence grid is still an
-axis-aligned ENU store; the route-oriented planner window, full multiwaypoint
-SITL, and dataset evidence remain open.
+pass-through corner route-window endpoint, and route-direction support
+validation are implemented. The ROG evidence grid is still an axis-aligned
+ENU store; the route-oriented planner window, full multiwaypoint SITL, and
+dataset evidence remain open.
 
 This document is the implementation plan for the high-speed, multi-waypoint
 navigation behavior. It is intentionally broader than a parameter-tuning
@@ -193,10 +193,13 @@ The oriented frame is used to select route samples, corridor seeds, and
 look-ahead endpoints. Every selected point is converted back to ENU before
 ROG queries, collision checks, A*, immutable snapshot certification, or PX4
 publication. `UNKNOWN` and `OUT_OF_MAP` remain non-traversable for the
-certified backup. The current `110 x 30 x 6 m` AABB now covers the configured
-visibility safety horizon in every horizontal direction, but it does not
-claim to provide a 45 m planning horizon in every direction; that distinction
-must stay visible in diagnostics.
+certified backup. The current `110 x 15 x 6 m` baseline AABB is retained for
+its measured latency/memory profile. It does not cover the visibility horizon
+in every horizontal direction. Route-specific support is checked against the
+measured start and requested route before search; unsupported Y/diagonal
+progress fails closed rather than being hidden by the long X side. A wider or
+sparse/chunked map is a later measured design decision, not an implicit
+consequence of this contract.
 
 The implementation order is:
 

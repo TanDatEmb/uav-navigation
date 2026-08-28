@@ -489,7 +489,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("std::make_shared<navigation_mapping::MappingActor>", constructor)
         self.assertIn("const auto result = mapping_actor->process(observation);", constructor)
         self.assertIn("observation.corrected_odometry.pose.pose", mapping_actor)
-        self.assertIn("map_->updateMap(backend_cloud_, map_pose)", mapping_actor)
+        self.assertIn("const auto backend_outcome = map_->updateMap(", mapping_actor)
         self.assertIn("mapping_worker_->start()", constructor)
         self.assertIn("propagated_state_callback_group_", constructor)
         self.assertIn("propagated_state_options.callback_group", constructor)

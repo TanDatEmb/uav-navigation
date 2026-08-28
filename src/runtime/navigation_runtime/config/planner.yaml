@@ -188,10 +188,11 @@ rog_map:
   # resolving an oracle/quantization mismatch.
   inflation_step: 4
   # ROG-Map storage remains an axis-aligned ENU evidence grid.  Keep enough
-  # support in both horizontal directions for the complete visibility horizon;
-  # route-oriented planning belongs above this storage contract and must not
-  # be emulated by hiding a narrow Y side behind the long X side.
-  map_size: [110, 30, 6]
+  # ROG-Map storage remains an axis-aligned ENU evidence grid.  The baseline
+  # footprint is intentionally anisotropic for measured memory/latency.  The
+  # planner checks route-direction support at runtime; a route that cannot be
+  # supported by this AABB fails closed until a wider/sparse map is certified.
+  map_size: [110, 15, 6]
   fix_map_origin: [0, 0, 1.5]
   # lio_odom is initialized from the estimator trajectory, so zero is not a
   # physical ground datum and a valid mission may descend below it.  Keep the
