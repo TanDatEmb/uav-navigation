@@ -27,6 +27,16 @@ inline Eigen::Vector3d boundEstimatedDerivative(
   return derivative * (maximum_norm / norm);
 }
 
+// Jerk reconstructed by differentiating propagated odometry is a diagnostic,
+// not a measured physical state.  Making that noisy finite difference an exact
+// C3 boundary forces a new trajectory to reproduce an arbitrary lateral or
+// reverse impulse.  A cold/rebased plan therefore starts with neutral jerk;
+// hot replans continue to splice to the exact jerk of the committed command.
+inline Eigen::Vector3d conditionEstimatedBoundaryJerk(
+    const Eigen::Vector3d& jerk, const bool estimated) noexcept {
+  return estimated ? Eigen::Vector3d::Zero() : jerk;
+}
+
 // Construct a seventh-order C3 connector between two complete PVAJ states.
 // This is a handoff primitive only: the caller must still run the normal
 // dynamic, flatness, corridor, and immutable-world certificates on the

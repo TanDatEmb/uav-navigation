@@ -69,6 +69,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 | HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
+| HG-026 | Cold-plan jerk ownership (`SAFETY_INVARIANT`) | finite-difference odometry jerk is diagnostic-only and becomes zero at PlanFromRest/rebase; hot replans preserve exact committed-command jerk | PROVISIONAL | Prevents a noisy third derivative from forcing an arbitrary reverse/lateral C3 launch. Position, velocity, bounded acceleration, all dynamic/corridor/world certificates and command-anchor gates remain unchanged. A false reject can delay a cold restart; a false accept remains blocked by the unchanged full candidate certificates. | Compare cold-start path regression, EXP feasible rate, V/A/J extrema and tracking over repeated three-column SITL and recorded-data shadow planning; retain exact hot-splice jerk residual tests. |
 
 ## Temporary-bypass register
 
@@ -9899,3 +9900,36 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 7c068a8`, `git show 1c38274`, 168 backend and 52
   runtime tests, authoritative Release build and the three cited artifacts
   preserve implementation, rollback and repeated evidence.
+
+### 2026-08-28 - Keep finite-difference jerk out of cold-plan boundaries
+
+- **Owner/status:** Planner state-boundary contract, `PROVISIONAL`; anchors
+  `kinematic_state_boundary.hpp` and `Planner::setState`.
+- **Physical contract:** Propagated odometry provides position and velocity;
+  acceleration and jerk are reconstructed finite differences. Acceleration
+  remains norm-bounded and supplied to PlanFromRest, while estimated jerk is
+  diagnostic-only and becomes zero at a cold/rebased PVAJ boundary. A hot
+  replan still takes exact PVAJ, including jerk, from the currently committed
+  trajectory at the future splice time.
+- **Safety impact:** `SAFETY_INVARIANT`; no V/A/J, corridor, flatness, world,
+  freshness, anchor, or PX4 tracking gate is relaxed. This removes an
+  unmeasured third derivative as a hard equality that can force an initial
+  reverse/lateral impulse. Candidate generation can still false-reject and the
+  runtime retains or stops on the existing certified-command contract.
+- **Derivation/evidence:** In
+  `.artifacts/runtime/external-mode-check-20260828T142323-1223796`, the first
+  raw planning jerk was `[-4.285, 6.289, -7.142]` m/s^3 and was projected to a
+  norm-4 boundary. The resulting nominal path initially moved backward and
+  laterally despite a forward mission; its deterministic seed reached
+  15.58/62.86/766.86 in V/A/J extrema. The same run contained 55 PlanFromRest
+  `-6` failures. This change targets that causal boundary, not the independent
+  hot-replan failures.
+- **Runtime cost:** One branch and zero-vector assignment per state update;
+  expected latency impact is below measurement resolution. Measure EXP
+  feasible rate and p50/p95/p99 rather than assuming an improvement.
+- **Removal/review condition:** Replace zero estimated jerk only when an
+  authoritative filtered jerk state or controller-conditioned command
+  boundary has units, covariance/bandwidth provenance and repeated tracking
+  evidence. Required verification: focused backend tests, Release build,
+  repeated exact three-column SITL, and representative recorded-data shadow
+  planning with cold-start path-regression and V/A/J distributions.

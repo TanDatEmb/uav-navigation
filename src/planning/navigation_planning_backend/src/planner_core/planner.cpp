@@ -3331,14 +3331,14 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             cfg_.exp_traj_cfg.max_jerk, cfg_.back_traj_cfg.max_jerk);
         const auto bounded_acceleration = boundEstimatedDerivative(
             state.acceleration_world, state.acceleration_estimated, acceleration_limit);
-        const auto bounded_jerk = boundEstimatedDerivative(
-            state.jerk_world, state.jerk_estimated, jerk_limit);
+        const auto conditioned_jerk = conditionEstimatedBoundaryJerk(
+            state.jerk_world, state.jerk_estimated);
         const bool acceleration_bounded =
             !bounded_acceleration.isApprox(state.acceleration_world, 0.0);
-        const bool jerk_bounded = !bounded_jerk.isApprox(state.jerk_world, 0.0);
+        const bool jerk_bounded = !conditioned_jerk.isApprox(state.jerk_world, 0.0);
         if ((acceleration_bounded || jerk_bounded) && !estimated_boundary_warning_emitted_) {
             planner_context_->warn(
-                " -- [planner] bounded estimated command-boundary derivatives: "
+                " -- [planner] conditioned estimated command-boundary derivatives: "
                 "acceleration={}/{} jerk={}/{}; raw estimates remain in runtime diagnostics",
                 state.acceleration_world.norm(), acceleration_limit,
                 state.jerk_world.norm(), jerk_limit);
@@ -3348,7 +3348,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         internal.p = state.position_world;
         internal.v = state.velocity_world;
         internal.a = bounded_acceleration;
-        internal.j = bounded_jerk;
+        internal.j = conditioned_jerk;
         const double quaternion_scale =
             state.orientation_world_body.coeffs().cwiseAbs().maxCoeff();
         if (!std::isfinite(quaternion_scale) || quaternion_scale <= 1.0e-9) {
