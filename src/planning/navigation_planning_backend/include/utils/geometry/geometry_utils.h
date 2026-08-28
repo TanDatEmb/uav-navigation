@@ -49,14 +49,31 @@ namespace geometry_utils {
     using navigation_math::vec_E;
     using navigation_math::PolyhedronH;
 
-    ///============ 2023-06-30: add by yunfan ============///
-    static void simplePMTimeAllocator(const double &a_max, const double &v_max,
-                                const double &v0,
-                                const double &total_dis,
-                                const double &cur_dis, double &t, double &vel) {
+    static void simplePMTimeAllocator(const double &max_acceleration_mps2,
+                                      const double &max_velocity_mps,
+                                      const double &initial_velocity_mps,
+                                      const double &total_distance_m,
+                                      const double &current_distance_m,
+                                      double &elapsed_s,
+                                      double &velocity_mps) {
+        if (!std::isfinite(max_acceleration_mps2) ||
+            max_acceleration_mps2 <= 0.0 ||
+            !std::isfinite(max_velocity_mps) || max_velocity_mps <= 0.0 ||
+            !std::isfinite(initial_velocity_mps) || initial_velocity_mps < 0.0 ||
+            !std::isfinite(total_distance_m) || total_distance_m <= 0.0 ||
+            !std::isfinite(current_distance_m) || current_distance_m < 0.0 ||
+            current_distance_m > total_distance_m) {
+            elapsed_s = std::numeric_limits<double>::quiet_NaN();
+            velocity_mps = std::numeric_limits<double>::quiet_NaN();
+            return;
+        }
         // Helper lambda functions
-        auto calc_dis = [](double a, double t) { return 0.5 * a * t * t; };
-        auto calc_time = [](double a, double cur_dis) { return sqrt(2 * cur_dis / a); };
+        auto calc_dis = [](double acceleration_mps2, double elapsed_s) {
+            return 0.5 * acceleration_mps2 * elapsed_s * elapsed_s;
+        };
+        auto calc_time = [](double acceleration_mps2, double distance_m) {
+            return sqrt(2 * distance_m / acceleration_mps2);
+        };
         auto solve_quadratic = [](double a, double b, double c) {
             double delta = b * b - 4 * a * c;
             if (!std::isfinite(delta) || !std::isfinite(a) ||
@@ -78,79 +95,90 @@ namespace geometry_utils {
         };
 
         // Precompute reusable values
-        const double t_to_v_max = v_max / a_max;
-        const double dis_to_v_max = calc_dis(a_max, t_to_v_max);
+        const double t_to_v_max = max_velocity_mps / max_acceleration_mps2;
+        const double dis_to_v_max = calc_dis(max_acceleration_mps2, t_to_v_max);
 
-        const double t_to_v0 = v0 / a_max;
-        const double dis_to_v0 = calc_dis(a_max, t_to_v0);
+        const double t_to_v0 = initial_velocity_mps / max_acceleration_mps2;
+        const double dis_to_v0 = calc_dis(max_acceleration_mps2, t_to_v0);
 
-        const double dec_time = (v_max - v0) / a_max;
-        const double dec_dis = 0.5 * (v_max + v0) * dec_time;
+        const double dec_time =
+            (max_velocity_mps - initial_velocity_mps) / max_acceleration_mps2;
+        const double dec_dis =
+            0.5 * (max_velocity_mps + initial_velocity_mps) * dec_time;
 
         // Case 1: Only acceleration to v0
-        if (total_dis <= dis_to_v0) {
+        if (total_distance_m <= dis_to_v0) {
             // The vehicle is already moving faster than the distance can
             // support under the declared acceleration envelope.  Decelerate
             // from v0; the old zero-speed formula could assign a duration
             // and terminal speed that did not satisfy the initial boundary.
-            const double discriminant = v0 * v0 - 2.0 * a_max * cur_dis;
-            const double scale = std::max({1.0, std::abs(v0 * v0),
-                                           std::abs(2.0 * a_max * cur_dis)});
+            const double discriminant = initial_velocity_mps * initial_velocity_mps -
+                2.0 * max_acceleration_mps2 * current_distance_m;
+            const double scale = std::max({1.0, std::abs(initial_velocity_mps * initial_velocity_mps),
+                                           std::abs(2.0 * max_acceleration_mps2 * current_distance_m)});
             const double bounded_discriminant =
                 discriminant < 0.0 && discriminant > -1.0e-12 * scale
                     ? 0.0 : discriminant;
             if (!std::isfinite(bounded_discriminant) || bounded_discriminant < 0.0) {
-                t = std::numeric_limits<double>::quiet_NaN();
-                vel = std::numeric_limits<double>::quiet_NaN();
+                elapsed_s = std::numeric_limits<double>::quiet_NaN();
+                velocity_mps = std::numeric_limits<double>::quiet_NaN();
                 return;
             }
-            t = (v0 - std::sqrt(bounded_discriminant)) / a_max;
-            vel = v0 - a_max * t;
+            elapsed_s = (initial_velocity_mps - std::sqrt(bounded_discriminant)) /
+                max_acceleration_mps2;
+            velocity_mps = initial_velocity_mps - max_acceleration_mps2 * elapsed_s;
             return;
         }
 
         // Case 2: Acceleration to v_max, then deceleration
-        if (total_dis <= dis_to_v_max + dec_dis) {
-            const double a = 2 * a_max;
-            const double b = -(a_max - v0);
-            const double c = -(v0 * v0 / a_max + 2 * total_dis);
+        if (total_distance_m <= dis_to_v_max + dec_dis) {
+            const double a = 2 * max_acceleration_mps2;
+            const double b = -(max_acceleration_mps2 - initial_velocity_mps);
+            const double c = -(initial_velocity_mps * initial_velocity_mps /
+                               max_acceleration_mps2 + 2 * total_distance_m);
             const double t_acc = solve_quadratic(a, b, c);
-            const double dis_acc = calc_dis(a_max, t_acc);
-            const double cur_v_max = a_max * t_acc;
+            const double dis_acc = calc_dis(max_acceleration_mps2, t_acc);
+            const double current_velocity_max_mps = max_acceleration_mps2 * t_acc;
 
-            if (cur_dis <= dis_acc) {
-                t = calc_time(a_max, cur_dis);
-                vel = a_max * t;
+            if (current_distance_m <= dis_acc) {
+                elapsed_s = calc_time(max_acceleration_mps2, current_distance_m);
+                velocity_mps = max_acceleration_mps2 * elapsed_s;
             } else {
-                const double remaining_dis = cur_dis - dis_acc;
-                const double t2 = solve_quadratic(-a_max, 2 * cur_v_max, -2 * remaining_dis);
-                t = t_acc + t2;
-                vel = cur_v_max - t2 * a_max;
+                const double remaining_distance_m = current_distance_m - dis_acc;
+                const double t2 = solve_quadratic(
+                    -max_acceleration_mps2, 2 * current_velocity_max_mps,
+                    -2 * remaining_distance_m);
+                elapsed_s = t_acc + t2;
+                velocity_mps = current_velocity_max_mps - t2 * max_acceleration_mps2;
             }
             return;
         }
 
         // Case 3: Acceleration + constant speed + deceleration
-        if (cur_dis < dis_to_v_max) {  // Case 3.1: During acceleration phase
-            t = calc_time(a_max, cur_dis);
-            vel = a_max * t;
+        if (current_distance_m < dis_to_v_max) {  // Case 3.1: During acceleration phase
+            elapsed_s = calc_time(max_acceleration_mps2, current_distance_m);
+            velocity_mps = max_acceleration_mps2 * elapsed_s;
             return;
         }
 
-        if (cur_dis < total_dis - dec_dis) {  // Case 3.2: During constant speed phase
-            const double remaining_dis = cur_dis - dis_to_v_max;
-            const double t_const = remaining_dis / v_max;
-            t = t_to_v_max + t_const;
-            vel = v_max;
+        if (current_distance_m < total_distance_m - dec_dis) {
+            const double remaining_distance_m = current_distance_m - dis_to_v_max;
+            const double t_const = remaining_distance_m / max_velocity_mps;
+            elapsed_s = t_to_v_max + t_const;
+            velocity_mps = max_velocity_mps;
             return;
         }
 
         // Case 3.3: During deceleration phase
-        const double const_phase_dis = total_dis - dec_dis - dis_to_v_max;
-        const double remaining_dis = cur_dis - dis_to_v_max - const_phase_dis;
-        const double t_dec = solve_quadratic(-a_max, 2 * v_max, -2 * remaining_dis);
-        t = t_to_v_max + const_phase_dis / v_max + t_dec;
-        vel = v_max - t_dec * a_max;
+        const double const_phase_distance_m =
+            total_distance_m - dec_dis - dis_to_v_max;
+        const double remaining_distance_m =
+            current_distance_m - dis_to_v_max - const_phase_distance_m;
+        const double t_dec = solve_quadratic(
+            -max_acceleration_mps2, 2 * max_velocity_mps,
+            -2 * remaining_distance_m);
+        elapsed_s = t_to_v_max + const_phase_distance_m / max_velocity_mps + t_dec;
+        velocity_mps = max_velocity_mps - t_dec * max_acceleration_mps2;
     }
 
     struct GuideTimeAllocation {

@@ -1909,6 +1909,18 @@ TEST(PlannerTrajectory, GuideTimeAllocationRejectsDegenerateOrInvalidInputs) {
       0.0, 10.0, 0.0, start,
       navigation_math::vec_E<navigation_math::Vec3f>{navigation_math::Vec3f(1.0, 0.0, 0.0)},
       allocation));
+
+  double elapsed = 0.0;
+  double velocity = 0.0;
+  geometry_utils::simplePMTimeAllocator(
+      std::numeric_limits<double>::quiet_NaN(), 10.0, 0.0, 1.0, 0.5,
+      elapsed, velocity);
+  EXPECT_FALSE(std::isfinite(elapsed));
+  EXPECT_FALSE(std::isfinite(velocity));
+  geometry_utils::simplePMTimeAllocator(5.0, 10.0, 0.0, 1.0, 1.5,
+                                        elapsed, velocity);
+  EXPECT_FALSE(std::isfinite(elapsed));
+  EXPECT_FALSE(std::isfinite(velocity));
 }
 
 TEST(PlannerTrajectory, GoalConnectionUsesInclusiveBoundary) {
