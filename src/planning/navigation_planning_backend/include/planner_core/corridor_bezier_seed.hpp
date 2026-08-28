@@ -189,13 +189,19 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
   constexpr std::array<double, 8> velocity_scales{
       1.0, 0.75, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0};
   for (int junction = 1; junction < piece_count; ++junction) {
-    const Eigen::Vector3d chord =
-        states[static_cast<std::size_t>(junction + 1)].col(0) -
-        states[static_cast<std::size_t>(junction - 1)].col(0);
-    const double chord_norm = chord.norm();
-    Eigen::Vector3d desired_velocity = Eigen::Vector3d::Zero();
-    if (chord_norm > 1.0e-9) {
-      desired_velocity = chord * (desired_internal_speed_mps / chord_norm);
+    const Eigen::Vector3d incoming_secant =
+        (states[static_cast<std::size_t>(junction)].col(0) -
+         states[static_cast<std::size_t>(junction - 1)].col(0)) /
+        durations_s(junction - 1);
+    const Eigen::Vector3d outgoing_secant =
+        (states[static_cast<std::size_t>(junction + 1)].col(0) -
+         states[static_cast<std::size_t>(junction)].col(0)) /
+        durations_s(junction);
+    Eigen::Vector3d desired_velocity =
+        0.5 * (incoming_secant + outgoing_secant);
+    const double desired_norm = desired_velocity.norm();
+    if (desired_norm > desired_internal_speed_mps && desired_norm > 1.0e-9) {
+      desired_velocity *= desired_internal_speed_mps / desired_norm;
     }
     bool found = false;
     for (const double scale : velocity_scales) {

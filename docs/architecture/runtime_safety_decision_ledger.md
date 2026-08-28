@@ -9330,6 +9330,19 @@ release profiles must not use the former allowance.
   boundary continuity, a corner requiring deterministic junction-speed
   reduction, full sampled containment and rejection of an immutable endpoint
   derivative pointing outside its corridor.
+  The first exact-HEAD integration artifact
+  `.artifacts/runtime/external-mode-check-20260828T123635-1104863` completed
+  both ordered waypoints without collision and retained `4.505 m` minimum
+  clearance, but selected no corridor-Bezier fallback. Candidate failures moved
+  primarily from corridor stage 2 to dynamics stage 5, with observed baseline
+  acceleration and jerk far above the unchanged `2 m/s^2` and `4 m/s^3`
+  mission limits. The cause was a timing inconsistency: every internal junction
+  was assigned up to `4.9 m/s` even when adjacent short pieces implied a much
+  lower secant velocity. Internal junction velocity is therefore now the
+  bounded average of adjacent position/time secants, with the existing finite
+  containment reductions retained. A regression case proves that unequal
+  straight pieces with equal `5 m/s` secants reproduce constant velocity with
+  negligible acceleration and jerk rather than injecting a speed spike.
 - **Removal/review condition:** Replace only with an equal-or-stronger
   corridor-contained baseline such as a formally bounded B-spline/Bezier or
   direct convex trajectory program that preserves endpoint and junction state

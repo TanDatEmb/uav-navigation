@@ -77,12 +77,37 @@ TEST(CorridorBezierSeed, BuildsStraightC3BaselineInsideOverlappingCorridors) {
       << " jerk=" << certificate.maximum_jerk_mps3;
 }
 
+TEST(CorridorBezierSeed, MatchesStraightJunctionVelocityToPieceTiming) {
+  navigation_math::PolyhedraH corridors{
+      box({-0.1, -1.0, 2.0}, {1.1, 1.0, 4.0}),
+      box({0.9, -1.0, 2.0}, {3.1, 1.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 1);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  navigation_math::VecDf durations(2);
+  durations << 0.2, 0.4;
+  navigation_math::VecDi mapping(2);
+  mapping << 0, 1;
+
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          state({0.0, 0.0, 3.0}, {5.0, 0.0, 0.0}),
+          state({3.0, 0.0, 3.0}, {5.0, 0.0, 0.0}), junctions, durations,
+          corridors, mapping, 8.0, 1.0e-8);
+
+  ASSERT_TRUE(result.valid);
+  EXPECT_NEAR(result.minimum_internal_velocity_scale, 1.0, 1.0e-12);
+  EXPECT_NEAR(result.trajectory[0].getVel(0.2).x(), 5.0, 1.0e-9);
+  EXPECT_NEAR(result.trajectory.getMaxVelRate(), 5.0, 1.0e-7);
+  EXPECT_NEAR(result.trajectory.getMaxAccRate(), 0.0, 1.0e-6);
+  EXPECT_NEAR(result.trajectory.getMaxJerRate(), 0.0, 1.0e-5);
+}
+
 TEST(CorridorBezierSeed, ReducesJunctionVelocityToContainACorner) {
   navigation_math::PolyhedraH corridors{
-      box({-1.0, -1.0, 2.0}, {10.5, 2.0, 4.0}),
-      box({8.0, 0.0, 2.0}, {11.0, 11.0, 4.0})};
+      box({-1.0, -0.1, 2.0}, {10.5, 2.0, 4.0}),
+      box({8.0, -0.1, 2.0}, {11.0, 11.0, 4.0})};
   navigation_math::Mat3Df junctions(3, 1);
-  junctions.col(0) = Eigen::Vector3d{9.0, 1.0, 3.0};
+  junctions.col(0) = Eigen::Vector3d{9.0, 0.0, 3.0};
   navigation_math::VecDf durations(2);
   durations << 3.0, 3.0;
   navigation_math::VecDi mapping(2);
