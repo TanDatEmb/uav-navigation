@@ -7976,3 +7976,39 @@ release profiles must not use the former allowance.
   the 180 ms backend budget is rejected; then inspect planner total latency,
   callback gaps, command age, waypoint order, altitude, clearance, and
   fail-closed behavior in a fresh 3-column run.
+
+### 2026-08-28 - Coalesce immutable mapping snapshot publication at 10 Hz
+
+- **Owner:** Navigation mapping actor and runtime world-snapshot publication
+  maintainers.
+- **Scope:** Set the canonical runtime snapshot publication period to 100 ms
+  while retaining per-observation mutable ROG-map updates and the existing
+  bounded changed-region/history coalescing. The 100 ms period is below the
+  200 ms planner period and the 500 ms world-freshness window; it does not
+  change the actor API default used by isolated mapping tests.
+- **Safety impact:** `PERFORMANCE_POLICY` with fail-closed freshness preserved.
+  No occupancy, UNKNOWN/OUT_OF_MAP, route-support, swept-world, dynamic,
+  backup, lease, or command-identity gate is relaxed. The last published
+  immutable snapshot remains the only execution input; the existing freshness
+  check rejects an aged snapshot. New epochs, whole-map changes, missing
+  history, malformed regions, patch-depth overflow, and export failures retain
+  the existing immediate/full-export or fail-stop behavior.
+- **Evidence:** The canonical 5 Hz trace
+  `.artifacts/runtime/external-mode-check-20260828T044208-708993` received
+  mapping observations at about 18 Hz and published 509/509 snapshots with
+  snapshot-export p95 27.4 ms and callback p95 43.6 ms. A 50 ms period
+  therefore did not coalesce this workload. The 100 ms runtime period targets
+  fewer immutable exports while preserving a snapshot update before each
+  planner period under the declared freshness contract.
+- **Removal/review condition:** Revisit if published snapshot age exceeds the
+  configured period, freshness rejects increase, world revision/history
+  conservation fails, patch classification differs from an immediate full
+  export, live snapshot memory grows, or any repeated run shows clearance,
+  waypoint, speed, altitude, handover, or mode regression. Revert the period
+  if the measured observation cadence no longer leaves a safe publication
+  margin; do not drop map revisions or make retention timer-only.
+- **Verification:** `make build`; run mapping/world-snapshot/runtime/planner
+  and PX4 contract tests plus the mapping actor coalescing test; then repeat
+  the same 3-column trace and compare callback/export p50/p95/p99,
+  published/deferred counts, snapshot age, world identity, memory, command
+  recertification, and mission outcome.
