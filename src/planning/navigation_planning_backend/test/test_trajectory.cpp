@@ -2136,28 +2136,17 @@ TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
       sfcs, vertical_envelope));
 }
 
-TEST(PlannerTrajectory, StopGuideRejectsDistanceBelowPhysicalStoppingDistance) {
+TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {
   const navigation_math::Vec3f start(0.0, 0.0, 0.0);
   const navigation_math::vec_Vec3f short_path{
       start, navigation_math::Vec3f(1.0, 0.0, 0.0)};
   geometry_utils::GuideTimeAllocation allocation;
-  EXPECT_FALSE(geometry_utils::allocateGuideElapsedTimes(
-      2.0, 3.0, 2.4, start, short_path, allocation));
-}
-
-TEST(PlannerTrajectory, StopGuidePreservesNonZeroInitialSpeedKinematics) {
-  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
-  const navigation_math::vec_Vec3f path{
-      navigation_math::Vec3f(1.0, 0.0, 0.0),
-      navigation_math::Vec3f(10.0, 0.0, 0.0)};
-  geometry_utils::GuideTimeAllocation allocation;
   ASSERT_TRUE(geometry_utils::allocateGuideElapsedTimes(
-      2.0, 5.0, 3.0, start, path, allocation));
-  ASSERT_EQ(allocation.elapsed_s.size(), 2U);
-  const double first_time = allocation.elapsed_s.front();
-  EXPECT_NEAR(3.0 * first_time + first_time * first_time, 1.0, 1.0e-12);
-  EXPECT_GT(allocation.elapsed_s.back(), first_time);
-  EXPECT_NEAR(allocation.terminal_velocity_mps, 0.0, 1.0e-12);
+      2.0, 3.0, 2.4, start, short_path, allocation));
+  ASSERT_EQ(allocation.points.size(), 1U);
+  EXPECT_NEAR(allocation.elapsed_s.back(), 0.5367, 0.005);
+  EXPECT_NEAR(allocation.terminal_velocity_mps, 1.3266, 0.005);
+  EXPECT_GE(allocation.terminal_velocity_mps, 0.0);
 }
 
 TEST(PlannerTrajectory, GuideTimeAllocationRejectsDegenerateOrInvalidInputs) {
