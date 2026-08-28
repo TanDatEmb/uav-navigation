@@ -46,6 +46,11 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
     const traj_opt::ExpOptimizationDiagnostics& source) {
   navigation_planning::OptimizationDiagnostics output;
   output.lbfgs_attempt_count = source.lbfgs_attempt_count;
+  output.lbfgs_evaluation_count = source.lbfgs_evaluation_count;
+  output.lbfgs_first_attempt_evaluation_count =
+      source.lbfgs_first_attempt_evaluation_count;
+  output.lbfgs_last_attempt_evaluation_count =
+      source.lbfgs_last_attempt_evaluation_count;
   output.retry_count = source.retry_count;
   output.retry_violation_mask = source.retry_violation_mask;
   output.retry_stop_reason = source.retry_stop_reason;

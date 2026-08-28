@@ -155,6 +155,9 @@ class PlannerTraceTest(unittest.TestCase):
                                     "backup_last_seed_endpoint": "[2.0,3.0,3.0]",
                                     "exp_diagnostics_valid": "1",
                                     "exp_lbfgs_attempt_count": "3",
+                                    "exp_lbfgs_evaluation_count": "173",
+                                    "exp_lbfgs_first_attempt_evaluation_count": "91",
+                                    "exp_lbfgs_last_attempt_evaluation_count": "42",
                                     "exp_retry_count": "2",
                                     "exp_retry_violation_mask": "5",
                                     "exp_retry_stop_reason": "5",
@@ -228,6 +231,9 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertTrue(records[0]["exp_diagnostics_valid"])
         self.assertEqual(records[0]["exp_lbfgs_attempt_count"], 3)
         self.assertEqual(records[0]["exp_retry_count"], 2)
+        self.assertEqual(records[0]["exp_lbfgs_evaluation_count"], 173)
+        self.assertEqual(records[0]["exp_lbfgs_first_attempt_evaluation_count"], 91)
+        self.assertEqual(records[0]["exp_lbfgs_last_attempt_evaluation_count"], 42)
         self.assertEqual(records[0]["exp_retry_violation_mask"], 5)
         self.assertEqual(records[0]["exp_retry_stop_reason"], 5)
         self.assertEqual(records[0]["exp_lbfgs_first_return_code"], 0)

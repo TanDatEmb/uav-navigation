@@ -2387,6 +2387,12 @@ void NavigationRuntimeNode::runCycle() {
                      backup_diagnostics.last_seed_endpoint);
     add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
     add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
+    add_trace_value("exp_lbfgs_evaluation_count",
+                    exp_diagnostics.lbfgs_evaluation_count);
+    add_trace_value("exp_lbfgs_first_attempt_evaluation_count",
+                    exp_diagnostics.lbfgs_first_attempt_evaluation_count);
+    add_trace_value("exp_lbfgs_last_attempt_evaluation_count",
+                    exp_diagnostics.lbfgs_last_attempt_evaluation_count);
     add_trace_value("exp_retry_count", exp_diagnostics.retry_count);
     add_trace_value("exp_retry_violation_mask", exp_diagnostics.retry_violation_mask);
     add_trace_value("exp_retry_stop_reason", exp_diagnostics.retry_stop_reason);

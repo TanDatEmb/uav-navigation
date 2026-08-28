@@ -8011,6 +8011,36 @@ release profiles must not use the former allowance.
   traces and report maximum yaw rate, yaw continuity, role, mode, waypoint,
   altitude, clearance, and fail-closed outcome.
 
+### 2026-08-28 - Expose EXP L-BFGS evaluation counts
+
+- **Owner:** Navigation trajectory-optimization diagnostics maintainers.
+- **Scope:** Publish total, first-attempt, and last-attempt L-BFGS objective
+  evaluation counts for each EXP solve. The count is collected from the
+  existing diagnostic `costFunctional` invocation counter and is propagated
+  through the planner facade, runtime trace, and report parser. No solver
+  parameter, stopping rule, objective, certificate, or fallback behavior is
+  changed.
+- **Safety impact:** `OBSERVABILITY_ONLY`. The fields are diagnostic-only and
+  never participate in candidate selection, hard gates, cancellation,
+  freshness, world authorization, or command publication. Missing or legacy
+  fields remain absent/partial in the parser rather than being inferred.
+- **Evidence:** The canonical trace
+  `.artifacts/runtime/external-mode-check-20260828T044208-708993` exposes
+  attempt and return-code counts but not the number of objective evaluations
+  behind each 180 ms tail. Since L-BFGS returns `LBFGSERR_MAXIMUMITERATION`
+  at -1008 and `LBFGSERR_MAXIMUMLINESEARCH` at -1009, evaluation counts are
+  required to separate iteration-bound from line-search-heavy cases before
+  tuning either parameter.
+- **Removal/review condition:** Revisit if counters disagree with the
+  objective invocation count, reset across retries incorrectly, or alter
+  timing enough to invalidate comparisons. Do not use the counters as a
+  substitute for certificates or silently convert an observation into a
+  solver limit.
+- **Verification:** `make build`; run optimizer/planner/runtime/PX4 tests and
+  planner trace parser tests; verify total count equals the sum of recorded
+  attempts, retry resets are accounted for, return-code interpretation is
+  preserved, and fresh traces include the three evaluation fields.
+
 ### 2026-08-28 - Coalesce immutable mapping snapshot publication at 10 Hz
 
 - **Owner:** Navigation mapping actor and runtime world-snapshot publication

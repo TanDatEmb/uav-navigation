@@ -983,6 +983,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                                   &ExpTrajOpt::monitorProgress,
                                                   &this->opt_vars,
                                                   attempt_params);
+        const int attempt_evaluation_count = std::max(0, opt_vars.iter_num);
+        diagnostics_.lbfgs_evaluation_count += attempt_evaluation_count;
+        if (diagnostics_.lbfgs_attempt_count == 1) {
+            diagnostics_.lbfgs_first_attempt_evaluation_count =
+                    attempt_evaluation_count;
+        }
+        diagnostics_.lbfgs_last_attempt_evaluation_count =
+                attempt_evaluation_count;
         if (diagnostics_.lbfgs_attempt_count == 1) {
             diagnostics_.first_lbfgs_return_code = result;
         }

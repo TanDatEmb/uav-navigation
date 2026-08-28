@@ -73,6 +73,13 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "optimizer_latency_ms": ("optimizer_latency_ms",),
     "exp_diagnostics_valid": ("exp_diagnostics_valid",),
     "exp_lbfgs_attempt_count": ("exp_lbfgs_attempt_count",),
+    "exp_lbfgs_evaluation_count": ("exp_lbfgs_evaluation_count",),
+    "exp_lbfgs_first_attempt_evaluation_count": (
+        "exp_lbfgs_first_attempt_evaluation_count",
+    ),
+    "exp_lbfgs_last_attempt_evaluation_count": (
+        "exp_lbfgs_last_attempt_evaluation_count",
+    ),
     "exp_retry_count": ("exp_retry_count",),
     "exp_retry_violation_mask": ("exp_retry_violation_mask",),
     "exp_retry_stop_reason": ("exp_retry_stop_reason",),
@@ -350,6 +357,13 @@ def normalize_planner_trace_record(
         "optimizer_latency_ms": _float(values["optimizer_latency_ms"]),
         "exp_diagnostics_valid": _bool(values["exp_diagnostics_valid"]),
         "exp_lbfgs_attempt_count": _int(values["exp_lbfgs_attempt_count"]),
+        "exp_lbfgs_evaluation_count": _int(values["exp_lbfgs_evaluation_count"]),
+        "exp_lbfgs_first_attempt_evaluation_count": _int(
+            values["exp_lbfgs_first_attempt_evaluation_count"]
+        ),
+        "exp_lbfgs_last_attempt_evaluation_count": _int(
+            values["exp_lbfgs_last_attempt_evaluation_count"]
+        ),
         "exp_retry_count": _int(values["exp_retry_count"]),
         "exp_retry_violation_mask": _int(values["exp_retry_violation_mask"]),
         "exp_retry_stop_reason": _int(values["exp_retry_stop_reason"]),

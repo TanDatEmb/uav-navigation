@@ -17,6 +17,9 @@ namespace navigation_planning {
 
 struct OptimizationDiagnostics {
   int lbfgs_attempt_count{0};
+  int lbfgs_evaluation_count{0};
+  int lbfgs_first_attempt_evaluation_count{0};
+  int lbfgs_last_attempt_evaluation_count{0};
   int retry_count{0};
   int retry_violation_mask{0};
   int retry_stop_reason{0};

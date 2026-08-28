@@ -41,6 +41,9 @@ namespace traj_opt {
     // participate in candidate selection, hard gates, or cancellation.
     struct ExpOptimizationDiagnostics {
         int lbfgs_attempt_count{0};
+        int lbfgs_evaluation_count{0};
+        int lbfgs_first_attempt_evaluation_count{0};
+        int lbfgs_last_attempt_evaluation_count{0};
         int retry_count{0};
         int retry_violation_mask{0};  // bit 0=velocity, bit 1=acceleration, bit 2=jerk
         int retry_stop_reason{0};     // 0=none, 1=non-finite scale, 2=cancelled,
