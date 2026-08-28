@@ -330,6 +330,71 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         return true;
     }
 
+    bool Planner::retainCertifiedCurrentMainHorizon(
+            const CandidateCommandBundle& candidate,
+            const bool new_goal) {
+        if (new_goal || commit_authorizer_ == nullptr || !map_ptr_) return false;
+        const auto identity = commandIdentitySnapshot();
+        const auto current_snapshot = cmd_traj_info_.snapshot();
+        if (!identity.valid() || current_snapshot.empty ||
+            current_snapshot.identity.localization_epoch != identity.localization_epoch ||
+            current_snapshot.identity.goal_epoch != identity.goal_epoch ||
+            current_snapshot.identity.request_id != identity.request_id) {
+            return false;
+        }
+        const double authorization_wall_time = planner_context_->getSimTime();
+        if (!currentMainHorizonDominatesCandidate(
+                current_snapshot.position.start_WT,
+                current_snapshot.position.getTotalDuration(),
+                current_snapshot.backup_start_tt,
+                current_snapshot.backup_available,
+                candidate.start_wall_time,
+                candidate.position.getTotalDuration(),
+                candidate.backup_start_tt,
+                candidate.backup_suffix_available,
+                authorization_wall_time)) {
+            return false;
+        }
+        auto current_candidate = CmdTraj::candidateFromSnapshot(current_snapshot);
+        if (!current_candidate ||
+            !candidateYawRateWithinLimit(*current_candidate, cfg_.yaw_rate_max_rad_s) ||
+            !std::isfinite(current_candidate->yaw.getMaxAccRate()) ||
+            current_candidate->yaw.getMaxAccRate() >
+                cfg_.yaw_acceleration_max_rad_s2 + 1.0e-6) {
+            return false;
+        }
+        if (route_snapshot_.has_value()) {
+            const double begin_tt = std::max(
+                0.0, authorization_wall_time - current_candidate->start_wall_time);
+            const auto route_certificate = certifyMainRouteRegression(
+                *current_candidate, *route_snapshot_, begin_tt,
+                navigation_mission::RouteProgressConfig{}.backtrack_tolerance_m);
+            if (route_certificate.applicable && !route_certificate.valid) return false;
+        }
+        const auto lease = commit_authorizer_->latest();
+        if (!lease) return false;
+        const auto validation = validateExecutableCandidate(
+            *lease.view, *current_candidate, authorization_wall_time,
+            candidateCertificatePolicy(*current_candidate, unknownPolicy()));
+        if (!validation.valid || !validation.protected_region.valid()) return false;
+
+        const double current_main_end = current_snapshot.position.start_WT +
+            (current_snapshot.backup_available
+                ? current_snapshot.backup_start_tt
+                : current_snapshot.position.getTotalDuration());
+        const double candidate_main_end = candidate.start_wall_time +
+            (candidate.backup_suffix_available
+                ? candidate.backup_start_tt
+                : candidate.position.getTotalDuration());
+        planner_context_->info(
+            " -- [planner] retaining latest-world-certified command because "
+            "candidate regresses absolute MAIN horizon current_end={} candidate_end={} "
+            "world_generation={} world_revision={}",
+            current_main_end, candidate_main_end,
+            lease.identity.generation, lease.identity.revision);
+        return true;
+    }
+
     bool Planner::acknowledgeCommandCandidate(const std::uint64_t generation) {
         if (commit_authorizer_ == nullptr) return false;
         CommandCertificate staged_certificate;
@@ -836,6 +901,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
+            if (retainCertifiedCurrentMainHorizon(*candidate, new_goal)) {
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
+                return NO_NEED;
+            }
             if (!authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -859,6 +928,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // 这次生成backup轨迹的点没有意义,
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED);
+            if (candidate && retainCertifiedCurrentMainHorizon(*candidate, new_goal)) {
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
+                return NO_NEED;
+            }
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -883,6 +956,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // Which means the exp traj is all in known free, no need for backup traj
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH);
+            if (candidate && retainCertifiedCurrentMainHorizon(*candidate, new_goal)) {
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
+                return NO_NEED;
+            }
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));

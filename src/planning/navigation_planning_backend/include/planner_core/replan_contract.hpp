@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include <navigation_math/type_utils.hpp>
 #include <planner_core/planner_result.hpp>
 
@@ -28,6 +30,47 @@ inline bool backupResultMayBuildCommandCandidate(navigation_math::RET_CODE resul
 inline bool shouldRetainBackupCapableCommand(
     bool new_goal, bool backup_available) noexcept {
   return !new_goal && backup_available;
+}
+
+// Receding-horizon admission must not replace a still-executable MAIN prefix
+// with one whose absolute switch-to-BACKUP time is earlier. Comparing relative
+// durations is incorrect because successive candidates have different wall
+// start times. Safety recertification and mission-identity checks remain the
+// caller's responsibility.
+inline bool currentMainHorizonDominatesCandidate(
+    double current_start_wall_time_s,
+    double current_duration_s,
+    double current_backup_start_s,
+    bool current_backup_available,
+    double candidate_start_wall_time_s,
+    double candidate_duration_s,
+    double candidate_backup_start_s,
+    bool candidate_backup_available,
+    double authorization_wall_time_s) noexcept {
+  const auto main_end = [](double start, double duration, double backup_start,
+                           bool backup_available) {
+    return start + (backup_available ? backup_start : duration);
+  };
+  if (!std::isfinite(current_start_wall_time_s) ||
+      !std::isfinite(current_duration_s) || current_duration_s < 0.0 ||
+      !std::isfinite(current_backup_start_s) || current_backup_start_s < 0.0 ||
+      current_backup_start_s > current_duration_s + 1.0e-9 ||
+      !std::isfinite(candidate_start_wall_time_s) ||
+      !std::isfinite(candidate_duration_s) || candidate_duration_s < 0.0 ||
+      !std::isfinite(candidate_backup_start_s) || candidate_backup_start_s < 0.0 ||
+      candidate_backup_start_s > candidate_duration_s + 1.0e-9 ||
+      !std::isfinite(authorization_wall_time_s)) {
+    return false;
+  }
+  const double current_main_end = main_end(
+      current_start_wall_time_s, current_duration_s,
+      current_backup_start_s, current_backup_available);
+  const double candidate_main_end = main_end(
+      candidate_start_wall_time_s, candidate_duration_s,
+      candidate_backup_start_s, candidate_backup_available);
+  constexpr double kTimeEpsilonS = 1.0e-6;
+  return current_main_end > authorization_wall_time_s + kTimeEpsilonS &&
+         current_main_end > candidate_main_end + kTimeEpsilonS;
 }
 
 // Preserve the first actionable backup failure at the planner boundary.  The
