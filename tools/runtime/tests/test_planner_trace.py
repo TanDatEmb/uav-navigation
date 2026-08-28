@@ -194,6 +194,8 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_certified_seed_maximum_acceleration_mps2": "8.0",
                                     "exp_certified_seed_maximum_jerk_mps3": "42.0",
                                     "exp_initial_duration_s": "4.25",
+                                    "exp_initial_minimum_piece_duration_s": "0.01",
+                                    "exp_initial_maximum_piece_duration_s": "1.75",
                                     "exp_final_duration_s": "4.75",
                                     "exp_retry_duration_lower_bound_min_s": "1.25",
                                     "exp_retry_duration_lower_bound_max_s": "2.50",
@@ -301,6 +303,8 @@ class PlannerTraceTest(unittest.TestCase):
             records[0]["exp_certified_seed_maximum_jerk_mps3"], 42.0
         )
         self.assertEqual(records[0]["exp_initial_duration_s"], 4.25)
+        self.assertEqual(records[0]["exp_initial_minimum_piece_duration_s"], 0.01)
+        self.assertEqual(records[0]["exp_initial_maximum_piece_duration_s"], 1.75)
         self.assertEqual(records[0]["exp_final_duration_s"], 4.75)
         self.assertEqual(records[0]["exp_retry_duration_lower_bound_min_s"], 1.25)
         self.assertEqual(records[0]["exp_retry_duration_lower_bound_max_s"], 2.5)

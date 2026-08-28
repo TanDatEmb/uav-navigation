@@ -48,6 +48,8 @@ struct OptimizationDiagnostics {
       std::numeric_limits<double>::quiet_NaN()};
   double certified_seed_maximum_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
   double initial_duration_s{std::numeric_limits<double>::quiet_NaN()};
+  double initial_minimum_piece_duration_s{std::numeric_limits<double>::quiet_NaN()};
+  double initial_maximum_piece_duration_s{std::numeric_limits<double>::quiet_NaN()};
   double final_duration_s{std::numeric_limits<double>::quiet_NaN()};
   double retry_duration_lower_bound_min_s{std::numeric_limits<double>::quiet_NaN()};
   double retry_duration_lower_bound_max_s{std::numeric_limits<double>::quiet_NaN()};

@@ -135,6 +135,12 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "exp_certified_seed_maximum_jerk_mps3",
     ),
     "exp_initial_duration_s": ("exp_initial_duration_s",),
+    "exp_initial_minimum_piece_duration_s": (
+        "exp_initial_minimum_piece_duration_s",
+    ),
+    "exp_initial_maximum_piece_duration_s": (
+        "exp_initial_maximum_piece_duration_s",
+    ),
     "exp_final_duration_s": ("exp_final_duration_s",),
     "exp_retry_duration_lower_bound_min_s": (
         "exp_retry_duration_lower_bound_min_s",
@@ -468,6 +474,12 @@ def normalize_planner_trace_record(
             values["exp_certified_seed_maximum_jerk_mps3"]
         ),
         "exp_initial_duration_s": _float(values["exp_initial_duration_s"]),
+        "exp_initial_minimum_piece_duration_s": _float(
+            values["exp_initial_minimum_piece_duration_s"]
+        ),
+        "exp_initial_maximum_piece_duration_s": _float(
+            values["exp_initial_maximum_piece_duration_s"]
+        ),
         "exp_final_duration_s": _float(values["exp_final_duration_s"]),
         "exp_retry_duration_lower_bound_min_s": _float(
             values["exp_retry_duration_lower_bound_min_s"]

@@ -2695,6 +2695,10 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("exp_certified_seed_maximum_jerk_mps3",
                     exp_diagnostics.certified_seed_maximum_jerk_mps3);
     add_trace_value("exp_initial_duration_s", exp_diagnostics.initial_duration_s);
+    add_trace_value("exp_initial_minimum_piece_duration_s",
+                    exp_diagnostics.initial_minimum_piece_duration_s);
+    add_trace_value("exp_initial_maximum_piece_duration_s",
+                    exp_diagnostics.initial_maximum_piece_duration_s);
     add_trace_value("exp_final_duration_s", exp_diagnostics.final_duration_s);
     add_trace_value("exp_retry_duration_lower_bound_min_s",
                     exp_diagnostics.retry_duration_lower_bound_min_s);

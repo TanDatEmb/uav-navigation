@@ -882,6 +882,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return INFINITY;
     }
     diagnostics_.initial_duration_s = opt_vars.times.sum();
+    diagnostics_.initial_minimum_piece_duration_s = opt_vars.times.minCoeff();
+    diagnostics_.initial_maximum_piece_duration_s = opt_vars.times.maxCoeff();
 
     /* 3)  construct the initial guess of the optimization varibles*/
     opt_vars.duration_lower_bound.resize(0);

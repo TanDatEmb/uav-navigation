@@ -87,6 +87,10 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.certified_seed_maximum_jerk_mps3 =
       source.certified_seed_maximum_jerk_mps3;
   output.initial_duration_s = source.initial_duration_s;
+  output.initial_minimum_piece_duration_s =
+      source.initial_minimum_piece_duration_s;
+  output.initial_maximum_piece_duration_s =
+      source.initial_maximum_piece_duration_s;
   output.final_duration_s = source.final_duration_s;
   output.retry_duration_lower_bound_min_s = source.retry_duration_lower_bound_min_s;
   output.retry_duration_lower_bound_max_s = source.retry_duration_lower_bound_max_s;

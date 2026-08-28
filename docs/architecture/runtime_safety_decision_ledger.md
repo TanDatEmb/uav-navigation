@@ -9769,3 +9769,24 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 5fee806`, `git show 9a30d69`, focused tests and
   the cited A/B artifacts preserve implementation, rollback and runtime
   evidence.
+
+### 2026-08-28 - Publish nominal seed piece-duration range
+
+- **Owner:** EXP hot-initialization diagnostics.
+- **Scope:** Publish the minimum and maximum piece duration of the exact
+  pre-optimizer MINCO initialization alongside its total duration and dynamic
+  extrema for every solve.
+- **Safety impact:** Observability only. Guide construction, corridor timing,
+  optimization, certificates, command admission and execution are unchanged.
+- **Evidence:** `processCorridorWithGuideTraj()` permits consecutive corridor
+  overlaps to select the same nearest guide sample and clamps the resulting
+  non-positive piece duration to 0.01 s. The three-column screening artifact
+  `.artifacts/runtime/external-mode-check-20260828T142323-1223796` shows median
+  deterministic-seed jerk 553.6 m/s^3 but did not expose its piece-duration
+  range, preventing direct causal correlation in the rolling trace.
+- **Removal/review condition:** Keep while corridor-to-guide timing seeds
+  MINCO or any deterministic fallback. Replace only with equivalent per-piece
+  timing evidence in a versioned trajectory schema.
+- **Verification:** Run trace parser, planner/runtime tests and Release build;
+  then verify an unchanged three-column screening run publishes finite ranges
+  and correlate minimum duration with seed dynamics and EXP outcome.
