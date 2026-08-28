@@ -9949,12 +9949,14 @@ release profiles must not use the former allowance.
   p95 was 7.046/6.553 m and speed p95 4.744/4.549 m/s, versus immediate
   baseline cross-track 4.328/3.947 m and speed 4.811/4.647 m/s. Both still
   failed the declared 5 m/s speed-p95 requirement.
-- **New causal debt:** Commit diagnostics in the unchanged baseline already
-  show nonzero P/V/A residual at generation changes: position p95
-  0.471/0.444 m, velocity 0.373/0.280 m/s and acceleration 0.566/0.330 m/s^2.
-  The candidate is solved at a future splice state but compared/activated
-  against the previous bundle at a different wall-time boundary. Resolve this
-  activation-time ownership mismatch before weakening continuity order.
+- **Residual clarification:** The aggregate unchanged-baseline residuals are
+  dominated by intentional PlanFromRest measured-state replacement. After
+  correlating `planning_cycle_id` with planner mode, artifact `142323` had zero
+  P/V/A/J residual for all 129 hot ReplanOnce commits; artifact `143719` had
+  zero A/J and only one bounded nonzero P/V hot replacement among 134 commits.
+  The large maxima belonged to 21/14 PlanFromRest commits. Therefore there is
+  no general activation-time mismatch to fix; retain mode-separated residual
+  reporting and treat restarts as discontinuous recovery evidence.
 - **Removal/review condition:** Historical rejected-experiment record. A future
   C2 design requires an explicit activation token and zero P/V/A residual at
   the actual generation switch, plus repeated feasible-rate and tracking
