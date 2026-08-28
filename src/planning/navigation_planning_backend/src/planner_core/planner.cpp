@@ -720,7 +720,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return FAILED;
         } else if (exp_ret_code == NEW_TRAJ) {
             if (cfg_.print_log) {
-                planner_context_->info(" -- [planner] in [ReplanOnce]: Last epx traj end, switch to new traj.");
+                planner_context_->info(" -- [planner] in [ReplanOnce]: Last exp traj end, switch to new traj.");
             }
             return NEW_TRAJ;
         } else if (exp_ret_code == EMER) {
@@ -1264,7 +1264,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
                     if (cfg_.print_log)
                         planner_context_->warn(
-                                " -- [planner] Replan, emergency stop, return FAILED and wait for plan form rest.");
+                                " -- [planner] Replan emergency stop; return FAILED and wait for a rest-state plan.");
                     return FAILED;
                 }
 
@@ -1298,21 +1298,20 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             /// Ready for replan.
             out_exp_traj_info.setGoalConnectedFlag(false);
 
-            // * 2) Check if in backup trajectory. While in backup trajectory,
-            // *    the guide trajectory should be a part of cmd trajectory.
-            // TODO: Why cannot directly replan on cmd traj? 241121
+            // The guide is always sampled from the committed command. This is
+            // required while a BACKUP suffix is active because planner history
+            // may end before the executable command; the command is the only
+            // valid continuity boundary for this replan.
 
-            // * 3) Perform collision check on the guide trajectory.
-            // TODO 0929 critical change for hot init.
-            double eval_t = replan_state_TT; //replan_process_start_TT;
+            // Sample the committed guide after the measured replan state and
+            // retain only its known-traversable continuity prefix.
+            double eval_t = replan_state_TT;
             double guide_pos_traj_total_time = guide_pos_traj.getTotalDuration();
 
             Vec3f temp_pt, last_sample_pt;
             last_exp_traj_time_pos.clear();
             last_sample_pt = guide_pos_traj.getPos(eval_t);
             eval_t += cfg_.sample_traj_dt_s;
-            // * 4) 记录replan点在evaluated_pts上的id
-            int replan_id = -1;
             for (; eval_t < guide_pos_traj_total_time; eval_t += cfg_.sample_traj_dt_s) {
                 temp_pt = guide_pos_traj.getPos(eval_t);
                 if ((temp_pt - last_sample_pt).norm() < cfg_.resolution * 0.8) {
@@ -1325,19 +1324,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 if (!navigation_world_model::isCellTraversable(temp_grid, unknownPolicy())) {
                     break;
                 }
-                if (eval_t > replan_state_TT && replan_id == -1) {
-                    replan_id = last_exp_traj_time_pos.size();
-                }
                 last_exp_traj_time_pos.emplace_back(eval_t, temp_pt);
                 last_exp_traj_vel.emplace_back(guide_pos_traj.getVel(eval_t).norm());
                 last_sample_pt = temp_pt;
             }
 
 
-            // * 6) Decide where to split the original exp trajecory and re-plan a new one with an A*,
-            // *    If the whole trajectory if free,  the whole trajectory should be receding and if not, or a new goal
-            // *    is given, we should only receiding a small distance and replan new trajectory ASAP
-            double split_dis = cfg_.receding_distance_m;
+            // Keep only the configured known-free continuity prefix; A* owns
+            // the remaining route on every planning cycle, including when the
+            // sampled command is entirely free.
+            const double split_dis = cfg_.receding_distance_m;
             // Do not turn a collision-free committed trajectory into an
             // infinite immutable guide.  That upstream shortcut recursively
             // feeds optimizer drift back into every later replan and lets the
@@ -1346,13 +1342,14 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // the rest of the route on every planning cycle.
 
 
-            // * 7）Begin replan process, first get the replan state from the committed trajectory.
+            // Begin the replan from the committed trajectory's measured-state
+            // boundary.
             if (!guide_pos_traj.getState(replan_state_TT, pos_init_state)) {
                 planner_context_->warn(" -- [planner] Invalid traj or eval t");
                 return FAILED;
             }
-            // * Generate guide path with time stampe, for hot trajectory initialization
-            // * the guide stamp is time from the replan start t
+            // Build the hot-start guide path. Stamps are relative to its first
+            // retained point.
             guide_stamp.clear();
             guide_path.clear();
             if (split_dis <= 0 || last_exp_traj_time_pos.empty()) {
@@ -1364,7 +1361,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 guide_path_end_vel = solve_state_.v.norm();
             } else {
                 temp_pt = last_exp_traj_time_pos.back().second;
-                // * 8) Pop all evaluated pts after the sampled point.
+                // Drop sampled points beyond the configured continuity prefix
+                // or points that are no longer traversable.
                 while (!navigation_world_model::isCellTraversable(
                            map_ptr_->classify(temp_pt,
                                               navigation_world_model::GridLayer::kInflated),
@@ -1527,7 +1525,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                         guide_path.back(), new_path, allocation)) {
                     planner_context_->warn(
                             " -- [planner] invalid A* guide time allocation: "
-                            "path_points={} v0={} a_max={} v_max={}",
+                            "path_points={} initial_velocity_mps={} "
+                            "max_acceleration_mps2={} max_velocity_mps={}",
                             new_path.size(), guide_path_end_vel,
                             cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel);
                     return FAILED;
@@ -2357,17 +2356,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
         double seed_point_t = std::max(start_t, out_t);
 
-        // TODO check this logic, comment on Dec. 13
-        // if
-        // 1) last exp traj has a backup traj
-        // 2) last backup WT is larger than this term
-        // 3) last exp is collision free
-        // if (ref_exp_traj.back_traj_start_TT > 0 &&
-        // seed_point_t < ref_exp_traj.back_traj_start_TT) {
-        // return NO_NEED;
-        // }
-
-
+        // Seed the backup corridor at the latest point that remains within
+        // the visible command prefix and outside the robot-radius retreat
+        // band. Completion is decided above from the full visibility and
+        // terminal-rest checks; no historical backup timestamp may override
+        // this current-world result.
         Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
 
         // Do not re-snap this point through the Evidence grid.  The command
