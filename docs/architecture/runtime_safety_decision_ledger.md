@@ -68,6 +68,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-022 | Acceptance-region pass-through fillet (`SAFETY_INVARIANT`) | switch route-progress ownership at the closest trajectory junction inside the configured waypoint acceptance ball; do not pin nonzero-speed C3 turns to the exact corner centre | PROVISIONAL | Removes an impossible exact-tangent-change constraint at genuine corners while retaining the mission acceptance radius, continuous corridor/dynamics/flatness gates, analytic regression checks on each route leg, measured waypoint acceptance and latest-world authorization. Stop waypoints do not receive the phase switch. | Repeat 90-degree and arbitrary-bearing missions. Require the measured vehicle to enter the acceptance ball, no admitted fold on either leg, bounded corner speed/clearance, stable yaw, and higher nominal commit availability across more than one run. |
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
+| HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
 
 ## Temporary-bypass register
 
@@ -9125,3 +9126,34 @@ release profiles must not use the former allowance.
   shallow, 90-degree and arbitrary-bearing SITL. Require ordered measured
   acceptance, an in-ball committed junction, bounded speed/clearance/yaw and
   no optimizer starvation or reverse route regression.
+
+### 2026-08-28 - Encode waypoint acceptance as a convex corridor cell
+
+- **Owner:** Route-boundary corridor generator and continuous corridor
+  certificate.
+- **Scope:** Intersect the generated waypoint boundary polytope with an
+  axis-aligned cube centered at the waypoint with half extent
+  `acceptance_radius/sqrt(3)`. The complete cube lies inside the 3-D spherical
+  acceptance region, so every continuously certified boundary piece enters
+  the mission region while its junctions remain optimizer variables.
+- **Safety impact:** Conservative `MISSION_PROGRESS_INVARIANT`. This does not
+  enlarge the configured acceptance radius, accept a waypoint from planner
+  geometry, or relax corridor tolerance. It strengthens the planner-side
+  prerequisite; MissionController still advances only from current/recent
+  measured odometry. World, dynamics, flatness, route and backup gates remain
+  unchanged.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T112401-1017565` showed that
+  a broad point corridor plus a soft spherical penalty produced continuous
+  corridor excess from about `3.98 m` to `79 m` and starved replacement solves
+  near `x=14`. The previous ungated run could solve but missed the `0.9 m`
+  measured acceptance sphere by about `0.45 m`. A bounded convex cell removes
+  both ambiguous ownership cases without hard-pinning the waypoint centre.
+- **Removal/review condition:** Replace only with an equal or stronger convex
+  representation or analytic continuous ball-intersection certificate. Do
+  not use a circumscribed box, a sampled-only check, a larger radius, or a
+  soft objective as the authorization boundary.
+- **Verification:** Unit-test that the boundary cell contains its centre and
+  rejects an axis point at `0.8 * radius`; run all backend tests/build and
+  repeated three-column SITL with ordered measured acceptance and bounded
+  planner/corridor latency.

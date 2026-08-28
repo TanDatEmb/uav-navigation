@@ -1639,9 +1639,19 @@ TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   ASSERT_TRUE(generator.SearchPolytopeOnPath(path, sfcs, shifted_start, false,
                                              nullptr, gate));
   ASSERT_FALSE(sfcs.empty());
-  EXPECT_TRUE(std::any_of(sfcs.begin(), sfcs.end(), [](const auto &polytope) {
-    return polytope.IsRouteBoundaryGate();
-  }));
+  const auto gate_polytope = std::find_if(
+      sfcs.begin(), sfcs.end(), [](const auto &polytope) {
+        return polytope.IsRouteBoundaryGate();
+      });
+  ASSERT_NE(gate_polytope, sfcs.end());
+  const auto centre = gate.point;
+  EXPECT_TRUE(gate_polytope->PointIsInside(centre, 1.0e-6));
+  // The gate cell is an inner approximation, not a box circumscribing the
+  // acceptance ball. A point 0.8 radius away on one axis remains inside the
+  // sphere but must not be authorized by this convex cell.
+  EXPECT_FALSE(gate_polytope->PointIsInside(
+      centre + navigation_math::Vec3f{0.8 * gate.radius_m, 0.0, 0.0},
+      1.0e-6));
 }
 
 TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {

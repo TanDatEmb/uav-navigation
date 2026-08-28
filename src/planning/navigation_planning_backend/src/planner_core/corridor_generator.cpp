@@ -13,6 +13,27 @@ using namespace navigation_math;
 
 namespace navigation_planning_backend {
 
+namespace {
+
+geometry_utils::Polytope acceptanceBallInnerCell(
+        const Vec3f& centre, const double radius_m) {
+    // An axis-aligned cube with half extent r/sqrt(3) is wholly contained in
+    // the 3-D acceptance ball. This gives MINCO a convex optimization cell
+    // without replacing the mission's spherical measured-state authority.
+    const double half_extent_m = radius_m / std::sqrt(3.0);
+    MatD4f planes(6, 4);
+    planes <<
+        1.0, 0.0, 0.0, -(centre.x() + half_extent_m),
+       -1.0, 0.0, 0.0,  (centre.x() - half_extent_m),
+        0.0, 1.0, 0.0, -(centre.y() + half_extent_m),
+        0.0,-1.0, 0.0,  (centre.y() - half_extent_m),
+        0.0, 0.0, 1.0, -(centre.z() + half_extent_m),
+        0.0, 0.0,-1.0,  (centre.z() - half_extent_m);
+    return geometry_utils::Polytope(std::move(planes));
+}
+
+}  // namespace
+
     CorridorGenerator::CorridorGenerator(const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                                          navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
                                          const double seed_line_max_dis, const double min_overlap_threshold,
@@ -313,6 +334,15 @@ namespace navigation_planning_backend {
                     solve_stage_.store(0);
                     return false;
                 }
+                // Make the route-boundary cell itself a hard convex subset of
+                // the mission acceptance ball. Every certified polynomial
+                // piece assigned to this cell therefore enters the measured
+                // acceptance region; optimization does not depend on a soft
+                // spherical penalty or an exact-centre junction.
+                boundary_poly = boundary_poly.CrossWith(
+                    acceptanceBallInnerCell(
+                        route_boundary_gate->point,
+                        route_boundary_gate->radius_m));
                 if (!boundary_poly.PointIsInside(corridor_path[second_id], 1.0e-6)) {
                     planner_context_->warn(
                         " -- [planner] route-boundary corridor excludes its waypoint");
