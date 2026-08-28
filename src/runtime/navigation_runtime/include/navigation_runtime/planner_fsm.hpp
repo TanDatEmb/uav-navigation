@@ -107,6 +107,29 @@ inline bool expiredEndpointMayBeReplayed(
   return endpoint_valid && endpoint_known_free && endpoint_near_execution_state;
 }
 
+// A stale world snapshot suspends command publication but does not mutate the
+// immutable committed bundle. Publication may resume without a replacement
+// solve only when that exact generation has subsequently been recertified on
+// a fresh world and still belongs to the active localization/goal epochs.
+inline bool worldFreshnessSuspendedCommandMayResume(
+    std::uint64_t suspended_generation,
+    std::uint64_t recertified_generation,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t bundle_goal_epoch,
+    std::uint64_t active_localization_epoch,
+    std::uint64_t active_goal_epoch,
+    std::int64_t valid_until_ns,
+    std::int64_t now_ns,
+    bool bundle_valid,
+    bool planner_failure_latched,
+    bool execution_lease_allows_command) noexcept {
+  return suspended_generation != 0U &&
+         recertified_generation == suspended_generation && bundle_valid &&
+         bundle_localization_epoch == active_localization_epoch &&
+         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         !planner_failure_latched && execution_lease_allows_command;
+}
+
 // Bounds consecutive rest-to-rest solve failures for one logical waypoint.
 // This state belongs to the mission/planner FSM, not to the optimizer: a
 // transient startup miss may be retried, but an unreachable goal must not be

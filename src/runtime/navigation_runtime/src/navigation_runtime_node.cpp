@@ -643,6 +643,59 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           throw std::runtime_error(
               "world snapshot publication could not finalize its execution certificate");
         }
+        if (expected_bundle && retain_validated_bundle) {
+          const auto recertified_bundle = command_store->load();
+          const auto now_ns = ros_clock->now().nanoseconds();
+          const auto suspended_generation =
+              world_freshness_suspended_bundle_generation_.load(
+                  std::memory_order_acquire);
+          if (recertified_bundle && worldFreshnessSuspendedCommandMayResume(
+                  suspended_generation,
+                  recertified_bundle->bundle_generation,
+                  recertified_bundle->localization_epoch,
+                  recertified_bundle->goal_epoch,
+                  active_localization_epoch_.load(std::memory_order_acquire),
+                  active_goal_epoch_.load(std::memory_order_acquire),
+                  recertified_bundle->valid_until_ns,
+                  now_ns,
+                  recertified_bundle->valid(),
+                  planner_failure_latched_.load(std::memory_order_acquire),
+                  command_execution_lease_failure_latch_.allowsCommandExposure())) {
+            std::lock_guard<std::mutex> command_lock(
+                command_execution_lease_failure_latch_.transitionMutex());
+            if (worldFreshnessSuspendedCommandMayResume(
+                    world_freshness_suspended_bundle_generation_.load(
+                        std::memory_order_acquire),
+                    recertified_bundle->bundle_generation,
+                    recertified_bundle->localization_epoch,
+                    recertified_bundle->goal_epoch,
+                    active_localization_epoch_.load(std::memory_order_acquire),
+                    active_goal_epoch_.load(std::memory_order_acquire),
+                    recertified_bundle->valid_until_ns,
+                    now_ns,
+                    recertified_bundle->valid(),
+                    planner_failure_latched_.load(std::memory_order_acquire),
+                    command_execution_lease_failure_latch_.allowsCommandExposure())) {
+              planner_command_available_.store(true, std::memory_order_release);
+              command_goal_epoch_.store(
+                  recertified_bundle->goal_epoch, std::memory_order_release);
+              safety_suffix_active_.store(
+                  world_freshness_suspended_safety_suffix_active_.load(
+                      std::memory_order_acquire),
+                  std::memory_order_release);
+              world_freshness_suspended_bundle_generation_.store(
+                  0U, std::memory_order_release);
+              world_freshness_suspended_safety_suffix_active_.store(
+                  false, std::memory_order_release);
+              ++world_freshness_command_recovery_count_;
+              RCLCPP_INFO(
+                  this->get_logger(),
+                  "fresh world recertified suspended command generation=%lu; "
+                  "command publication resumed without replacing the bundle",
+                  static_cast<unsigned long>(recertified_bundle->bundle_generation));
+            }
+          }
+        }
         if (expected_bundle && !retain_validated_bundle &&
             expected_bundle->localization_epoch ==
                 active_localization_epoch_.load(std::memory_order_acquire) &&
@@ -1439,7 +1492,32 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                  static_cast<unsigned long>(candidate_ptr->bundle_generation));
     return false;
   }
+  world_freshness_suspended_bundle_generation_.store(0U, std::memory_order_release);
+  world_freshness_suspended_safety_suffix_active_.store(
+      false, std::memory_order_release);
   return true;
+}
+
+void NavigationRuntimeNode::suspendCommandForWorldFreshness() {
+  std::lock_guard<std::mutex> command_lock(
+      command_execution_lease_failure_latch_.transitionMutex());
+  if (planner_command_available_.load(std::memory_order_acquire)) {
+    const auto bundle = command_bundle_store_.load();
+    if (bundle && bundle->localization_epoch ==
+                      active_localization_epoch_.load(std::memory_order_acquire) &&
+        bundle->goal_epoch == active_goal_epoch_.load(std::memory_order_acquire)) {
+      world_freshness_suspended_bundle_generation_.store(
+          bundle->bundle_generation, std::memory_order_release);
+      world_freshness_suspended_safety_suffix_active_.store(
+          safety_suffix_active_.load(std::memory_order_acquire),
+          std::memory_order_release);
+      ++world_freshness_command_suspend_count_;
+    }
+  }
+  planner_command_available_.store(false, std::memory_order_release);
+  planner_failure_latched_.store(false, std::memory_order_release);
+  safety_suffix_active_.store(false, std::memory_order_release);
+  command_goal_epoch_.store(0U, std::memory_order_release);
 }
 
 void NavigationRuntimeNode::runCycle() {
@@ -1535,6 +1613,12 @@ void NavigationRuntimeNode::runCycle() {
   }
   add_value("world_snapshot_freshness_rejection_count",
             world_snapshot_freshness_rejection_count_.load());
+  add_value("world_freshness_command_suspend_count",
+            world_freshness_command_suspend_count_.load());
+  add_value("world_freshness_command_recovery_count",
+            world_freshness_command_recovery_count_.load());
+  add_value("world_freshness_suspended_bundle_generation",
+            world_freshness_suspended_bundle_generation_.load());
   add_value("command_execution_lease_rejection_count",
             command_execution_lease_rejection_count_);
   add_value("command_execution_lease_terminal_latch_count",
@@ -1627,16 +1711,10 @@ void NavigationRuntimeNode::runCycle() {
   if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
     ++world_snapshot_freshness_rejection_count_;
     planner_->cancelActiveSolve();
-    {
-      std::lock_guard<std::mutex> command_lock(
-          command_execution_lease_failure_latch_.transitionMutex());
-      planner_command_available_.store(false);
-      // A stale world is a recoverable evidence gap, not a terminal planner
-      // request failure. The next fresh snapshot can trigger a new solve.
-      planner_failure_latched_.store(false);
-      safety_suffix_active_.store(false);
-      command_goal_epoch_.store(0U);
-    }
+    // A stale world is a recoverable evidence gap, not a terminal planner
+    // request failure. Preserve only the exact suspended generation so a
+    // later fresh-world certificate can restore it without a new solve.
+    suspendCommandForWorldFreshness();
     RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000,
         "planner cycle stopped because the world snapshot is not fresh");
@@ -2774,15 +2852,9 @@ void NavigationRuntimeNode::publishCommand() {
   if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
     ++world_snapshot_freshness_rejection_count_;
     planner_->cancelActiveSolve();
-    std::lock_guard<std::mutex> command_lock(
-        command_execution_lease_failure_latch_.transitionMutex());
-    planner_command_available_.store(false);
-    // Do not latch a transient world-evidence failure as terminal. No command
-    // is published from this callback; PX4's command lease remains fail-closed
-    // until a fresh world and a newly committed candidate are available.
-    planner_failure_latched_.store(false);
-    safety_suffix_active_.store(false);
-    command_goal_epoch_.store(0U);
+    // No command is published from this callback. A later fresh snapshot may
+    // resume only this exact bundle after successful world recertification.
+    suspendCommandForWorldFreshness();
     return;
   }
 

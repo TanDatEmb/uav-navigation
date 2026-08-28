@@ -184,6 +184,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,
                              std::int64_t now_ns);
+  void suspendCommandForWorldFreshness();
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           navigation_mapping::PointCloud& output,
@@ -258,6 +259,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t invalid_corrected_pose_count_{0};
   std::atomic_uint64_t invalid_execution_state_count_{0};
   std::atomic_uint64_t world_snapshot_freshness_rejection_count_{0};
+  std::atomic_uint64_t world_freshness_command_suspend_count_{0};
+  std::atomic_uint64_t world_freshness_command_recovery_count_{0};
+  std::atomic_uint64_t world_freshness_suspended_bundle_generation_{0};
+  std::atomic_bool world_freshness_suspended_safety_suffix_active_{false};
   std::atomic_uint64_t command_execution_lease_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
   navigation_execution::ExecutionStateFailureLatch command_execution_lease_failure_latch_;

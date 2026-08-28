@@ -49,6 +49,27 @@ TEST(PlannerFsm, ReplaysOnlyKnownFreeFrontierEndpointNearMeasuredState) {
   EXPECT_FALSE(expiredEndpointMayBeReplayed(true, true, false));
 }
 
+TEST(PlannerFsm, ResumesOnlyExactFreshWorldRecertifiedGeneration) {
+  EXPECT_TRUE(worldFreshnessSuspendedCommandMayResume(
+      17U, 17U, 3U, 5U, 3U, 5U, 10'500, 10'000,
+      true, false, true));
+  EXPECT_FALSE(worldFreshnessSuspendedCommandMayResume(
+      17U, 18U, 3U, 5U, 3U, 5U, 10'500, 10'000,
+      true, false, true));
+  EXPECT_FALSE(worldFreshnessSuspendedCommandMayResume(
+      17U, 17U, 3U, 5U, 3U, 6U, 10'500, 10'000,
+      true, false, true));
+  EXPECT_FALSE(worldFreshnessSuspendedCommandMayResume(
+      17U, 17U, 3U, 5U, 3U, 5U, 9'999, 10'000,
+      true, false, true));
+  EXPECT_FALSE(worldFreshnessSuspendedCommandMayResume(
+      17U, 17U, 3U, 5U, 3U, 5U, 10'500, 10'000,
+      true, true, true));
+  EXPECT_FALSE(worldFreshnessSuspendedCommandMayResume(
+      17U, 17U, 3U, 5U, 3U, 5U, 10'500, 10'000,
+      true, false, false));
+}
+
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
             PlannerResultDisposition::FailClosed);

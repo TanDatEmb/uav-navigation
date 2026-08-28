@@ -9499,3 +9499,40 @@ release profiles must not use the former allowance.
   workspace tests and a Release build. Then run exact-HEAD three-column SITL
   and require report aggregates to equal the raw runtime fields before using
   the evidence for an algorithm decision.
+
+### 2026-08-28 - Resume only an exactly recertified freshness-suspended command
+
+- **Owner:** Runtime world-freshness and execution-command ownership boundary.
+- **Scope:** When world evidence becomes stale, record the exact currently
+  exposed bundle generation before suspending publication. A later immutable
+  snapshot may restore publication without a replacement planner commit only
+  after that same bundle is successfully recertified, remains inside its
+  declared time interval, still matches the active localization and goal
+  epochs, and the execution lease permits exposure. Preserve whether the
+  suspended command was safety-suffix-owned and publish suspension/recovery
+  counters.
+- **Safety impact:** The freshness gate is unchanged and no command is emitted
+  while world evidence is stale. Recovery cannot use a different generation,
+  expired trajectory, changed goal/localization epoch, failed certificate or
+  latched execution lease. A map-invalidated trajectory still schedules
+  measured-state PlanFromRest and remains unavailable.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T131511-1148220` on `1df07fa`
+  stopped at 37.443 s after the last command lease expired. At 36.672 s the
+  world-freshness rejection count increased from 56 to 60; command publication
+  stopped at cycle 227 even though fresh snapshots 312, 314 and 315 then
+  produced successful full revalidations 74, 75 and 76 of the unchanged bundle
+  generation 41. Replacement PlanFromRest solves continued failing in
+  `main_minco`, so the old contract unnecessarily required a new commit after
+  already proving the retained trajectory against the new world.
+- **Removal/review condition:** Replace only with an equivalent typed lease FSM
+  that explicitly distinguishes stale-world suspension, successful exact-
+  bundle recertification, map invalidation, epoch transition and terminal
+  handover. Never restore command availability merely because a fresh map
+  arrived.
+- **Verification:** Unit-test exact generation, epoch, validity interval,
+  planner-failure and execution-latch rejection. Run all runtime/workspace
+  tests and Release build, then repeated three-column SITL. Require observed
+  suspend/recovery pairs, no command-validity expiry caused solely by a
+  successfully recertified bundle, and no regression in clearance, collision,
+  anchor, freshness or PX4 handover gates.
