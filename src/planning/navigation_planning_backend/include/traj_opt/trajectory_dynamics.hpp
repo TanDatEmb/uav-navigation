@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include <data_structure/base/trajectory.h>
@@ -12,6 +13,8 @@ namespace traj_opt {
 
 struct TrajectoryDynamicReport {
     bool finite{true};
+    double first_nonfinite_time_s{std::numeric_limits<double>::quiet_NaN()};
+    std::uint32_t nonfinite_mask{0U};
     double maximum_body_rate_rad_s{0.0};
     double minimum_thrust_n{std::numeric_limits<double>::infinity()};
     double maximum_thrust_n{0.0};
@@ -59,10 +62,21 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
                                     : yaw_trajectory->getVel(time).x();
         flatness.forward(velocity, acceleration, jerk, yaw, yaw_rate,
                          thrust, quaternion, body_rate);
-        if (!velocity.allFinite() || !acceleration.allFinite() || !jerk.allFinite() ||
-            !std::isfinite(yaw) || !std::isfinite(yaw_rate) ||
-            !std::isfinite(thrust) || !quaternion.allFinite() || !body_rate.allFinite()) {
+        std::uint32_t nonfinite_mask = 0U;
+        if (!velocity.allFinite()) nonfinite_mask |= 1U << 0U;
+        if (!acceleration.allFinite()) nonfinite_mask |= 1U << 1U;
+        if (!jerk.allFinite()) nonfinite_mask |= 1U << 2U;
+        if (!std::isfinite(yaw)) nonfinite_mask |= 1U << 3U;
+        if (!std::isfinite(yaw_rate)) nonfinite_mask |= 1U << 4U;
+        if (!std::isfinite(thrust)) nonfinite_mask |= 1U << 5U;
+        if (!quaternion.allFinite()) nonfinite_mask |= 1U << 6U;
+        if (!body_rate.allFinite()) nonfinite_mask |= 1U << 7U;
+        if (nonfinite_mask != 0U) {
             report.finite = false;
+            if (!std::isfinite(report.first_nonfinite_time_s)) {
+                report.first_nonfinite_time_s = time;
+                report.nonfinite_mask = nonfinite_mask;
+            }
             return false;
         }
         report.maximum_body_rate_rad_s =

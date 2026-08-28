@@ -1059,10 +1059,19 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 position_trajectory, cfg_.back_traj_cfg, &dynamic_report,
                 0.005, &yaw_trajectory)) {
             planner_context_->error(
-                    " -- [planner] emergency brake dynamic gate failed: body_rate={} thrust=[{},{}]",
+                    " -- [planner] emergency brake dynamic gate failed: finite={} "
+                    "first_nonfinite_time={} nonfinite_mask={} body_rate={} thrust=[{},{}] "
+                    "initial_v={} initial_a={} initial_j={} yaw={} yaw_rate={}",
+                    dynamic_report.finite,
+                    dynamic_report.first_nonfinite_time_s,
+                    dynamic_report.nonfinite_mask,
                     dynamic_report.maximum_body_rate_rad_s,
                     dynamic_report.minimum_thrust_n,
-                    dynamic_report.maximum_thrust_n);
+                    dynamic_report.maximum_thrust_n,
+                    bounded_state.col(1).transpose(),
+                    bounded_state.col(2).transpose(),
+                    bounded_state.col(3).transpose(),
+                    measured_yaw, measured_yaw_dot);
             return false;
         }
 

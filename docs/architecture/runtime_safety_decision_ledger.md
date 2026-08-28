@@ -10356,6 +10356,25 @@ release profiles must not use the former allowance.
   certificate and explicit replacement/stop provenance. Continue reporting
   solve and mapping p50/p95/p99; this safety fix does not close A* starvation.
 
+### 2026-08-29 - Attribute non-finite emergency-brake flatness samples
+
+- **Owner/status:** Planner dynamic-certificate diagnostics, observability only.
+- **Scope:** Record the first non-finite trajectory time and a component mask
+  for velocity, acceleration, jerk, yaw, yaw rate, thrust, quaternion and body
+  rate when the independent flatness evaluator rejects an emergency BRAKE.
+- **Safety impact:** None. Candidate formulas, sampling, physical limits,
+  world authorization and rejection behavior are unchanged.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T173955-1391583` correctly
+  stopped retaining bundle 25 at 0.309 m, but emergency BRAKE was rejected even
+  though the old log showed in-range body rate and thrust. The missing finite
+  provenance prevents an evidence-backed correction.
+- **Removal/review condition:** Keep until the emergency-brake failure has a
+  typed certificate reason propagated to runtime diagnostics.
+- **Verification:** Rebuild planner/runtime and repeat the exact 2 m/s mission;
+  require any rejection to identify its first invalid time/component without
+  changing the rejection decision.
+
 ### 2026-08-29 - Fail closed on malformed Piece inputs and low-degree derivatives
 
 - **Owner/status:** `geometry_utils::Piece` direct evaluation and rate
