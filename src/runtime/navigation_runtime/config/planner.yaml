@@ -90,6 +90,10 @@ traj_opt:
     pos_constraint_type: 2
     block_energy_cost: false
     opt_accuracy: 5.0e-6
+    # Bound L-BFGS history to reduce per-iteration O(history * variables)
+    # work. This only shapes the numerical search; independent hard
+    # corridor/dynamic/flatness/world certificates remain authoritative.
+    lbfgs_memory_size: 32
     # Feasibility retries disable relative-cost stopping but remain bounded;
     # hard V/A/J and flatness gates remain the only acceptance authority.
     feasibility_retry_max_iterations: 64
@@ -135,6 +139,9 @@ traj_opt:
     piece_num: 2
     block_energy_cost: true
     opt_accuracy: 1.0e-6
+    # Keep backup optimization bounded by the same measured history budget.
+    # A backup candidate still requires the strict known-free certificate.
+    lbfgs_memory_size: 32
     integral_reso: 12
     smooth_eps: 0.01
     corridor_plane_tolerance_m: 0.01

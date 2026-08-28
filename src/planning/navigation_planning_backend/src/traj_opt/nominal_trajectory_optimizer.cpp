@@ -944,7 +944,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     opt_vars.iter_num = 0;
     double minCostFunctional{0};
     lbfgs::lbfgs_parameter_t lbfgs_params;
-    lbfgs_params.mem_size = 256;
+    lbfgs_params.mem_size = cfg_.lbfgs_memory_size;
     lbfgs_params.past = 3;
     lbfgs_params.min_step = 1.0e-32;
     lbfgs_params.g_epsilon = 0.0;

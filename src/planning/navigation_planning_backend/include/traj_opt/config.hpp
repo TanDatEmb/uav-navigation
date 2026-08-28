@@ -92,6 +92,9 @@ namespace traj_opt {
         int integral_reso{0};
         double opt_accuracy{0};
         int feasibility_retry_max_iterations{64};
+        // L-BFGS history length is a bounded numerical-performance knob. It
+        // changes neither the physical limits nor any candidate certificate.
+        int lbfgs_memory_size{32};
 
         Config() = default;
 
@@ -131,6 +134,7 @@ namespace traj_opt {
             loader.LoadParam("traj_opt" + ns + "block_energy_cost", block_energy_cost, false);
             loader.LoadParam("traj_opt" + ns + "opt_accuracy", opt_accuracy, 1.0e-5);
             loader.LoadParam("traj_opt" + ns + "integral_reso", integral_reso, 10);
+            loader.LoadParam("traj_opt" + ns + "lbfgs_memory_size", lbfgs_memory_size, 32);
             loader.LoadParam("traj_opt" + ns + "smooth_eps", smooth_eps, 0.01);
             loader.LoadParam("traj_opt" + ns + "corridor_plane_tolerance_m",
                              corridor_plane_tolerance_m, 0.01);
@@ -213,11 +217,12 @@ namespace traj_opt {
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||
-                feasibility_retry_max_iterations <= 0) {
+                feasibility_retry_max_iterations <= 0 ||
+                lbfgs_memory_size < 3 || lbfgs_memory_size > 256) {
                 throw std::invalid_argument(
                     "trajectory smoothing and geometric tolerances must be finite; "
-                    "smoothing must be positive, certificate tolerances non-negative "
-                    "and retry iterations positive");
+                    "smoothing must be positive, certificate tolerances non-negative, "
+                    "retry iterations positive, and L-BFGS memory must be within [3, 256]");
             }
 
             quadrotot_flatness.reset(mass, grav, dh, dv, cp, v_eps);

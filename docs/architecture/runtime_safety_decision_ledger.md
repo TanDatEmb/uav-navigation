@@ -7914,3 +7914,33 @@ release profiles must not use the former allowance.
   mission, and PX4 contract tests; then repeat Y, diagonal, 0/45/90-degree,
   and yaw-versus-velocity route cases and inspect required/certified look-ahead,
   support, clipping, terminal speed, world identity, latency, and outcome.
+
+### 2026-08-28 - Bound L-BFGS history for planner tail latency
+
+- **Owner:** Navigation nominal/backup trajectory optimization maintainers.
+- **Scope:** Replace the previous fixed 256-entry L-BFGS history with the
+  explicit per-profile `lbfgs_memory_size` parameter, set to 32 in the
+  canonical runtime profile. The same bound applies to nominal and backup
+  solves and is validated in the inclusive range [3, 256].
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This changes only the
+  numerical search workspace and may cause an optimizer to terminate or fail
+  earlier; it cannot widen V/A/J, corridor, flatness, swept-world, UNKNOWN,
+  backup, freshness, lease, or command-identity gates. Every resulting
+  candidate still passes the existing independent certificates or is rejected.
+- **Evidence:** Runtime artifact
+  `.artifacts/runtime/external-mode-check-20260828T040104-673978` measured
+  EXP optimization p95 137543 us, p99 170952 us and max 175900 us while
+  nominal solves used the unbounded/default iteration count and 256 history
+  entries. The history reduction targets per-iteration matrix work without
+  changing the solve deadline; the next comparison must measure convergence,
+  hard-gate rejection, and tail latency together.
+- **Removal/review condition:** Revisit if repeated representative runs show
+  worse corridor/dynamic/flatness/world acceptance, more command exhaustion,
+  waypoint or altitude regressions, or no p95/p99 improvement. Do not raise
+  the solve deadline or reduce a hard certificate to compensate for optimizer
+  quality loss.
+- **Verification:** `make build`; run planner, runtime, PX4, and optimizer
+  contract tests; then repeat the same 3-column workload and compare L-BFGS
+  iterations/return codes, EXP p50/p95/p99/max, total planning latency,
+  certificate outcomes, command gaps, waypoint completion, altitude,
+  clearance, and fail-closed decisions.

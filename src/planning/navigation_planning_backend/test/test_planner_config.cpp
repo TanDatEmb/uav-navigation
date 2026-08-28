@@ -103,6 +103,8 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_TRUE(planner.preserve_backup_altitude);
   EXPECT_DOUBLE_EQ(planner.yaw_tracking_error_budget_rad, 0.35);
   EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
+  EXPECT_EQ(planner.exp_traj_cfg.lbfgs_memory_size, 32);
+  EXPECT_EQ(planner.back_traj_cfg.lbfgs_memory_size, 32);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
 
