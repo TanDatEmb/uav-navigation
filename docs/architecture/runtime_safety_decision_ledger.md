@@ -8373,3 +8373,32 @@ release profiles must not use the former allowance.
 - **Verification:** Build through `px4_navigation_external_mode`, run
   `navigation_mission/test_mission_contract`, and run all PX4 External Mode
   package tests before commit.
+
+### 2026-08-28 - Certify an immutable nominal seed before optimizer fallback
+
+- **Owner:** Nominal MINCO optimizer and planner trajectory-certificate
+  maintainers.
+- **Scope:** Introduce an independent certificate for a complete, immutable
+  pre-L-BFGS trajectory. Certification requires exact piece-to-corridor
+  provenance, continuous half-space containment at the configured tolerance,
+  initial/terminal PVAJ equality, C3 junction continuity, route-boundary gates,
+  V/A/J limits, and the quadrotor flatness envelope.
+- **Safety impact:** This checkpoint is certificate infrastructure only and does
+  not yet alter runtime candidate selection. It deliberately does not rebuild a
+  seed from optimizer-mutated variables, sample corridor membership, widen the
+  corridor tolerance, or bypass later yaw, immutable-world, backup, and atomic
+  command authorization. A future fallback may select only the bit-identical
+  trajectory that passed this certificate before L-BFGS began.
+- **Evidence:** Unit coverage accepts a two-piece C3 minimum-snap trajectory
+  with exact corridor provenance, rejects swapped piece/corridor ownership, and
+  rejects a continuous corridor excess of `0.010001 m` against the unchanged
+  `0.01 m` tolerance. The focused backend build and test executable must pass
+  before this infrastructure is committed.
+- **Removal/review condition:** Replace only with an equal or stronger typed
+  trajectory certificate that preserves immutable candidate identity and every
+  listed hard gate. Remove if runtime integration cannot prove that the selected
+  fallback is the exact pre-optimizer object.
+- **Verification:** Build `navigation_planning_backend`; run
+  `test_exp_optimizer_seed` and the package CTest set. Runtime integration must
+  be a separate commit followed by repeated recorded-data and three-pillar SITL
+  evidence.
