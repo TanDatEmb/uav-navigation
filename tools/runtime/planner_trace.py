@@ -626,16 +626,33 @@ def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "exp_corridor_seed_build_failure_stage",
                 corridor_build_failure_stage_counts,
             ),
-            (
-                "exp_corridor_seed_retry_last_certificate_stage",
-                corridor_retry_certificate_stage_counts,
-            ),
             ("exp_corridor_seed_selected_mode", corridor_selected_mode_counts),
         ):
             value = record.get(field)
             if isinstance(value, int) and not isinstance(value, bool):
                 key = str(value)
                 counts[key] = counts.get(key, 0) + 1
+        retry_build_valid_count = record.get(
+            "exp_corridor_seed_retry_build_valid_count"
+        )
+        retry_certificate_stage = record.get(
+            "exp_corridor_seed_retry_last_certificate_stage"
+        )
+        # Stage zero is the valid-certificate value, but it is also the
+        # producer's default when no retry trajectory reached certification.
+        # Count the stage only when at least one retry build was valid; never
+        # turn a default-initialized field into evidence of a certificate.
+        if (
+            isinstance(retry_build_valid_count, int)
+            and not isinstance(retry_build_valid_count, bool)
+            and retry_build_valid_count > 0
+            and isinstance(retry_certificate_stage, int)
+            and not isinstance(retry_certificate_stage, bool)
+        ):
+            key = str(retry_certificate_stage)
+            corridor_retry_certificate_stage_counts[key] = (
+                corridor_retry_certificate_stage_counts.get(key, 0) + 1
+            )
     return {
         "record_count": len(records),
         "complete_record_count": sum(bool(record.get("complete")) for record in records),

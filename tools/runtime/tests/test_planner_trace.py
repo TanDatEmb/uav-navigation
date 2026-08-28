@@ -352,7 +352,7 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(summary["exp_corridor_seed_retry_build_valid_total"], 3)
         self.assertEqual(
             summary["exp_corridor_seed_retry_last_certificate_stage_counts"],
-            {"0": 3, "5": 1},
+            {"0": 1, "5": 1},
         )
         self.assertEqual(
             summary["exp_corridor_seed_selected_mode_counts"],
