@@ -9624,3 +9624,27 @@ release profiles must not use the former allowance.
   selected BACKUP, while planner total p95/max were 79.226/180.272 ms. The
   command-store race is closed at unit and one-run screening level, but MAIN
   feasibility and latency tails remain open and require repeated evidence.
+
+### 2026-08-28 - Rejected experiment: defer replans until the MAIN boundary
+
+- **Owner:** Runtime planner scheduling experiment, reverted by `016caa0`.
+- **Scope:** Commit `5158bd4` kept the 5 Hz timer but skipped replacement solves
+  while a certified MAIN prefix had more than one solve deadline plus three
+  timer ticks remaining. Mapping recertification remained active throughout.
+- **Safety impact:** No gate was relaxed and the mission completed, but the
+  reduced replacement cadence allowed several trajectories to enter their
+  braking suffix. The experiment was therefore reverted in full; no scheduler
+  deferral remains in product behavior.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T135131-1191985` reduced
+  planning records from 233 to 94 and observed role transitions from 76 to 39,
+  but produced four near-stops below 1 m/s around route x=23, 28, 75 and 107 m,
+  each lasting about 1.5--2.5 s. Speed p95 fell to 4.782 m/s. This reproduces
+  the reported stop/reaccelerate behavior and proves that lowering effective
+  planner frequency before improving replacement feasibility is the wrong
+  ordering.
+- **Removal/review condition:** Historical rejected-experiment record; retain
+  until a replacement architecture demonstrates reliable MAIN continuation
+  and can safely derive a lower solve cadence from measured success tails.
+- **Verification:** `git show 5158bd4`, `git show 016caa0`, and the cited
+  artifact preserve the implementation, rollback and runtime evidence.
