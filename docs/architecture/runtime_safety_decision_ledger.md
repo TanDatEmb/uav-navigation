@@ -69,6 +69,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 | HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
+| HG-026 | Curved MAIN backup reachability (`SAFETY_INVARIANT`) | rejected experiment: consecutive inflated-map segments remained KNOWN_FREE within the finite visibility-distance budget; braking suffix retained independent SFC and swept certificate | REJECTED / REVERTED | Artifact `external-mode-check-20260828T154306-1288519` completed safely but retained 21 local-boundary restarts, frequently exported only 0.24-1.5 s of MAIN, and worsened cross-track p95 to 7.36 m. Commit `36b292e` was reverted by `e012298`; the straight-ray limitation remains an open M7 debt. | Preserve the rejected evidence. A replacement must explain the remaining certificate truncation and improve prefix length/restarts without worsening clearance, tracking, or latency over repeated scenario-matrix SITL and recorded data. |
 
 ## Temporary-bypass register
 
@@ -9964,3 +9965,34 @@ release profiles must not use the former allowance.
 - **Verification:** `git show d3330da`, `git show e631881`, focused 8/8 backend
   tests, Release build and the cited repeated SITL artifacts preserve the
   implementation, rollback and evidence.
+
+### 2026-08-28 - Rejected experiment: curved MAIN backup-prefix reachability
+
+- **Owner/status:** MAIN/BACKUP bundle assembly, `REJECTED / REVERTED`;
+  implementation commit `36b292e`, revert commit `e012298`.
+- **Scope:** Replaced repeated straight lines from the command origin to future
+  MAIN samples with consecutive inflated-map segment traversal and a finite
+  cumulative-distance budget. UNKNOWN and OUT_OF_MAP remained blocked; the
+  braking polynomial retained its own corridor and swept-world certificate.
+- **Safety impact:** The change was fail closed and removed a geometrically
+  questionable visibility proxy, but did not establish longer executable MAIN
+  prefixes in runtime and materially worsened route tracking.
+- **Evidence:** Focused curved/blocked/budget tests passed and the Release
+  workspace built. Valid artifact
+  `.artifacts/runtime/external-mode-check-20260828T154306-1288519` completed the
+  140 m mission without collision, with actual minimum clearance 4.48 m,
+  planner p95 56.12 ms, and measured speed p95 4.85 m/s. It nevertheless had
+  21 `local trajectory boundary reached` events, frequently exported only
+  0.24-1.5 s before backup, and worsened cross-track p95 to 7.36 m versus
+  3.95-4.33 m in baseline artifacts `143719` and `142323`.
+- **Conclusion:** Straight-origin visibility was not the sufficient cause of
+  certificate truncation. Changing only the prefix walk altered route shape
+  without fixing restart continuity. Mission completion alone is not evidence
+  that this architectural debt was resolved.
+- **Removal/review condition:** Historical rejected-experiment record. A future
+  replacement must locate the actual truncation stage, retain immutable-map
+  fail-closed provenance, and improve certified prefix/restart distributions
+  without worsening clearance, tracking, or latency. Do not reapply `36b292e`.
+- **Verification:** `git show 36b292e`, `git show e012298`, focused 8/8 backend
+  tests, Release build, and the cited artifact preserve implementation,
+  rollback, and runtime evidence.
