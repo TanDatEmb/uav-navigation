@@ -9648,3 +9648,33 @@ release profiles must not use the former allowance.
   and can safely derive a lower solve cadence from measured success tails.
 - **Verification:** `git show 5158bd4`, `git show 016caa0`, and the cited
   artifact preserve the implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Rejected experiment: add jerk cost only to feasibility retries
+
+- **Owner:** Nominal MINCO bounded feasibility retry experiment, reverted by
+  `7df9c6f`.
+- **Scope:** Commit `e33c40d` kept the initial nominal jerk objective disabled
+  but added a `5.0e5` jerk penalty to the existing maximum-two retries after a
+  strict jerk-certificate failure. No retry, iteration or deadline budget was
+  changed.
+- **Safety impact:** No hard gate was relaxed and the 140 m mission completed
+  without collision, but the altered search direction increased MAIN/BACKUP
+  switching and made speed continuity materially worse. The experiment was
+  therefore reverted in full; the product configuration has no retry-only jerk
+  weight.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T135907-1203584` reduced
+  planner total p95/max from 79.226/180.272 ms to 71.987/98.558 ms and reduced
+  non-finite optimizer messages from five to one versus artifact
+  `.artifacts/runtime/external-mode-check-20260828T134232-1181253`. However,
+  dynamics-stage failures did not improve (60 to 61), MAIN/BACKUP command-role
+  transitions rose from 75 to 99, route-region episodes below 2 m/s rose from
+  one to three, and measured speed p95 fell from 4.818 to 4.574 m/s. The first
+  5--55 m remained below 4 m/s for 20.6 s. This is a local numerical benefit,
+  not a continuity improvement.
+- **Removal/review condition:** Historical rejected-experiment record. Revisit
+  jerk conditioning only together with a trajectory parameterization whose
+  certified continuation horizon and terminal velocity contract prevent the
+  optimizer from trading repeated deceleration for feasibility.
+- **Verification:** `git show e33c40d`, `git show 7df9c6f`, and the cited
+  artifacts preserve the implementation, rollback and A/B evidence.
