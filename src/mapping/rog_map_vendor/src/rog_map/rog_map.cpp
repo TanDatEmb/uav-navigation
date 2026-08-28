@@ -226,6 +226,43 @@ PlanningGridPatchExport ROGMap::exportPlanningGridRegion(
   return output;
 }
 
+PlanningGridRegionSizeEstimate ROGMap::estimatePlanningGridRegionSize(
+    const Vec3f& region_min, const Vec3f& region_max) const {
+  PlanningGridRegionSizeEstimate estimate;
+  if (!region_min.allFinite() || !region_max.allFinite() ||
+      (region_max.array() < region_min.array()).any()) return estimate;
+  Vec3i requested_min;
+  Vec3i requested_max;
+  posToGlobalIndex(region_min, requested_min);
+  posToGlobalIndex(region_max, requested_max);
+  const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+  const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+  const Vec3i patch_min = requested_min.cwiseMax(map_min);
+  const Vec3i patch_max = requested_max.cwiseMin(map_max);
+  if ((patch_max.array() < patch_min.array()).any()) return estimate;
+  const Vec3i dimensions = patch_max - patch_min + Vec3i::Ones();
+  std::size_t base_count = 1U;
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto dimension = static_cast<std::size_t>(dimensions[axis]);
+    if (dimension == 0U ||
+        base_count > std::numeric_limits<std::size_t>::max() / dimension) return estimate;
+    base_count *= dimension;
+  }
+  const std::size_t inflated_count =
+      inf_map_->estimatePlanningGridRegionCellCount(region_min, region_max);
+  if (inflated_count == 0U) return estimate;
+  const std::size_t inflated_layers = cfg_.unk_inflation_en ? 2U : 1U;
+  if (inflated_count >
+      (std::numeric_limits<std::size_t>::max() - base_count) / inflated_layers) {
+    return estimate;
+  }
+  estimate.base_cell_count = base_count;
+  estimate.inflated_cell_count = inflated_count;
+  estimate.owned_byte_count = base_count + inflated_layers * inflated_count;
+  estimate.valid = true;
+  return estimate;
+}
+
 void ROGMap::init() {
   initProbMap();
   planning_nearest_offsets_ =

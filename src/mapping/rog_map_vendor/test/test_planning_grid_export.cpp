@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "test_rog_map_fixture.hpp"
 
@@ -204,8 +205,36 @@ TEST(RogMapPlanningGridExport, RegionMatchesFullExportAfterSignedAxisSlides) {
     const auto patch = map.exportPlanningGridRegion(
         position - Eigen::Vector3d{1.35, 1.15, 1.05},
         position + Eigen::Vector3d{1.25, 1.45, 1.35});
+    const auto estimate = map.estimatePlanningGridRegionSize(
+        position - Eigen::Vector3d{1.35, 1.15, 1.05},
+        position + Eigen::Vector3d{1.25, 1.45, 1.35});
+    ASSERT_TRUE(estimate.valid);
+    EXPECT_EQ(estimate.base_cell_count, patch.base_state.size());
+    EXPECT_EQ(estimate.inflated_cell_count, patch.inflated.occupied.size());
+    EXPECT_EQ(estimate.owned_byte_count,
+              patch.base_state.size() + patch.inflated.occupied.size() +
+                  patch.inflated.unknown.size());
     expectPatchMatchesFull(patch, full);
   }
+}
+
+TEST(RogMapPlanningGridExport, RegionSizeEstimateRejectsMalformedOrEmptyBounds) {
+  TestRogMap map;
+  map.loadConfigAndInit(testConfigPath());
+
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(map.estimatePlanningGridRegionSize(
+                      Eigen::Vector3d{nan, 0.0, 0.0},
+                      Eigen::Vector3d{1.0, 1.0, 1.0})
+                   .valid);
+  EXPECT_FALSE(map.estimatePlanningGridRegionSize(
+                      Eigen::Vector3d{1.0, 1.0, 1.0},
+                      Eigen::Vector3d{-1.0, -1.0, -1.0})
+                   .valid);
+  EXPECT_FALSE(map.estimatePlanningGridRegionSize(
+                      Eigen::Vector3d{1'000'000.0, 1'000'000.0, 1'000'000.0},
+                      Eigen::Vector3d{1'000'001.0, 1'000'001.0, 1'000'001.0})
+                   .valid);
 }
 
 TEST(RogMapPlanningGridExport, CircularLogicalOrderingMatchesAfterSignedAxisSlides) {

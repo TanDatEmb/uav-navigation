@@ -170,6 +170,7 @@ namespace {
 // sees the missing revision and fails closed.
 constexpr std::size_t kWorldChangeHistoryRetention = 256U;
 constexpr std::size_t kMaximumSnapshotPatchDepth = 8U;
+constexpr double kMaximumPatchToFullOwnedByteRatio = 0.40;
 
 }  // namespace
 
@@ -201,6 +202,7 @@ class MappingActor::Impl final {
 
   [[nodiscard]] MappingSnapshotPublication initialSnapshot() {
     auto exported = map_->exportPlanningGrid();
+    full_snapshot_owned_bytes_ = exported.ownedByteSize();
     nearest_offsets_ = toProductNearestOffsets(exported.nearest_offsets);
     auto snapshot = std::make_shared<MappingWorldSnapshot>(
         toProductGrid(std::move(exported), nearest_offsets_),
@@ -373,7 +375,20 @@ class MappingActor::Impl final {
       const bool can_apply_patch = current_snapshot_ && !pending_change_covers_world_ &&
           pending_changed_region_.valid() &&
           current_snapshot_->patchDepth() < kMaximumSnapshotPatchDepth;
-      if (can_apply_patch) {
+      bool patch_is_efficient = false;
+      if (can_apply_patch && full_snapshot_owned_bytes_ > 0U) {
+        const auto estimate = map_->estimatePlanningGridRegionSize(
+            pending_changed_region_.minimum, pending_changed_region_.maximum);
+        patch_is_efficient = estimate.valid &&
+            static_cast<double>(estimate.owned_byte_count) <
+                kMaximumPatchToFullOwnedByteRatio *
+                    static_cast<double>(full_snapshot_owned_bytes_);
+        if (!patch_is_efficient) {
+          result.snapshot_full_export_reason =
+              SnapshotFullExportReason::kPatchTooLarge;
+        }
+      }
+      if (can_apply_patch && patch_is_efficient) {
         const auto patch_export = map_->exportPlanningGridRegion(
             pending_changed_region_.minimum,
             pending_changed_region_.maximum);
@@ -398,6 +413,7 @@ class MappingActor::Impl final {
                       : SnapshotFullExportReason::kPatchDepthLimit;
         }
         auto exported = map_->exportPlanningGrid();
+        full_snapshot_owned_bytes_ = exported.ownedByteSize();
         result.snapshot_export_base_cells = exported.base_state.size();
         result.snapshot_export_inflated_cells = exported.inflated.occupied.size();
         if (!nearest_offsets_) {
@@ -496,6 +512,7 @@ class MappingActor::Impl final {
   std::unique_ptr<internal::RuntimeMappingMap> map_;
   double snapshot_publication_period_s_{0.05};
   std::int64_t snapshot_publication_period_ns_{50'000'000};
+  std::size_t full_snapshot_owned_bytes_{0U};
   rog_map::PointCloud backend_cloud_;
   rog_map::PointCloud backend_free_space_cloud_;
   std::shared_ptr<const std::vector<navigation_world_model::GridIndex3>> nearest_offsets_;

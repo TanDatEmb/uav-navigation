@@ -158,6 +158,30 @@ namespace rog_map {
         return output;
     }
 
+    std::size_t InfMap::estimatePlanningGridRegionCellCount(
+        const Vec3f& region_min, const Vec3f& region_max) const {
+        if (!region_min.allFinite() || !region_max.allFinite() ||
+            (region_max.array() < region_min.array()).any()) return 0U;
+        Vec3i requested_min;
+        Vec3i requested_max;
+        posToGlobalIndex(region_min, requested_min);
+        posToGlobalIndex(region_max, requested_max);
+        const Vec3i map_min = local_map_origin_i_ - sc_.half_map_size_i;
+        const Vec3i map_max = map_min + sc_.map_size_i - Vec3i::Ones();
+        const Vec3i patch_min = requested_min.cwiseMax(map_min);
+        const Vec3i patch_max = requested_max.cwiseMin(map_max);
+        if ((patch_max.array() < patch_min.array()).any()) return 0U;
+        const Vec3i dimensions = patch_max - patch_min + Vec3i::Ones();
+        std::size_t count = 1U;
+        for (int axis = 0; axis < 3; ++axis) {
+            const auto dimension = static_cast<std::size_t>(dimensions[axis]);
+            if (dimension == 0U ||
+                count > std::numeric_limits<std::size_t>::max() / dimension) return 0U;
+            count *= dimension;
+        }
+        return count;
+    }
+
     // Public Query Function ========================================================================
     bool InfMap::isOccupiedInflate(const Vec3f& pos) const {
         if (!insideLocalMap(pos)) return false;

@@ -119,6 +119,9 @@ class ROGMap : public ProbMap {
   [[nodiscard]] PlanningGridPatchExport exportPlanningGridRegion(
       const Vec3f& region_min, const Vec3f& region_max) const;
 
+  [[nodiscard]] PlanningGridRegionSizeEstimate estimatePlanningGridRegionSize(
+      const Vec3f& region_min, const Vec3f& region_max) const;
+
  protected:
   std::shared_ptr<const std::vector<Vec3i>> planning_nearest_offsets_;
   std::ofstream time_log_file_, map_info_log_file_;

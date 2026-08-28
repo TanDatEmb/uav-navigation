@@ -9205,3 +9205,36 @@ release profiles must not use the former allowance.
   profile. Require A* to return a local prefix within budget, no no-command
   safety stop, continued measured mission progress, and latency distributions
   over repeated SITL plus representative recorded data.
+
+### 2026-08-28 - Select immutable snapshot export before copying large patches
+
+- **Owner:** ROG-Map planning-grid export and mapping snapshot publication.
+- **Scope:** Estimate the exact clipped base/inflated patch cell counts without
+  copying them. Use a patch only below 40 percent of the stable full-snapshot
+  owned bytes; otherwise export one flat full snapshot directly. Publication
+  cadence, world identity and accumulated changed-region ownership are
+  unchanged.
+- **Safety impact:** Representation/performance only. Both forms contain the
+  same evidence and inflated layers at the same revision; no observation is
+  dropped, no ray is shortened, no map cell is reclassified and no freshness,
+  collision or revalidation gate changes. Invalid/overflowing estimates choose
+  the already validated full export.
+- **Evidence:** Complete three-column SITL artifact
+  `.artifacts/runtime/external-mode-check-20260828T114150-1042798` measured 247
+  patches spanning 50--81 percent of the 6,282,392-byte grid; they averaged
+  `21.319 ms`, versus `12.577 ms` for 105 full exports. Recorded Mid-360 2x
+  artifact `.artifacts/runtime/dataset-20260828T114615-1045031` PASSed all
+  2756 observations and independently measured 679 patches: below 40 percent
+  averaged `7.071 ms`, while 40--80 percent buckets averaged
+  `10.103--15.551 ms`; 626 full exports averaged `8.261 ms`. The crossover is
+  therefore distribution-derived from both SITL and real sensor data, not one
+  latency sample.
+- **Removal/review condition:** Replace with shared immutable chunk storage or
+  an independently benchmarked export selector that preserves exact snapshot
+  identity and query parity. Do not raise publication age or omit map layers to
+  reduce callback time.
+- **Verification:** Unit-test estimate/export byte parity after signed-axis
+  slides, patch/full selection, malformed/empty bounds and arithmetic guards; run
+  mapping/backend tests and Release build. Repeat recorded Mid-360 and
+  three-column SITL, requiring identical accounting/mission safety with lower
+  snapshot and callback p95/p99 plus bounded peak live bytes.

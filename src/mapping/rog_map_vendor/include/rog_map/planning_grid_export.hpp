@@ -58,4 +58,11 @@ struct PlanningGridPatchExport {
   std::vector<std::uint8_t> base_state;
 };
 
+struct PlanningGridRegionSizeEstimate {
+  std::size_t base_cell_count{0U};
+  std::size_t inflated_cell_count{0U};
+  std::size_t owned_byte_count{0U};
+  bool valid{false};
+};
+
 }  // namespace rog_map

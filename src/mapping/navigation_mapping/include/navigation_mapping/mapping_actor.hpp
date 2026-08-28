@@ -24,6 +24,7 @@ enum class SnapshotFullExportReason : std::uint8_t {
   kInvalidChangedRegion = 3,
   kPatchDepthLimit = 4,
   kEmptyPatch = 5,
+  kPatchTooLarge = 6,
 };
 
 struct MappingUpdateResult {
