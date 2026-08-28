@@ -77,6 +77,9 @@ void Polytope::Reset() {
     is_known_free = false;
     have_seed_line = false;
     route_boundary_gate_ = false;
+    route_boundary_point_.setConstant(
+        std::numeric_limits<float>::quiet_NaN());
+    route_boundary_radius_m_ = std::numeric_limits<double>::quiet_NaN();
 }
 
 bool Polytope::IsKnownFree() {

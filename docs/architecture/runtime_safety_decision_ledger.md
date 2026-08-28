@@ -7327,25 +7327,28 @@ release profiles must not use the former allowance.
 - **Owner:** Navigation planning and corridor-generation maintainers.
 - **Scope:** When a genuine pass-through corner uses certified route look-ahead,
   the corridor generator stops the incoming line corridor at the active
-  waypoint, inserts a point-derived corridor intersected with an axis-aligned
-  box whose half extent is `acceptance_radius / sqrt(3)`, and marks that
-  corridor as a route-boundary gate. The gate is matched to an interior guide
-  sample and the incoming overlap is checked before the corridor is published.
-  If A* allocation leaves a long incoming edge, only that edge is subdivided
-  into bounded seed segments before gate construction. SFC simplification
-  preserves the complete corridor sequence whenever the marker is present, and
-  corridor compaction cannot pop a gate while appending the outgoing leg.
+  waypoint, inserts a point-derived free-space corridor, and marks it with a
+  route-boundary junction contract containing the waypoint and acceptance
+  radius. The gate is matched to an interior guide sample and the incoming
+  overlap is checked before the corridor is published. If A* allocation leaves
+  a long incoming edge, only that edge is subdivided into bounded seed
+  segments before gate construction. SFC simplification preserves the complete
+  corridor sequence whenever the marker is present, and corridor compaction
+  cannot pop a gate while appending the outgoing leg.
 - **Safety impact:** `SAFETY_INVARIANT` preservation. This closes the route
   adherence hole where a single convex free-space corridor allowed MINCO to
   cut a genuine waypoint corner without entering the mission acceptance ball.
-  The gate lies inside the existing mission acceptance region, but collision,
-  UNKNOWN, OUT_OF_MAP, clearance, dynamic, swept-world, backup, identity, and
-  deadline gates remain unchanged and authoritative. Invalid or unmatchable
-  gate geometry fails closed.
-- **Derivation and cost:** The cube half extent is selected so every point in
-  the gate is inside the spherical mission acceptance radius. Any added seed
-  samples are linear interpolation with segment length no greater than the
-  configured corridor seed limit. One bounded point-corridor construction is
+  The hard junction check requires one of the gate's adjacent polynomial
+  junctions to enter that ball, while the point-derived corridor is no longer
+  incorrectly used as a full-piece sub-metre turn box. Collision, UNKNOWN,
+  OUT_OF_MAP, clearance, dynamic, swept-world, backup, identity, and deadline
+  gates remain unchanged and authoritative. Invalid or unmatchable gate
+  geometry fails closed.
+- **Derivation and cost:** The route-boundary point and radius are carried as
+  explicit polytope metadata. The guide seed places the incoming junction at
+  the mission waypoint, the objective penalizes only an outside-ball junction,
+  and the independent post-solve certificate checks both adjacent junctions.
+  One bounded point-corridor construction and one bounded junction check are
   added only for an active look-ahead boundary; no second optimizer or planner
   is introduced. The marker is retained as metadata so generic SFC
   simplification cannot erase the contract. During MINCO hot initialization,

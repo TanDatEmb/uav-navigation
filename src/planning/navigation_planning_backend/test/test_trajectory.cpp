@@ -1126,7 +1126,7 @@ TEST(PlannerTrajectory, SimplifySfcPreservesRouteBoundaryGate) {
   };
 
   Polytope gate = make_box(0.8, 1.2, -0.2, 0.2, 2.8, 3.2);
-  gate.SetRouteBoundaryGate(true);
+  gate.SetRouteBoundaryContract(Vec3f{1.0F, 0.0F, 3.0F}, 0.9);
   PolytopeVec sfcs{
       make_box(-1.0, 2.0, -1.0, 1.0, 2.0, 4.0),
       gate,
@@ -1136,6 +1136,9 @@ TEST(PlannerTrajectory, SimplifySfcPreservesRouteBoundaryGate) {
       Vec3f(0.0, 0.0, 3.0), Vec3f(2.5, 0.0, 3.0), sfcs));
   ASSERT_EQ(sfcs.size(), 3U);
   EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_TRUE(sfcs[1].GetRouteBoundaryPoint().isApprox(
+      Vec3f{1.0F, 0.0F, 3.0F}));
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
 }
 
 TEST(PlannerTrajectory, GoalPoliciesRemainNamedAndShareProvisionalValue) {

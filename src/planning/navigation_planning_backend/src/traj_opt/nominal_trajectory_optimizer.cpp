@@ -53,6 +53,8 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                                        const Mat3Df &waypoint_attractor,
                                        const VecDf &waypoint_attractor_dead_d,
                                        const Mat3Df &route_reference_points,
+                                       const std::vector<Vec3f> &route_boundary_points,
+                                       const std::vector<double> &route_boundary_radii,
                                        const Vec3f &route_reference_head,
                                        const Vec3f &route_reference_tail,
                                        const double route_reference_lateral_weight,
@@ -162,6 +164,37 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                         gradPos += weightAtt * violaAttPenaD * 2.0 * p_a;
                         tmp_cost += weightAtt * violaAttPena;
                     }
+                }
+            }
+
+            // Route-boundary acceptance is a junction contract, not a
+            // corridor-center preference. Penalize only an excursion of the
+            // junction outside the mission acceptance ball so the initialized
+            // guide point remains a valid zero-penalty seed while the
+            // independent post-solve check remains authoritative.
+            const bool is_internal_junction =
+                (j == integralResolution) && (i + 1 < piece_num);
+            const int boundary_cell_index = i + 1;
+            if (is_internal_junction &&
+                boundary_cell_index >= 0 &&
+                boundary_cell_index < static_cast<int>(route_boundary_points.size()) &&
+                boundary_cell_index < static_cast<int>(route_boundary_radii.size()) &&
+                route_boundary_points[static_cast<std::size_t>(boundary_cell_index)].allFinite() &&
+                std::isfinite(route_boundary_radii[static_cast<std::size_t>(boundary_cell_index)]) &&
+                route_boundary_radii[static_cast<std::size_t>(boundary_cell_index)] > 0.0) {
+                const Vec3f boundary_error = pos -
+                    route_boundary_points[static_cast<std::size_t>(boundary_cell_index)];
+                const double boundary_violation = boundary_error.squaredNorm() -
+                    std::pow(route_boundary_radii[static_cast<std::size_t>(boundary_cell_index)], 2.0);
+                double boundary_penalty = 0.0;
+                double boundary_penalty_derivative = 0.0;
+                if (gcopter::smoothedL1(
+                        boundary_violation, smoothFactor,
+                        boundary_penalty, boundary_penalty_derivative)) {
+                    const double boundary_weight = std::max(weightPos, 1.0);
+                    gradPos += boundary_weight * boundary_penalty_derivative *
+                        2.0 * boundary_error;
+                    tmp_cost += boundary_weight * boundary_penalty;
                 }
             }
 
@@ -429,6 +462,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
                           hPolyIdx, hPolytopes,
                           waypoint_attractor, waypoint_attractor_dead_d,
                           obj.route_reference_points,
+                          obj.route_boundary_points, obj.route_boundary_radii,
                           obj.headPVAJ.col(0), obj.tailPVAJ.col(0),
                           route_reference_lateral_weight,
                           route_reference_vertical_weight,
@@ -601,8 +635,8 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         // itself must initialize at the overlap interior.
         opt_vars.route_reference_points.col(j) = guide_point;
         const VecDf guide_plane_values =
-                opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
-                opt_vars.hOverlapPolytopes[j].col(3);
+            opt_vars.hOverlapPolytopes[j].leftCols(3) * guide_point +
+            opt_vars.hOverlapPolytopes[j].col(3);
         // Initialize on the collision-checked A* route when the corresponding
         // sample belongs to this convex overlap. The guide-plane test above
         // guarantees feasibility. A centre-dominant blend creates lateral and
@@ -611,6 +645,31 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         opt_vars.points.col(j) = guide_plane_values.maxCoeff() <= 1.0e-6
                 ? guide_point
                 : interior;
+        const int boundary_cell_index = j + 1;
+        if (boundary_cell_index < static_cast<int>(opt_vars.route_boundary_points.size()) &&
+            boundary_cell_index < static_cast<int>(opt_vars.route_boundary_radii.size()) &&
+            opt_vars.route_boundary_points[static_cast<std::size_t>(boundary_cell_index)].allFinite() &&
+            std::isfinite(opt_vars.route_boundary_radii[static_cast<std::size_t>(boundary_cell_index)]) &&
+            opt_vars.route_boundary_radii[static_cast<std::size_t>(boundary_cell_index)] > 0.0) {
+            const Vec3f &boundary_point =
+                opt_vars.route_boundary_points[static_cast<std::size_t>(boundary_cell_index)];
+            const VecDf boundary_plane_values =
+                opt_vars.hOverlapPolytopes[j].leftCols(3) * boundary_point +
+                opt_vars.hOverlapPolytopes[j].col(3);
+            if (!boundary_plane_values.allFinite() ||
+                boundary_plane_values.maxCoeff() > cfg_.corridor_plane_tolerance_m) {
+                planner_context_->warn(
+                    " -- [ExpOpt] route-boundary point {} is not in its incoming overlap "
+                    "(violation={})",
+                    boundary_cell_index, boundary_plane_values.maxCoeff());
+                return false;
+            }
+            // Seed the junction at the mission-owned boundary. The objective
+            // retains a soft outside-ball penalty, while the final junction
+            // check below is the hard acceptance authority.
+            opt_vars.points.col(j) = boundary_point;
+            opt_vars.route_reference_points.col(j) = boundary_point;
+        }
         time_stamps(j + 1) = navigation_planning_backend::routeBoundaryJunctionTime(
                 outgoing_from_route_gate, nearest_index, opt_vars.guide_t.size(), j,
                 time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
@@ -972,6 +1031,41 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         }
         return maximum_violation;
     };
+    const auto route_boundary_satisfied = [&]() {
+        if (opt_vars.route_boundary_gates.size() != opt_vars.hPolytopes.size() ||
+            opt_vars.route_boundary_points.size() != opt_vars.hPolytopes.size() ||
+            opt_vars.route_boundary_radii.size() != opt_vars.hPolytopes.size()) {
+            return false;
+        }
+        const int piece_count = traj.getPieceNum();
+        if (piece_count <= 0) return false;
+        for (std::size_t gate_index = 0;
+             gate_index < opt_vars.route_boundary_gates.size(); ++gate_index) {
+            if (opt_vars.route_boundary_gates[gate_index] == 0U) continue;
+            const Vec3f &boundary_point = opt_vars.route_boundary_points[gate_index];
+            const double boundary_radius = opt_vars.route_boundary_radii[gate_index];
+            if (!boundary_point.allFinite() || !std::isfinite(boundary_radius) ||
+                boundary_radius <= 0.0) {
+                return false;
+            }
+            bool reached = false;
+            const int gate_cell = static_cast<int>(gate_index);
+            const int first_junction = gate_cell - 1;
+            const int last_junction = gate_cell;
+            for (const int junction_index : {first_junction, last_junction}) {
+                if (junction_index < 0 || junction_index >= piece_count) continue;
+                const Eigen::Vector3d junction = traj.getJuncPos(junction_index);
+                const double distance =
+                    (junction - boundary_point.cast<double>()).norm();
+                if (std::isfinite(distance) && distance <= boundary_radius + 1.0e-6) {
+                    reached = true;
+                    break;
+                }
+            }
+            if (!reached) return false;
+        }
+        return true;
+    };
     const auto position_constraint_satisfied = [&]() {
         // Corridor planes are a hard safety contract.  The integrated L-BFGS
         // penalty is only a search aid and must not authorize an excursion
@@ -980,7 +1074,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         const double corridor_plane_tolerance = cfg_.corridor_plane_tolerance_m;
         const double maximum_violation = corridor_plane_violation();
         return std::isfinite(maximum_violation) &&
-               maximum_violation <= corridor_plane_tolerance;
+               maximum_violation <= corridor_plane_tolerance &&
+               route_boundary_satisfied();
     };
     double maximum_velocity = std::numeric_limits<double>::infinity();
     double maximum_acceleration = std::numeric_limits<double>::infinity();
@@ -1650,11 +1745,30 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.guide_path = guide_path;
     opt_vars.guide_t = guide_t;
     opt_vars.route_boundary_gates.assign(sfcs.size(), 0U);
+    opt_vars.route_boundary_points.assign(
+        sfcs.size(), Vec3f::Constant(std::numeric_limits<float>::quiet_NaN()));
+    opt_vars.route_boundary_radii.assign(
+        sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
 
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
                 sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
+        if (sfcs[i].IsRouteBoundaryGate()) {
+            const auto &boundary_point = sfcs[i].GetRouteBoundaryPoint();
+            const double boundary_radius = sfcs[i].GetRouteBoundaryRadius();
+            if (!boundary_point.allFinite() || !std::isfinite(boundary_radius) ||
+                boundary_radius <= 0.0) {
+                planner_context_->warn(
+                    " -- [ExpOpt] route-boundary gate {} has invalid point/radius",
+                    i);
+                return false;
+            }
+            opt_vars.route_boundary_points[static_cast<std::size_t>(i)] =
+                    boundary_point;
+            opt_vars.route_boundary_radii[static_cast<std::size_t>(i)] =
+                    boundary_radius;
+        }
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(
@@ -1761,11 +1875,30 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.guide_path = guide_path;
     opt_vars.guide_t = guide_t;
     opt_vars.route_boundary_gates.assign(sfcs.size(), 0U);
+    opt_vars.route_boundary_points.assign(
+        sfcs.size(), Vec3f::Constant(std::numeric_limits<float>::quiet_NaN()));
+    opt_vars.route_boundary_radii.assign(
+        sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
 
     for (long i = 0; i < sfcs.size(); i++) {
         opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
                 sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
+        if (sfcs[i].IsRouteBoundaryGate()) {
+            const auto &boundary_point = sfcs[i].GetRouteBoundaryPoint();
+            const double boundary_radius = sfcs[i].GetRouteBoundaryRadius();
+            if (!boundary_point.allFinite() || !std::isfinite(boundary_radius) ||
+                boundary_radius <= 0.0) {
+                planner_context_->warn(
+                    " -- [ExpOpt] route-boundary gate {} has invalid point/radius",
+                    i);
+                return false;
+            }
+            opt_vars.route_boundary_points[static_cast<std::size_t>(i)] =
+                    boundary_point;
+            opt_vars.route_boundary_radii[static_cast<std::size_t>(i)] =
+                    boundary_radius;
+        }
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(

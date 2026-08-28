@@ -322,17 +322,6 @@ namespace navigation_planning_backend {
                     solve_stage_.store(0);
                     return false;
                 }
-                const double half_extent = route_boundary_gate->radius_m /
-                    std::sqrt(3.0);
-                Polytope acceptance_box;
-                if (!GenerateEmptyPolytope(
-                        corridor_path[second_id], half_extent, acceptance_box)) {
-                    planner_context_->warn(
-                        " -- [planner] failed to construct route-boundary acceptance box");
-                    solve_stage_.store(0);
-                    return false;
-                }
-                boundary_poly = boundary_poly.CrossWith(acceptance_box);
                 if (!boundary_poly.PointIsInside(corridor_path[second_id], 1.0e-6)) {
                     planner_context_->warn(
                         " -- [planner] route-boundary corridor excludes its waypoint");
@@ -353,12 +342,13 @@ namespace navigation_planning_backend {
                 }
                 boundary_poly.overlap_depth_with_last_one = incoming_overlap;
                 boundary_poly.interior_pt_with_last_one = boundary_interior;
-                boundary_poly.SetRouteBoundaryGate(true);
+                boundary_poly.SetRouteBoundaryContract(
+                    corridor_path[second_id], route_boundary_gate->radius_m);
                 sfcs.push_back(boundary_poly);
                 planner_context_->info(
-                    " -- [planner] inserted route-boundary gate index={} radius={} "
-                    "half_extent={} overlap_depth={}",
-                    second_id, route_boundary_gate->radius_m, half_extent,
+                    " -- [planner] inserted route-boundary junction index={} radius={} "
+                    "overlap_depth={}",
+                    second_id, route_boundary_gate->radius_m,
                     incoming_overlap);
             }
             if (second_id == corridor_path.size() - 1) {

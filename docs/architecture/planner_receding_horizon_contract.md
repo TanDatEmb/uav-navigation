@@ -19,13 +19,15 @@ At each planning tick:
    `PASS_THROUGH` goal carries `next_target` as route metadata; when the
    certified map horizon permits and the outgoing tangent is a genuine corner,
    the planner extends the executable guide through a bounded prefix of that
-   outgoing segment. The corridor generator inserts a bounded route-boundary
-   gate at the active waypoint and preserves it through SFC simplification, so
-   a convex corridor cannot cut across the waypoint. The MINCO hot seed assigns
-   the overlap after that gate to the first post-waypoint guide timestamp (or
-   splits the remaining interval when the look-ahead endpoint is that only
-   post-waypoint sample), so the hard boundary does not create a near-zero-
-   duration turn piece.
+   outgoing segment. The corridor generator inserts a route-boundary junction
+   contract at the active waypoint and preserves its marker through SFC
+   simplification. The adjacent MINCO junction is seeded at, and independently
+   hard-checked against, the waypoint acceptance ball; the surrounding
+   collision-certified corridor remains wide enough for a smooth fillet. The
+   MINCO hot seed assigns the overlap after that boundary to the first
+   post-waypoint guide timestamp (or splits the remaining interval when the
+   look-ahead endpoint is that only post-waypoint sample), so the hard boundary
+   does not create a near-zero-duration turn piece.
    Shallow/straight legs
    terminate at the active waypoint so the nominal curve cannot trade away its
    measured acceptance boundary for a soft look-ahead endpoint. The

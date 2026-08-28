@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <limits>
 #include <vector>
@@ -38,6 +39,7 @@ namespace geometry_utils {
         void serialize(Archive& archive) {
             archive(undefined, is_known_free, planes, have_seed_line,
                     route_boundary_gate_,
+                    route_boundary_point_, route_boundary_radius_m_,
                     overlap_depth_with_last_one, interior_pt_with_last_one,
                     ellipsoid_, seed_line.first,seed_line.second, robot_r);
         }
@@ -76,15 +78,40 @@ namespace geometry_utils {
         void SetKnownFree(bool is_free);
 
         // A route-boundary gate is a mission-geometry contract. It prevents
-        // SFC simplification from removing the small corridor that forces a
-        // pass-through trajectory to enter the active waypoint acceptance
+        // SFC simplification from removing the corridor cell whose adjacent
+        // trajectory junction must enter the active waypoint acceptance
         // region before continuing onto the next leg.
         void SetRouteBoundaryGate(bool enabled) noexcept {
             route_boundary_gate_ = enabled;
+            if (!enabled) {
+                route_boundary_point_.setConstant(
+                    std::numeric_limits<float>::quiet_NaN());
+                route_boundary_radius_m_ =
+                    std::numeric_limits<double>::quiet_NaN();
+            }
         }
 
         bool IsRouteBoundaryGate() const noexcept {
             return route_boundary_gate_;
+        }
+
+        void SetRouteBoundaryContract(const Vec3f& point,
+                                      const double radius_m) noexcept {
+            if (!point.allFinite() || !std::isfinite(radius_m) || radius_m <= 0.0) {
+                SetRouteBoundaryGate(false);
+                return;
+            }
+            route_boundary_point_ = point;
+            route_boundary_radius_m_ = radius_m;
+            route_boundary_gate_ = true;
+        }
+
+        const Vec3f& GetRouteBoundaryPoint() const noexcept {
+            return route_boundary_point_;
+        }
+
+        double GetRouteBoundaryRadius() const noexcept {
+            return route_boundary_radius_m_;
         }
 
         void SetPlanes(MatD4f _planes);
@@ -101,6 +128,10 @@ namespace geometry_utils {
 
     private:
         bool route_boundary_gate_{false};
+        Vec3f route_boundary_point_{
+            Vec3f::Constant(std::numeric_limits<float>::quiet_NaN())};
+        double route_boundary_radius_m_{
+            std::numeric_limits<double>::quiet_NaN()};
 
     };
 
