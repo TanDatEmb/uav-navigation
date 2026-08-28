@@ -9278,6 +9278,17 @@ release profiles must not use the former allowance.
   consecutive `PathSearch` failures expired the command lease near x=20.7 m.
   Keeping guidance beyond the executable radius corrects that semantic error;
   it does not increase the certified prefix or its safety horizon.
+  Exact-HEAD follow-up artifact
+  `.artifacts/runtime/external-mode-check-20260828T122307-1085850` completed both
+  ordered waypoints and the 140 m mission with no collision, `4.429 m` minimum
+  clearance and route path-length ratio `1.018`. Compared with artifact
+  `...T114150-1042798`, commit ratio improved from `91/228` (39.9 percent) to
+  `125/207` (60.4 percent), maximum inter-commit gap fell from `4.508 s` to
+  `2.060 s`, and 3.0-to-4.2 m/s speed-recovery episodes fell from four to two.
+  This is functional evidence, not final acceptance: 82 solves still did not
+  commit and measured speed p95 reached only `4.579 m/s` against the requested
+  `5.0 m/s`, so deterministic corridor-contained command ownership remains an
+  open follow-on rather than a reason to relax the speed or dynamics contract.
 - **Removal/review condition:** Replace only with an explicit global-route/local-
   deformation hierarchy that preserves monotonic measured progress, active
   waypoint boundaries and equal-or-stronger local certification. Do not replace
