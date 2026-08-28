@@ -9928,3 +9928,37 @@ release profiles must not use the former allowance.
 - **Verification:** `git show e5c4c4b`, `git show 0d0dabe`, focused 8/8 backend
   tests, Release build and the two cited exact-HEAD SITL artifacts preserve the
   implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Rejected experiment: C2 PX4 generation handoff
+
+- **Owner:** Planner-to-PX4 handoff experiment, introduced by `d3330da` and
+  reverted by `e631881`.
+- **Scope:** Preserved initial position, velocity and acceleration while
+  releasing the prior segment jerk at every cold/hot MAIN solve. Generated
+  trajectory jerk and all dynamic, flatness, route, corridor, world and
+  execution gates remained unchanged.
+- **Safety impact:** The contract matched the current PX4 message surface,
+  which transmits P/V/A but not jerk, and both runs completed within the
+  waypoint radius without collision. It did not improve command renewal or
+  route quality, so the C3 generation boundary was restored pending a more
+  complete timing fix.
+- **Evidence:** Exact-HEAD artifacts
+  `.artifacts/runtime/external-mode-check-20260828T152631-1277213` and
+  `.artifacts/runtime/external-mode-check-20260828T152854-1279305` had 23/22
+  local-boundary restarts and 42/34 failed PlanFromRest attempts. Cross-track
+  p95 was 7.046/6.553 m and speed p95 4.744/4.549 m/s, versus immediate
+  baseline cross-track 4.328/3.947 m and speed 4.811/4.647 m/s. Both still
+  failed the declared 5 m/s speed-p95 requirement.
+- **New causal debt:** Commit diagnostics in the unchanged baseline already
+  show nonzero P/V/A residual at generation changes: position p95
+  0.471/0.444 m, velocity 0.373/0.280 m/s and acceleration 0.566/0.330 m/s^2.
+  The candidate is solved at a future splice state but compared/activated
+  against the previous bundle at a different wall-time boundary. Resolve this
+  activation-time ownership mismatch before weakening continuity order.
+- **Removal/review condition:** Historical rejected-experiment record. A future
+  C2 design requires an explicit activation token and zero P/V/A residual at
+  the actual generation switch, plus repeated feasible-rate and tracking
+  improvement. Do not reapply jerk release alone.
+- **Verification:** `git show d3330da`, `git show e631881`, focused 8/8 backend
+  tests, Release build and the cited repeated SITL artifacts preserve the
+  implementation, rollback and evidence.
