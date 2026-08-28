@@ -1744,8 +1744,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         const bool candidate_made_progress = std::isfinite(retry_violation) &&
                                              retry_violation < best_normalized_violation;
         if (!candidate_is_feasible && !candidate_made_progress) {
+            if (hasRemainingFeasibilityRetry(
+                    retry, kMaximumFeasibilityRetries)) {
+                planner_context_->warn(
+                        " -- [ExpOpt] feasibility retry made no progress; "
+                        "restoring best candidate before stronger bounded attempt: "
+                        "attempt={} previous={} current={}",
+                        retry + 1, best_normalized_violation, retry_violation);
+                restore_best_candidate();
+                ret = lbfgs::LBFGS_STOP;
+                continue;
+            }
             planner_context_->warn(
-                    " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
+                    " -- [ExpOpt] final feasibility retry made no progress: "
+                    "previous={} current={}",
                     best_normalized_violation, retry_violation);
             diagnostics_.retry_stop_reason = 5;
             restore_best_candidate();

@@ -10840,3 +10840,47 @@ release profiles must not use the former allowance.
   --gtest_color=no`; then `make build && make test`; then repeat
   `long_three_pillars_multiwaypoint` at 5 m/s and compare against
   `external-mode-check-20260828T194521-1523703`.
+
+### 2026-08-29 - Execute the configured stronger nominal-feasibility retry
+
+- **Owner/status:** Nominal MINCO dynamic-feasibility recovery, correctness
+  fix, `PROVISIONAL` pending repeated SITL.
+- **Scope:** When the first finite, corridor-valid feasibility retry does not
+  reduce normalized V/A/J violation, restore the best prior candidate and run
+  the one remaining bounded retry with its configured stronger dynamic
+  penalty. Stop fail-closed if the final retry is infeasible, leaves the
+  corridor, becomes non-finite, is cancelled, or still makes no progress.
+- **Safety impact:** No velocity, acceleration, jerk, corridor, flatness,
+  route, tracking, freshness or deadline gate changes. At most the already
+  configured two optimizer retries run; every output still passes independent
+  continuous corridor and analytic dynamics certificates before commit.
+- **Behavioral reason:** Exact-SHA artifact
+  `external-mode-check-20260828T195031-1533972` stopped at the first waypoint
+  although all four planner solves completed in `11.4-12.7 ms`, far below the
+  180 ms deadline. Best candidates remained at normalized dynamic violation
+  `1.10-1.44`. Diagnostics showed `retry_count=1` and stop reason 5. The loop
+  used penalty growth `10^retry`, but broke on retry index zero before retry
+  index one—the only attempt with the intended 10x feasibility penalty—could
+  execute. Larger fixed-point time stretches were correctly rejected because
+  immutable endpoint PVAJ moved the rebuilt polynomial outside its corridor.
+- **False-accept/false-reject consequences:** This removes a false early stop,
+  not a hard-gate rejection. Restoring the previous best candidate prevents a
+  non-improving iterate from becoming the next seed. If stronger optimization
+  cannot find a certified result, the command remains rejected exactly as
+  before.
+- **Runtime cost and evidence required:** Worst-case work adds one bounded
+  feasibility solve only on already-infeasible candidates and remains under
+  the absolute solve deadline. Focused optimizer/trajectory tests, Release
+  build and full tests must pass. Repeated 5 m/s SITL must report retry count,
+  solve latency distribution, waypoint coverage, collision/clearance, speed,
+  altitude and yaw; one successful run is not a threshold-tuning basis.
+- **Removal/review condition:** Preserve while feasibility penalty escalation
+  is a two-stage bounded policy. Replace with an explicitly constrained solver
+  or a certified reachable entrance seed, not with relaxed dynamic limits.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory test_exp_optimizer_seed -j2 &&
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no &&
+  ./build/navigation_planning_backend/test_exp_optimizer_seed
+  --gtest_color=no`; then `make build && make test`; then repeat the exact
+  `long_three_pillars_multiwaypoint` 5 m/s scenario and compare against
+  `external-mode-check-20260828T195031-1533972`.
