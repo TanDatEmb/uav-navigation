@@ -27,6 +27,10 @@ namespace traj_opt {
         double full_turn_max_acceleration_rad_s2{0.0};
         double hold_max_rate_rad_s{0.0};
         double hold_max_acceleration_rad_s2{0.0};
+        double stopping_displacement_rad{0.0};
+        double stopping_max_rate_rad_s{0.0};
+        double stopping_max_acceleration_rad_s2{0.0};
+        bool used_stopping_displacement{false};
     };
 
     using namespace geometry_utils;

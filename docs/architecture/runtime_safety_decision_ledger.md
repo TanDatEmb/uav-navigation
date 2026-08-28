@@ -8722,3 +8722,30 @@ release profiles must not use the former allowance.
 - **Verification:** Unit-test the perturbed analytic piece for physical V/A/J
   maxima and fail-closed limit checking; run all backend tests and repeat
   representative SITL after the dependent yaw behavior is separately committed.
+
+### 2026-08-28 - Stop rotating yaw with a forward minimum-jerk displacement
+
+- **Owner:** Semantic yaw optimizer for MAIN and BACKUP suffixes.
+- **Scope:** If the requested turn and exact-angle hold are both infeasible,
+  attempt the free-terminal-position minimum-jerk stop
+  `delta_yaw = 0.5*w0*T + a0*T^2/12`. The suffix preserves initial yaw/rate/
+  acceleration, advances in the physically consistent direction, and ends at
+  zero yaw rate and acceleration. It remains subject to unchanged continuous
+  1.0 rad/s and 0.3 rad/s2 certificates.
+- **Safety impact:** Closes an availability defect without accepting a limit
+  violation or extending an uncertified command. Exact-angle hold previously
+  forced a rotating state to reverse back to its initial angle. If the analytic
+  stop still exceeds either limit, optimization continues to fail closed.
+- **Evidence:** Artifact `external-mode-check-20260828T093028-924584` recorded
+  51 BACKUP failures with 2--3.5 s durations and exact-angle hold acceleration
+  maxima up to 0.61 rad/s2. Offline evaluation of the analytic stop over all 51
+  recorded states retained max rate <=0.417 rad/s and max acceleration <=0.290
+  rad/s2; every sample was feasible under the unchanged active limits.
+- **Removal/review condition:** Replace only with an equal or stronger bounded
+  yaw state machine or a jointly optimized position/yaw safety suffix. Never
+  retain non-zero terminal yaw rate at handover or widen active yaw limits to
+  make an exact-angle reversal pass.
+- **Verification:** Unit-test both an infeasible 0.2 s stop and the recorded
+  3.0 s feasible state; run all backend tests and repeat representative SITL,
+  requiring zero admitted yaw-limit violations and improved MAIN/BACKUP
+  availability before acceptance.

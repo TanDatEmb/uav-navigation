@@ -2052,7 +2052,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             planner_context_->error(
                 " -- [planner] in [generateExpTraj]: YawTrajOpt failed reason={} "
                 "duration={} init=[{},{},{}] target={} delta={} "
-                "full_max=[{},{}] hold_max=[{},{}] limits=[{},{}]",
+                "full_max=[{},{}] hold_max=[{},{}] stop=[{},{},{}] limits=[{},{}]",
                 static_cast<int>(yaw.failure), yaw.duration_s,
                 yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
                 yaw.target_yaw_rad, yaw.requested_delta_rad,
@@ -2060,6 +2060,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 yaw.full_turn_max_acceleration_rad_s2,
                 yaw.hold_max_rate_rad_s,
                 yaw.hold_max_acceleration_rad_s2,
+                yaw.stopping_displacement_rad,
+                yaw.stopping_max_rate_rad_s,
+                yaw.stopping_max_acceleration_rad_s2,
                 cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
             return FAILED;
         }
@@ -2958,7 +2961,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             planner_context_->error(
                 " -- [planner] in [generateBackupTrajectory] YawTrajOpt failed reason={} "
                 "duration={} init=[{},{},{}] target={} delta={} "
-                "full_max=[{},{}] hold_max=[{},{}] limits=[{},{}]",
+                "full_max=[{},{}] hold_max=[{},{}] stop=[{},{},{}] limits=[{},{}]",
                 static_cast<int>(yaw.failure), yaw.duration_s,
                 yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
                 yaw.target_yaw_rad, yaw.requested_delta_rad,
@@ -2966,6 +2969,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 yaw.full_turn_max_acceleration_rad_s2,
                 yaw.hold_max_rate_rad_s,
                 yaw.hold_max_acceleration_rad_s2,
+                yaw.stopping_displacement_rad,
+                yaw.stopping_max_rate_rad_s,
+                yaw.stopping_max_acceleration_rad_s2,
                 cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
             return OPT_FAILED;
         }

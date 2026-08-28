@@ -47,12 +47,15 @@ bool YawTrajOpt::optimizeToTarget(
   last_diagnostics_.requested_delta_rad = requested_delta;
   const VecDf times = VecDf::Constant(1, duration);
   const VecDf no_waypoints;
-  const auto interpolate = [&](const double scale) {
+  const auto interpolate_delta = [&](const double yaw_delta_rad) {
     const navigation_math::Vec3f initial = initial_state.head(3);
     navigation_math::Vec3f terminal;
-    terminal << initial_state(0) + scale * requested_delta, 0.0, 0.0;
+    terminal << initial_state(0) + yaw_delta_rad, 0.0, 0.0;
     return poly_interpo::minimumJerkInterpolation<1>(
         initial, terminal, no_waypoints, times);
+  };
+  const auto interpolate = [&](const double scale) {
+    return interpolate_delta(scale * requested_delta);
   };
   const auto feasible = [&](const Trajectory &candidate) {
     const double rate = candidate.getMaxVelRate();
@@ -71,8 +74,27 @@ bool YawTrajOpt::optimizeToTarget(
     last_diagnostics_.hold_max_rate_rad_s = selected.getMaxVelRate();
     last_diagnostics_.hold_max_acceleration_rad_s2 = selected.getMaxAccRate();
     if (!feasible(selected)) {
-      last_diagnostics_.failure = YawOptimizationFailure::kNoFeasibleHold;
-      return false;
+      // A rotating state cannot generally finish at the exact same angle with
+      // zero rate/acceleration without reversing part of its motion. The
+      // free-terminal-position minimum-jerk stop advances by this analytic
+      // displacement; it preserves the initial state and reaches zero
+      // derivatives without inventing an opposite turn.
+      const double stopping_displacement =
+          0.5 * initial_state(1) * duration +
+          initial_state(2) * duration * duration / 12.0;
+      Trajectory stopping = interpolate_delta(stopping_displacement);
+      last_diagnostics_.stopping_displacement_rad = stopping_displacement;
+      last_diagnostics_.stopping_max_rate_rad_s = stopping.getMaxVelRate();
+      last_diagnostics_.stopping_max_acceleration_rad_s2 = stopping.getMaxAccRate();
+      if (!feasible(stopping)) {
+        last_diagnostics_.failure = YawOptimizationFailure::kNoFeasibleHold;
+        return false;
+      }
+      last_diagnostics_.used_stopping_displacement = true;
+      selected = std::move(stopping);
+      selected.start_WT = position_trajectory.start_WT;
+      output_trajectory = std::move(selected);
+      return true;
     }
     double feasible_scale = 0.0;
     double infeasible_scale = 1.0;

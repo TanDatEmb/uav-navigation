@@ -26,6 +26,7 @@
 #include "traj_opt/yaw_traj_opt.h"
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
+#include "utils/optimization/polynomial_interpolation.h"
 
 namespace navigation_planning_backend {
 
@@ -1182,6 +1183,52 @@ TEST(PlannerTrajectory, SemanticYawReportsInfeasibleShortSameHeadingStop) {
   EXPECT_DOUBLE_EQ(diagnostics.duration_s, 0.2);
   EXPECT_DOUBLE_EQ(diagnostics.requested_delta_rad, 0.0);
   EXPECT_GT(diagnostics.hold_max_acceleration_rad_s2, 0.3);
+  EXPECT_GT(diagnostics.stopping_max_acceleration_rad_s2, 0.3);
+}
+
+TEST(PlannerTrajectory, MinimumJerkForwardYawStopHasPhysicalAccelerationPeak) {
+  const navigation_math::Vec3f initial{0.0, 0.8, 0.0};
+  const navigation_math::Vec3f terminal{0.08, 0.0, 0.0};
+  const navigation_math::VecDf times =
+      navigation_math::VecDf::Constant(1, 0.2);
+  const navigation_math::VecDf no_waypoints;
+  const auto stopping = geometry_utils::poly_interpo::minimumJerkInterpolation<1>(
+      initial, terminal, no_waypoints, times);
+
+  ASSERT_FALSE(stopping.empty());
+  SCOPED_TRACE(::testing::Message() << "coefficients:\n"
+                                   << stopping[0].getCoeffMat());
+  EXPECT_NEAR(stopping.getVel(0.0).x(), 0.8, 1.0e-12);
+  EXPECT_NEAR(stopping.getPos(0.2).x(), 0.08, 1.0e-12);
+  EXPECT_NEAR(stopping.getVel(0.2).x(), 0.0, 1.0e-12);
+  EXPECT_NEAR(stopping.getAcc(0.2).x(), 0.0, 1.0e-12);
+  EXPECT_NEAR(stopping.getMaxAccRate(), 6.0, 1.0e-8);
+}
+
+TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {
+  const std::vector<double> durations{3.0};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{
+      0.516842123820765, 0.24656354241796274,
+      -0.06843350325595021, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.3);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(
+      initial_yaw, initial_yaw(0), position, yaw));
+  const auto& diagnostics = optimizer.lastDiagnostics();
+  EXPECT_TRUE(diagnostics.used_stopping_displacement);
+  const double expected_displacement =
+      0.5 * initial_yaw(1) * 3.0 + initial_yaw(2) * 9.0 / 12.0;
+  EXPECT_NEAR(diagnostics.stopping_displacement_rad,
+              expected_displacement, 1.0e-12);
+  EXPECT_NEAR(yaw.getPos(3.0).x(),
+              initial_yaw(0) + expected_displacement, 1.0e-9);
+  EXPECT_NEAR(yaw.getVel(3.0).x(), 0.0, 1.0e-9);
+  EXPECT_NEAR(yaw.getAcc(3.0).x(), 0.0, 1.0e-9);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 0.3 + 1.0e-6);
 }
 
 TEST(PlannerTrajectory, YawNormalizationRecoversNonFiniteTarget) {
