@@ -1884,13 +1884,20 @@ void NavigationRuntimeNode::runCycle() {
   const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
   const bool transition_goal_identity_changed = transition_bundle &&
       transition_bundle->request_id != goal->request_id;
+  const auto transition_sample = transition_bundle
+      ? transition_bundle->sample(now_ns)
+      : std::nullopt;
+  const double transition_anchor_error_m = transition_sample
+      ? (transition_sample->position_world - execution_state.position_world).norm()
+      : std::numeric_limits<double>::infinity();
   const bool measured_state_goal_transition = hotRetargetNeedsMeasuredStatePlan(
       hot_goal_transition, planner_command_available_.load(std::memory_order_acquire),
       transition_goal_identity_changed,
       transition_elapsed_s,
       transition_bundle ? transition_bundle->duration_s
                         : std::numeric_limits<double>::quiet_NaN(),
-      planning_interval_s);
+      planning_interval_s, transition_anchor_error_m,
+      navigation_contracts::kCommandAnchorErrorLimitM);
   const bool plan_from_rest_with_transition = plan_from_rest || measured_state_goal_transition;
   const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest_with_transition;
   if (new_goal) {

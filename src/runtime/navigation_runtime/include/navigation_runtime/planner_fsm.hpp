@@ -32,9 +32,20 @@ inline bool hotRetargetNeedsMeasuredStatePlan(
     bool hot_goal_transition, bool command_available,
     bool goal_identity_changed,
     double command_elapsed_s, double command_duration_s,
-    double planning_interval_s) noexcept {
+    double planning_interval_s, double command_anchor_error_m,
+    double maximum_anchor_error_m) noexcept {
   if (!hot_goal_transition || !command_available) {
     return false;
+  }
+  // A hot stitch that already violates the shared execution-anchor envelope
+  // can only produce a candidate that the atomic commit boundary must reject,
+  // or a reverse connector back to historical command state. Rebase the new
+  // route from measured PVA before solving instead.
+  if (std::isfinite(command_anchor_error_m) &&
+      std::isfinite(maximum_anchor_error_m) &&
+      maximum_anchor_error_m >= 0.0 &&
+      command_anchor_error_m > maximum_anchor_error_m) {
+    return true;
   }
   // A measured pass-through acceptance is the route-boundary proof. Keep the
   // existing nominal command as the hot-replan history while it still has

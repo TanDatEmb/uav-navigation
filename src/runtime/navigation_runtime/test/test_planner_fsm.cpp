@@ -261,13 +261,29 @@ TEST(PlannerFsm, PassThroughHotRetargetsFromCertifiedFiniteCommand) {
 }
 
 TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 1.0, 1.1, 0.1));
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 1.2, 1.1, 0.1));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, true, 0.8, 1.1, 0.1));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 0.8, 1.1, 0.1));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(false, true, true, 1.2, 1.1, 0.1));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, false, true, 1.2, 1.1, 0.1));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(true, true, false, 1.2, 1.1, 0.0));
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, false, 1.0, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, false, 1.2, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, true, 0.8, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, false, 0.8, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      false, true, true, 1.2, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      true, false, true, 1.2, 1.1, 0.1, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, false, 1.2, 1.1, 0.0, 0.2, 0.75));
+}
+
+TEST(PlannerFsm, RebasesDivergedHotRetargetBeforeAtomicCommit) {
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, true, 0.2, 2.0, 0.1, 0.751, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, true, 0.2, 2.0, 0.1, 0.75, 0.75));
+  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
+      false, true, true, 0.2, 2.0, 0.1, 2.0, 0.75));
 }
 
 TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
