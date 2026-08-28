@@ -346,6 +346,23 @@ TEST(PlannerTrajectory, StateTransitionPieceRejectsInvalidBoundary) {
       non_finite, finite, 0.8).has_value());
 }
 
+TEST(PlannerTrajectory, YawHandoffRequiresRateAndAccelerationCertificate) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  navigation_math::StatePVAJ terminal = navigation_math::StatePVAJ::Zero();
+  terminal(0, 0) = 0.35;
+
+  EXPECT_FALSE(navigation_planning_backend::
+      minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+          initial, terminal, 0.5, 1.0, 0.3));
+
+  const auto certified = navigation_planning_backend::
+      minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+          initial, terminal, 5.0, 1.0, 0.3);
+  ASSERT_TRUE(certified.has_value());
+  EXPECT_LE(certified->getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_LE(certified->getMaxAccRate(), 0.3 + 1.0e-6);
+}
+
 TEST(PlannerTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
   EXPECT_TRUE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::SUCCESS));
   EXPECT_FALSE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::NO_NEED));

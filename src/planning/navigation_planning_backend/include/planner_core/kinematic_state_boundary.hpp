@@ -96,4 +96,32 @@ inline std::optional<geometry_utils::Piece> minimumSnapStateTransitionPiece(
   return geometry_utils::Piece(duration_s, coefficients);
 }
 
+// Build the same C3 connector while enforcing scalar rate and acceleration
+// limits. Yaw handoffs use a one-axis state embedded in StatePVAJ; checking
+// here prevents a flatness-valid connector from reaching the final command
+// certificate with excessive yaw acceleration.
+inline std::optional<geometry_utils::Piece>
+minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+    const geometry_utils::StatePVAJ& initial_state,
+    const geometry_utils::StatePVAJ& terminal_state,
+    const double duration_s,
+    const double maximum_rate,
+    const double maximum_acceleration) {
+  if (!std::isfinite(maximum_rate) || maximum_rate <= 0.0 ||
+      !std::isfinite(maximum_acceleration) || maximum_acceleration <= 0.0) {
+    return std::nullopt;
+  }
+  auto piece = minimumSnapStateTransitionPiece(
+      initial_state, terminal_state, duration_s);
+  if (!piece.has_value()) return std::nullopt;
+  const double rate = piece->getMaxVelRate();
+  const double acceleration = piece->getMaxAccRate();
+  if (!std::isfinite(rate) || !std::isfinite(acceleration) ||
+      rate > maximum_rate + 1.0e-6 ||
+      acceleration > maximum_acceleration + 1.0e-6) {
+    return std::nullopt;
+  }
+  return piece;
+}
+
 }  // namespace navigation_planning_backend

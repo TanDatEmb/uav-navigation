@@ -2087,8 +2087,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 for (int attempt = 0; attempt < 24 && !handoff_ready; ++attempt) {
                     const auto position_piece = minimumSnapStateTransitionPiece(
                             source_state, target_state, handoff_duration);
-                    const auto yaw_piece = minimumSnapStateTransitionPiece(
-                            source_yaw_state, target_yaw_state, handoff_duration);
+                    const auto yaw_piece =
+                            minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+                                    source_yaw_state, target_yaw_state, handoff_duration,
+                                    cfg_.yaw_rate_max_rad_s,
+                                    cfg_.yaw_acceleration_max_rad_s2);
                     if (position_piece.has_value() && yaw_piece.has_value()) {
                         const double maximum_handoff_velocity =
                                 position_piece->getMaxVelRate();

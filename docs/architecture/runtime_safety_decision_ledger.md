@@ -8548,3 +8548,27 @@ release profiles must not use the former allowance.
   `tools.runtime.tests.test_planner_trace` and
   `tools.runtime.tests.test_runtime_contract`. The next SITL report must retain
   the raw PX4 values and structured yaw trace before any M2 PASS decision.
+
+### 2026-08-28 - Certify measured-state rebase yaw before bundle admission
+
+- **Owner:** Planner measured-state rebase handoff.
+- **Scope:** Apply the configured yaw-rate and yaw-acceleration certificates
+  while searching the duration of the C3 rebase connector, in addition to the
+  existing position PVAJ and flatness envelopes.
+- **Safety impact:** This closes a fail-closed availability defect without
+  changing either hard yaw limit. A connector that is position/flatness-valid
+  but yaw-dynamically invalid is stretched and rechecked; if no common
+  certified duration exists, the previous command is retained as before.
+- **Evidence:** The first authoritative 3 m/s multi-waypoint SITL after route
+  yaw integration reached waypoint 1, then repeatedly produced rebase yaw
+  acceleration up to 1.42 rad/s2 (last attempt 0.5206 rad/s2) against the
+  0.3 rad/s2 hard limit and entered `PAUSED_SAFETY_STOP`. A focused unit test
+  rejects the short connector and accepts a longer connector under the same
+  unchanged limits.
+- **Removal/review condition:** Replace only with an equal or stronger unified
+  position/yaw connector-duration solver. Do not remove the final bundle yaw
+  certificate or increase its limit to recover planner availability.
+- **Verification:** Release-build and run the complete
+  `navigation_planning_backend` CTest set, then regenerate the authoritative
+  manifest and repeat `long_three_pillars_multiwaypoint` at 3 m/s. M2 remains
+  open until repeated representative yaw and mission evidence passes.
