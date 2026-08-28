@@ -10,6 +10,7 @@
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/pass_through_terminal_velocity.hpp>
+#include <planner_core/route_boundary_timing.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <utils/optimization/optimization_utils.h>
 
@@ -253,6 +254,21 @@ TEST(PlannerPassThrough, LookaheadDistanceCoversStoppingAndReplanEnvelope) {
       navigation_planning_backend::passThroughLookaheadDistance(
           -1.0, 3.0, 2.0, 4.0, 0.2, 3.0, 10.0),
       0.0);
+}
+
+TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::routeBoundaryJunctionTime(
+          true, 2, 3, 1, 3.0, 10.0, 10.0),
+      6.5);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::routeBoundaryJunctionTime(
+          true, 2, 4, 1, 3.0, 10.0, 4.0),
+      4.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::routeBoundaryJunctionTime(
+          false, 2, 3, 1, 3.0, 10.0, 10.0),
+      10.0);
 }
 
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {

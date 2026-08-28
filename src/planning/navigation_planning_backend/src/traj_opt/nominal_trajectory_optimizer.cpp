@@ -12,6 +12,7 @@
 #include <planner_core/corridor_plane_validation.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <planner_runtime_context/planner_runtime_context.hpp>
+#include <planner_core/route_boundary_timing.hpp>
 
 #define POS_IDX 1
 #define VEL_IDX 2
@@ -610,7 +611,9 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         opt_vars.points.col(j) = guide_plane_values.maxCoeff() <= 1.0e-6
                 ? guide_point
                 : interior;
-        time_stamps(j + 1) = opt_vars.guide_t[nearest_index];
+        time_stamps(j + 1) = navigation_planning_backend::routeBoundaryJunctionTime(
+                outgoing_from_route_gate, nearest_index, opt_vars.guide_t.size(), j,
+                time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
     }
 
     for (int i = 1; i < time_stamps.size(); i++) {

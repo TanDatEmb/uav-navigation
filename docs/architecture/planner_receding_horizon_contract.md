@@ -22,8 +22,10 @@ At each planning tick:
    outgoing segment. The corridor generator inserts a bounded route-boundary
    gate at the active waypoint and preserves it through SFC simplification, so
    a convex corridor cannot cut across the waypoint. The MINCO hot seed assigns
-   the overlap after that gate to the first post-waypoint guide timestamp, so
-   the hard boundary does not create a near-zero-duration turn piece.
+   the overlap after that gate to the first post-waypoint guide timestamp (or
+   splits the remaining interval when the look-ahead endpoint is that only
+   post-waypoint sample), so the hard boundary does not create a near-zero-
+   duration turn piece.
    Shallow/straight legs
    terminate at the active waypoint so the nominal curve cannot trade away its
    measured acceptance boundary for a soft look-ahead endpoint. The

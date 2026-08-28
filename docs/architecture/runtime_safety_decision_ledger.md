@@ -7350,8 +7350,10 @@ release profiles must not use the former allowance.
   is introduced. The marker is retained as metadata so generic SFC
   simplification cannot erase the contract. During MINCO hot initialization,
   the overlap immediately after a marked gate starts its guide-sample search
-  one sample later; this preserves a positive, route-aligned time interval for
-  the outgoing turn instead of accepting the generic 0.01 s duration clamp.
+  one sample later. If that sample is also the final look-ahead endpoint, the
+  remaining guide interval is split at its midpoint. This preserves positive
+  time for both the outgoing turn and the final SFC piece instead of accepting
+  the generic 0.01 s duration clamp.
 - **Timing safety impact:** `SAFETY_INVARIANT` preservation. The timing change
   does not relax any dynamic or corridor gate and does not alter the mission
   acceptance radius. It prevents a zero-time seed from presenting an
