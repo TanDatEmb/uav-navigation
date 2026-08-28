@@ -385,6 +385,98 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
+TEST(MissionController, PassThroughAcceptsRecentMeasuredSegmentCrossingAtCruiseSpeed) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_segment_crossing
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: middle
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+      hold_s: 0.1
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  const auto origin = controller.update(
+      0.05, Eigen::Vector3d{0.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
+  ASSERT_TRUE(origin.waypoint_accepted);
+  controller.onTrajectory(true, 0.05);
+
+  // Neither endpoint is inside the 0.4 m ball around x=1.0, but the two
+  // recent measured samples cross it at 5 m/s. Pass-through must not lose the
+  // checkpoint solely because the timer did not sample the ball's interior.
+  const auto crossing = controller.update(
+      0.10, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+      Eigen::Vector3d{5.0, 0.0, 0.0});
+  EXPECT_EQ(crossing.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(crossing, 1U);
+  EXPECT_NEAR(crossing.acceptance_position_error_m, 0.0, 1.0e-12);
+  EXPECT_DOUBLE_EQ(crossing.acceptance_speed_mps, 5.0);
+  EXPECT_EQ(crossing.waypoint_index, 2U);
+}
+
+TEST(MissionController, PassThroughRejectsCrossingAcrossStaleMeasuredGap) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_stale_crossing
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: middle
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  ASSERT_TRUE(controller.update(
+      0.05, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+      Eigen::Vector3d::Zero()).waypoint_accepted);
+  controller.onTrajectory(true, 0.05);
+
+  const auto stale_crossing = controller.update(
+      0.35, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+      Eigen::Vector3d{5.0, 0.0, 0.0});
+  EXPECT_FALSE(stale_crossing.waypoint_accepted);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+}
+
 TEST(MissionController, PassThroughCornerAdvancesOnMeasuredAcceptance) {
   const auto path = writeMission(R"yaml(
 mission:

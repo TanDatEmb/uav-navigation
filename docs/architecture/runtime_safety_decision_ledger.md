@@ -8185,3 +8185,38 @@ release profiles must not use the former allowance.
   compare waypoint order/coverage, measured speed recovery, corner terminal
   speed, altitude, clearance, planner p50/p95/p99/max, EXP/backup reject
   stages, command continuity, and fail-closed mode outcome.
+
+### 2026-08-28 - Accept recent measured pass-through crossings
+
+- **Owner:** PX4 External Mode mission-controller and mission-contract
+  maintainers.
+- **Scope:** For a `PASS_THROUGH` waypoint, retain direct point acceptance and
+  additionally accept a recent, forward route-ordered segment between two
+  valid measured odometry samples when that segment intersects the configured
+  acceptance ball. Crossing inference is limited to the 250 ms mission-update
+  sample window; stop waypoints retain point-in-ball plus low-speed/hold
+  confirmation.
+- **Safety impact:** `MISSION_PROGRESS_INVARIANT` preservation. The planner
+  cannot advance a checkpoint from look-ahead or command endpoint; both segment
+  endpoints are measured, route projection must move forward across the active
+  waypoint arc, and the segment-to-waypoint distance must remain within the
+  configured acceptance radius. A stale or non-route-ordered gap is rejected.
+  No acceptance radius, speed limit, corridor, UNKNOWN/OUT_OF_MAP, swept-world,
+  freshness, backup, yaw, or PX4 mode gate is relaxed.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T060359-794884` sampled the
+  active waypoint gate at 4.464 m/s with position error 2.037 m, then at the
+  next throttled observation error was 2.652 m; the waypoint was never observed
+  inside its 0.9 m ball and the mission stopped at waypoint 1. The node's
+  mission timer is 50 ms, so recent segment intersection preserves a crossing
+  that point sampling can miss at cruise speed.
+- **Removal/review condition:** Revisit if repeated traces show acceptance on
+  reverse motion, stale odometry gaps, lateral near-misses, wrong route order,
+  duplicate request IDs, or any stop-waypoint regression. Do not compensate by
+  enlarging acceptance radius or lowering the pass-through speed contract.
+- **Verification:** `make build`; run mission/planner/runtime/PX4 tests,
+  including direct and stale-gap crossing cases; then repeat
+  `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check` and
+  compare waypoint order/coverage, acceptance errors/speeds, request/goal
+  transitions, altitude, clearance, command continuity, and planner/mapping
+  latency distributions.

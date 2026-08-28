@@ -77,6 +77,7 @@ class MissionController final {
   static constexpr double kSafetyStopSpeedMps = 0.15;
   static constexpr double kSafetyStopConfirmationS = 0.5;
   static constexpr double kSafetyStopTimeoutS = 5.0;
+  static constexpr double kMaximumPassThroughSampleGapS = 0.25;
   static constexpr std::uint8_t kSafetyTrajectoryRole = 1U;
   static constexpr std::uint8_t kSafetyRouteKind = 1U;
   static constexpr std::uint8_t kSafetyStopKind = 2U;
@@ -97,6 +98,8 @@ class MissionController final {
   bool checkpoint_valid_{false};
   bool trajectory_ready_{false};
   bool terminal_hold_pending_{false};
+  std::optional<Eigen::Vector3d> previous_position_;
+  double previous_position_time_s_{0.0};
 };
 
 }  // namespace px4_navigation_external_mode

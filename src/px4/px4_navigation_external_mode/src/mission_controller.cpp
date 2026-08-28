@@ -8,6 +8,26 @@
 
 namespace px4_navigation_external_mode {
 
+namespace {
+
+std::optional<double> segmentDistanceToPoint(
+    const Eigen::Vector3d& start, const Eigen::Vector3d& end,
+    const Eigen::Vector3d& point) noexcept {
+  if (!start.allFinite() || !end.allFinite() || !point.allFinite()) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d delta = end - start;
+  const double length_squared = delta.squaredNorm();
+  if (!std::isfinite(length_squared)) return std::nullopt;
+  const double fraction = length_squared > 1.0e-12
+      ? std::clamp((point - start).dot(delta) / length_squared, 0.0, 1.0)
+      : 0.0;
+  const double distance = (start + fraction * delta - point).norm();
+  return std::isfinite(distance) ? std::optional<double>{distance} : std::nullopt;
+}
+
+}  // namespace
+
 MissionController::MissionController(Mission mission)
     : mission_(std::move(mission)), route_progress_(mission_) {
   if (mission_.waypoints.empty()) {
@@ -36,6 +56,8 @@ void MissionController::activate(double now_s) {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
+  previous_position_.reset();
+  previous_position_time_s_ = 0.0;
 }
 
 void MissionController::deactivate() {
@@ -52,6 +74,8 @@ void MissionController::deactivate() {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
+  previous_position_.reset();
+  previous_position_time_s_ = 0.0;
 }
 
 void MissionController::onTrajectory(bool success, double now_s) {
@@ -220,6 +244,17 @@ MissionControllerEvent MissionController::update(
     state_ = MissionControllerState::ExecutingWaypoint;
   }
 
+  // Keep the last valid mission-update sample for pass-through crossing
+  // detection. The local copy is deliberately captured before replacing the
+  // sample so a single update can certify the measured segment that crossed a
+  // waypoint acceptance ball.
+  const auto previous_position = previous_position_;
+  const double previous_position_time_s = previous_position_time_s_;
+  if (position.has_value() && position->allFinite()) {
+    previous_position_ = *position;
+    previous_position_time_s_ = now_s;
+  }
+
   if (state_ == MissionControllerState::Braking) {
     const bool stopped = velocity.has_value() && velocity->allFinite() &&
                          velocity->norm() <= kSafetyStopSpeedMps;
@@ -303,9 +338,52 @@ MissionControllerEvent MissionController::update(
            route_progress_.insideAcceptance(active_waypoint_index_, *position);
   };
   // A pass-through waypoint is still a mission waypoint, not a planner
-  // horizon marker.  Never advance it from lookahead or velocity alone: the
-  // measured position must enter its configured acceptance radius.
-  const auto passThroughAcceptance = [&]() { return insideAcceptance(); };
+  // horizon marker. Advance only from measured positions: either the current
+  // sample is inside the acceptance ball, or two recent measured samples form
+  // a forward route-ordered segment that intersects that ball. The latter is
+  // required at cruise speed because a 50 ms mission timer can otherwise skip
+  // a sub-metre ball between samples.
+  const auto passThroughAcceptanceError = [&]() -> std::optional<double> {
+    if (!position.has_value() || !position->allFinite() ||
+        active_waypoint_index_ >= mission_.waypoints.size()) {
+      return std::nullopt;
+    }
+    const auto& active = mission_.waypoints[active_waypoint_index_];
+    const double current_error = (*position - active.position_enu).norm();
+    if (std::isfinite(current_error) && current_error <= active.acceptance_radius_m) {
+      return current_error;
+    }
+    if (!previous_position.has_value() ||
+        !previous_position->allFinite() ||
+        !std::isfinite(previous_position_time_s) ||
+        now_s < previous_position_time_s ||
+        now_s - previous_position_time_s > kMaximumPassThroughSampleGapS) {
+      return std::nullopt;
+    }
+    const auto previous_projection = route_progress_.project(*previous_position);
+    const auto current_projection = route_progress_.project(*position);
+    if (!previous_projection.valid || !current_projection.valid) {
+      return std::nullopt;
+    }
+    const double waypoint_arc =
+        route_progress_.waypointArcLengthM(active_waypoint_index_);
+    if (!std::isfinite(waypoint_arc) ||
+        previous_projection.arc_length_m > waypoint_arc + 1.0e-6 ||
+        current_projection.arc_length_m + 1.0e-6 < waypoint_arc ||
+        current_projection.arc_length_m <= previous_projection.arc_length_m + 1.0e-6) {
+      return std::nullopt;
+    }
+    const auto segment_error = segmentDistanceToPoint(
+        *previous_position, *position, active.position_enu);
+    if (!segment_error.has_value() ||
+        *segment_error > active.acceptance_radius_m + 1.0e-6) {
+      return std::nullopt;
+    }
+    return segment_error;
+  };
+  const auto passThroughAcceptance = [&]() {
+    return passThroughAcceptanceError().has_value();
+  };
   const auto slowEnough = [&]() {
     // Waypoint completion is only valid with a measured, finite velocity
     // sample. Missing velocity must not turn a fly-through into an arrival.
@@ -350,7 +428,11 @@ MissionControllerEvent MissionController::update(
     }
     if ((trajectory_ready_ || immediate_pass_through) && inside && acceptance_ready) {
       if (pass_through) {
-        const double acceptance_error = (*position - waypoint.position_enu).norm();
+        const auto acceptance_error = passThroughAcceptanceError();
+        if (!acceptance_error.has_value() || !position.has_value() ||
+            !velocity.has_value() || !velocity->allFinite()) {
+          return {};
+        }
         const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
@@ -360,7 +442,7 @@ MissionControllerEvent MissionController::update(
                                        active_waypoint_index_ - 1U, request_id_};
           event.waypoint_accepted = true;
           event.accepted_waypoint_index = active_waypoint_index_ - 1U;
-          event.acceptance_position_error_m = acceptance_error;
+          event.acceptance_position_error_m = *acceptance_error;
           event.acceptance_speed_mps = acceptance_speed;
           return event;
         }
@@ -373,7 +455,7 @@ MissionControllerEvent MissionController::update(
                                      active_waypoint_index_, request_id_};
         event.waypoint_accepted = true;
         event.accepted_waypoint_index = active_waypoint_index_ - 1U;
-        event.acceptance_position_error_m = acceptance_error;
+        event.acceptance_position_error_m = *acceptance_error;
         event.acceptance_speed_mps = acceptance_speed;
         return event;
       }
