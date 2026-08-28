@@ -1547,18 +1547,34 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                             : std::numeric_limits<double>::quiet_NaN());
                 }
 
+                const bool terminal_stop_required =
+                    !pass_through_next_target_.has_value() &&
+                    (new_path.back() - requested_goal_p_).norm() <=
+                        navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
                 geometry_utils::GuideTimeAllocation allocation;
-                if (!geometry_utils::allocateGuideElapsedTimes(
-                        cfg_.exp_traj_cfg.max_acc,
-                        cfg_.exp_traj_cfg.max_vel,
-                        guide_path_end_vel,
-                        guide_path.back(), new_path, allocation)) {
+                const bool allocation_valid = terminal_stop_required
+                    ? geometry_utils::allocateGuideElapsedTimes(
+                          cfg_.exp_traj_cfg.max_acc,
+                          cfg_.exp_traj_cfg.max_vel,
+                          guide_path_end_vel,
+                          guide_path.back(), new_path, allocation)
+                    : geometry_utils::allocateGuideContinuationElapsedTimes(
+                          cfg_.exp_traj_cfg.max_acc,
+                          cfg_.exp_traj_cfg.max_jerk,
+                          cfg_.exp_traj_cfg.max_vel,
+                          guide_path_end_vel,
+                          guide_path.back(), new_path, allocation);
+                if (!allocation_valid) {
                     planner_context_->warn(
                             " -- [planner] invalid A* guide time allocation: "
-                            "path_points={} initial_velocity_mps={} "
-                            "max_acceleration_mps2={} max_velocity_mps={}",
+                            "mode={} path_points={} initial_velocity_mps={} "
+                            "max_acceleration_mps2={} max_jerk_mps3={} "
+                            "max_velocity_mps={}",
+                            terminal_stop_required ? "terminal-stop" : "continuation",
                             new_path.size(), guide_path_end_vel,
-                            cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_vel);
+                            cfg_.exp_traj_cfg.max_acc,
+                            cfg_.exp_traj_cfg.max_jerk,
+                            cfg_.exp_traj_cfg.max_vel);
                     return FAILED;
                 }
                 const double guide_time_origin_s = guide_stamp.back();
@@ -1567,6 +1583,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     guide_stamp.emplace_back(
                             guide_time_origin_s + allocation.elapsed_s[i]);
                 }
+                guide_path_end_vel = allocation.terminal_velocity_mps;
             }
         }
 

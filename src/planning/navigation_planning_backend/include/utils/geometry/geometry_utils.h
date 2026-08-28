@@ -31,6 +31,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -187,6 +188,209 @@ namespace geometry_utils {
         double path_length_m{0.0};
         double terminal_velocity_mps{0.0};
     };
+
+    struct JerkLimitedContinuationProfile {
+        double initial_velocity_mps{0.0};
+        double terminal_velocity_mps{0.0};
+        double maximum_jerk_mps3{0.0};
+        double jerk_phase_s{0.0};
+        double constant_acceleration_phase_s{0.0};
+        double acceleration_duration_s{0.0};
+        double acceleration_distance_m{0.0};
+        double cruise_duration_s{0.0};
+        double total_duration_s{0.0};
+
+        double distanceAtTime(const double time_s) const noexcept {
+            if (!std::isfinite(time_s) || time_s <= 0.0) return 0.0;
+            const double t = std::min(time_s, total_duration_s);
+            const double jerk = maximum_jerk_mps3;
+            const double t_jerk = jerk_phase_s;
+            const double peak_acceleration = jerk * t_jerk;
+            if (t <= t_jerk) {
+                return initial_velocity_mps * t + jerk * t * t * t / 6.0;
+            }
+            const double first_distance = initial_velocity_mps * t_jerk +
+                jerk * t_jerk * t_jerk * t_jerk / 6.0;
+            const double first_velocity = initial_velocity_mps +
+                0.5 * jerk * t_jerk * t_jerk;
+            if (t <= t_jerk + constant_acceleration_phase_s) {
+                const double dt = t - t_jerk;
+                return first_distance + first_velocity * dt +
+                    0.5 * peak_acceleration * dt * dt;
+            }
+            const double second_distance = first_distance +
+                first_velocity * constant_acceleration_phase_s +
+                0.5 * peak_acceleration * constant_acceleration_phase_s *
+                    constant_acceleration_phase_s;
+            const double second_velocity = first_velocity +
+                peak_acceleration * constant_acceleration_phase_s;
+            if (t <= acceleration_duration_s) {
+                const double dt = t - t_jerk - constant_acceleration_phase_s;
+                return second_distance + second_velocity * dt +
+                    0.5 * peak_acceleration * dt * dt -
+                    jerk * dt * dt * dt / 6.0;
+            }
+            return acceleration_distance_m +
+                terminal_velocity_mps * (t - acceleration_duration_s);
+        }
+    };
+
+    inline bool makeJerkLimitedContinuationProfile(
+            const double path_length_m,
+            const double initial_velocity_mps,
+            const double maximum_velocity_mps,
+            const double maximum_acceleration_mps2,
+            const double maximum_jerk_mps3,
+            JerkLimitedContinuationProfile &profile) noexcept {
+        profile = JerkLimitedContinuationProfile{};
+        if (!std::isfinite(path_length_m) || path_length_m <= 0.0 ||
+            !std::isfinite(initial_velocity_mps) || initial_velocity_mps < 0.0 ||
+            !std::isfinite(maximum_velocity_mps) || maximum_velocity_mps <= 0.0 ||
+            initial_velocity_mps > maximum_velocity_mps + 1.0e-9 ||
+            !std::isfinite(maximum_acceleration_mps2) ||
+            maximum_acceleration_mps2 <= 0.0 ||
+            !std::isfinite(maximum_jerk_mps3) || maximum_jerk_mps3 <= 0.0) {
+            return false;
+        }
+        const double bounded_initial_velocity =
+            std::min(initial_velocity_mps, maximum_velocity_mps);
+        const auto acceleration_envelope = [&](const double terminal_velocity) {
+            const double delta_velocity =
+                std::max(0.0, terminal_velocity - bounded_initial_velocity);
+            const double full_acceleration_delta =
+                maximum_acceleration_mps2 * maximum_acceleration_mps2 /
+                maximum_jerk_mps3;
+            const double jerk_phase = delta_velocity <= full_acceleration_delta
+                ? std::sqrt(delta_velocity / maximum_jerk_mps3)
+                : maximum_acceleration_mps2 / maximum_jerk_mps3;
+            const double constant_acceleration_phase =
+                delta_velocity <= full_acceleration_delta
+                ? 0.0
+                : delta_velocity / maximum_acceleration_mps2 - jerk_phase;
+            const double duration = 2.0 * jerk_phase + constant_acceleration_phase;
+            const double distance =
+                0.5 * (bounded_initial_velocity + terminal_velocity) * duration;
+            return std::array<double, 4>{
+                jerk_phase, constant_acceleration_phase, duration, distance};
+        };
+
+        double terminal_velocity = maximum_velocity_mps;
+        auto envelope = acceleration_envelope(terminal_velocity);
+        if (!std::all_of(envelope.begin(), envelope.end(),
+                         [](const double value) { return std::isfinite(value); })) {
+            return false;
+        }
+        if (envelope[3] > path_length_m) {
+            double lower = bounded_initial_velocity;
+            double upper = maximum_velocity_mps;
+            for (int iteration = 0; iteration < 80; ++iteration) {
+                const double middle = 0.5 * (lower + upper);
+                const auto middle_envelope = acceleration_envelope(middle);
+                if (!std::isfinite(middle_envelope[3])) return false;
+                if (middle_envelope[3] <= path_length_m) {
+                    lower = middle;
+                } else {
+                    upper = middle;
+                }
+            }
+            terminal_velocity = lower;
+            envelope = acceleration_envelope(terminal_velocity);
+        }
+        if (!std::isfinite(terminal_velocity) || terminal_velocity <= 0.0 ||
+            !std::isfinite(envelope[3]) || envelope[3] > path_length_m + 1.0e-9) {
+            return false;
+        }
+        const double cruise_distance = std::max(0.0, path_length_m - envelope[3]);
+        const double cruise_duration = cruise_distance / terminal_velocity;
+        const double total_duration = envelope[2] + cruise_duration;
+        if (!std::isfinite(cruise_duration) || cruise_duration < 0.0 ||
+            !std::isfinite(total_duration) || total_duration <= 0.0) {
+            return false;
+        }
+        profile.initial_velocity_mps = bounded_initial_velocity;
+        profile.terminal_velocity_mps = terminal_velocity;
+        profile.maximum_jerk_mps3 = maximum_jerk_mps3;
+        profile.jerk_phase_s = envelope[0];
+        profile.constant_acceleration_phase_s = envelope[1];
+        profile.acceleration_duration_s = envelope[2];
+        profile.acceleration_distance_m = envelope[3];
+        profile.cruise_duration_s = cruise_duration;
+        profile.total_duration_s = total_duration;
+        const double represented_distance = profile.distanceAtTime(total_duration);
+        return std::isfinite(represented_distance) &&
+            std::abs(represented_distance - path_length_m) <=
+                1.0e-9 * std::max(1.0, path_length_m);
+    }
+
+    // Allocate a non-stopping frontier profile. Acceleration starts and ends
+    // at zero, is ramped by the declared jerk limit, and may continue at the
+    // declared cruise speed. This is distinct from allocateGuideElapsedTimes,
+    // whose symmetric accelerate/decelerate profile is reserved for terminal
+    // mission goals.
+    inline bool allocateGuideContinuationElapsedTimes(
+            const double max_acceleration_mps2,
+            const double max_jerk_mps3,
+            const double max_velocity_mps,
+            const double initial_velocity_mps,
+            const Vec3f &start,
+            const vec_Vec3f &path,
+            GuideTimeAllocation &allocation) {
+        allocation = GuideTimeAllocation{};
+        if (!start.allFinite() || path.empty()) return false;
+        constexpr double duplicate_distance_m = 1.0e-6;
+        Vec3f previous = start;
+        std::vector<double> cumulative_distance_m;
+        cumulative_distance_m.reserve(path.size());
+        allocation.points.reserve(path.size());
+        allocation.elapsed_s.reserve(path.size());
+        for (const auto &point : path) {
+            if (!point.allFinite()) return false;
+            const double segment_length_m = (point - previous).norm();
+            if (!std::isfinite(segment_length_m)) return false;
+            if (segment_length_m > duplicate_distance_m) {
+                allocation.path_length_m += segment_length_m;
+                if (!std::isfinite(allocation.path_length_m)) return false;
+                allocation.points.push_back(point);
+                cumulative_distance_m.push_back(allocation.path_length_m);
+            }
+            previous = point;
+        }
+        if (allocation.points.empty() ||
+            allocation.path_length_m <= duplicate_distance_m) {
+            return false;
+        }
+        JerkLimitedContinuationProfile profile;
+        if (!makeJerkLimitedContinuationProfile(
+                allocation.path_length_m, initial_velocity_mps,
+                max_velocity_mps, max_acceleration_mps2,
+                max_jerk_mps3, profile)) {
+            return false;
+        }
+        double previous_elapsed_s = 0.0;
+        for (const double distance_m : cumulative_distance_m) {
+            double elapsed_s = profile.total_duration_s;
+            if (distance_m < allocation.path_length_m) {
+                double lower = previous_elapsed_s;
+                double upper = profile.total_duration_s;
+                for (int iteration = 0; iteration < 80; ++iteration) {
+                    const double middle = 0.5 * (lower + upper);
+                    if (profile.distanceAtTime(middle) < distance_m) {
+                        lower = middle;
+                    } else {
+                        upper = middle;
+                    }
+                }
+                elapsed_s = 0.5 * (lower + upper);
+            }
+            if (!std::isfinite(elapsed_s) || elapsed_s <= previous_elapsed_s) {
+                return false;
+            }
+            allocation.elapsed_s.push_back(elapsed_s);
+            previous_elapsed_s = elapsed_s;
+        }
+        allocation.terminal_velocity_mps = profile.terminal_velocity_mps;
+        return allocation.elapsed_s.size() == allocation.points.size();
+    }
 
     // A remote mission goal is a direction/progress contract, not a request
     // to expand A* beyond the route that can be certified and executed in the

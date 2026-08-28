@@ -1910,6 +1910,42 @@ TEST(PlannerTrajectory, GuideTimeAllocationUsesPointAlignedTravelledDistance) {
   }
 }
 
+TEST(PlannerTrajectory, ContinuationGuideDoesNotManufactureFrontierStop) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_E<navigation_math::Vec3f> path{
+      navigation_math::Vec3f(4.0, 0.0, 0.0),
+      navigation_math::Vec3f(14.0, 0.0, 0.0),
+  };
+  geometry_utils::GuideTimeAllocation allocation;
+  ASSERT_TRUE(geometry_utils::allocateGuideContinuationElapsedTimes(
+      2.0, 4.0, 5.0, 0.0, start, path, allocation));
+  ASSERT_EQ(allocation.elapsed_s.size(), 2U);
+  EXPECT_GT(allocation.elapsed_s.front(), 0.0);
+  EXPECT_GT(allocation.elapsed_s.back(), allocation.elapsed_s.front());
+  EXPECT_NEAR(allocation.path_length_m, 14.0, 1.0e-12);
+  EXPECT_NEAR(allocation.terminal_velocity_mps, 5.0, 1.0e-12);
+  EXPECT_NEAR(allocation.elapsed_s.back(), 4.3, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, ShortContinuationGuideEndsWithBoundedPositiveSpeed) {
+  geometry_utils::JerkLimitedContinuationProfile profile;
+  ASSERT_TRUE(geometry_utils::makeJerkLimitedContinuationProfile(
+      0.5, 0.0, 5.0, 2.0, 4.0, profile));
+  EXPECT_GT(profile.terminal_velocity_mps, 0.0);
+  EXPECT_LT(profile.terminal_velocity_mps, 5.0);
+  EXPECT_LE(profile.maximum_jerk_mps3, 4.0);
+  EXPECT_LE(4.0 * profile.jerk_phase_s, 2.0 + 1.0e-12);
+  EXPECT_NEAR(profile.distanceAtTime(profile.total_duration_s), 0.5, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, ContinuationGuideRejectsOverspeedAndInvalidLimits) {
+  geometry_utils::JerkLimitedContinuationProfile profile;
+  EXPECT_FALSE(geometry_utils::makeJerkLimitedContinuationProfile(
+      10.0, 5.1, 5.0, 2.0, 4.0, profile));
+  EXPECT_FALSE(geometry_utils::makeJerkLimitedContinuationProfile(
+      10.0, 0.0, 5.0, 2.0, 0.0, profile));
+}
+
 TEST(PlannerTrajectory, SubdividesEverySparseGuideEdgeForCorridorSeeds) {
   const navigation_math::vec_Vec3f path{
       navigation_math::Vec3f{44.0F, 5.0F, 3.0F},

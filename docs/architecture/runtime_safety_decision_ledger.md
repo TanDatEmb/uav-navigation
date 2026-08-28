@@ -10840,3 +10840,52 @@ release profiles must not use the former allowance.
   --gtest_color=no`; then `make build && make test`; then repeat
   `long_three_pillars_multiwaypoint` at 5 m/s and compare against
   `external-mode-check-20260828T194521-1523703`.
+
+### 2026-08-29 - Separate frontier continuation timing from terminal stopping
+
+- **Owner/status:** A* guide time parameterization and nominal terminal-state
+  construction, correctness/behavior fix, `PROVISIONAL` pending repeated SITL
+  and representative recorded-data evaluation.
+- **Scope:** Keep the symmetric accelerate/decelerate allocator for a true
+  final stop goal. For a bounded sensing frontier or pass-through route prefix,
+  allocate a monotone S-curve that ramps acceleration up and down under the
+  declared jerk/acceleration limits, then cruises without manufacturing a
+  terminal stop. Propagate the allocator's terminal speed into the nominal
+  boundary state.
+- **Safety impact:** Mission V/A/J, corridor, route, world, tracking, flatness,
+  deadline and backup gates are unchanged. The continuation allocator rejects
+  invalid limits and initial overspeed, uses no flight-tuned constants, and is
+  only an initial parameterization; the complete polynomial still requires
+  the existing analytic dynamic and immutable-world certificates.
+- **Behavioral reason:** `simplePMTimeAllocator` is explicitly a symmetric
+  accelerate/decelerate profile. For a 14 m local prefix starting near rest at
+  `V/A=5/2`, it allocates `5.3 s` and returns terminal speed `0`. The planner
+  also discarded `GuideTimeAllocation::terminal_velocity_mps`, leaving every
+  frontier solve with a zero terminal boundary. This exactly creates the
+  observed accelerate-to-prefix then decelerate/replan cycle. Exact-SHA
+  artifacts `external-mode-check-20260828T195031-1533972` and
+  `external-mode-check-20260828T195713-1546236` further show the resulting
+  rest-to-rest candidates miss the strict jerk gate despite planner totals of
+  only `7.4-12.7 ms`; stronger post-hoc penalties made V/A/J worse and were
+  reverted rather than retained.
+- **False-accept/false-reject consequences:** A true final goal still receives
+  a stopping profile. A frontier now carries a physically bounded positive
+  terminal speed, preventing the false stop. If no finite monotone S-curve can
+  be represented, allocation fails closed. Corners and hot-replan PVAJ remain
+  subject to their existing independent checks.
+- **Runtime cost and evidence required:** Fixed 80-iteration scalar bisections
+  per guide point; A* and MINCO dominate the solve, but p50/p95/p99 must still
+  be measured. Focused tests must verify the 14 m analytical profile, short
+  prefixes, invalid inputs and final-stop separation. Release/full tests must
+  pass. Repeated 5 m/s SITL and dataset shadow planning must compare waypoint
+  coverage, speed dips, command renewals, V/A/J, yaw, altitude, clearance,
+  collision and latency distributions.
+- **Removal/review condition:** Keep the stop/continuation semantic split even
+  if the scalar profile is later replaced by a path-parameterized TOPP/S-curve
+  solver. Do not return to treating every receding frontier as a stop goal.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory test_exp_optimizer_seed -j2 &&
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no &&
+  ./build/navigation_planning_backend/test_exp_optimizer_seed
+  --gtest_color=no`; then `make build && make test`; then repeated exact 5 m/s
+  `long_three_pillars_multiwaypoint` SITL and representative dataset checks.
