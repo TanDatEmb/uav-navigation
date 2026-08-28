@@ -8263,3 +8263,32 @@ release profiles must not use the former allowance.
   inspect `planning_target` versus mission target, waypoint coverage, speed,
   altitude, clearance, command identity/PVA continuity, and p50/p95/p99
   planning/mapping latency.
+
+### 2026-08-28 - Bound backup refinement to the certified braking seed
+
+- **Owner:** Planner backup-suffix generation and trajectory-handoff maintainers.
+- **Scope:** When `BackupTrajOpt` returns a numerically successful refinement,
+  compare its normalized spatial trace against the already certified
+  minimum-snap braking piece. If the deviation exceeds
+  `max(0.5 m, 3 * planner resolution)`, discard the refinement and retain the
+  certified seed.
+- **Safety impact:** This is a continuity/stability guard, not a relaxed safety
+  gate. The seed still passes the existing PVAJ, V/A/J, flatness, SFC,
+  KNOWN_FREE swept, and complete-bundle authorization checks. A refinement that
+  remains within the trace bound still passes every existing check. This avoids
+  repeated hot replans replacing a safe stop suffix with a geometrically
+  different path that can reverse lateral or vertical motion; it does not
+  authorize UNKNOWN or change PX4 handover behavior.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T062835-818576` repeatedly
+  replaced BACKUP candidates while the mission remained on waypoint 1; the
+  committed command showed lateral/vertical oscillation and PX4 stopped at
+  `0.759/0.750 m` lateral tracking error. The guard must be reviewed against
+  repeated multi-waypoint runtime distributions, not a single run.
+- **Removal/review condition:** Remove or retune only after a piecewise
+  route/trajectory handoff owns backup continuity and repeated representative
+  runtime evidence shows no backup-induced oscillation. Verification requires
+  build, targeted planner tests, the full test suite, and
+  `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check`; inspect
+  backup refinement acceptance/rejection counts, tracking envelope, waypoint
+  coverage, and mission outcome.

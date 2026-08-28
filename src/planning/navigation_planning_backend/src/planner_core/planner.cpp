@@ -2758,11 +2758,57 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             temp_pos_traj.emplace_back(braking_piece);
             opt_ts = heu_ts;
         } else {
-            ++backup_refinement_success_count_;
-            planner_context_->info(
-                    " -- [planner] backup refinement accepted: "
-                    "backup_refinement_success={} backup_refinement_fallback={}",
-                    backup_refinement_success_count_, backup_refinement_fallback_count_);
+            // Backup is an executable safety suffix, not a second route
+            // planner. A numerically successful refinement may remain inside
+            // the SFC and pass all pointwise gates while bending away from
+            // the already certified braking seed. Replacing the seed on every
+            // hot replan then changes the stopping direction and can create a
+            // low-speed lateral/altitude oscillation. Keep refinement only
+            // when its normalized spatial trace stays close to that seed.
+            const double refined_duration = temp_pos_traj.getTotalDuration();
+            const double seed_duration = braking_piece.getDuration();
+            const double shape_tolerance_m = std::max(0.5, 3.0 * cfg_.resolution);
+            double maximum_seed_deviation_m = 0.0;
+            bool shape_bounded = std::isfinite(refined_duration) &&
+                    refined_duration > 0.0 && std::isfinite(seed_duration) &&
+                    seed_duration > 0.0 && std::isfinite(shape_tolerance_m) &&
+                    shape_tolerance_m > 0.0;
+            constexpr int kShapeSamples = 32;
+            for (int sample = 0; shape_bounded && sample <= kShapeSamples; ++sample) {
+                const double alpha = static_cast<double>(sample) /
+                        static_cast<double>(kShapeSamples);
+                const Vec3f refined_point = temp_pos_traj.getPos(alpha * refined_duration);
+                const Vec3f seed_point = braking_piece.getPos(alpha * seed_duration);
+                const double deviation = (refined_point - seed_point).norm();
+                if (!refined_point.allFinite() || !seed_point.allFinite() ||
+                    !std::isfinite(deviation)) {
+                    shape_bounded = false;
+                    break;
+                }
+                maximum_seed_deviation_m = std::max(maximum_seed_deviation_m, deviation);
+                if (maximum_seed_deviation_m > shape_tolerance_m) {
+                    shape_bounded = false;
+                    break;
+                }
+            }
+            if (!shape_bounded) {
+                ++backup_refinement_fallback_count_;
+                planner_context_->warn(
+                        " -- [planner] backup refinement rejected: seed-trace deviation={} "
+                        "limit={}; using certified minimum-snap seed",
+                        maximum_seed_deviation_m, shape_tolerance_m);
+                temp_pos_traj.clear();
+                temp_pos_traj.emplace_back(braking_piece);
+                opt_ts = heu_ts;
+            } else {
+                ++backup_refinement_success_count_;
+                planner_context_->info(
+                        " -- [planner] backup refinement accepted: "
+                        "seed_trace_deviation={} limit={} "
+                        "backup_refinement_success={} backup_refinement_fallback={}",
+                        maximum_seed_deviation_m, shape_tolerance_m,
+                        backup_refinement_success_count_, backup_refinement_fallback_count_);
+            }
         }
         const auto backupCandidateValidation = [this](
                 const Trajectory& backup_position, const double backup_start_wall_time) {
