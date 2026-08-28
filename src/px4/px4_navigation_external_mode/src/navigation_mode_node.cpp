@@ -18,6 +18,7 @@
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 
 namespace px4_navigation_external_mode {
@@ -286,23 +287,12 @@ void NavigationMode::onNavigationCommand(
     const bool health_epoch_matches = navigation_contracts::estimatorHealthAllowsCommand(
         typed_health_seen_, lio_health_valid_, message->localization_epoch,
         lio_localization_epoch_);
-    bool mission_identity_matches = false;
-    if (mission_ && mission_controller_) {
-      if (!mission_terminal_) {
-        mission_identity_matches = navigation_contracts::commandMissionIdentityMatches(
+    const bool mission_identity_matches = mission_ && mission_controller_ &&
+        missionCommandIdentityMatches(
             *message, mission_->id,
             static_cast<std::uint32_t>(mission_controller_->activeWaypointIndex()),
-            mission_controller_->activeRequestId());
-      } else {
-        // A final COMPLETED sample may race the mission-complete transition,
-        // but only the exact terminal checkpoint already acknowledged by the
-        // controller is allowed after the active mission has advanced.
-        mission_identity_matches =
-            message->mission_id == mission_->id &&
-            message->waypoint_index == last_completed_waypoint_index_ &&
-            message->request_id == last_completed_request_id_;
-      }
-    }
+            mission_controller_->activeRequestId(), mission_terminal_,
+            last_completed_waypoint_index_, last_completed_request_id_);
     const bool command_identity_monotonic = !navigation_command_.has_value() ||
         navigation_contracts::commandWorldIdentityNonRegressing(
             *message, *navigation_command_);
@@ -510,7 +500,7 @@ void NavigationMode::onNavigationCommand(
     }
   }
   if (accepted && completed_command && mission_controller_) {
-    const auto waypoint = mission_controller_->activeWaypoint();
+    const auto waypoint = mission_controller_->waypointAt(message->waypoint_index);
     const auto state = mission_controller_->state();
     const Eigen::Vector3d measured = odometry_
         ? Eigen::Vector3d{odometry_->pose.pose.position.x, odometry_->pose.pose.position.y,
@@ -531,8 +521,11 @@ void NavigationMode::onNavigationCommand(
         "terminal_hold_pending=%s",
         static_cast<unsigned>(message->role), static_cast<unsigned>(message->waypoint_index),
         static_cast<unsigned long>(message->request_id), static_cast<unsigned>(state),
-        (measured - waypoint.position_enu).norm(),
-        (command_position - waypoint.position_enu).norm(), measured_speed,
+        waypoint ? (measured - waypoint->position_enu).norm()
+                 : std::numeric_limits<double>::quiet_NaN(),
+        waypoint ? (command_position - waypoint->position_enu).norm()
+                 : std::numeric_limits<double>::quiet_NaN(),
+        measured_speed,
         terminal_main_hold_inside_acceptance ? "true" : "false",
         terminal_backup_hold_inside_acceptance ? "true" : "false",
         mission_controller_->nativeTrajectoryReady() ? "true" : "false",

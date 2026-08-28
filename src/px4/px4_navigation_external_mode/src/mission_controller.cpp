@@ -552,6 +552,12 @@ MissionWaypoint MissionController::activeWaypoint() const {
   return mission_.waypoints.at(active_waypoint_index_);
 }
 
+std::optional<MissionWaypoint> MissionController::waypointAt(std::size_t index) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (index >= mission_.waypoints.size()) return std::nullopt;
+  return mission_.waypoints[index];
+}
+
 std::optional<MissionWaypoint> MissionController::nextWaypoint() const {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto next = active_waypoint_index_ + 1U;

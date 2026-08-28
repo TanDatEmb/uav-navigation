@@ -68,6 +68,7 @@ class MissionController final {
   [[nodiscard]] std::size_t activeWaypointIndex() const;
   [[nodiscard]] std::uint64_t activeRequestId() const;
   [[nodiscard]] MissionWaypoint activeWaypoint() const;
+  [[nodiscard]] std::optional<MissionWaypoint> waypointAt(std::size_t index) const;
   [[nodiscard]] std::optional<MissionWaypoint> nextWaypoint() const;
   [[nodiscard]] bool nativeTrajectoryReady() const;
   [[nodiscard]] bool terminalHoldPending() const;

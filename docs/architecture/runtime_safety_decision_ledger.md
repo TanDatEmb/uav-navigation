@@ -8292,3 +8292,25 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check`; inspect
   backup refinement acceptance/rejection counts, tracking envelope, waypoint
   coverage, and mission outcome.
+
+### 2026-08-28 - Resolve delayed terminal commands without an active waypoint
+
+- **Owner:** PX4 External Mode command adapter and mission-controller lifecycle.
+- **Scope:** Keep accepting only the exact final mission/waypoint/request identity
+  after mission completion, but resolve diagnostic geometry by the command's
+  bounded waypoint index instead of dereferencing the controller's active index.
+  The active index is intentionally one-past-the-end in `Complete` state.
+- **Safety impact:** This removes an exception path after a valid delayed
+  `STATUS_COMPLETED` sample without broadening command identity, freshness,
+  monotonic sample, estimator-health, tracking-envelope, or handover gates.
+  Wrong terminal identities and duplicate samples remain fail-closed.
+- **Evidence:** Unit coverage requires the exact delayed terminal identity to
+  match, wrong waypoint/request identities to fail, a duplicate sample ID to
+  fail the monotonic gate, and terminal waypoint lookup at `size()` to return no
+  value while the completed waypoint remains addressable.
+- **Removal/review condition:** Remove only when mission lifecycle and command
+  ingestion become one versioned state machine that owns a terminal checkpoint
+  object directly. Do not restore unchecked `activeWaypoint()` access after
+  `MissionControllerState::Complete`.
+- **Verification:** Build `px4_navigation_external_mode`, run
+  `test_navigation_command` and `test_mission`, then run the package CTest set.

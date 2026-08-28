@@ -5,6 +5,7 @@
 #include <px4_ros2/utils/frame_conversion.hpp>
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 
 TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) {
@@ -19,6 +20,37 @@ TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) 
             px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
   EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 11U, 10U),
             px4_navigation_external_mode::CommandAcceptanceGate::kAccept);
+}
+
+TEST(NavigationCommandContract, ExactLateTerminalIdentityIsAccepted) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 8U;
+  command.request_id = 17U;
+
+  EXPECT_TRUE(px4_navigation_external_mode::missionCommandIdentityMatches(
+      command, "mission", 9U, 17U, true, 8U, 17U));
+}
+
+TEST(NavigationCommandContract, WrongLateTerminalIdentityIsRejected) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 8U;
+  command.request_id = 18U;
+
+  EXPECT_FALSE(px4_navigation_external_mode::missionCommandIdentityMatches(
+      command, "mission", 9U, 18U, true, 8U, 17U));
+  command.request_id = 17U;
+  command.waypoint_index = 7U;
+  EXPECT_FALSE(px4_navigation_external_mode::missionCommandIdentityMatches(
+      command, "mission", 9U, 17U, true, 8U, 17U));
+}
+
+TEST(NavigationCommandContract, DuplicateLateTerminalSampleStillFailsMonotonicGate) {
+  navigation_contracts::ExecutionStateFreshness fresh;
+  fresh.reason = navigation_contracts::ExecutionStateFreshnessReason::kValid;
+  EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 42U, 42U),
+            px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
 }
 
 TEST(NavigationCommandContract, BackupRecoveryWindowIsBoundedAndHoldOnly) {

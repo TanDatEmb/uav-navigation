@@ -216,6 +216,11 @@ TEST(MissionController, PublishesWaypointsAndCompletesWithoutFlightActions) {
   EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
   expectWaypointAccepted(event, 1U);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Complete);
+  EXPECT_EQ(controller.activeWaypointIndex(), mission.waypoints.size());
+  EXPECT_FALSE(controller.waypointAt(controller.activeWaypointIndex()).has_value());
+  const auto terminal_waypoint = controller.waypointAt(event.waypoint_index);
+  ASSERT_TRUE(terminal_waypoint.has_value());
+  EXPECT_EQ(terminal_waypoint->id, "second");
 }
 
 TEST(MissionController, WaitsForAirborneBeforePublishingMissionGoal) {
