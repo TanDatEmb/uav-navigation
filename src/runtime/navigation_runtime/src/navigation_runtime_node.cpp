@@ -287,6 +287,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.deployment_profile", std::string("sitl"));
   planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 10.0);
   command_rate_hz_ = declare_parameter("navigation_runtime.command_rate_hz", 50.0);
+  mapping_snapshot_publication_period_s_ = declare_parameter(
+      "navigation_runtime.mapping_snapshot_publication_period_s", 0.05);
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
   planner_watchdog_timeout_s_ = declare_parameter(
@@ -319,12 +321,20 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     throw std::invalid_argument("navigation_runtime.planner_rate_hz must be positive");
   }
   if (!std::isfinite(command_rate_hz_) || command_rate_hz_ <= 0.0 ||
+      !std::isfinite(mapping_snapshot_publication_period_s_) ||
+      mapping_snapshot_publication_period_s_ <= 0.0 ||
       !std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||
       !std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0 ||
       !std::isfinite(plan_from_rest_failure_confirmation_s_) ||
       plan_from_rest_failure_confirmation_s_ <= 0.0) {
     throw std::invalid_argument(
         "planner backend timing and safety parameters must be positive");
+  }
+  if (mapping_snapshot_publication_period_s_ > data_freshness_window_s_ ||
+      mapping_snapshot_publication_period_s_ > 1.0 / planner_rate_hz_) {
+    throw std::invalid_argument(
+        "navigation_runtime.mapping_snapshot_publication_period_s must not exceed "
+        "the world freshness window or planner period");
   }
   const auto data_freshness_window_ns =
       navigation_common::secondsToNanoseconds(data_freshness_window_s_);
@@ -361,7 +371,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   const auto ros_clock = get_clock();
   auto mapping_actor = std::make_shared<navigation_mapping::MappingActor>(
       planner_config_path_, [ros_clock] { return ros_clock->now().seconds(); },
-      navigation_mapping::MappingFrameContract{planning_frame_, body_frame_id_});
+      navigation_mapping::MappingFrameContract{planning_frame_, body_frame_id_},
+      mapping_snapshot_publication_period_s_);
   const auto mapping_configuration = mapping_actor->configuration();
   if (mapping_configuration.callbacks_enabled ||
       mapping_configuration.raycasting_batch_update_size != 1) {
@@ -405,6 +416,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       next.last_update_attempt_stamp_ns = observation.stamp_ns;
       next.snapshot_export_us = result.snapshot_export_us;
       next.pointcloud_decode_us = observation.pointcloud_decode_us;
+      next.world_snapshot_published = static_cast<bool>(result.snapshot);
       if (result.snapshot) {
         const auto expected_bundle = command_store->load();
         bool retain_validated_bundle = false;
@@ -637,6 +649,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_revision", mapping.world_revision);
         add_value("observation_stamp_ns", mapping.observation_stamp_ns);
         add_value("last_update_attempt_stamp_ns", mapping.last_update_attempt_stamp_ns);
+        add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
+        add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
+        add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
         addObservationAccountingValues(status, lifecycle);
         add_text("mapping_update_outcome",
                  std::string(navigation_mapping::worldUpdateOutcomeName(map.update_outcome)));
@@ -1396,6 +1411,9 @@ void NavigationRuntimeNode::runCycle() {
             last_registered_scan_sequence_.load(std::memory_order_acquire));
   add_value("world_generation", mapping.world_generation);
   add_value("world_revision", mapping.world_revision);
+  add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
+  add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
+  add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
   add_value("world_snapshot_bytes", mapping.snapshot_bytes);
   add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
   add_value("world_snapshot_shared_metadata_bytes", mapping.snapshot_shared_metadata_bytes);

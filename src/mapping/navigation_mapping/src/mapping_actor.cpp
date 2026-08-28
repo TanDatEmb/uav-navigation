@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -175,10 +176,18 @@ constexpr std::size_t kMaximumSnapshotPatchDepth = 8U;
 class MappingActor::Impl final {
  public:
   Impl(const std::string& config_path, std::function<double()> wall_clock_seconds,
-       MappingFrameContract frame_contract)
+       MappingFrameContract frame_contract, const double snapshot_publication_period_s)
       : config_path_(config_path),
         wall_clock_seconds_(std::move(wall_clock_seconds)),
-        map_(std::make_unique<internal::RuntimeMappingMap>(wall_clock_seconds_)) {
+        map_(std::make_unique<internal::RuntimeMappingMap>(wall_clock_seconds_)),
+        snapshot_publication_period_s_(snapshot_publication_period_s) {
+    const auto period_ns = navigation_common::secondsToNanoseconds(
+        snapshot_publication_period_s_);
+    if (!period_ns || *period_ns <= 0) {
+      throw std::invalid_argument(
+          "mapping snapshot publication period must be positive and finite");
+    }
+    snapshot_publication_period_ns_ = *period_ns;
     map_->loadConfigAndInit(config_path_);
     expected_world_frame_id_ = std::move(frame_contract.world_frame_id);
     expected_body_frame_id_ = std::move(frame_contract.body_frame_id);
@@ -199,6 +208,8 @@ class MappingActor::Impl final {
                                                        0U, 0},
         change_history_);
     current_snapshot_ = snapshot;
+    pending_changed_region_ = {};
+    pending_change_covers_world_ = false;
     return {snapshot, snapshot->metrics()};
   }
 
@@ -245,6 +256,8 @@ class MappingActor::Impl final {
         last_scan_sequence_ = 0;
         change_history_.reset();
         current_snapshot_.reset();
+        pending_changed_region_ = {};
+        pending_change_covers_world_ = false;
       }
 
       const auto map_started = std::chrono::steady_clock::now();
@@ -323,13 +336,47 @@ class MappingActor::Impl final {
       }
       change_history_ = std::make_shared<navigation_world_model::WorldChangeHistory>(
           navigation_world_model::WorldChangeHistory{std::move(records)});
+
+      if (change.affects_whole_world) {
+        pending_change_covers_world_ = true;
+      } else if (change.affected_region.valid()) {
+        if (!pending_changed_region_.valid()) {
+          pending_changed_region_ = change.affected_region;
+        } else {
+          pending_changed_region_.minimum =
+              pending_changed_region_.minimum.cwiseMin(change.affected_region.minimum);
+          pending_changed_region_.maximum =
+              pending_changed_region_.maximum.cwiseMax(change.affected_region.maximum);
+        }
+      } else {
+        pending_change_covers_world_ = true;
+      }
+
+      const bool publication_due = !current_snapshot_ || pending_change_covers_world_ ||
+          observation.stamp_ns - current_snapshot_->identity().observation_stamp_ns >=
+              snapshot_publication_period_ns_;
+      if (!publication_due) {
+        result.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - map_started).count();
+        result.localization_epoch = localization_epoch_;
+        result.world_generation = world_generation_;
+        result.world_revision = world_revision_;
+        result.observation_stamp_ns = observation.stamp_ns;
+        last_observation_stamp_ns_ = observation.stamp_ns;
+        if (observation.scan_sequence != 0U) {
+          last_scan_sequence_ = observation.scan_sequence;
+        }
+        return result;
+      }
+
       std::shared_ptr<const MappingWorldSnapshot> snapshot;
-      const bool can_apply_patch = current_snapshot_ && !change.affects_whole_world &&
+      const bool can_apply_patch = current_snapshot_ && !pending_change_covers_world_ &&
+          pending_changed_region_.valid() &&
           current_snapshot_->patchDepth() < kMaximumSnapshotPatchDepth;
       if (can_apply_patch) {
         const auto patch_export = map_->exportPlanningGridRegion(
-            change.affected_region.minimum,
-            change.affected_region.maximum);
+            pending_changed_region_.minimum,
+            pending_changed_region_.maximum);
         if (!patch_export.base_state.empty() && !patch_export.inflated.occupied.empty()) {
           snapshot = std::make_shared<MappingWorldSnapshot>(
               current_snapshot_, toProductPatch(patch_export), identity, change_history_);
@@ -358,6 +405,8 @@ class MappingActor::Impl final {
         last_scan_sequence_ = observation.scan_sequence;
       }
       current_snapshot_ = snapshot;
+      pending_changed_region_ = {};
+      pending_change_covers_world_ = false;
       return result;
     } catch (...) {
       // The backend is mutable and has no transaction/rollback API. Any
@@ -427,6 +476,8 @@ class MappingActor::Impl final {
   std::string config_path_;
   std::function<double()> wall_clock_seconds_;
   std::unique_ptr<internal::RuntimeMappingMap> map_;
+  double snapshot_publication_period_s_{0.05};
+  std::int64_t snapshot_publication_period_ns_{50'000'000};
   rog_map::PointCloud backend_cloud_;
   rog_map::PointCloud backend_free_space_cloud_;
   std::shared_ptr<const std::vector<navigation_world_model::GridIndex3>> nearest_offsets_;
@@ -438,15 +489,19 @@ class MappingActor::Impl final {
   std::uint64_t last_scan_sequence_{0};
   bool poisoned_{false};
   navigation_world_model::WorldChangeHistoryPtr change_history_;
+  navigation_world_model::AxisAlignedBox pending_changed_region_{};
+  bool pending_change_covers_world_{false};
   std::string expected_world_frame_id_;
   std::string expected_body_frame_id_;
 };
 
 MappingActor::MappingActor(const std::string& config_path,
                            std::function<double()> wall_clock_seconds,
-                           MappingFrameContract frame_contract)
+                           MappingFrameContract frame_contract,
+                           const double snapshot_publication_period_s)
     : impl_(std::make_unique<Impl>(config_path, std::move(wall_clock_seconds),
-                                   std::move(frame_contract))) {}
+                                   std::move(frame_contract),
+                                   snapshot_publication_period_s)) {}
 
 MappingActor::~MappingActor() = default;
 

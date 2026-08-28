@@ -599,9 +599,9 @@ class MappingWorldSnapshot final
     if (identity.localization_epoch != parent_identity.localization_epoch ||
         identity.generation != parent_identity.generation ||
         parent_identity.revision == std::numeric_limits<std::uint64_t>::max() ||
-        identity.revision != parent_identity.revision + 1U ||
+        identity.revision <= parent_identity.revision ||
         identity.observation_stamp_ns <= parent_identity.observation_stamp_ns) {
-      throw std::invalid_argument("patch snapshot identity is not a successor");
+      throw std::invalid_argument("patch snapshot identity is not a newer successor");
     }
     const auto validate_layout = [](const PlanningGridLayout& layout,
                                     const char* name) -> std::size_t {

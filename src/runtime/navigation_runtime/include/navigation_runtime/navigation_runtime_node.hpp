@@ -49,6 +49,7 @@ struct MappingTelemetrySnapshot {
   std::int64_t snapshot_export_us{0};
   std::int64_t mapping_callback_total_us{0};
   std::int64_t pointcloud_decode_us{0};
+  bool world_snapshot_published{false};
   std::uint64_t snapshot_bytes{0};
   std::uint64_t snapshot_owned_bytes{0};
   std::uint64_t snapshot_shared_metadata_bytes{0};
@@ -68,6 +69,8 @@ struct MappingTelemetrySnapshot {
   std::uint64_t outcome_above_ceiling{0};
   std::uint64_t command_revalidation_fast_path_count{0};
   std::uint64_t command_revalidation_full_count{0};
+  std::uint64_t world_snapshot_published_count{0};
+  std::uint64_t world_snapshot_deferred_count{0};
 };
 
 class MappingTelemetry {
@@ -88,6 +91,13 @@ class MappingTelemetry {
     next.outcome_callback_owned = state_.outcome_callback_owned;
     next.outcome_below_ground = state_.outcome_below_ground;
     next.outcome_above_ceiling = state_.outcome_above_ceiling;
+    next.world_snapshot_published_count = state_.world_snapshot_published_count;
+    next.world_snapshot_deferred_count = state_.world_snapshot_deferred_count;
+    if (next.world_snapshot_published) {
+      ++next.world_snapshot_published_count;
+    } else if (navigation_mapping::worldUpdateAdvanced(next.map.update_outcome)) {
+      ++next.world_snapshot_deferred_count;
+    }
     // `next` is normally a snapshot copied by the producer. Do not overwrite
     // producer-side increments here: unlike the legacy lifecycle counters,
     // revalidation counters are intentionally updated for this same result.
@@ -173,6 +183,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::string deployment_profile_;
   double planner_rate_hz_{10.0};
   double command_rate_hz_{50.0};
+  double mapping_snapshot_publication_period_s_{0.05};
   double data_freshness_window_s_{0.5};
   std::int64_t data_freshness_window_ns_{500'000'000};
   double planner_watchdog_timeout_s_{1.0};

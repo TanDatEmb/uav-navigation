@@ -1830,6 +1830,16 @@ def _diagnostic_timing_summary(
                 for field in fields:
                     if not planner_timing_is_current(status_values, field):
                         continue
+                    # Snapshot export is emitted only on publication after the
+                    # mapping cadence optimization. Do not turn deferred
+                    # samples into zero-latency export observations. Legacy
+                    # artifacts without the marker retain their old behavior.
+                    if (
+                        field == "world_snapshot_export_us"
+                        and "world_snapshot_published" in status_values
+                        and int(_number(status_values.get("world_snapshot_published"), 0.0)) != 1
+                    ):
+                        continue
                     value = _number(status_values.get(field), -1.0)
                     if value >= 0.0 and math.isfinite(value):
                         values_by_field[field].append(value)
@@ -2070,6 +2080,9 @@ def _navigation_mapping_summary(
         "world_snapshot_peak_live_count",
         "world_snapshot_live_owned_bytes",
         "world_snapshot_peak_live_owned_bytes",
+        "world_snapshot_published",
+        "world_snapshot_published_count",
+        "world_snapshot_deferred_count",
         "old_generation_drop_count",
         "invalid_stamp_count",
         "invalid_frame_count",
@@ -2279,10 +2292,26 @@ def _mapping_integrity_reasons(mapping: dict[str, Any]) -> list[str]:
                 outcomes["mapping_outcome_slide_only_count"]
             )
             revision = int(_number(mapping.get("world_revision"), 0.0))
-            if revision != advanced:
-                reasons.append(
-                    "mapping world revision does not equal advancing update outcomes"
-                )
+            published_snapshots = mapping.get("world_snapshot_published_count")
+            if published_snapshots is None:
+                if revision != advanced:
+                    reasons.append(
+                        "mapping world revision does not equal advancing update outcomes"
+                    )
+            else:
+                published_snapshots = int(_number(published_snapshots, 0.0))
+                if published_snapshots > advanced:
+                    reasons.append(
+                        "mapping published snapshot count exceeds advancing update outcomes"
+                    )
+                if revision > advanced:
+                    reasons.append(
+                        "mapping published world revision exceeds advancing update outcomes"
+                    )
+                if published_snapshots > 0 and revision <= 0:
+                    reasons.append(
+                        "mapping published snapshot count has no published world revision"
+                    )
             if published > 0:
                 observation_stamp = int(_number(
                     mapping.get("observation_stamp_ns"), 0.0

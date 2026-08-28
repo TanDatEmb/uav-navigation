@@ -7816,3 +7816,40 @@ release profiles must not use the former allowance.
   runtime, and PX4 contract tests; then repeat the 3-column scenario and
   compare mapping callback/export/revalidation p50/p95/p99, world identity,
   command generation, freshness, strict backup, and mission outcome.
+
+### 2026-08-28 - Bound immutable snapshot export cadence
+
+- **Owner:** Navigation mapping actor and runtime world-snapshot publication
+  maintainers.
+- **Scope:** Keep every admitted mutable ROG update serialized and revisioned,
+  but accumulate its conservative changed-region union and export only the
+  newest immutable snapshot at `navigation_runtime.mapping_snapshot_publication_period_s`.
+  The canonical profile uses 50 ms, no slower than the planner period and no
+  slower than the world-freshness budget. New localization epochs and whole-map
+  changes force immediate full export; ordinary coalesced updates use one
+  bounded patch when its provenance and geometry remain valid.
+- **Safety impact:** This changes publication latency, not map admission,
+  occupancy semantics, UNKNOWN/OUT_OF_MAP policy, or certificate gates. The
+  execution store continues to authorize only the last immutable snapshot and
+  rejects stale snapshots through the existing freshness gate. Revision history
+  retains every advancing update, and a patch spanning multiple revisions is
+  accepted only with a newer identity and complete contiguous history. Missing
+  history, malformed regions, epoch changes, patch-depth overflow, or export
+  failure fall back to the existing full export/fail-stop path.
+- **Evidence:** Prior traces showed mapping callback p95 around 42--72 ms and
+  snapshot export p95 around 28--52 ms while the input stream was faster than
+  the callback. The previous actor exported a patch or full grid for every
+  advancing update. The new telemetry separates map-update completion from
+  `world_snapshot_published_count` and `world_snapshot_deferred_count`; report
+  timing excludes deferred zero exports.
+- **Removal/review condition:** Revisit if published snapshot age exceeds the
+  configured period, the freshness gate rejects due to publication delay,
+  world-revision/history conservation fails, live snapshot memory grows,
+  patch classification differs from an immediate full export, or any repeated
+  scenario shows a clearance, waypoint, speed, altitude, handover, or mode
+  regression. Do not turn this into timer-only retention or drop revision
+  history.
+- **Verification:** `make build`; run mapping, world-snapshot, runtime, planner,
+  and PX4 contract tests; run the mapping actor coalescing test; execute a fresh
+  3-column trace and compare callback/export p50/p95/p99, published/deferred
+  counts, world age, identity ordering, memory, and mission outcome.

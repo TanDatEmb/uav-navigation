@@ -26,11 +26,21 @@ nav_msgs::msg::Odometry odometryAt(const std::int32_t seconds) {
   return odometry;
 }
 
+nav_msgs::msg::Odometry odometryAtStamp(const std::int64_t stamp_ns) {
+  nav_msgs::msg::Odometry odometry;
+  odometry.header.stamp.sec = static_cast<std::int32_t>(stamp_ns / 1'000'000'000LL);
+  odometry.header.stamp.nanosec = static_cast<std::uint32_t>(stamp_ns % 1'000'000'000LL);
+  odometry.header.frame_id = "lio_odom";
+  odometry.child_frame_id = "base_link";
+  odometry.pose.pose.orientation.w = 1.0;
+  return odometry;
+}
+
 navigation_mapping::MappingObservation observationAt(
     const std::int64_t stamp_ns, const std::int64_t odometry_stamp_ns) {
   auto cloud = std::make_unique<navigation_mapping::PointCloud>();
   cloud->push_back(navigation_mapping::PointXYZI{1.0F, 0.0F, 0.0F, 0.0F});
-  auto odometry = odometryAt(static_cast<std::int32_t>(odometry_stamp_ns / 1'000'000'000LL));
+  auto odometry = odometryAtStamp(odometry_stamp_ns);
   return {std::move(cloud), std::move(odometry), 1U, 1U, stamp_ns, 0};
 }
 
@@ -41,7 +51,7 @@ navigation_mapping::MappingObservation observationAtPose(
   cloud->push_back(navigation_mapping::PointXYZI{
       static_cast<float>(position.x() + 2.0), static_cast<float>(position.y()),
       static_cast<float>(position.z()), 0.0F});
-  auto odometry = odometryAt(static_cast<std::int32_t>(odometry_stamp_ns / 1'000'000'000LL));
+  auto odometry = odometryAtStamp(odometry_stamp_ns);
   odometry.pose.pose.position.x = position.x();
   odometry.pose.pose.position.y = position.y();
   odometry.pose.pose.position.z = position.z();
@@ -217,6 +227,38 @@ TEST(MappingActorContract, UsesBoundedPatchForSteadyStateMapUpdate) {
     maximum_depth = std::max(maximum_depth, bounded_snapshot->patchDepth());
   }
   EXPECT_LE(maximum_depth, 8U);
+}
+
+TEST(MappingActorContract, CoalescesSnapshotExportAcrossRecentMapUpdates) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+
+  const auto first = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U));
+  ASSERT_TRUE(first.snapshot);
+
+  const auto deferred = actor.process(observationAtPose(
+      1'020'000'000LL, 1'020'000'000LL, Eigen::Vector3d::Zero(), 2U));
+  EXPECT_FALSE(deferred.snapshot);
+  EXPECT_EQ(deferred.world_revision, 2U);
+
+  const auto published = actor.process(observationAtPose(
+      1'060'000'000LL, 1'060'000'000LL, Eigen::Vector3d::Zero(), 3U));
+  ASSERT_TRUE(published.snapshot);
+  EXPECT_EQ(published.world_revision, 3U);
+  EXPECT_EQ(published.snapshot->identity().observation_stamp_ns, 1'060'000'000LL);
+  const auto patch_snapshot =
+      std::dynamic_pointer_cast<const navigation_mapping::MappingWorldSnapshot>(
+          published.snapshot);
+  ASSERT_TRUE(patch_snapshot);
+  EXPECT_EQ(patch_snapshot->patchDepth(), 1U);
+}
+
+TEST(MappingActorContract, RejectsNonPositiveSnapshotPublicationPeriod) {
+  EXPECT_THROW(
+      navigation_mapping::MappingActor(
+          NAVIGATION_MAPPING_PLANNER_CONFIG_PATH, {}, {}, 0.0),
+      std::invalid_argument);
 }
 
 }  // namespace

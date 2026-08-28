@@ -2849,6 +2849,50 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             mapping["timing_distributions"]["world_snapshot_export_us"]["p50"], 15018.0)
 
+    def test_navigation_mapping_summary_accepts_deferred_snapshot_exports(self) -> None:
+        mapping = {
+            "received_observation_count": 3,
+            "accepted_observation_count": 3,
+            "observation_rejected_before_inbox_count": 0,
+            "mapping_started_count": 3,
+            "mapping_published_count": 3,
+            "mapping_failed_count": 0,
+            "mapping_pending_count": 0,
+            "mapping_in_flight_count": 0,
+            "observation_replaced_pending_count": 0,
+            "observation_discarded_pending_count": 0,
+            "observation_accounting_valid": 1,
+            "observation_accounting_violation_count": 0,
+            **_mapping_outcomes(3),
+            "world_revision": 3,
+            "world_snapshot_published_count": 2,
+            "world_snapshot_deferred_count": 1,
+        }
+        self.assertEqual(report._mapping_integrity_reasons(mapping), [])
+
+    def test_mapping_snapshot_export_timing_ignores_deferred_zero_samples(self) -> None:
+        samples = [
+            {
+                "stream": "mapping_diagnostics",
+                "payload": {"statuses": [{
+                    "name": "navigation_mapping/world_model",
+                    "values": {
+                        "world_snapshot_published": published,
+                        "world_snapshot_export_us": export_us,
+                    },
+                }]},
+            }
+            for published, export_us in ((1, 12000), (0, 0), (1, 14000), (1, 16000))
+        ]
+        timing = report._diagnostic_timing_summary(
+            samples,
+            "navigation_mapping/world_model",
+            ("world_snapshot_export_us",),
+            stream_names=("mapping_diagnostics",),
+        )
+        self.assertEqual(timing["world_snapshot_export_us"]["sample_count"], 3)
+        self.assertEqual(timing["world_snapshot_export_us"]["p50"], 14000.0)
+
     def test_navigation_mapping_summary_merges_status_owners_in_either_final_order(self) -> None:
         planner = {
             "name": "navigation_runtime/planner",

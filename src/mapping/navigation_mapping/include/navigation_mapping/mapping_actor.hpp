@@ -44,7 +44,8 @@ class NAVIGATION_MAPPING_PUBLIC MappingActor final {
  public:
   explicit MappingActor(const std::string& config_path,
                         std::function<double()> wall_clock_seconds = {},
-                        MappingFrameContract frame_contract = {});
+                        MappingFrameContract frame_contract = {},
+                        double snapshot_publication_period_s = 0.05);
   ~MappingActor();
 
   MappingActor(const MappingActor&) = delete;
