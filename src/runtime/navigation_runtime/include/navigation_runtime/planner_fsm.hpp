@@ -81,6 +81,82 @@ enum class RetainedValidationTransition {
   FailClosed,
 };
 
+enum class PlannerRenewalReason : std::uint8_t {
+  kRetainCertifiedMain,
+  kForcedTransition,
+  kNoCommand,
+  kSafetyRecovery,
+  kInvalidHorizon,
+  kRenewalDue,
+};
+
+struct PlannerRenewalDecision {
+  bool run_optimizer{true};
+  PlannerRenewalReason reason{PlannerRenewalReason::kInvalidHorizon};
+  double remaining_main_horizon_s{std::numeric_limits<double>::quiet_NaN()};
+  double required_lead_time_s{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// World recertification and command sampling remain active independently of
+// this gate. The expensive optimizer is deferred only while the exact MAIN
+// bundle still has enough certified time before its declared BACKUP switch (or
+// main-only endpoint) to cover one scheduling interval, one complete solve
+// deadline, and the future hot-stitch interval.
+inline PlannerRenewalDecision classifyPlannerRenewal(
+    bool forced_transition, bool command_available,
+    bool safety_suffix_active, navigation_planning::CandidateRole command_role,
+    bool trajectory_metadata_valid, double command_elapsed_s,
+    double backup_start_s, double solve_deadline_s,
+    double replan_forward_s, double scheduling_interval_s) noexcept {
+  if (forced_transition) {
+    return {true, PlannerRenewalReason::kForcedTransition};
+  }
+  if (!command_available) {
+    return {true, PlannerRenewalReason::kNoCommand};
+  }
+  if (safety_suffix_active ||
+      command_role != navigation_planning::CandidateRole::kMain) {
+    return {true, PlannerRenewalReason::kSafetyRecovery};
+  }
+  if (!trajectory_metadata_valid || !std::isfinite(command_elapsed_s) ||
+      command_elapsed_s < 0.0 || !std::isfinite(backup_start_s) ||
+      backup_start_s < 0.0 || !std::isfinite(solve_deadline_s) ||
+      solve_deadline_s <= 0.0 || !std::isfinite(replan_forward_s) ||
+      replan_forward_s <= 0.0 || !std::isfinite(scheduling_interval_s) ||
+      scheduling_interval_s <= 0.0) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+
+  const long double lead_time =
+      static_cast<long double>(solve_deadline_s) +
+      static_cast<long double>(replan_forward_s) +
+      static_cast<long double>(scheduling_interval_s);
+  const long double remaining =
+      static_cast<long double>(backup_start_s) -
+      static_cast<long double>(command_elapsed_s);
+  if (!std::isfinite(lead_time) || !std::isfinite(remaining) ||
+      lead_time <= 0.0L) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+
+  const auto remaining_s = static_cast<double>(remaining);
+  const auto lead_time_s = static_cast<double>(lead_time);
+  if (!std::isfinite(remaining_s) || !std::isfinite(lead_time_s)) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+  // Both elapsed and backup-start originate from a nanosecond command clock.
+  // At their exact boundary, decimal-to-binary rounding may differ by a few
+  // ulps; one nanosecond resolves that representation ambiguity only toward an
+  // earlier, conservative renewal.
+  constexpr long double kCommandClockResolutionSeconds = 1.0e-9L;
+  if (remaining <= lead_time + kCommandClockResolutionSeconds) {
+    return {true, PlannerRenewalReason::kRenewalDue,
+            remaining_s, lead_time_s};
+  }
+  return {false, PlannerRenewalReason::kRetainCertifiedMain,
+          remaining_s, lead_time_s};
+}
+
 inline RetainedValidationTransition retainedValidationTransition(bool usable) noexcept {
   return usable ? RetainedValidationTransition::PreserveExistingState
                 : RetainedValidationTransition::FailClosed;

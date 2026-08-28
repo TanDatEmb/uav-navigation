@@ -1592,6 +1592,8 @@ void NavigationRuntimeNode::runCycle() {
   addObservationAccountingValues(status, accounting);
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
+  add_value("optimizer_deferred_count", optimizer_deferred_count_);
+  add_value("optimizer_renewal_due_count", optimizer_renewal_due_count_);
   add_value("stale_input_count", stale_input_count_);
   add_value("stale_mapping_input_count",
             stale_mapping_input_count_.load() + mapping.discarded_stale);
@@ -1872,10 +1874,12 @@ void NavigationRuntimeNode::runCycle() {
       route_snapshot->waypoints[route_snapshot->active_waypoint_index];
   const Eigen::Vector3d target = active_route_waypoint.position_enu;
   const auto planner_started = std::chrono::steady_clock::now();
-  // This is the internal planner backend FSM boundary: each mission waypoint enters
-  // PlanFromRest once, then every subsequent planning tick is ReplanOnce.
-  // planner backend itself owns the committed main/backup timing; the ROS adapter must
-  // not add a second horizon-expiry or trajectory-slicing policy.
+  // This is the internal planner backend FSM boundary: each mission waypoint
+  // enters PlanFromRest once. Later timer ticks retain a latest-world-certified
+  // MAIN until its planner-owned backup transition is close enough that one
+  // scheduler period, one complete solve deadline, and the future hot-splice
+  // interval must be reserved. Map recertification and command sampling remain
+  // independent of this expensive optimizer renewal policy.
   const bool plan_from_rest = new_goal || restart_from_rest;
   const auto transition_bundle = command_bundle_store_.load();
   const double transition_elapsed_s = transition_bundle
@@ -1913,6 +1917,28 @@ void NavigationRuntimeNode::runCycle() {
   if (!plan_from_rest_with_transition && !replan_for_new_goal && skip_replan_once_) {
     skip_replan_once_ = false;
     return;
+  }
+  const bool forced_transition = plan_from_rest_with_transition || replan_for_new_goal;
+  const auto renewal_decision = classifyPlannerRenewal(
+      forced_transition,
+      planner_command_available_.load(std::memory_order_acquire),
+      safety_suffix_active_.load(std::memory_order_acquire),
+      transition_sample ? transition_sample->role
+                        : transition_bundle ? transition_bundle->role
+                                            : navigation_planning::CandidateRole::kEmergency,
+      transition_bundle && transition_sample &&
+          transition_bundle->hasTrajectoryMetadata(),
+      transition_elapsed_s,
+      transition_bundle ? transition_bundle->backup_start_time_s
+                        : std::numeric_limits<double>::quiet_NaN(),
+      planner_->solveDeadlineSeconds(), planner_->replanForwardSeconds(),
+      planning_interval_s);
+  if (!renewal_decision.run_optimizer) {
+    ++optimizer_deferred_count_;
+    return;
+  }
+  if (renewal_decision.reason == PlannerRenewalReason::kRenewalDue) {
+    ++optimizer_renewal_due_count_;
   }
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const std::uint64_t solve_generation = ++planner_solve_generation_;

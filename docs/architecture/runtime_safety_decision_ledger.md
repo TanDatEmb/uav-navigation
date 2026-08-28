@@ -10573,3 +10573,46 @@ release profiles must not use the former allowance.
 - **Verification:** Repeat the focused commands above after any change to
   `Piece` rate certificates, `RootFinder` endpoint handling or normalized
   polynomial evaluation.
+
+### 2026-08-29 - Renew optimizer from the certified MAIN horizon
+
+- **Owner/status:** Runtime planner scheduling and planner-owned command
+  metadata, behavior change, `PROVISIONAL`.
+- **Scope:** The 5 Hz planning timer continues checking localization, world,
+  propagated-state, route and mission state, while immutable map publication
+  continues re-certifying the exposed command. `ReplanOnce` is deferred only
+  while a current MAIN command has a valid current sample plus trajectory
+  metadata and its remaining
+  time before `backup_start_time_s` exceeds the sum of one scheduler period,
+  `solve_deadline_s`, and `replan_forward_dt_s`. New goals, measured-state
+  restart, hot retarget, missing commands, BACKUP/emergency recovery, and
+  invalid horizon evidence always run the optimizer.
+- **Safety impact:** This removes unnecessary replacement of a still-certified
+  MAIN, but does not slow obstacle admission or command publication. A new map
+  snapshot still validates the entire remaining command and atomically clears
+  it plus schedules measured-state recovery when blocked. The renewal lead is
+  derived from existing owned timing contracts; no collision, tracking,
+  dynamics, freshness or optimizer threshold is relaxed.
+- **False-accept/false-reject consequences:** A malformed or unavailable
+  horizon never authorizes deferral. Conservative timing may run a solve one
+  timer early. Scheduler delay beyond the declared period remains visible in
+  diagnostics and the existing backup/command lease remains the fail-closed
+  boundary; this change does not claim real-time certification.
+- **Runtime cost and evidence required:** Deferred ticks avoid optimizer work
+  while retaining bounded state/contract checks. Diagnostics count deferrals
+  and horizon-triggered renewals. Focused FSM tests must cover MAIN deferral,
+  the exact renewal boundary, all forced recovery paths and invalid metadata;
+  Release build must pass. Repeated SITL and recorded-data runs must then show
+  solve/commit-rate reduction without increased obstacle-response delay,
+  collision, BACKUP entry, command loss or waypoint regression.
+- **Removal/review condition:** Keep the separation between high-rate safety
+  recertification and expensive optimization. Replace the lead-time expression
+  only with a measured worst-case scheduling/commit latency contract; never
+  defer on invalid evidence or while a safety-owned suffix is active.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  test_planner_fsm -j2 && ./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`; then `make build`; then repeat the exact 5 m/s
+  `long_three_pillars_multiwaypoint` SITL scenario and compare planner solve
+  count, p50/p95/p99 latency, committed generations, speed continuity,
+  waypoint acceptance, clearance and terminal state against artifact
+  `external-mode-check-20260828T183859-1439560`.

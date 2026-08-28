@@ -405,6 +405,10 @@ double PlannerFacade::solveDeadlineSeconds() const noexcept {
   return impl_->planner->solveDeadlineSeconds();
 }
 
+double PlannerFacade::replanForwardSeconds() const noexcept {
+  return impl_->planner->replanForwardSeconds();
+}
+
 double PlannerFacade::trackingErrorBudgetMeters() const noexcept {
   return impl_->planner->trackingErrorBudgetMeters();
 }

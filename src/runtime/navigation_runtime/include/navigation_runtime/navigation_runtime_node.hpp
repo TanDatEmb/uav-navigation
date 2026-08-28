@@ -293,6 +293,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t terminal_bundle_generation_{0U};
   std::uint64_t cycle_count_{0};
   std::atomic_uint64_t cycle_success_count_{0};
+  std::uint64_t optimizer_deferred_count_{0};
+  std::uint64_t optimizer_renewal_due_count_{0};
   std::atomic_uint64_t command_publish_count_{0};
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};

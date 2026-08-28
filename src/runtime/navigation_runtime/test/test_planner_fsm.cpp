@@ -16,6 +16,65 @@ TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
             PlannerResultDisposition::CommandReady);
 }
 
+TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
+  const auto decision = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 1.0, 4.0, 0.18, 0.2, 0.2);
+  EXPECT_FALSE(decision.run_optimizer);
+  EXPECT_EQ(decision.reason, PlannerRenewalReason::kRetainCertifiedMain);
+  EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 3.0);
+  EXPECT_NEAR(decision.required_lead_time_s, 0.58, 1.0e-15);
+}
+
+TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
+  const auto before_boundary = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 3.41, 4.0, 0.18, 0.2, 0.2);
+  EXPECT_FALSE(before_boundary.run_optimizer);
+
+  const auto at_boundary = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 3.42, 4.0, 0.18, 0.2, 0.2);
+  EXPECT_TRUE(at_boundary.run_optimizer);
+  EXPECT_EQ(at_boundary.reason, PlannerRenewalReason::kRenewalDue);
+}
+
+TEST(PlannerFsm, NeverDefersRequiredTransitionsOrSafetyRecovery) {
+  EXPECT_EQ(classifyPlannerRenewal(
+                true, true, false, navigation_planning::CandidateRole::kMain,
+                true, 0.0, 10.0, 0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kForcedTransition);
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, false, false, navigation_planning::CandidateRole::kMain,
+                false, 0.0, 0.0, 0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kNoCommand);
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, true, true, navigation_planning::CandidateRole::kMain,
+                true, 0.0, 10.0, 0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kSafetyRecovery);
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, true, false, navigation_planning::CandidateRole::kEmergency,
+                true, 0.0, 10.0, 0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kSafetyRecovery);
+}
+
+TEST(PlannerFsm, InvalidRenewalEvidenceRunsOptimizerFailClosed) {
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, true, false, navigation_planning::CandidateRole::kMain,
+                false, 0.0, 10.0, 0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kInvalidHorizon);
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, true, false, navigation_planning::CandidateRole::kMain,
+                true, std::numeric_limits<double>::quiet_NaN(), 10.0,
+                0.18, 0.2, 0.2).reason,
+            PlannerRenewalReason::kInvalidHorizon);
+  EXPECT_EQ(classifyPlannerRenewal(
+                false, true, false, navigation_planning::CandidateRole::kMain,
+                true, 0.0, 10.0, 0.18, 0.2,
+                std::numeric_limits<double>::infinity()).reason,
+            PlannerRenewalReason::kInvalidHorizon);
+}
+
 TEST(PlannerFsm, NoNeedWithoutCommittedCommandFailsClosed) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kNoNeed, false, false, false),
             PlannerResultDisposition::FailClosed);

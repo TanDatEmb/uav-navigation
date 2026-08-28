@@ -4,12 +4,18 @@ The current runtime uses planner backend's in-process committed trajectory state
 ROS adapter must preserve that state rather than inventing a second bundle or
 horizon transport.
 
-At each planning tick:
+At each planning timer tick:
 
-1. A new waypoint starts `PlanFromRest`; later ticks use `ReplanOnce`.
+1. A new waypoint or invalidated command starts `PlanFromRest`. A valid MAIN
+   is re-certified on each published map snapshot but does not run the
+   optimizer on every timer tick.
 2. planner backend replans from a short future state (`replan_forward_dt_s: 0.2`) and
    retains a bounded prefix (`receding_distance_m: 3.0`) so position, velocity, and
-   acceleration remain continuous.
+   acceleration remain continuous. `ReplanOnce` is scheduled when the time to
+   the certified BACKUP switch (or a main-only endpoint) is no greater than
+   one scheduler period plus one solve deadline plus the replan-forward
+   interval. Goal transitions, recovery, missing commands and malformed
+   horizon metadata bypass this deferral gate.
 3. ROG-Map and the planner validate the committed path against the current
    inflated map. A hot-replan failure may retain a valid backup suffix.
 4. If the committed suffix cannot be anchored to fresh propagated odometry,

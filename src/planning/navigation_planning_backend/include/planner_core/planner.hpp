@@ -298,6 +298,9 @@ namespace navigation_planning_backend {
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
         }
+        double replanForwardSeconds() const noexcept {
+            return cfg_.replan_forward_dt_s;
+        }
         double trackingErrorBudgetMeters() const noexcept {
             return cfg_.tracking_error_budget_m;
         }
