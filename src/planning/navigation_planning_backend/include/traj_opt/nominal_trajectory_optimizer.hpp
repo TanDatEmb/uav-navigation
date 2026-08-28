@@ -137,17 +137,6 @@ namespace traj_opt {
             : std::numeric_limits<double>::quiet_NaN();
     }
 
-    // A bounded retry schedule may deliberately reserve its stronger penalty
-    // for a later attempt.  A finite first attempt that makes no progress must
-    // not make that configured final attempt unreachable; the caller restores
-    // the best certified-corridor candidate before continuing.
-    inline bool hasRemainingFeasibilityRetry(
-            const int completed_retry_index,
-            const int maximum_retry_count) noexcept {
-        return completed_retry_index >= 0 && maximum_retry_count > 0 &&
-               completed_retry_index + 1 < maximum_retry_count;
-    }
-
 
     class ExpTrajOpt {
         ExpOptimizationDiagnostics diagnostics_{};

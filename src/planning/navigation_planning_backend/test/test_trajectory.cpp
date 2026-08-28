@@ -62,13 +62,6 @@ TEST(PlannerTrajectory, FeasibilityRetryActivatesDisabledViolatedDynamicPenalty)
       traj_opt::feasibilityRetryPenaltyWeight(weights, 0)));
 }
 
-TEST(PlannerTrajectory, NoProgressDoesNotSkipStrongerBoundedRetry) {
-  EXPECT_TRUE(traj_opt::hasRemainingFeasibilityRetry(0, 2));
-  EXPECT_FALSE(traj_opt::hasRemainingFeasibilityRetry(1, 2));
-  EXPECT_FALSE(traj_opt::hasRemainingFeasibilityRetry(-1, 2));
-  EXPECT_FALSE(traj_opt::hasRemainingFeasibilityRetry(0, 0));
-}
-
 class SweepWorld : public navigation_world_model::WorldModelView {
  public:
   double blocked_from_x{std::numeric_limits<double>::infinity()};
