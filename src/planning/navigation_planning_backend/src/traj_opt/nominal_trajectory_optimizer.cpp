@@ -967,6 +967,17 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 cfg_.corridor_plane_tolerance_m);
     diagnostics_.corridor_seed_build_failure_stage =
         static_cast<int>(corridor_seed_result.failure_stage);
+    if (!corridor_seed_result.valid &&
+        corridor_seed_result.failing_piece_index >= 0) {
+        planner_context_->warn(
+                " -- [ExpOpt] corridor-contained seed failed: stage={} piece={} "
+                "control={} plane={} violation_m={}",
+                static_cast<int>(corridor_seed_result.failure_stage),
+                corridor_seed_result.failing_piece_index,
+                corridor_seed_result.failing_control_index,
+                corridor_seed_result.failing_plane_index,
+                corridor_seed_result.maximum_plane_violation_m);
+    }
     Trajectory deterministic_nominal_seed = immutable_nominal_seed;
     navigation_planning_backend::DeterministicNominalSeedCertificate
             deterministic_seed_certificate;

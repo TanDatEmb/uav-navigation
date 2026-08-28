@@ -27,6 +27,11 @@ struct CorridorBezierSeedResult {
   CorridorBezierSeedFailureStage failure_stage{
       CorridorBezierSeedFailureStage::kInput};
   double minimum_internal_derivative_scale{0.0};
+  int failing_piece_index{-1};
+  int failing_control_index{-1};
+  int failing_plane_index{-1};
+  double maximum_plane_violation_m{
+      std::numeric_limits<double>::quiet_NaN()};
   geometry_utils::Trajectory trajectory;
 };
 
@@ -91,6 +96,32 @@ inline bool controlsInside(
       [&planes, tolerance_m](const Eigen::Vector3d& point) {
         return pointInsideNormalized(planes, point, tolerance_m);
       });
+}
+
+struct ControlPlaneViolation {
+  int control_index{-1};
+  int plane_index{-1};
+  double value_m{-std::numeric_limits<double>::infinity()};
+};
+
+inline ControlPlaneViolation maximumControlPlaneViolation(
+    const std::array<Eigen::Vector3d, kDegree + 1>& controls,
+    const navigation_math::PolyhedronH& normalized_planes) {
+  ControlPlaneViolation output;
+  for (int control = 0; control <= kDegree; ++control) {
+    const Eigen::VectorXd values =
+        normalized_planes.leftCols(3) * controls[control] +
+        normalized_planes.col(3);
+    if (!values.allFinite()) continue;
+    Eigen::Index plane = 0;
+    const double maximum = values.maxCoeff(&plane);
+    if (maximum > output.value_m) {
+      output.control_index = control;
+      output.plane_index = static_cast<int>(plane);
+      output.value_m = maximum;
+    }
+  }
+  return output;
 }
 
 inline Eigen::MatrixXd powerCoefficients(
@@ -277,10 +308,18 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
     if (!corridor_bezier_detail::controlsInside(
             controls, normalized_corridors[static_cast<std::size_t>(corridor)],
             corridor_tolerance_m)) {
+      const auto violation =
+          corridor_bezier_detail::maximumControlPlaneViolation(
+              controls,
+              normalized_corridors[static_cast<std::size_t>(corridor)]);
       output.trajectory.clear();
       output.failure_stage = piece == 0 || piece + 1 == piece_count
           ? CorridorBezierSeedFailureStage::kBoundaryControl
           : CorridorBezierSeedFailureStage::kInternalVelocity;
+      output.failing_piece_index = piece;
+      output.failing_control_index = violation.control_index;
+      output.failing_plane_index = violation.plane_index;
+      output.maximum_plane_violation_m = violation.value_m;
       return output;
     }
     const Eigen::MatrixXd coefficients =

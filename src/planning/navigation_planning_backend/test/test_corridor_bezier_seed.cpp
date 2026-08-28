@@ -260,4 +260,8 @@ TEST(CorridorBezierSeed, RejectsImmutableBoundaryDerivativeOutsideCorridor) {
   EXPECT_EQ(result.failure_stage,
             navigation_planning_backend::CorridorBezierSeedFailureStage::
                 kBoundaryControl);
+  EXPECT_EQ(result.failing_piece_index, 0);
+  EXPECT_EQ(result.failing_control_index, 3);
+  EXPECT_EQ(result.failing_plane_index, 1);
+  EXPECT_GT(result.maximum_plane_violation_m, 0.0);
 }
