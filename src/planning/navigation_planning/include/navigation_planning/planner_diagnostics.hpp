@@ -29,6 +29,13 @@ struct OptimizationDiagnostics {
   bool valid{false};
   bool used_certified_seed{false};
   int certified_seed_failure_stage{0};
+  int corridor_seed_build_failure_stage{0};
+  int corridor_seed_retry_attempt_count{0};
+  int corridor_seed_retry_build_valid_count{0};
+  int corridor_seed_retry_last_certificate_stage{0};
+  int corridor_seed_selected_mode{0};
+  double corridor_seed_selected_max_duration_scale{
+      std::numeric_limits<double>::quiet_NaN()};
   double initial_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};
   double best_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};
   double final_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};

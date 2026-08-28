@@ -86,6 +86,22 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_certified_seed_failure_stage": (
         "exp_certified_seed_failure_stage",
     ),
+    "exp_corridor_seed_build_failure_stage": (
+        "exp_corridor_seed_build_failure_stage",
+    ),
+    "exp_corridor_seed_retry_attempt_count": (
+        "exp_corridor_seed_retry_attempt_count",
+    ),
+    "exp_corridor_seed_retry_build_valid_count": (
+        "exp_corridor_seed_retry_build_valid_count",
+    ),
+    "exp_corridor_seed_retry_last_certificate_stage": (
+        "exp_corridor_seed_retry_last_certificate_stage",
+    ),
+    "exp_corridor_seed_selected_mode": ("exp_corridor_seed_selected_mode",),
+    "exp_corridor_seed_selected_max_duration_scale": (
+        "exp_corridor_seed_selected_max_duration_scale",
+    ),
     "exp_lbfgs_attempt_count": ("exp_lbfgs_attempt_count",),
     "exp_lbfgs_evaluation_count": ("exp_lbfgs_evaluation_count",),
     "exp_lbfgs_first_attempt_evaluation_count": (
@@ -388,6 +404,24 @@ def normalize_planner_trace_record(
         "exp_certified_seed_failure_stage": _int(
             values["exp_certified_seed_failure_stage"]
         ),
+        "exp_corridor_seed_build_failure_stage": _int(
+            values["exp_corridor_seed_build_failure_stage"]
+        ),
+        "exp_corridor_seed_retry_attempt_count": _int(
+            values["exp_corridor_seed_retry_attempt_count"]
+        ),
+        "exp_corridor_seed_retry_build_valid_count": _int(
+            values["exp_corridor_seed_retry_build_valid_count"]
+        ),
+        "exp_corridor_seed_retry_last_certificate_stage": _int(
+            values["exp_corridor_seed_retry_last_certificate_stage"]
+        ),
+        "exp_corridor_seed_selected_mode": _int(
+            values["exp_corridor_seed_selected_mode"]
+        ),
+        "exp_corridor_seed_selected_max_duration_scale": _float(
+            values["exp_corridor_seed_selected_max_duration_scale"]
+        ),
         "exp_lbfgs_attempt_count": _int(values["exp_lbfgs_attempt_count"]),
         "exp_lbfgs_evaluation_count": _int(values["exp_lbfgs_evaluation_count"]),
         "exp_lbfgs_first_attempt_evaluation_count": _int(
@@ -579,11 +613,29 @@ def collect_planner_trace_records(
 
 def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     failure_stage_counts: dict[str, int] = {}
+    corridor_build_failure_stage_counts: dict[str, int] = {}
+    corridor_retry_certificate_stage_counts: dict[str, int] = {}
+    corridor_selected_mode_counts: dict[str, int] = {}
     for record in records:
         stage = record.get("exp_certified_seed_failure_stage")
         if isinstance(stage, int) and not isinstance(stage, bool):
             key = str(stage)
             failure_stage_counts[key] = failure_stage_counts.get(key, 0) + 1
+        for field, counts in (
+            (
+                "exp_corridor_seed_build_failure_stage",
+                corridor_build_failure_stage_counts,
+            ),
+            (
+                "exp_corridor_seed_retry_last_certificate_stage",
+                corridor_retry_certificate_stage_counts,
+            ),
+            ("exp_corridor_seed_selected_mode", corridor_selected_mode_counts),
+        ):
+            value = record.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                key = str(value)
+                counts[key] = counts.get(key, 0) + 1
     return {
         "record_count": len(records),
         "complete_record_count": sum(bool(record.get("complete")) for record in records),
@@ -592,6 +644,30 @@ def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             record.get("exp_used_certified_seed") is True for record in records
         ),
         "exp_certified_seed_failure_stage_counts": failure_stage_counts,
+        "exp_corridor_seed_build_failure_stage_counts": (
+            corridor_build_failure_stage_counts
+        ),
+        "exp_corridor_seed_retry_attempt_total": sum(
+            value
+            for record in records
+            if isinstance(
+                value := record.get("exp_corridor_seed_retry_attempt_count"), int
+            )
+            and not isinstance(value, bool)
+        ),
+        "exp_corridor_seed_retry_build_valid_total": sum(
+            value
+            for record in records
+            if isinstance(
+                value := record.get("exp_corridor_seed_retry_build_valid_count"),
+                int,
+            )
+            and not isinstance(value, bool)
+        ),
+        "exp_corridor_seed_retry_last_certificate_stage_counts": (
+            corridor_retry_certificate_stage_counts
+        ),
+        "exp_corridor_seed_selected_mode_counts": corridor_selected_mode_counts,
         "fields_are_runtime_supplied": True,
         "missing_data_policy": "omitted, never inferred from request/trajectory IDs or aggregate counters",
     }

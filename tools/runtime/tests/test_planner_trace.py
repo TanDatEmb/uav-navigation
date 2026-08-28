@@ -168,6 +168,12 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_diagnostics_valid": "1",
                                     "exp_used_certified_seed": "1",
                                     "exp_certified_seed_failure_stage": "0",
+                                    "exp_corridor_seed_build_failure_stage": "0",
+                                    "exp_corridor_seed_retry_attempt_count": "2",
+                                    "exp_corridor_seed_retry_build_valid_count": "1",
+                                    "exp_corridor_seed_retry_last_certificate_stage": "0",
+                                    "exp_corridor_seed_selected_mode": "2",
+                                    "exp_corridor_seed_selected_max_duration_scale": "1.75",
                                     "exp_lbfgs_attempt_count": "3",
                                     "exp_lbfgs_evaluation_count": "173",
                                     "exp_lbfgs_first_attempt_evaluation_count": "91",
@@ -255,6 +261,16 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertTrue(records[0]["exp_diagnostics_valid"])
         self.assertTrue(records[0]["exp_used_certified_seed"])
         self.assertEqual(records[0]["exp_certified_seed_failure_stage"], 0)
+        self.assertEqual(records[0]["exp_corridor_seed_build_failure_stage"], 0)
+        self.assertEqual(records[0]["exp_corridor_seed_retry_attempt_count"], 2)
+        self.assertEqual(records[0]["exp_corridor_seed_retry_build_valid_count"], 1)
+        self.assertEqual(
+            records[0]["exp_corridor_seed_retry_last_certificate_stage"], 0
+        )
+        self.assertEqual(records[0]["exp_corridor_seed_selected_mode"], 2)
+        self.assertEqual(
+            records[0]["exp_corridor_seed_selected_max_duration_scale"], 1.75
+        )
         self.assertEqual(records[0]["exp_lbfgs_attempt_count"], 3)
         self.assertEqual(records[0]["exp_retry_count"], 2)
         self.assertEqual(records[0]["exp_lbfgs_evaluation_count"], 173)
@@ -296,11 +312,30 @@ class PlannerTraceTest(unittest.TestCase):
                     "bundle_id": index,
                     "exp_used_certified_seed": used,
                     "exp_certified_seed_failure_stage": stage,
+                    "exp_corridor_seed_build_failure_stage": build_stage,
+                    "exp_corridor_seed_retry_attempt_count": retry_attempts,
+                    "exp_corridor_seed_retry_build_valid_count": retry_valid,
+                    "exp_corridor_seed_retry_last_certificate_stage": retry_stage,
+                    "exp_corridor_seed_selected_mode": selected_mode,
                 },
                 source="test",
             )
-            for index, (used, stage) in enumerate(
-                ((1, 0), (0, 5), (0, 5), (0, 2)), start=1
+            for index, (
+                used,
+                stage,
+                build_stage,
+                retry_attempts,
+                retry_valid,
+                retry_stage,
+                selected_mode,
+            ) in enumerate(
+                (
+                    (1, 0, 0, 2, 2, 0, 2),
+                    (0, 5, 0, 3, 1, 5, 0),
+                    (0, 5, 3, 0, 0, 0, 0),
+                    (0, 2, 0, 1, 0, 0, 0),
+                ),
+                start=1,
             )
         ]
         summary = planner_trace_summary([record for record in records if record])
@@ -308,6 +343,20 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(
             summary["exp_certified_seed_failure_stage_counts"],
             {"0": 1, "2": 1, "5": 2},
+        )
+        self.assertEqual(
+            summary["exp_corridor_seed_build_failure_stage_counts"],
+            {"0": 3, "3": 1},
+        )
+        self.assertEqual(summary["exp_corridor_seed_retry_attempt_total"], 6)
+        self.assertEqual(summary["exp_corridor_seed_retry_build_valid_total"], 3)
+        self.assertEqual(
+            summary["exp_corridor_seed_retry_last_certificate_stage_counts"],
+            {"0": 3, "5": 1},
+        )
+        self.assertEqual(
+            summary["exp_corridor_seed_selected_mode_counts"],
+            {"0": 3, "2": 1},
         )
 
 

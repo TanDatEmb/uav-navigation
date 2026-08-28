@@ -7,6 +7,7 @@
 #include <traj_opt/nominal_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
+#include <utility>
 #include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
@@ -946,6 +947,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 opt_vars.times, opt_vars.hPolytopes, opt_vars.hPolyIdx,
                 cfg_.max_vel * cfg_.optimization_dynamic_reserve_ratio,
                 cfg_.corridor_plane_tolerance_m);
+    diagnostics_.corridor_seed_build_failure_stage =
+        static_cast<int>(corridor_seed_result.failure_stage);
     Trajectory deterministic_nominal_seed = immutable_nominal_seed;
     navigation_planning_backend::DeterministicNominalSeedCertificate
             deterministic_seed_certificate;
@@ -966,28 +969,31 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         if (deterministic_seed_certificate.valid) {
             deterministic_nominal_seed = corridor_seed_result.trajectory;
             deterministic_seed_uses_corridor_bezier = true;
+            diagnostics_.corridor_seed_selected_mode = 1;
+            diagnostics_.corridor_seed_selected_max_duration_scale = 1.0;
         } else {
             // Corridor construction has already established geometry.  If the
             // only failure is V/A/J, rebuild it with a finite set of uniform
             // duration reserves.  Endpoint P/V/A/J remain immutable, so every
             // rebuilt candidate still requires the complete certificate.
-            std::vector<VecDf> retry_duration_candidates;
+            std::vector<std::pair<int, VecDf>> retry_duration_candidates;
             const VecDf piece_scales = navigation_planning_backend::
                     boundedPieceDurationRetryScales(
                         corridor_seed_result.trajectory, cfg_);
             if (piece_scales.size() == opt_vars.times.size() &&
                 piece_scales.allFinite() && piece_scales.maxCoeff() > 1.0) {
                 retry_duration_candidates.emplace_back(
-                    opt_vars.times.cwiseProduct(piece_scales));
+                    2, opt_vars.times.cwiseProduct(piece_scales));
             }
             const auto retry_scales = navigation_planning_backend::
                     boundedDynamicDurationRetryScales(
                         deterministic_seed_certificate, cfg_);
             for (const double duration_scale : retry_scales) {
                 retry_duration_candidates.emplace_back(
-                    opt_vars.times * duration_scale);
+                    3, opt_vars.times * duration_scale);
             }
-            for (const VecDf& retry_times : retry_duration_candidates) {
+            for (const auto& [retry_mode, retry_times] : retry_duration_candidates) {
+                ++diagnostics_.corridor_seed_retry_attempt_count;
                 auto retry_seed = navigation_planning_backend::
                         buildCorridorContainedBezierSeed(
                             opt_vars.headPVAJ, opt_vars.tailPVAJ,
@@ -997,6 +1003,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                 cfg_.optimization_dynamic_reserve_ratio,
                             cfg_.corridor_plane_tolerance_m);
                 if (!retry_seed.valid) continue;
+                ++diagnostics_.corridor_seed_retry_build_valid_count;
                 const auto retry_certificate = navigation_planning_backend::
                         certifyDeterministicNominalSeed(
                             retry_seed.trajectory,
@@ -1008,6 +1015,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                             opt_vars.headPVAJ,
                             opt_vars.tailPVAJ,
                             cfg_);
+                diagnostics_.corridor_seed_retry_last_certificate_stage =
+                    static_cast<int>(retry_certificate.failure_stage);
                 if (!retry_certificate.valid) continue;
                 corridor_seed_result = std::move(retry_seed);
                 deterministic_nominal_seed = corridor_seed_result.trajectory;
@@ -1015,6 +1024,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 deterministic_seed_uses_corridor_bezier = true;
                 deterministic_seed_duration_scale =
                     (retry_times.array() / opt_vars.times.array()).maxCoeff();
+                diagnostics_.corridor_seed_selected_mode = retry_mode;
+                diagnostics_.corridor_seed_selected_max_duration_scale =
+                    deterministic_seed_duration_scale;
                 break;
             }
         }

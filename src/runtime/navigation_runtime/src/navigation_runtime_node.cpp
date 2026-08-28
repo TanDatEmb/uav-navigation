@@ -2568,6 +2568,18 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.used_certified_seed ? 1 : 0);
     add_trace_value("exp_certified_seed_failure_stage",
                     exp_diagnostics.certified_seed_failure_stage);
+    add_trace_value("exp_corridor_seed_build_failure_stage",
+                    exp_diagnostics.corridor_seed_build_failure_stage);
+    add_trace_value("exp_corridor_seed_retry_attempt_count",
+                    exp_diagnostics.corridor_seed_retry_attempt_count);
+    add_trace_value("exp_corridor_seed_retry_build_valid_count",
+                    exp_diagnostics.corridor_seed_retry_build_valid_count);
+    add_trace_value("exp_corridor_seed_retry_last_certificate_stage",
+                    exp_diagnostics.corridor_seed_retry_last_certificate_stage);
+    add_trace_value("exp_corridor_seed_selected_mode",
+                    exp_diagnostics.corridor_seed_selected_mode);
+    add_trace_value("exp_corridor_seed_selected_max_duration_scale",
+                    exp_diagnostics.corridor_seed_selected_max_duration_scale);
     add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
     add_trace_value("exp_lbfgs_evaluation_count",
                     exp_diagnostics.lbfgs_evaluation_count);

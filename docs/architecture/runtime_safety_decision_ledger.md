@@ -9466,3 +9466,36 @@ release profiles must not use the former allowance.
   recorded data. Require shorter certified fallback duration, repeatable
   fallback availability, lower dynamics-stage rejection and no latency,
   clearance, route, altitude, anchor or speed regression.
+
+### 2026-08-28 - Trace deterministic corridor fallback retry boundaries
+
+- **Owner:** Nominal-trajectory optimizer diagnostics and runtime report
+  normalization.
+- **Scope:** Publish the initial corridor-seed construction failure stage,
+  retry attempt and construction-success counts, last retry certificate stage,
+  selected construction mode, and selected maximum duration multiplier. Keep
+  the fields source-owned through the backend facade, runtime decision trace
+  and report summary; missing fields remain missing rather than inferred.
+- **Safety impact:** Observability only. Retry ordering, trajectory
+  construction, certification, selection, mission limits, UNKNOWN policy,
+  backup handling, PX4 handover and acceptance gates are unchanged. The
+  optimizer still publishes a corridor baseline only after the complete
+  fail-closed certificate succeeds.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T130718-1138466` completed the
+  three-column mission without collision and committed `160/232` solves, but
+  selected zero deterministic fallbacks while 189 solves ended at dynamics
+  stage 5. Existing fields cannot distinguish a retry that failed to construct
+  a corridor-contained polynomial from one that constructed successfully and
+  then failed the complete certificate. That ambiguity blocks an architectural
+  decision between replacing the Bezier builder and replacing its time/dynamic
+  allocation.
+- **Removal/review condition:** Remove only when an equal-or-stronger typed
+  planning-decision trace identifies every deterministic candidate's build and
+  certificate boundary. Do not infer these outcomes from MINCO success,
+  committed trajectory counts or the final fallback-use bit.
+- **Verification:** Run `test_corridor_bezier_seed`,
+  `test_exp_optimizer_seed`, `tools.runtime.tests.test_planner_trace`, all
+  workspace tests and a Release build. Then run exact-HEAD three-column SITL
+  and require report aggregates to equal the raw runtime fields before using
+  the evidence for an algorithm decision.

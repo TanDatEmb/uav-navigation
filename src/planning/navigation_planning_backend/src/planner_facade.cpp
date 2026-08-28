@@ -60,6 +60,17 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.valid = source.valid;
   output.used_certified_seed = source.used_certified_seed;
   output.certified_seed_failure_stage = source.certified_seed_failure_stage;
+  output.corridor_seed_build_failure_stage =
+      source.corridor_seed_build_failure_stage;
+  output.corridor_seed_retry_attempt_count =
+      source.corridor_seed_retry_attempt_count;
+  output.corridor_seed_retry_build_valid_count =
+      source.corridor_seed_retry_build_valid_count;
+  output.corridor_seed_retry_last_certificate_stage =
+      source.corridor_seed_retry_last_certificate_stage;
+  output.corridor_seed_selected_mode = source.corridor_seed_selected_mode;
+  output.corridor_seed_selected_max_duration_scale =
+      source.corridor_seed_selected_max_duration_scale;
   output.initial_normalized_dynamic_violation = source.initial_normalized_dynamic_violation;
   output.best_normalized_dynamic_violation = source.best_normalized_dynamic_violation;
   output.final_normalized_dynamic_violation = source.final_normalized_dynamic_violation;
