@@ -298,6 +298,9 @@ namespace navigation_planning_backend {
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
         }
+        double trackingErrorBudgetMeters() const noexcept {
+            return cfg_.tracking_error_budget_m;
+        }
         navigation_world_model::UnknownPolicy unknownPolicy() const noexcept {
             return cfg_.unknown_space_policy;
         }

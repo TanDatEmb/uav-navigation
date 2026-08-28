@@ -242,6 +242,21 @@ TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {
       true, 4.0, 4.0, 4.0, 0.2, 0.75, true));
 }
 
+TEST(PlannerFsm, RetainedCommandCannotConsumeUncertifiedTrackingClearance) {
+  EXPECT_DOUBLE_EQ(retainedCommandTrackingLimit(0.25, 0.75), 0.25);
+  EXPECT_DOUBLE_EQ(retainedCommandTrackingLimit(1.0, 0.75), 0.75);
+  EXPECT_TRUE(std::isnan(retainedCommandTrackingLimit(
+      std::numeric_limits<double>::quiet_NaN(), 0.75)));
+
+  // Generation 341 remained below the final 0.75 m execution rejection gate,
+  // but at 0.301 m it had already consumed more tracking clearance than the
+  // world certificate reserved. That state must trigger measured-state brake
+  // recovery instead of retaining the detached nominal prefix.
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      true, 0.86, 8.361, 6.270, 0.301,
+      retainedCommandTrackingLimit(0.25, 0.75), true));
+}
+
 TEST(PlannerFsm, RetainsVisibleMainOnlyTrajectoryAfterTransientReplanFailure) {
   EXPECT_TRUE(committedSafetySuffixIsUsable(
       false, 0.8, 1.395, 0.8, 0.187, 0.75, true));

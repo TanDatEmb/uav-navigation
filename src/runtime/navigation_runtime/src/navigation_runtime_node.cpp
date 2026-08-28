@@ -2171,10 +2171,13 @@ void NavigationRuntimeNode::runCycle() {
     const double safety_transition_s = backup_available
                                            ? std::max(backup_start_s, clamped_elapsed_s)
                                            : clamped_elapsed_s;
+    const double retained_tracking_limit_m = retainedCommandTrackingLimit(
+        planner_->trackingErrorBudgetMeters(),
+        navigation_contracts::kCommandAnchorErrorLimitM);
     bool use_safety_suffix = committedSafetySuffixIsUsable(
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
-        anchor_error_m, navigation_contracts::kCommandAnchorErrorLimitM, sampled_path_clear);
+        anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
     bool emergency_brake_committed = false;
     if (!validate_without_new_commit && !use_safety_suffix && fresh_vehicle_state &&
         committed && command_anchor_valid) {
@@ -2245,18 +2248,21 @@ void NavigationRuntimeNode::runCycle() {
     } else if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
                   "planner backend hot replan failed (%d); retaining visible committed trajectory "
-                  "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f",
+                  "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f "
+                  "anchor_error=%.3f tracking_limit=%.3f",
                   static_cast<int>(result), backup_available, elapsed_s, safety_transition_s,
-                  total_duration_s, anchor_error_m);
+                  total_duration_s, anchor_error_m, retained_tracking_limit_m);
     } else {
       RCLCPP_ERROR(get_logger(),
                    "planner backend hot replan failed without a valid safety suffix: backup=%d "
                    "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f "
+                   "tracking_limit=%.3f "
                    "state_age=%.3f clear=%d blocked_t=%.3f blocked_grid=%d "
                    "blocked=(%.2f,%.2f,%.2f)",
                    backup_available, elapsed_s,
                    safety_transition_s, total_duration_s,
-                   anchor_error_m, latest_vehicle_state_age_s, sampled_path_clear,
+                   anchor_error_m, retained_tracking_limit_m,
+                   latest_vehicle_state_age_s, sampled_path_clear,
                    first_blocked_sample_s, static_cast<int>(first_blocked_grid),
                    first_blocked_sample.x(), first_blocked_sample.y(),
                    first_blocked_sample.z());

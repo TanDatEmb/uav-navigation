@@ -91,6 +91,7 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
 
   EXPECT_EQ(facade.solveStage(), 0);
   EXPECT_EQ(facade.solvePointCount(), 0U);
+  EXPECT_DOUBLE_EQ(facade.trackingErrorBudgetMeters(), 0.25);
   const auto snapshot = facade.committedSnapshot();
   EXPECT_TRUE(snapshot.empty());
   EXPECT_EQ(snapshot.generation, 0U);

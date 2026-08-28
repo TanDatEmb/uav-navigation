@@ -50,7 +50,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-004 | Vehicle dynamic and flatness envelope | V/A/J 12/12/30, body rate 5 rad/s, thrust acceleration 6-25 m/s2 | PROVISIONAL | Product config says X500-derived, but controller/PX4/hardware provenance is incomplete. Backup missions may lower these limits. | Link airframe/controller evidence and dataset/SITL distributions; certify continuity and actual PX4 tracking before hardware. |
 | HG-005 | Planning radius invariant | 0.35 + 0.25 + 0.05 + 0.10 + 0.05 = 0.80 m | PROVISIONAL | Ownership and sum are explicit and config-validated. Component error budgets are not yet tied to measured distributions. | Derive tracking/localization/mapping p99 independently and preserve the sum invariant. |
 | HG-006 | Runtime input freshness | cloud/corrected/propagated maximum age 0.5 s; exact timestamp pairing at the typed observation boundary | PROVISIONAL | Fail-closed works, but 0.5 s is far larger than a 0.2 s planning lead. Recent runs show health exits from scheduling gaps around this boundary. The removed legacy pairing-skew knob is no longer an independent authority. | Express per-stream deadlines from rates and braking envelope; measure dataset and loaded-SITL gap distributions. |
-| HG-007 | Safety suffix anchor | maximum state-to-command anchor error 0.75 m | PROVISIONAL | Prevents retaining a geometrically detached suffix, but value is independent of speed, stopping distance and localization confidence. | Replace with speed/covariance-aware contract or derive a certified worst case. |
+| HG-007 | Safety suffix anchor | retained bundles use `min(planner tracking budget, 0.75 m execution limit)`; PX4 final rejection remains 0.75 m | PROVISIONAL | A retained MAIN-to-BRAKE bundle may not consume clearance absent from its world certificate. The 0.75 m execution limit remains a final rejection boundary, not additional planned clearance. Values remain independent of speed, stopping distance and localization confidence. | Repeat retained-command failures and measured-state emergency-brake transitions; replace with a speed/covariance-aware tracking tube or derive certified worst cases. |
 | HG-008 | Planner watchdog | 1.0 s | PROVISIONAL | Protects command publication from a hung solve, but exceeds the internal 0.18 s solve deadline by 5.6x and invalidates all command availability on expiry. | Align watchdog with cancellability and measured worst-case stage latency; test cancellation and immutable commit under load. |
 | HG-009 | Goal connectivity | Shared 3-D completion/connectivity tolerance 0.20 m | PROVISIONAL | Planner endpoint resolution and runtime completion now use one product-owned value; scale/provenance and mission distributions remain provisional. | Validate goal acceptance/rejection across map resolutions and 3-D endpoint cases; retain one shared owner. |
 | HG-010 | Retained-suffix swept validation | spatial step 0.5 inflated-map resolution, time step clamped 2-50 ms | PROVISIONAL | Adaptive segment checks fail closed for OCCUPIED and OUT_OF_MAP. Maximum step and map revision stability are not yet recorded in the certificate. | Attach map revision/generation and segment certificate to the committed bundle; test obstacle between legacy 50 ms samples. |
@@ -10323,6 +10323,38 @@ release profiles must not use the former allowance.
   measured-state restart before an envelope violation, bounded P/V handoff,
   zero collision, no tracking-envelope exit, complete waypoint order and
   planner/mapping p50/p95/p99 evidence.
+
+### 2026-08-29 - Preserve certified clearance when a replacement solve fails
+
+- **Owner/status:** Runtime retained-command validation and planner/execution
+  boundary, safety invariant; tightens HG-007 without adding a threshold.
+- **Scope:** A failed replacement solve may retain a continuous MAIN-to-BRAKE
+  bundle only while its measured command-anchor error remains within the
+  smaller of the planner tracking budget and the final execution anchor limit.
+  If that certificate-relative budget is exceeded, runtime uses the existing
+  measured-state emergency-brake path; an invalid brake candidate fails closed.
+- **Safety impact:** Positive and fail-closed. The inflated world certificate
+  includes `planner/tracking_error_budget_m` (0.25 m in the cited mission), so
+  the broader 0.75 m PX4 rejection envelope cannot authorize another 0.50 m of
+  unplanned clearance. No map, dynamics, freshness, waypoint, deadline,
+  UNKNOWN/OUT_OF_MAP or PX4 threshold is relaxed.
+- **Evidence:** In artifact
+  `.artifacts/runtime/external-mode-check-20260828T165809-1348078`, bundle 341
+  started from matching measured P/V. Replans then failed in A* at about 88 ms
+  while runtime retained the bundle: anchor error grew through 0.301 m at
+  elapsed 0.86 s, 0.597 m at 1.18 s and 0.739 m at 1.34 s. PX4 rejected at
+  elapsed 1.364 s with 0.753 m longitudinal error. Although diagnostics marked
+  the frozen bundle safety-owned, its actual BRAKE interval did not begin until
+  6.270 s; the vehicle was still executing the retained MAIN prefix.
+- **Removal/review condition:** Replace only with an execution/controller-owned
+  tracking tube that proves equivalent world clearance throughout time scaling
+  or command re-anchoring. Do not raise either existing budget from one run.
+- **Verification:** Build planner facade and runtime tests, then repeat the
+  generation-341 scenario and retained-command fault injection. Require a
+  measured-state emergency BRAKE before 0.25 m is exceeded at the next
+  validation boundary, zero 0.75 m PX4 rejection, zero collision, valid world
+  certificate and explicit replacement/stop provenance. Continue reporting
+  solve and mapping p50/p95/p99; this safety fix does not close A* starvation.
 
 ### 2026-08-29 - Fail closed on malformed Piece inputs and low-degree derivatives
 

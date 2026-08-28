@@ -405,6 +405,10 @@ double PlannerFacade::solveDeadlineSeconds() const noexcept {
   return impl_->planner->solveDeadlineSeconds();
 }
 
+double PlannerFacade::trackingErrorBudgetMeters() const noexcept {
+  return impl_->planner->trackingErrorBudgetMeters();
+}
+
 navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   navigation_planning::PlannerDiagnostics output;
   output.solve_stage = impl_->planner->solveStage();

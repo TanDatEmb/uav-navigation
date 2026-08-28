@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -258,6 +259,22 @@ inline bool committedSafetySuffixIsUsable(
     return std::abs(safety_transition_s - elapsed_s) <= 1.0e-9;
   }
   return safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s;
+}
+
+// A retained bundle is still executing geometry certified with the planner's
+// tracking-error allowance. The broader execution anchor is a final rejection
+// boundary, not authority to consume clearance that was never included in the
+// world certificate.
+inline double retainedCommandTrackingLimit(
+    const double planner_tracking_budget_m,
+    const double execution_anchor_limit_m) noexcept {
+  if (!std::isfinite(planner_tracking_budget_m) ||
+      planner_tracking_budget_m < 0.0 ||
+      !std::isfinite(execution_anchor_limit_m) ||
+      execution_anchor_limit_m < 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return std::min(planner_tracking_budget_m, execution_anchor_limit_m);
 }
 
 }  // namespace navigation_runtime
