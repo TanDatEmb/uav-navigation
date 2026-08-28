@@ -7944,3 +7944,35 @@ release profiles must not use the former allowance.
   iterations/return codes, EXP p50/p95/p99/max, total planning latency,
   certificate outcomes, command gaps, waypoint completion, altitude,
   clearance, and fail-closed decisions.
+
+### 2026-08-28 - Align planner cadence with its absolute solve budget
+
+- **Owner:** Navigation runtime scheduler and planner-backend maintainers.
+- **Scope:** Set the canonical runtime planner cadence to 5 Hz while keeping
+  command sampling at 50 Hz. At node construction, reject any configuration
+  whose backend `solve_deadline_s` is non-finite, non-positive, or greater
+  than or equal to one planner period. The planner callback remains
+  mutually exclusive; this check prevents a nominal timer cadence that the
+  callback cannot physically service.
+- **Safety impact:** `PERFORMANCE_POLICY` and fail-closed startup validation.
+  No solve deadline, dynamic limit, map policy, command lease, waypoint
+  acceptance rule, fallback, or certificate is relaxed. A mismatched profile
+  is rejected before the mapping worker starts instead of silently running an
+  overloaded scheduler. The 50 Hz command sampler remains independent and
+  continues to publish only the immutable validated command bundle.
+- **Evidence:** The exact `90d9148` audit identified the canonical 10 Hz
+  planner period (100 ms) as shorter than the 180 ms solve budget. The fresh
+  post-L-BFGS artifact
+  `.artifacts/runtime/external-mode-check-20260828T043244-698169` still
+  reached a 180697 us total solve and stopped fail-closed before cruise,
+  so increasing the deadline or retaining a 10 Hz nominal schedule would
+  hide the measured tail rather than resolve the cadence mismatch.
+- **Removal/review condition:** Revisit only after repeated representative
+  SITL and recorded-data distributions demonstrate a bounded planner p99
+  with explicit scheduling margin at a higher rate. Do not remove the guard,
+  make the timer re-entrant, or compensate by increasing the solve deadline.
+- **Verification:** `make build`; run runtime/planner/PX4 contract tests;
+  verify that the canonical profile is 5 Hz and that a 10 Hz override with
+  the 180 ms backend budget is rejected; then inspect planner total latency,
+  callback gaps, command age, waypoint order, altitude, clearance, and
+  fail-closed behavior in a fresh 3-column run.

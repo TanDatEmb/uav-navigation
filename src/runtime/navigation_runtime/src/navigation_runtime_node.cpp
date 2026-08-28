@@ -285,7 +285,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   body_frame_id_ = declare_parameter("navigation_runtime.body_frame_id", std::string("base_link"));
   deployment_profile_ = declare_parameter(
       "navigation_runtime.deployment_profile", std::string("sitl"));
-  planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 10.0);
+  planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 5.0);
   command_rate_hz_ = declare_parameter("navigation_runtime.command_rate_hz", 50.0);
   mapping_snapshot_publication_period_s_ = declare_parameter(
       "navigation_runtime.mapping_snapshot_publication_period_s", 0.05);
@@ -703,6 +703,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   planner_ = std::make_unique<navigation_planning_backend::PlannerFacade>(
       planner_config_path_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_, [this]() { return now().seconds(); });
+  const double planner_period_s = 1.0 / planner_rate_hz_;
+  const double solve_deadline_s = planner_->solveDeadlineSeconds();
+  if (!std::isfinite(solve_deadline_s) || solve_deadline_s <= 0.0 ||
+      solve_deadline_s >= planner_period_s) {
+    throw std::invalid_argument(
+        "navigation_runtime.planner_rate_hz must leave a complete timer period "
+        "for planner.solve_deadline_s");
+  }
   mapping_worker_->setStrictlyIncreasingOrderKey(
       [](const navigation_mapping::MappingObservation& observation) { return observation.stamp_ns; });
   mapping_worker_->start();

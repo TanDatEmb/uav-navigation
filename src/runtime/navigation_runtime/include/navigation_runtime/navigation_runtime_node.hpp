@@ -181,7 +181,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::string planning_frame_;
   std::string body_frame_id_;
   std::string deployment_profile_;
-  double planner_rate_hz_{10.0};
+  // The planner owns a 180 ms solve budget. Keep one complete timer period
+  // available for that budget; command sampling remains independent at 50 Hz.
+  double planner_rate_hz_{5.0};
   double command_rate_hz_{50.0};
   double mapping_snapshot_publication_period_s_{0.05};
   double data_freshness_window_s_{0.5};

@@ -528,7 +528,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(parameters["planner_rate_hz"], 10.0)
+            self.assertEqual(parameters["planner_rate_hz"], 5.0)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)

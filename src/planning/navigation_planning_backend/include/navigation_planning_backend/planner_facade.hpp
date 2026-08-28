@@ -72,6 +72,7 @@ class PlannerFacade final {
   [[nodiscard]] double committedBackupStartTime() const noexcept;
   [[nodiscard]] int solveStage() const noexcept;
   [[nodiscard]] std::size_t solvePointCount() const noexcept;
+  [[nodiscard]] double solveDeadlineSeconds() const noexcept;
 
   [[nodiscard]] navigation_planning::PlannerDiagnostics diagnostics() const;
 

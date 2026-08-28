@@ -362,6 +362,10 @@ std::size_t PlannerFacade::solvePointCount() const noexcept {
   return impl_->planner->solvePointCount();
 }
 
+double PlannerFacade::solveDeadlineSeconds() const noexcept {
+  return impl_->planner->solveDeadlineSeconds();
+}
+
 navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   navigation_planning::PlannerDiagnostics output;
   output.solve_stage = impl_->planner->solveStage();

@@ -9,7 +9,10 @@ navigation_runtime_node:
       planning_frame: lio_odom
       body_frame_id: base_link
       deployment_profile: sitl
-      planner_rate_hz: 10.0
+      # The planner solve budget is 180 ms; 5 Hz gives one 200 ms scheduling
+      # period without overlapping the next planning deadline. Command
+      # sampling remains high-rate and independent below.
+      planner_rate_hz: 5.0
       command_rate_hz: 50.0
       # Export immutable world snapshots at 20 Hz while keeping mutable map
       # updates latest-only. This remains below both the planner period and

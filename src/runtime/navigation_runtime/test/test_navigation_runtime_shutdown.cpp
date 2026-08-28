@@ -90,6 +90,26 @@ TEST(NavigationRuntimeTelemetry, KeepsRevalidationCountersFromCurrentUpdate) {
   EXPECT_EQ(snapshot.command_revalidation_full_count, 2U);
 }
 
+TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr);
+  rclcpp::NodeOptions options;
+  options.context(context);
+  options.parameter_overrides({
+      rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
+      rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 10.0),
+      rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
+  });
+
+  EXPECT_THROW(
+      {
+        auto navigation = std::make_shared<NavigationRuntimeNode>(options);
+      },
+      std::invalid_argument);
+  context->shutdown("cadence contract test complete");
+}
+
 class ExecutorStopGuard {
  public:
   ExecutorStopGuard(rclcpp::Executor& executor, std::thread& thread)

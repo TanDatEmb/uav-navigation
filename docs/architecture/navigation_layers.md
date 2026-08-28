@@ -43,7 +43,7 @@ ROS/vendor-free C++20 request/outcome/candidate and kinematic-state contracts;
 runtime sends the typed propagated state directly to the backend adapter.
 It pairs the newest cloud and propagated odometry, rejects wrong-frame/stale
 inputs, updates the world model, and runs the backend's
-`PlanFromRest`/`ReplanOnce` state machine. The configured loop is 10 Hz for
+`PlanFromRest`/`ReplanOnce` state machine. The configured loop is 5 Hz for
 planning and 50 Hz for command sampling.
 
 The runtime publishes `navigation_contracts/NavigationCommand` on

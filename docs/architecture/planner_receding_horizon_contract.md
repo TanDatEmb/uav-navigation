@@ -37,7 +37,7 @@ The relevant runtime bounds are:
 
 | Contract | Current value |
 |---|---:|
-| Planning loop | 10 Hz |
+| Planning loop | 5 Hz |
 | Command sampling | 50 Hz |
 | Input pair maximum skew | 0.1 s |
 | Input maximum age | 0.5 s |
