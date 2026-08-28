@@ -72,7 +72,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   world_geometry.inflated_resolution_m = map.inflation_resolution;
   world_geometry.occupied_inflation_radius_m =
       map.inflation_resolution * map.inflation_step;
-  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 30.0, 6.0};
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);
@@ -305,7 +305,7 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   world_geometry.evidence_resolution_m = 0.2;
   world_geometry.inflated_resolution_m = 0.2;
   world_geometry.occupied_inflation_radius_m = 1.0;
-  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 30.0, 6.0};
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);
@@ -331,6 +331,45 @@ TEST(PlannerProductConfig, RejectsMapThatCannotContainConfiguredPlanningHorizon)
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
+}
+
+TEST(PlannerProductConfig, RejectsLongAxisThatHidesInsufficientDirectionalSupport) {
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = 0.2;
+  world_geometry.inflated_resolution_m = 0.2;
+  world_geometry.occupied_inflation_radius_m = 1.0;
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 10.0;
+  EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
+}
+
+TEST(PlannerProductConfig, DirectionalSupportUsesTheFirstAxisAlignedBoundary) {
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.local_center_m = Eigen::Vector3d::Zero();
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 30.0, 6.0};
+
+  const auto x_support = navigation_world_model::directionalSupportToLocalBoundary(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(), world_geometry);
+  const auto y_support = navigation_world_model::directionalSupportToLocalBoundary(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitY(), world_geometry);
+  const auto diagonal_support =
+      navigation_world_model::directionalSupportToLocalBoundary(
+          Eigen::Vector3d::Zero(), Eigen::Vector3d{1.0, 1.0, 0.0}, world_geometry);
+
+  ASSERT_TRUE(x_support.has_value());
+  ASSERT_TRUE(y_support.has_value());
+  ASSERT_TRUE(diagonal_support.has_value());
+  EXPECT_DOUBLE_EQ(*x_support, 55.0);
+  EXPECT_DOUBLE_EQ(*y_support, 15.0);
+  EXPECT_NEAR(*diagonal_support, 15.0 * std::sqrt(2.0), 1.0e-12);
+  EXPECT_FALSE(navigation_world_model::directionalSupportToLocalBoundary(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), world_geometry));
+  EXPECT_DOUBLE_EQ(
+      *navigation_world_model::directionalSupportToLocalBoundary(
+          Eigen::Vector3d{0.0, 20.0, 0.0}, Eigen::Vector3d::UnitY(), world_geometry),
+      0.0);
 }
 
 TEST(PlannerProductConfig, RejectsTallOnlyMapWithoutHorizontalPlanningExtent) {

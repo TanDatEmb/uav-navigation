@@ -7628,3 +7628,41 @@ release profiles must not use the former allowance.
   Inspect route-lookahead activation, boundary-gate evidence, waypoint order,
   speed recovery, altitude, clearance, strict backup, connector/PVAJ
   continuity, and p50/p95/p99 planning latency.
+
+### 2026-08-28 - Reject insufficient omnidirectional map support
+
+- **Owner:** Navigation world-model and planner-configuration maintainers.
+  **Scope:** Validate the axis-aligned ENU evidence map against the complete
+  configured visibility horizon in both horizontal directions. Add a pure
+  ray-to-AABB support calculation for future route-oriented planning queries;
+  do not rotate, resample, or reinterpret ROG-Map voxel storage.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. The previous
+  `maxCoeff(X,Y)` validation allowed the 110 m X side to hide a 15 m Y side,
+  so a planner could start with a nominally valid horizon that was not
+  available for a Y or diagonal route. The new check fails closed unless the
+  shortest horizontal support covers `visibility_horizon_m` plus one evidence
+  cell. UNKNOWN, OUT_OF_MAP, collision, backup, and dynamic policies are
+  unchanged.
+- **Derivation and cost:** Support is the first finite intersection of a
+  normalized ENU direction ray with the local AABB. Configuration validation
+  checks +X and +Y from the map center, which is the conservative minimum for
+  all horizontal directions of an axis-aligned rectangle. The product map Y
+  extent changes from 15 m to 30 m to satisfy the existing 14 m minimum
+  visibility horizon without expanding the map to an unbenchmarked 90 m
+  square. The future oriented planning-window phase must still measure the
+  path-horizon benefit and map/snapshot cost.
+- **Evidence:** Added unit coverage for axis, diagonal, zero-direction, and
+  out-of-map support, plus a regression test proving that 110 x 15 m is
+  rejected. Existing 110 x 15 fixtures were updated to 110 x 30 m. Full
+  runtime/SITL acceptance remains open until the new geometry and latency
+  distributions are measured.
+- **Removal/review condition:** Revisit only after a route-oriented query
+  contract and a measured sparse/chunked or sufficiently wide evidence-map
+  design can provide the same safety support with lower memory and slide/export
+  tails. Do not restore `maxCoeff` or lower the visibility horizon to make a
+  narrow map pass.
+- **Verification:** `make build`; source `install/setup.bash` and run the
+  planner-config, world-model, trajectory, runtime, mission, and PX4 contract
+  tests. Then repeat the 0/45/90 degree route matrix and inspect mapping
+  update, snapshot export, planning, command age, speed, altitude, clearance,
+  backup, and waypoint evidence at p50/p95/p99.

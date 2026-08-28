@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -103,6 +106,54 @@ struct WorldGeometry {
   GridBounds evidence_bounds{};
   GridBounds inflated_bounds{};
 };
+
+// Return the finite distance from `origin` to the first boundary of the
+// axis-aligned local map along a unit direction.  The world model remains an
+// ENU evidence grid; this helper is only a geometry contract for consumers
+// that need to decide whether an oriented route has enough support.  It does
+// not rotate or resample the voxel storage.
+[[nodiscard]] inline std::optional<double> directionalSupportToLocalBoundary(
+    const Point3& origin, const Point3& direction,
+    const WorldGeometry& geometry) noexcept {
+  if (!origin.allFinite() || !direction.allFinite() ||
+      !geometry.local_center_m.allFinite() ||
+      !geometry.local_size_m.allFinite() ||
+      (geometry.local_size_m.array() <= 0.0).any()) {
+    return std::nullopt;
+  }
+
+  const double direction_norm = direction.norm();
+  if (!std::isfinite(direction_norm) || direction_norm <= 1.0e-12) {
+    return std::nullopt;
+  }
+  const Point3 unit_direction = direction / direction_norm;
+  const Point3 half_size = 0.5 * geometry.local_size_m;
+  const Point3 local_min = geometry.local_center_m - half_size;
+  const Point3 local_max = geometry.local_center_m + half_size;
+  constexpr double kBoundaryEpsilonM = 1.0e-9;
+  if ((origin.array() < local_min.array() - kBoundaryEpsilonM).any() ||
+      (origin.array() > local_max.array() + kBoundaryEpsilonM).any()) {
+    return 0.0;
+  }
+
+  double support_m = std::numeric_limits<double>::infinity();
+  for (int axis = 0; axis < 3; ++axis) {
+    const double component = unit_direction(axis);
+    if (std::abs(component) <= 1.0e-12) {
+      continue;
+    }
+    const double boundary = component > 0.0 ? local_max(axis) : local_min(axis);
+    const double distance = (boundary - origin(axis)) / component;
+    if (!std::isfinite(distance) || distance < -kBoundaryEpsilonM) {
+      return std::nullopt;
+    }
+    support_m = std::min(support_m, std::max(0.0, distance));
+  }
+  if (!std::isfinite(support_m)) {
+    return std::nullopt;
+  }
+  return support_m;
+}
 
 struct WorldSnapshotIdentity {
   std::uint64_t localization_epoch{0};

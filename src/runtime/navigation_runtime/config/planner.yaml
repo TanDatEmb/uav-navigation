@@ -187,9 +187,11 @@ rog_map:
   # explicitly; increasing inflation must not be used as a substitute for
   # resolving an oracle/quantization mismatch.
   inflation_step: 4
-  # Route progress is along ENU X; keep the local map long in X and narrow in
-  # Y so planner backend does not hit the longitudinal boundary at 7.45 m.
-  map_size: [110, 15, 6]
+  # ROG-Map storage remains an axis-aligned ENU evidence grid.  Keep enough
+  # support in both horizontal directions for the complete visibility horizon;
+  # route-oriented planning belongs above this storage contract and must not
+  # be emulated by hiding a narrow Y side behind the long X side.
+  map_size: [110, 30, 6]
   fix_map_origin: [0, 0, 1.5]
   # lio_odom is initialized from the estimator trajectory, so zero is not a
   # physical ground datum and a valid mission may descend below it.  Keep the

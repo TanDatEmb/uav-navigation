@@ -263,11 +263,28 @@ namespace navigation_planning_backend {
                     "inflation at least as large as the planner safety envelope");
             }
             const double minimum_map_extent = 2.0 * robot_r + world_resolution;
-            const double horizontal_extent = world_geometry.local_size_m.head<2>().maxCoeff();
+            const auto support_x = navigation_world_model::directionalSupportToLocalBoundary(
+                world_geometry.local_center_m, navigation_world_model::Point3::UnitX(),
+                world_geometry);
+            const auto support_y = navigation_world_model::directionalSupportToLocalBoundary(
+                world_geometry.local_center_m, navigation_world_model::Point3::UnitY(),
+                world_geometry);
+            const double minimum_horizontal_support =
+                support_x.has_value() && support_y.has_value()
+                    ? std::min(*support_x, *support_y)
+                    : 0.0;
+            // The planner may use an oriented route window later, but the
+            // evidence map itself is still an axis-aligned ENU AABB.  Require
+            // every horizontal direction to have the complete visibility
+            // horizon plus one cell of inward margin.  The previous maxCoeff
+            // check allowed a long X side to hide an unsafe narrow Y side.
+            const double required_directional_support =
+                visibility_horizon_m + world_resolution;
             if (world_geometry.local_size_m.minCoeff() < minimum_map_extent - 1.0e-9 ||
-                horizontal_extent + 1.0e-9 < planning_horizon_m) {
+                !std::isfinite(minimum_horizontal_support) ||
+                minimum_horizontal_support + 1.0e-9 < required_directional_support) {
                 throw std::invalid_argument(
-                    "world map extent is insufficient for the configured planning horizon "
+                    "world map directional support is insufficient for the visibility horizon "
                     "and safety envelope");
             }
             if (corridor_bound_distance_m + 1.0e-9 < robot_r ||

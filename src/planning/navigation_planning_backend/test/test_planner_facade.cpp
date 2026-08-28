@@ -17,7 +17,7 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
     result.occupied_inflation_radius_m = 1.0;
     result.effective_virtual_ground_m = -1.0;
     result.effective_virtual_ceiling_m = 5.0;
-    result.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+    result.local_size_m = Eigen::Vector3d{110.0, 30.0, 6.0};
     return result;
   }
 
