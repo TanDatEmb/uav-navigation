@@ -3214,12 +3214,39 @@ void NavigationRuntimeNode::publishCommand() {
             std::chrono::steady_clock::now() - store_publish_started).count(),
         std::memory_order_release);
     if (!exposed) {
-      // The world or goal advanced between sampling and publication. Do not
-      // expose the stale command and do not misclassify recertification as a
-      // terminal planner failure.
-      planner_command_available_.store(false);
-      command_goal_epoch_.store(0U);
-      safety_suffix_active_.store(false);
+      // The world or goal advanced between sampling and publication. Never
+      // expose the stale pointer. Mapping recertification deliberately copies
+      // the same immutable bundle with a newer world identity, however, and a
+      // planner commit may also supersede this sample. Preserve availability
+      // only when the store now owns a non-older, valid bundle for the same
+      // active epochs; the next timer tick will sample and transactionally
+      // expose that exact pointer. Every invalidation/epoch/lease case still
+      // clears the command fail-closed.
+      const auto current_bundle = command_bundle_store_.load();
+      const auto current_localization_epoch =
+          active_localization_epoch_.load(std::memory_order_acquire);
+      const auto current_goal_epoch =
+          active_goal_epoch_.load(std::memory_order_acquire);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const bool superseded_by_valid_bundle = current_bundle &&
+          supersedingBundleMayRemainAvailable(
+              sampled_bundle ? sampled_bundle->bundle_generation : 0U,
+              current_bundle->bundle_generation,
+              current_bundle->localization_epoch,
+              current_bundle->goal_epoch,
+              current_localization_epoch,
+              current_goal_epoch,
+              current_bundle->valid_until_ns,
+              command_ros_time.nanoseconds(),
+              current_bundle->valid(),
+              planner_failure_latched_.load(std::memory_order_acquire),
+              command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (!superseded_by_valid_bundle) {
+        planner_command_available_.store(false);
+        command_goal_epoch_.store(0U);
+        safety_suffix_active_.store(false);
+      }
       return;
     }
   } else {

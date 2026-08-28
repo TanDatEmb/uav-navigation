@@ -9580,3 +9580,32 @@ release profiles must not use the former allowance.
   suspension/recovery, speed continuity, tracking, clearance and mission
   completion. Do not change the 180 ms deadline or tracking envelope during
   this A/B.
+
+### 2026-08-28 - Preserve command availability across certified bundle replacement
+
+- **Owner:** Runtime command-store/mapping recertification transaction.
+- **Scope:** When command publication loses the pointer-identity race to a
+  mapping-recertified copy or a newer planner commit, skip that stale
+  publication without clearing command availability if the store now owns a
+  valid, non-older bundle for the same active localization and goal epochs.
+- **Safety impact:** The stale sampled pointer is never published. Continued
+  availability requires the current store bundle to remain structurally valid,
+  inside its declared validity interval, on the active epochs, with no planner
+  failure latch and a valid execution lease. Older generation, invalidation,
+  expiry, epoch change or lease failure still clears command state fail-closed.
+- **Evidence:** Exact-head artifact
+  `.artifacts/runtime/external-mode-check-20260828T133615-1171708` recertified
+  generation 102 as map revisions advanced. At simulation time 48.624 s the
+  last valid command still sampled generation 102 at trajectory time 0.740 s,
+  far before its 6.656 s declared end. A concurrent recertified pointer caused
+  `publishIfCurrent()` to lose identity, clear availability, and the next
+  ordinary MINCO replacement failure became terminal at cycle 301. The mission
+  entered `PAUSED_SAFETY_STOP` near 83 m despite the current certified bundle.
+- **Removal/review condition:** Replace only if command sampling and world
+  recertification become one versioned transaction that returns an explicit
+  retry/current-bundle result. Do not weaken pointer/world identity checks.
+- **Verification:** Run `test_planner_fsm`, execution-store tests, full
+  workspace tests and Release build. Repeat `MAP_PROFILE=long_three_pillars_speed
+  make external-mode-check`; verify stale pointers are never exposed and map
+  recertification races no longer produce a zero-generation emergency while a
+  current valid bundle remains in the store.

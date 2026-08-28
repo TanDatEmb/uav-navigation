@@ -130,6 +130,31 @@ inline bool worldFreshnessSuspendedCommandMayResume(
          !planner_failure_latched && execution_lease_allows_command;
 }
 
+// Mapping recertification replaces an immutable bundle with a certified copy.
+// A command timer that sampled the previous pointer must skip that one
+// publication, but it must not revoke the current command merely because the
+// pointer changed. The same rule covers a newer planner commit winning the
+// race. Continued availability is allowed only for a non-older, valid bundle
+// that still belongs to both active epochs and its declared time interval.
+inline bool supersedingBundleMayRemainAvailable(
+    std::uint64_t sampled_generation,
+    std::uint64_t current_generation,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t bundle_goal_epoch,
+    std::uint64_t active_localization_epoch,
+    std::uint64_t active_goal_epoch,
+    std::int64_t valid_until_ns,
+    std::int64_t now_ns,
+    bool bundle_valid,
+    bool planner_failure_latched,
+    bool execution_lease_allows_command) noexcept {
+  return sampled_generation != 0U &&
+         current_generation >= sampled_generation && bundle_valid &&
+         bundle_localization_epoch == active_localization_epoch &&
+         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         !planner_failure_latched && execution_lease_allows_command;
+}
+
 // Bounds consecutive rest-to-rest solve failures for one logical waypoint.
 // This state belongs to the mission/planner FSM, not to the optimizer: a
 // transient startup miss may be retried, but an unreachable goal must not be

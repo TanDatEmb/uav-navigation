@@ -70,6 +70,28 @@ TEST(PlannerFsm, ResumesOnlyExactFreshWorldRecertifiedGeneration) {
       true, false, false));
 }
 
+TEST(PlannerFsm, SupersedingCertifiedBundleDoesNotRevokeCommandAvailability) {
+  EXPECT_TRUE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 9, 7, 9, 1200, 1100, true, false, true));
+  EXPECT_TRUE(supersedingBundleMayRemainAvailable(
+      41, 42, 7, 9, 7, 9, 1200, 1100, true, false, true));
+
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 40, 7, 9, 7, 9, 1200, 1100, true, false, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 6, 9, 7, 9, 1200, 1100, true, false, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 8, 7, 9, 1200, 1100, true, false, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 9, 7, 9, 1099, 1100, true, false, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 9, 7, 9, 1200, 1100, false, false, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 9, 7, 9, 1200, 1100, true, true, true));
+  EXPECT_FALSE(supersedingBundleMayRemainAvailable(
+      41, 41, 7, 9, 7, 9, 1200, 1100, true, false, false));
+}
+
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
             PlannerResultDisposition::FailClosed);
