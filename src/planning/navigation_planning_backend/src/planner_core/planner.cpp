@@ -2785,12 +2785,17 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // when its normalized spatial trace stays close to that seed.
             const double refined_duration = temp_pos_traj.getTotalDuration();
             const double seed_duration = braking_piece.getDuration();
+            const double refined_maximum_speed_mps = temp_pos_traj.getMaxVelRate();
             const double shape_tolerance_m = std::max(0.5, 3.0 * cfg_.resolution);
             double maximum_seed_deviation_m = 0.0;
             bool shape_bounded = std::isfinite(refined_duration) &&
                     refined_duration > 0.0 && std::isfinite(seed_duration) &&
                     seed_duration > 0.0 && std::isfinite(shape_tolerance_m) &&
-                    shape_tolerance_m > 0.0;
+                    shape_tolerance_m > 0.0 &&
+                    std::isfinite(refined_maximum_speed_mps) &&
+                    std::isfinite(braking_seed.allowed_peak_velocity_mps) &&
+                    refined_maximum_speed_mps <=
+                        braking_seed.allowed_peak_velocity_mps + 1.0e-6;
             constexpr int kShapeSamples = 32;
             for (int sample = 0; shape_bounded && sample <= kShapeSamples; ++sample) {
                 const double alpha = static_cast<double>(sample) /
@@ -2813,8 +2818,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 ++backup_refinement_fallback_count_;
                 planner_context_->warn(
                         " -- [planner] backup refinement rejected: seed-trace deviation={} "
-                        "limit={}; using certified minimum-snap seed",
-                        maximum_seed_deviation_m, shape_tolerance_m);
+                        "limit={} refined_peak_speed={} seed_peak_speed={}; "
+                        "using certified minimum-snap seed",
+                        maximum_seed_deviation_m, shape_tolerance_m,
+                        refined_maximum_speed_mps,
+                        braking_seed.allowed_peak_velocity_mps);
                 temp_pos_traj.clear();
                 temp_pos_traj.emplace_back(braking_piece);
                 opt_ts = heu_ts;

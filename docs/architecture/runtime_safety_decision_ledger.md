@@ -9872,3 +9872,31 @@ release profiles must not use the former allowance.
 - **Verification:** `git show a3dd36d`, `git show 207b433`, mission contract
   test, authoritative Release build and the cited artifact preserve the
   implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Bound BACKUP speed by unavoidable acceleration release
+
+- **Owner:** Certified BACKUP braking trajectory.
+- **Scope:** After constructing the certified minimum-snap BACKUP seed, replace
+  the temporary mission-cap allowance with that seed's exact analytic peak
+  speed. Terminal-altitude recovery and optional MINCO refinement may not
+  exceed it. Exact initial PVAJ, terminal PVAJ=0, analytic V/A/J extrema,
+  Bezier hull, KNOWN_FREE sweep, flatness and final authorization remain
+  unchanged.
+- **Safety impact:** This tightens only post-seed BACKUP transformations. The
+  seed may retain the small peak needed by its exact-boundary polynomial, but
+  refinement cannot turn that certified stop into a second acceleration phase
+  merely because a higher speed is legal for MAIN. Initial overspeed remains
+  representable; infeasible refinements fall back to the certified seed.
+- **Evidence:** Repeated rejected 5/3/8 and 5/2/8 runs failed PX4 tracking while
+  executing BACKUP. At representative failures, command velocity remained
+  materially ahead of measured velocity even though the role was already
+  safety braking. Source inspection showed the certificate allowed any peak
+  up to the mission cruise cap for a below-cap switch state, contradicting the
+  intended braking semantics.
+- **Removal/review condition:** Keep while BACKUP denotes a stopping suffix.
+  Replace only if a feedback-aware contingency controller explicitly owns a
+  different speed contract and carries equivalent world/dynamics evidence.
+- **Verification:** Run backup/planner tests, runtime tests and authoritative
+  Release build; then repeated unchanged three-column SITL comparing backup
+  peak speed, switch time, optimizer outcomes, tracking envelope, low-speed
+  episodes, clearance and completion.
