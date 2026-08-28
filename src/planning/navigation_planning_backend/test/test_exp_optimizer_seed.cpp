@@ -63,6 +63,40 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   ASSERT_TRUE(diagnostics.valid);
   EXPECT_DOUBLE_EQ(diagnostics.initial_duration_s, guide_times.back());
   EXPECT_TRUE(std::isfinite(diagnostics.final_duration_s));
+    EXPECT_FALSE(trajectory.empty());
+}
+
+TEST(ExpOptimizer, RouteBoundaryGateUsesPostBoundaryGuideTime) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 8.0;
+  config.max_acc = 4.0;
+  config.max_jerk = 8.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(30.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path{
+      head.col(0), navigation_math::Vec3f(10.0, 0.0, 1.0),
+      navigation_math::Vec3f(10.1, 0.0, 1.0), tail.col(0)};
+  const std::vector<double> guide_times{0.0, 3.0, 4.0, 10.0};
+
+  auto incoming = makeBox(-1.0, 10.5, -2.0, 2.0, 0.0, 2.0);
+  auto gate = makeBox(9.5, 10.5, -0.5, 0.5, 0.0, 2.0);
+  gate.SetRouteBoundaryGate(true);
+  auto outgoing = makeBox(9.5, 31.0, -2.0, 2.0, 0.0, 2.0);
+  geometry_utils::PolytopeVec corridors{incoming, gate, outgoing};
+  geometry_utils::Trajectory trajectory;
+
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, corridors, trajectory));
+  const auto diagnostics = optimizer.diagnostics();
+  ASSERT_TRUE(diagnostics.valid);
+  // The outgoing overlap must use t=4.0 from the first post-waypoint guide
+  // sample; reusing t=3.0 would be converted into the legacy 0.01 s clamp.
+  EXPECT_DOUBLE_EQ(diagnostics.initial_duration_s, guide_times.back());
   EXPECT_FALSE(trajectory.empty());
 }
 

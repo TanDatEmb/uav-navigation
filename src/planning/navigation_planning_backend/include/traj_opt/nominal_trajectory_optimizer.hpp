@@ -113,6 +113,11 @@ namespace traj_opt {
             double route_reference_vertical_weight{0.0};
             double route_reference_lateral_deadband_m{0.0};
             double route_reference_vertical_deadband_m{0.0};
+            // One entry per corridor cell.  A marked cell is a hard mission
+            // boundary inserted for a pass-through waypoint; its outgoing
+            // overlap must consume a post-boundary guide sample so the hot
+            // seed does not create a near-zero-duration turn piece.
+            std::vector<unsigned char> route_boundary_gates;
             VecDf magnitudeBounds, penaltyWeights;
 
             PolyhedraV vPolytopes; // the original sfc and intersecting sfc

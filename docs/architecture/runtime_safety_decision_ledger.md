@@ -7348,11 +7348,23 @@ release profiles must not use the former allowance.
   configured corridor seed limit. One bounded point-corridor construction is
   added only for an active look-ahead boundary; no second optimizer or planner
   is introduced. The marker is retained as metadata so generic SFC
-  simplification cannot erase the contract.
+  simplification cannot erase the contract. During MINCO hot initialization,
+  the overlap immediately after a marked gate starts its guide-sample search
+  one sample later; this preserves a positive, route-aligned time interval for
+  the outgoing turn instead of accepting the generic 0.01 s duration clamp.
+- **Timing safety impact:** `SAFETY_INVARIANT` preservation. The timing change
+  does not relax any dynamic or corridor gate and does not alter the mission
+  acceptance radius. It prevents a zero-time seed from presenting an
+  artificially infeasible high-jerk corner to the optimizer; the final
+  continuous physical V/A/J and world certificates remain authoritative.
 - **Evidence:** The SFC preservation unit test passes with the existing planner
-  and trajectory suites. The next authoritative build/manifest and repeated
-  3 m/s multi-waypoint SITL must verify that the gate is constructed, waypoint
-  order is preserved, and optimizer latency/failure tails remain bounded.
+  and trajectory suites, and the EXP seed test covers post-boundary guide time
+  allocation. The current EXP package has a pre-existing exact-cap
+  multi-corridor fixture failure (physical acceleration 2.0019/2); it is kept
+  visible rather than masked. The next authoritative build/manifest and
+  repeated 3 m/s multi-waypoint SITL must verify that the gate is constructed,
+  waypoint order is preserved, and optimizer latency/failure tails remain
+  bounded.
 - **Removal/review condition:** Revisit if gate construction rejects a valid
   route due to numerical overlap, causes repeated optimizer failure or latency
   tails, permits measured waypoint skipping, or regresses PVA continuity,

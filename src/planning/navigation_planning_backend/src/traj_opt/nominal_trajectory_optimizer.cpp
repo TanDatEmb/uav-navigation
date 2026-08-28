@@ -571,7 +571,20 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         const Vec3f interior = opt_vars.waypoint_attractor.col(j);
         int nearest_index = first_guide_index;
         double nearest_distance = std::numeric_limits<double>::max();
-        for (int i = first_guide_index; i < static_cast<int>(opt_vars.guide_path.size()); i++) {
+        // A route-boundary gate occupies one hard corridor cell.  The overlap
+        // after that cell is a distinct temporal junction, even when both
+        // neighbouring overlap interiors are closest to the same mission
+        // waypoint.  Advance to the next guide sample for that outgoing
+        // junction so MINCO receives an executable turn duration instead of
+        // the historical 0.01 s clamp.
+        const bool outgoing_from_route_gate =
+                j < static_cast<int>(opt_vars.route_boundary_gates.size()) &&
+                opt_vars.route_boundary_gates[static_cast<std::size_t>(j)] != 0U;
+        const int guide_search_start = outgoing_from_route_gate &&
+                first_guide_index + 1 < static_cast<int>(opt_vars.guide_path.size())
+                ? first_guide_index + 1
+                : first_guide_index;
+        for (int i = guide_search_start; i < static_cast<int>(opt_vars.guide_path.size()); i++) {
             const double distance = (opt_vars.guide_path[i] - interior).norm();
             if (distance < nearest_distance) {
                 nearest_distance = distance;
@@ -1633,9 +1646,12 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.tailPVAJ = tailPVAJ;
     opt_vars.guide_path = guide_path;
     opt_vars.guide_t = guide_t;
+    opt_vars.route_boundary_gates.assign(sfcs.size(), 0U);
     opt_vars.hPolytopes.resize(sfcs.size());
 
     for (long i = 0; i < sfcs.size(); i++) {
+        opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
+                sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(
@@ -1741,9 +1757,12 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.tailPVAJ = tailPVAJ;
     opt_vars.guide_path = guide_path;
     opt_vars.guide_t = guide_t;
+    opt_vars.route_boundary_gates.assign(sfcs.size(), 0U);
     opt_vars.hPolytopes.resize(sfcs.size());
 
     for (long i = 0; i < sfcs.size(); i++) {
+        opt_vars.route_boundary_gates[static_cast<std::size_t>(i)] =
+                sfcs[i].IsRouteBoundaryGate() ? 1U : 0U;
         opt_vars.hPolytopes[i] = sfcs[i].GetPlanes();
         if (!navigation_planning_backend::normalizeCorridorPlanes(opt_vars.hPolytopes[i])) {
             planner_context_->warn(
