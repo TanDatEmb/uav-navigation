@@ -197,6 +197,25 @@ TEST(PlannerPassThrough, ShortCornerBoundaryRequiresLowerIncomingTerminalSpeed) 
   EXPECT_LT(terminal_cap, incoming.norm());
 }
 
+TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
+  const auto endpoint = navigation_planning_backend::passThroughRouteWindowEndpoint(
+      Eigen::Vector3d{50.0, 5.0, 3.0}, Eigen::Vector3d{50.0, -5.0, 3.0},
+      Eigen::Vector3d{30.0, 0.0, 0.0}, 0.9, 0.2);
+  ASSERT_TRUE(endpoint.has_value());
+  EXPECT_NEAR(endpoint->x(), 50.0, 1.0e-12);
+  EXPECT_NEAR(endpoint->y(), 4.325, 1.0e-12);
+  EXPECT_NEAR((*endpoint - Eigen::Vector3d{50.0, 5.0, 3.0}).norm(), 0.675, 1.0e-12);
+}
+
+TEST(PlannerPassThrough, RouteWindowDoesNotChangeShallowBendOrTinyAcceptanceBall) {
+  EXPECT_FALSE(navigation_planning_backend::passThroughRouteWindowEndpoint(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{10.0, 1.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}, 0.9, 0.2));
+  EXPECT_FALSE(navigation_planning_backend::passThroughRouteWindowEndpoint(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{0.0, 10.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}, 0.2, 0.2));
+}
+
 TEST(PlannerPassThrough, TerminalSpeedCapRejectsImpossibleShortBoundary) {
   EXPECT_NEAR(
       navigation_planning_backend::terminalSpeedCapForPath(1.0, 1.0, 2.4, 2.94),

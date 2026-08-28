@@ -1299,12 +1299,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 }
 
                 // Keep the active waypoint as the current trajectory endpoint.
-                // Pass-through continuity is carried by the terminal PVA state
-                // below and the mission controller publishes the next goal only
-                // after measured acceptance. Extending this guide beyond the
-                // active waypoint lets an unconstrained MINCO polynomial bow
-                // around the mission boundary, so the vehicle can skip the
-                // acceptance ball even though A* contains the waypoint sample.
+                // A bounded pass-through route window may replace the final
+                // point later, but only inside the mission acceptance ball and
+                // only after its own free-space segment check. Arbitrary
+                // extension beyond that ball would let MINCO skip a mission
+                // boundary even when A* contains the waypoint sample.
 
                 geometry_utils::GuideTimeAllocation allocation;
                 if (!geometry_utils::allocateGuideElapsedTimes(
@@ -1328,6 +1327,63 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
+        // A sharp pass-through corner cannot be solved robustly by reaching
+        // the exact waypoint and rotating the velocity at the same point. Use
+        // the mission acceptance ball as a bounded route window: the endpoint
+        // lies on the outgoing tangent, while the measured mission controller
+        // still owns waypoint acceptance against the requested coordinate.
+        bool route_window_endpoint = false;
+        if (pass_through_next_target_.has_value() && guide_path.size() >= 2U &&
+            guide_stamp.size() == guide_path.size() &&
+            (guide_path.back() - gi_.goal_p).norm() <=
+                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6 &&
+            (gi_.goal_p - requested_goal_p_).norm() <=
+                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6) {
+            Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
+            for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                const Eigen::Vector3d delta =
+                    (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
+                if (delta.norm() > 1.0e-6) {
+                    incoming_tangent = delta;
+                    break;
+                }
+            }
+            const auto route_window = passThroughRouteWindowEndpoint(
+                requested_goal_p_.cast<double>(), *pass_through_next_target_,
+                incoming_tangent, goal_acceptance_radius_m_,
+                navigation_world_model::kGoalConnectionToleranceM);
+            if (route_window.has_value() && map_ptr_->contains(*route_window) &&
+                navigation_world_model::isCellTraversable(
+                    map_ptr_->classify(
+                        *route_window, navigation_world_model::GridLayer::kInflated),
+                    unknownPolicy()) &&
+                map_ptr_->isSegmentTraversable(
+                    guide_path[guide_path.size() - 2U].cast<double>(), *route_window,
+                    navigation_world_model::GridLayer::kInflated, unknownPolicy())) {
+                const double route_segment_length =
+                    (*route_window - guide_path[guide_path.size() - 2U].cast<double>()).norm();
+                const double previous_stamp = guide_stamp.size() >= 2U
+                    ? guide_stamp[guide_stamp.size() - 2U] : 0.0;
+                const double route_segment_duration =
+                    route_segment_length / cfg_.exp_traj_cfg.max_vel;
+                if (std::isfinite(route_segment_length) && route_segment_length > 1.0e-6 &&
+                    std::isfinite(route_segment_duration) && route_segment_duration > 0.0 &&
+                    std::isfinite(previous_stamp)) {
+                    guide_path.back() = route_window->cast<double>();
+                    guide_stamp.back() = previous_stamp + route_segment_duration;
+                    gi_.goal_p = guide_path.back();
+                    planning_goal_p_ = gi_.goal_p;
+                    goal_endpoint_adjusted_ = true;
+                    route_window_endpoint = true;
+                    planner_context_->info(
+                        " -- [planner] pass-through route window endpoint offset={:.3f} "
+                        "acceptance_radius={:.3f}",
+                        (route_window->cast<double>() - requested_goal_p_.cast<double>()).norm(),
+                        goal_acceptance_radius_m_);
+                }
+            }
+        }
+
         // Resolve the terminal point before corridor construction. Snapping
         // only the MINCO tail after CIRI has certified the unsnapped guide can
         // place the fixed endpoint outside every generated polytope.
@@ -1340,7 +1396,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                   navigation_world_model::kGoalConnectionToleranceM)
             : GuideEndpoint{guide_path.back(), false};
         guide_path.back() = resolved_endpoint.position;
-        const bool connected_goal = resolved_endpoint.goal_connected;
+        const bool connected_goal = resolved_endpoint.goal_connected || route_window_endpoint;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
         latest_guide_start_ = guide_path.front();
@@ -1418,7 +1474,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const bool genuine_corner = guide_tangent.norm() > 0.5 &&
                     outgoing_delta.allFinite() && outgoing_delta.norm() > 1.0e-6 &&
                     guide_tangent.dot(outgoing_delta.normalized()) <= 0.7;
-            if (genuine_corner && guide_path.size() >= 2U) {
+            if (genuine_corner && guide_path.size() >= 2U && !route_window_endpoint) {
                 // A corner is a hard route boundary, not a request to rotate
                 // the velocity vector at the endpoint of the incoming MINCO
                 // solve. Keep the incoming tangent at the waypoint and let

@@ -151,4 +151,55 @@ inline std::optional<Eigen::Vector3d> frontierContinuationVelocity(
   return incoming_velocity + delta * (maximum_delta / delta_norm);
 }
 
+// A pass-through waypoint with a genuine heading change needs a bounded
+// route-window endpoint.  Ending the incoming polynomial at the exact corner
+// leaves no geometric room for the next leg to rotate the velocity vector.
+// The endpoint remains inside the mission-owned acceptance ball; it is not a
+// waypoint skip and it never changes the collision or dynamic certificates.
+inline std::optional<Eigen::Vector3d> passThroughRouteWindowEndpoint(
+    const Eigen::Vector3d& waypoint,
+    const Eigen::Vector3d& next_target,
+    const Eigen::Vector3d& incoming_tangent,
+    const double acceptance_radius_m,
+    const double connection_tolerance_m) noexcept {
+  if (!waypoint.allFinite() || !next_target.allFinite() ||
+      !incoming_tangent.allFinite() ||
+      !std::isfinite(acceptance_radius_m) || acceptance_radius_m <= 0.0 ||
+      !std::isfinite(connection_tolerance_m) || connection_tolerance_m < 0.0) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d outgoing_delta = next_target - waypoint;
+  const double outgoing_length = outgoing_delta.norm();
+  const double incoming_length = incoming_tangent.norm();
+  if (!std::isfinite(outgoing_length) || outgoing_length <= 1.0e-6 ||
+      !std::isfinite(incoming_length) || incoming_length <= 1.0e-6) {
+    return std::nullopt;
+  }
+
+  // Keep the existing corner classifier in one place.  A dot product above
+  // this value is a shallow bend and does not need a route window.
+  constexpr double kGenuineCornerTangentDot = 0.7;
+  if (incoming_tangent.normalized().dot(outgoing_delta / outgoing_length) >
+      kGenuineCornerTangentDot) {
+    return std::nullopt;
+  }
+
+  // The fixed interior ratio is geometry, not a safety threshold: it leaves
+  // enough acceptance margin that the endpoint is not re-snapped to the
+  // exact goal by the smaller planner connection tolerance.
+  constexpr double kAcceptanceInteriorRatio = 0.75;
+  const double offset_m = acceptance_radius_m * kAcceptanceInteriorRatio;
+  if (!std::isfinite(offset_m) ||
+      offset_m <= connection_tolerance_m + 1.0e-6) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d endpoint = waypoint +
+      (outgoing_delta / outgoing_length) * offset_m;
+  if (!endpoint.allFinite() ||
+      (endpoint - waypoint).norm() > acceptance_radius_m + 1.0e-6) {
+    return std::nullopt;
+  }
+  return endpoint;
+}
+
 }  // namespace navigation_planning_backend

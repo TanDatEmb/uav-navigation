@@ -1,6 +1,9 @@
 # Continuous waypoint trajectory architecture plan
 
-**Status:** planned, implementation in staged checkpoints
+**Status:** implementation in staged checkpoints; route/progress, command
+continuity, explicit visibility evidence, native 3D visibility production, and
+bounded pass-through corner route-window endpoint are implemented. Full
+multiwaypoint SITL and dataset evidence remain open.
 
 This document is the implementation plan for the high-speed, multi-waypoint
 navigation behavior. It is intentionally broader than a parameter-tuning
@@ -116,8 +119,13 @@ waypoint. It also permits replanning the future piece without changing the
 already accepted boundary piece, subject to whole-candidate recertification.
 
 The existing `Trajectory`/MINCO implementation can be reused as the piece
-solver. The required change is the boundary/candidate contract and route-aware
-assembly, not an immediate optimizer replacement.
+solver. The current checkpoint introduces the first route-window boundary:
+when a pass-through guide reaches a genuine corner, the terminal point may be
+placed inside the active acceptance ball on the outgoing tangent. The measured
+mission acceptance contract remains authoritative, and the route-window
+segment is checked before the existing corridor/MINCO/backup certificates.
+The required long-term change is still route-aware piece assembly, not an
+immediate optimizer replacement.
 
 ### 3.4 Mapping evidence contract
 
@@ -187,8 +195,11 @@ identity handling without changing planner geometry yet.
 Add a planner-side segment/boundary representation and candidate metadata for
 exact waypoint boundaries. Reuse current MINCO pieces, assemble only when P/V/A
 continuity and per-piece certificates pass, and test a corner where a single
-polynomial would bow outside the acceptance ball. Keep the current active-endpoint
-behavior as the fail-closed fallback until the piecewise path is proven.
+polynomial would bow outside the acceptance ball. The current staged
+implementation adds a bounded acceptance route-window endpoint for genuine
+pass-through corners; exact-goal behavior remains the fallback when the
+endpoint or its predecessor segment is not certified. The full multi-piece
+boundary representation is still required before release.
 
 **Commit:** `feat: assemble certified piecewise trajectories at waypoints`.
 
@@ -199,6 +210,11 @@ Separate “refresh/recertify the current piece” from “advance the future pi
 Do not repeatedly solve an endpoint whose remaining distance is shorter than
 the continuity/braking requirement. A retained command is allowed only while
 the existing world/anchor/lease certificate is still valid.
+
+The current corner checkpoint uses the acceptance ball as a bounded route
+window, rather than extending a trajectory beyond the active waypoint. It
+must be replaced or subsumed by a measured, route-aware look-ahead policy that
+handles arbitrary corner radius, obstacle detours, and multi-piece handoff.
 
 Validate speed recovery, reduced hot-replan churn, continuous velocity, and no
 regression in measured waypoint acceptance.
