@@ -65,6 +65,7 @@ namespace navigation_planning_backend {
         navigation_world_model::WorldSnapshotIdentity pinned_world{};
         navigation_world_model::WorldSnapshotIdentity validated_world{};
         double validation_begin_tt{0.0};
+        navigation_world_model::AxisAlignedBox protected_region{};
     };
 
     struct CommitDiagnostics {

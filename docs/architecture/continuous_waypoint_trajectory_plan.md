@@ -104,6 +104,14 @@ be certified, the planner shortens the *new candidate* and retains only a
 previously certified command or a certified emergency brake. It never crosses
 the unknown-space boundary to manufacture look-ahead.
 
+Mapping publication uses the same certificate ownership boundary. A committed
+trajectory stores its conservative swept protected region. When immutable
+change history proves that all newer map changes are disjoint from that region,
+the runtime refreshes the world identity without re-sweeping the complete
+trajectory. If provenance is missing, intersects the region, crosses an epoch,
+or the command is expired, the existing full validation/fail-closed path is
+used.
+
 ### 3.3 Piecewise trajectory at waypoint boundaries
 
 The executable nominal trajectory is a sequence of certified pieces:

@@ -2112,6 +2112,8 @@ def _navigation_mapping_summary(
         "mapping_outcome_callback_owned_count",
         "mapping_outcome_below_ground_count",
         "mapping_outcome_above_ceiling_count",
+        "command_revalidation_fast_path_count",
+        "command_revalidation_full_count",
         "observation_accounting_valid",
         "observation_accounting_violation_count",
         "nonfinite_point_count",

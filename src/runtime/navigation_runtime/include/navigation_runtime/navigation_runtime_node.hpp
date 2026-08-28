@@ -66,6 +66,8 @@ struct MappingTelemetrySnapshot {
   std::uint64_t outcome_callback_owned{0};
   std::uint64_t outcome_below_ground{0};
   std::uint64_t outcome_above_ceiling{0};
+  std::uint64_t command_revalidation_fast_path_count{0};
+  std::uint64_t command_revalidation_full_count{0};
 };
 
 class MappingTelemetry {
@@ -86,6 +88,9 @@ class MappingTelemetry {
     next.outcome_callback_owned = state_.outcome_callback_owned;
     next.outcome_below_ground = state_.outcome_below_ground;
     next.outcome_above_ceiling = state_.outcome_above_ceiling;
+    // `next` is normally a snapshot copied by the producer. Do not overwrite
+    // producer-side increments here: unlike the legacy lifecycle counters,
+    // revalidation counters are intentionally updated for this same result.
     switch (next.map.update_outcome) {
       case navigation_mapping::MapUpdateOutcome::kUpdated: ++next.outcome_updated; break;
       case navigation_mapping::MapUpdateOutcome::kAccumulated: ++next.outcome_accumulated; break;

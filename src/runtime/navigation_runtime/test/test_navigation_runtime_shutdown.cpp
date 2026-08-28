@@ -76,6 +76,20 @@ struct ObserverReleaseGuard {
   ~ObserverReleaseGuard() { observer->release(); }
 };
 
+TEST(NavigationRuntimeTelemetry, KeepsRevalidationCountersFromCurrentUpdate) {
+  MappingTelemetry telemetry;
+  telemetry.initialize(MappingTelemetrySnapshot{});
+  MappingTelemetrySnapshot update;
+  update.map.update_outcome = navigation_mapping::MapUpdateOutcome::kUpdated;
+  update.command_revalidation_fast_path_count = 3U;
+  update.command_revalidation_full_count = 2U;
+  telemetry.recordUpdate(update);
+
+  const auto snapshot = telemetry.snapshot();
+  EXPECT_EQ(snapshot.command_revalidation_fast_path_count, 3U);
+  EXPECT_EQ(snapshot.command_revalidation_full_count, 2U);
+}
+
 class ExecutorStopGuard {
  public:
   ExecutorStopGuard(rclcpp::Executor& executor, std::thread& thread)

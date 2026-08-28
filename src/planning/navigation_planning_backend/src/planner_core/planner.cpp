@@ -258,7 +258,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return false;
         }
         CommandCertificate certificate{
-            pinned_identity, lease.identity, validation.begin_tt};
+            pinned_identity, lease.identity, validation.begin_tt,
+            validation.protected_region};
         const auto decision = commit_authorizer_->commitIfCurrentOrUnaffected(
             lease.identity, validation.protected_region,
             [&](const navigation_world_model::WorldValidationLease& commit_lease) {

@@ -449,6 +449,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           if (backend_matches_bundle) {
             const auto validation = planner_->validateCommittedTrajectory(
                 result.snapshot, ros_clock->now().seconds());
+            if (validation.reused_unchanged_certificate) {
+              ++next.command_revalidation_fast_path_count;
+            } else {
+              ++next.command_revalidation_full_count;
+            }
             const auto committed_after = planner_->committedSnapshot();
             retain_validated_bundle = validation.valid &&
                 committed_after.generation == expected_bundle->bundle_generation &&
@@ -642,6 +647,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("mapping_outcome_callback_owned_count", mapping.outcome_callback_owned);
         add_value("mapping_outcome_below_ground_count", mapping.outcome_below_ground);
         add_value("mapping_outcome_above_ceiling_count", mapping.outcome_above_ceiling);
+        add_value("command_revalidation_fast_path_count",
+                  mapping.command_revalidation_fast_path_count);
+        add_value("command_revalidation_full_count",
+                  mapping.command_revalidation_full_count);
         add_value("observation_accounting_valid",
                   lifecycle.allInvariantsHold() ? 1U : 0U);
         add_value("observation_accounting_violation_count", lifecycle.violation_count);

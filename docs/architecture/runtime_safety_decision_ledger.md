@@ -7777,3 +7777,42 @@ release profiles must not use the former allowance.
   inspect a fresh runtime artifact and require non-empty
   `planning_total_us` with units in microseconds and matching
   `planning_latency_ms * 1000` within measurement rounding.
+
+### 2026-08-28 - Reuse disjoint world certificates during mapping publication
+
+- **Owner:** Navigation world-snapshot, planner certificate, and runtime
+  mapping maintainers.
+- **Scope:** Store the swept candidate protected AABB in the immutable command
+  certificate. During a mapping publication, skip a repeated full trajectory
+  resweep only when the new immutable snapshot's complete change provenance
+  proves all revisions after that certificate are disjoint from the protected
+  region and the command lease has not expired. Publish counters for the
+  provenance fast path and full revalidation path.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. The fast path is the
+  existing `commitIfCurrentOrUnaffected` proof moved to the command-retention
+  boundary; it does not trust a changed map, skip an intersecting region, or
+  relax UNKNOWN/OUT_OF_MAP, backup, swept, dynamic, freshness, epoch, lease,
+  or command-anchor gates. Missing, malformed, truncated, or intersecting
+  history falls back to full validation, which remains fail-closed.
+- **Derivation and cost:** The protected region is produced by the existing
+  swept validator, including curve and voxel shells. The fast path performs an
+  expiry check and immutable history query instead of repeatedly sampling the
+  whole trajectory at mapping frequency. One certificate AABB is retained per
+  command; counters add no map copy.
+- **Evidence:** The valid external-mode traces showed mapping callback time
+  materially above the observation period while the callback performed map
+  update, snapshot publication, and command recertification. The store already
+  had a disjoint-change authorizer, but the mapping retention path always ran
+  `validateCommittedTrajectory`, so the proof was not reused there. Focused
+  planner/runtime tests and a fresh artifact must verify non-zero fast-path
+  counts, zero fast-path use for intersecting changes, and lower mapping
+  callback p95 without loss of command/world identity ordering.
+- **Removal/review condition:** Revisit if fast-path counts are zero, history
+  queries dominate, disjoint updates are incorrectly rejected, or any repeated
+  run shows stale/unsafe command retention, waypoint, speed, altitude,
+  clearance, or handover regression. Never replace the provenance query with a
+  timer, revision-only shortcut, or unconditional snapshot retention.
+- **Verification:** `make build`; run mapping, world-snapshot, planner,
+  runtime, and PX4 contract tests; then repeat the 3-column scenario and
+  compare mapping callback/export/revalidation p50/p95/p99, world identity,
+  command generation, freshness, strict backup, and mission outcome.

@@ -289,6 +289,27 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   if (snapshot.empty || snapshot.position.empty() || snapshot.yaw.empty()) return output;
   output.pinned_world = snapshot.certificate.pinned_world;
   output.validated_world = world->identity();
+  const double duration = snapshot.position.getTotalDuration();
+  const double end_wall_time = snapshot.position.start_WT + duration;
+  const double begin_time = authorization_wall_time_s - snapshot.position.start_WT;
+  if (std::isfinite(authorization_wall_time_s) && std::isfinite(duration) &&
+      duration >= 0.0 && std::isfinite(snapshot.position.start_WT) &&
+      std::isfinite(end_wall_time) && authorization_wall_time_s <= end_wall_time &&
+      snapshot.certificate.protected_region.valid() &&
+      !world->changedRegionIntersectsSince(
+          snapshot.certificate.validated_world,
+          snapshot.certificate.protected_region)) {
+    // The immutable snapshot has complete change provenance. If every change
+    // since the last full trajectory certificate is disjoint from its swept
+    // region, retaining the command is equivalent to the store's
+    // commitIfCurrentOrUnaffected path and avoids re-sweeping every voxel at
+    // mapping frequency. The expiry check above remains mandatory.
+    output.valid = true;
+    output.begin_time_s = std::clamp(begin_time, 0.0, duration);
+    output.first_blocked_time_s = output.begin_time_s;
+    output.reused_unchanged_certificate = true;
+    return output;
+  }
   CandidateCommandBundle candidate;
   candidate.position = snapshot.position;
   candidate.yaw = snapshot.yaw;
@@ -311,8 +332,8 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   output.sample_count = validation.sample_count;
   output.segment_count = validation.segment_count;
   if (!validation.valid) {
-    const double duration = candidate.position.getTotalDuration();
-    const double sample_time = std::clamp(validation.first_blocked_tt, 0.0, duration);
+    const double candidate_duration = candidate.position.getTotalDuration();
+    const double sample_time = std::clamp(validation.first_blocked_tt, 0.0, candidate_duration);
     output.first_blocked_position = toVector3d(candidate.position.getPos(sample_time));
     const auto state = world->classify(
         candidate.position.getPos(sample_time), navigation_world_model::GridLayer::kInflated);

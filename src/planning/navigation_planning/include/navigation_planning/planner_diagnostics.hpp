@@ -114,6 +114,10 @@ struct CommittedTrajectoryMetadata {
 
 struct TrajectoryValidationResult {
   bool valid{false};
+  // True only when immutable changed-region provenance proved that the
+  // previous full certificate remains valid. This is observability for the
+  // mapping fast path; it is never a certificate without that proof.
+  bool reused_unchanged_certificate{false};
   navigation_world_model::WorldSnapshotIdentity pinned_world{};
   navigation_world_model::WorldSnapshotIdentity validated_world{};
   double begin_time_s{0.0};
