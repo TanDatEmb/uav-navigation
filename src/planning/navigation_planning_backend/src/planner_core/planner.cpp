@@ -1814,6 +1814,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         out_exp_traj_info.setSFC(sfc);
         temp_exp_traj = temp_exp_traj + out_traj;
         temp_exp_traj.start_WT = new_traj_WT; //last_exp_traj_info.replan_start_WT ;
+        double required_main_prefix_duration_TT = 0.0;
 
         if (!last_exp_traj_info.empty()) {
             StatePVAJ yaw_replan_state;
@@ -1931,6 +1932,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 }
                 temp_exp_traj = handoff_position + temp_exp_traj;
                 temp_yaw_traj = handoff_yaw + temp_yaw_traj;
+                required_main_prefix_duration_TT = handoff_duration;
                 planner_context_->info(
                         " -- [planner] inserted measured-state rebase handoff duration={} "
                         "position_delta={} velocity_delta={}",
@@ -1957,6 +1959,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
         out_exp_traj_info.setTrajectory(new_traj_WT, temp_exp_traj, temp_yaw_traj, on_backup_start_TT,
                                         on_backup_end_TT);
+        if (!out_exp_traj_info.setRequiredMainPrefixDuration(
+                required_main_prefix_duration_TT)) {
+            planner_context_->error(
+                    " -- [planner] invalid required main prefix duration={}",
+                    required_main_prefix_duration_TT);
+            return FAILED;
+        }
 
         latest_replan.setExpYawTraj(temp_yaw_traj);
         latest_replan.setExpTraj(temp_exp_traj);
@@ -2222,6 +2231,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         double t0 = planner_context_->getSimTime() -
                     ref_exp_traj.getStartWallTime() + 0.01;
         double te = seed_point_t;
+        const double required_main_prefix_duration_TT =
+            ref_exp_traj.getRequiredMainPrefixDuration();
+        if (!std::isfinite(required_main_prefix_duration_TT) ||
+            required_main_prefix_duration_TT < 0.0) {
+            planner_context_->error(
+                    " -- [planner] invalid required main prefix duration={}",
+                    required_main_prefix_duration_TT);
+            return OPT_FAILED;
+        }
+        // A measured-state rebase handoff is part of nominal EXP, not a
+        // disposable prefix.  Start BACKUP only after the complete connector
+        // has elapsed; the full candidate/world certificate still authorizes
+        // the connector and the suffix independently.
+        const double backup_switch_lower_bound = std::max(
+                t0, required_main_prefix_duration_TT);
+        if (!std::isfinite(backup_switch_lower_bound) ||
+            !(backup_switch_lower_bound < te)) {
+            planner_context_->warn(
+                    " -- [planner] no backup switch window after required main "
+                    "prefix prefix={} lower_bound={} visibility_end={}",
+                    required_main_prefix_duration_TT, backup_switch_lower_bound, te);
+            return OPT_FAILED;
+        }
         //            cout << "t0: " << t0 << endl;
         //            cout << "te: " << te << endl;
         //            cout << "exp_traj_dur: " << ref_exp_traj.optimized_exp_traj.getTotalDuration() << endl;
@@ -2231,7 +2263,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // main+backup bundle is already committed atomically; forcing the
         // switch into a fixed number of replanning cycles makes a vehicle at
         // low speed brake before it can enter an obstacle detour.
-        heu_ts = std::clamp(heu_ts, t0, te);
+        heu_ts = std::clamp(heu_ts, backup_switch_lower_bound, te);
         StatePVAJ switch_state;
         BackupBrakingSeed braking_seed;
         bool braking_seed_inside_sfc = false;
@@ -2450,8 +2482,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 selected_braking_piece_ready = true;
                 break;
             }
-            if (candidate_ts <= t0 + 1.0e-9) break;
-            candidate_ts = std::max(t0, candidate_ts - cfg_.sample_traj_dt_s);
+            if (candidate_ts <= backup_switch_lower_bound + 1.0e-9) break;
+            candidate_ts = std::max(
+                    backup_switch_lower_bound,
+                    candidate_ts - cfg_.sample_traj_dt_s);
         }
         const auto& certificate_diagnostics = backup_certificate_diagnostics_;
         if (!braking_seed_inside_sfc) {
@@ -2532,7 +2566,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         back_traj_opt_->setSolveBudget(
                 &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
         bool temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
-                                                 t0,
+                                                 backup_switch_lower_bound,
                                                  backup_switch_upper_bound,
                                                  heu_ts,
                                                  back_traj_info.getSFC(),
@@ -2548,7 +2582,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             vec_Vec3f init_ps;
             back_traj_opt_->getInitValue(init_ts, init_times, init_ps);
             latest_replan.setBackupCondition(init_ts, init_times, init_ps,
-                                             t0, backup_switch_upper_bound,
+                                             backup_switch_lower_bound,
+                                             backup_switch_upper_bound,
                                              back_traj_info.getSFC());
         }
 
@@ -2668,8 +2703,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
 
 
-        if (opt_ts < t0) {
-            planner_context_->error(" -- [planner] opt_ts {} < t0 {}", opt_ts, t0);
+        if (!std::isfinite(opt_ts) ||
+            opt_ts + 1.0e-9 < backup_switch_lower_bound ||
+            opt_ts > te + 1.0e-9) {
+            planner_context_->error(
+                    " -- [planner] opt_ts {} outside certified backup switch window "
+                    "[{}, {}]",
+                    opt_ts, backup_switch_lower_bound, te);
             return OPT_FAILED;
         }
         double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;

@@ -9,6 +9,8 @@
 #define EXP_TRAJ_H
 #include <data_structure/base/trajectory.h>
 
+#include <cmath>
+
 
 namespace navigation_planning_backend {
     using geometry_utils::Trajectory;
@@ -33,11 +35,17 @@ namespace navigation_planning_backend {
         /* some part of exp traj may belong to last backup, record this */
         double on_backup_start_TT{-1}, on_backup_end_TT{-1};
 
+        // A measured-state rebase may prepend a certified C3 handoff.  The
+        // backup switch must not cut that prefix away when the candidate is
+        // assembled; it remains nominal EXP until this duration has elapsed.
+        double required_main_prefix_duration_TT_{0.0};
+
     public:
         explicit  ExpTraj() = default;
 
         void setEmpty() {
             flag_empty_ = true;
+            required_main_prefix_duration_TT_ = 0.0;
         }
 
         bool empty() const {
@@ -75,6 +83,19 @@ namespace navigation_planning_backend {
             flag_empty_ = false;
             on_backup_start_TT = _on_backup_start_TT;
             on_backup_end_TT = _on_backup_end_TT;
+            required_main_prefix_duration_TT_ = 0.0;
+        }
+
+        bool setRequiredMainPrefixDuration(const double duration_TT) {
+            if (!std::isfinite(duration_TT) || duration_TT < 0.0) {
+                return false;
+            }
+            required_main_prefix_duration_TT_ = duration_TT;
+            return true;
+        }
+
+        double getRequiredMainPrefixDuration() const {
+            return required_main_prefix_duration_TT_;
         }
 
         double getTotalDuration() const {

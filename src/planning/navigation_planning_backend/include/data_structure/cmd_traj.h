@@ -203,7 +203,12 @@ namespace navigation_planning_backend {
             candidate.backup_disposition = disposition;
             if (backup_traj != nullptr) {
                 const double backup_start = backup_traj->getStartTT();
+                const double required_main_prefix_duration =
+                    exp_traj.getRequiredMainPrefixDuration();
                 if (!std::isfinite(backup_start) || backup_start < 0.0 ||
+                    !std::isfinite(required_main_prefix_duration) ||
+                    required_main_prefix_duration < 0.0 ||
+                    backup_start + 1.0e-9 < required_main_prefix_duration ||
                     !exp_traj.getPartialTrajectoryByTrajectoryTime(
                         0, backup_start, tmp_pos_traj, tmp_yaw_traj)) {
                     return std::nullopt;

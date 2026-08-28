@@ -672,6 +672,31 @@ TEST(PlannerTrajectory, CandidateBuilderPreservesInheritedAndNewBackupRoles) {
   EXPECT_TRUE(candidate->backup_suffix_available);
 }
 
+TEST(PlannerTrajectory, CandidateBuilderDoesNotCutRequiredMainPrefix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+  ASSERT_TRUE(exp.setRequiredMainPrefixDuration(0.4));
+
+  navigation_planning_backend::BackupTraj early_backup;
+  early_backup.setTrajectory(
+      10.3, 0.3, linearTrajectory(0.5, 10.3), linearTrajectory(0.5, 10.3));
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &early_backup,
+      navigation_planning_backend::BackupDisposition::SUCCESS));
+
+  navigation_planning_backend::BackupTraj delayed_backup;
+  delayed_backup.setTrajectory(
+      10.4, 0.4, linearTrajectory(0.5, 10.4), linearTrajectory(0.5, 10.4));
+  auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &delayed_backup,
+      navigation_planning_backend::BackupDisposition::SUCCESS);
+  ASSERT_TRUE(candidate);
+  EXPECT_DOUBLE_EQ(candidate->backup_start_tt, 0.4);
+  EXPECT_DOUBLE_EQ(candidate->position.getTotalDuration(), 0.9);
+}
+
 TEST(PlannerTrajectory, CandidateBuilderDoesNotAdvertiseZeroLengthBackupSuffix) {
   auto position = linearTrajectory(1.0, 10.0);
   auto yaw = linearTrajectory(1.0, 10.0);

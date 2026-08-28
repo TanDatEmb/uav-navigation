@@ -7537,3 +7537,47 @@ release profiles must not use the former allowance.
   external-mode-check`, inspecting command-generation boundaries, P/V/A/J
   residuals, speed, altitude, clearance, strict backup evidence, and
   p50/p95/p99 planning latency.
+
+### 2026-08-28 - Preserve the certified handoff prefix before BACKUP
+
+- **Owner:** Navigation planning trajectory composition and runtime execution
+  maintainers.
+- **Scope:** Propagate the duration of a measured-state PVAJ handoff from
+  `ExpTraj` into backup selection and candidate construction. A BACKUP suffix
+  may begin only at or after that duration; candidate construction rejects a
+  backup start that would truncate the prefix. The backup optimizer and the
+  final immutable-world authorization still certify the resulting suffix.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This closes a
+  trajectory ownership hole that silently discarded a certified continuity
+  connector when the visibility-derived switch was near the current command
+  time. It does not relax KNOWN_FREE backup, UNKNOWN/OUT_OF_MAP, dynamic,
+  flatness, corridor, swept-world, identity, freshness, command-anchor,
+  waypoint, or deadline gates. If no certified backup window remains after
+  the prefix, the solve fails closed.
+- **Derivation and cost:** The lower backup switch bound is the maximum of
+  the current command time and the recorded connector duration. It is applied
+  to the bounded backward switch search and to the optimizer's existing switch
+  interval; no new planner pass or safety threshold is introduced. Candidate
+  construction repeats the invariant as a fail-closed composition check.
+- **Evidence:** The post-connector SITL artifact
+  `.artifacts/runtime/external-mode-check-20260828T022542-589388` showed most
+  rebase transitions at `p95 Δp=0.02265 m`, `p95 Δv=0.02943 m/s`, but one
+  BACKUP transition still at `Δp=0.45318 m`, `Δv=0.27525 m/s`; commit traces
+  showed the backup switch near zero, proving that the connector was being
+  truncated during composition. That run is invalid for acceptance because
+  lidar and external-odometry freshness gaps were present. Focused candidate
+  composition tests, a rebuilt manifest, and a fresh valid SITL run are
+  required.
+- **Removal/review condition:** Revisit if enforcing prefix ownership causes
+  repeated no-window failures on representative routes, increases planning
+  tails, or regresses speed, altitude, clearance, strict backup, PVA
+  continuity, or mission completion. Do not lower the prefix bound to recover
+  progress; change the handoff/route architecture only with new evidence.
+- **Verification:** `make build`; source `install/setup.bash` and run the
+  planner backend, trajectory, execution, runtime, and PX4 contract tests;
+  then repeat `SPEED_CAP_MPS=3
+  MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check`,
+  accepting results only when sensor freshness is valid and inspecting backup
+  switch time versus prefix duration, generation P/V/A/J residuals, speed,
+  altitude, clearance, waypoint order, strict backup, and p50/p95/p99
+  planning latency.
