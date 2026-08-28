@@ -293,6 +293,7 @@ rog_map:
         self.assertEqual(envelopes["planning_map_size_xyz_m"], (80.0, 20.0, 6.0))
         self.assertEqual(envelopes["planning_map_origin_xy_m"], (0.0, 0.0))
         self.assertEqual(envelopes["planning_map_origin_xyz_m"], (0.0, 0.0, 1.5))
+        self.assertFalse(envelopes["map_sliding_enabled"])
         self.assertEqual(envelopes["lio_half_extent_xy_m"], (24.0, 18.0))
         self.assertEqual(envelopes["inflation_radius_m"], 0.75)
         self.assertEqual(envelopes["robot_radius_m"], 0.87)
@@ -376,6 +377,42 @@ rog_map:
         self.assertIn("drawEnvelope", replay)
         self.assertIn("centered on UAV", replay)
         self.assertEqual(payload["spatial_envelopes"]["robot_radius_m"], 0.8)
+
+    def test_replay_draws_rectangular_planner_window_and_fits_sliding_bounds(self) -> None:
+        payload = _replay_payload({
+            "ground_truth": [
+                {"t": 0.0, "position": [0.0, 0.0, 1.5], "velocity": [1.0, 0.0, 0.0]},
+                {"t": 20.0, "position": [20.0, 0.0, 1.5], "velocity": [1.0, 0.0, 0.0]},
+            ],
+            "waypoints": [],
+            "metrics": {"obstacles": [], "route_obstacles": []},
+            "observability": {},
+            "spatial_envelopes": {
+                "planning_map_size_xy_m": (110.0, 15.0),
+                "planning_map_origin_xy_m": (0.0, 0.0),
+                "map_sliding_enabled": True,
+            },
+        })
+        self.assertEqual(payload["spatial_envelopes"]["planning_map_size_xy_m"], [110.0, 15.0])
+        self.assertAlmostEqual(payload["bounds"]["min_x"], -55.0)
+        self.assertAlmostEqual(payload["bounds"]["max_x"], 75.0)
+        self.assertAlmostEqual(payload["bounds"]["min_y"], -7.5)
+        self.assertAlmostEqual(payload["bounds"]["max_y"], 7.5)
+
+        replay = replay_section({
+            "ground_truth": [{"t": 0.0, "position": [0.0, 0.0, 1.5], "velocity": [0.0, 0.0, 0.0]}],
+            "waypoints": [],
+            "metrics": {"obstacles": [], "route_obstacles": []},
+            "observability": {},
+            "spatial_envelopes": {
+                "planning_map_size_xy_m": [110.0, 15.0],
+                "planning_map_origin_xy_m": [0.0, 0.0],
+                "map_sliding_enabled": True,
+            },
+        })
+        self.assertIn("drawPlannerWindow", replay)
+        self.assertIn("ROG-Map rectangular planner window", replay)
+        self.assertIn("ROG-Map map window", replay)
 
     def test_replay_keeps_path_identity_in_legend_and_status_not_on_map(self) -> None:
         replay = replay_section({

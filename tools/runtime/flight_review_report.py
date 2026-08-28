@@ -129,7 +129,8 @@ def _replay_map_context_html(spatial: dict[str, Any]) -> str:
     return (
         '<div class="replay-map-context" aria-label="Replay map and sensing context">'
         f'<span><strong>ROG-Map planner window</strong> {_dimension_text(map_size)} m; '
-        f'origin ({_coordinate_text(map_origin)}) m; resolution {fmt(spatial.get("planning_resolution_m"), 2)} m</span>'
+        f'origin ({_coordinate_text(map_origin)}) m; resolution {fmt(spatial.get("planning_resolution_m"), 2)} m'
+        f'{"; sliding follows UAV" if spatial.get("map_sliding_enabled") else ""}</span>'
         f'<span><strong>Planner visibility</strong> {visibility}; '
         f'raycast update box {_dimension_text(spatial.get("rog_local_update_box_m"))} m; '
         f'ray range {ray_range_text}</span>'
@@ -1119,10 +1120,58 @@ def _replay_payload(data: dict[str, Any]) -> dict[str, Any]:
         )
         if finite(envelopes.get(key)) is not None and finite(envelopes.get(key)) > 0.0
     }
+    map_size_xy = envelopes.get("planning_map_size_xy_m")
+    map_origin_xy = envelopes.get("planning_map_origin_xy_m")
+    if (
+        isinstance(map_size_xy, (list, tuple))
+        and len(map_size_xy) >= 2
+        and all(finite(value) is not None and finite(value) > 0.0 for value in map_size_xy[:2])
+    ):
+        replay_envelopes["planning_map_size_xy_m"] = [finite(value) for value in map_size_xy[:2]]
+    if (
+        isinstance(map_origin_xy, (list, tuple))
+        and len(map_origin_xy) >= 2
+        and all(finite(value) is not None for value in map_origin_xy[:2])
+    ):
+        replay_envelopes["planning_map_origin_xy_m"] = [finite(value) for value in map_origin_xy[:2]]
+    replay_envelopes["map_sliding_enabled"] = bool(envelopes.get("map_sliding_enabled", False))
+
+    # A planner map is a rectangular finite grid, not a radial envelope. Keep
+    # its footprint in the replay bounds so the complete rectangle remains
+    # visible. With map sliding enabled the configured origin is only the
+    # initial center; the runtime window follows the UAV.
+    if "planning_map_size_xy_m" in replay_envelopes:
+        half_x = replay_envelopes["planning_map_size_xy_m"][0] / 2.0
+        half_y = replay_envelopes["planning_map_size_xy_m"][1] / 2.0
+        if replay_envelopes["map_sliding_enabled"] and ground_truth:
+            bounds["min_x"] = min(bounds["min_x"], min(item["p"][0] for item in ground_truth) - half_x)
+            bounds["max_x"] = max(bounds["max_x"], max(item["p"][0] for item in ground_truth) + half_x)
+            bounds["min_y"] = min(bounds["min_y"], min(item["p"][1] for item in ground_truth) - half_y)
+            bounds["max_y"] = max(bounds["max_y"], max(item["p"][1] for item in ground_truth) + half_y)
+        elif "planning_map_origin_xy_m" in replay_envelopes:
+            center_x, center_y = replay_envelopes["planning_map_origin_xy_m"]
+            bounds["min_x"] = min(bounds["min_x"], center_x - half_x)
+            bounds["max_x"] = max(bounds["max_x"], center_x + half_x)
+            bounds["min_y"] = min(bounds["min_y"], center_y - half_y)
+            bounds["max_y"] = max(bounds["max_y"], center_y + half_y)
+
     # Keep the configured sensing/planning rings visible around the cursor UAV
     # in the same replay viewport. Projected LiDAR points remain the
     # time-varying observation evidence.
-    replay_radius = max(replay_envelopes.values(), default=0.0)
+    replay_radius = max(
+        (
+            value for key, value in replay_envelopes.items()
+            if key in {
+                "lidar_max_range_m",
+                "visibility_horizon_floor_m",
+                "visibility_horizon_cap_m",
+                "safe_corridor_max_m",
+                "safe_corridor_nominal_m",
+                "robot_radius_m",
+            }
+        ),
+        default=0.0,
+    )
     if replay_radius > 0.0 and ground_truth:
         bounds["min_x"] = min(bounds["min_x"], min(item["p"][0] for item in ground_truth) - replay_radius)
         bounds["max_x"] = max(bounds["max_x"], max(item["p"][0] for item in ground_truth) + replay_radius)
@@ -1249,7 +1298,32 @@ _REPLAY_SCRIPT = r"""
     title.textContent = `${label}: ${fmt(radius, 2)} m around UAV at replay cursor`;
   }
 
+  function drawPlannerWindow(parent, vehicle) {
+    const size = data.spatial_envelopes && data.spatial_envelopes.planning_map_size_xy_m;
+    if (!Array.isArray(size) || size.length < 2 || !size.every(value => Number.isFinite(Number(value)) && Number(value) > 0)) return;
+    const configuredOrigin = data.spatial_envelopes.planning_map_origin_xy_m;
+    const sliding = data.spatial_envelopes.map_sliding_enabled === true;
+    const center = sliding && Array.isArray(vehicle) && vehicle.length >= 2
+      ? [Number(vehicle[0]), Number(vehicle[1])]
+      : (Array.isArray(configuredOrigin) && configuredOrigin.length >= 2
+        ? [Number(configuredOrigin[0]), Number(configuredOrigin[1])]
+        : null);
+    if (!center || !center.every(value => Number.isFinite(value))) return;
+    const halfX = Number(size[0]) / 2, halfY = Number(size[1]) / 2;
+    const topLeft = world([center[0] - halfX, center[1] + halfY, 0]);
+    const bottomRight = world([center[0] + halfX, center[1] - halfY, 0]);
+    const window = svgNode("rect", {
+      x: topLeft[0], y: topLeft[1],
+      width: bottomRight[0] - topLeft[0], height: bottomRight[1] - topLeft[1],
+      fill: "#7650a8", "fill-opacity": .025, stroke: "#7650a8",
+      "stroke-opacity": .82, "stroke-width": 1.5, "stroke-dasharray": "9 4"
+    }, parent);
+    const title = svgNode("title", {}, window);
+    title.textContent = `ROG-Map rectangular planner window: ${fmt(size[0], 1)} × ${fmt(size[1], 1)} m in ENU XY; ${sliding ? "center follows UAV" : "configured center"}`;
+  }
+
   const staticLayer = svgNode("g", {}, svg);
+  const windowLayer = svgNode("g", {}, svg);
   const trailLayer = svgNode("g", {}, svg);
   const activeLayer = svgNode("g", {}, svg);
   const vehicleLayer = svgNode("g", {}, svg);
@@ -1319,7 +1393,8 @@ _REPLAY_SCRIPT = r"""
     const lidar = latestAt(data.lidar_observations || [], time);
     document.getElementById("replay-lidar").textContent = lidar ? `scan ${lidar.scan_index ?? "—"} · ${lidar.roi_points ?? 0} ROI points · range ${fmt(lidar.min_range_m, 2)}–${fmt(lidar.max_range_m, 2)} m` : "No LiDAR observation yet";
     const envelopeLabels = {lidar_max_range_m: "LiDAR max range", visibility_horizon_floor_m: "ROG-Map visibility floor", visibility_horizon_cap_m: "ROG-Map visibility cap", robot_radius_m: "vehicle radius"};
-    const envelopes = Object.entries(data.spatial_envelopes || {}).map(([name, radius]) => `${envelopeLabels[name] || name.replace(/_m$/, "").replaceAll("_", " ")}: ${fmt(radius, 2)} m`);
+    const envelopeKeys = ["lidar_max_range_m", "visibility_horizon_floor_m", "visibility_horizon_cap_m", "safe_corridor_max_m", "safe_corridor_nominal_m", "robot_radius_m"];
+    const envelopes = envelopeKeys.filter(name => Number.isFinite(Number(data.spatial_envelopes && data.spatial_envelopes[name]))).map(name => `${envelopeLabels[name] || name.replace(/_m$/, "").replaceAll("_", " ")}: ${fmt(data.spatial_envelopes[name], 2)} m`);
     document.getElementById("replay-envelopes").textContent = envelopes.length ? `${envelopes.join(" · ")} · centered on UAV` : "No configured replay envelopes";
   }
 
@@ -1327,7 +1402,9 @@ _REPLAY_SCRIPT = r"""
     currentTime = Math.max(data.start, Math.min(data.end, Number(time)));
     slider.value = currentTime;
     const ground = nearestGround(currentTime), plans = activePlansAt(currentTime), planner = latestAt(data.planner, currentTime);
+    clear(windowLayer);
     clear(trailLayer); clear(activeLayer); clear(vehicleLayer);
+    if (ground) drawPlannerWindow(windowLayer, ground.p);
     const trail = data.ground_truth.filter(item => item.t <= currentTime + 1e-9).map(item => item.p);
     polyline(trailLayer, trail, {stroke: "#1f6feb", "stroke-width": 3});
     plans.slice().sort((left, right) => right.role - left.role).forEach(plan => {
@@ -1411,7 +1488,7 @@ def replay_section(data: dict[str, Any]) -> str:
             "Scrub or play the recorded timeline. Blue is the observed UAV path; "
             "teal/red lines are nominal/safety path candidates from the same planner bundle. "
             "A solid line is selected at the cursor and a dashed line is another candidate. "
-            "Purple rings show the ROG-Map planner visibility window; the teal dashed ring is the LiDAR max range. "
+            "The purple dashed rectangle is the ROG-Map planner window; purple rings show planner visibility and the teal dashed ring is the LiDAR max range. "
             "Purple points are projected LiDAR observations. Click a timeline marker to jump to a path publication."
         )
     else:
@@ -1432,7 +1509,7 @@ def replay_section(data: dict[str, Any]) -> str:
     <div class="replay-event-caption"><span>candidate path publication timeline</span><span><i class="replay-swatch nominal"></i> nominal (lower lane) <i class="replay-swatch safety"></i> safety (upper lane)</span></div>
     <div id="replay-plan-events" class="replay-plan-events" aria-label="Trajectory publication events"></div>
     <div class="replay-grid">
-      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> nominal path candidate</span><span><i class="replay-swatch safety"></i> safety path candidate</span><span>solid = selected · dashed = other candidate</span><span>◌ waypoint acceptance radius</span><span><i class="replay-swatch planner"></i> ROG-Map planner visibility</span><span><i class="replay-swatch lidar"></i> LiDAR max range</span><span>• LiDAR observation</span></div>{_replay_map_context_html(data.get("spatial_envelopes", {}))}</div>
+      <div class="replay-map-card"><svg id="replay-map" class="replay-map" role="img" aria-label="Interactive 2D flight replay"><title>Interactive 2D flight replay</title></svg><div class="replay-legend"><span><i class="replay-swatch ground"></i> observed UAV path</span><span class="replay-heading-legend">➤</span><span>UAV heading (ENU yaw)</span><span><i class="replay-swatch nominal"></i> nominal path candidate</span><span><i class="replay-swatch safety"></i> safety path candidate</span><span>solid = selected · dashed = other candidate</span><span>◌ waypoint acceptance radius</span><span><i class="replay-swatch planner-window"></i> ROG-Map map window</span><span><i class="replay-swatch planner"></i> planner visibility rings</span><span><i class="replay-swatch lidar"></i> LiDAR max range</span><span>• LiDAR observation</span></div>{_replay_map_context_html(data.get("spatial_envelopes", {}))}</div>
       <aside class="replay-status"><h3>State at cursor</h3>
         <div class="replay-status-metrics">
           <div class="replay-status-metric"><span class="replay-status-metric-label">Time</span><strong id="replay-time-value-side" class="replay-status-metric-value">—</strong></div>
@@ -2442,7 +2519,7 @@ def render(session: Path, output: Path) -> Path:
     .replay-toolbar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 8px; }} .replay-toolbar button {{ border:1px solid #b9c9d6; border-radius:6px; background:#fff; color:#1f4f78; padding:7px 13px; font-weight:800; cursor:pointer; }} .replay-toolbar button:hover {{ background:#edf5fb; }} .replay-time-control {{ display:flex; align-items:center; gap:10px; flex:1; min-width:280px; color:#53677b; font-size:12px; font-weight:700; }} .replay-time-control input {{ flex:1; accent-color:{BLUE}; }} .replay-time-control output {{ min-width:62px; color:#18324b; font-variant-numeric:tabular-nums; }}
     .replay-event-caption {{ display:flex; justify-content:space-between; gap:12px; color:#68778a; font-size:11px; margin-top:8px; }} .replay-plan-events {{ height:30px; position:relative; margin:2px 3px 12px; border-bottom:1px solid #cdd8e1; background:linear-gradient(to bottom,transparent 0%,transparent 46%,#edf2f6 46%,#edf2f6 54%,transparent 54%,transparent 100%); }} .replay-marker {{ position:absolute; bottom:0; width:3px; height:10px; padding:0; border:0; cursor:pointer; transform:translateX(-1px); }} .replay-marker.nominal {{ bottom:0; background:{TEAL}; }} .replay-marker.safety {{ bottom:14px; background:{RED}; }} .replay-marker.active {{ height:18px; width:5px; box-shadow:0 0 0 2px #f0a51a; z-index:2; }}
     .replay-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:12px; align-items:start; }} .replay-map-card {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#fff; padding:8px 8px 6px; overflow:hidden; }} .replay-map {{ width:100%; height:auto; display:block; }} .replay-status {{ min-width:0; border:1px solid #e3e9ee; border-radius:9px; background:#f8fafc; padding:14px; }} .replay-status h3 {{ margin-bottom:12px; }} .replay-status-metrics {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:12px; }} .replay-status-metric {{ min-width:0; padding:10px; border:1px solid #dce6ed; border-radius:8px; background:#fff; }} .replay-status-metric-label {{ display:block; color:#68778a; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }} .replay-status-metric-value {{ display:block; margin-top:4px; color:#18324b; font-size:17px; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }} .replay-status-group {{ padding:11px 0 2px; border-top:1px solid #e1e9ef; }} .replay-status-group:first-of-type {{ padding-top:0; border-top:0; }} .replay-status-group-title {{ margin-bottom:3px; color:#29435d; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }} .replay-field {{ display:grid; grid-template-columns:minmax(76px,.42fr) minmax(0,1fr); gap:8px; align-items:baseline; padding:7px 0; border-bottom:1px solid #edf1f4; }} .replay-field:last-child {{ border-bottom:0; }} .replay-field-label {{ color:#68778a; font-size:11px; font-weight:700; }} .replay-field-value {{ min-width:0; color:#1f3c56; font-size:12px; line-height:1.35; font-weight:700; overflow-wrap:anywhere; }} .replay-status > .small {{ margin-top:12px; line-height:1.5; }} .replay-legend {{ display:flex; flex-wrap:wrap; gap:8px 18px; color:#53677b; font-size:11px; margin:5px 4px 0; }} .replay-heading-legend {{ color:{BLUE}; font-size:18px; line-height:10px; font-weight:900; margin-left:4px; }} .replay-swatch {{ display:inline-block; width:18px; height:3px; margin:0 5px 2px 0; vertical-align:middle; background:#1f6feb; }} .replay-swatch.nominal {{ background:{TEAL}; }} .replay-swatch.safety {{ background:{RED}; }} .replay-swatch.ground {{ background:{BLUE}; height:4px; }} .replay-svg-label {{ fill:#617284; font-size:11px; }} .replay-svg-title {{ fill:#29435d; font-size:12px; font-weight:700; }} .replay-map-label {{ fill:#5a3f45; font-size:11px; font-weight:700; }}
-    .replay-swatch.planner {{ background:{PURPLE}; height:2px; border-top:1px dashed {PURPLE}; }} .replay-swatch.lidar {{ background:{TEAL}; height:2px; border-top:1px dashed {TEAL}; }} .replay-map-context {{ display:flex; flex-wrap:wrap; gap:7px 16px; margin:8px 4px 2px; padding-top:8px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; line-height:1.45; }} .replay-map-context span {{ min-width:240px; flex:1 1 240px; }} .replay-map-context strong {{ color:#29435d; }}
+    .replay-swatch.planner-window {{ background:{PURPLE}; height:2px; border-top:1px dashed {PURPLE}; }} .replay-swatch.planner {{ background:{PURPLE}; height:2px; border-top:1px dotted {PURPLE}; }} .replay-swatch.lidar {{ background:{TEAL}; height:2px; border-top:1px dashed {TEAL}; }} .replay-map-context {{ display:flex; flex-wrap:wrap; gap:7px 16px; margin:8px 4px 2px; padding-top:8px; border-top:1px solid #edf1f4; color:#53677b; font-size:11px; line-height:1.45; }} .replay-map-context span {{ min-width:240px; flex:1 1 240px; }} .replay-map-context strong {{ color:#29435d; }}
     .evidence {{ width:100%; border-collapse:collapse; font-size:13px; }} .evidence th,.evidence td {{ padding:10px 9px; border-bottom:1px solid #e5ebef; text-align:left; vertical-align:middle; }} .evidence th {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }} .evidence .observed {{ font-weight:800; color:#1f3c56; }}
     .two-col {{ display:grid; grid-template-columns:1.1fr .9fr; gap:18px; align-items:start; }}
     .callout {{ padding:13px 15px; background:#f7fafc; border-left:4px solid var(--blue); border-radius:6px; }} .callout p {{ color:#385169; font-size:13px; }}
