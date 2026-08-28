@@ -17,7 +17,10 @@ mission:
     # Conservative calibration baseline retained until repeated speed-ladder
     # evidence proves a larger PX4 tracking envelope.
     max_acceleration_mps2: 2.0
-    max_jerk_mps3: 4.0
+    # Keep acceleration authority unchanged; repeated traces show jerk-only
+    # optimizer rejection is common while the 8 m/s^3 ceiling remains far
+    # below the 30 m/s^3 product envelope.
+    max_jerk_mps3: 8.0
     unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15
