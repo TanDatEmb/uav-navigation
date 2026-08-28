@@ -27,6 +27,18 @@ inline Eigen::Vector3d boundEstimatedDerivative(
   return derivative * (maximum_norm / norm);
 }
 
+// PX4's external trajectory interface consumes position, velocity and
+// acceleration feed-forward, but not jerk.  Preserve the complete executable
+// PVA boundary and make jerk a new-segment shaping variable instead of an
+// artificial C3 handoff equality.  The generated segment still has to satisfy
+// the unchanged continuous jerk and flatness certificates.
+inline geometry_utils::StatePVAJ px4ExecutableBoundaryState(
+    const geometry_utils::StatePVAJ& source) noexcept {
+  auto output = source;
+  output.col(3).setZero();
+  return output;
+}
+
 // Construct a seventh-order C3 connector between two complete PVAJ states.
 // This is a handoff primitive only: the caller must still run the normal
 // dynamic, flatness, corridor, and immutable-world certificates on the

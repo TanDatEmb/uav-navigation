@@ -69,6 +69,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 | HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
+| HG-026 | PX4 executable handoff order (`SAFETY_INVARIANT`) | exact P/V/A continuity at MAIN generation changes; incoming jerk is released because External Mode does not transmit jerk | PROVISIONAL | Aligns the planner boundary with the actual PX4 `TrajectorySetpoint` contract and removes an ownerless C3 equality. Every generated trajectory still passes unchanged continuous V/A/J, flatness, corridor and world certificates; MAIN-to-BACKUP continuity inside one bundle remains polynomial-exact. | Prove zero P/V/A splice residual, bounded jerk on both sides, improved feasible/renewal rate and non-worse PX4 tracking over repeated SITL and recorded-data shadow planning; inspect controller source/API on PX4 upgrades. |
 
 ## Temporary-bypass register
 
@@ -9928,3 +9929,35 @@ release profiles must not use the former allowance.
 - **Verification:** `git show e5c4c4b`, `git show 0d0dabe`, focused 8/8 backend
   tests, Release build and the two cited exact-HEAD SITL artifacts preserve the
   implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Match planner generation handoff to PX4 PVA execution
+
+- **Owner/status:** Planner-to-PX4 trajectory handoff, `PROVISIONAL`; anchors
+  `kinematic_state_boundary.hpp`, `Planner::generateExpTraj`, and
+  `NavigationMode::updateSetpoint`.
+- **Physical contract:** A new MAIN generation preserves the prior command's
+  exact position, velocity and acceleration at its activation time. The
+  instantaneous incoming jerk is not imposed on the next MINCO segment. The
+  PX4 External Mode publishes position, velocity, acceleration, yaw and yaw
+  rate through `TrajectorySetpoint`; it has no jerk field in this interface.
+- **Safety impact:** `SAFETY_INVARIANT`; this changes generation continuity
+  from C3 to C2 at the transport boundary, not the trajectory's dynamic
+  certificate. The new segment must still remain under the unchanged jerk,
+  acceleration, velocity, flatness, corridor, route-regression and latest-world
+  gates. Backup generated inside the candidate remains exactly connected to
+  the selected MAIN polynomial. A false accept would present a bounded jerk
+  step with continuous acceleration; a false reject retains/stops through the
+  existing certified-command FSM.
+- **Derivation:** Local PX4 interface source
+  `px4_ros2_cpp/.../experimental/trajectory.cpp` serializes only P/V/A and
+  yaw/yaw-rate, and `navigation_mode_node.cpp` calls exactly those setters.
+  Therefore jerk equality across independently published generations had no
+  execution owner while materially constraining degree-seven MINCO.
+- **Runtime cost:** One fixed-size state copy and one zero-vector assignment per
+  solve; expected p50/p95/p99 impact is below measurement resolution. Solver
+  feasible rate and evaluation count are required evidence, not assumed.
+- **Removal/review condition:** Restore C3 only if the execution interface
+  begins consuming jerk or controller evidence proves a required jerk-state
+  handoff. Promote only after focused splice tests, Release build, repeated
+  three-column SITL and representative recorded-data shadow planning show zero
+  P/V/A residual, bounded jerk, better renewal and non-worse tracking.
