@@ -1058,6 +1058,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
     diagnostics_.certified_seed_failure_stage =
             static_cast<int>(deterministic_seed_certificate.failure_stage);
+    diagnostics_.certified_seed_maximum_velocity_mps =
+            deterministic_seed_certificate.maximum_velocity_mps;
+    diagnostics_.certified_seed_maximum_acceleration_mps2 =
+            deterministic_seed_certificate.maximum_acceleration_mps2;
+    diagnostics_.certified_seed_maximum_jerk_mps3 =
+            deterministic_seed_certificate.maximum_jerk_mps3;
 
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
@@ -1236,6 +1242,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                             : traj.getMaxAccRate();
         maximum_jerk = traj.empty() ? std::numeric_limits<double>::infinity()
                                     : traj.getMaxJerRate();
+        diagnostics_.last_candidate_maximum_velocity_mps = maximum_velocity;
+        diagnostics_.last_candidate_maximum_acceleration_mps2 = maximum_acceleration;
+        diagnostics_.last_candidate_maximum_jerk_mps3 = maximum_jerk;
     };
     const auto normalized_dynamic_violation = [&]() {
         if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||

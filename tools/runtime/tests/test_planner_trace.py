@@ -187,6 +187,12 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_initial_normalized_dynamic_violation": "1.25",
                                     "exp_best_normalized_dynamic_violation": "1.01",
                                     "exp_final_normalized_dynamic_violation": "1.01",
+                                    "maximum_velocity_mps": "4.95",
+                                    "maximum_acceleration_mps2": "2.04",
+                                    "maximum_jerk_mps3": "4.40",
+                                    "exp_certified_seed_maximum_velocity_mps": "7.5",
+                                    "exp_certified_seed_maximum_acceleration_mps2": "8.0",
+                                    "exp_certified_seed_maximum_jerk_mps3": "42.0",
                                     "exp_initial_duration_s": "4.25",
                                     "exp_final_duration_s": "4.75",
                                     "exp_retry_duration_lower_bound_min_s": "1.25",
@@ -282,6 +288,18 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_lbfgs_last_return_code"], -1)
         self.assertFalse(records[0]["exp_lbfgs_cancelled"])
         self.assertEqual(records[0]["exp_best_normalized_dynamic_violation"], 1.01)
+        self.assertEqual(records[0]["maximum_velocity_mps"], 4.95)
+        self.assertEqual(records[0]["maximum_acceleration_mps2"], 2.04)
+        self.assertEqual(records[0]["maximum_jerk_mps3"], 4.40)
+        self.assertEqual(
+            records[0]["exp_certified_seed_maximum_velocity_mps"], 7.5
+        )
+        self.assertEqual(
+            records[0]["exp_certified_seed_maximum_acceleration_mps2"], 8.0
+        )
+        self.assertEqual(
+            records[0]["exp_certified_seed_maximum_jerk_mps3"], 42.0
+        )
         self.assertEqual(records[0]["exp_initial_duration_s"], 4.25)
         self.assertEqual(records[0]["exp_final_duration_s"], 4.75)
         self.assertEqual(records[0]["exp_retry_duration_lower_bound_min_s"], 1.25)

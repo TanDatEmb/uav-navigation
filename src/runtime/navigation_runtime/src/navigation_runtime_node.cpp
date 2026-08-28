@@ -2679,6 +2679,21 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.best_normalized_dynamic_violation);
     add_trace_value("exp_final_normalized_dynamic_violation",
                     exp_diagnostics.final_normalized_dynamic_violation);
+    // Keep the historical generic names populated for report compatibility;
+    // these are the last independently evaluated MINCO candidate extrema,
+    // including a candidate rejected by a hard gate.
+    add_trace_value("maximum_velocity_mps",
+                    exp_diagnostics.last_candidate_maximum_velocity_mps);
+    add_trace_value("maximum_acceleration_mps2",
+                    exp_diagnostics.last_candidate_maximum_acceleration_mps2);
+    add_trace_value("maximum_jerk_mps3",
+                    exp_diagnostics.last_candidate_maximum_jerk_mps3);
+    add_trace_value("exp_certified_seed_maximum_velocity_mps",
+                    exp_diagnostics.certified_seed_maximum_velocity_mps);
+    add_trace_value("exp_certified_seed_maximum_acceleration_mps2",
+                    exp_diagnostics.certified_seed_maximum_acceleration_mps2);
+    add_trace_value("exp_certified_seed_maximum_jerk_mps3",
+                    exp_diagnostics.certified_seed_maximum_jerk_mps3);
     add_trace_value("exp_initial_duration_s", exp_diagnostics.initial_duration_s);
     add_trace_value("exp_final_duration_s", exp_diagnostics.final_duration_s);
     add_trace_value("exp_retry_duration_lower_bound_min_s",

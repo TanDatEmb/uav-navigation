@@ -74,6 +74,18 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.initial_normalized_dynamic_violation = source.initial_normalized_dynamic_violation;
   output.best_normalized_dynamic_violation = source.best_normalized_dynamic_violation;
   output.final_normalized_dynamic_violation = source.final_normalized_dynamic_violation;
+  output.last_candidate_maximum_velocity_mps =
+      source.last_candidate_maximum_velocity_mps;
+  output.last_candidate_maximum_acceleration_mps2 =
+      source.last_candidate_maximum_acceleration_mps2;
+  output.last_candidate_maximum_jerk_mps3 =
+      source.last_candidate_maximum_jerk_mps3;
+  output.certified_seed_maximum_velocity_mps =
+      source.certified_seed_maximum_velocity_mps;
+  output.certified_seed_maximum_acceleration_mps2 =
+      source.certified_seed_maximum_acceleration_mps2;
+  output.certified_seed_maximum_jerk_mps3 =
+      source.certified_seed_maximum_jerk_mps3;
   output.initial_duration_s = source.initial_duration_s;
   output.final_duration_s = source.final_duration_s;
   output.retry_duration_lower_bound_min_s = source.retry_duration_lower_bound_min_s;

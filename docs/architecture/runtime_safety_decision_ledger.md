@@ -9711,3 +9711,32 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 0ccc993`, `git show 7a81a83`, focused/full tests,
   Release build, and the cited A/B artifacts preserve implementation, rollback
   and runtime evidence.
+
+### 2026-08-28 - Publish nominal candidate and fallback-seed dynamic extrema
+
+- **Owner:** EXP optimizer diagnostics and runtime rolling-bundle trace.
+- **Scope:** Every optimizer invocation publishes the last independently
+  evaluated MINCO candidate V/A/J extrema and the immutable deterministic
+  seed V/A/J extrema. Existing generic `maximum_*` trace fields now carry the
+  candidate values; explicit `exp_certified_seed_maximum_*` fields distinguish
+  fallback quality. Rejected candidates remain observable.
+- **Safety impact:** Observability only. Candidate generation, optimization,
+  hard V/A/J and flatness gates, MAIN/BACKUP selection, command admission and
+  execution are unchanged. Non-finite or unavailable measurements remain
+  omitted by the existing trace serializer rather than synthesized.
+- **Evidence:** Baseline artifact
+  `.artifacts/runtime/external-mode-check-20260828T134232-1181253` contains 60
+  EXP-stage failures and 165 deterministic seeds failing the dynamics stage,
+  but its rolling records leave `maximum_velocity_mps`,
+  `maximum_acceleration_mps2`, and `maximum_jerk_mps3` null. Text logs show
+  materially different failure classes, from small optimized overshoots to
+  fallback seeds with jerk in the tens or hundreds of m/s^3. Those classes
+  require different remedies and must be machine-readable before changing
+  trajectory architecture or limits.
+- **Removal/review condition:** Keep while MINCO or a deterministic fallback
+  participates in nominal planning. Replace only with equally explicit
+  candidate-specific certificate evidence in a versioned diagnostics schema.
+- **Verification:** Run `tools/runtime/tests/test_planner_trace.py`, backend and
+  workspace tests, Release build, then one unchanged three-column screening
+  run and verify successful and failed solve records expose finite extrema
+  whenever the corresponding candidate was evaluated.
