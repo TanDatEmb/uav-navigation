@@ -5,7 +5,11 @@ import unittest
 RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
-from planner_trace import collect_planner_trace_records, normalize_planner_trace_record
+from planner_trace import (
+    collect_planner_trace_records,
+    normalize_planner_trace_record,
+    planner_trace_summary,
+)
 
 
 class PlannerTraceTest(unittest.TestCase):
@@ -162,6 +166,8 @@ class PlannerTraceTest(unittest.TestCase):
                                     "backup_last_seed_max_jerk_mps3": "4.0",
                                     "backup_last_seed_endpoint": "[2.0,3.0,3.0]",
                                     "exp_diagnostics_valid": "1",
+                                    "exp_used_certified_seed": "1",
+                                    "exp_certified_seed_failure_stage": "0",
                                     "exp_lbfgs_attempt_count": "3",
                                     "exp_lbfgs_evaluation_count": "173",
                                     "exp_lbfgs_first_attempt_evaluation_count": "91",
@@ -247,6 +253,8 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["backup_last_seed_duration_s"], 1.25)
         self.assertEqual(records[0]["backup_last_seed_max_jerk_mps3"], 4.0)
         self.assertTrue(records[0]["exp_diagnostics_valid"])
+        self.assertTrue(records[0]["exp_used_certified_seed"])
+        self.assertEqual(records[0]["exp_certified_seed_failure_stage"], 0)
         self.assertEqual(records[0]["exp_lbfgs_attempt_count"], 3)
         self.assertEqual(records[0]["exp_retry_count"], 2)
         self.assertEqual(records[0]["exp_lbfgs_evaluation_count"], 173)
@@ -279,6 +287,28 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_first_nonfinite_max_duration_s"], 1.24)
         self.assertIsNone(records[0]["exp_first_nonfinite_cost"])
         self.assertIsNone(records[0]["exp_first_nonfinite_gradient_norm"])
+
+    def test_summary_counts_explicit_certified_seed_outcomes(self) -> None:
+        records = [
+            normalize_planner_trace_record(
+                {
+                    "planning_cycle_id": index,
+                    "bundle_id": index,
+                    "exp_used_certified_seed": used,
+                    "exp_certified_seed_failure_stage": stage,
+                },
+                source="test",
+            )
+            for index, (used, stage) in enumerate(
+                ((1, 0), (0, 5), (0, 5), (0, 2)), start=1
+            )
+        ]
+        summary = planner_trace_summary([record for record in records if record])
+        self.assertEqual(summary["exp_certified_seed_used_count"], 1)
+        self.assertEqual(
+            summary["exp_certified_seed_failure_stage_counts"],
+            {"0": 1, "2": 1, "5": 2},
+        )
 
 
 if __name__ == "__main__":

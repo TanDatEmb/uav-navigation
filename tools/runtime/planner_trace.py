@@ -82,6 +82,10 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "backup_last_seed_endpoint": ("backup_last_seed_endpoint",),
     "optimizer_latency_ms": ("optimizer_latency_ms",),
     "exp_diagnostics_valid": ("exp_diagnostics_valid",),
+    "exp_used_certified_seed": ("exp_used_certified_seed",),
+    "exp_certified_seed_failure_stage": (
+        "exp_certified_seed_failure_stage",
+    ),
     "exp_lbfgs_attempt_count": ("exp_lbfgs_attempt_count",),
     "exp_lbfgs_evaluation_count": ("exp_lbfgs_evaluation_count",),
     "exp_lbfgs_first_attempt_evaluation_count": (
@@ -380,6 +384,10 @@ def normalize_planner_trace_record(
         "backup_last_seed_endpoint": _point(values["backup_last_seed_endpoint"]),
         "optimizer_latency_ms": _float(values["optimizer_latency_ms"]),
         "exp_diagnostics_valid": _bool(values["exp_diagnostics_valid"]),
+        "exp_used_certified_seed": _bool(values["exp_used_certified_seed"]),
+        "exp_certified_seed_failure_stage": _int(
+            values["exp_certified_seed_failure_stage"]
+        ),
         "exp_lbfgs_attempt_count": _int(values["exp_lbfgs_attempt_count"]),
         "exp_lbfgs_evaluation_count": _int(values["exp_lbfgs_evaluation_count"]),
         "exp_lbfgs_first_attempt_evaluation_count": _int(
@@ -570,10 +578,20 @@ def collect_planner_trace_records(
 
 
 def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    failure_stage_counts: dict[str, int] = {}
+    for record in records:
+        stage = record.get("exp_certified_seed_failure_stage")
+        if isinstance(stage, int) and not isinstance(stage, bool):
+            key = str(stage)
+            failure_stage_counts[key] = failure_stage_counts.get(key, 0) + 1
     return {
         "record_count": len(records),
         "complete_record_count": sum(bool(record.get("complete")) for record in records),
         "partial_record_count": sum(not bool(record.get("complete")) for record in records),
+        "exp_certified_seed_used_count": sum(
+            record.get("exp_used_certified_seed") is True for record in records
+        ),
+        "exp_certified_seed_failure_stage_counts": failure_stage_counts,
         "fields_are_runtime_supplied": True,
         "missing_data_policy": "omitted, never inferred from request/trajectory IDs or aggregate counters",
     }

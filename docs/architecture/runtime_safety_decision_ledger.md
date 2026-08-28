@@ -9368,3 +9368,32 @@ release profiles must not use the former allowance.
   gaps without increased clearance, route-regression, dynamics, altitude or
   External Mode failures. Treat a lower internal-velocity scale as diagnostic,
   not permission to weaken mission cruise acceptance.
+
+### 2026-08-28 - Expose deterministic nominal fallback outcomes in reports
+
+- **Owner:** Planner decision-trace normalization and runtime report evidence.
+- **Scope:** Preserve the producer-owned `exp_used_certified_seed` and
+  `exp_certified_seed_failure_stage` fields in every normalized rolling-bundle
+  record. Summarize the explicit fallback-use count and failure-stage
+  histogram without inferring either value from trajectory IDs, solve stage or
+  commit counters.
+- **Safety impact:** Observability only. This does not change planner selection,
+  trajectory construction, PX4 handover, thresholds or acceptance. Missing or
+  malformed fields remain absent rather than being synthesized.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T125006-1120692` was BLOCKED
+  by a fail-closed PX4 Hold handover after `planner backend PVA command anchor
+  is not near vehicle`; it did not complete the second waypoint. The raw trace
+  contained 244 complete planner records, one explicit certified-seed use and
+  failure-stage counts `{0: 36, 2: 7, 3: 6, 5: 195}`. Before this change those
+  two fields were discarded by the report adapter, hiding that the bounded
+  duration baseline was selected only once while dynamics remained the
+  dominant rejection. Re-rendering the same immutable samples now reproduces
+  those exact counts in `planning.rolling_bundle_trace`.
+- **Removal/review condition:** Remove only if the producer and report migrate
+  to a typed equivalent that preserves source and rejection stage explicitly.
+  Never replace these fields with an inference from `solve_stage=backup` or a
+  successful commit.
+- **Verification:** Run `tools.runtime.tests.test_planner_trace`; re-render the
+  cited session and require the report summary to equal the raw decision-trace
+  counts. Run the complete runtime-contract suite before commit.
