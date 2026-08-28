@@ -138,6 +138,21 @@ inline bool passThroughLookaheadComplete(
          certified_distance_m + 1.0e-6 >= required_distance_m;
 }
 
+// Outgoing-route lookahead may start only after the current guide actually
+// reaches the controller-owned mission waypoint. A visibility-bounded prefix
+// is an internal receding-horizon endpoint, never a route boundary.
+inline bool passThroughGuideReachesMissionBoundary(
+    const Eigen::Vector3d& guide_endpoint,
+    const Eigen::Vector3d& mission_waypoint,
+    const double connection_tolerance_m) noexcept {
+  if (!guide_endpoint.allFinite() || !mission_waypoint.allFinite() ||
+      !std::isfinite(connection_tolerance_m) || connection_tolerance_m < 0.0) {
+    return false;
+  }
+  const double error = (guide_endpoint - mission_waypoint).norm();
+  return std::isfinite(error) && error <= connection_tolerance_m + 1.0e-6;
+}
+
 // Compute a bounded outgoing velocity for a pass-through waypoint. The
 // direction comes from the mission-owned next target; the planner's dynamic
 // certificates still validate the complete polynomial afterwards.

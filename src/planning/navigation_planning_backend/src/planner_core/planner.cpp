@@ -1493,7 +1493,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (pass_through_next_target_.has_value() && guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
             (guide_path.back() - gi_.goal_p).norm() <=
-                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6) {
+                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6 &&
+            passThroughGuideReachesMissionBoundary(
+                guide_path.back().cast<double>(), requested_goal_p_.cast<double>(),
+                navigation_world_model::kGoalConnectionToleranceM)) {
             const Eigen::Vector3d current_endpoint = guide_path.back().cast<double>();
             const Eigen::Vector3d next_target = *pass_through_next_target_;
             const double outgoing_distance = (next_target - current_endpoint).norm();

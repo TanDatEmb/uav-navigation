@@ -295,6 +295,16 @@ TEST(PlannerPassThrough, SeparatesRequiredAndCertifiedLookahead) {
   EXPECT_FALSE(navigation_planning_backend::passThroughLookaheadComplete(required, -1.0));
 }
 
+TEST(PlannerPassThrough, VisibilityPrefixCannotMasqueradeAsMissionBoundary) {
+  const Eigen::Vector3d mission_waypoint{85.0, -5.0, 3.0};
+  EXPECT_FALSE(navigation_planning_backend::passThroughGuideReachesMissionBoundary(
+      Eigen::Vector3d{70.0, -5.0, 3.0}, mission_waypoint, 0.2));
+  EXPECT_TRUE(navigation_planning_backend::passThroughGuideReachesMissionBoundary(
+      Eigen::Vector3d{84.9, -5.0, 3.0}, mission_waypoint, 0.2));
+  EXPECT_FALSE(navigation_planning_backend::passThroughGuideReachesMissionBoundary(
+      Eigen::Vector3d::Constant(NAN), mission_waypoint, 0.2));
+}
+
 TEST(PlannerPassThrough, CollinearPassThroughLegStillUsesLookaheadEnvelope) {
   const Eigen::Vector3d waypoint{20.0, 5.0, 3.0};
   const Eigen::Vector3d next_target{50.0, 5.0, 3.0};

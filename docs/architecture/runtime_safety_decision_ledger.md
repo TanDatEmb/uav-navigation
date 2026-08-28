@@ -8649,3 +8649,29 @@ release profiles must not use the former allowance.
   export before and after signed-axis slides; build and run vendor, mapping and
   runtime tests; then repeat representative recorded-data/SITL and compare
   full/patch export and callback distributions without changing hard gates.
+
+### 2026-08-28 - Do not cross a mission boundary from a visibility prefix
+
+- **Owner:** Planner receding-horizon route geometry.
+- **Scope:** Permit pass-through lookahead into the next mission leg only when
+  the certified guide endpoint reaches the actual active mission waypoint.
+  A visibility-truncated local prefix remains on the current leg and advances
+  monotonically on later replans; it cannot masquerade as the waypoint.
+- **Safety impact:** Correctness and fail-closed route ownership. No horizon,
+  acceptance radius, corridor tolerance, map policy, or dynamic limit changes.
+  All local prefixes and final candidates retain existing world and V/A/J
+  certificates. The change removes an uncertified early route transition.
+- **Evidence:** Exact-HEAD artifact
+  `external-mode-check-20260828T092022-915192` bounded waypoint `(85,-5)` to
+  local prefix `(70,-5)` from the vehicle near `(57,-5)`, then incorrectly
+  extended toward next waypoint `(85,5)` and moved the guide endpoint to about
+  `(77,-1)`. Repeated MINCO time stretches then violated the corridor and the
+  third `PlanFromRest` failure caused a safety stop at waypoint 4.
+- **Removal/review condition:** Replace only with a typed route-progress model
+  that distinguishes internal horizon frontiers from measured mission
+  boundaries. Never enable outgoing-leg geometry before the active waypoint is
+  reached or enlarge corridor/acceptance thresholds to hide the diagonal cut.
+- **Verification:** Unit-test a distant prefix and a true boundary endpoint;
+  run the complete planner backend tests and exact build; repeat the 3 m/s
+  multi-waypoint scenario, checking guide endpoints remain on the current leg
+  until measured waypoint acceptance and cross only afterward.
