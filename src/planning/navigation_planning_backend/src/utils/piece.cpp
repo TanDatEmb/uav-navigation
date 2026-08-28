@@ -6,10 +6,30 @@
 
 #include <data_structure/base/piece.h>
 
+#include <cmath>
+#include <limits>
 
 using namespace geometry_utils;
 
-// Piece==================================================
+namespace {
+
+Eigen::Vector3d invalidVector() {
+    return Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+}
+
+bool validPieceData(const Piece& piece) {
+    const auto& coefficients = piece.getCoeffMat();
+    return std::isfinite(piece.getDuration()) && piece.getDuration() > 0.0 &&
+           piece.getDegree() >= 0 && coefficients.rows() == 3 &&
+           coefficients.cols() == piece.getDegree() + 1 &&
+           coefficients.allFinite();
+}
+
+Eigen::MatrixXd emptyDerivativeCoefficients() {
+    return Eigen::MatrixXd(3, 0);
+}
+
+}  // namespace
 
 int Piece::getDim() const {
     return 3;
@@ -32,6 +52,7 @@ const Eigen::MatrixXd &Piece::getCoeffMat() const {
 }
 
 Eigen::Vector3d Piece::getPos(const double &t) const {
+    if (!validPieceData(*this) || !std::isfinite(t)) return invalidVector();
     Eigen::Vector3d pos(0.0, 0.0, 0.0);
     double tn = 1.0;
     for (int i = D; i >= 0; i--) {
@@ -42,6 +63,7 @@ Eigen::Vector3d Piece::getPos(const double &t) const {
 }
 
 Eigen::Vector3d Piece::getVel(const double &t) const {
+    if (!validPieceData(*this) || !std::isfinite(t)) return invalidVector();
     Eigen::Vector3d vel(0.0, 0.0, 0.0);
     double tn = 1.0;
     int n = 1;
@@ -54,6 +76,7 @@ Eigen::Vector3d Piece::getVel(const double &t) const {
 }
 
 Eigen::Vector3d Piece::getAcc(const double &t) const {
+    if (!validPieceData(*this) || !std::isfinite(t)) return invalidVector();
     Eigen::Vector3d acc(0.0, 0.0, 0.0);
     double tn = 1.0;
     int m = 1;
@@ -68,6 +91,7 @@ Eigen::Vector3d Piece::getAcc(const double &t) const {
 }
 
 Eigen::Vector3d Piece::getJer(const double &t) const {
+    if (!validPieceData(*this) || !std::isfinite(t)) return invalidVector();
     Eigen::Vector3d jer(0.0, 0.0, 0.0);
     double tn = 1.0;
     int l = 1;
@@ -84,6 +108,7 @@ Eigen::Vector3d Piece::getJer(const double &t) const {
 }
 
 Eigen::Vector3d Piece::getSnap(const double &t) const {
+    if (!validPieceData(*this) || !std::isfinite(t)) return invalidVector();
     Eigen::Vector3d sna(0.0, 0.0, 0.0);
     double tn = 1.0;
     int l = 1;
@@ -103,6 +128,7 @@ Eigen::Vector3d Piece::getSnap(const double &t) const {
 
 
 Eigen::MatrixXd Piece::normalizePosCoeffMat() const {
+    if (!validPieceData(*this)) return Eigen::MatrixXd();
     Eigen::MatrixXd nPosCoeffsMat(3, D + 1);
     double t = 1.0;
     for (int i = D; i >= 0; i--) {
@@ -113,6 +139,7 @@ Eigen::MatrixXd Piece::normalizePosCoeffMat() const {
 }
 
 Eigen::MatrixXd Piece::normalizeVelCoeffMat() const {
+    if (!validPieceData(*this) || D < 1) return emptyDerivativeCoefficients();
     Eigen::MatrixXd nVelCoeffMat(3, D);
     int n = 1;
     double t = duration;
@@ -125,6 +152,7 @@ Eigen::MatrixXd Piece::normalizeVelCoeffMat() const {
 }
 
 Eigen::MatrixXd Piece::normalizeAccCoeffMat() const {
+    if (!validPieceData(*this) || D < 2) return emptyDerivativeCoefficients();
     Eigen::MatrixXd nAccCoeffMat(3, D - 1);
     int n = 2;
     int m = 1;
@@ -139,6 +167,7 @@ Eigen::MatrixXd Piece::normalizeAccCoeffMat() const {
 }
 
 Eigen::MatrixXd Piece::normalizeJerCoeffMat() const {
+    if (!validPieceData(*this) || D < 3) return emptyDerivativeCoefficients();
     Eigen::MatrixXd nJerCoeffMat(3, D - 2);
     int n = 3;
     int m = 2;
@@ -155,6 +184,8 @@ Eigen::MatrixXd Piece::normalizeJerCoeffMat() const {
 }
 
 double Piece::getMaxVelRate() const {
+    if (!validPieceData(*this)) return std::numeric_limits<double>::quiet_NaN();
+    if (D < 1) return getVel(0.0).norm();
     Eigen::MatrixXd nVelCoeffMat = normalizeVelCoeffMat();
     Eigen::VectorXd coeff = math_utils::RootFinder::polySqr(nVelCoeffMat.row(0)) +
                             math_utils::RootFinder::polySqr(nVelCoeffMat.row(1)) +
@@ -204,6 +235,8 @@ double Piece::getMaxVelRate() const {
 }
 
 double Piece::getMaxAccRate() const {
+    if (!validPieceData(*this)) return std::numeric_limits<double>::quiet_NaN();
+    if (D < 2) return getAcc(0.0).norm();
     Eigen::MatrixXd nAccCoeffMat = normalizeAccCoeffMat();
     Eigen::VectorXd coeff = math_utils::RootFinder::polySqr(nAccCoeffMat.row(0)) +
                             math_utils::RootFinder::polySqr(nAccCoeffMat.row(1)) +
@@ -244,6 +277,8 @@ double Piece::getMaxAccRate() const {
 }
 
 double Piece::getMaxJerRate() const {
+    if (!validPieceData(*this)) return std::numeric_limits<double>::quiet_NaN();
+    if (D < 3) return getJer(0.0).norm();
     Eigen::MatrixXd nJerCoeffMat = normalizeJerCoeffMat();
     Eigen::VectorXd coeff = math_utils::RootFinder::polySqr(nJerCoeffMat.row(0)) +
                             math_utils::RootFinder::polySqr(nJerCoeffMat.row(1)) +
@@ -286,7 +321,12 @@ Eigen::MatrixXd Piece::getState(const double &t) const {
 }
 
 bool Piece::checkMaxVelRate(const double &maxVelRate) const {
+    if (!validPieceData(*this) || !std::isfinite(maxVelRate) || maxVelRate <= 0.0) {
+        return false;
+    }
     double sqrMaxVelRate = maxVelRate * maxVelRate;
+    if (!std::isfinite(sqrMaxVelRate)) return false;
+    if (D < 1) return getVel(0.0).norm() < maxVelRate;
     if (getVel(0.0).squaredNorm() >= sqrMaxVelRate ||
         getVel(duration).squaredNorm() >= sqrMaxVelRate) {
         return false;
@@ -302,7 +342,12 @@ bool Piece::checkMaxVelRate(const double &maxVelRate) const {
 }
 
 bool Piece::checkMaxAccRate(const double &maxAccRate) const {
+    if (!validPieceData(*this) || !std::isfinite(maxAccRate) || maxAccRate <= 0.0) {
+        return false;
+    }
     double sqrMaxAccRate = maxAccRate * maxAccRate;
+    if (!std::isfinite(sqrMaxAccRate)) return false;
+    if (D < 2) return getAcc(0.0).norm() < maxAccRate;
     if (getAcc(0.0).squaredNorm() >= sqrMaxAccRate ||
         getAcc(duration).squaredNorm() >= sqrMaxAccRate) {
         return false;

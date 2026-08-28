@@ -392,6 +392,34 @@ TEST(PlannerTrajectory, InvalidTrajectoryEvaluationFailsClosed) {
   EXPECT_FALSE(malformed.getPos(0.0).allFinite());
 }
 
+TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
+  const geometry_utils::Piece constant_piece(
+      1.0, Eigen::MatrixXd::Zero(3, 1));
+  EXPECT_TRUE(constant_piece.getPos(0.5).isApprox(Eigen::Vector3d::Zero()));
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxVelRate(), 0.0);
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxAccRate(), 0.0);
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxJerRate(), 0.0);
+  EXPECT_TRUE(constant_piece.checkMaxVelRate(1.0));
+  EXPECT_TRUE(constant_piece.checkMaxAccRate(1.0));
+  EXPECT_FALSE(constant_piece.getPos(
+      std::numeric_limits<double>::quiet_NaN()).allFinite());
+  EXPECT_EQ(constant_piece.normalizeVelCoeffMat().cols(), 0);
+  EXPECT_EQ(constant_piece.normalizeAccCoeffMat().cols(), 0);
+  EXPECT_EQ(constant_piece.normalizeJerCoeffMat().cols(), 0);
+
+  const geometry_utils::Piece malformed_piece(
+      1.0, Eigen::MatrixXd::Zero(2, 6));
+  EXPECT_FALSE(malformed_piece.getPos(0.0).allFinite());
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxVelRate()));
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxAccRate()));
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxJerRate()));
+  EXPECT_FALSE(malformed_piece.checkMaxVelRate(1.0));
+  EXPECT_FALSE(malformed_piece.checkMaxAccRate(1.0));
+  EXPECT_FALSE(constant_piece.checkMaxVelRate(
+      std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
+}
+
 TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
   coefficients(0, 4) = 1.0;
