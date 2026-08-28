@@ -446,7 +446,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertNotIn("corrected_odometry_topic", navigation)
         self.assertNotIn("odometry_topic", navigation)
         self.assertEqual(navigation["planner_watchdog_timeout_s"], 1.0)
-        self.assertEqual(navigation["mapping_snapshot_publication_period_s"], 0.1)
+        self.assertEqual(navigation["mapping_snapshot_publication_period_s"], 0.2)
         self.assertNotIn("planner_solve_timeout_s", navigation)
         self.assertEqual(navigation["command_topic"], "/navigation/navigation_command")
         runtime_source = (

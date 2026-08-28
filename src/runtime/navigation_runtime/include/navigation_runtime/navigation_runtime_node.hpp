@@ -185,7 +185,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // available for that budget; command sampling remains independent at 50 Hz.
   double planner_rate_hz_{5.0};
   double command_rate_hz_{50.0};
-  double mapping_snapshot_publication_period_s_{0.10};
+  double mapping_snapshot_publication_period_s_{0.20};
   double data_freshness_window_s_{0.5};
   std::int64_t data_freshness_window_ns_{500'000'000};
   double planner_watchdog_timeout_s_{1.0};

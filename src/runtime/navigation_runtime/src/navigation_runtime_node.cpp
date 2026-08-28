@@ -288,7 +288,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 5.0);
   command_rate_hz_ = declare_parameter("navigation_runtime.command_rate_hz", 50.0);
   mapping_snapshot_publication_period_s_ = declare_parameter(
-      "navigation_runtime.mapping_snapshot_publication_period_s", 0.10);
+      "navigation_runtime.mapping_snapshot_publication_period_s", 0.20);
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
   planner_watchdog_timeout_s_ = declare_parameter(

@@ -8041,14 +8041,14 @@ release profiles must not use the former allowance.
   attempts, retry resets are accounted for, return-code interpretation is
   preserved, and fresh traces include the three evaluation fields.
 
-### 2026-08-28 - Coalesce immutable mapping snapshot publication at 10 Hz
+### 2026-08-28 - Align immutable mapping snapshot publication with planner cadence
 
 - **Owner:** Navigation mapping actor and runtime world-snapshot publication
   maintainers.
-- **Scope:** Set the canonical runtime snapshot publication period to 100 ms
+- **Scope:** Set the canonical runtime snapshot publication period to 200 ms
   while retaining per-observation mutable ROG-map updates and the existing
-  bounded changed-region/history coalescing. The 100 ms period is below the
-  200 ms planner period and the 500 ms world-freshness window; it does not
+  bounded changed-region/history coalescing. The 200 ms period matches the
+  200 ms planner period and remains below the 500 ms world-freshness window; it does
   change the actor API default used by isolated mapping tests.
 - **Safety impact:** `PERFORMANCE_POLICY` with fail-closed freshness preserved.
   No occupancy, UNKNOWN/OUT_OF_MAP, route-support, swept-world, dynamic,
@@ -8061,9 +8061,13 @@ release profiles must not use the former allowance.
   `.artifacts/runtime/external-mode-check-20260828T044208-708993` received
   mapping observations at about 18 Hz and published 509/509 snapshots with
   snapshot-export p95 27.4 ms and callback p95 43.6 ms. A 50 ms period
-  therefore did not coalesce this workload. The 100 ms runtime period targets
-  fewer immutable exports while preserving a snapshot update before each
-  planner period under the declared freshness contract.
+  therefore did not coalesce this workload. The fresh post-change trace
+  `.artifacts/runtime/external-mode-check-20260828T050836-727416` measured an
+  effective sensor cadence of about 10 Hz (p50 inter-observation period 100 ms),
+  and also published 466/466 snapshots at 100 ms. The 200 ms runtime period is
+  therefore the smallest canonical period expected to coalesce that workload
+  while preserving one publication per planner period under the declared
+  freshness contract.
 - **Removal/review condition:** Revisit if published snapshot age exceeds the
   configured period, freshness rejects increase, world revision/history
   conservation fails, patch classification differs from an immediate full

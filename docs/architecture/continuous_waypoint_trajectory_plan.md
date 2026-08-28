@@ -116,7 +116,7 @@ The mutable map update cadence and immutable snapshot publication cadence are
 separate. Every admitted map update remains serialized and contributes one
 revision plus a bounded change record. The actor may coalesce only snapshot
 export: it accumulates the changed-region union and publishes the newest
-revision at the configured period (100 ms in the canonical runtime profile),
+revision at the configured period (200 ms in the canonical runtime profile),
 immediately forcing a full export for a new localization epoch or a whole-map
 change. A patch may therefore span multiple revisions; its history must cover
 the complete interval or publication fails closed. Runtime freshness is measured
