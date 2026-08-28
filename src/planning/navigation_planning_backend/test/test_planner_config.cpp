@@ -7,6 +7,7 @@
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
+#include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
@@ -151,6 +152,18 @@ TEST(BoundaryVelocityRecovery, RejectsWorseningOrLateOverspeed) {
   EXPECT_TRUE(late.peak_bounded);
   EXPECT_FALSE(late.recovered_by_deadline);
   EXPECT_FALSE(late.satisfied);
+}
+
+TEST(HotReplanTrackingRecovery, NeverBuildsAReverseConnectorToMeasuredHistory) {
+  using navigation_planning_backend::HotReplanTrackingRecovery;
+  using navigation_planning_backend::classifyHotReplanTrackingRecovery;
+
+  EXPECT_EQ(classifyHotReplanTrackingRecovery(false, true),
+            HotReplanTrackingRecovery::kContinueHotStitch);
+  EXPECT_EQ(classifyHotReplanTrackingRecovery(true, true),
+            HotReplanTrackingRecovery::kRestartFromMeasuredState);
+  EXPECT_EQ(classifyHotReplanTrackingRecovery(true, false),
+            HotReplanTrackingRecovery::kFailClosed);
 }
 
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {

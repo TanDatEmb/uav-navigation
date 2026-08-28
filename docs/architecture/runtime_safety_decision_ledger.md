@@ -64,6 +64,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
 | HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
 | HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
+| HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position or yaw exceeds its existing tracking-error budget; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag and yaw error. Require zero generated reverse-rebase connectors, bounded command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
 
 ## Temporary-bypass register
 
@@ -8991,3 +8992,36 @@ release profiles must not use the former allowance.
   same three-column mission. Compare lookahead variance, command duration,
   optimizer/rebase failures, waypoint coverage, speed continuity, yaw and
   clearance across multiple runs.
+
+### 2026-08-28 - Restart tracking divergence without a reverse connector
+
+- **Owner:** Planner hot-replan continuity boundary and runtime restart FSM.
+- **Scope:** When the measured position or yaw exceeds its existing tracking
+  budget, stop hot stitching and return the existing `NEW_TRAJ` transition so
+  the next solve starts from a fresh measured state. A measured pose that is
+  not traversable still returns failure. Remove the polynomial that joined the
+  current command state back to the historical measured state.
+- **Safety impact:** This removes a nominal reverse/rejoin behavior; it does
+  not ban negative ENU velocity or affect a legitimate mission whose bearing
+  is west/south. The currently committed command remains immutable and
+  world-certified while the runtime schedules the restart. No tracking,
+  command-anchor, route-regression, V/A/J, flatness, world, or waypoint gate is
+  enlarged or bypassed.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T105832-989061` logged
+  measured-state connectors as long as `8.978 s` for a position discrepancy
+  of about `0.340 m`; later final admission rejected these candidates for
+  route regression up to several metres. The connector starts at the command
+  ahead of the vehicle and ends at an already historical measured state, so
+  increasing its duration makes the stale-target and reverse-motion problem
+  worse rather than recovering tracking.
+- **Removal/review condition:** Replace only with an explicit tracking
+  recovery controller that targets a predicted future route state and proves
+  command continuity, route monotonicity, dynamics and latest-world safety.
+  Never restore a connector whose endpoint is the measured state captured at
+  solve start, and never hide divergence by increasing the tracking budget.
+- **Verification:** Unit-test continue/restart/fail-closed classification, run
+  all backend tests and the exact Release build, then inject command lag and
+  yaw error in repeated three-column SITL runs. Require zero reverse-rebase
+  connector logs, bounded handover residuals, successful measured-state
+  restart or certified stop, and no stale-state command commit.
