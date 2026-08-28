@@ -27,6 +27,8 @@ struct OptimizationDiagnostics {
   int last_lbfgs_return_code{-1};
   bool cancelled{false};
   bool valid{false};
+  bool used_certified_seed{false};
+  int certified_seed_failure_stage{0};
   double initial_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};
   double best_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};
   double final_normalized_dynamic_violation{std::numeric_limits<double>::quiet_NaN()};

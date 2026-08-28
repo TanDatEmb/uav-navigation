@@ -2562,6 +2562,10 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_vector("backup_last_seed_endpoint",
                      backup_diagnostics.last_seed_endpoint);
     add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
+    add_trace_value("exp_used_certified_seed",
+                    exp_diagnostics.used_certified_seed ? 1 : 0);
+    add_trace_value("exp_certified_seed_failure_stage",
+                    exp_diagnostics.certified_seed_failure_stage);
     add_trace_value("exp_lbfgs_attempt_count", exp_diagnostics.lbfgs_attempt_count);
     add_trace_value("exp_lbfgs_evaluation_count",
                     exp_diagnostics.lbfgs_evaluation_count);

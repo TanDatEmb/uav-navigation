@@ -982,6 +982,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 opt_vars.headPVAJ,
                 opt_vars.tailPVAJ,
                 cfg_);
+    diagnostics_.certified_seed_failure_stage =
+            static_cast<int>(immutable_seed_certificate.failure_stage);
 
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
@@ -1682,12 +1684,61 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 minCostFunctional = INFINITY;
             }
         }
-        if (ret >= 0 && !traj.empty()) {
+    }
+
+    // MINCO is a quality refinement, not the sole owner of nominal command
+    // availability. If it terminates numerically or its final hard gates
+    // reject the optimized iterate, copy only the immutable pre-LBFGS seed
+    // that was independently certified before any optimizer mutation.
+    if (ret < 0 && !diagnostics_.cancelled) {
+        const auto selection = navigation_planning_backend::selectNominalCandidate(
+                traj, false, immutable_nominal_seed,
+                immutable_seed_certificate, traj);
+        if (selection == navigation_planning_backend::
+                NominalCandidateSelection::kCertifiedSeed) {
+            update_dynamic_extrema();
+            diagnostics_.used_certified_seed = true;
+            diagnostics_.final_normalized_dynamic_violation =
+                    normalized_dynamic_violation();
             diagnostics_.final_duration_s = traj.getTotalDuration();
+            minCostFunctional = 0.0;
+            ret = lbfgs::LBFGS_STOP;
+            planner_context_->warn(
+                    " -- [ExpOpt] MINCO refinement unavailable; selected exact "
+                    "pre-LBFGS certified seed: duration={} corridor_violation={} "
+                    "boundary_residual={} vel={}/{} acc={}/{} jerk={}/{}",
+                    diagnostics_.final_duration_s,
+                    immutable_seed_certificate.maximum_corridor_violation_m,
+                    immutable_seed_certificate.maximum_boundary_residual,
+                    maximum_velocity, cfg_.max_vel,
+                    maximum_acceleration, cfg_.max_acc,
+                    maximum_jerk, cfg_.max_jerk);
         }
+    }
+
+    if (ret >= 0 && !traj.empty()) {
+        diagnostics_.final_duration_s = traj.getTotalDuration();
     } else {
         traj.clear();
         minCostFunctional = INFINITY;
+        const auto &flatness = immutable_seed_certificate.flatness_report;
+        planner_context_->warn(
+                " -- [ExpOpt] MINCO and immutable seed unavailable: "
+                "solver={} seed_stage={} corridor_violation={} "
+                "boundary_residual={} vel={}/{} acc={}/{} jerk={}/{} "
+                "flatness_finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
+                ret,
+                static_cast<int>(immutable_seed_certificate.failure_stage),
+                immutable_seed_certificate.maximum_corridor_violation_m,
+                immutable_seed_certificate.maximum_boundary_residual,
+                immutable_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
+                immutable_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
+                immutable_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
+                flatness.finite,
+                flatness.maximum_body_rate_rad_s, cfg_.max_omg,
+                flatness.minimum_thrust_n, flatness.maximum_thrust_n,
+                cfg_.min_acc_thr * cfg_.mass,
+                cfg_.max_acc_thr * cfg_.mass);
         cout << YELLOW << " -- [MINCO] TrajOpt failed, " << lbfgs::lbfgs_strerror(ret) << RESET << endl;
 //        cout << "Init times: " << times_init.transpose() << endl;
     }

@@ -58,6 +58,8 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.last_lbfgs_return_code = source.last_lbfgs_return_code;
   output.cancelled = source.cancelled;
   output.valid = source.valid;
+  output.used_certified_seed = source.used_certified_seed;
+  output.certified_seed_failure_stage = source.certified_seed_failure_stage;
   output.initial_normalized_dynamic_violation = source.initial_normalized_dynamic_violation;
   output.best_normalized_dynamic_violation = source.best_normalized_dynamic_violation;
   output.final_normalized_dynamic_violation = source.final_normalized_dynamic_violation;

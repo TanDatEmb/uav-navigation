@@ -8777,3 +8777,31 @@ release profiles must not use the former allowance.
   forward lateral detour; run all backend tests and repeat the exact
   three-column mission, requiring rejected folds to retain a valid prior bundle
   or transition to certified BRAKE without high-speed yaw reversal.
+
+### 2026-08-28 - Make MINCO optional after immutable nominal certification
+
+- **Owner:** Nominal trajectory optimizer candidate selection.
+- **Scope:** Freeze and independently certify the pre-LBFGS piecewise MINCO
+  seed before optimization. If a non-cancelled MINCO refinement fails
+  numerically or its final corridor/dynamics/flatness gates reject it, copy the
+  exact frozen seed only when its precomputed corridor, PVAJ boundary,
+  route-boundary, V/A/J and flatness certificate is valid. Otherwise fail
+  closed as before. Record whether the seed was used and its reject stage.
+- **Safety impact:** Removes MINCO convergence as a single point of command
+  availability without weakening any hard gate or reconstructing a fallback
+  from mutated optimizer state. Cancellation remains terminal; an uncertified
+  seed never becomes executable. Final route-regression and latest-world
+  authorization still run on the selected bundle.
+- **Evidence:** Artifact `external-mode-check-20260828T095508-942471` repeatedly
+  exhausted MAIN bundles because MINCO candidates missed hard V/A/J limits by
+  small and large margins, even though the deterministic seed had already been
+  frozen and certified in source but was selected only for corridor rejection.
+  The run later failed tracking continuity at waypoint 5; no limit was tuned.
+- **Removal/review condition:** Replace with an explicitly product-owned
+  deterministic CONNECTOR/NOMINAL generator. MINCO may remain refinement, but
+  must never regain sole ownership of command availability or mutate the
+  certified fallback object.
+- **Verification:** Unit-test exact-copy/reject selection, run all backend and
+  runtime tests, then repeat the three-column run and require explicit seed-use
+  evidence, unchanged hard limits, route-regression/world authorization, and
+  no worse connector/tracking continuity before acceptance.
