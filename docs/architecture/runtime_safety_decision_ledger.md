@@ -10266,3 +10266,12 @@ release profiles must not use the former allowance.
 - **Evidence:** Release planning backend target rebuilt successfully after the Eigen array-expression correction. Focused tests passed 85/85, including malformed trajectory evaluation, mismatched input rejection and the `end_id=-1` partial contract; mission contract tests passed 10/10. The compiler no longer emits the previously observed signed/unsigned warnings in the touched corridor/MINCO/nominal-optimizer paths.
 - **Removal/review condition:** Keep the typed callback and fail-closed validation. Revisit only if a future public API replaces the legacy trajectory scalar getters with an explicit result type while preserving non-finite rejection at every execution boundary.
 - **Verification:** `cmake --build build/navigation_planning_backend --target test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`; `cmake --build build/navigation_mission --target test_mission_contract -j2`; `./build/navigation_mission/test_mission_contract --gtest_color=no`.
+
+### 2026-08-29 - Validate the direct motion-profile allocator boundary
+
+- **Owner/status:** Planning geometry time allocator, implementation fix; no new gate or changed motion limit.
+- **Scope:** `simplePMTimeAllocator` now names its arguments with physical units and rejects non-finite/non-positive acceleration or speed limits, invalid initial velocity, non-positive total distance and current distance outside `[0, total]` before evaluating square roots or divisions.
+- **Safety impact:** Positive and fail-closed. Invalid direct calls return non-finite outputs that the existing allocation contract rejects; valid branch equations and switching roundoff handling are unchanged. No speed, acceleration, jerk, map, collision or acceptance threshold was changed.
+- **Evidence:** Added direct invalid-input regression coverage to the planning trajectory suite; the previous valid switching-boundary and guide-time tests remain in the same suite.
+- **Removal/review condition:** Keep the input guard and unit-bearing names. Any future profile extension must define its domain and terminal-speed semantics before accepting new inputs.
+- **Verification:** `cmake --build build/navigation_planning_backend --target test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
