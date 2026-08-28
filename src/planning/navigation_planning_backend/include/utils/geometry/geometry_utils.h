@@ -212,6 +212,62 @@ namespace geometry_utils {
         return true;
     }
 
+    // Keep a long A* route as a bounded receding prefix. The mission route
+    // remains owned by the controller, while the trajectory solver receives
+    // only the currently certifiable spatial horizon. The caller still
+    // rechecks the resulting prefix against its authoritative world oracle.
+    inline bool truncatePathAtDistance(
+            const vec_Vec3f &path, const double maximum_length,
+            vec_Vec3f &prefix, bool &truncated) {
+        prefix.clear();
+        truncated = false;
+        if (path.size() < 2U || !std::isfinite(maximum_length) ||
+            maximum_length <= 0.0) {
+            return false;
+        }
+        for (const auto &point : path) {
+            if (!point.allFinite()) return false;
+        }
+        prefix.reserve(path.size());
+        prefix.emplace_back(path.front());
+        constexpr double duplicate_distance_m = 1.0e-9;
+        double accumulated_length = 0.0;
+        for (std::size_t index = 1U; index < path.size(); ++index) {
+            const Vec3f &start = path[index - 1U];
+            const Vec3f &end = path[index];
+            const double segment_length = (end - start).norm();
+            if (!std::isfinite(segment_length)) {
+                prefix.clear();
+                return false;
+            }
+            if (segment_length <= duplicate_distance_m) continue;
+            const double remaining_length = maximum_length - accumulated_length;
+            if (!std::isfinite(remaining_length) || remaining_length < 0.0) {
+                truncated = true;
+                break;
+            }
+            if (remaining_length + duplicate_distance_m >= segment_length) {
+                prefix.emplace_back(end);
+                accumulated_length += segment_length;
+                continue;
+            }
+            if (remaining_length <= duplicate_distance_m) {
+                truncated = true;
+                break;
+            }
+            const double fraction = std::clamp(
+                    remaining_length / segment_length, 0.0, 1.0);
+            prefix.emplace_back(start + static_cast<float>(fraction) * (end - start));
+            truncated = true;
+            break;
+        }
+        if (!truncated && prefix.size() < 2U) {
+            prefix.clear();
+            return false;
+        }
+        return prefix.size() >= 2U && prefix.back().allFinite();
+    }
+
     inline bool allocateGuideElapsedTimes(const double a_max,
                                            const double v_max,
                                            const double initial_speed,

@@ -1341,12 +1341,67 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     return FAILED;
                 }
 
-                // Keep the active waypoint as the current trajectory endpoint.
-                // A bounded pass-through route window may replace the final
-                // point later, but only inside the mission acceptance ball and
-                // only after its own free-space segment check. Arbitrary
-                // extension beyond that ball would let MINCO skip a mission
-                // boundary even when A* contains the waypoint sample.
+                // Keep remote mission progress as a controller-owned contract,
+                // but give MINCO only a bounded certified prefix. A mission
+                // waypoint can be farther away than the current visibility
+                // horizon after a measured pass-through handoff. Solving that
+                // entire route in one polynomial couples a remote endpoint to
+                // finite local evidence and can repeatedly fail at the first
+                // long outgoing leg. The next cycle receives the same mission
+                // goal and advances this prefix from fresh measured state.
+                const double route_distance =
+                    (gi_.goal_p - guide_path.back()).norm();
+                const double local_prefix_limit = std::min(
+                    temp_horizon, cfg_.visibility_horizon_m);
+                if (std::isfinite(route_distance) &&
+                    std::isfinite(local_prefix_limit) &&
+                    local_prefix_limit > cfg_.resolution * 2.0 &&
+                    route_distance > local_prefix_limit + cfg_.resolution) {
+                    vec_Vec3f bounded_path;
+                    bool prefix_truncated = false;
+                    if (!geometry_utils::truncatePathAtDistance(
+                            new_path, local_prefix_limit, bounded_path,
+                            prefix_truncated) || !prefix_truncated ||
+                        bounded_path.size() < 2U) {
+                        planner_context_->warn(
+                            " -- [planner] unable to construct certified local route prefix: "
+                            "route_distance={} prefix_limit={}",
+                            route_distance, local_prefix_limit);
+                        return FAILED;
+                    }
+                    bool prefix_certified = true;
+                    for (std::size_t index = 1U;
+                         index < bounded_path.size(); ++index) {
+                        if (!map_ptr_->isSegmentTraversable(
+                                bounded_path[index - 1U].cast<double>(),
+                                bounded_path[index].cast<double>(),
+                                navigation_world_model::GridLayer::kInflated,
+                                unknownPolicy())) {
+                            prefix_certified = false;
+                            break;
+                        }
+                    }
+                    if (!prefix_certified) {
+                        planner_context_->warn(
+                            " -- [planner] bounded local route prefix failed inflated-map certification: "
+                            "route_distance={} prefix_limit={}",
+                            route_distance, local_prefix_limit);
+                        return FAILED;
+                    }
+                    new_path = std::move(bounded_path);
+                    gi_.goal_p = new_path.back();
+                    planning_goal_p_ = gi_.goal_p;
+                    goal_endpoint_adjusted_ = true;
+                    planner_context_->info(
+                        " -- [planner] bounded remote goal to certified route prefix: "
+                        "route_distance={} prefix_limit={} prefix_length={} "
+                        "mission_goal=({}, {}, {}) prefix_goal=({}, {}, {})",
+                        route_distance, local_prefix_limit,
+                        geometry_utils::computePathLength(new_path),
+                        requested_goal_p_.x(), requested_goal_p_.y(),
+                        requested_goal_p_.z(), gi_.goal_p.x(), gi_.goal_p.y(),
+                        gi_.goal_p.z());
+                }
 
                 geometry_utils::GuideTimeAllocation allocation;
                 if (!geometry_utils::allocateGuideElapsedTimes(

@@ -8220,3 +8220,46 @@ release profiles must not use the former allowance.
   compare waypoint order/coverage, acceptance errors/speeds, request/goal
   transitions, altitude, clearance, command continuity, and planner/mapping
   latency distributions.
+
+### 2026-08-28 - Bound remote mission goals to a certified receding prefix
+
+- **Owner:** Navigation planner route-search and trajectory-seed maintainers.
+- **Scope:** When an A* route to the active mission waypoint exceeds the
+  configured effective visibility horizon, retain the original waypoint as
+  the mission-controller target but pass only a bounded, interpolated A* prefix
+  to MINCO. The prefix is rechecked on the inflated map and the next planning
+  cycle repeats from fresh measured state. Goals within the horizon retain the
+  existing exact endpoint and pass-through/corner behavior.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This prevents a remote
+  endpoint beyond the current finite planning evidence from being coupled to
+  one executable polynomial. It does not authorize UNKNOWN, clip a command
+  past a waypoint, change acceptance radius, or alter V/A/J, corridor,
+  swept-world, backup, freshness, lease, or PX4 mode gates. A malformed or
+  uncertifiable prefix is rejected fail-closed.
+- **Derivation and cost:** The prefix bound is the minimum of the remaining
+  configured planning horizon and the existing effective visibility horizon;
+  no new threshold is introduced. The bounded interpolation is linear in the
+  A* path length and adds one segment traversability check before the existing
+  guide allocation/corridor/optimizer stages. This is a receding-horizon
+  ownership correction, not a reduction of the mission route or map footprint.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T061332-806845` accepted
+  waypoint 1 after the measured-crossing fix, then repeatedly attempted the
+  remote waypoint `(50,5,3)` from about 30 m away. `target_grid=1` and
+  `planning_total` remained finite, but `main_minco` failed with repeated
+  corridor/dynamic violations while the committed endpoint stayed at the
+  previous waypoint. Focused prefix tests and a fresh clean-manifest runtime
+  trace are required; the current artifact remains BLOCKED evidence.
+- **Removal/review condition:** Revert or redesign only if repeated
+  representative runs show worse waypoint order/coverage, speed recovery,
+  altitude, clearance, command continuity, planner tails, or more fail-closed
+  stops. Replace with a measured route-window/piecewise planner only when it
+  preserves the same remote-goal and immutable-world contracts. Never increase
+  the bound or relax a certificate to hide optimizer failure.
+- **Verification:** `make build`; source `install/setup.bash` and run planner,
+  trajectory, mission, runtime, and PX4 contract tests; rebuild the clean
+  manifest; then repeat
+  `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check` and
+  inspect `planning_target` versus mission target, waypoint coverage, speed,
+  altitude, clearance, command identity/PVA continuity, and p50/p95/p99
+  planning/mapping latency.

@@ -1350,6 +1350,55 @@ TEST(PlannerTrajectory, SubdividesEverySparseGuideEdgeForCorridorSeeds) {
   EXPECT_TRUE(subdivided[2].isApprox(navigation_math::Vec3f{50.0F, 5.0F, 3.0F}));
 }
 
+TEST(PlannerTrajectory, TruncatesRemoteRouteToBoundedCertifiedPrefix) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{4.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{4.0F, 4.0F, 3.0F},
+      navigation_math::Vec3f{12.0F, 4.0F, 3.0F}};
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = false;
+  ASSERT_TRUE(geometry_utils::truncatePathAtDistance(
+      path, 7.0, prefix, truncated));
+  ASSERT_TRUE(truncated);
+  ASSERT_EQ(prefix.size(), 3U);
+  EXPECT_TRUE(prefix.front().isApprox(path.front()));
+  EXPECT_TRUE(prefix[1].isApprox(path[1]));
+  EXPECT_NEAR((prefix.back() - path[1]).norm(), 3.0, 1.0e-6);
+  EXPECT_NEAR(
+      (prefix[1] - prefix[0]).norm() + (prefix[2] - prefix[1]).norm(),
+      7.0, 1.0e-6);
+}
+
+TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{2.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{2.0F, 2.0F, 3.0F}};
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = true;
+  ASSERT_TRUE(geometry_utils::truncatePathAtDistance(
+      path, 10.0, prefix, truncated));
+  EXPECT_FALSE(truncated);
+  ASSERT_EQ(prefix.size(), path.size());
+  for (std::size_t index = 0U; index < path.size(); ++index) {
+    EXPECT_TRUE(prefix[index].isApprox(path[index]));
+  }
+}
+
+TEST(PlannerTrajectory, RejectsInvalidRoutePrefixBounds) {
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = false;
+  EXPECT_FALSE(geometry_utils::truncatePathAtDistance(
+      navigation_math::vec_Vec3f{navigation_math::Vec3f::Zero()},
+      5.0, prefix, truncated));
+  EXPECT_FALSE(geometry_utils::truncatePathAtDistance(
+      navigation_math::vec_Vec3f{
+          navigation_math::Vec3f::Zero(),
+          navigation_math::Vec3f{1.0F, 0.0F, 0.0F}},
+      0.0, prefix, truncated));
+}
+
 TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
   navigation_math::vec_Vec3f subdivided;
   EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
