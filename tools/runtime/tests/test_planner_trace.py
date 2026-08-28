@@ -126,6 +126,7 @@ class PlannerTraceTest(unittest.TestCase):
                                     "solve_stage": "5",
                                     "solve_stage_name": "backup",
                                     "planning_latency_ms": "8.25",
+                                    "planning_total_us": "8250",
                                     "exp_frontend_us": "1200",
                                     "exp_opt_us": "34000",
                                     "backup_frontend_us": "900",
@@ -202,6 +203,7 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["commit_decision"], 4)
         self.assertFalse(records[0]["solve_deadline_exceeded"])
         self.assertTrue(records[0]["command_available"])
+        self.assertEqual(records[0]["planning_total_us"], 8250.0)
         self.assertEqual(records[0]["exp_frontend_us"], 1200.0)
         self.assertEqual(records[0]["exp_opt_us"], 34000.0)
         self.assertEqual(records[0]["backup_frontend_us"], 900.0)

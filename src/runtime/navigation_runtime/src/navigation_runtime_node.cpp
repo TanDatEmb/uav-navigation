@@ -2289,6 +2289,11 @@ void NavigationRuntimeNode::runCycle() {
       trace_status.values.push_back(std::move(item));
     }
     add_trace_value("planning_latency_ms", planner_elapsed_ms);
+    // Keep the canonical total in the same microsecond unit as all planner
+    // stage fields. `planning_latency_ms` remains for the rolling trace, while
+    // this field feeds the report's percentile table without reconstructing a
+    // total by summing stages that may overlap or be skipped.
+    add_trace_value("planning_total_us", last_planner_us_);
     // Keep planner stage timings explicit and unit-labelled in the structured
     // trace.  The raw planner backend log already exposes these values, but without
     // publishing them here the report cannot identify which stage causes a

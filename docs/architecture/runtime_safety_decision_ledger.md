@@ -7746,3 +7746,34 @@ release profiles must not use the former allowance.
   yaw-different-from-velocity scenarios while inspecting yaw continuity,
   yaw-rate, position/velocity/altitude, waypoint order, handover reason,
   freshness, and p50/p95/p99 planner latency.
+
+### 2026-08-28 - Restore canonical planner total in structured diagnostics
+
+- **Owner:** Navigation runtime observability and report maintainers.
+- **Scope:** Publish the measured wall-clock duration of each planner solve as
+  `planning_total_us` in the structured planner decision trace. Keep
+  `planning_latency_ms` for the rolling trace and keep stage timings
+  (`exp_frontend_us`, `exp_opt_us`, `backup_frontend_us`, `backup_opt_us`)
+  separate.
+- **Safety impact:** `OBSERVABILITY_ONLY`. No planner behavior, deadline,
+  command, fallback, or acceptance decision changes. Missing or invalid timing
+  remains unavailable; it must not be converted to a zero or a safety pass.
+- **Derivation and cost:** The value is `last_planner_us_`, measured around the
+  complete `PlannerFacade` solve. The report must use this canonical total and
+  must not sum stages, because stages can be skipped or overlap with other
+  runtime work. One diagnostic key/value is added per solve.
+- **Evidence:** Existing artifacts contained `planner_us` in runtime cycle
+  metrics and stage values in the decision trace, but
+  `planning_total_us` distributions were empty because the producer emitted
+  only the millisecond rolling-trace field. The report parser and contract
+  tests already named `planning_total_us`; the producer/parser mismatch is now
+  covered by a trace fixture and percentile assertion.
+- **Removal/review condition:** Keep this field while the report's p50/p95/p99
+  planner total is used for budget decisions. Revisit only if the runtime
+  timing clock or trace schema changes; never infer total latency by adding
+  stage values or treat an empty distribution as zero.
+- **Verification:** `make build`; run planner/PX4 CTest and
+  `python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py' -q`;
+  inspect a fresh runtime artifact and require non-empty
+  `planning_total_us` with units in microseconds and matching
+  `planning_latency_ms * 1000` within measurement rounding.

@@ -2775,6 +2775,7 @@ class RuntimeContractTest(unittest.TestCase):
                                 "exp_opt_us": value + 4,
                                 "backup_frontend_us": value + 5,
                                 "backup_opt_us": value + 6,
+                                "planning_total_us": value + 2,
                             },
                         },
                     ]
@@ -2792,7 +2793,8 @@ class RuntimeContractTest(unittest.TestCase):
         for key in ("mean", "p50", "p95", "p99", "max"):
             self.assertIn(key, mapping["mapping_filter_us"])
         planning = report._planning_timing_summary(samples)
-        self.assertEqual(planning["planning_total_us"]["sample_count"], 0)
+        self.assertEqual(planning["planning_total_us"]["sample_count"], 3)
+        self.assertEqual(planning["planning_total_us"]["p50"], 22.0)
         self.assertEqual(planning["exp_opt_us"]["sample_count"], 3)
         self.assertEqual(planning["exp_opt_us"]["p50"], 24.0)
         self.assertEqual(planning["backup_opt_us"]["max"], 36.0)
