@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cmath>
-
 #include <navigation_math/type_utils.hpp>
 #include <planner_core/planner_result.hpp>
 
@@ -30,21 +28,6 @@ inline bool backupResultMayBuildCommandCandidate(navigation_math::RET_CODE resul
 inline bool shouldRetainBackupCapableCommand(
     bool new_goal, bool backup_available) noexcept {
   return !new_goal && backup_available;
-}
-
-// BACKUP is an executable braking certificate, not route guidance.  A hot
-// recovery must preserve the sampled BACKUP PVAJ boundary, but retaining its
-// spatial suffix as the next nominal guide recursively feeds the stopping
-// curve into MAIN and prolongs the deceleration.  MAIN may retain only its
-// configured continuity prefix; BACKUP recovery starts geometric search at
-// the exact sampled state.
-inline double retainedHotReplanGuideDistance(
-    double configured_distance_m, bool sampled_state_is_backup) noexcept {
-  if (!std::isfinite(configured_distance_m) || configured_distance_m <= 0.0 ||
-      sampled_state_is_backup) {
-    return 0.0;
-  }
-  return configured_distance_m;
 }
 
 // Preserve the first actionable backup failure at the planner boundary.  The
