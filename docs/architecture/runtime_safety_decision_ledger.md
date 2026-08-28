@@ -7381,6 +7381,45 @@ release profiles must not use the former allowance.
   endpoint error, speed, altitude, clearance, strict backup, and planning
   p50/p95/p99.
 
+### 2026-08-28 - Hold the route-boundary junction through MINCO optimization
+
+- **Owner:** Nominal trajectory optimizer and navigation planning maintainers.
+  **Scope:** For a marked route-boundary corridor cell, the incoming adjacent
+  MINCO junction is reconstructed at the recorded mission waypoint on every
+  objective/rebuild; its optimizer gradient is cleared, and the point must be
+  valid in the incoming overlap. The independent final gate still verifies
+  that an adjacent junction lies inside the waypoint acceptance ball.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This prevents numerical
+  optimization from moving the only route-boundary junction out of the
+  mission acceptance region after a valid seed was constructed. The surrounding
+  corridor remains free-space geometry for smooth fillet generation. No
+  mission acceptance, UNKNOWN, OUT_OF_MAP, clearance, V/A/J, flatness,
+  swept-world, backup, identity, freshness, command-anchor, or deadline gate is
+  relaxed.
+- **Derivation and cost:** The route-boundary point is a mission-owned
+  geometric junction, not a free corridor control point. Reapplying it after
+  corridor parameterization makes that invariant independent of L-BFGS drift;
+  clearing its spatial gradient avoids an optimizer request to move a fixed
+  variable, while time variables remain free to find a certified smooth turn.
+  The bounded work is one metadata pass over route-boundary cells per objective
+  evaluation and does not add a planner or optimizer pass.
+- **Evidence:** Add/retain route-boundary metadata and SFC-preservation tests;
+  run the planner backend suite, authoritative build/manifest, and the
+  structured three-pillar SITL. This entry remains open until the artifact
+  shows waypoint 2 and later transitions, bounded optimizer latency/failure
+  tails, speed recovery, altitude, clearance, strict backup, and command
+  continuity.
+- **Removal/review condition:** Revisit if fixed-junction parameterization
+  makes a valid corridor infeasible, increases optimizer tails, causes a stop
+  or waypoint skip, or regresses altitude, clearance, PVA continuity, or route
+  completion. Do not replace the hard junction with a soft-only penalty.
+- **Verification:** `make build`; source `install/setup.bash` and run the
+  planner, mission, trajectory, and runtime contract tests; then repeat
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check`, inspecting route-boundary junctions, waypoint
+  order/coverage, speed, altitude, clearance, strict backup, and p50/p95/p99
+  planning latency.
+
 ### 2026-08-28 - Shape corner terminal speed before outgoing recovery
 
 - **Owner:** Navigation planner terminal-state and pass-through handoff

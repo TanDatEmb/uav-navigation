@@ -21,9 +21,10 @@ At each planning tick:
    the planner extends the executable guide through a bounded prefix of that
    outgoing segment. The corridor generator inserts a route-boundary junction
    contract at the active waypoint and preserves its marker through SFC
-   simplification. The adjacent MINCO junction is seeded at, and independently
-   hard-checked against, the waypoint acceptance ball; the surrounding
-   collision-certified corridor remains wide enough for a smooth fillet. The
+   simplification. The adjacent MINCO junction is held at the recorded waypoint
+   while optimizing, then independently hard-checked against the waypoint
+   acceptance ball; the surrounding collision-certified corridor remains wide
+   enough for a smooth fillet. The
    MINCO hot seed assigns the overlap after that boundary to the first
    post-waypoint guide timestamp (or splits the remaining interval when the
    look-ahead endpoint is that only post-waypoint sample), so the hard boundary
