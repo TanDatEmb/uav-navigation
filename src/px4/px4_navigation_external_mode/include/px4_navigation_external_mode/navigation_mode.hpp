@@ -110,6 +110,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t trajectory_received_count_{0U};
   std::uint64_t trajectory_accepted_count_{0U};
   std::uint64_t trajectory_rejected_count_{0U};
+  std::uint64_t waypoint_handoff_retained_command_count_{0U};
   std::uint64_t setpoint_update_count_{0U};
   std::uint64_t stale_state_failure_count_{0U};
   std::int64_t last_odometry_receive_ns_{0};

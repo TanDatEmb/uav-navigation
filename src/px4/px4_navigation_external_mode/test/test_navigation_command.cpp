@@ -4,6 +4,7 @@
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <px4_ros2/utils/frame_conversion.hpp>
 #include "px4_navigation_external_mode/reject_provenance.hpp"
+#include "px4_navigation_external_mode/certified_command_handoff.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
@@ -51,6 +52,46 @@ TEST(NavigationCommandContract, DuplicateLateTerminalSampleStillFailsMonotonicGa
   fresh.reason = navigation_contracts::ExecutionStateFreshnessReason::kValid;
   EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 42U, 42U),
             px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
+}
+
+TEST(NavigationCommandContract, GoalHandoffRetainsExactCertifiedCommandIdentity) {
+  navigation_contracts::msg::NavigationCommand current;
+  current.mission_id = "mission";
+  current.waypoint_index = 3U;
+  current.request_id = 8U;
+  current.sample_id = 21U;
+
+  const auto retained = px4_navigation_external_mode::transitionCertifiedCommand(
+      current, std::nullopt,
+      px4_navigation_external_mode::CertifiedCommandTransition::kRetain);
+  ASSERT_TRUE(retained.has_value());
+  EXPECT_EQ(retained->waypoint_index, 3U);
+  EXPECT_EQ(retained->request_id, 8U);
+  EXPECT_EQ(retained->sample_id, 21U);
+}
+
+TEST(NavigationCommandContract, AcceptedReplacementCommitsAtomically) {
+  navigation_contracts::msg::NavigationCommand current;
+  current.waypoint_index = 3U;
+  current.request_id = 8U;
+  navigation_contracts::msg::NavigationCommand replacement;
+  replacement.waypoint_index = 4U;
+  replacement.request_id = 9U;
+
+  const auto committed = px4_navigation_external_mode::transitionCertifiedCommand(
+      current, replacement,
+      px4_navigation_external_mode::CertifiedCommandTransition::kCommit);
+  ASSERT_TRUE(committed.has_value());
+  EXPECT_EQ(committed->waypoint_index, 4U);
+  EXPECT_EQ(committed->request_id, 9U);
+}
+
+TEST(NavigationCommandContract, LifecycleInvalidationClearsCertifiedCommand) {
+  navigation_contracts::msg::NavigationCommand current;
+  current.sample_id = 21U;
+  EXPECT_FALSE(px4_navigation_external_mode::transitionCertifiedCommand(
+      current, std::nullopt,
+      px4_navigation_external_mode::CertifiedCommandTransition::kInvalidate).has_value());
 }
 
 TEST(NavigationCommandContract, BackupRecoveryWindowIsBoundedAndHoldOnly) {

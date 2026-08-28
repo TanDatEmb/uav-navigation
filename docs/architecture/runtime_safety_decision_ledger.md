@@ -8314,3 +8314,34 @@ release profiles must not use the former allowance.
   `MissionControllerState::Complete`.
 - **Verification:** Build `px4_navigation_external_mode`, run
   `test_navigation_command` and `test_mission`, then run the package CTest set.
+
+### 2026-08-28 - Preserve certified command during atomic waypoint handoff
+
+- **Owner:** PX4 External Mode command slot and mission-goal handoff.
+- **Scope:** Publishing the next waypoint no longer clears the currently
+  certified `NavigationCommand`. A rejected, malformed, stale-identity, or
+  world-regressing replacement also leaves that exact command unchanged. Only
+  a fully accepted candidate replaces it atomically; activation boundaries,
+  estimator-epoch changes, terminal failure, and mode handover explicitly
+  invalidate the slot.
+- **Safety impact:** The retained command keeps its original mission/request,
+  world, epoch, timestamp, and validity lease; it is never relabelled by the PX4
+  adapter. Existing estimator-health, odometry, command-freshness,
+  `valid_until`, tracking-envelope, and terminal-status gates remain
+  authoritative. This removes the asynchronous zero-velocity pulse caused by
+  clearing the slot before the next planner command arrives, without allowing
+  indefinite execution of an old trajectory.
+- **Evidence:** Unit tests require retain to preserve every identity field,
+  commit to replace old identity in one transition, and lifecycle invalidation
+  to empty the slot. Runtime metrics expose
+  `waypoint_handoffs_retaining_command`. Focused PX4 package tests must pass
+  before commit; SITL must later show no stationary command inserted solely at
+  a `PublishGoal` transition.
+- **Removal/review condition:** Replace only with a shared versioned
+  mission/command handoff state machine that provides equal or stronger
+  immutable identity and bounded-lease guarantees. Never restore unconditional
+  cache clearing on waypoint publication.
+- **Verification:** Build `px4_navigation_external_mode`; run
+  `test_navigation_command`, `test_mission`, and package CTest. During repeated
+  multi-waypoint SITL, correlate accepted-waypoint status, goal publication,
+  command identity, velocity setpoint, and the retained-handoff counter.

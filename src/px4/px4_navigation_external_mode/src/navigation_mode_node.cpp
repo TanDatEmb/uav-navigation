@@ -16,6 +16,7 @@
 #include <px4_ros2/utils/frame_conversion.hpp>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
+#include "px4_navigation_external_mode/certified_command_handoff.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
@@ -150,7 +151,8 @@ void NavigationMode::onActivate() {
     activation_time_ = node().get_clock()->now();
     last_setpoint_time_ = activation_time_;
     failure_reported_ = false;
-    navigation_command_.reset();
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
     mission_complete_published_ = false;
     // Estimator and odometry freshness are process-level observations, not
     // per-activation state.  Clearing them here makes PX4 see an artificial
@@ -162,6 +164,7 @@ void NavigationMode::onActivate() {
     trajectory_received_count_ = 0U;
     trajectory_accepted_count_ = 0U;
     trajectory_rejected_count_ = 0U;
+    waypoint_handoff_retained_command_count_ = 0U;
     setpoint_update_count_ = 0U;
     stale_state_failure_count_ = 0U;
     last_goal_publish_ns_ = 0;
@@ -203,7 +206,8 @@ void NavigationMode::onDeactivate() {
     // a new generation; otherwise the runtime can repopulate the cached
     // trajectory while the PX4 mode executor is already handing over.
     failure_reported_ = true;
-    navigation_command_.reset();
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
   }
   if (mission_controller_) mission_controller_->deactivate();
   if (last_status_state_ != navigation_contracts::msg::NavigationModeStatus::PAUSED &&
@@ -265,7 +269,11 @@ void NavigationMode::onNavigationCommand(
   if (!valid) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     ++trajectory_rejected_count_;
-    navigation_command_.reset();
+    // A malformed replacement does not revoke the independently certified
+    // command already being executed. Its own validity/freshness and health
+    // leases remain authoritative in updateSetpoint().
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
     return;
   }
 
@@ -298,7 +306,8 @@ void NavigationMode::onNavigationCommand(
             *message, *navigation_command_);
     if (!health_epoch_matches || !mission_identity_matches || !command_identity_monotonic) {
       ++trajectory_rejected_count_;
-      navigation_command_.reset();
+      navigation_command_ = transitionCertifiedCommand(
+          navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
       return;
     }
     const auto odometry_source_ns = odometry_
@@ -377,7 +386,8 @@ void NavigationMode::onNavigationCommand(
       }
     }
     if (!anchor_invalid && !odometry_stale) {
-      navigation_command_ = *message;
+      navigation_command_ = transitionCertifiedCommand(
+          navigation_command_, *message, CertifiedCommandTransition::kCommit);
       ++trajectory_received_count_;
       ++trajectory_accepted_count_;
       last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
@@ -605,7 +615,15 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     const auto& waypoint = mission_controller_->activeWaypoint();
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
-      navigation_command_.reset();
+      // Waypoint acceptance and planner publication run on independent
+      // callbacks. Preserve the exact old certified command under its old
+      // identity until a new command is committed atomically. Never relabel it
+      // here; normal validity/freshness expiry remains fail-closed.
+      if (navigation_command_.has_value()) {
+        ++waypoint_handoff_retained_command_count_;
+      }
+      navigation_command_ = transitionCertifiedCommand(
+          navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
     }
     navigation_contracts::msg::NavigationGoal goal;
     goal.header.frame_id = planning_frame_;
@@ -768,7 +786,8 @@ void NavigationMode::onEstimatorHealth(
     // Invalidate command exposure immediately when typed health announces a
     // new public frame; NavigationCommand carries the epoch and is checked at
     // the command boundary below.
-    navigation_command_.reset();
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
     last_command_receive_ns_ = 0;
     odometry_.reset();
     last_odometry_receive_ns_ = 0;
@@ -787,6 +806,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::uint64_t trajectories_received;
   std::uint64_t trajectories_accepted;
   std::uint64_t trajectories_rejected;
+  std::uint64_t waypoint_handoffs_retaining_command;
   std::uint64_t setpoint_updates;
   std::uint64_t stale_state_failures;
   std::int64_t odometry_gap_us;
@@ -804,6 +824,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
     trajectories_received = trajectory_received_count_;
     trajectories_accepted = trajectory_accepted_count_;
     trajectories_rejected = trajectory_rejected_count_;
+    waypoint_handoffs_retaining_command = waypoint_handoff_retained_command_count_;
     setpoint_updates = setpoint_update_count_;
     stale_state_failures = stale_state_failure_count_;
     odometry_gap_us = maximum_odometry_callback_gap_us_;
@@ -815,6 +836,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   RCLCPP_INFO(node().get_logger(),
               "external_mode_metrics odom_callbacks=%lu odom_max_gap_us=%ld "
               "trajectory_received=%lu trajectory_accepted=%lu trajectory_rejected=%lu "
+              "waypoint_handoffs_retaining_command=%lu "
               "setpoint_updates=%lu setpoint_max_gap_us=%ld last_state_age_s=%.6f "
               "stale_state_failures=%lu velocity_command_enu=(%.3f,%.3f,%.3f) "
               "forward_guard_count=%lu",
@@ -823,6 +845,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(trajectories_received),
               static_cast<unsigned long>(trajectories_accepted),
               static_cast<unsigned long>(trajectories_rejected),
+              static_cast<unsigned long>(waypoint_handoffs_retaining_command),
               static_cast<unsigned long>(setpoint_updates),
               static_cast<long>(setpoint_gap_us), state_age_s,
               static_cast<unsigned long>(stale_state_failures), velocity_command_enu.x(),
@@ -841,7 +864,8 @@ void NavigationMode::safetyStopNavigation(const char* reason) {
     }
     failure_reported_ = true;
     handover_requested_ = true;
-    navigation_command_.reset();
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
   }
   if (mission_controller_) mission_controller_->deactivate();
   publishStatus(navigation_contracts::msg::NavigationModeStatus::PAUSED,
@@ -865,7 +889,8 @@ void NavigationMode::failNavigation(const char* reason) {
     }
     failure_reported_ = true;
     handover_requested_ = true;
-    navigation_command_.reset();
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
   }
   if (mission_controller_) mission_controller_->deactivate();
   const auto status_reason = std::string_view(reason).find("odometry") != std::string_view::npos
