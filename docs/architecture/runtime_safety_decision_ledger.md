@@ -65,6 +65,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
 | HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
 | HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position or yaw exceeds its existing tracking-error budget; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag and yaw error. Require zero generated reverse-rebase connectors, bounded command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
+| HG-022 | Acceptance-region pass-through fillet (`SAFETY_INVARIANT`) | switch route-progress ownership at the closest trajectory junction inside the configured waypoint acceptance ball; do not pin nonzero-speed C3 turns to the exact corner centre | PROVISIONAL | Removes an impossible exact-tangent-change constraint at genuine corners while retaining the mission acceptance radius, continuous corridor/dynamics/flatness gates, analytic regression checks on each route leg, measured waypoint acceptance and latest-world authorization. Stop waypoints do not receive the phase switch. | Repeat 90-degree and arbitrary-bearing missions. Require the measured vehicle to enter the acceptance ball, no admitted fold on either leg, bounded corner speed/clearance, stable yaw, and higher nominal commit availability across more than one run. |
 
 ## Temporary-bypass register
 
@@ -9025,3 +9026,39 @@ release profiles must not use the former allowance.
   yaw error in repeated three-column SITL runs. Require zero reverse-rebase
   connector logs, bounded handover residuals, successful measured-state
   restart or certified stop, and no stale-state command commit.
+
+### 2026-08-28 - Fillet pass-through corners inside mission acceptance
+
+- **Owner:** Pass-through guide geometry and final route-regression
+  certificate.
+- **Scope:** Do not pin a nonzero-speed C3 trajectory to the exact centre of a
+  genuine corner. Allow the optimizer to fillet through the already configured
+  waypoint acceptance region. At final admission, change from incoming to
+  outgoing route coordinates at the closest polynomial junction inside that
+  region; stop waypoints remain single-phase.
+- **Safety impact:** The acceptance radius is an existing measured mission
+  contract, not a new tolerance. Every polynomial still requires continuous
+  corridor, V/A/J, flatness, yaw, latest-world and execution authorization.
+  Route regression remains analytically bounded on both legs and measured
+  waypoint acceptance still owns mission advancement. No corner may be cut
+  outside the configured ball.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T110635-996862` reached the
+  first two mission waypoints and then produced a certified `7.2 m` outgoing
+  window at the `(50,5)->(50,-5)` corner. The exact route-boundary pin made
+  every seed and refined trajectory violate its corridor, commonly by hundreds
+  or thousands of metres. A C3 trajectory cannot retain nonzero velocity while
+  changing tangent instantaneously at one exact point shared by perpendicular
+  corridor phases; it must either stop or use finite curvature inside the
+  acceptance region.
+- **Removal/review condition:** Replace only with a route generator that owns
+  an explicit curvature-continuous fillet/tube and preserves the same measured
+  acceptance, per-leg monotonic progress, dynamic and world certificates.
+  Never restore an exact nonzero-speed corner pin or enlarge acceptance to hide
+  infeasible geometry.
+- **Verification:** Unit-test an in-ball phase junction, folded outgoing leg,
+  negative-ENU mission and stop-waypoint exclusion; run all backend tests and
+  the Release build. Then repeat 90-degree and arbitrary-bearing SITL missions,
+  requiring measured entry into the acceptance ball, bounded corner speed and
+  clearance, stable yaw, zero admitted folds and improved command renewal over
+  more than one run.

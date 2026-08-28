@@ -1318,15 +1318,15 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateAllowsNegativeEnuDirection
   EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
 }
 
-TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentAtPinnedCorner) {
+TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentInsideAcceptanceBall) {
   Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
-  incoming.row(0) << 15.0, 5.0;
+  incoming.row(0) << 14.4, 5.0;
   incoming(2, 1) = 3.0;
   Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
   // The outgoing piece bows in X while progressing monotonically in Y. A
   // single incoming-tangent certificate sees a 1 m X regression at its tail;
   // route-arc progress correctly remains monotonic after the pinned junction.
-  outgoing.row(0) << -1.0, 1.0, 20.0;
+  outgoing.row(0) << -1.0, 1.0, 19.4;
   outgoing.row(1) << 0.0, 7.0, 0.0;
   outgoing(2, 2) = 3.0;
   navigation_planning_backend::CandidateCommandBundle candidate;
@@ -1344,10 +1344,10 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentAtPinnedCorn
 
 TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldAfterCorner) {
   Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
-  incoming.row(0) << 15.0, 5.0;
+  incoming.row(0) << 14.4, 5.0;
   incoming(2, 1) = 3.0;
   Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
-  outgoing(0, 2) = 20.0;
+  outgoing(0, 2) = 19.4;
   // y(t)=-4t^2+8t advances 4 m, then returns to the corner at t=2.
   outgoing.row(1) << -4.0, 8.0, 0.0;
   outgoing(2, 2) = 3.0;

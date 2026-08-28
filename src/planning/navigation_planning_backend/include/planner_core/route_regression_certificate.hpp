@@ -55,11 +55,13 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
     return result;
   }
 
-  // A long pass-through candidate has one optimizer junction fixed at the
-  // active mission waypoint. Before that junction progress belongs to the
-  // incoming segment; after it progress belongs to the outgoing segment.
-  // Keeping one incoming tangent across both phases falsely classifies a
-  // physically valid corner as a reverse manoeuvre.
+  // A pass-through candidate changes route ownership inside the mission-owned
+  // acceptance ball. Requiring the junction to equal the waypoint centre
+  // makes a nonzero-speed C3 turn through two intersecting corridors
+  // geometrically impossible. Before the closest in-ball junction progress
+  // belongs to the incoming segment; after it progress belongs to the
+  // outgoing segment. Keeping one incoming tangent across both phases falsely
+  // classifies a physically valid fillet as a reverse manoeuvre.
   const auto outgoing_segment_it = std::find_if(
       route.segments.begin(), route.segments.end(),
       [&route](const navigation_mission::RouteSegment& segment) {
@@ -67,19 +69,26 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
       });
   std::optional<int> boundary_piece_index;
   if (outgoing_segment_it != route.segments.end() &&
+      route.waypoints[route.active_waypoint_index].behavior ==
+          navigation_mission::MissionWaypoint::Behavior::PassThrough &&
       outgoing_segment_it->tangent.allFinite() &&
       std::abs(outgoing_segment_it->tangent.norm() - 1.0) <= 1.0e-6) {
-    constexpr double kPinnedBoundaryToleranceM = 1.0e-4;
     const Eigen::Vector3d boundary =
         route.waypoints[route.active_waypoint_index].position_enu;
+    const double acceptance_radius_m =
+        route.waypoints[route.active_waypoint_index].acceptance_radius_m;
+    double closest_junction_distance_m = std::numeric_limits<double>::infinity();
     for (int piece_index = 0;
          piece_index + 1 < candidate.position.getPieceNum(); ++piece_index) {
       const auto& piece = candidate.position[piece_index];
       const Eigen::Vector3d junction = piece.getPos(piece.getDuration());
-      if (junction.allFinite() &&
-          (junction - boundary).norm() <= kPinnedBoundaryToleranceM) {
+      const double junction_distance_m = (junction - boundary).norm();
+      if (junction.allFinite() && std::isfinite(acceptance_radius_m) &&
+          acceptance_radius_m > 0.0 && std::isfinite(junction_distance_m) &&
+          junction_distance_m <= acceptance_radius_m + 1.0e-6 &&
+          junction_distance_m < closest_junction_distance_m) {
         boundary_piece_index = piece_index;
-        break;
+        closest_junction_distance_m = junction_distance_m;
       }
     }
   }
