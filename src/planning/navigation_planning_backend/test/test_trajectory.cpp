@@ -421,6 +421,15 @@ TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
   EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
 }
 
+TEST(PlannerTrajectory, PieceRateCertificateBoundsRootSearchAtInitialBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  coefficients(0, 0) = 0.5;
+  coefficients(0, 1) = 0.0625;
+  const geometry_utils::Piece piece(1.0, coefficients);
+
+  EXPECT_NEAR(piece.getMaxVelRate(), 1.0625, 1.0e-9);
+}
+
 TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
   const Eigen::VectorXd empty;
   EXPECT_EQ(math_utils::RootFinder::polyConv(empty, Eigen::VectorXd::Ones(1)).size(), 0);

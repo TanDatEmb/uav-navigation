@@ -6,6 +6,7 @@
 
 #include <data_structure/base/piece.h>
 
+#include <cfloat>
 #include <cmath>
 #include <limits>
 
@@ -27,6 +28,37 @@ bool validPieceData(const Piece& piece) {
 
 Eigen::MatrixXd emptyDerivativeCoefficients() {
     return Eigen::MatrixXd(3, 0);
+}
+
+bool moveRootSearchBoundsAwayFromZeros(const Eigen::VectorXd& derivative_coefficients,
+                                       double& left_bound, double& right_bound) {
+    constexpr int kMaxBoundaryExpansionIterations = 128;
+    const auto move_left = [&]() {
+        for (int iteration = 0; iteration < kMaxBoundaryExpansionIterations; ++iteration) {
+            const double value = math_utils::RootFinder::polyVal(
+                derivative_coefficients, left_bound);
+            if (!std::isfinite(value)) return false;
+            if (std::abs(value) >= DBL_EPSILON) return true;
+            const double next_bound = 0.5 * left_bound;
+            if (next_bound == left_bound) return false;
+            left_bound = next_bound;
+        }
+        return false;
+    };
+    const auto move_right = [&]() {
+        for (int iteration = 0; iteration < kMaxBoundaryExpansionIterations; ++iteration) {
+            const double value = math_utils::RootFinder::polyVal(
+                derivative_coefficients, right_bound);
+            if (!std::isfinite(value)) return false;
+            if (std::abs(value) >= DBL_EPSILON) return true;
+            const double next_bound = 0.5 * (right_bound + 1.0);
+            if (next_bound == right_bound) return false;
+            right_bound = next_bound;
+        }
+        return false;
+    };
+
+    return move_left() && move_right();
 }
 
 }  // namespace
@@ -202,19 +234,8 @@ double Piece::getMaxVelRate() const {
     } else {
         double l = -0.0625;
         double r = 1.0625;
-        int cnt = 0;
-        while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), l)) < DBL_EPSILON) {
-            l = 0.5 * l;
-            if (cnt++ > 100) {
-                std::cout << "math_utils::RootFinder stuck in inf-loop" << std::endl;
-            }
-        }
-        cnt = 0;
-        while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), r)) < DBL_EPSILON) {
-            r = 0.5 * (r + 1.0);
-            if (cnt++ > 100) {
-                std::cout << "math_utils::RootFinder stuck in inf-loop" << std::endl;
-            }
+        if (!moveRootSearchBoundsAwayFromZeros(coeff.head(N - 1), l, r)) {
+            return std::numeric_limits<double>::quiet_NaN();
         }
         std::set<double> candidates = math_utils::RootFinder::solvePolynomial(coeff.head(N - 1), l, r,
                                                                               FLT_EPSILON / duration);
@@ -252,11 +273,8 @@ double Piece::getMaxAccRate() const {
     } else {
         double l = -0.0625;
         double r = 1.0625;
-        while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), l)) < DBL_EPSILON) {
-            l = 0.5 * l;
-        }
-        while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), r)) < DBL_EPSILON) {
-            r = 0.5 * (r + 1.0);
+        if (!moveRootSearchBoundsAwayFromZeros(coeff.head(N - 1), l, r)) {
+            return std::numeric_limits<double>::quiet_NaN();
         }
         std::set<double> candidates = math_utils::RootFinder::solvePolynomial(coeff.head(N - 1), l, r,
                                                                               FLT_EPSILON / duration);
@@ -293,11 +311,8 @@ double Piece::getMaxJerRate() const {
     }
     double l = -0.0625;
     double r = 1.0625;
-    while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), l)) < DBL_EPSILON) {
-        l *= 0.5;
-    }
-    while (fabs(math_utils::RootFinder::polyVal(coeff.head(N - 1), r)) < DBL_EPSILON) {
-        r = 0.5 * (r + 1.0);
+    if (!moveRootSearchBoundsAwayFromZeros(coeff.head(N - 1), l, r)) {
+        return std::numeric_limits<double>::quiet_NaN();
     }
     std::set<double> candidates = math_utils::RootFinder::solvePolynomial(
             coeff.head(N - 1), l, r, FLT_EPSILON / duration);
