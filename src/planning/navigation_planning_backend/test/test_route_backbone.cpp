@@ -72,6 +72,20 @@ TEST(RouteBackbone, NeverCrossesActiveWaypointBoundary) {
   EXPECT_NEAR(target.point.y(), 0.0, 1.0e-9);
 }
 
+TEST(RouteBackbone, SelectsForwardTargetOnAnisotropicMapLateralLeg) {
+  const auto route = makeSnapshot(
+      {{0.0, 0.0, 3.0}, {0.0, 45.0, 3.0}}, 1U,
+      {0.0, 0.0, 3.0});
+  const auto target = navigation_planning_backend::selectRouteBackboneTarget(
+      route, {0.0, 0.0, 3.0}, 14.0);
+
+  ASSERT_TRUE(target.valid);
+  EXPECT_FALSE(target.reaches_active_waypoint);
+  EXPECT_NEAR(target.point.x(), 0.0, 1.0e-12);
+  EXPECT_NEAR(target.point.y(), 28.0, 1.0e-12);
+  EXPECT_GT(target.point.y(), 15.0);
+}
+
 TEST(RouteBackbone, UsesPlanningStartProjectionButNeverRegressesHighWater) {
   auto route = makeSnapshot(
       {{0.0, 0.0, 3.0}, {140.0, 0.0, 3.0}}, 1U,

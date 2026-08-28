@@ -1412,7 +1412,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 if (!std::isfinite(local_search_horizon) ||
                     !PathSearch(guide_path.back(), local_search_goal,
                                 local_search_horizon,
-                                new_path, solve_deadline)) {
+                                new_path, solve_deadline,
+                                route_backbone_target.valid)) {
                     planner_context_->warn(" -- [planner] PathSearch for new path failed");
                     return FAILED;
                 }

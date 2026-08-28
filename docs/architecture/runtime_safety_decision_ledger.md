@@ -73,6 +73,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-027 | Condition-aware deterministic-seed PVAJ equality (`NUMERICAL_TOLERANCE`) | component-wise power-basis roundoff bound derived from coefficient term sums, polynomial degree and IEEE-754 epsilon; no fixed flight-tuned tolerance | PROVISIONAL | Replaces one dimensionally mixed absolute `1e-8` test that rejected corridor-contained seeds when endpoint evaluation suffered cancellation. A mismatch larger than the computed representation bound still fails before route, dynamics, flatness, world and execution certificates. | Unit-test ill-conditioned representation and physical mismatch; compare residual/bound distributions over historical artifacts, then require repeated scenario-matrix SITL with no clearance, tracking, latency or command-continuity regression. |
 | HG-028 | STOP-only terminal endpoint hold (`MISSION_PROGRESS_INVARIANT`) | terminal bundle generation and planner suppression require `BEHAVIOR_STOP`; a completed `PASS_THROUGH` endpoint restarts from current measured PVA | PROVISIONAL | A pass-through endpoint inside its acceptance ball no longer suppresses planning while waiting for measured mission handoff. Failed replacement solves still retain only the existing finite latest-world-certified command; STOP endpoint hold, waypoint acceptance radius, route order, world, dynamics and execution gates are unchanged. | Unit-test STOP/PASS_THROUGH policy, then repeat collinear and corner scenario-matrix SITL. Require ordered measured acceptance, continued command renewal, no endpoint-induced mode exit, and no STOP hold regression. |
 | HG-029 | A* distinct-layer edge validation (`PERFORMANCE_POLICY`) | one ray certificate on the active inflated search layer; a second inflated certificate only when the active search layer is evidence/probability | PROVISIONAL | Removes an identical immutable inflated-grid query from every expanded neighbor when A* already searches inflated occupancy. It does not cache across world revisions, skip an edge, change unknown policy, alter search deadlines, or weaken the separate inflated check for probability-map fallback. | Unit-test query identity and detour success, then compare A* iterations/latency/timeouts on repeated transverse-wall SITL and recorded snapshots without clearance regression. |
+| HG-030 | Route-backbone partial AABB support (`SAFETY_INVARIANT`) | only a valid immutable forward route backbone may project a remote local-search target to the current map boundary; executable prefix remains bounded by the 14 m horizon and continuously certified | PROVISIONAL | Preserves the remote mission waypoint and measured route progress while allowing receding motion in ±X/±Y on an axis-aligned anisotropic map. The boundary is never reported as waypoint completion; goals without valid route provenance still fail closed, and UNKNOWN, OUT_OF_MAP, corridor, world, dynamics and execution gates are unchanged. | Unit-test axis-independent backbone selection; repeat ±X/±Y and diagonal SITL. Require monotonic measured waypoint progress, explicit partial-frontier evidence, no OUT_OF_MAP solve loop, clearance, command renewal, and mapping/planner latency distributions. |
 
 ## Temporary-bypass register
 
@@ -10121,3 +10122,36 @@ release profiles must not use the former allowance.
 - **Verification:** Build and run all `navigation_runtime` tests; repeat
   collinear handoff SITL and require no anchor-rejected candidate, continued
   command ownership, ordered waypoint progress and no reverse connector.
+
+### 2026-08-28 - Recede along route backbone within anisotropic map support
+
+- **Owner/status:** Planner route-query/A* boundary, `PROVISIONAL`; supersedes
+  the older blanket rejection of partial endpoint support only for a typed,
+  immutable forward route backbone.
+- **Scope:** A valid route-backbone target may request the existing partial
+  AABB path-search mode. When the remote target lies beyond directional map
+  support, A* projects its search endpoint inside the map margin and reports a
+  horizon result. Planner then truncates the returned route to the configured
+  local horizon, independently certifies every inflated segment, and changes
+  only the local planning endpoint. Mission target identity and measured route
+  progress remain remote and unchanged.
+- **Safety impact:** A map-boundary prefix is not waypoint completion and does
+  not authorize OUT_OF_MAP or UNKNOWN under a stricter mission policy. Goals
+  without valid route provenance retain ordinary fail-closed support checks.
+  Corridor, V/A/J, flatness, latest-world, backup, command-anchor and execution
+  admission remain mandatory for every generated prefix.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T161846-1316185` passed the
+  +X obstacle phase and accepted waypoint `(105,0,3)` at 1.52 m/s. On the +Y
+  handoff, the 45 m target was `OUT_OF_MAP` for the centered 30 m Y window;
+  every PlanFromRest failed at A* setup in 0.04-0.18 ms until the finite backup
+  ended. A route-backbone unit test proves identical forward selection on a
+  lateral leg whose guidance target lies beyond the 15 m half-width.
+- **Removal/review condition:** Revert if any boundary prefix advances mission
+  state, loses route monotonicity, omits explicit incomplete-frontier evidence,
+  or worsens clearance/latency. Replace with a sparse or route-oriented map only
+  after it provides equivalent immutable evidence and fail-closed semantics.
+- **Verification:** Build and run all backend tests; repeat the comprehensive
+  ±X/±Y scenario at a validated speed, then recorded-data shadow planning.
+  Require explicit partial-route logs, in-order measured waypoint acceptance,
+  no target-OUT_OF_MAP retry loop, and p50/p95/p99 mapping/planning evidence.
