@@ -104,6 +104,9 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "guide_path_length_m": ("guide_path_length_m",),
     "guide_duration_s": ("guide_duration_s",),
+    "required_lookahead_m": ("required_lookahead_m",),
+    "certified_lookahead_m": ("certified_lookahead_m",),
+    "lookahead_complete": ("lookahead_complete",),
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
     "exp_nonfinite_evaluation_count": ("exp_nonfinite_evaluation_count",),
     "exp_first_nonfinite_stage": ("exp_first_nonfinite_stage",),
@@ -382,6 +385,9 @@ def normalize_planner_trace_record(
         ),
         "guide_path_length_m": _float(values["guide_path_length_m"]),
         "guide_duration_s": _float(values["guide_duration_s"]),
+        "required_lookahead_m": _float(values["required_lookahead_m"]),
+        "certified_lookahead_m": _float(values["certified_lookahead_m"]),
+        "lookahead_complete": _bool(values["lookahead_complete"]),
         "exp_retry_budget_remaining_us": _float(
             values["exp_retry_budget_remaining_us"]
         ),

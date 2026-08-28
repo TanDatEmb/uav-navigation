@@ -1033,6 +1033,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         guide_stamp.reserve(reserve_size);
         latest_guide_path_length_m_ = std::numeric_limits<double>::quiet_NaN();
         latest_guide_duration_s_ = std::numeric_limits<double>::quiet_NaN();
+        required_lookahead_m_ = std::numeric_limits<double>::quiet_NaN();
+        certified_lookahead_m_ = std::numeric_limits<double>::quiet_NaN();
+        lookahead_complete_ = false;
 
         Vec4f init_yaw{solve_state_.yaw, 0, 0, 0};
         Vec4f fina_yaw{0, 0, 0, 0};
@@ -1364,6 +1367,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // MissionController advance the checkpoint while the same command is live.
         bool route_lookahead_active = false;
         bool route_lookahead_is_corner = false;
+        double route_terminal_speed_cap_mps =
+            cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
         if (gi_.new_goal && pass_through_next_target_.has_value()) {
             planner_context_->info(
@@ -1398,11 +1403,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
-            const double desired_lookahead = passThroughLookaheadDistance(
-                planning_speed, cfg_.exp_traj_cfg.max_vel,
-                cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
-                cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
-                outgoing_distance);
+            const double required_lookahead_envelope =
+                passThroughRequiredLookaheadDistance(
+                    planning_speed, cfg_.exp_traj_cfg.max_vel,
+                    cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
+                    cfg_.replan_forward_dt_s, cfg_.receding_distance_m);
+            const double desired_lookahead = std::isfinite(
+                    required_lookahead_envelope)
+                ? std::min(outgoing_distance, required_lookahead_envelope)
+                : 0.0;
+            required_lookahead_m_ = desired_lookahead;
             // The A* query must be allowed to reach the next mission target;
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
@@ -1465,6 +1475,26 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 segment_start = segment_end;
                             }
                             if (certified) {
+                                const bool complete = passThroughLookaheadComplete(
+                                    desired_lookahead, allocation.path_length_m);
+                                const double allocation_duration_s =
+                                    allocation.elapsed_s.empty()
+                                        ? std::numeric_limits<double>::quiet_NaN()
+                                        : allocation.elapsed_s.back();
+                                if (!complete && std::isfinite(allocation_duration_s) &&
+                                    allocation_duration_s > 1.0e-6) {
+                                    const double certified_speed_cap =
+                                        terminalSpeedCapForPath(
+                                            allocation.path_length_m,
+                                            allocation_duration_s,
+                                            std::max(0.0, guide_path_end_vel),
+                                            route_terminal_speed_cap_mps);
+                                    if (std::isfinite(certified_speed_cap)) {
+                                        route_terminal_speed_cap_mps = std::min(
+                                            route_terminal_speed_cap_mps,
+                                            certified_speed_cap);
+                                    }
+                                }
                                 const double guide_time_origin_s = guide_stamp.back();
                                 for (std::size_t index = 0;
                                      index < allocation.points.size(); ++index) {
@@ -1478,13 +1508,17 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 goal_endpoint_adjusted_ = true;
                                 route_lookahead_active = true;
                                 route_lookahead_is_corner = genuine_corner;
+                                certified_lookahead_m_ = allocation.path_length_m;
+                                lookahead_complete_ = complete;
                                 route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
                                     current_endpoint, goal_acceptance_radius_m_};
                                 planner_context_->info(
                                     " -- [planner] pass-through route lookahead distance={:.3f} "
-                                    "required={:.3f} remaining_horizon={:.3f} corner={}",
-                                    allocation.path_length_m, desired_lookahead,
-                                    remaining_horizon, genuine_corner);
+                                    "required={:.3f} complete={} terminal_speed_cap={:.3f} "
+                                    "remaining_horizon={:.3f} corner={}",
+                                    allocation.path_length_m, desired_lookahead, complete,
+                                    route_terminal_speed_cap_mps, remaining_horizon,
+                                    genuine_corner);
                             }
                         }
                     }
@@ -1747,7 +1781,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const double terminal_velocity_cap =
                     cfg_.exp_traj_cfg.max_vel *
                     cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
-            double preferred_terminal_speed = guide_path_end_vel;
+            double preferred_terminal_speed = std::min(
+                std::max(guide_path_end_vel, solve_state_.v.norm()),
+                route_terminal_speed_cap_mps);
             if (route_lookahead_active && route_lookahead_is_corner &&
                 pass_through_next_target_.has_value()) {
                 // The route-boundary corridor is intentionally local to the

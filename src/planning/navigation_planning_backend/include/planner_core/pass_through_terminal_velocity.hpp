@@ -76,6 +76,14 @@ inline double passThroughCornerSpeedCap(
 // configured receding prefix.  This is a route-window geometry bound, not a
 // safety-gate relaxation; the selected path and the final polynomial retain
 // their existing world and dynamic certificates.
+inline double passThroughRequiredLookaheadDistance(
+    const double speed_mps,
+    const double maximum_velocity_mps,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3,
+    const double replan_forward_dt_s,
+    const double receding_distance_m) noexcept;
+
 inline double passThroughLookaheadDistance(
     const double speed_mps,
     const double maximum_velocity_mps,
@@ -84,13 +92,32 @@ inline double passThroughLookaheadDistance(
     const double replan_forward_dt_s,
     const double receding_distance_m,
     const double available_route_distance_m) noexcept {
+  if (!std::isfinite(available_route_distance_m) || available_route_distance_m <= 0.0) {
+    return 0.0;
+  }
+  const double required_distance = passThroughRequiredLookaheadDistance(
+      speed_mps, maximum_velocity_mps, maximum_acceleration_mps2,
+      maximum_jerk_mps3, replan_forward_dt_s, receding_distance_m);
+  if (!std::isfinite(required_distance) || required_distance <= 0.0) return 0.0;
+  return std::min(available_route_distance_m, required_distance);
+}
+
+// Required route-window length before considering the finite mission leg.  The
+// planner records this separately from the certified prefix so a map-bounded
+// short prefix cannot masquerade as a complete continuity window.
+inline double passThroughRequiredLookaheadDistance(
+    const double speed_mps,
+    const double maximum_velocity_mps,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3,
+    const double replan_forward_dt_s,
+    const double receding_distance_m) noexcept {
   if (!std::isfinite(speed_mps) || speed_mps < 0.0 ||
       !std::isfinite(maximum_velocity_mps) || maximum_velocity_mps <= 0.0 ||
       !std::isfinite(maximum_acceleration_mps2) || maximum_acceleration_mps2 <= 0.0 ||
       !std::isfinite(maximum_jerk_mps3) || maximum_jerk_mps3 <= 0.0 ||
       !std::isfinite(replan_forward_dt_s) || replan_forward_dt_s <= 0.0 ||
-      !std::isfinite(receding_distance_m) || receding_distance_m <= 0.0 ||
-      !std::isfinite(available_route_distance_m) || available_route_distance_m <= 0.0) {
+      !std::isfinite(receding_distance_m) || receding_distance_m <= 0.0) {
     return 0.0;
   }
   const double bounded_speed = std::min(speed_mps, maximum_velocity_mps);
@@ -101,7 +128,14 @@ inline double passThroughLookaheadDistance(
   if (!std::isfinite(required_distance) || required_distance <= 0.0) {
     return 0.0;
   }
-  return std::min(available_route_distance_m, required_distance);
+  return required_distance;
+}
+
+inline bool passThroughLookaheadComplete(
+    const double required_distance_m, const double certified_distance_m) noexcept {
+  return std::isfinite(required_distance_m) && required_distance_m > 0.0 &&
+         std::isfinite(certified_distance_m) && certified_distance_m >= 0.0 &&
+         certified_distance_m + 1.0e-6 >= required_distance_m;
 }
 
 // Compute a bounded outgoing velocity for a pass-through waypoint. The

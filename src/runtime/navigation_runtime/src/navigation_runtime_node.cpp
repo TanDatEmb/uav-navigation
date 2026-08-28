@@ -2405,6 +2405,9 @@ void NavigationRuntimeNode::runCycle() {
                     exp_diagnostics.retry_free_duration_seed_max_s);
     add_trace_value("guide_path_length_m", planner_diagnostics.latest_guide_path_length_m);
     add_trace_value("guide_duration_s", planner_diagnostics.latest_guide_duration_s);
+    add_trace_value("required_lookahead_m", planner_diagnostics.required_lookahead_m);
+    add_trace_value("certified_lookahead_m", planner_diagnostics.certified_lookahead_m);
+    add_trace_value("lookahead_complete", planner_diagnostics.lookahead_complete ? 1 : 0);
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
     add_trace_value("exp_nonfinite_evaluation_count",

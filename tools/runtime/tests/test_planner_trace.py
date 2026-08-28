@@ -172,6 +172,9 @@ class PlannerTraceTest(unittest.TestCase):
                                     "exp_retry_free_duration_seed_max_s": "0.125",
                                     "guide_path_length_m": "18.5",
                                     "guide_duration_s": "4.0",
+                                    "required_lookahead_m": "7.2",
+                                    "certified_lookahead_m": "6.0",
+                                    "lookahead_complete": "0",
                                     "exp_retry_budget_remaining_us": "42000",
                                     "exp_nonfinite_evaluation_count": "2",
                                     "exp_first_nonfinite_stage": "5",
@@ -239,6 +242,9 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["exp_retry_free_duration_seed_max_s"], 0.125)
         self.assertEqual(records[0]["guide_path_length_m"], 18.5)
         self.assertEqual(records[0]["guide_duration_s"], 4.0)
+        self.assertEqual(records[0]["required_lookahead_m"], 7.2)
+        self.assertEqual(records[0]["certified_lookahead_m"], 6.0)
+        self.assertFalse(records[0]["lookahead_complete"])
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
         self.assertEqual(records[0]["exp_nonfinite_evaluation_count"], 2)
         self.assertEqual(records[0]["exp_first_nonfinite_stage"], 5)

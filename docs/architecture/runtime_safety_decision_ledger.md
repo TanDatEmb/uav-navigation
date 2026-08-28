@@ -7853,3 +7853,33 @@ release profiles must not use the former allowance.
   and PX4 contract tests; run the mapping actor coalescing test; execute a fresh
   3-column trace and compare callback/export p50/p95/p99, published/deferred
   counts, world age, identity ordering, memory, and mission outcome.
+
+### 2026-08-28 - Distinguish certified pass-through look-ahead completeness
+
+- **Owner:** Navigation planner route-window and runtime diagnostics maintainers.
+- **Scope:** Record the route-window length required by the stopping/replan
+  envelope separately from the prefix actually traversable and certified by
+  the current world snapshot. A non-empty but short prefix remains eligible
+  only as a bounded frontier; it is never labelled complete. Its terminal
+  speed seed is capped by the certified distance and duration.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. No UNKNOWN/OUT_OF_MAP,
+  dynamic, corridor, flatness, swept-world, backup, freshness, or command
+  lease gate is relaxed. The completeness bit and speed cap are planner
+  observability/seed constraints; the final polynomial and immutable world
+  certificate remain authoritative. Invalid or missing measurements leave the
+  completion state false and preserve the existing fail-closed path.
+- **Evidence:** The exact `90d9148` audit found that any non-empty outgoing
+  prefix was marked active even when shorter than the computed stopping and
+  replan requirement, which can cause terminal-speed loss and repeated hot
+  replans. The new fields are `required_lookahead_m`,
+  `certified_lookahead_m`, and `lookahead_complete`; runtime traces expose all
+  three for distribution-level review.
+- **Removal/review condition:** Revisit if a repeated scenario shows terminal
+  speed above the certified-distance bound, a completed prefix shorter than
+  required, increased command exhaustion, or regression in waypoint order,
+  clearance, altitude, handover, or fail-closed behavior. Do not replace the
+  completeness check with a boolean-only bypass or a larger timeout.
+- **Verification:** `make build`; run planner, runtime, and PX4 contract tests;
+  run the planner trace tests; then inspect a fresh 3-column trace and compare
+  required/certified look-ahead, terminal speed, planner latency, command gaps,
+  waypoint outcome, and safety decisions.

@@ -383,6 +383,9 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   output.latest_guide_max = toVector3d(impl_->planner->latestGuideMax());
   output.latest_guide_path_length_m = impl_->planner->latestGuidePathLengthMeters();
   output.latest_guide_duration_s = impl_->planner->latestGuideDurationSeconds();
+  output.required_lookahead_m = impl_->planner->requiredLookaheadMeters();
+  output.certified_lookahead_m = impl_->planner->certifiedLookaheadMeters();
+  output.lookahead_complete = impl_->planner->lookaheadComplete();
   output.requested_goal = toVector3d(impl_->planner->requestedGoal());
   output.planning_goal = toVector3d(impl_->planner->planningGoal());
   output.goal_acceptance_radius_m = impl_->planner->goalAcceptanceRadiusMeters();

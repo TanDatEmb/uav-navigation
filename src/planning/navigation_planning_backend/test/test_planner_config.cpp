@@ -270,6 +270,15 @@ TEST(PlannerPassThrough, LookaheadDistanceCoversStoppingAndReplanEnvelope) {
       0.0);
 }
 
+TEST(PlannerPassThrough, SeparatesRequiredAndCertifiedLookahead) {
+  const double required = navigation_planning_backend::passThroughRequiredLookaheadDistance(
+      3.0, 3.0, 2.0, 4.0, 0.2, 3.0);
+  EXPECT_NEAR(required, 7.2, 1.0e-12);
+  EXPECT_TRUE(navigation_planning_backend::passThroughLookaheadComplete(required, 7.2));
+  EXPECT_FALSE(navigation_planning_backend::passThroughLookaheadComplete(required, 6.0));
+  EXPECT_FALSE(navigation_planning_backend::passThroughLookaheadComplete(required, -1.0));
+}
+
 TEST(PlannerPassThrough, CollinearPassThroughLegStillUsesLookaheadEnvelope) {
   const Eigen::Vector3d waypoint{20.0, 5.0, 3.0};
   const Eigen::Vector3d next_target{50.0, 5.0, 3.0};

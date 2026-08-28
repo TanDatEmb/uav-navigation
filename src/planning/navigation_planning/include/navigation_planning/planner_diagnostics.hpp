@@ -216,6 +216,9 @@ struct PlannerDiagnostics {
       std::numeric_limits<double>::quiet_NaN())};
   double latest_guide_path_length_m{std::numeric_limits<double>::quiet_NaN()};
   double latest_guide_duration_s{std::numeric_limits<double>::quiet_NaN()};
+  double required_lookahead_m{std::numeric_limits<double>::quiet_NaN()};
+  double certified_lookahead_m{std::numeric_limits<double>::quiet_NaN()};
+  bool lookahead_complete{false};
   Eigen::Vector3d requested_goal{Eigen::Vector3d::Constant(
       std::numeric_limits<double>::quiet_NaN())};
   Eigen::Vector3d planning_goal{Eigen::Vector3d::Constant(

@@ -141,6 +141,9 @@ namespace navigation_planning_backend {
         Vec3f latest_guide_max_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         double latest_guide_path_length_m_{std::numeric_limits<double>::quiet_NaN()};
         double latest_guide_duration_s_{std::numeric_limits<double>::quiet_NaN()};
+        double required_lookahead_m_{std::numeric_limits<double>::quiet_NaN()};
+        double certified_lookahead_m_{std::numeric_limits<double>::quiet_NaN()};
+        bool lookahead_complete_{false};
 
         bool authorizeAndStage(CandidateCommandBundle&& candidate);
 
@@ -235,6 +238,9 @@ namespace navigation_planning_backend {
         Vec3f latestGuideMax() const { return latest_guide_max_; }
         double latestGuidePathLengthMeters() const { return latest_guide_path_length_m_; }
         double latestGuideDurationSeconds() const { return latest_guide_duration_s_; }
+        double requiredLookaheadMeters() const noexcept { return required_lookahead_m_; }
+        double certifiedLookaheadMeters() const noexcept { return certified_lookahead_m_; }
+        bool lookaheadComplete() const noexcept { return lookahead_complete_; }
         Vec3f requestedGoal() const { return requested_goal_p_; }
         Vec3f planningGoal() const { return planning_goal_p_; }
         double goalAcceptanceRadiusMeters() const noexcept {
