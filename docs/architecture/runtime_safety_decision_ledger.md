@@ -8345,3 +8345,31 @@ release profiles must not use the former allowance.
   `test_navigation_command`, `test_mission`, and package CTest. During repeated
   multi-waypoint SITL, correlate accepted-waypoint status, goal publication,
   command identity, velocity setpoint, and the retained-handoff counter.
+
+### 2026-08-28 - Centralize measured route boundary and reversal progress
+
+- **Owner:** `navigation_mission::RouteProgress`; MissionController remains the
+  sole waypoint-state transition owner.
+- **Scope:** RouteProgress now evaluates recent measured segments crossing a
+  waypoint acceptance ball with a finite sample-gap bound, forward incoming-leg
+  motion, and lateral miss rejection. MissionController delegates that geometry
+  instead of maintaining a second projection policy. Monotonic progress also
+  resolves geometrically tied branches using prior arc progress, including a
+  route that reverses 180 degrees over the same line.
+- **Safety impact:** Planner endpoints still cannot advance mission state; only
+  current/recent measured positions can satisfy the boundary. STOP/PASS_THROUGH,
+  measured velocity, hold, and braking policy remain in MissionController. The
+  change does not enlarge an acceptance radius, permit a stale sample gap, or
+  relax route backtracking diagnostics.
+- **Evidence:** Route contract tests cover duplicate waypoints, altitude
+  interpolation, monotonic backtracking, forward segment jump, lateral miss,
+  backward crossing, and branch selection after a 180-degree reversal. Existing
+  PX4 mission tests cover stale crossing gaps, exact-once active-index advance,
+  STOP speed/hold gates, pass-through, and terminal backup/main behavior.
+- **Removal/review condition:** Replace only when one immutable route snapshot
+  is consumed directly by mission, planner, yaw, and diagnostics with equivalent
+  measured-boundary semantics. This checkpoint does not yet claim that complete
+  M1 integration; planner/yaw route consumption remains open.
+- **Verification:** Build through `px4_navigation_external_mode`, run
+  `navigation_mission/test_mission_contract`, and run all PX4 External Mode
+  package tests before commit.

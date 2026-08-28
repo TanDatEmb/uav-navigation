@@ -8,26 +8,6 @@
 
 namespace px4_navigation_external_mode {
 
-namespace {
-
-std::optional<double> segmentDistanceToPoint(
-    const Eigen::Vector3d& start, const Eigen::Vector3d& end,
-    const Eigen::Vector3d& point) noexcept {
-  if (!start.allFinite() || !end.allFinite() || !point.allFinite()) {
-    return std::nullopt;
-  }
-  const Eigen::Vector3d delta = end - start;
-  const double length_squared = delta.squaredNorm();
-  if (!std::isfinite(length_squared)) return std::nullopt;
-  const double fraction = length_squared > 1.0e-12
-      ? std::clamp((point - start).dot(delta) / length_squared, 0.0, 1.0)
-      : 0.0;
-  const double distance = (start + fraction * delta - point).norm();
-  return std::isfinite(distance) ? std::optional<double>{distance} : std::nullopt;
-}
-
-}  // namespace
-
 MissionController::MissionController(Mission mission)
     : mission_(std::move(mission)), route_progress_(mission_) {
   if (mission_.waypoints.empty()) {
@@ -348,38 +328,14 @@ MissionControllerEvent MissionController::update(
         active_waypoint_index_ >= mission_.waypoints.size()) {
       return std::nullopt;
     }
-    const auto& active = mission_.waypoints[active_waypoint_index_];
-    const double current_error = (*position - active.position_enu).norm();
-    if (std::isfinite(current_error) && current_error <= active.acceptance_radius_m) {
-      return current_error;
-    }
-    if (!previous_position.has_value() ||
-        !previous_position->allFinite() ||
-        !std::isfinite(previous_position_time_s) ||
-        now_s < previous_position_time_s ||
-        now_s - previous_position_time_s > kMaximumPassThroughSampleGapS) {
-      return std::nullopt;
-    }
-    const auto previous_projection = route_progress_.project(*previous_position);
-    const auto current_projection = route_progress_.project(*position);
-    if (!previous_projection.valid || !current_projection.valid) {
-      return std::nullopt;
-    }
-    const double waypoint_arc =
-        route_progress_.waypointArcLengthM(active_waypoint_index_);
-    if (!std::isfinite(waypoint_arc) ||
-        previous_projection.arc_length_m > waypoint_arc + 1.0e-6 ||
-        current_projection.arc_length_m + 1.0e-6 < waypoint_arc ||
-        current_projection.arc_length_m <= previous_projection.arc_length_m + 1.0e-6) {
-      return std::nullopt;
-    }
-    const auto segment_error = segmentDistanceToPoint(
-        *previous_position, *position, active.position_enu);
-    if (!segment_error.has_value() ||
-        *segment_error > active.acceptance_radius_m + 1.0e-6) {
-      return std::nullopt;
-    }
-    return segment_error;
+    const double sample_gap_s = previous_position.has_value() &&
+                                    std::isfinite(previous_position_time_s) &&
+                                    now_s >= previous_position_time_s
+        ? now_s - previous_position_time_s
+        : std::numeric_limits<double>::quiet_NaN();
+    return route_progress_.measuredWaypointCrossingError(
+        active_waypoint_index_, *position, previous_position, sample_gap_s,
+        kMaximumPassThroughSampleGapS);
   };
   const auto passThroughAcceptance = [&]() {
     return passThroughAcceptanceError().has_value();

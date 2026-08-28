@@ -156,3 +156,38 @@ TEST(RouteProgress, ExposesCornerTangentsAndFiniteProjection) {
   EXPECT_TRUE(projection.tangent.allFinite());
   EXPECT_GT(projection.lateral_error_m, 0.0);
 }
+
+TEST(RouteProgress, MeasuredBoundaryAcceptsForwardJumpButRejectsLateralMiss) {
+  const navigation_mission::RouteProgress route(makeRouteMission());
+  const auto crossed = route.measuredWaypointCrossingError(
+      2U, Eigen::Vector3d{10.8, 0.0, 3.08},
+      Eigen::Vector3d{9.2, 0.0, 2.92}, 0.05, 0.25);
+  ASSERT_TRUE(crossed.has_value());
+  EXPECT_LT(*crossed, 0.7);
+
+  EXPECT_FALSE(route.measuredWaypointCrossingError(
+      2U, Eigen::Vector3d{10.8, 1.0, 3.08},
+      Eigen::Vector3d{9.2, 1.0, 2.92}, 0.05, 0.25).has_value());
+  EXPECT_FALSE(route.measuredWaypointCrossingError(
+      2U, Eigen::Vector3d{9.2, 0.0, 2.92},
+      Eigen::Vector3d{10.8, 0.0, 3.08}, 0.05, 0.25).has_value());
+}
+
+TEST(RouteProgress, MonotonicProjectionSelectsReturnBranchAtReversal) {
+  navigation_mission::Mission mission;
+  mission.waypoints = {
+      {"start", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"reverse", Eigen::Vector3d{10.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"finish", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  navigation_mission::RouteProgress route(mission);
+  EXPECT_NEAR(route.update(Eigen::Vector3d{8.0, 0.0, 3.0}).progress_arc_m, 8.0, 1.0e-12);
+  EXPECT_NEAR(route.update(Eigen::Vector3d{10.0, 0.0, 3.0}).progress_arc_m, 10.0, 1.0e-12);
+  const auto returning = route.update(Eigen::Vector3d{9.0, 0.0, 3.0});
+  EXPECT_NEAR(returning.progress_arc_m, 11.0, 1.0e-12);
+  EXPECT_EQ(returning.projection.segment_index, 1U);
+  EXPECT_FALSE(returning.backtracking_exceeded);
+}

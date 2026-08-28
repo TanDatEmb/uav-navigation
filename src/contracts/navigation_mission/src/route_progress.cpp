@@ -8,10 +8,27 @@ namespace navigation_mission {
 namespace {
 
 constexpr double kMinimumSegmentLengthM = 1.0e-9;
+constexpr double kProjectionDistanceTieSquaredM2 = 1.0e-12;
 
 double clampArc(const double arc_length_m, const double total_length_m) {
   if (!std::isfinite(arc_length_m)) return 0.0;
   return std::clamp(arc_length_m, 0.0, total_length_m);
+}
+
+std::optional<double> segmentDistanceToPoint(
+    const Eigen::Vector3d& start, const Eigen::Vector3d& end,
+    const Eigen::Vector3d& point) noexcept {
+  if (!start.allFinite() || !end.allFinite() || !point.allFinite()) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d delta = end - start;
+  const double length_squared = delta.squaredNorm();
+  if (!std::isfinite(length_squared)) return std::nullopt;
+  const double fraction = length_squared > 1.0e-12
+      ? std::clamp((point - start).dot(delta) / length_squared, 0.0, 1.0)
+      : 0.0;
+  const double distance = (start + fraction * delta - point).norm();
+  return std::isfinite(distance) ? std::optional<double>{distance} : std::nullopt;
 }
 
 }  // namespace
@@ -100,10 +117,48 @@ RouteProjection RouteProgress::project(const Eigen::Vector3d& position) const no
 }
 
 RouteProgressState RouteProgress::update(const Eigen::Vector3d& position) noexcept {
-  const auto projection = project(position);
+  auto projection = project(position);
   if (!projection.valid) return state_;
   const bool was_valid = state_.valid;
   const double previous_progress = state_.progress_arc_m;
+  if (was_valid && !segments_.empty()) {
+    // A route may overlap itself, especially at a 180-degree reversal. Pure
+    // nearest-point projection cannot identify the active branch there. Among
+    // geometrically tied candidates, select the arc closest to prior monotonic
+    // progress and prefer the forward branch on an exact arc-distance tie.
+    const double best_distance_squared = projection.lateral_error_m *
+                                         projection.lateral_error_m;
+    double best_arc_distance = std::abs(projection.arc_length_m - previous_progress);
+    for (std::size_t index = 0U; index < segments_.size(); ++index) {
+      const auto& segment = segments_[index];
+      const Eigen::Vector3d delta = position - segment.start;
+      const double raw_fraction = delta.dot(segment.tangent) / segment.length_m;
+      if (!std::isfinite(raw_fraction)) continue;
+      const double fraction = std::clamp(raw_fraction, 0.0, 1.0);
+      const Eigen::Vector3d point = segment.start + fraction *
+                                    (segment.end - segment.start);
+      const double distance_squared = (position - point).squaredNorm();
+      if (!std::isfinite(distance_squared) ||
+          std::abs(distance_squared - best_distance_squared) >
+              kProjectionDistanceTieSquaredM2) {
+        continue;
+      }
+      const double arc = segment.start_arc_m + fraction * segment.length_m;
+      const double arc_distance = std::abs(arc - previous_progress);
+      const bool closer_to_progress = arc_distance + 1.0e-12 < best_arc_distance;
+      const bool forward_on_tie = std::abs(arc_distance - best_arc_distance) <= 1.0e-12 &&
+                                  arc > projection.arc_length_m;
+      if (!closer_to_progress && !forward_on_tie) continue;
+      projection.valid = true;
+      projection.segment_index = index;
+      projection.arc_length_m = arc;
+      projection.lateral_error_m = std::sqrt(distance_squared);
+      projection.segment_fraction = fraction;
+      projection.point = point;
+      projection.tangent = segment.tangent;
+      best_arc_distance = arc_distance;
+    }
+  }
   state_.valid = true;
   state_.backtracking_exceeded = was_valid &&
       projection.arc_length_m + config_.backtrack_tolerance_m < previous_progress;
@@ -184,6 +239,38 @@ bool RouteProgress::insideAcceptance(const std::size_t waypoint_index,
   const double distance_m = (position - waypoints_[waypoint_index].position_enu).norm();
   return std::isfinite(distance_m) &&
          distance_m <= waypoints_[waypoint_index].acceptance_radius_m;
+}
+
+std::optional<double> RouteProgress::measuredWaypointCrossingError(
+    const std::size_t waypoint_index, const Eigen::Vector3d& current_position,
+    const std::optional<Eigen::Vector3d>& previous_position,
+    const double sample_gap_s, const double maximum_sample_gap_s) const noexcept {
+  if (waypoint_index >= waypoints_.size() || !current_position.allFinite()) {
+    return std::nullopt;
+  }
+  const auto& waypoint = waypoints_[waypoint_index];
+  const double current_error = (current_position - waypoint.position_enu).norm();
+  if (std::isfinite(current_error) && current_error <= waypoint.acceptance_radius_m) {
+    return current_error;
+  }
+  if (!previous_position.has_value() || !previous_position->allFinite() ||
+      !std::isfinite(sample_gap_s) || !std::isfinite(maximum_sample_gap_s) ||
+      sample_gap_s < 0.0 || maximum_sample_gap_s < 0.0 ||
+      sample_gap_s > maximum_sample_gap_s) {
+    return std::nullopt;
+  }
+  const auto incoming = incomingTangent(waypoint_index);
+  if (!incoming.has_value()) return std::nullopt;
+  const Eigen::Vector3d measured_motion = current_position - *previous_position;
+  if (!measured_motion.allFinite() || measured_motion.dot(*incoming) <= 1.0e-6) {
+    return std::nullopt;
+  }
+  const auto error = segmentDistanceToPoint(
+      *previous_position, current_position, waypoint.position_enu);
+  if (!error.has_value() || *error > waypoint.acceptance_radius_m + 1.0e-6) {
+    return std::nullopt;
+  }
+  return error;
 }
 
 }  // namespace navigation_mission

@@ -73,6 +73,12 @@ class RouteProgress final {
       std::size_t waypoint_index) const noexcept;
   [[nodiscard]] bool insideAcceptance(std::size_t waypoint_index,
                                       const Eigen::Vector3d& position) const noexcept;
+  // Evaluate only measured-state passage through a waypoint boundary. The
+  // caller still owns STOP versus PASS_THROUGH policy and state advancement.
+  [[nodiscard]] std::optional<double> measuredWaypointCrossingError(
+      std::size_t waypoint_index, const Eigen::Vector3d& current_position,
+      const std::optional<Eigen::Vector3d>& previous_position,
+      double sample_gap_s, double maximum_sample_gap_s) const noexcept;
 
  private:
   [[nodiscard]] std::size_t segmentForArc(double arc_length_m) const noexcept;
