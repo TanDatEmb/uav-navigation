@@ -1740,6 +1740,22 @@ TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {
             navigation_planning_backend::PLANNER_BACKUP_FAILED);
 }
 
+TEST(PlannerTrajectory, BackupRecoveryDoesNotReuseBrakingGeometryAsMainGuide) {
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::retainedHotReplanGuideDistance(3.0, false),
+      3.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::retainedHotReplanGuideDistance(3.0, true),
+      0.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::retainedHotReplanGuideDistance(0.0, false),
+      0.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::retainedHotReplanGuideDistance(
+          std::numeric_limits<double>::quiet_NaN(), false),
+      0.0);
+}
+
 TEST(PlannerTrajectory, UnconnectedOrInvalidGoalDoesNotMoveGuideEndpoint) {
   const navigation_math::Vec3f guide_endpoint(1.0, 2.0, 3.0);
   const navigation_math::Vec3f goal(2.0, 2.0, 3.0);

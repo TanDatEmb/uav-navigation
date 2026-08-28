@@ -1308,13 +1308,18 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // * 6) Decide where to split the original exp trajecory and re-plan a new one with an A*,
             // *    If the whole trajectory if free,  the whole trajectory should be receding and if not, or a new goal
             // *    is given, we should only receiding a small distance and replan new trajectory ASAP
-            double split_dis = cfg_.receding_distance_m;
+            const bool replan_state_is_backup =
+                    cmd_traj_info_.isTTOnBackupTraj(replan_state_TT);
+            const double split_dis = retainedHotReplanGuideDistance(
+                    cfg_.receding_distance_m, replan_state_is_backup);
             // Do not turn a collision-free committed trajectory into an
             // infinite immutable guide.  That upstream shortcut recursively
             // feeds optimizer drift back into every later replan and lets the
             // displayed normal path advance independently of newly sensed
-            // geometry. Keep only the configured continuity prefix; A* owns
-            // the rest of the route on every planning cycle.
+            // geometry. Keep only the configured MAIN continuity prefix; A*
+            // owns the rest of the route on every planning cycle.  A BACKUP
+            // sample still supplies the exact initial PVAJ state below, but
+            // its braking geometry is never retained as nominal route input.
 
 
             // * 7）Begin replan process, first get the replan state from the committed trajectory.

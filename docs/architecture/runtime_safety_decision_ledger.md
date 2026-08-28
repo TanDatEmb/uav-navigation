@@ -9678,3 +9678,35 @@ release profiles must not use the former allowance.
   optimizer from trading repeated deceleration for feasibility.
 - **Verification:** `git show e33c40d`, `git show 7df9c6f`, and the cited
   artifacts preserve the implementation, rollback and A/B evidence.
+
+### 2026-08-28 - Keep BACKUP braking geometry out of recovered MAIN guidance
+
+- **Owner:** Hot-replan guide construction at the MAIN/BACKUP boundary.
+- **Scope:** A replan whose future splice state lies on BACKUP keeps that
+  exact committed PVAJ state but retains zero metres of the BACKUP spatial
+  suffix. A* therefore rebuilds nominal route geometry immediately from the
+  certified braking state. MAIN replans continue to retain the configured
+  3 m continuity prefix.
+- **Safety impact:** No dynamic, world, corridor, unknown-space, tracking or
+  command-admission gate changes. The initial PVAJ splice remains exact and
+  the complete newly generated MAIN+BACKUP bundle still requires all existing
+  certificates. Failed recovery leaves the previously committed braking
+  suffix untouched. The change only prevents an emergency stopping curve from
+  becoming the geometric reference for a later nominal trajectory.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T134232-1181253` committed
+  142 bundles over the 140 m route, changed MAIN/BACKUP role 75 times, and its
+  successful bundles had only 1.485 s median MAIN switch time despite a
+  25.730 m median guide. Source inspection showed every hot replan retained
+  `receding_distance_m=3.0` from `cmd_traj_info_`, which contains the braking
+  suffix after the switch. This recursively biases recovery toward the stop
+  branch and directly contradicts BACKUP's safety-only ownership.
+- **Removal/review condition:** Revert if focused continuity tests or repeated
+  SITL/recorded-data evidence show splice residuals, commit reliability,
+  clearance, latency tails or speed continuity regress. Replace only as part
+  of an explicit branched trajectory contract where MAIN and BACKUP geometry
+  are stored and selected independently.
+- **Verification:** Run backend and workspace tests plus Release build. Compare
+  repeated three-column runs for exact PVAJ splice residuals, role transitions,
+  time below 1/2/3/4 m/s, stage failures, commit ratio, planner latency,
+  clearance, collision and mission completion without changing hard gates.
