@@ -62,6 +62,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-016 | Nominal boundary-overspeed recovery (`SAFETY_INVARIANT`) | peak no greater than measured initial speed; exact suffix below mission cap by `1.15 * jerkLimitedStopTime(initial-cap)` | PROVISIONAL | A measured state already above the nominal speed cap makes an instantaneous strict boundary impossible. MAIN now matches BACKUP ownership: it may only reduce, never worsen, that inherited overspeed and must recover on a bounded physics-derived schedule. Acceleration, jerk, corridor, flatness, world and execution gates remain unchanged. | Exercise normal, worsening and late-recovery negatives; repeat speed-cap SITL and recorded-data shadow planning, then inspect overspeed magnitude/recovery distributions before promotion. |
 | HG-017 | Pass-through safety-suffix ownership transfer (`SAFETY_INVARIANT`) | exact previous goal identity, measured pass-through transition, current command lease, unchanged world certificate and finite declared end | PROVISIONAL | A braking suffix remains a world-certified physical command when mission ownership advances to the next route checkpoint. The store may atomically rebind its goal epoch/request identity without relabeling it as MAIN, giving the new-goal solve only the suffix's existing finite recovery window. Failed identity/world/lease checks still invalidate immediately. | Exercise nominal and safety-suffix handoffs, wrong-epoch/world negative tests, repeated SITL corner transitions and suffix-expiry fail-closed behavior. |
 | HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
+| HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
 
 ## Temporary-bypass register
 
@@ -8916,3 +8917,41 @@ release profiles must not use the former allowance.
   then repeat the 3 m/s three-column mission. Inspect required/certified
   lookahead, command duration, route-boundary acceptance, optimizer and rebase
   failures, yaw continuity, route regression, clearance, and mission coverage.
+
+### 2026-08-28 - Certify MAIN regression in mission-polyline coordinates
+
+- **Owner:** Final MAIN candidate admission and immutable mission route.
+- **Scope:** When a candidate contains an optimizer-pinned junction at the
+  active waypoint and the mission has an outgoing segment, evaluate exact
+  polynomial progress extrema on the incoming route arc before that junction
+  and the outgoing route arc after it. Candidates without that exact boundary
+  continue to use the conservative active-segment certificate.
+- **Safety impact:** The existing 0.5 m backtrack tolerance is unchanged and is
+  applied independently to both route phases. BACKUP remains outside this MAIN
+  gate. The change removes false rejects caused by projecting an outgoing turn
+  onto the old incoming tangent; it does not authorize reverse motion, corner
+  cutting, or an acceptance-radius shortcut. The waypoint switch requires a
+  candidate junction within 0.1 mm of the immutable mission waypoint, matching
+  the hard optimizer pin rather than using measured acceptance radius.
+- **Derivation and cost:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T104858-979310` repeatedly
+  produced 5--7.2 m certified corner lookahead and dynamically feasible MINCO
+  results, then rejected many with reported incoming-axis regressions from
+  0.51 m to several metres. The old certificate used one tangent for the whole
+  candidate even though the route-boundary optimizer fixes an exact waypoint
+  junction and the immutable route already owns both adjacent segments. The
+  runtime cost remains analytic polynomial root evaluation once per piece; no
+  sampling interval is introduced.
+- **Evidence:** Unit evidence accepts a two-piece 90-degree route whose
+  outgoing leg bows laterally on the old axis while progressing monotonically
+  on the new arc, and rejects a 4 m advance-then-fold after the same corner.
+  Existing tests retain straight, negative-ENU, lateral-detour, folded MAIN,
+  and BACKUP-role coverage. Full backend tests and repeated SITL remain open.
+- **Removal/review condition:** Replace only with a full route-tube projection
+  certificate that is at least as strict for reverse motion and resolves
+  overlapping/180-degree route ownership explicitly. Never enlarge the
+  backtrack tolerance or exempt corner candidates from regression checking.
+- **Verification:** Run all backend tests and exact Release build, then repeat
+  the three-column mission. Require no false incoming-axis rejection after a
+  pinned boundary, zero admitted folds, bounded cross-track/yaw, and complete
+  mission evidence across more than one run.

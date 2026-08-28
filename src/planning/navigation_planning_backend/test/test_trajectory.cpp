@@ -1226,6 +1226,27 @@ navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
   return progress.snapshot(mission.id, mission.frame, 1U, 1U, 1U);
 }
 
+navigation_mission::ImmutableRouteSnapshot makeCornerActiveRouteSnapshot() {
+  navigation_mission::Mission mission;
+  mission.id = "route-regression-corner-test";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint start;
+  start.id = "start";
+  start.position_enu = Eigen::Vector3d{0.0, 0.0, 3.0};
+  navigation_mission::MissionWaypoint corner;
+  corner.id = "corner";
+  corner.position_enu = Eigen::Vector3d{20.0, 0.0, 3.0};
+  corner.acceptance_radius_m = 0.9;
+  navigation_mission::MissionWaypoint outgoing;
+  outgoing.id = "outgoing";
+  outgoing.position_enu = Eigen::Vector3d{20.0, 10.0, 3.0};
+  mission.waypoints = {start, corner, outgoing};
+  navigation_mission::RouteProgress progress(mission);
+  const auto measured = progress.update(Eigen::Vector3d{5.0, 0.0, 3.0});
+  EXPECT_TRUE(measured.valid);
+  return progress.snapshot(mission.id, mission.frame, 1U, 1U, 1U);
+}
+
 TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldedNominal) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
   // x(t)=5+8t-4t^2 advances to x=9 and folds back to x=5.
@@ -1295,6 +1316,52 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateAllowsNegativeEnuDirection
   EXPECT_TRUE(certificate.applicable);
   EXPECT_TRUE(certificate.valid);
   EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentAtPinnedCorner) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 15.0, 5.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
+  // The outgoing piece bows in X while progressing monotonically in Y. A
+  // single incoming-tangent certificate sees a 1 m X regression at its tail;
+  // route-arc progress correctly remains monotonic after the pinned junction.
+  outgoing.row(0) << -1.0, 1.0, 20.0;
+  outgoing.row(1) << 0.0, 7.0, 0.0;
+  outgoing(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 1.0}, {incoming, outgoing});
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldAfterCorner) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 15.0, 5.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
+  outgoing(0, 2) = 20.0;
+  // y(t)=-4t^2+8t advances 4 m, then returns to the corner at t=2.
+  outgoing.row(1) << -4.0, 8.0, 0.0;
+  outgoing(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 2.0}, {incoming, outgoing});
+  candidate.roles = {{0.0, 3.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_FALSE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 4.0, 1.0e-9);
 }
 
 TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {

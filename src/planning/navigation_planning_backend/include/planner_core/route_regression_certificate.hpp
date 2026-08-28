@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 
 #include <data_structure/cmd_traj.h>
@@ -49,9 +50,38 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
   }
 
   const auto& active_segment = *active_segment_it;
-  const Eigen::Vector3d tangent = active_segment.tangent;
-  if (!tangent.allFinite() || std::abs(tangent.norm() - 1.0) > 1.0e-6) {
+  if (!active_segment.tangent.allFinite() ||
+      std::abs(active_segment.tangent.norm() - 1.0) > 1.0e-6) {
     return result;
+  }
+
+  // A long pass-through candidate has one optimizer junction fixed at the
+  // active mission waypoint. Before that junction progress belongs to the
+  // incoming segment; after it progress belongs to the outgoing segment.
+  // Keeping one incoming tangent across both phases falsely classifies a
+  // physically valid corner as a reverse manoeuvre.
+  const auto outgoing_segment_it = std::find_if(
+      route.segments.begin(), route.segments.end(),
+      [&route](const navigation_mission::RouteSegment& segment) {
+        return segment.start_waypoint_index == route.active_waypoint_index;
+      });
+  std::optional<int> boundary_piece_index;
+  if (outgoing_segment_it != route.segments.end() &&
+      outgoing_segment_it->tangent.allFinite() &&
+      std::abs(outgoing_segment_it->tangent.norm() - 1.0) <= 1.0e-6) {
+    constexpr double kPinnedBoundaryToleranceM = 1.0e-4;
+    const Eigen::Vector3d boundary =
+        route.waypoints[route.active_waypoint_index].position_enu;
+    for (int piece_index = 0;
+         piece_index + 1 < candidate.position.getPieceNum(); ++piece_index) {
+      const auto& piece = candidate.position[piece_index];
+      const Eigen::Vector3d junction = piece.getPos(piece.getDuration());
+      if (junction.allFinite() &&
+          (junction - boundary).norm() <= kPinnedBoundaryToleranceM) {
+        boundary_piece_index = piece_index;
+        break;
+      }
+    }
   }
 
   const double duration = candidate.position.getTotalDuration();
@@ -69,6 +99,12 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
     const double piece_duration = piece.getDuration();
     const double piece_end_tt = piece_begin_tt + piece_duration;
     if (!std::isfinite(piece_duration) || piece_duration <= 0.0) return result;
+
+    const bool outgoing_phase = boundary_piece_index.has_value() &&
+        piece_index > *boundary_piece_index;
+    const auto& progress_segment = outgoing_phase
+        ? *outgoing_segment_it : active_segment;
+    const Eigen::Vector3d tangent = progress_segment.tangent;
 
     for (const auto& role : candidate.roles) {
       if (role.role != CandidateTrajectoryRole::MAIN) continue;
@@ -98,7 +134,8 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
 
       for (const double local_time : candidate_times) {
         const double progress_m =
-            tangent.dot(piece.getPos(local_time) - active_segment.start);
+            progress_segment.start_arc_m +
+            tangent.dot(piece.getPos(local_time) - progress_segment.start);
         if (!std::isfinite(progress_m)) return result;
         evaluated = true;
         high_water_m = std::max(high_water_m, progress_m);
