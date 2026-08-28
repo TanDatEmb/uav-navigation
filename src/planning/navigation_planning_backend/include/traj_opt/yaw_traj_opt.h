@@ -11,11 +11,30 @@
 #include <utils/header/type_utils.hpp>
 
 namespace traj_opt {
+    enum class YawOptimizationFailure : std::uint8_t {
+        kNone = 0,
+        kInvalidInput = 1,
+        kNoFeasibleHold = 2,
+    };
+
+    struct YawOptimizationDiagnostics {
+        YawOptimizationFailure failure{YawOptimizationFailure::kNone};
+        navigation_math::Vec4f initial_state{navigation_math::Vec4f::Zero()};
+        double target_yaw_rad{0.0};
+        double duration_s{0.0};
+        double requested_delta_rad{0.0};
+        double full_turn_max_rate_rad_s{0.0};
+        double full_turn_max_acceleration_rad_s2{0.0};
+        double hold_max_rate_rad_s{0.0};
+        double hold_max_acceleration_rad_s2{0.0};
+    };
+
     using namespace geometry_utils;
     class YawTrajOpt {
     private:
         double yaw_rate_max_rad_s_{10};
         double yaw_acceleration_max_rad_s2_{10};
+        YawOptimizationDiagnostics last_diagnostics_{};
 
     public:
 
@@ -32,6 +51,10 @@ namespace traj_opt {
                               double target_yaw_rad,
                               const Trajectory &position_trajectory,
                               Trajectory &output_trajectory);
+
+        [[nodiscard]] const YawOptimizationDiagnostics& lastDiagnostics() const noexcept {
+            return last_diagnostics_;
+        }
 
     };
 

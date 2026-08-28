@@ -1167,6 +1167,23 @@ TEST(PlannerTrajectory, SemanticYawExecutesCertifiedPartialTurnWhenTimeIsShort) 
   EXPECT_LT(endpoint, initial_yaw(0) + std::remainder(-3.0 - 3.0, 2.0 * M_PI));
 }
 
+TEST(PlannerTrajectory, SemanticYawReportsInfeasibleShortSameHeadingStop) {
+  const std::vector<double> durations{0.2};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{0.0, 0.8, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.3);
+  geometry_utils::Trajectory yaw;
+
+  EXPECT_FALSE(optimizer.optimizeToTarget(initial_yaw, 0.0, position, yaw));
+  const auto& diagnostics = optimizer.lastDiagnostics();
+  EXPECT_EQ(diagnostics.failure,
+            traj_opt::YawOptimizationFailure::kNoFeasibleHold);
+  EXPECT_DOUBLE_EQ(diagnostics.duration_s, 0.2);
+  EXPECT_DOUBLE_EQ(diagnostics.requested_delta_rad, 0.0);
+  EXPECT_GT(diagnostics.hold_max_acceleration_rad_s2, 0.3);
+}
+
 TEST(PlannerTrajectory, YawNormalizationRecoversNonFiniteTarget) {
   double yaw = std::numeric_limits<double>::infinity();
   geometry_utils::normalizeNextYaw(1.2, yaw);

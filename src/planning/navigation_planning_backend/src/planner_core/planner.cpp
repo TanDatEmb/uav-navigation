@@ -2048,7 +2048,19 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (!yaw_traj_opt_->optimizeToTarget(
                 init_yaw, route_yaw_reference_.target_yaw_rad,
                 out_traj, new_traj)) {
-            planner_context_->error(" -- [planner] in [generateExpTraj]: YawTrajOpt failed, force return");
+            const auto& yaw = yaw_traj_opt_->lastDiagnostics();
+            planner_context_->error(
+                " -- [planner] in [generateExpTraj]: YawTrajOpt failed reason={} "
+                "duration={} init=[{},{},{}] target={} delta={} "
+                "full_max=[{},{}] hold_max=[{},{}] limits=[{},{}]",
+                static_cast<int>(yaw.failure), yaw.duration_s,
+                yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
+                yaw.target_yaw_rad, yaw.requested_delta_rad,
+                yaw.full_turn_max_rate_rad_s,
+                yaw.full_turn_max_acceleration_rad_s2,
+                yaw.hold_max_rate_rad_s,
+                yaw.hold_max_acceleration_rad_s2,
+                cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
             return FAILED;
         }
         if (!last_exp_traj_info.empty()) {
@@ -2942,7 +2954,19 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (!yaw_traj_opt_->optimizeToTarget(
                 yaw_init_vec, yaw_init_vec(0), temp_pos_traj,
                 temp_yaw_traj)) {
-            planner_context_->error(" -- [planner] in [generateBackupTrajectory] YawTrajOpt FAILD.");
+            const auto& yaw = yaw_traj_opt_->lastDiagnostics();
+            planner_context_->error(
+                " -- [planner] in [generateBackupTrajectory] YawTrajOpt failed reason={} "
+                "duration={} init=[{},{},{}] target={} delta={} "
+                "full_max=[{},{}] hold_max=[{},{}] limits=[{},{}]",
+                static_cast<int>(yaw.failure), yaw.duration_s,
+                yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
+                yaw.target_yaw_rad, yaw.requested_delta_rad,
+                yaw.full_turn_max_rate_rad_s,
+                yaw.full_turn_max_acceleration_rad_s2,
+                yaw.hold_max_rate_rad_s,
+                yaw.hold_max_acceleration_rad_s2,
+                cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
             return OPT_FAILED;
         }
         traj_opt::TrajectoryDynamicReport backup_dynamic_report;

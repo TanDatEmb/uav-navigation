@@ -8675,3 +8675,27 @@ release profiles must not use the former allowance.
   run the complete planner backend tests and exact build; repeat the 3 m/s
   multi-waypoint scenario, checking guide endpoints remain on the current leg
   until measured waypoint acceptance and cross only afterward.
+
+### 2026-08-28 - Expose semantic-yaw infeasibility at MAIN and BACKUP
+
+- **Owner:** Semantic yaw optimizer and planner solve diagnostics.
+- **Scope:** Record input yaw position/rate/acceleration, available duration,
+  normalized target/delta, full-turn maxima, zero-displacement hold maxima,
+  active limits, and a typed failure reason whenever MAIN or BACKUP yaw
+  construction fails.
+- **Safety impact:** Observability only. The interpolation, partial-turn search,
+  position trajectory, yaw limits, candidate admission, and fail-closed result
+  are unchanged. No failed yaw candidate becomes executable.
+- **Evidence:** Exact-HEAD run
+  `external-mode-check-20260828T092448-919753` repeatedly reported only
+  `YawTrajOpt failed` around the `(50,5)->(50,-5)` turn for both MAIN and
+  BACKUP. Source review shows BACKUP asks a finite-rate yaw state to finish at
+  the same angle with zero terminal rate/acceleration in the position backup's
+  duration; the previous boolean API hid whether even that zero-displacement
+  polynomial violated the 1.0/0.3 rad limits.
+- **Removal/review condition:** Replace with equivalent typed per-candidate
+  yaw evidence in the structured planner trace. Never widen yaw limits or
+  accept a failed yaw suffix merely to recover availability.
+- **Verification:** Unit-test an infeasible short same-heading stop; build and
+  run all planner backend tests; repeat representative SITL and use the numeric
+  failure state to derive a bounded yaw-stop or duration policy.
