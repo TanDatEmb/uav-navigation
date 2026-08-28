@@ -18,6 +18,7 @@
 #include "planner_core/ciri.h"
 #include "planner_core/corridor_generator.h"
 #include "planner_core/guide_endpoint.hpp"
+#include "planner_core/guide_vertical_envelope.hpp"
 #include "planner_core/kinematic_state_boundary.hpp"
 #include "planner_core/replan_contract.hpp"
 #include "planner_core/route_regression_certificate.hpp"
@@ -1652,6 +1653,10 @@ TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   EXPECT_FALSE(gate_polytope->PointIsInside(
       centre + navigation_math::Vec3f{0.8 * gate.radius_m, 0.0, 0.0},
       1.0e-6));
+  const auto vertical_envelope =
+      navigation_planning_backend::deriveGuideVerticalEnvelope(path, 0.2);
+  EXPECT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      sfcs, vertical_envelope));
 }
 
 TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {

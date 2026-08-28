@@ -9149,11 +9149,17 @@ release profiles must not use the former allowance.
   near `x=14`. The previous ungated run could solve but missed the `0.9 m`
   measured acceptance sphere by about `0.45 m`. A bounded convex cell removes
   both ambiguous ownership cases without hard-pinning the waypoint centre.
+  Follow-up artifact
+  `.artifacts/runtime/external-mode-check-20260828T112759-1023232` confirmed
+  that the convex geometry removed the former multi-metre corridor rejects,
+  but exposed lost seed-line provenance after `Polytope::CrossWith`; every
+  lookahead then failed the downstream vertical-envelope gate before MINCO.
 - **Removal/review condition:** Replace only with an equal or stronger convex
   representation or analytic continuous ball-intersection certificate. Do
   not use a circumscribed box, a sampled-only check, a larger radius, or a
   soft objective as the authorization boundary.
-- **Verification:** Unit-test that the boundary cell contains its centre and
-  rejects an axis point at `0.8 * radius`; run all backend tests/build and
+- **Verification:** Unit-test that the boundary cell contains its centre,
+  rejects an axis point at `0.8 * radius`, and preserves seed provenance
+  through the vertical-envelope stage; run all backend tests/build and
   repeated three-column SITL with ordered measured acceptance and bounded
   planner/corridor latency.

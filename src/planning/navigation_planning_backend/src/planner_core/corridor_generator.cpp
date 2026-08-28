@@ -339,10 +339,17 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                 // piece assigned to this cell therefore enters the measured
                 // acceptance region; optimization does not depend on a soft
                 // spherical penalty or an exact-centre junction.
+                const auto boundary_seed_line = boundary_poly.seed_line;
+                const double boundary_seed_radius = boundary_poly.robot_r;
                 boundary_poly = boundary_poly.CrossWith(
                     acceptanceBallInnerCell(
                         route_boundary_gate->point,
                         route_boundary_gate->radius_m));
+                // Polytope intersection intentionally returns geometry only.
+                // Restore the collision-checked seed provenance required by
+                // the downstream per-segment vertical envelope.
+                boundary_poly.SetSeedLine(
+                    boundary_seed_line, boundary_seed_radius);
                 if (!boundary_poly.PointIsInside(corridor_path[second_id], 1.0e-6)) {
                     planner_context_->warn(
                         " -- [planner] route-boundary corridor excludes its waypoint");
