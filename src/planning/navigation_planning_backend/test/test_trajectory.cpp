@@ -184,6 +184,20 @@ class CountingAstarWorld final : public SweepWorld {
     previous_layer_ = layer;
     previous_start_ = start;
     previous_end_ = end;
+    const bool repeated_undirected_edge = std::any_of(
+        queried_edges_.begin(), queried_edges_.end(),
+        [&](const auto& edge) {
+          return edge.layer == layer &&
+              ((edge.start.isApprox(start, 1.0e-12) &&
+                edge.end.isApprox(end, 1.0e-12)) ||
+               (edge.start.isApprox(end, 1.0e-12) &&
+                edge.end.isApprox(start, 1.0e-12)));
+        });
+    if (repeated_undirected_edge) {
+      ++repeated_undirected_edge_queries_;
+    } else {
+      queried_edges_.push_back({start, end, layer});
+    }
     const int samples = std::max(
         1, static_cast<int>(std::ceil((end - start).norm() * 10.0)));
     for (int sample = 0; sample <= samples; ++sample) {
@@ -200,7 +214,17 @@ class CountingAstarWorld final : public SweepWorld {
     return consecutive_duplicate_queries_;
   }
 
+  [[nodiscard]] std::uint64_t repeatedUndirectedEdgeQueries() const noexcept {
+    return repeated_undirected_edge_queries_;
+  }
+
  private:
+  struct QueriedEdge {
+    navigation_world_model::Point3 start;
+    navigation_world_model::Point3 end;
+    navigation_world_model::GridLayer layer;
+  };
+
   static bool occupied(const navigation_world_model::Point3& point) noexcept {
     return point.x() >= 2.0 && point.x() < 3.0 &&
            point.y() >= -0.5 && point.y() < 1.5;
@@ -214,6 +238,8 @@ class CountingAstarWorld final : public SweepWorld {
   mutable navigation_world_model::Point3 previous_end_{
       navigation_world_model::Point3::Zero()};
   mutable std::uint64_t consecutive_duplicate_queries_{0U};
+  mutable std::vector<QueriedEdge> queried_edges_;
+  mutable std::uint64_t repeated_undirected_edge_queries_{0U};
 };
 
 geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
@@ -1700,6 +1726,7 @@ TEST(PlannerTrajectory, InflatedAstarDoesNotRepeatIdenticalEdgeCertificates) {
               result == navigation_math::REACH_HORIZON);
   EXPECT_GT(path.size(), 2U);
   EXPECT_EQ(world->consecutiveDuplicateQueries(), 0U);
+  EXPECT_EQ(world->repeatedUndirectedEdgeQueries(), 0U);
 }
 
 TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {

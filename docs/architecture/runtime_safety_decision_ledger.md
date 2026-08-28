@@ -74,6 +74,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-028 | STOP-only terminal endpoint hold (`MISSION_PROGRESS_INVARIANT`) | terminal bundle generation and planner suppression require `BEHAVIOR_STOP`; a completed `PASS_THROUGH` endpoint restarts from current measured PVA | PROVISIONAL | A pass-through endpoint inside its acceptance ball no longer suppresses planning while waiting for measured mission handoff. Failed replacement solves still retain only the existing finite latest-world-certified command; STOP endpoint hold, waypoint acceptance radius, route order, world, dynamics and execution gates are unchanged. | Unit-test STOP/PASS_THROUGH policy, then repeat collinear and corner scenario-matrix SITL. Require ordered measured acceptance, continued command renewal, no endpoint-induced mode exit, and no STOP hold regression. |
 | HG-029 | A* distinct-layer edge validation (`PERFORMANCE_POLICY`) | one ray certificate on the active inflated search layer; a second inflated certificate only when the active search layer is evidence/probability | PROVISIONAL | Removes an identical immutable inflated-grid query from every expanded neighbor when A* already searches inflated occupancy. It does not cache across world revisions, skip an edge, change unknown policy, alter search deadlines, or weaken the separate inflated check for probability-map fallback. | Unit-test query identity and detour success, then compare A* iterations/latency/timeouts on repeated transverse-wall SITL and recorded snapshots without clearance regression. |
 | HG-030 | Route-backbone partial AABB support (`SAFETY_INVARIANT`) | only a valid immutable forward route backbone may project a remote local-search target to the current map boundary; executable prefix remains bounded by the 14 m horizon and continuously certified | PROVISIONAL | Preserves the remote mission waypoint and measured route progress while allowing receding motion in ±X/±Y on an axis-aligned anisotropic map. The boundary is never reported as waypoint completion; goals without valid route provenance still fail closed, and UNKNOWN, OUT_OF_MAP, corridor, world, dynamics and execution gates are unchanged. | Unit-test axis-independent backbone selection; repeat ±X/±Y and diagonal SITL. Require monotonic measured waypoint progress, explicit partial-frontier evidence, no OUT_OF_MAP solve loop, clearance, command renewal, and mapping/planner latency distributions. |
+| HG-031 | A* closed/occupied pre-ray pruning (`PERFORMANCE_POLICY`) | discard CLOSED neighbours and non-traversable endpoint cells before continuous edge queries within one immutable search round | PROVISIONAL | Removes reverse-edge and doomed endpoint raycasts without admitting any edge that lacks the existing search-layer/inflated certificate. It assumes CLOSED nodes are never reopened and does not reuse evidence across rounds or world revisions. | Unit-test zero repeated undirected edge queries; compare wall-detour expansions, timeout rate, clearance and p50/p95/p99 on repeated SITL and recorded snapshots. |
 
 ## Temporary-bypass register
 
@@ -10155,3 +10156,35 @@ release profiles must not use the former allowance.
   ±X/±Y scenario at a validated speed, then recorded-data shadow planning.
   Require explicit partial-route logs, in-order measured waypoint acceptance,
   no target-OUT_OF_MAP retry loop, and p50/p95/p99 mapping/planning evidence.
+
+### 2026-08-28 - Reject closed and occupied A* neighbours before ray queries
+
+- **Owner/status:** A* graph expansion and planner performance policy,
+  `PROVISIONAL`.
+- **Scope:** Resolve the candidate node state and endpoint cell before invoking
+  the continuous edge oracle. A neighbour already CLOSED in the current A*
+  round is discarded without querying the reverse edge; a non-traversable
+  endpoint is discarded before raycasting. Every candidate that can enter the
+  open set still receives the same search-layer and, where distinct, inflated
+  continuous-segment certificates.
+- **Safety impact:** No UNKNOWN, OCCUPIED, OUT_OF_MAP, diagonal, corridor,
+  dynamic, latest-world, backup, command-anchor, search-time or solve-deadline
+  gate changes. The optimization is valid only because one search round pins
+  one immutable WorldModel view and a CLOSED node cannot be reopened by this
+  implementation. It does not cache evidence across rounds or revisions.
+- **Evidence:** Exact-HEAD-before-change artifact
+  `.artifacts/runtime/external-mode-check-20260828T162352-1320577` reached the
+  +Y transverse wall, then exhausted the 80 ms A* stage on every PlanFromRest:
+  preferred and unrestricted searches expanded roughly 650-1,400 nodes each.
+  Planner total remained p95 180.075 ms and the old certified bundle entered
+  backup before expiring. The deterministic detour test now asserts zero
+  repeated undirected edge queries in addition to zero consecutive duplicate
+  inflated queries; all 8 backend executables (170 tests) pass in Release.
+- **Removal/review condition:** Revert if graph state can be reopened after
+  CLOSED, if endpoint classification and continuous-edge policy diverge, or if
+  repeated SITL shows no expansion/latency improvement. A cross-cycle cache
+  requires separate world-identity provenance and is not authorized here.
+- **Verification:** Build/test `navigation_planning_backend`; repeat the same
+  +Y wall phase and compare iterations per 40 ms, A* timeout rate, committed
+  prefix renewal, clearance and planning p50/p95/p99. Recorded-data shadow
+  planning remains required before changing any budget.

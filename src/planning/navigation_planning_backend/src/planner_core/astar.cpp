@@ -677,6 +677,56 @@ namespace path_search {
                             continue;
                         }
 
+                        // Resolve graph state before invoking the continuous
+                        // edge oracle. A CLOSED neighbour has already been
+                        // expanded on this immutable world, so the reverse
+                        // edge cannot improve it. The previous ordering paid
+                        // for that ray query and discarded the result below.
+                        // This changes no admissibility decision and avoids
+                        // certifying most undirected edges twice.
+                        neighborPtr = nodeAt(getLocalIndexHash(neighborIdx));
+                        if (neighborPtr == nullptr) {
+                            cout << RED << " -- [RM] neighborPtr is null, which should not happen." <<
+                                 RESET
+                                 << endl;
+                            continue;
+                        }
+                        neighborPtr->id_g = neighborIdx;
+                        const bool flag_explored = neighborPtr->rounds == rounds_;
+                        if (flag_explored && neighborPtr->state == GridNode::CLOSEDSET) {
+                            continue;
+                        }
+
+                        CellState neighbor_type;
+                        if (md_.use_inf_map) {
+                            neighbor_type = map_ptr_->classify(
+                                    neighborPos, GridLayer::kInflated);
+                        } else if (!md_.use_inf_neighbor) {
+                            neighbor_type = map_ptr_->classify(
+                                    neighborPos, GridLayer::kEvidence);
+                        } else {
+                            // Use the probability map, but query all
+                            // neighbours of the candidate. If any is occupied,
+                            // the candidate is occupied.
+                            neighbor_type = neighborHaveOne(OCCUPIED_CELL, neighborIdx)
+                                ? OCCUPIED_CELL : UNKNOWN_CELL;
+                            // If one neighbour is known free, retain that
+                            // evidence for the frontier policy. A missing
+                            // neighbour is UNKNOWN, never an implicit
+                            // traversable UNDEFINED value.
+                            if (md_.unknown_as_occ &&
+                                neighbor_type != OCCUPIED_CELL) {
+                                neighbor_type = neighborHaveOne(
+                                        KNOWN_FREE_CELL, neighborIdx)
+                                    ? KNOWN_FREE_CELL : UNKNOWN_CELL;
+                            }
+                        }
+                        if (!isCellTraversable(
+                                    neighbor_type,
+                                    UnknownPolicy::kAllowUnknown)) {
+                            continue;
+                        }
+
                         // A free endpoint does not imply a free continuous
                         // edge: the segment can cut through the corner of an
                         // inflated occupied voxel. This applies to axial
@@ -710,48 +760,6 @@ namespace path_search {
                                     current_pos, neighborPos,
                                     GridLayer::kInflated, search_policy)) {
                             continue;
-                        }
-
-                        CellState neighbor_type;
-
-                        if (md_.use_inf_map) {
-                            neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kInflated);
-                        } else {
-                            if (!md_.use_inf_neighbor) {
-                                neighbor_type = map_ptr_->classify(neighborPos, GridLayer::kEvidence);
-                            } else {
-                                // use prob map, but query all neighbors of the current node
-                                // if there is one neighbor is occupied, then the neighbor is occupied.
-                                neighbor_type = neighborHaveOne(OCCUPIED_CELL, neighborIdx)
-                                    ? OCCUPIED_CELL : UNKNOWN_CELL;
-                                // If there is one known-free neighbor, retain
-                                // that evidence for the frontier policy. A
-                                // missing neighbour is UNKNOWN, never an
-                                // implicit traversable UNDEFINED value.
-                                if (md_.unknown_as_occ && neighbor_type != OCCUPIED_CELL) {
-                                    neighbor_type = neighborHaveOne(KNOWN_FREE_CELL, neighborIdx)
-                                        ? KNOWN_FREE_CELL : UNKNOWN_CELL;
-                                }
-                            }
-                        }
-
-                        if (!isCellTraversable(neighbor_type, UnknownPolicy::kAllowUnknown)) {
-                            continue;
-                        }
-
-                        neighborPtr = nodeAt(getLocalIndexHash(neighborIdx));
-                        if (neighborPtr == nullptr) {
-                            cout << RED << " -- [RM] neighborPtr is null, which should not happen." <<
-                                 RESET
-                                 << endl;
-                            continue;
-                        }
-                        neighborPtr->id_g = neighborIdx;
-
-                        bool flag_explored = neighborPtr->rounds == rounds_;
-
-                        if (flag_explored && neighborPtr->state == GridNode::CLOSEDSET) {
-                            continue; //in closed set.
                         }
 
                         if (md_.unknown_as_occ && neighbor_type == CellState::kUnknown && neighborPtr) {
