@@ -9740,3 +9740,32 @@ release profiles must not use the former allowance.
   workspace tests, Release build, then one unchanged three-column screening
   run and verify successful and failed solve records expose finite extrema
   whenever the corresponding candidate was evaluated.
+
+### 2026-08-28 - Rejected experiment: densify bounded temporal feasibility search
+
+- **Owner:** Nominal temporal projection experiment, reverted by `9a30d69`.
+- **Scope:** Commit `5fee806` inserted reserve proposals at 1.10 and 1.25 times
+  the analytically required reserve between the prior required and 1.50x
+  points. Every proposal retained exact endpoint PVAJ and required unchanged
+  corridor, route-boundary, V/A/J and flatness certificates.
+- **Safety impact:** No hard gate was relaxed and the mission completed without
+  collision. However, certifying more temporally stretched MAIN candidates
+  traded numerical feasibility for path quality and cruise continuity. The
+  experiment was reverted in full; the product again uses the original
+  three-point temporal proposal set.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T143013-1230484` selected 34
+  intermediate scales. Against immediate predecessor artifact
+  `.artifacts/runtime/external-mode-check-20260828T142323-1223796`, EXP failures
+  fell only from 91 to 86 and role transitions from 92 to 78, while speed p95
+  fell from 4.817 to 4.494 m/s, median speed fell from 2.407 to 2.032 m/s,
+  cross-track p95 rose to 11.551 m and failed its 8 m gate, and planner p95
+  increased from 88.405 to 98.898 ms. Clearance remained 4.160 m with zero
+  collision, so the rejection is driven by operational quality and latency,
+  not a weakened safety result.
+- **Removal/review condition:** Historical rejected-experiment record. Do not
+  add duration-only MAIN fallbacks without a joint progress, route-reference
+  and continuity quality contract. Dynamic feasibility alone is insufficient.
+- **Verification:** `git show 5fee806`, `git show 9a30d69`, focused tests and
+  the cited A/B artifacts preserve implementation, rollback and runtime
+  evidence.
