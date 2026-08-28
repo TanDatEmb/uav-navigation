@@ -1592,8 +1592,6 @@ void NavigationRuntimeNode::runCycle() {
   addObservationAccountingValues(status, accounting);
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
-  add_value("nominal_replacement_deferred_count",
-            nominal_replacement_deferred_count_.load());
   add_value("stale_input_count", stale_input_count_);
   add_value("stale_mapping_input_count",
             stale_mapping_input_count_.load() + mapping.discarded_stale);
@@ -1890,30 +1888,6 @@ void NavigationRuntimeNode::runCycle() {
   }
   if (!plan_from_rest_with_transition && !replan_for_new_goal && skip_replan_once_) {
     skip_replan_once_ = false;
-    return;
-  }
-  // Mapping publication already revalidates the current immutable bundle on
-  // every exported world snapshot. Avoid replacing a long, valid MAIN prefix
-  // on every 5 Hz timer tick; wake the solver at full rate once only one solve
-  // deadline plus three retry ticks remain before the declared backup/main
-  // boundary. This reduces path churn without reducing obstacle response or
-  // changing any certificate, physical limit, or fail-closed transition.
-  constexpr std::uint32_t kReservedReplacementRetryTicks = 3U;
-  if (!plan_from_rest_with_transition && !replan_for_new_goal &&
-      transition_bundle && nominalReplacementMayBeDeferred(
-          planner_command_available_.load(std::memory_order_acquire),
-          planner_failure_latched_.load(std::memory_order_acquire),
-          safety_suffix_active_.load(std::memory_order_acquire),
-          trajectory_finished_.load(std::memory_order_acquire),
-          transition_bundle->valid(),
-          transition_bundle->backup_available,
-          transition_elapsed_s,
-          transition_bundle->backup_start_time_s,
-          transition_bundle->duration_s,
-          planner_->solveDeadlineSeconds(),
-          planning_interval_s,
-          kReservedReplacementRetryTicks)) {
-    ++nominal_replacement_deferred_count_;
     return;
   }
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;

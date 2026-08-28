@@ -9624,33 +9624,3 @@ release profiles must not use the former allowance.
   selected BACKUP, while planner total p95/max were 79.226/180.272 ms. The
   command-store race is closed at unit and one-run screening level, but MAIN
   feasibility and latency tails remain open and require repeated evidence.
-
-### 2026-08-28 - Schedule nominal replacement from the certified MAIN boundary
-
-- **Owner:** Runtime planner scheduling and immutable command lifecycle.
-- **Scope:** Keep the 5 Hz planner timer as a retry ceiling, but defer ordinary
-  replacement solves while the current certified MAIN interval has more than
-  one complete 180 ms solve deadline plus three timer ticks remaining. Mapping
-  continues to recertify the bundle on every published world snapshot. New
-  goals, invalid bundles, terminal state and safety-suffix execution bypass the
-  deferral and run the existing full-rate planner path.
-- **Safety impact:** No command interval, world/UNKNOWN rule, trajectory
-  certificate, physical limit, safety radius, watchdog or PX4 gate changes.
-  The policy may only skip a redundant nominal replacement; it cannot extend a
-  MAIN interval or suppress map invalidation. The three reserved ticks provide
-  bounded replacement attempts before the declared backup boundary.
-- **Evidence:** Exact-head artifact
-  `.artifacts/runtime/external-mode-check-20260828T134232-1181253` completed the
-  140 m route but executed 233 planning records and committed 142 replacement
-  bundles. Their backup switch time p50/p95 was 1.512/3.207 s while planner
-  total p95 was 79.226 ms. Solving every 0.2 s therefore replaces many long,
-  still-certified MAIN prefixes and adds latency/path churn without improving
-  static-world obstacle response.
-- **Removal/review condition:** Remove if repeated SITL or recorded data show
-  worse safety-suffix dwell, speed continuity, clearance, mission completion,
-  or insufficient replacement attempts. Prefer a future explicit map-change
-  impact query only if it preserves the current whole-trajectory recertificate.
-- **Verification:** Run focused FSM tests, full workspace tests and Release
-  build. Compare repeated `long_three_pillars_speed` artifacts for deferred
-  count, solve/commit rate, MAIN/BACKUP observed dwell, speed dips, planner
-  latency tails, clearance and completion without changing any acceptance gate.

@@ -294,7 +294,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::uint64_t cycle_count_{0};
   std::atomic_uint64_t cycle_success_count_{0};
   std::atomic_uint64_t command_publish_count_{0};
-  std::atomic_uint64_t nominal_replacement_deferred_count_{0};
   std::int64_t last_planner_us_{0};
   std::atomic_int64_t last_publish_us_{0};
   std::atomic_int64_t last_command_store_publish_us_{0};
