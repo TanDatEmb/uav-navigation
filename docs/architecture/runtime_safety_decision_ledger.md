@@ -8080,3 +8080,29 @@ release profiles must not use the former allowance.
   the same 3-column trace and compare callback/export p50/p95/p99,
   published/deferred counts, snapshot age, world identity, memory, command
   recertification, and mission outcome.
+
+### 2026-08-28 - Reuse EXP objective scratch buffers
+
+- **Owner:** Navigation planning backend / EXP nominal trajectory optimizer
+  maintainers.
+- **Scope:** Reuse the already-sized Eigen buffers owned by one optimizer
+  instance for decoded times/points, MINCO partial gradients, and propagated
+  point/time gradients on every L-BFGS objective evaluation. The objective
+  equations, corridor parameterization, limits, retry policy, and hard
+  certificates are unchanged.
+- **Safety impact:** `PERFORMANCE_POLICY` with no safety relaxation. This is a
+  storage/allocation change only; finite-value checks, cancellation/deadline
+  monitoring, corridor validation, V/A/J, flatness, yaw, world, and command
+  gates remain authoritative.
+- **Evidence:** The 3-column trace
+  `.artifacts/runtime/external-mode-check-20260828T051528-732736` measured
+  EXP p95 177.6 ms and a median 1,319.5 objective evaluations per solve,
+  making per-evaluation heap/Eigen allocation a measured latency-tail target.
+  The existing EXP suite remains the numerical parity gate.
+- **Removal/review condition:** Revert if any objective result, continuous
+  corridor/dynamic/flatness/yaw certificate, cancellation behavior, or mission
+  outcome changes; retain only if repeated traces show lower EXP callback
+  latency without increased failure or memory tails.
+- **Verification:** `make build`; run the complete contract/unit suite and
+  repeat `MAP_PROFILE=long_three_pillars_multiwaypoint make external-mode-check`
+  with the same mission/provenance checks.

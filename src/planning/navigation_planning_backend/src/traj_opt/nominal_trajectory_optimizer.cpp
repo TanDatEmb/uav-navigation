@@ -437,8 +437,8 @@ double ExpTrajOpt::costFunctional(void *ptr,
 
     /* 2) Reconstruct the optimization varibles */
 
-    Mat3Df points;
-    VecDf times;
+    auto &points = obj.points;
+    auto &times = obj.times;
     gcopter::forwardMapTauToT(tau, times);
     if (obj.duration_lower_bound.size() != 0 &&
         obj.duration_lower_bound.size() != times.size()) {
@@ -456,8 +456,8 @@ double ExpTrajOpt::costFunctional(void *ptr,
     }
     switch (pos_constraint_type) {
         case 1: {
-            VecDf xi_e = xi;
-            points = Eigen::Map<Eigen::Matrix<double, 3, Eigen::Dynamic>>(xi_e.data(), 3, xi_e.size() / 3);
+            points = Eigen::Map<const Eigen::Matrix<double, 3, Eigen::Dynamic>>(
+                xi.data(), 3, xi.size() / 3);
             break;
         }
         default: {
@@ -476,8 +476,8 @@ double ExpTrajOpt::costFunctional(void *ptr,
     /* 3) Compute the energy const and gradient */
     double cost{0};
     obj.minco.setParameters(points, times);
-    MatD3f partialGradByCoeffs(8 * times.size(), 3);
-    VecDf partialGradByTimes(times.size());
+    auto &partialGradByCoeffs = obj.partialGradByCoeffs;
+    auto &partialGradByTimes = obj.partialGradByTimes;
     partialGradByCoeffs.setZero();
     partialGradByTimes.setZero();
     if (!block_energy_cost) {
@@ -524,8 +524,8 @@ double ExpTrajOpt::costFunctional(void *ptr,
     }
 
     /* 5) Propagate the gradient from CT to PT */
-    Mat3Df gradByPoints;
-    VecDf gradByTimes;
+    auto &gradByPoints = obj.gradByPoints;
+    auto &gradByTimes = obj.gradByTimes;
     obj.minco.propogateGrad(partialGradByCoeffs, partialGradByTimes,
                             gradByPoints, gradByTimes);
     clearRouteBoundaryJunctionGradients(
@@ -537,8 +537,8 @@ double ExpTrajOpt::costFunctional(void *ptr,
     gcopter::propagateGradientTToTau(tau, gradByTimes, gradTau);
     switch (pos_constraint_type) {
         case 1: {
-            MatDf gp = gradByPoints;
-            gradXi = Eigen::Map<VecDf>(gp.data(), gp.size());
+            gradXi = Eigen::Map<const VecDf>(
+                gradByPoints.data(), gradByPoints.size());
             break;
         }
         default: {
