@@ -1602,6 +1602,7 @@ TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {
   for (std::size_t index = 0U; index < path.size(); ++index) {
     EXPECT_TRUE(prefix[index].isApprox(path[index]));
   }
+  EXPECT_LE(geometry_utils::computePathLength(prefix), 10.0);
 }
 
 TEST(PlannerTrajectory, RejectsInvalidRoutePrefixBounds) {

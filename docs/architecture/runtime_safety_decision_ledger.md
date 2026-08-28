@@ -9186,6 +9186,15 @@ release profiles must not use the former allowance.
   45 m toward/around the first pillar and only afterwards truncated the result
   to 14 m, so work outside the executable prefix consumed the complete search
   budget.
+  Follow-up artifact
+  `.artifacts/runtime/external-mode-check-20260828T113759-1036939` confirmed
+  that A* produced executable commands and advanced the measured UAV to about
+  `(80.5,-7.6,3.0)` with speed up to `6.12 m/s`. It then exposed a stale
+  postcondition: prefixes already bounded by the pre-search cap returned
+  `truncated=false`, and the caller rejected them solely because it still
+  required post-search truncation. Accepting an already-within-bound prefix is
+  not a bypass; its finite length and every inflated-map segment remain
+  re-certified before optimization.
 - **Removal/review condition:** Replace only with a route-search hierarchy that
   separately represents global mission progress and a locally executable
   certified prefix with an equal or smaller search bound. Do not compensate by

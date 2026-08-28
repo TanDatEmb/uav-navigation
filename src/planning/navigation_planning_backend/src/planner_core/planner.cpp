@@ -1429,12 +1429,15 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     bool prefix_truncated = false;
                     if (!geometry_utils::truncatePathAtDistance(
                             new_path, local_prefix_limit, bounded_path,
-                            prefix_truncated) || !prefix_truncated ||
-                        bounded_path.size() < 2U) {
+                            prefix_truncated) || bounded_path.size() < 2U ||
+                        geometry_utils::computePathLength(bounded_path) >
+                            local_prefix_limit + 1.0e-6) {
                         planner_context_->warn(
                             " -- [planner] unable to construct certified local route prefix: "
-                            "route_distance={} prefix_limit={}",
-                            route_distance, local_prefix_limit);
+                            "route_distance={} prefix_limit={} source_length={} truncated={}",
+                            route_distance, local_prefix_limit,
+                            geometry_utils::computePathLength(new_path),
+                            prefix_truncated);
                         return FAILED;
                     }
                     bool prefix_certified = true;
