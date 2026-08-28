@@ -9847,28 +9847,3 @@ release profiles must not use the former allowance.
 - **Verification:** `git show c9f18bb`, `git show e3c4200`, mission contract
   tests, authoritative Release build and both cited artifacts preserve the
   implementation, rollback and repeated evidence.
-
-### 2026-08-28 - Isolate jerk-only three-column calibration at 5/2/8
-
-- **Owner:** Two-waypoint three-column mission dynamics.
-- **Scope:** Keep velocity and acceleration ceilings at 5 m/s and 2 m/s^2;
-  raise only the mission jerk ceiling from 4 to 8 m/s^3. The multi-waypoint
-  profile remains at 5/2/4 until this isolated variable is repeatedly
-  validated. Product limits remain 12/12/30.
-- **Safety impact:** All continuous dynamics, flatness, world, route, yaw,
-  splice and PX4 tracking gates remain fail-closed. Acceleration authority is
-  deliberately unchanged after repeated 5/3/8 trials exceeded the PX4
-  tracking envelope. This change may admit faster jerk transients and must be
-  rolled back if tracking, yaw, altitude, route error or clearance regresses.
-- **Evidence:** Across exact-profile artifacts `142323` and `143719`, optimized
-  candidate jerk p95 was 8.553 and 6.293 m/s^3 while acceleration p95 remained
-  2.065 and 2.058 m/s^2. The rejected 5/3/8 experiment proved that additional
-  acceleration authority, not merely fewer solver failures, is operationally
-  unsafe; a jerk-only A/B is therefore the narrow next experiment.
-- **Removal/review condition:** Retain only after repeated two-waypoint runs
-  complete without tracking-envelope exits and improve continuity metrics.
-  Promote to multi-waypoint only as a separate validated checkpoint.
-- **Verification:** Run mission contract tests and an authoritative Release
-  build, then repeated unchanged `long_three_pillars_speed` SITL and compare
-  EXP outcomes, commits, roles, low-speed episodes, actual/setpoint dynamics,
-  tracking, altitude, yaw, route error, clearance and completion.
