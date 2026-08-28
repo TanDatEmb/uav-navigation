@@ -2174,10 +2174,18 @@ void NavigationRuntimeNode::runCycle() {
     const double retained_tracking_limit_m = retainedCommandTrackingLimit(
         planner_->trackingErrorBudgetMeters(),
         navigation_contracts::kCommandAnchorErrorLimitM);
+    const double relative_anchor_speed_mps =
+        command_anchor_valid && fresh_vehicle_state
+            ? (command_anchor_sample.velocity_world - current_vehicle_velocity).norm()
+            : std::numeric_limits<double>::quiet_NaN();
+    const double projected_anchor_error_m =
+        projectedRetainedAnchorErrorUpperBound(
+            anchor_error_m, relative_anchor_speed_mps,
+            static_cast<double>(planning_period_us_) * 1.0e-6);
     bool use_safety_suffix = committedSafetySuffixIsUsable(
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
-        anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
+        projected_anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
     bool emergency_brake_committed = false;
     if (!validate_without_new_commit && !use_safety_suffix && fresh_vehicle_state &&
         committed && command_anchor_valid) {
@@ -2249,19 +2257,23 @@ void NavigationRuntimeNode::runCycle() {
       RCLCPP_WARN(get_logger(),
                   "planner backend hot replan failed (%d); retaining visible committed trajectory "
                   "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f "
-                  "anchor_error=%.3f tracking_limit=%.3f",
+                  "anchor_error=%.3f projected_anchor_error=%.3f "
+                  "relative_anchor_speed=%.3f tracking_limit=%.3f",
                   static_cast<int>(result), backup_available, elapsed_s, safety_transition_s,
-                  total_duration_s, anchor_error_m, retained_tracking_limit_m);
+                  total_duration_s, anchor_error_m, projected_anchor_error_m,
+                  relative_anchor_speed_mps, retained_tracking_limit_m);
     } else {
       RCLCPP_ERROR(get_logger(),
                    "planner backend hot replan failed without a valid safety suffix: backup=%d "
                    "elapsed=%.3f backup_start=%.3f end=%.3f anchor_error=%.3f "
+                   "projected_anchor_error=%.3f relative_anchor_speed=%.3f "
                    "tracking_limit=%.3f "
                    "state_age=%.3f clear=%d blocked_t=%.3f blocked_grid=%d "
                    "blocked=(%.2f,%.2f,%.2f)",
                    backup_available, elapsed_s,
                    safety_transition_s, total_duration_s,
-                   anchor_error_m, retained_tracking_limit_m,
+                   anchor_error_m, projected_anchor_error_m,
+                   relative_anchor_speed_mps, retained_tracking_limit_m,
                    latest_vehicle_state_age_s, sampled_path_clear,
                    first_blocked_sample_s, static_cast<int>(first_blocked_grid),
                    first_blocked_sample.x(), first_blocked_sample.y(),

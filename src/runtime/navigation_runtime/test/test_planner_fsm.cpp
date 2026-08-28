@@ -257,6 +257,21 @@ TEST(PlannerFsm, RetainedCommandCannotConsumeUncertifiedTrackingClearance) {
       retainedCommandTrackingLimit(0.25, 0.75), true));
 }
 
+TEST(PlannerFsm, RetainedCommandReservesClearanceUntilNextValidationBoundary) {
+  EXPECT_DOUBLE_EQ(
+      projectedRetainedAnchorErrorUpperBound(0.096, 0.8, 0.2), 0.256);
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      true, 0.64, 8.785, 7.681,
+      projectedRetainedAnchorErrorUpperBound(0.096, 0.8, 0.2),
+      retainedCommandTrackingLimit(0.25, 0.75), true));
+  EXPECT_TRUE(committedSafetySuffixIsUsable(
+      true, 0.64, 8.785, 7.681,
+      projectedRetainedAnchorErrorUpperBound(0.096, 0.2, 0.2),
+      retainedCommandTrackingLimit(0.25, 0.75), true));
+  EXPECT_TRUE(std::isnan(projectedRetainedAnchorErrorUpperBound(
+      0.1, 0.2, 0.0)));
+}
+
 TEST(PlannerFsm, RetainsVisibleMainOnlyTrajectoryAfterTransientReplanFailure) {
   EXPECT_TRUE(committedSafetySuffixIsUsable(
       false, 0.8, 1.395, 0.8, 0.187, 0.75, true));

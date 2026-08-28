@@ -277,4 +277,25 @@ inline double retainedCommandTrackingLimit(
   return std::min(planner_tracking_budget_m, execution_anchor_limit_m);
 }
 
+// A retained trajectory remains the command until the next planning
+// validation boundary.  Checking only the instantaneous anchor error can
+// consume the entire tracking allowance between two planner ticks.  The
+// triangle-inequality bound below projects the current relative velocity over
+// that interval; invalid inputs fail closed at the caller through NaN.
+inline double projectedRetainedAnchorErrorUpperBound(
+    const double anchor_error_m,
+    const double relative_speed_mps,
+    const double validation_interval_s) noexcept {
+  if (!std::isfinite(anchor_error_m) || anchor_error_m < 0.0 ||
+      !std::isfinite(relative_speed_mps) || relative_speed_mps < 0.0 ||
+      !std::isfinite(validation_interval_s) || validation_interval_s <= 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  const double projected_error_m =
+      anchor_error_m + relative_speed_mps * validation_interval_s;
+  return std::isfinite(projected_error_m)
+      ? projected_error_m
+      : std::numeric_limits<double>::quiet_NaN();
+}
+
 }  // namespace navigation_runtime

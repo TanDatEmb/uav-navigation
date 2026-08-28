@@ -10356,6 +10356,43 @@ release profiles must not use the former allowance.
   certificate and explicit replacement/stop provenance. Continue reporting
   solve and mapping p50/p95/p99; this safety fix does not close A* starvation.
 
+### 2026-08-29 - Reserve retained-command clearance through the next validation tick
+
+- **Owner/status:** Runtime retained-command validation, `PROVISIONAL`; extends
+  the HG-007 tracking-envelope guard without changing its 0.25 m budget.
+- **Scope:** When a replacement solve fails, runtime now bounds the retained
+  command's anchor error at the next planner validation boundary as current
+  position error plus measured command-to-vehicle relative speed multiplied by
+  the configured planner period. Retention requires this projected bound, not
+  only the instantaneous error, to remain inside the existing planner tracking
+  allowance. Failure uses the existing measured-state emergency brake and
+  latest-world atomic commit path.
+- **Safety impact:** Positive and fail-closed. This closes the observed
+  sampling gap in which anchor error grew from 0.213 m to 0.341 m between 5 Hz
+  validations and consumed the clearance already represented by the planner's
+  inflated radius. No map, dynamics, UNKNOWN/OUT_OF_MAP, PX4, timing or
+  acceptance threshold is relaxed. The first-order projection does not claim
+  a controller reachability proof; acceleration-sensitive tracking tubes remain
+  the replacement condition.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260828T174432-1396698` reached the
+  second route checkpoint without collision, then approached
+  `gen_landmark_se`. Retained-bundle anchor error progressed 0.096, 0.213 and
+  0.341 m on consecutive failed replacement solves. At 0.341 m the measured
+  point `(104.807, -7.403, 2.258)` was already classified inflated OCCUPIED;
+  emergency dynamics passed but atomic world authorization correctly rejected
+  the brake at its initial point. Truth clearance remained 0.403 m and the
+  mission failed closed.
+- **Removal/review condition:** Replace with an execution/controller-owned
+  tracking tube that includes bounded relative acceleration and scheduling
+  jitter. Revert if repeated ±X/±Y evidence shows unnecessary brake churn or
+  if any projected-safe retention crosses the unchanged 0.25 m allowance.
+- **Verification:** Run focused runtime FSM tests, Release build and repeated
+  `navigation_generalization` trials. Require an emergency-brake commit before
+  the measured state enters inflated occupancy, no collision or 0.75 m PX4
+  rejection, and report projected/current anchor error plus planner and mapping
+  latency distributions.
+
 ### 2026-08-29 - Attribute non-finite emergency-brake flatness samples
 
 - **Owner/status:** Planner dynamic-certificate diagnostics, observability only.
