@@ -11,6 +11,21 @@
 
 namespace navigation_mapping {
 
+enum class SnapshotExportMode : std::uint8_t {
+  kDeferred = 0,
+  kFull = 1,
+  kPatch = 2,
+};
+
+enum class SnapshotFullExportReason : std::uint8_t {
+  kNone = 0,
+  kNoCurrentSnapshot = 1,
+  kWholeWorldChanged = 2,
+  kInvalidChangedRegion = 3,
+  kPatchDepthLimit = 4,
+  kEmptyPatch = 5,
+};
+
 struct MappingUpdateResult {
   MapUpdateOutcome outcome{MapUpdateOutcome::kEmptyCloud};
   RaycastDiagnostics diagnostics{};
@@ -22,6 +37,11 @@ struct MappingUpdateResult {
   std::int64_t observation_stamp_ns{0};
   std::int64_t map_update_us{0};
   std::int64_t snapshot_export_us{0};
+  SnapshotExportMode snapshot_export_mode{SnapshotExportMode::kDeferred};
+  SnapshotFullExportReason snapshot_full_export_reason{SnapshotFullExportReason::kNone};
+  std::uint64_t snapshot_export_base_cells{0};
+  std::uint64_t snapshot_export_inflated_cells{0};
+  std::uint64_t snapshot_patch_depth{0};
 };
 
 // Product-owned configuration facts consumed by runtime composition. The

@@ -50,6 +50,11 @@ struct MappingTelemetrySnapshot {
   std::int64_t mapping_callback_total_us{0};
   std::int64_t pointcloud_decode_us{0};
   bool world_snapshot_published{false};
+  std::uint64_t snapshot_export_mode{0};
+  std::uint64_t snapshot_full_export_reason{0};
+  std::uint64_t snapshot_export_base_cells{0};
+  std::uint64_t snapshot_export_inflated_cells{0};
+  std::uint64_t snapshot_patch_depth{0};
   std::uint64_t snapshot_bytes{0};
   std::uint64_t snapshot_owned_bytes{0};
   std::uint64_t snapshot_shared_metadata_bytes{0};
@@ -71,6 +76,8 @@ struct MappingTelemetrySnapshot {
   std::uint64_t command_revalidation_full_count{0};
   std::uint64_t world_snapshot_published_count{0};
   std::uint64_t world_snapshot_deferred_count{0};
+  std::uint64_t world_snapshot_full_export_count{0};
+  std::uint64_t world_snapshot_patch_export_count{0};
 };
 
 class MappingTelemetry {
@@ -93,8 +100,17 @@ class MappingTelemetry {
     next.outcome_above_ceiling = state_.outcome_above_ceiling;
     next.world_snapshot_published_count = state_.world_snapshot_published_count;
     next.world_snapshot_deferred_count = state_.world_snapshot_deferred_count;
+    next.world_snapshot_full_export_count = state_.world_snapshot_full_export_count;
+    next.world_snapshot_patch_export_count = state_.world_snapshot_patch_export_count;
     if (next.world_snapshot_published) {
       ++next.world_snapshot_published_count;
+      if (next.snapshot_export_mode ==
+          static_cast<std::uint64_t>(navigation_mapping::SnapshotExportMode::kFull)) {
+        ++next.world_snapshot_full_export_count;
+      } else if (next.snapshot_export_mode ==
+                 static_cast<std::uint64_t>(navigation_mapping::SnapshotExportMode::kPatch)) {
+        ++next.world_snapshot_patch_export_count;
+      }
     } else if (navigation_mapping::worldUpdateAdvanced(next.map.update_outcome)) {
       ++next.world_snapshot_deferred_count;
     }

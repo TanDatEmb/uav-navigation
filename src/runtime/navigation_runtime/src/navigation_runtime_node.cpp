@@ -530,6 +530,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       next.map = result.diagnostics;
       next.last_update_attempt_stamp_ns = observation.stamp_ns;
       next.snapshot_export_us = result.snapshot_export_us;
+      next.snapshot_export_mode = static_cast<std::uint64_t>(result.snapshot_export_mode);
+      next.snapshot_full_export_reason =
+          static_cast<std::uint64_t>(result.snapshot_full_export_reason);
+      next.snapshot_export_base_cells = result.snapshot_export_base_cells;
+      next.snapshot_export_inflated_cells = result.snapshot_export_inflated_cells;
+      next.snapshot_patch_depth = result.snapshot_patch_depth;
       next.pointcloud_decode_us = observation.pointcloud_decode_us;
       next.world_snapshot_published = static_cast<bool>(result.snapshot);
       if (result.snapshot) {
@@ -767,6 +773,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
         add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
         add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
+        add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
+        add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+        add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
+        add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
+        add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
+        add_value("world_snapshot_export_inflated_cells",
+                  mapping.snapshot_export_inflated_cells);
+        add_value("world_snapshot_patch_depth", mapping.snapshot_patch_depth);
         addObservationAccountingValues(status, lifecycle);
         add_text("mapping_update_outcome",
                  std::string(navigation_mapping::worldUpdateOutcomeName(map.update_outcome)));
@@ -1554,6 +1568,13 @@ void NavigationRuntimeNode::runCycle() {
   add_value("world_snapshot_published", mapping.world_snapshot_published ? 1U : 0U);
   add_value("world_snapshot_published_count", mapping.world_snapshot_published_count);
   add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
+  add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
+  add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+  add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
+  add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
+  add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
+  add_value("world_snapshot_export_inflated_cells", mapping.snapshot_export_inflated_cells);
+  add_value("world_snapshot_patch_depth", mapping.snapshot_patch_depth);
   add_value("world_snapshot_bytes", mapping.snapshot_bytes);
   add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
   add_value("world_snapshot_shared_metadata_bytes", mapping.snapshot_shared_metadata_bytes);

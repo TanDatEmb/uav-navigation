@@ -204,6 +204,13 @@ TEST(MappingActorContract, UsesBoundedPatchForSteadyStateMapUpdate) {
           second_result.snapshot);
   ASSERT_TRUE(patch_snapshot);
   EXPECT_EQ(patch_snapshot->patchDepth(), 1U);
+  EXPECT_EQ(second_result.snapshot_export_mode,
+            navigation_mapping::SnapshotExportMode::kPatch);
+  EXPECT_EQ(second_result.snapshot_full_export_reason,
+            navigation_mapping::SnapshotFullExportReason::kNone);
+  EXPECT_EQ(second_result.snapshot_patch_depth, 1U);
+  EXPECT_GT(second_result.snapshot_export_base_cells, 0U);
+  EXPECT_GT(second_result.snapshot_export_inflated_cells, 0U);
   EXPECT_LT(second_result.snapshot_metrics.owned_bytes,
             first_result.snapshot_metrics.owned_bytes);
 
@@ -252,6 +259,10 @@ TEST(MappingActorContract, CoalescesSnapshotExportAcrossRecentMapUpdates) {
           published.snapshot);
   ASSERT_TRUE(patch_snapshot);
   EXPECT_EQ(patch_snapshot->patchDepth(), 1U);
+  EXPECT_EQ(published.snapshot_export_mode,
+            navigation_mapping::SnapshotExportMode::kPatch);
+  EXPECT_EQ(deferred.snapshot_export_mode,
+            navigation_mapping::SnapshotExportMode::kDeferred);
 }
 
 TEST(MappingActorContract, RejectsNonPositiveSnapshotPublicationPeriod) {

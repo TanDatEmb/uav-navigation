@@ -2830,6 +2830,13 @@ class RuntimeContractTest(unittest.TestCase):
             "world_snapshot_shared_metadata_bytes": "783204",
             "world_snapshot_live_count": "1",
             "world_snapshot_peak_live_count": "2",
+            "world_snapshot_full_export_count": "4",
+            "world_snapshot_patch_export_count": "13",
+            "world_snapshot_export_mode": "2",
+            "world_snapshot_full_export_reason": "0",
+            "world_snapshot_export_base_cells": "2048",
+            "world_snapshot_export_inflated_cells": "256",
+            "world_snapshot_patch_depth": "3",
             "world_snapshot_export_us": "15018",
         }
         snapshot = {
@@ -2850,6 +2857,10 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(mapping["world_snapshot_bytes"], 4019364)
         self.assertEqual(mapping["world_snapshot_owned_bytes"], 3236160)
         self.assertEqual(mapping["world_snapshot_peak_live_count"], 2)
+        self.assertEqual(mapping["world_snapshot_full_export_count"], 4)
+        self.assertEqual(mapping["world_snapshot_patch_export_count"], 13)
+        self.assertEqual(mapping["world_snapshot_export_mode"], 2)
+        self.assertEqual(mapping["world_snapshot_patch_depth"], 3)
         self.assertEqual(
             mapping["timing_distributions"]["world_snapshot_export_us"]["p50"], 15018.0)
 

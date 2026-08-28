@@ -8602,3 +8602,25 @@ release profiles must not use the former allowance.
   regenerate the exact-HEAD manifest and repeat the 3 m/s three-pillar mission.
   Inspect waypoint transition velocity, fillet trace, yaw maxima, clearance,
   and mission coverage; one improved run is not final acceptance.
+
+### 2026-08-28 - Expose immutable snapshot export mode and extent
+
+- **Owner:** Mapping actor and runtime mapping telemetry.
+- **Scope:** Record whether each publication used a bounded patch or full-grid
+  export, the fail-closed reason for a full export, exported base/inflated cell
+  counts, resulting patch depth, and cumulative full/patch publication counts.
+- **Safety impact:** Observability only. Snapshot cadence, freshness, patch
+  depth, map semantics, command recertification, and all failure gates remain
+  unchanged. The fields close the evidence gap between a costly export and its
+  architectural cause before any performance behavior is changed.
+- **Evidence:** The third exact-HEAD 3 m/s run stopped before the sharp corner
+  after a 502 ms LiDAR arrival gap. In the same run mapping callback p95 was
+  72.8 ms and published snapshot export mean/max were 35.3/60.8 ms, but prior
+  telemetry could not distinguish patch cost from periodic full flattening.
+- **Removal/review condition:** Replace only with equivalent or stronger typed
+  per-publication provenance. Do not increase the freshness window or reduce
+  map evidence to conceal an export latency tail.
+- **Verification:** Build mapping and runtime, run their complete CTest sets,
+  run the runtime report contract tests, then capture a representative
+  recorded-data or SITL distribution containing the new fields before choosing
+  an optimization.

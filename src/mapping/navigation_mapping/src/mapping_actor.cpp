@@ -377,21 +377,39 @@ class MappingActor::Impl final {
         const auto patch_export = map_->exportPlanningGridRegion(
             pending_changed_region_.minimum,
             pending_changed_region_.maximum);
+        result.snapshot_export_base_cells = patch_export.base_state.size();
+        result.snapshot_export_inflated_cells = patch_export.inflated.occupied.size();
         if (!patch_export.base_state.empty() && !patch_export.inflated.occupied.empty()) {
           snapshot = std::make_shared<MappingWorldSnapshot>(
               current_snapshot_, toProductPatch(patch_export), identity, change_history_);
+          result.snapshot_export_mode = SnapshotExportMode::kPatch;
+        } else {
+          result.snapshot_full_export_reason = SnapshotFullExportReason::kEmptyPatch;
         }
       }
       if (!snapshot) {
+        if (result.snapshot_full_export_reason == SnapshotFullExportReason::kNone) {
+          result.snapshot_full_export_reason = !current_snapshot_
+              ? SnapshotFullExportReason::kNoCurrentSnapshot
+              : pending_change_covers_world_
+                  ? SnapshotFullExportReason::kWholeWorldChanged
+                  : !pending_changed_region_.valid()
+                      ? SnapshotFullExportReason::kInvalidChangedRegion
+                      : SnapshotFullExportReason::kPatchDepthLimit;
+        }
         auto exported = map_->exportPlanningGrid();
+        result.snapshot_export_base_cells = exported.base_state.size();
+        result.snapshot_export_inflated_cells = exported.inflated.occupied.size();
         if (!nearest_offsets_) {
           nearest_offsets_ = toProductNearestOffsets(exported.nearest_offsets);
         }
         snapshot = std::make_shared<MappingWorldSnapshot>(
             toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_);
+        result.snapshot_export_mode = SnapshotExportMode::kFull;
       }
       result.snapshot = snapshot;
       result.snapshot_metrics = snapshot->metrics();
+      result.snapshot_patch_depth = snapshot->patchDepth();
       result.snapshot_export_us = std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - export_started).count();
       result.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
