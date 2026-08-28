@@ -70,6 +70,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 | HG-025 | Convex acceptance-region corridor (`MISSION_PROGRESS_INVARIANT`) | intersect each pass-through boundary corridor with an axis-aligned cube of half extent `radius/sqrt(3)`, wholly contained in the spherical mission acceptance region | PROVISIONAL | Makes acceptance geometry a hard continuous-corridor property instead of relying on a soft optimizer penalty. The inner approximation is conservative: it cannot enlarge waypoint acceptance, and measured sphere entry remains the sole mission transition authority. | Require route-boundary cell containment tests, backend certificates, and repeated measured waypoint acceptance without corridor starvation across shallow and sharp turns. |
 | HG-026 | Curved MAIN backup reachability (`SAFETY_INVARIANT`) | rejected experiment: consecutive inflated-map segments remained KNOWN_FREE within the finite visibility-distance budget; braking suffix retained independent SFC and swept certificate | REJECTED / REVERTED | Artifact `external-mode-check-20260828T154306-1288519` completed safely but retained 21 local-boundary restarts, frequently exported only 0.24-1.5 s of MAIN, and worsened cross-track p95 to 7.36 m. Commit `36b292e` was reverted by `e012298`; the straight-ray limitation remains an open M7 debt. | Preserve the rejected evidence. A replacement must explain the remaining certificate truncation and improve prefix length/restarts without worsening clearance, tracking, or latency over repeated scenario-matrix SITL and recorded data. |
+| HG-027 | Condition-aware deterministic-seed PVAJ equality (`NUMERICAL_TOLERANCE`) | component-wise power-basis roundoff bound derived from coefficient term sums, polynomial degree and IEEE-754 epsilon; no fixed flight-tuned tolerance | PROVISIONAL | Replaces one dimensionally mixed absolute `1e-8` test that rejected corridor-contained seeds when endpoint evaluation suffered cancellation. A mismatch larger than the computed representation bound still fails before route, dynamics, flatness, world and execution certificates. | Unit-test ill-conditioned representation and physical mismatch; compare residual/bound distributions over historical artifacts, then require repeated scenario-matrix SITL with no clearance, tracking, latency or command-continuity regression. |
 
 ## Temporary-bypass register
 
@@ -9996,3 +9997,38 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 36b292e`, `git show e012298`, focused 8/8 backend
   tests, Release build, and the cited artifact preserve implementation,
   rollback, and runtime evidence.
+
+### 2026-08-28 - Condition-aware deterministic-seed boundary equality
+
+- **Owner/status:** EXP deterministic fallback certificate, `PROVISIONAL`;
+  anchor `deterministic_nominal_seed.hpp`.
+- **Physical contract:** Initial, terminal and inter-piece PVAJ equality remains
+  mandatory component by component. The permitted residual is only the
+  forward-error bound of evaluating that component's power-basis polynomial:
+  IEEE-754 epsilon multiplied by the finite operation count and absolute term
+  sum. Position, velocity, acceleration and jerk are checked independently;
+  one ill-conditioned component cannot authorize a mismatch in another.
+- **Safety impact:** `NUMERICAL_TOLERANCE`, fail closed. This removes the
+  dimensionally mixed constant `1e-8` while preserving corridor, route
+  boundary, V/A/J, flatness, latest-world and execution gates unchanged. A
+  true state mismatch above representable evaluation uncertainty is rejected.
+- **Derivation:** Across 58 existing runtime sessions, 3,130 logged seed
+  residuals were available. Typical values were near `1e-10`, while a smaller
+  cancellation-conditioned tail reached `5.16e-4`. The new 395 m
+  generalization artifact `external-mode-check-20260828T155229-1296928`
+  failed before movement on an obstacle-free +X prefix: its corridor-valid
+  seed reported an `8.11e-6` boundary residual, then all three MINCO attempts
+  failed with `replan_code=-6`. This distribution is evidence of numerical
+  conditioning, not a basis for selecting a new fixed threshold.
+- **Evidence required:** Focused tests must accept a deliberately
+  ill-conditioned exact power-basis endpoint only inside its computed bound
+  and reject a `1e-4` physical endpoint mismatch on a well-conditioned seed.
+  Runtime logs must export both residual and bound. Repeated long-route and
+  ±X/±Y scenario-matrix SITL must show improved initial/rolling command
+  availability without clearance, tracking, latency or continuity regression.
+- **Removal/review condition:** Revert if the computed bound is non-finite for
+  a candidate otherwise presented as certifiable, masks a constructed physical
+  mismatch, or does not improve the exact failure class. Prefer a future
+  Bernstein-basis certificate if seed provenance exposes its control points.
+- **Verification:** Focused backend build and 8/8 test executables, full Release
+  build, the cited artifact, and repeated exact-HEAD SITL.

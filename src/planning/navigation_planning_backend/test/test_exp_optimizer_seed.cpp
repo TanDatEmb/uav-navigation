@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -332,10 +333,45 @@ TEST(DeterministicNominalSeed, RequiresExactPieceCorridorMappingAndPvajContinuit
   EXPECT_LE(valid.maximum_corridor_violation_m,
             config.corridor_plane_tolerance_m);
   EXPECT_LE(valid.maximum_boundary_residual, 1.0e-8);
+  EXPECT_TRUE(std::isfinite(valid.maximum_boundary_roundoff_bound));
 
   mapping << 1, 0;
   EXPECT_FALSE(navigation_planning_backend::certifyDeterministicNominalSeed(
       seed, corridors, mapping, gates, points, radii, initial, terminal, config).valid);
+
+  mapping << 0, 1;
+  auto wrong_terminal = terminal;
+  wrong_terminal(0, 0) += 1.0e-4;
+  const auto physical_mismatch =
+      navigation_planning_backend::certifyDeterministicNominalSeed(
+          seed, corridors, mapping, gates, points, radii, initial,
+          wrong_terminal, config);
+  EXPECT_FALSE(physical_mismatch.valid);
+  EXPECT_EQ(physical_mismatch.failure_stage,
+            navigation_planning_backend::
+                DeterministicNominalSeedFailureStage::kBoundary);
+}
+
+TEST(DeterministicNominalSeed, BoundaryRoundoffTracksPowerBasisConditioning) {
+  constexpr int degree = 7;
+  constexpr double root = 23.1;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, degree + 1);
+  const std::array<double, degree + 1> binomial{1.0, 7.0, 21.0, 35.0,
+                                               35.0, 21.0, 7.0, 1.0};
+  for (int column = 0; column <= degree; ++column) {
+    coefficients(0, column) =
+        binomial[static_cast<std::size_t>(column)] *
+        std::pow(-root, column);
+  }
+  const geometry_utils::Piece ill_conditioned(root, coefficients);
+  const double represented_residual = std::abs(
+      ill_conditioned.getPos(root).x());
+  const auto roundoff = navigation_planning_backend::pieceStateRoundoffBound(
+      ill_conditioned, root);
+  EXPECT_GT(represented_residual, 1.0e-8);
+  EXPECT_TRUE(roundoff.allFinite());
+  EXPECT_LE(represented_residual, roundoff(0, 0));
+  EXPECT_LT(roundoff(0, 0), 0.01);
 }
 
 TEST(DeterministicNominalSeed, RejectsAnyCorridorExcessWithoutToleranceRelaxation) {

@@ -32,6 +32,8 @@ struct DeterministicNominalSeedCertificate {
       std::numeric_limits<double>::infinity()};
   double maximum_boundary_residual{
       std::numeric_limits<double>::infinity()};
+  double maximum_boundary_roundoff_bound{
+      std::numeric_limits<double>::infinity()};
   double maximum_velocity_mps{std::numeric_limits<double>::infinity()};
   double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
   double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
@@ -139,6 +141,61 @@ inline navigation_math::StatePVAJ pieceState(
   return state;
 }
 
+// Bound the unavoidable forward error when Piece evaluates a power-basis
+// polynomial in double precision. Long pieces can have large, cancelling
+// coefficients even when their physical endpoint state is exactly constrained.
+// A fixed absolute epsilon therefore confuses representation conditioning with
+// a PVAJ discontinuity. The bound follows the absolute term sum and operation
+// count; it is derived from machine precision, not tuned from flight data.
+inline navigation_math::StatePVAJ pieceStateRoundoffBound(
+    const geometry_utils::Piece& piece, const double time_s) {
+  navigation_math::StatePVAJ bound = navigation_math::StatePVAJ::Zero();
+  const auto& coefficients = piece.getCoeffMat();
+  const int degree = piece.getDegree();
+  if (!coefficients.allFinite() || !std::isfinite(time_s) || degree < 0) {
+    bound.setConstant(std::numeric_limits<double>::infinity());
+    return bound;
+  }
+  constexpr double kEvaluationOperationsPerTerm = 4.0;
+  const double epsilon = std::numeric_limits<double>::epsilon();
+  for (int derivative = 0; derivative <= 3; ++derivative) {
+    const int term_count = degree - derivative + 1;
+    if (term_count <= 0) continue;
+    const double operation_count =
+        kEvaluationOperationsPerTerm * static_cast<double>(term_count);
+    const double denominator = 1.0 - operation_count * epsilon;
+    if (!(denominator > 0.0)) {
+      bound.col(derivative).setConstant(
+          std::numeric_limits<double>::infinity());
+      continue;
+    }
+    const double gamma = operation_count * epsilon / denominator;
+    for (int axis = 0; axis < 3; ++axis) {
+      long double absolute_term_sum = 0.0L;
+      for (int column = 0; column < coefficients.cols(); ++column) {
+        const int power = degree - column;
+        if (power < derivative) continue;
+        long double multiplier = 1.0L;
+        for (int order = 0; order < derivative; ++order) {
+          multiplier *= static_cast<long double>(power - order);
+        }
+        const long double time_power = std::pow(
+            static_cast<long double>(std::abs(time_s)), power - derivative);
+        absolute_term_sum += std::abs(
+            static_cast<long double>(coefficients(axis, column)) *
+            multiplier * time_power);
+      }
+      const long double numerical_bound =
+          static_cast<long double>(gamma) * absolute_term_sum;
+      bound(axis, derivative) = numerical_bound <=
+              static_cast<long double>(std::numeric_limits<double>::max())
+          ? static_cast<double>(numerical_bound)
+          : std::numeric_limits<double>::infinity();
+    }
+  }
+  return bound;
+}
+
 // Certify an immutable pre-optimizer trajectory. Each piece must retain its
 // exact SFC provenance; geometric union/sampling checks are not substitutes.
 inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
@@ -188,23 +245,48 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
   }
 
   result.failure_stage = DeterministicNominalSeedFailureStage::kBoundary;
-  constexpr double kStateTolerance = 1.0e-8;
   const auto initial_state = pieceState(seed[0], 0.0);
   const auto terminal_state = pieceState(
       seed[piece_count - 1], seed[piece_count - 1].getDuration());
+  const auto initial_roundoff = pieceStateRoundoffBound(seed[0], 0.0);
+  const auto terminal_roundoff = pieceStateRoundoffBound(
+      seed[piece_count - 1], seed[piece_count - 1].getDuration());
+  const auto initial_residual = (initial_state - expected_initial_state).cwiseAbs();
+  const auto terminal_residual = (terminal_state - expected_terminal_state).cwiseAbs();
   result.maximum_boundary_residual = std::max(
-      (initial_state - expected_initial_state).cwiseAbs().maxCoeff(),
-      (terminal_state - expected_terminal_state).cwiseAbs().maxCoeff());
+      initial_residual.maxCoeff(), terminal_residual.maxCoeff());
+  result.maximum_boundary_roundoff_bound = std::max(
+      initial_roundoff.maxCoeff(), terminal_roundoff.maxCoeff());
+  if (!initial_residual.allFinite() || !terminal_residual.allFinite() ||
+      !initial_roundoff.allFinite() || !terminal_roundoff.allFinite() ||
+      (initial_residual.array() > initial_roundoff.array()).any() ||
+      (terminal_residual.array() > terminal_roundoff.array()).any()) {
+    return result;
+  }
   for (int piece_index = 0; piece_index + 1 < piece_count; ++piece_index) {
     const auto left = pieceState(
         seed[piece_index], seed[piece_index].getDuration());
     const auto right = pieceState(seed[piece_index + 1], 0.0);
+    const navigation_math::StatePVAJ left_roundoff = pieceStateRoundoffBound(
+        seed[piece_index], seed[piece_index].getDuration());
+    const navigation_math::StatePVAJ right_roundoff =
+        pieceStateRoundoffBound(seed[piece_index + 1], 0.0);
+    const navigation_math::StatePVAJ junction_roundoff =
+        (left_roundoff + right_roundoff).eval();
+    const auto junction_residual = (left - right).cwiseAbs();
     result.maximum_boundary_residual = std::max(
         result.maximum_boundary_residual,
-        (left - right).cwiseAbs().maxCoeff());
+        junction_residual.maxCoeff());
+    result.maximum_boundary_roundoff_bound = std::max(
+        result.maximum_boundary_roundoff_bound,
+        junction_roundoff.maxCoeff());
+    if (!junction_residual.allFinite() || !junction_roundoff.allFinite() ||
+        (junction_residual.array() > junction_roundoff.array()).any()) {
+      return result;
+    }
   }
   if (!std::isfinite(result.maximum_boundary_residual) ||
-      result.maximum_boundary_residual > kStateTolerance) {
+      !std::isfinite(result.maximum_boundary_roundoff_bound)) {
     return result;
   }
 
