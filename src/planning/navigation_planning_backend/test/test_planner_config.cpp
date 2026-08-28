@@ -235,6 +235,20 @@ TEST(PlannerPassThrough, TerminalSpeedCapRejectsImpossibleShortBoundary) {
       2.94, 1.0e-12);
 }
 
+TEST(PlannerPassThrough, LookaheadDistanceCoversStoppingAndReplanEnvelope) {
+  const double lookahead = navigation_planning_backend::passThroughLookaheadDistance(
+      3.0, 3.0, 2.0, 4.0, 0.2, 3.0, 10.0);
+  EXPECT_NEAR(lookahead, 7.2, 1.0e-12);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::passThroughLookaheadDistance(
+          3.0, 3.0, 2.0, 4.0, 0.2, 3.0, 4.0),
+      4.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::passThroughLookaheadDistance(
+          -1.0, 3.0, 2.0, 4.0, 0.2, 3.0, 10.0),
+      0.0);
+}
+
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);

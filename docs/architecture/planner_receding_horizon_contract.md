@@ -15,9 +15,12 @@ At each planning tick:
 4. If the committed suffix cannot be anchored to fresh propagated odometry,
    the runtime may commit an emergency brake using measured position and
    velocity. Otherwise it removes the command and fails closed.
-5. The active mission waypoint remains the terminal target. A
-   `PASS_THROUGH` goal carries `next_target` as directional metadata; it does
-   not skip the current waypoint.
+5. The active mission waypoint remains the mission-identity target. A
+   `PASS_THROUGH` goal carries `next_target` as route metadata; when the
+   certified map horizon permits, the planner extends the executable guide
+   through a bounded prefix of that outgoing segment. The MissionController
+   still accepts the current waypoint only from measured position inside its
+   configured acceptance radius.
 
 The relevant runtime bounds are:
 
@@ -30,6 +33,7 @@ The relevant runtime bounds are:
 | Planner solve timeout | 1.0 s |
 | Replan-forward interval | 0.2 s |
 | Receding distance | 3.0 m |
+| Planning horizon | 45.0 m |
 
 This contract is implemented by `navigation_runtime_node`,
 `planner.yaml`, and the PX4 External Mode command boundary. It does not

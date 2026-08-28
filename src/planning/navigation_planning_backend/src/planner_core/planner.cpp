@@ -1327,13 +1327,119 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
-        // A sharp pass-through corner cannot be solved robustly by reaching
-        // the exact waypoint and rotating the velocity at the same point. Use
-        // the mission acceptance ball as a bounded route window: the endpoint
-        // lies on the outgoing tangent, while the measured mission controller
-        // still owns waypoint acceptance against the requested coordinate.
-        bool route_window_endpoint = false;
+        // A pass-through waypoint is a measured mission boundary, not the end
+        // of the executable route. Extend the guide through the next route
+        // segment when the current solve has enough certified map horizon.
+        // This gives MINCO geometric room to turn and lets MissionController
+        // advance the checkpoint while the same command is still live.
+        bool route_lookahead_active = false;
         if (pass_through_next_target_.has_value() && guide_path.size() >= 2U &&
+            guide_stamp.size() == guide_path.size() &&
+            (guide_path.back() - gi_.goal_p).norm() <=
+                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6) {
+            const Eigen::Vector3d current_endpoint = guide_path.back().cast<double>();
+            const Eigen::Vector3d next_target = *pass_through_next_target_;
+            const double outgoing_distance = (next_target - current_endpoint).norm();
+            const double guide_length = geometry_utils::computePathLength(guide_path);
+            const double remaining_horizon = cfg_.planning_horizon_m - guide_length;
+            const double planning_speed = std::min(
+                cfg_.exp_traj_cfg.max_vel,
+                std::max(solve_state_.v.norm(), guide_path_end_vel));
+            const double desired_lookahead = passThroughLookaheadDistance(
+                planning_speed, cfg_.exp_traj_cfg.max_vel,
+                cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
+                cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
+                outgoing_distance);
+            // The A* query must be allowed to reach the next mission target;
+            // the shorter desired_lookahead is applied only when selecting the
+            // certified prefix from that returned route.
+            const double search_distance = remaining_horizon;
+            if (std::isfinite(outgoing_distance) && outgoing_distance > 1.0e-6 &&
+                std::isfinite(search_distance) && search_distance > cfg_.resolution * 2.0) {
+                vec_Vec3f next_path;
+                solve_stage_.store(2);
+                if (PathSearch(guide_path.back(), next_target, search_distance,
+                               next_path, solve_deadline) && next_path.size() >= 2U) {
+                    vec_Vec3f lookahead_points;
+                    double accumulated_distance = 0.0;
+                    Vec3f previous_point = guide_path.back();
+                    for (const auto& point : next_path) {
+                        const double segment_length =
+                            (point - previous_point).norm();
+                        if (!std::isfinite(segment_length) || segment_length <= 1.0e-6) {
+                            previous_point = point;
+                            continue;
+                        }
+                        if (accumulated_distance + segment_length <=
+                            desired_lookahead + 1.0e-6) {
+                            lookahead_points.emplace_back(point);
+                            accumulated_distance += segment_length;
+                            previous_point = point;
+                            continue;
+                        }
+                        const double remaining_distance =
+                            desired_lookahead - accumulated_distance;
+                        if (remaining_distance > 1.0e-6) {
+                            const double fraction = std::clamp(
+                                remaining_distance / segment_length, 0.0, 1.0);
+                            lookahead_points.emplace_back(
+                                previous_point + static_cast<float>(fraction) *
+                                    (point - previous_point));
+                            accumulated_distance = desired_lookahead;
+                        }
+                        break;
+                    }
+                    if (!lookahead_points.empty()) {
+                        geometry_utils::GuideTimeAllocation allocation;
+                        if (geometry_utils::allocateGuideElapsedTimes(
+                                cfg_.exp_traj_cfg.max_acc,
+                                cfg_.exp_traj_cfg.max_vel,
+                                guide_path_end_vel, guide_path.back(),
+                                lookahead_points, allocation)) {
+                            bool certified = true;
+                            Eigen::Vector3d segment_start = guide_path.back().cast<double>();
+                            for (const auto& point : allocation.points) {
+                                const Eigen::Vector3d segment_end = point.cast<double>();
+                                if (!map_ptr_->isSegmentTraversable(
+                                        segment_start, segment_end,
+                                        navigation_world_model::GridLayer::kInflated,
+                                        unknownPolicy())) {
+                                    certified = false;
+                                    break;
+                                }
+                                segment_start = segment_end;
+                            }
+                            if (certified) {
+                                const double guide_time_origin_s = guide_stamp.back();
+                                for (std::size_t index = 0;
+                                     index < allocation.points.size(); ++index) {
+                                    guide_path.emplace_back(allocation.points[index]);
+                                    guide_stamp.emplace_back(
+                                        guide_time_origin_s + allocation.elapsed_s[index]);
+                                }
+                                guide_path_end_vel = allocation.terminal_velocity_mps;
+                                gi_.goal_p = guide_path.back();
+                                planning_goal_p_ = gi_.goal_p;
+                                goal_endpoint_adjusted_ = true;
+                                route_lookahead_active = true;
+                                planner_context_->info(
+                                    " -- [planner] pass-through route lookahead distance={:.3f} "
+                                    "required={:.3f} remaining_horizon={:.3f}",
+                                    allocation.path_length_m, desired_lookahead,
+                                    remaining_horizon);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no route lookahead is certified, a bounded acceptance-ball
+        // endpoint remains available for genuine corners. It is intentionally
+        // skipped once the outgoing route is already present in the guide.
+        bool route_window_endpoint = false;
+        if (!route_lookahead_active && pass_through_next_target_.has_value() &&
+            guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
             (guide_path.back() - gi_.goal_p).norm() <=
                 navigation_world_model::kGoalConnectionToleranceM + 1.0e-6 &&
@@ -1432,7 +1538,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                   navigation_world_model::kGoalConnectionToleranceM)
             : GuideEndpoint{guide_path.back(), false};
         guide_path.back() = resolved_endpoint.position;
-        const bool connected_goal = resolved_endpoint.goal_connected || route_window_endpoint;
+        const bool connected_goal = !route_lookahead_active &&
+            (resolved_endpoint.goal_connected || route_window_endpoint);
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
         latest_guide_start_ = guide_path.front();

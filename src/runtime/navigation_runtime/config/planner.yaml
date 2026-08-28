@@ -40,7 +40,10 @@ planner:
   replan_forward_dt_s: 0.2
   # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
   solve_deadline_s: 0.18
-  planning_horizon_m: 30.0
+  # The route horizon includes a bounded pass-through look-ahead segment, not
+  # only the active waypoint. This preserves geometric room for PX4-style
+  # continuous handoff while remaining bounded by the rolling map extent.
+  planning_horizon_m: 45.0
   # planner backend convention: a non-positive value disables the explicit sensing
   # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
   # limit below and checked against known-free map evidence.

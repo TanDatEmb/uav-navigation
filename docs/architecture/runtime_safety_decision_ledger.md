@@ -7251,3 +7251,46 @@ release profiles must not use the former allowance.
   make external-mode-check` and the declared speed ladder, checking route
   window endpoints, waypoint order, command generations, speed, altitude,
   clearance, strict backup evidence, and p50/p95/p99 latency.
+
+### 2026-08-28 - Extend pass-through guides through a certified route lookahead
+
+- **Owner:** Navigation planning, runtime execution, and mission-controller
+  maintainers.
+- **Scope:** A `PASS_THROUGH` goal may extend its executable guide from the
+  active waypoint into the outgoing segment supplied by `next_target`. The
+  extension length is bounded by both the remaining 45 m planning horizon and
+  the outgoing route length, and its minimum requested margin is derived from
+  the current bounded speed stopping distance, two replan-forward intervals,
+  and the configured 3 m receding prefix. A* supplies the route prefix; every
+  appended segment is checked against the inflated-layer/UNKNOWN policy before
+  guide time allocation. If no certified extension fits, the existing exact
+  goal or bounded acceptance-window path remains in force.
+- **Safety impact:** This preserves the mission identity and acceptance
+  contract while removing the need to rotate a high terminal velocity inside
+  a sub-metre waypoint ball. The current waypoint is never completed by the
+  planner endpoint: MissionController still requires measured position inside
+  the waypoint acceptance radius. The candidate retains the existing dynamic,
+  corridor, swept-world, strict-backup, identity, and lease certificates. No
+  UNKNOWN, OUT_OF_MAP, clearance, speed, acceleration, jerk, or deadline gate
+  is relaxed.
+- **Derivation and cost:** The route margin is
+  `jerk_limited_stop_distance(v) + 2*v*replan_forward_dt + receding_distance`;
+  it is clamped by available outgoing route and remaining planning horizon.
+  One bounded A* route-prefix query and one linear segment certificate are
+  added only for pass-through goals. The 45 m horizon is a geometric capacity
+  change required to hold the active segment plus that certified prefix, not a
+  safety threshold; map geometry validation still owns the hard extent check.
+- **Evidence:** The lookahead helper test, planner configuration suite,
+  trajectory suite, mission suite, full build, and authoritative manifest must
+  pass. Repeated 3 m/s multi-waypoint SITL and recorded-data shadow planning
+  remain required before claiming stable high-speed completion.
+- **Removal/review condition:** Revert or redesign if the lookahead crosses a
+  waypoint without measured acceptance, breaks command/world identity or PVA
+  continuity, increases optimizer latency/failure tails, worsens clearance or
+  altitude, or causes the planner to consume map horizon needed by the backup
+  certificate.
+- **Verification:** `make build`; sourced planner, trajectory, mission, and
+  runtime contract tests; then repeated
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check`, checking waypoint order, endpoint error, route length,
+  speed, altitude, clearance, strict backup evidence, and planning p50/p95/p99.
