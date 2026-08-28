@@ -1251,6 +1251,23 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     immutable_seed_certificate.maximum_boundary_residual);
             ret = lbfgs::LBFGS_STOP;
         } else {
+            const auto &flatness = immutable_seed_certificate.flatness_report;
+            planner_context_->warn(
+                    " -- [ExpOpt] immutable pre-LBFGS seed unavailable: "
+                    "stage={} corridor_violation={} boundary_residual={} "
+                    "vel={}/{} acc={}/{} jerk={}/{} flatness_finite={} "
+                    "body_rate={}/{} thrust=[{},{}]/[{},{}]",
+                    static_cast<int>(immutable_seed_certificate.failure_stage),
+                    immutable_seed_certificate.maximum_corridor_violation_m,
+                    immutable_seed_certificate.maximum_boundary_residual,
+                    immutable_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
+                    immutable_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
+                    immutable_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
+                    flatness.finite,
+                    flatness.maximum_body_rate_rad_s, cfg_.max_omg,
+                    flatness.minimum_thrust_n, flatness.maximum_thrust_n,
+                    cfg_.min_acc_thr * cfg_.mass,
+                    cfg_.max_acc_thr * cfg_.mass);
             ret = -1;
         }
     }

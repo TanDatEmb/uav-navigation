@@ -14,12 +14,28 @@
 
 namespace navigation_planning_backend {
 
+enum class DeterministicNominalSeedFailureStage {
+  kNone = 0,
+  kInput = 1,
+  kCorridor = 2,
+  kBoundary = 3,
+  kRouteBoundary = 4,
+  kDynamics = 5,
+  kFlatness = 6,
+};
+
 struct DeterministicNominalSeedCertificate {
   bool valid{false};
+  DeterministicNominalSeedFailureStage failure_stage{
+      DeterministicNominalSeedFailureStage::kInput};
   double maximum_corridor_violation_m{
       std::numeric_limits<double>::infinity()};
   double maximum_boundary_residual{
       std::numeric_limits<double>::infinity()};
+  double maximum_velocity_mps{std::numeric_limits<double>::infinity()};
+  double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
+  double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
+  traj_opt::TrajectoryDynamicReport flatness_report{};
 };
 
 enum class NominalCandidateSelection {
@@ -83,6 +99,7 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
     return result;
   }
 
+  result.failure_stage = DeterministicNominalSeedFailureStage::kCorridor;
   result.maximum_corridor_violation_m =
       -std::numeric_limits<double>::infinity();
   result.maximum_boundary_residual = 0.0;
@@ -105,6 +122,7 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
     return result;
   }
 
+  result.failure_stage = DeterministicNominalSeedFailureStage::kBoundary;
   constexpr double kStateTolerance = 1.0e-8;
   const auto initial_state = pieceState(seed[0], 0.0);
   const auto terminal_state = pieceState(
@@ -125,6 +143,7 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
     return result;
   }
 
+  result.failure_stage = DeterministicNominalSeedFailureStage::kRouteBoundary;
   for (std::size_t gate_index = 0; gate_index < route_boundary_gates.size(); ++gate_index) {
     if (route_boundary_gates[gate_index] == 0U) continue;
     const auto& point = route_boundary_points[gate_index];
@@ -143,23 +162,26 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
     if (!reached) return result;
   }
 
-  const double maximum_velocity = seed.getMaxVelRate();
-  const double maximum_acceleration = seed.getMaxAccRate();
-  const double maximum_jerk = seed.getMaxJerRate();
+  result.failure_stage = DeterministicNominalSeedFailureStage::kDynamics;
+  result.maximum_velocity_mps = seed.getMaxVelRate();
+  result.maximum_acceleration_mps2 = seed.getMaxAccRate();
+  result.maximum_jerk_mps3 = seed.getMaxJerRate();
   if (!navigation_planning::withinNumericalDynamicLimit(
-          maximum_velocity, config.max_vel) ||
+          result.maximum_velocity_mps, config.max_vel) ||
       !navigation_planning::withinNumericalDynamicLimit(
-          maximum_acceleration, config.max_acc) ||
+          result.maximum_acceleration_mps2, config.max_acc) ||
       !navigation_planning::withinNumericalDynamicLimit(
-          maximum_jerk, config.max_jerk)) {
+          result.maximum_jerk_mps3, config.max_jerk)) {
     return result;
   }
-  traj_opt::TrajectoryDynamicReport dynamic_report;
+
+  result.failure_stage = DeterministicNominalSeedFailureStage::kFlatness;
   if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
-          seed, config, &dynamic_report)) {
+          seed, config, &result.flatness_report)) {
     return result;
   }
   result.valid = true;
+  result.failure_stage = DeterministicNominalSeedFailureStage::kNone;
   return result;
 }
 

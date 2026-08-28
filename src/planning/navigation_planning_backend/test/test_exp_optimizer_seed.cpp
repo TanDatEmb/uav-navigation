@@ -267,6 +267,8 @@ TEST(DeterministicNominalSeed, RequiresExactPieceCorridorMappingAndPvajContinuit
   const auto valid = navigation_planning_backend::certifyDeterministicNominalSeed(
       seed, corridors, mapping, gates, points, radii, initial, terminal, config);
   EXPECT_TRUE(valid.valid);
+  EXPECT_EQ(valid.failure_stage,
+            navigation_planning_backend::DeterministicNominalSeedFailureStage::kNone);
   EXPECT_LE(valid.maximum_corridor_violation_m,
             config.corridor_plane_tolerance_m);
   EXPECT_LE(valid.maximum_boundary_residual, 1.0e-8);
@@ -300,6 +302,8 @@ TEST(DeterministicNominalSeed, RejectsAnyCorridorExcessWithoutToleranceRelaxatio
   const auto rejected = navigation_planning_backend::certifyDeterministicNominalSeed(
       seed, corridors, mapping, gates, points, radii, initial, terminal, config);
   EXPECT_FALSE(rejected.valid);
+  EXPECT_EQ(rejected.failure_stage,
+            navigation_planning_backend::DeterministicNominalSeedFailureStage::kCorridor);
   EXPECT_GT(rejected.maximum_corridor_violation_m,
             config.corridor_plane_tolerance_m);
 }
