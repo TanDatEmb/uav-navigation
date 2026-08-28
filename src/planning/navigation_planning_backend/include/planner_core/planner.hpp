@@ -110,6 +110,10 @@ namespace navigation_planning_backend {
         std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
         RouteYawReference route_yaw_reference_{};
         std::optional<double> last_route_yaw_target_rad_;
+        double latest_candidate_maximum_yaw_rate_rad_s_{
+            std::numeric_limits<double>::quiet_NaN()};
+        double latest_candidate_maximum_yaw_acceleration_rad_s2_{
+            std::numeric_limits<double>::quiet_NaN()};
 
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
@@ -252,6 +256,19 @@ namespace navigation_planning_backend {
             return goal_acceptance_radius_m_;
         }
         bool goalEndpointAdjusted() const noexcept { return goal_endpoint_adjusted_; }
+        RouteYawReference routeYawReference() const noexcept {
+            return route_yaw_reference_;
+        }
+        double yawRateLimitRadS() const noexcept { return cfg_.yaw_rate_max_rad_s; }
+        double yawAccelerationLimitRadS2() const noexcept {
+            return cfg_.yaw_acceleration_max_rad_s2;
+        }
+        double latestCandidateMaximumYawRateRadS() const noexcept {
+            return latest_candidate_maximum_yaw_rate_rad_s_;
+        }
+        double latestCandidateMaximumYawAccelerationRadS2() const noexcept {
+            return latest_candidate_maximum_yaw_acceleration_rad_s2_;
+        }
         navigation_world_model::CellState requestedGoalInflatedState() const noexcept {
             return requested_goal_inflated_state_;
         }

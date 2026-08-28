@@ -230,6 +230,15 @@ struct PlannerDiagnostics {
   bool goal_endpoint_adjusted{false};
   int requested_goal_inflated_state{0};
   int planning_goal_inflated_state{0};
+  int route_yaw_source{4};
+  double route_yaw_target_rad{std::numeric_limits<double>::quiet_NaN()};
+  double route_yaw_lookahead_m{std::numeric_limits<double>::quiet_NaN()};
+  double route_yaw_progress_arc_m{std::numeric_limits<double>::quiet_NaN()};
+  double yaw_rate_limit_rad_s{std::numeric_limits<double>::quiet_NaN()};
+  double yaw_acceleration_limit_rad_s2{std::numeric_limits<double>::quiet_NaN()};
+  double candidate_maximum_yaw_rate_rad_s{std::numeric_limits<double>::quiet_NaN()};
+  double candidate_maximum_yaw_acceleration_rad_s2{
+      std::numeric_limits<double>::quiet_NaN()};
   OptimizationDiagnostics optimization{};
   BackupCertificateDiagnostics backup_certificate{};
 };

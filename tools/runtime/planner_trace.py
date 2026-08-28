@@ -36,6 +36,16 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "planning_latency_ms": ("planning_latency_ms",),
     "planning_total_us": ("planning_total_us",),
+    "route_yaw_source": ("route_yaw_source",),
+    "route_yaw_target_rad": ("route_yaw_target_rad",),
+    "route_yaw_lookahead_m": ("route_yaw_lookahead_m",),
+    "route_yaw_progress_arc_m": ("route_yaw_progress_arc_m",),
+    "yaw_rate_limit_rad_s": ("yaw_rate_limit_rad_s",),
+    "yaw_acceleration_limit_rad_s2": ("yaw_acceleration_limit_rad_s2",),
+    "candidate_maximum_yaw_rate_rad_s": ("candidate_maximum_yaw_rate_rad_s",),
+    "candidate_maximum_yaw_acceleration_rad_s2": (
+        "candidate_maximum_yaw_acceleration_rad_s2",
+    ),
     "exp_frontend_us": ("exp_frontend_us",),
     "exp_opt_us": ("exp_opt_us",),
     "backup_frontend_us": ("backup_frontend_us",),
@@ -298,6 +308,20 @@ def normalize_planner_trace_record(
         "solver_latency_us": _float(values["solver_latency_us"]),
         "planning_latency_ms": _float(values["planning_latency_ms"]),
         "planning_total_us": _float(values["planning_total_us"]),
+        "route_yaw_source": _int(values["route_yaw_source"]),
+        "route_yaw_target_rad": _float(values["route_yaw_target_rad"]),
+        "route_yaw_lookahead_m": _float(values["route_yaw_lookahead_m"]),
+        "route_yaw_progress_arc_m": _float(values["route_yaw_progress_arc_m"]),
+        "yaw_rate_limit_rad_s": _float(values["yaw_rate_limit_rad_s"]),
+        "yaw_acceleration_limit_rad_s2": _float(
+            values["yaw_acceleration_limit_rad_s2"]
+        ),
+        "candidate_maximum_yaw_rate_rad_s": _float(
+            values["candidate_maximum_yaw_rate_rad_s"]
+        ),
+        "candidate_maximum_yaw_acceleration_rad_s2": _float(
+            values["candidate_maximum_yaw_acceleration_rad_s2"]
+        ),
         "exp_frontend_us": _float(values["exp_frontend_us"]),
         "exp_opt_us": _float(values["exp_opt_us"]),
         "backup_frontend_us": _float(values["backup_frontend_us"]),

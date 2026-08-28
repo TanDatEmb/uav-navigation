@@ -219,6 +219,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         }
         const double maximum_yaw_rate = candidate.yaw.getMaxVelRate();
         const double maximum_yaw_acceleration = candidate.yaw.getMaxAccRate();
+        latest_candidate_maximum_yaw_rate_rad_s_ = maximum_yaw_rate;
+        latest_candidate_maximum_yaw_acceleration_rad_s2_ =
+            maximum_yaw_acceleration;
         if (!candidateYawRateWithinLimit(candidate, cfg_.yaw_rate_max_rad_s)) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));

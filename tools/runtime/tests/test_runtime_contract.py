@@ -1692,6 +1692,9 @@ class RuntimeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("param show UXRCE_DDS_SYNCT", startup)
+        self.assertIn("param show MPC_YAWRAUTO_MAX", startup)
+        self.assertIn("param show MPC_YAWRAUTO_ACC", startup)
+        self.assertIn("param show MC_YAWRATE_MAX", startup)
 
     def test_planner_has_one_unknown_space_policy_owner(self) -> None:
         planner_config = yaml.safe_load(

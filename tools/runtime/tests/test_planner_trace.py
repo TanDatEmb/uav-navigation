@@ -127,6 +127,14 @@ class PlannerTraceTest(unittest.TestCase):
                                     "solve_stage_name": "backup",
                                     "planning_latency_ms": "8.25",
                                     "planning_total_us": "8250",
+                                    "route_yaw_source": "0",
+                                    "route_yaw_target_rad": "1.25",
+                                    "route_yaw_lookahead_m": "7.5",
+                                    "route_yaw_progress_arc_m": "18.0",
+                                    "yaw_rate_limit_rad_s": "1.0",
+                                    "yaw_acceleration_limit_rad_s2": "0.3",
+                                    "candidate_maximum_yaw_rate_rad_s": "0.8",
+                                    "candidate_maximum_yaw_acceleration_rad_s2": "0.25",
                                     "exp_frontend_us": "1200",
                                     "exp_opt_us": "34000",
                                     "backup_frontend_us": "900",
@@ -210,6 +218,16 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertFalse(records[0]["solve_deadline_exceeded"])
         self.assertTrue(records[0]["command_available"])
         self.assertEqual(records[0]["planning_total_us"], 8250.0)
+        self.assertEqual(records[0]["route_yaw_source"], 0)
+        self.assertEqual(records[0]["route_yaw_target_rad"], 1.25)
+        self.assertEqual(records[0]["route_yaw_lookahead_m"], 7.5)
+        self.assertEqual(records[0]["route_yaw_progress_arc_m"], 18.0)
+        self.assertEqual(records[0]["yaw_rate_limit_rad_s"], 1.0)
+        self.assertEqual(records[0]["yaw_acceleration_limit_rad_s2"], 0.3)
+        self.assertEqual(records[0]["candidate_maximum_yaw_rate_rad_s"], 0.8)
+        self.assertEqual(
+            records[0]["candidate_maximum_yaw_acceleration_rad_s2"], 0.25
+        )
         self.assertEqual(records[0]["exp_frontend_us"], 1200.0)
         self.assertEqual(records[0]["exp_opt_us"], 34000.0)
         self.assertEqual(records[0]["backup_frontend_us"], 900.0)

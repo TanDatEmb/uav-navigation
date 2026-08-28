@@ -29,3 +29,6 @@ param show EKF2_RNG_CTRL
 param show EKF2_MAG_TYPE
 param show COM_RC_IN_MODE
 param show UXRCE_DDS_SYNCT
+param show MPC_YAWRAUTO_MAX
+param show MPC_YAWRAUTO_ACC
+param show MC_YAWRATE_MAX

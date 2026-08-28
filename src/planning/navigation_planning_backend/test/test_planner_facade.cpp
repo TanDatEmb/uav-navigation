@@ -1,4 +1,5 @@
 #include <navigation_planning_backend/planner_facade.hpp>
+#include <planner_core/route_yaw_reference.hpp>
 
 #include <functional>
 #include <memory>
@@ -100,6 +101,10 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
   EXPECT_EQ(diagnostics.solve_stage, 0);
   EXPECT_EQ(diagnostics.solve_point_count, 0U);
   EXPECT_EQ(diagnostics.module_time_us[0], 0.0);
+  EXPECT_EQ(diagnostics.route_yaw_source,
+            static_cast<int>(navigation_planning_backend::RouteYawSource::kInvalidRoute));
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 1.0);
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 0.3);
 }
 
 TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {

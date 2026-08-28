@@ -8525,3 +8525,26 @@ release profiles must not use the former allowance.
   Then capture active PX4 limits and run open-map component SITL covering
   straight flight, 90-degree pass-through, standstill, and reversal before M2
   can be marked accepted.
+
+### 2026-08-28 - Record route-yaw provenance and active PX4 yaw limits
+
+- **Owner:** Planner diagnostics, structured runtime trace, and PX4 SITL startup
+  evidence.
+- **Scope:** Export route-yaw source, semantic target, lookahead, route progress,
+  configured rate/acceleration limits, and measured candidate maxima into every
+  planner solve trace. Print effective `MPC_YAWRAUTO_MAX`, `MPC_YAWRAUTO_ACC`,
+  and `MC_YAWRATE_MAX` values into the PX4 artifact log at startup.
+- **Safety impact:** Observability only. These fields do not select yaw, change
+  a limit, admit a candidate, alter a PX4 parameter, or convert a missing value
+  into a pass. Missing or unparsable active PX4 values leave M2 acceptance open.
+- **Evidence:** C++ diagnostics tests verify configured limits; planner-trace
+  tests verify lossless numeric normalization; runtime-contract tests require
+  all three PX4 parameter queries in the startup wrapper.
+- **Removal/review condition:** Replace only when equivalent typed PX4
+  parameter telemetry and route-yaw provenance are included in each immutable
+  run manifest. Never infer active airframe limits solely from source defaults.
+- **Verification:** Release-build `navigation_planning_backend` and
+  `navigation_runtime`; run their CTest sets plus
+  `tools.runtime.tests.test_planner_trace` and
+  `tools.runtime.tests.test_runtime_contract`. The next SITL report must retain
+  the raw PX4 values and structured yaw trace before any M2 PASS decision.

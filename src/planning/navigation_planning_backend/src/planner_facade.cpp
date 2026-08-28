@@ -408,6 +408,18 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
       impl_->planner->requestedGoalInflatedState());
   output.planning_goal_inflated_state = static_cast<int>(
       impl_->planner->planningGoalInflatedState());
+  const auto route_yaw = impl_->planner->routeYawReference();
+  output.route_yaw_source = static_cast<int>(route_yaw.source);
+  output.route_yaw_target_rad = route_yaw.target_yaw_rad;
+  output.route_yaw_lookahead_m = route_yaw.lookahead_m;
+  output.route_yaw_progress_arc_m = route_yaw.progress_arc_m;
+  output.yaw_rate_limit_rad_s = impl_->planner->yawRateLimitRadS();
+  output.yaw_acceleration_limit_rad_s2 =
+      impl_->planner->yawAccelerationLimitRadS2();
+  output.candidate_maximum_yaw_rate_rad_s =
+      impl_->planner->latestCandidateMaximumYawRateRadS();
+  output.candidate_maximum_yaw_acceleration_rad_s2 =
+      impl_->planner->latestCandidateMaximumYawAccelerationRadS2();
   output.backup_certificate = impl_->planner->backupCertificateDiagnostics();
   output.optimization = toProductDiagnostics(impl_->planner->latestExpOptimizationDiagnostics());
   return output;

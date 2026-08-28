@@ -2577,6 +2577,18 @@ void NavigationRuntimeNode::runCycle() {
     add_trace_value("required_lookahead_m", planner_diagnostics.required_lookahead_m);
     add_trace_value("certified_lookahead_m", planner_diagnostics.certified_lookahead_m);
     add_trace_value("lookahead_complete", planner_diagnostics.lookahead_complete ? 1 : 0);
+    add_trace_value("route_yaw_source", planner_diagnostics.route_yaw_source);
+    add_trace_value("route_yaw_target_rad", planner_diagnostics.route_yaw_target_rad);
+    add_trace_value("route_yaw_lookahead_m", planner_diagnostics.route_yaw_lookahead_m);
+    add_trace_value("route_yaw_progress_arc_m",
+                    planner_diagnostics.route_yaw_progress_arc_m);
+    add_trace_value("yaw_rate_limit_rad_s", planner_diagnostics.yaw_rate_limit_rad_s);
+    add_trace_value("yaw_acceleration_limit_rad_s2",
+                    planner_diagnostics.yaw_acceleration_limit_rad_s2);
+    add_trace_value("candidate_maximum_yaw_rate_rad_s",
+                    planner_diagnostics.candidate_maximum_yaw_rate_rad_s);
+    add_trace_value("candidate_maximum_yaw_acceleration_rad_s2",
+                    planner_diagnostics.candidate_maximum_yaw_acceleration_rad_s2);
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
     add_trace_value("exp_nonfinite_evaluation_count",
