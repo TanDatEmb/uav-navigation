@@ -1524,9 +1524,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const double outgoing_distance = (next_target - current_endpoint).norm();
             const double guide_length = geometry_utils::computePathLength(guide_path);
             const double remaining_horizon = cfg_.planning_horizon_m - guide_length;
-            const double planning_speed = std::min(
-                cfg_.exp_traj_cfg.max_vel,
-                std::max(solve_state_.v.norm(), guide_path_end_vel));
             Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
             for (std::size_t index = guide_path.size(); index > 1U; --index) {
                 const Eigen::Vector3d delta =
@@ -1539,8 +1536,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
             const double required_lookahead_envelope =
-                passThroughRequiredLookaheadDistance(
-                    planning_speed, cfg_.exp_traj_cfg.max_vel,
+                passThroughCruiseLookaheadDistance(
+                    cfg_.exp_traj_cfg.max_vel,
                     cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
                     cfg_.replan_forward_dt_s, cfg_.receding_distance_m);
             const double desired_lookahead = std::isfinite(

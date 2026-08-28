@@ -63,6 +63,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-017 | Pass-through safety-suffix ownership transfer (`SAFETY_INVARIANT`) | exact previous goal identity, measured pass-through transition, current command lease, unchanged world certificate and finite declared end | PROVISIONAL | A braking suffix remains a world-certified physical command when mission ownership advances to the next route checkpoint. The store may atomically rebind its goal epoch/request identity without relabeling it as MAIN, giving the new-goal solve only the suffix's existing finite recovery window. Failed identity/world/lease checks still invalidate immediately. | Exercise nominal and safety-suffix handoffs, wrong-epoch/world negative tests, repeated SITL corner transitions and suffix-expiry fail-closed behavior. |
 | HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
 | HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
+| HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
 
 ## Temporary-bypass register
 
@@ -8955,3 +8956,38 @@ release profiles must not use the former allowance.
   the three-column mission. Require no false incoming-axis rejection after a
   pinned boundary, zero admitted folds, bounded cross-track/yaw, and complete
   mission evidence across more than one run.
+
+### 2026-08-28 - Size pass-through route windows at mission cruise speed
+
+- **Owner:** Planner pass-through horizon geometry.
+- **Scope:** Derive the required outgoing route window from the mission maximum
+  velocity rather than the instantaneous measured/guide speed. Continue to
+  bound it by the finite outgoing leg, remaining planning horizon, traversable
+  A* prefix, and immutable-map segment certificate.
+- **Safety impact:** No velocity/acceleration/jerk limit, planner cadence,
+  search deadline, map policy, waypoint radius, or candidate gate is changed.
+  This is a conservative increase in requested geometry at low speed; failure
+  to find or certify it retains the acceptance-fillet/fail-closed path. The
+  same complete corridor, continuous dynamics, flatness, route-regression,
+  latest-world and execution checks authorize the resulting command.
+- **Derivation and cost:** At the declared 3 m/s mission cap, 2 m/s2 and
+  4 m/s3 limits, 0.2 s forward-replan time and 3 m receding distance, the
+  existing physics envelope is 7.2 m. Artifact
+  `.artifacts/runtime/external-mode-check-20260828T105516-984820` showed the
+  requested pass-through window changing from about 3.0 m near rest to 7.2 m
+  at cruise. Consecutive optimizer terminal routes therefore changed while the
+  vehicle accelerated, and the old 3.7 m-short prefix expired before a stable
+  replacement committed.
+- **Evidence:** Unit evidence fixes the cruise window at 7.2 m and proves it
+  does not collapse to the zero-speed 3 m receding-only value. The prior
+  physics, finite-leg, map-certification and insufficient-search-window tests
+  remain authoritative. Backend tests, repeated SITL, and recorded-data
+  distributions remain required.
+- **Removal/review condition:** Replace only with an adaptive window that has
+  hysteresis and proves an equal command-availability envelope from measured
+  latency distributions. Do not lower planner cadence or increase deadlines to
+  hide terminal-route churn.
+- **Verification:** Run all backend tests and Release build, then repeat the
+  same three-column mission. Compare lookahead variance, command duration,
+  optimizer/rebase failures, waypoint coverage, speed continuity, yaw and
+  clearance across multiple runs.

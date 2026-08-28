@@ -131,6 +131,22 @@ inline double passThroughRequiredLookaheadDistance(
   return required_distance;
 }
 
+// A mission route window is sized for the declared cruise envelope, not the
+// instantaneous measured speed. Otherwise the requested geometry grows while
+// accelerating and collapses while braking, so consecutive solves optimize
+// different terminal routes exactly when command continuity matters most.
+inline double passThroughCruiseLookaheadDistance(
+    const double maximum_velocity_mps,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3,
+    const double replan_forward_dt_s,
+    const double receding_distance_m) noexcept {
+  return passThroughRequiredLookaheadDistance(
+      maximum_velocity_mps, maximum_velocity_mps,
+      maximum_acceleration_mps2, maximum_jerk_mps3,
+      replan_forward_dt_s, receding_distance_m);
+}
+
 inline bool passThroughLookaheadComplete(
     const double required_distance_m, const double certified_distance_m) noexcept {
   return std::isfinite(required_distance_m) && required_distance_m > 0.0 &&

@@ -422,6 +422,17 @@ TEST(PlannerPassThrough, SeparatesRequiredAndCertifiedLookahead) {
   EXPECT_FALSE(navigation_planning_backend::passThroughLookaheadComplete(required, -1.0));
 }
 
+TEST(PlannerPassThrough, CruiseLookaheadDoesNotCollapseAtLowMeasuredSpeed) {
+  const double cruise_window =
+      navigation_planning_backend::passThroughCruiseLookaheadDistance(
+          3.0, 2.0, 4.0, 0.2, 3.0);
+  EXPECT_NEAR(cruise_window, 7.2, 1.0e-12);
+  EXPECT_GT(
+      cruise_window,
+      navigation_planning_backend::passThroughRequiredLookaheadDistance(
+          0.0, 3.0, 2.0, 4.0, 0.2, 3.0));
+}
+
 TEST(PlannerPassThrough, VisibilityPrefixCannotMasqueradeAsMissionBoundary) {
   const Eigen::Vector3d mission_waypoint{85.0, -5.0, 3.0};
   EXPECT_FALSE(navigation_planning_backend::passThroughGuideReachesMissionBoundary(
