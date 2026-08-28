@@ -31,6 +31,10 @@ At each planning timer tick:
    through a bounded prefix of the outgoing segment for straight, shallow, and
    genuine-corner legs. The corridor generator inserts a route-boundary
    junction contract at the active waypoint and preserves its marker through
+   a hard acceptance-region cell. A successful hot retarget clears its
+   one-shot transition flag, so later timer ticks retain that exact certified
+   MAIN until normal horizon renewal is due instead of repeatedly moving the
+   future junction.
    SFC simplification. The adjacent MINCO junction is held at the recorded
    waypoint while optimizing, then independently hard-checked against the
    waypoint acceptance ball; the surrounding collision-certified corridor

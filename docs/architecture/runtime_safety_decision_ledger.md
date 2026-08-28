@@ -10664,3 +10664,48 @@ release profiles must not use the former allowance.
   then `make build && make test`; then repeat the exact 5 m/s
   `long_three_pillars_multiwaypoint` scenario and compare against
   `external-mode-check-20260828T185557-1458329`.
+
+### 2026-08-29 - Make pass-through hot retarget a one-shot forced solve
+
+- **Owner/status:** Runtime planner FSM and pass-through route-boundary
+  execution, correctness fix, `PROVISIONAL`.
+- **Scope:** After a successful new-waypoint commit, clear
+  `hot_goal_transition_` for both measured-state `PlanFromRest` and retained
+  command `ReplanOnce` transition paths. Subsequent timer ticks use the normal
+  certified-horizon renewal decision. Failed transitions keep the flag and
+  continue fail-closed recovery.
+- **Safety impact:** No map, route-regression, acceptance, dynamics, tracking,
+  backup, freshness or deadline threshold changes. The first solve for a new
+  checkpoint remains forced. Map callbacks still revalidate the remaining
+  immutable command, while BACKUP/emergency, missing command, invalid metadata
+  and an expiring MAIN still force optimization.
+- **Behavioral reason:** Exact-SHA artifacts
+  `external-mode-check-20260828T190327-1469771` and
+  `external-mode-check-20260828T190653-1473076` reached only waypoint 6 and 4
+  respectively before `PAUSED_SAFETY_STOP`. In the second run the runtime
+  committed generations 255 through 311 roughly every planning tick while the
+  candidate role remained MAIN. Every individual route-lookahead solve inserted
+  a hard 0.9 m route-boundary junction, but the executed command never came
+  closer than 4.55 m to waypoint `(85,5,3)`: each successful hot-retarget left
+  the transition flag set, so `forced_transition` bypassed scheduler deferral
+  and continually moved the future junction. Candidate retries then attempted
+  to return to the missed waypoint and were correctly rejected by the existing
+  0.5 m route-regression certificate.
+- **False-accept/false-reject consequences:** A successful committed transition
+  consumes the one-shot flag; this cannot authorize an unvalidated command.
+  Clearing it too early would risk retaining a previous-goal command, so the
+  state change remains strictly inside the successful commit path. Failures do
+  not clear it.
+- **Runtime cost and evidence required:** This should reduce optimizer and
+  commit churn and allow the already-certified acceptance junction to advance
+  into the executable present. Focused FSM tests, Release build and full tests
+  must pass. Repeated SITL must prove waypoint coverage, no collision, bounded
+  route regression, reduced solve/commit count, and no obstacle-response,
+  speed, altitude or yaw regression.
+- **Removal/review condition:** Preserve one-shot transition semantics unless
+  goal identity is represented by a dedicated committed FSM state. Never use a
+  sticky forced-transition flag as a periodic replanning policy.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  test_planner_fsm -j2 && ./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`; then `make build && make test`; then repeat 5 m/s
+  `long_three_pillars_multiwaypoint` SITL and compare to both artifacts above.

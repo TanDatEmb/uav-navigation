@@ -2403,7 +2403,10 @@ void NavigationRuntimeNode::runCycle() {
         active_goal_->waypoint_index == goal->waypoint_index &&
         active_goal_->request_id == goal->request_id) {
       if (new_goal) new_goal_ = false;
-      if (plan_from_rest_with_transition) hot_goal_transition_ = false;
+      if (clearHotGoalTransitionAfterCommit(
+              plan_from_rest_with_transition, replan_for_new_goal)) {
+        hot_goal_transition_ = false;
+      }
       if (restart_from_rest) restart_from_rest_ = false;
     }
   }

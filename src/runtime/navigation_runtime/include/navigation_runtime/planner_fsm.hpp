@@ -25,6 +25,17 @@ inline bool canHotRetargetAtWaypointTransition(
          !planner_failure_latched;
 }
 
+// A hot-retarget flag authorizes exactly one forced solve for the new
+// checkpoint. Once either the measured-state or hot-stitch transition has
+// committed, leaving the flag set would bypass horizon-driven renewal on every
+// later timer tick and repeatedly move a future route-boundary junction away
+// from the executing vehicle.
+inline bool clearHotGoalTransitionAfterCommit(
+    bool measured_state_transition_committed,
+    bool hot_stitch_transition_committed) noexcept {
+  return measured_state_transition_committed || hot_stitch_transition_committed;
+}
+
 // A pass-through goal transition changes the route boundary. Rebase on the
 // newest measured PVA state rather than hot-stitching through the previous
 // endpoint. The remaining-time rule also covers an expired command when the

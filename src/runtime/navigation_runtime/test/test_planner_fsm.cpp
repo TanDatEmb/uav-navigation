@@ -16,6 +16,13 @@ TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
             PlannerResultDisposition::CommandReady);
 }
 
+TEST(PlannerFsm, ClearsForcedHotRetargetAfterEitherSuccessfulTransitionPath) {
+  EXPECT_TRUE(clearHotGoalTransitionAfterCommit(true, false));
+  EXPECT_TRUE(clearHotGoalTransitionAfterCommit(false, true));
+  EXPECT_TRUE(clearHotGoalTransitionAfterCommit(true, true));
+  EXPECT_FALSE(clearHotGoalTransitionAfterCommit(false, false));
+}
+
 TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   const auto decision = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
