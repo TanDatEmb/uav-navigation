@@ -446,6 +446,23 @@ TEST(PlannerPassThrough, CollinearPassThroughLegStillUsesLookaheadEnvelope) {
   EXPECT_LT(lookahead, (next_target - waypoint).norm());
 }
 
+TEST(PlannerPassThrough, GenuineCornerRetainsLongOutgoingLookahead) {
+  const Eigen::Vector3d waypoint{50.0, 5.0, 3.0};
+  const Eigen::Vector3d next_target{50.0, -5.0, 3.0};
+  const Eigen::Vector3d incoming_tangent{30.0, 0.0, 0.0};
+  ASSERT_TRUE(navigation_planning_backend::passThroughGenuineCorner(
+      waypoint, next_target, incoming_tangent));
+
+  const double required =
+      navigation_planning_backend::passThroughRequiredLookaheadDistance(
+          3.0, 3.0, 2.0, 4.0, 0.2, 3.0);
+  EXPECT_NEAR(required, 7.2, 1.0e-12);
+  EXPECT_TRUE(navigation_planning_backend::passThroughOutgoingLookaheadEligible(
+      required, (next_target - waypoint).norm(), 15.0, 0.2));
+  EXPECT_FALSE(navigation_planning_backend::passThroughOutgoingLookaheadEligible(
+      required, (next_target - waypoint).norm(), 0.4, 0.2));
+}
+
 TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
   EXPECT_DOUBLE_EQ(
       navigation_planning_backend::routeBoundaryJunctionTime(

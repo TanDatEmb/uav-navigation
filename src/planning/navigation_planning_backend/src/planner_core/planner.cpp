@@ -1552,16 +1552,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             const double search_distance = remaining_horizon;
-            // A sharp turn uses the acceptance-ball fillet below instead of a
-            // long outgoing extension. This keeps the route-boundary geometry
-            // local while still giving the live command room to rotate before
-            // the measured waypoint handoff. Straight and shallow pass-through
-            // legs retain the longer look-ahead continuity path.
-            if (!genuine_corner &&
-                std::isfinite(desired_lookahead) && desired_lookahead > 1.0e-6 &&
-                std::isfinite(outgoing_distance) &&
-                outgoing_distance > 1.0e-6 &&
-                std::isfinite(search_distance) && search_distance > cfg_.resolution * 2.0) {
+            // Every pass-through boundary needs enough certified outgoing
+            // route to remain executable across the measured handoff. A
+            // genuine corner additionally receives the hard route-boundary
+            // gate below so the longer solve cannot cut the waypoint.
+            if (passThroughOutgoingLookaheadEligible(
+                    desired_lookahead, outgoing_distance, search_distance,
+                    cfg_.resolution)) {
                 vec_Vec3f next_path;
                 solve_stage_.store(2);
                 if (PathSearch(guide_path.back(), next_target, search_distance,

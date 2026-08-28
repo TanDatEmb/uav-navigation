@@ -61,6 +61,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-015 | Guide-owned vertical SFC envelope (`SAFETY_INVARIANT`) | each SFC seed-line min/max Z plus one inflated-map voxel | PROVISIONAL | Intentional vertical avoidance remains owned by each collision-checked A* guide segment; MINCO cannot exploit the full rolling-map height and create an unrelated dive/climb on another segment. The scale follows map discretization and overlap is recertified after clipping, but repeated vertical-obstacle and dataset evidence is still required. | Prove vertical detours remain feasible, continuous corridor overlap is preserved, and altitude/clearance improve across repeated SITL and recorded data without optimizer starvation. |
 | HG-016 | Nominal boundary-overspeed recovery (`SAFETY_INVARIANT`) | peak no greater than measured initial speed; exact suffix below mission cap by `1.15 * jerkLimitedStopTime(initial-cap)` | PROVISIONAL | A measured state already above the nominal speed cap makes an instantaneous strict boundary impossible. MAIN now matches BACKUP ownership: it may only reduce, never worsen, that inherited overspeed and must recover on a bounded physics-derived schedule. Acceleration, jerk, corridor, flatness, world and execution gates remain unchanged. | Exercise normal, worsening and late-recovery negatives; repeat speed-cap SITL and recorded-data shadow planning, then inspect overspeed magnitude/recovery distributions before promotion. |
 | HG-017 | Pass-through safety-suffix ownership transfer (`SAFETY_INVARIANT`) | exact previous goal identity, measured pass-through transition, current command lease, unchanged world certificate and finite declared end | PROVISIONAL | A braking suffix remains a world-certified physical command when mission ownership advances to the next route checkpoint. The store may atomically rebind its goal epoch/request identity without relabeling it as MAIN, giving the new-goal solve only the suffix's existing finite recovery window. Failed identity/world/lease checks still invalidate immediately. | Exercise nominal and safety-suffix handoffs, wrong-epoch/world negative tests, repeated SITL corner transitions and suffix-expiry fail-closed behavior. |
+| HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
 
 ## Temporary-bypass register
 
@@ -8875,3 +8876,43 @@ release profiles must not use the former allowance.
   `install/setup.bash`; run the focused `test_route_yaw_reference`, backend and
   runtime suites, `make build`, then
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
+
+### 2026-08-28 - Preserve physics-derived lookahead through genuine corners
+
+- **Owner:** Planner pass-through route geometry and nominal corridor gate.
+- **Scope:** Apply the existing stopping/replan/receding-distance lookahead to
+  genuine corners as well as shallow route boundaries. A genuine corner marks
+  its mission waypoint as a hard route-boundary cell; the bounded
+  acceptance-ball fillet remains the fallback when no long outgoing prefix is
+  map-certified.
+- **Safety impact:** No planner cadence, planning horizon, waypoint acceptance
+  radius, map policy, corridor tolerance, dynamic limit, or execution lease is
+  relaxed. The route-boundary cell fixes the optimizer junction at the mission
+  waypoint, and the complete candidate still requires corridor, continuous
+  V/A/J, flatness, latest-world, route-regression, and execution admission.
+  Failure to search, certify, allocate, or optimize the longer route falls back
+  to the existing local fillet and ultimately fails closed.
+- **Derivation and cost:** At 3 m/s with the mission limits of 2 m/s2 and
+  4 m/s3, the existing physics helper requires 7.2 m: jerk-limited stopping
+  distance plus two 0.2 s forward-replan intervals and the configured 3 m
+  receding distance. Artifact
+  `.artifacts/runtime/external-mode-check-20260828T104135-974023` retained the
+  prior finite suffix at waypoint 6, but the corner guide ended only 0.675 m
+  into the outgoing leg and expired after repeated new-goal solve failures.
+  Source inspection found the genuine-corner route-boundary branch unreachable
+  behind an outer `!genuine_corner` condition.
+- **Evidence:** Unit evidence requires a 90-degree corner to remain eligible
+  for the 7.2 m outgoing lookahead and rejects a search window no larger than
+  two map voxels. The existing route-boundary tests prove the corridor gate is
+  preserved during simplification, fixes the junction at the waypoint, and
+  assigns distinct incoming/outgoing time. Full backend build/tests and
+  repeated SITL remain required.
+- **Removal/review condition:** Replace only with an explicit multi-segment
+  mission route generator that provides an equal or longer certified command
+  and equivalent waypoint-boundary ownership. Do not lower planner frequency,
+  enlarge acceptance radius, retain stale world certificates, or disable the
+  boundary gate to conceal corner solve latency.
+- **Verification:** Run the complete backend tests and exact Release build,
+  then repeat the 3 m/s three-column mission. Inspect required/certified
+  lookahead, command duration, route-boundary acceptance, optimizer and rebase
+  failures, yaw continuity, route regression, clearance, and mission coverage.

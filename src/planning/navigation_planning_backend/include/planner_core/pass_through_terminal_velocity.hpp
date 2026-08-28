@@ -138,6 +138,22 @@ inline bool passThroughLookaheadComplete(
          certified_distance_m + 1.0e-6 >= required_distance_m;
 }
 
+// Long outgoing lookahead is a route-continuity mechanism for every
+// pass-through boundary, including genuine corners. Corner classification
+// selects the hard route-boundary gate; it must not disable the geometry that
+// gives the optimizer time and distance to execute the turn.
+inline bool passThroughOutgoingLookaheadEligible(
+    const double desired_lookahead_m,
+    const double outgoing_distance_m,
+    const double remaining_search_distance_m,
+    const double map_resolution_m) noexcept {
+  return std::isfinite(desired_lookahead_m) && desired_lookahead_m > 1.0e-6 &&
+         std::isfinite(outgoing_distance_m) && outgoing_distance_m > 1.0e-6 &&
+         std::isfinite(remaining_search_distance_m) &&
+         std::isfinite(map_resolution_m) && map_resolution_m > 0.0 &&
+         remaining_search_distance_m > 2.0 * map_resolution_m;
+}
+
 // Outgoing-route lookahead may start only after the current guide actually
 // reaches the controller-owned mission waypoint. A visibility-bounded prefix
 // is an internal receding-horizon endpoint, never a route boundary.
