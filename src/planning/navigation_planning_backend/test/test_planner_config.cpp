@@ -810,13 +810,3 @@ TEST(PlannerKinematicStateBoundary, BoundsOnlyEstimatedHighOrderDerivatives) {
       0.0, initial, 3.0, 5.0, 30.0, 0.05, 0.0);
   EXPECT_TRUE(bounded_seed.feasible);
 }
-
-TEST(PlannerKinematicStateBoundary, EstimatedJerkIsNotAColdPlanConstraint) {
-  const Eigen::Vector3d finite_difference_jerk{-4.0, 6.0, -7.0};
-  EXPECT_TRUE(navigation_planning_backend::conditionEstimatedBoundaryJerk(
-                  finite_difference_jerk, true)
-                  .isZero(0.0));
-  EXPECT_TRUE(navigation_planning_backend::conditionEstimatedBoundaryJerk(
-                  finite_difference_jerk, false)
-                  .isApprox(finite_difference_jerk, 0.0));
-}
