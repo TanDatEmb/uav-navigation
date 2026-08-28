@@ -47,6 +47,7 @@
 #include <data_structure/cmd_traj.h>
 #include <data_structure/backup_traj.h>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_mission/route_progress.hpp>
 
 
 namespace navigation_planning_backend {
@@ -105,6 +106,7 @@ namespace navigation_planning_backend {
             navigation_world_model::CellState::kUndefined};
         bool goal_endpoint_adjusted_{false};
         std::optional<Vec3f> pass_through_next_target_;
+        std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
 
         // use negative value to indicate the traj is not available
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
@@ -339,6 +341,30 @@ namespace navigation_planning_backend {
             } else {
                 pass_through_next_target_.reset();
             }
+        }
+
+        // Planning-thread-only immutable mission route. Mission, planner
+        // endpoint/tangent selection and diagnostics share this identity;
+        // M2 will drive yaw from its route lookahead. Compatibility mirrors
+        // are never authoritative here.
+        bool setRouteSnapshot(
+                const navigation_mission::ImmutableRouteSnapshot& route) noexcept {
+            if (!route.valid()) {
+                route_snapshot_.reset();
+                pass_through_next_target_.reset();
+                return false;
+            }
+            route_snapshot_ = route;
+            const std::size_t next_index = route.active_waypoint_index + 1U;
+            if (route.waypoints[route.active_waypoint_index].behavior ==
+                    navigation_mission::MissionWaypoint::Behavior::PassThrough &&
+                next_index < route.waypoints.size()) {
+                pass_through_next_target_ =
+                    route.waypoints[next_index].position_enu;
+            } else {
+                pass_through_next_target_.reset();
+            }
+            return true;
         }
 
         void cancelActiveSolve() {

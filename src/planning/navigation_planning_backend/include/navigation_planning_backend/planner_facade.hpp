@@ -14,6 +14,7 @@
 #include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_planning/planner_status.hpp>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_mission/route_progress.hpp>
 #include <navigation_world_model/world_commit_authorizer.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
@@ -42,6 +43,8 @@ class PlannerFacade final {
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
   void setGoalAcceptanceRadius(double radius_m) noexcept;
+  [[nodiscard]] bool setRouteSnapshot(
+      const navigation_mission::ImmutableRouteSnapshot& route) noexcept;
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);

@@ -13,6 +13,7 @@ find_package(fmt REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common)
 find_package(navigation_world_model REQUIRED)
 find_package(navigation_planning REQUIRED)
+find_package(navigation_mission REQUIRED)
 find_package(rog_map_vendor REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -60,6 +61,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${PCL_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
   Eigen3::Eigen
   navigation_planning::navigation_planning
+  navigation_mission::navigation_mission
   navigation_world_model::navigation_world_model
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -89,7 +91,7 @@ install(EXPORT ${PROJECT_NAME}Targets
 )
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 fmt navigation_planning navigation_world_model rog_map_vendor std_msgs yaml-cpp)
+ament_export_dependencies(Eigen3 fmt navigation_mission navigation_planning navigation_world_model rog_map_vendor std_msgs yaml-cpp)
 ament_export_include_directories(include)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -101,7 +103,7 @@ if(BUILD_TESTING)
       yaml-cpp::yaml-cpp)
     target_include_directories(${target} PRIVATE ${PCL_INCLUDE_DIRS})
     ament_target_dependencies(${target}
-      navigation_planning navigation_world_model rog_map_vendor std_msgs)
+      navigation_mission navigation_planning navigation_world_model rog_map_vendor std_msgs)
   endfunction()
 
   ament_add_gtest(test_trajectory test/test_trajectory.cpp)

@@ -15,6 +15,12 @@ MissionController::MissionController(Mission mission)
   }
 }
 
+navigation_mission::ImmutableRouteSnapshot MissionController::routeSnapshot() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return route_progress_.snapshot(
+      mission_.id, mission_.frame, 1U, request_id_, active_waypoint_index_);
+}
+
 void MissionController::activate(double now_s) {
   if (!std::isfinite(now_s)) {
     throw std::invalid_argument("mission activation time must be finite");

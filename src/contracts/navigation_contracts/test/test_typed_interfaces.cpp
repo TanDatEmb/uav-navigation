@@ -2,6 +2,7 @@
 
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
@@ -40,6 +41,42 @@ TEST(NavigationContracts, PropagatedOdometryCarriesEpochSequenceAndSourceState) 
   EXPECT_EQ(message.odometry.child_frame_id, "base_link");
   EXPECT_EQ(message.odometry.header.stamp.sec, 12);
   EXPECT_EQ(message.odometry.header.stamp.nanosec, 34U);
+}
+
+TEST(NavigationContracts, NavigationGoalCarriesVersionedRouteAndMeasuredProgress) {
+  navigation_contracts::msg::NavigationGoal message;
+  message.header.frame_id = "lio_odom";
+  message.mission_id = "three-pillars";
+  message.waypoint_index = 1U;
+  message.request_id = 7U;
+  message.route.mission_id = message.mission_id;
+  message.route.frame_id = message.header.frame_id;
+  message.route.route_revision = 3U;
+  message.route.request_id = message.request_id;
+  message.route.active_waypoint_index = message.waypoint_index;
+  message.route.measured_progress_valid = true;
+  message.route.measured_segment_index = 0U;
+  message.route.measured_progress_arc_m = 8.5;
+  message.route.measured_projection_arc_m = 8.0;
+  message.route.measured_lateral_error_m = 0.2;
+  geometry_msgs::msg::Point point;
+  point.x = 10.0;
+  point.z = 2.0;
+  message.route.waypoint_positions.push_back(point);
+  message.route.waypoint_ids.push_back("wp-1");
+  message.route.waypoint_acceptance_radii_m.push_back(1.0);
+  message.route.waypoint_behaviors.push_back(
+      navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH);
+
+  EXPECT_EQ(message.route.mission_id, message.mission_id);
+  EXPECT_EQ(message.route.frame_id, message.header.frame_id);
+  EXPECT_EQ(message.route.route_revision, 3U);
+  EXPECT_EQ(message.route.request_id, message.request_id);
+  EXPECT_EQ(message.route.active_waypoint_index, message.waypoint_index);
+  ASSERT_EQ(message.route.waypoint_positions.size(), 1U);
+  EXPECT_EQ(message.route.waypoint_ids.front(), "wp-1");
+  EXPECT_DOUBLE_EQ(message.route.measured_progress_arc_m, 8.5);
+  EXPECT_DOUBLE_EQ(message.route.measured_projection_arc_m, 8.0);
 }
 
 TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {

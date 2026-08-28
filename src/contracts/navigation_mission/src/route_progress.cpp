@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 
 namespace navigation_mission {
@@ -32,6 +33,105 @@ std::optional<double> segmentDistanceToPoint(
 }
 
 }  // namespace
+
+bool ImmutableRouteSnapshot::valid() const noexcept {
+  if (mission_id.empty() || frame.empty() || route_revision == 0U ||
+      request_id == 0U || waypoints.empty() ||
+      active_waypoint_index >= waypoints.size() ||
+      waypoint_arc_lengths_m.size() != waypoints.size() ||
+      !std::isfinite(total_length_m) || total_length_m < 0.0 ||
+      !measured_progress.valid ||
+      !measured_progress.projection.valid ||
+      !std::isfinite(measured_progress.progress_arc_m) ||
+      !std::isfinite(measured_progress.projection.arc_length_m) ||
+      !std::isfinite(measured_progress.projection.lateral_error_m) ||
+      !measured_progress.projection.point.allFinite() ||
+      !measured_progress.projection.tangent.allFinite() ||
+      measured_progress.progress_arc_m < 0.0 ||
+      measured_progress.progress_arc_m > total_length_m + 1.0e-6 ||
+      measured_progress.projection.arc_length_m < 0.0 ||
+      measured_progress.projection.arc_length_m > total_length_m + 1.0e-6 ||
+      measured_progress.projection.lateral_error_m < 0.0) {
+    return false;
+  }
+  std::set<std::string> waypoint_ids;
+  for (std::size_t index = 0; index < waypoints.size(); ++index) {
+    const auto& waypoint = waypoints[index];
+    if (waypoint.id.empty() || !waypoint.position_enu.allFinite() ||
+        !std::isfinite(waypoint.acceptance_radius_m) ||
+        waypoint.acceptance_radius_m <= 0.0 ||
+        !std::isfinite(waypoint_arc_lengths_m[index])) {
+      return false;
+    }
+    if (!waypoint_ids.insert(waypoint.id).second) return false;
+    if (index > 0U && waypoint_arc_lengths_m[index] + 1.0e-9 <
+                          waypoint_arc_lengths_m[index - 1U]) {
+      return false;
+    }
+  }
+  for (const auto& segment : segments) {
+    if (segment.start_waypoint_index >= waypoints.size() ||
+        segment.end_waypoint_index >= waypoints.size() ||
+        segment.start_waypoint_index >= segment.end_waypoint_index ||
+        !segment.start.allFinite() || !segment.end.allFinite() ||
+        !segment.tangent.allFinite() || !std::isfinite(segment.start_arc_m) ||
+        !std::isfinite(segment.end_arc_m) || !std::isfinite(segment.length_m) ||
+        segment.length_m <= 0.0 || segment.end_arc_m <= segment.start_arc_m) {
+      return false;
+    }
+    if ((segment.start - waypoints[segment.start_waypoint_index].position_enu).norm() >
+            1.0e-6 ||
+        (segment.end - waypoints[segment.end_waypoint_index].position_enu).norm() >
+            1.0e-6 ||
+        std::abs(segment.start_arc_m -
+                 waypoint_arc_lengths_m[segment.start_waypoint_index]) > 1.0e-6 ||
+        std::abs(segment.end_arc_m -
+                 waypoint_arc_lengths_m[segment.end_waypoint_index]) > 1.0e-6) {
+      return false;
+    }
+  }
+  if (std::abs(waypoint_arc_lengths_m.back() - total_length_m) > 1.0e-6) {
+    return false;
+  }
+  if (segments.empty()) {
+    return measured_progress.projection.segment_index ==
+           std::numeric_limits<std::size_t>::max();
+  }
+  if (measured_progress.projection.segment_index >= segments.size()) return false;
+  const auto& measured_segment =
+      segments[measured_progress.projection.segment_index];
+  if (measured_progress.projection.arc_length_m + 1.0e-6 <
+          measured_segment.start_arc_m ||
+      measured_progress.projection.arc_length_m >
+          measured_segment.end_arc_m + 1.0e-6) {
+    return false;
+  }
+  return true;
+}
+
+std::optional<Eigen::Vector3d> ImmutableRouteSnapshot::pointAtArc(
+    const double arc_length_m) const noexcept {
+  if (!valid() || !std::isfinite(arc_length_m)) return std::nullopt;
+  if (segments.empty()) return waypoints.front().position_enu;
+  const double bounded_arc = std::clamp(arc_length_m, 0.0, total_length_m);
+  const auto iterator = std::lower_bound(
+      segments.begin(), segments.end(), bounded_arc,
+      [](const RouteSegment& segment, const double arc) {
+        return segment.end_arc_m < arc;
+      });
+  const auto& segment = iterator == segments.end() ? segments.back() : *iterator;
+  const double fraction = std::clamp(
+      (bounded_arc - segment.start_arc_m) / segment.length_m, 0.0, 1.0);
+  return segment.start + fraction * (segment.end - segment.start);
+}
+
+std::optional<Eigen::Vector3d> ImmutableRouteSnapshot::routeLookaheadPoint(
+    const double lookahead_m) const noexcept {
+  if (!valid() || !std::isfinite(lookahead_m) || lookahead_m < 0.0) {
+    return std::nullopt;
+  }
+  return pointAtArc(measured_progress.progress_arc_m + lookahead_m);
+}
 
 RouteProgress::RouteProgress(const Mission& mission, RouteProgressConfig config)
     : waypoints_(mission.waypoints), config_(config) {
@@ -271,6 +371,24 @@ std::optional<double> RouteProgress::measuredWaypointCrossingError(
     return std::nullopt;
   }
   return error;
+}
+
+ImmutableRouteSnapshot RouteProgress::snapshot(
+    const std::string& mission_id, const std::string& frame,
+    const std::uint64_t route_revision, const std::uint64_t request_id,
+    const std::size_t active_waypoint_index) const {
+  ImmutableRouteSnapshot output;
+  output.mission_id = mission_id;
+  output.frame = frame;
+  output.route_revision = route_revision;
+  output.request_id = request_id;
+  output.active_waypoint_index = active_waypoint_index;
+  output.waypoints = waypoints_;
+  output.segments = segments_;
+  output.waypoint_arc_lengths_m = waypoint_arc_lengths_;
+  output.measured_progress = state_;
+  output.total_length_m = total_length_m_;
+  return output;
 }
 
 }  // namespace navigation_mission

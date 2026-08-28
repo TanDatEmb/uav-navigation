@@ -646,6 +646,50 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       goal.next_target.y = next_waypoint->position_enu.y();
       goal.next_target.z = next_waypoint->position_enu.z();
     }
+    const auto route = mission_controller_->routeSnapshot();
+    if (!route.valid() || route.request_id != event.request_id ||
+        route.active_waypoint_index != event.waypoint_index) {
+      RCLCPP_ERROR(node().get_logger(),
+                   "Refusing to publish goal without matching immutable route snapshot");
+      handover_requested_ = true;
+      publishStatus(navigation_contracts::msg::NavigationModeStatus::PAUSED,
+                    navigation_contracts::msg::NavigationModeStatus::SAFETY_STOP,
+                    &event);
+      return;
+    }
+    goal.route.mission_id = route.mission_id;
+    goal.route.frame_id = route.frame;
+    goal.route.route_revision = route.route_revision;
+    goal.route.request_id = route.request_id;
+    goal.route.active_waypoint_index =
+        static_cast<std::uint32_t>(route.active_waypoint_index);
+    goal.route.measured_progress_valid = route.measured_progress.valid;
+    goal.route.measured_segment_index = static_cast<std::uint32_t>(
+        route.segments.empty() ? 0U
+                               : route.measured_progress.projection.segment_index);
+    goal.route.measured_progress_arc_m = route.measured_progress.progress_arc_m;
+    goal.route.measured_projection_arc_m =
+        route.measured_progress.projection.arc_length_m;
+    goal.route.measured_lateral_error_m =
+        route.measured_progress.projection.lateral_error_m;
+    goal.route.waypoint_positions.reserve(route.waypoints.size());
+    goal.route.waypoint_ids.reserve(route.waypoints.size());
+    goal.route.waypoint_acceptance_radii_m.reserve(route.waypoints.size());
+    goal.route.waypoint_behaviors.reserve(route.waypoints.size());
+    for (const auto& route_waypoint : route.waypoints) {
+      geometry_msgs::msg::Point point;
+      point.x = route_waypoint.position_enu.x();
+      point.y = route_waypoint.position_enu.y();
+      point.z = route_waypoint.position_enu.z();
+      goal.route.waypoint_positions.push_back(point);
+      goal.route.waypoint_ids.push_back(route_waypoint.id);
+      goal.route.waypoint_acceptance_radii_m.push_back(
+          route_waypoint.acceptance_radius_m);
+      goal.route.waypoint_behaviors.push_back(
+          route_waypoint.behavior == MissionWaypoint::Behavior::Stop
+              ? navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP
+              : navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH);
+    }
     goal_publisher_->publish(goal);
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);

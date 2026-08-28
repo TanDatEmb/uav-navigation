@@ -191,3 +191,45 @@ TEST(RouteProgress, MonotonicProjectionSelectsReturnBranchAtReversal) {
   EXPECT_EQ(returning.projection.segment_index, 1U);
   EXPECT_FALSE(returning.backtracking_exceeded);
 }
+
+TEST(RouteProgress, ImmutableSnapshotCarriesMeasuredRouteIdentityAndLookahead) {
+  navigation_mission::RouteProgress route(makeRouteMission());
+  const auto state = route.update(Eigen::Vector3d{4.0, 0.2, 1.4});
+  ASSERT_TRUE(state.valid);
+  const auto snapshot = route.snapshot("mission", "lio_odom", 1U, 7U, 1U);
+  ASSERT_TRUE(snapshot.valid());
+  EXPECT_EQ(snapshot.mission_id, "mission");
+  EXPECT_EQ(snapshot.active_waypoint_index, 1U);
+  EXPECT_DOUBLE_EQ(snapshot.measured_progress.progress_arc_m,
+                   state.progress_arc_m);
+  const auto lookahead = snapshot.routeLookaheadPoint(3.0);
+  const auto expected = route.pointAtArc(state.progress_arc_m + 3.0);
+  ASSERT_TRUE(lookahead.has_value());
+  ASSERT_TRUE(expected.has_value());
+  EXPECT_TRUE(lookahead->isApprox(*expected, 1.0e-12));
+
+  auto malformed = snapshot;
+  malformed.request_id = 0U;
+  EXPECT_FALSE(malformed.valid());
+}
+
+TEST(RouteProgress, ImmutableSnapshotRepresentsSingleWaypointWithoutSegment) {
+  navigation_mission::Mission mission;
+  mission.id = "hold-only";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint waypoint;
+  waypoint.id = "hold";
+  waypoint.position_enu = Eigen::Vector3d{2.0, 3.0, 4.0};
+  waypoint.acceptance_radius_m = 0.5;
+  mission.waypoints = {waypoint};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(Eigen::Vector3d{2.1, 3.0, 4.0}).valid);
+
+  const auto snapshot = progress.snapshot(
+      mission.id, mission.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(snapshot.valid());
+  EXPECT_TRUE(snapshot.segments.empty());
+  ASSERT_TRUE(snapshot.routeLookaheadPoint(10.0).has_value());
+  EXPECT_TRUE(snapshot.routeLookaheadPoint(10.0)->isApprox(
+      mission.waypoints.front().position_enu));
+}

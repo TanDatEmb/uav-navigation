@@ -13,6 +13,7 @@
   <depend>eigen</depend>
   <depend>fmt</depend>
   <depend>navigation_world_model</depend>
+  <depend>navigation_mission</depend>
   <depend>navigation_planning</depend>
   <depend>rog_map_vendor</depend>
   <depend>std_msgs</depend>

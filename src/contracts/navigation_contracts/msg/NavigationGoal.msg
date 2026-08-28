@@ -13,3 +13,8 @@ uint8 BEHAVIOR_STOP=1
 uint8 behavior
 bool has_next_target
 geometry_msgs/Point next_target
+
+# Immutable mission route and measured monotonic progress used by mission,
+# planner, yaw, and diagnostics. current/next fields remain transport
+# compatibility mirrors and must agree with this snapshot.
+navigation_contracts/RouteSnapshot route

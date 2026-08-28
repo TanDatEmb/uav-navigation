@@ -8434,3 +8434,32 @@ release profiles must not use the former allowance.
   `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
   If blocked, re-review planner, mapping, PX4, mission, and report artifacts at
   the first causal boundary; do not tune the corridor gate from one run.
+
+### 2026-08-28 - Transport one immutable measured route into planner ownership
+
+- **Owner:** MissionController route state, NavigationGoal transport, runtime
+  admission, and planner route context.
+- **Scope:** MissionController publishes the complete versioned mission route,
+  active waypoint, and measured monotonic arc progress in every goal. Runtime
+  reconstructs and validates route geometry, requires identity/frame/index and
+  compatibility mirrors to agree, and gives that same snapshot to the planner.
+  The planner derives pass-through continuation from the snapshot instead of
+  independently trusting `next_target`.
+- **Safety impact:** Missing, malformed, duplicate-ID, non-finite, regressed, or
+  mismatched route data is rejected fail-closed and cannot retain or create an
+  executable command. Waypoint acceptance remains measured-state-only in
+  MissionController. This change does not enlarge waypoint radius, relax map or
+  trajectory certificates, rotate map evidence, or change yaw/speed limits.
+- **Evidence:** Mission contract tests cover immutable identity and lookahead;
+  ROS interface tests cover typed route transport; planner-facade tests reject
+  an empty snapshot and accept reconstructed measured geometry. Focused Release
+  builds and package CTest sets are required before commit.
+- **Removal/review condition:** Remove compatibility `target/next_target`
+  mirrors only in a versioned interface migration. Replace this snapshot only
+  with an equal or stronger atomic mission-route object consumed by mission,
+  planner, yaw, diagnostics, and acceptance logic.
+- **Verification:** Build through `navigation_runtime` and
+  `px4_navigation_external_mode`; run CTest for `navigation_mission`,
+  `navigation_contracts`, `navigation_planning_backend`,
+  `navigation_runtime`, and `px4_navigation_external_mode`. M2 must consume this
+  route in yaw policy before claiming complete shared-route behavior.

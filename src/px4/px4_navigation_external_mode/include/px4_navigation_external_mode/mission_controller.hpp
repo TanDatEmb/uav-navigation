@@ -73,6 +73,7 @@ class MissionController final {
   [[nodiscard]] bool nativeTrajectoryReady() const;
   [[nodiscard]] bool terminalHoldPending() const;
   [[nodiscard]] double acceptanceSpeedMps() const;
+  [[nodiscard]] navigation_mission::ImmutableRouteSnapshot routeSnapshot() const;
 
  private:
   static constexpr double kSafetyStopSpeedMps = 0.15;

@@ -12,6 +12,7 @@
 #include <navigation_common/time.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_planning_backend/planner_facade.hpp>
+#include <navigation_mission/route_progress.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -80,6 +81,120 @@ double goalCompletionTolerance(
                     goal.acceptance_radius_m);
   }
   return navigation_world_model::kGoalCompletionToleranceM;
+}
+
+std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
+    const navigation_contracts::msg::NavigationGoal& goal) {
+  const auto& source = goal.route;
+  const std::size_t count = source.waypoint_positions.size();
+  if (count == 0U || source.waypoint_ids.size() != count ||
+      source.waypoint_acceptance_radii_m.size() != count ||
+      source.waypoint_behaviors.size() != count ||
+      source.mission_id != goal.mission_id || source.frame_id != goal.header.frame_id ||
+      source.request_id != goal.request_id ||
+      source.active_waypoint_index != goal.waypoint_index ||
+      source.active_waypoint_index >= count || !source.measured_progress_valid) {
+    return std::nullopt;
+  }
+  navigation_mission::Mission mission;
+  mission.id = source.mission_id;
+  mission.frame = source.frame_id;
+  mission.waypoints.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto& point = source.waypoint_positions[index];
+    const double radius = source.waypoint_acceptance_radii_m[index];
+    const std::uint8_t behavior = source.waypoint_behaviors[index];
+    if (source.waypoint_ids[index].empty() || !std::isfinite(point.x) ||
+        !std::isfinite(point.y) || !std::isfinite(point.z) ||
+        !std::isfinite(radius) || radius <= 0.0 ||
+        (behavior != navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH &&
+         behavior != navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP)) {
+      return std::nullopt;
+    }
+    navigation_mission::MissionWaypoint waypoint;
+    waypoint.id = source.waypoint_ids[index];
+    waypoint.position_enu = Eigen::Vector3d{point.x, point.y, point.z};
+    waypoint.acceptance_radius_m = radius;
+    waypoint.behavior =
+        behavior == navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP
+            ? navigation_mission::MissionWaypoint::Behavior::Stop
+            : navigation_mission::MissionWaypoint::Behavior::PassThrough;
+    mission.waypoints.push_back(std::move(waypoint));
+  }
+
+  navigation_mission::RouteProgress route(mission);
+  navigation_mission::ImmutableRouteSnapshot snapshot;
+  snapshot.mission_id = source.mission_id;
+  snapshot.frame = source.frame_id;
+  snapshot.route_revision = source.route_revision;
+  snapshot.request_id = source.request_id;
+  snapshot.active_waypoint_index = source.active_waypoint_index;
+  snapshot.waypoints = mission.waypoints;
+  snapshot.segments = route.segments();
+  snapshot.waypoint_arc_lengths_m.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    snapshot.waypoint_arc_lengths_m.push_back(route.waypointArcLengthM(index));
+  }
+  snapshot.total_length_m = route.totalLengthM();
+  snapshot.measured_progress.valid = true;
+  snapshot.measured_progress.progress_arc_m = source.measured_progress_arc_m;
+  snapshot.measured_progress.projection.valid = true;
+  snapshot.measured_progress.projection.segment_index = snapshot.segments.empty()
+      ? std::numeric_limits<std::size_t>::max()
+      : source.measured_segment_index;
+  snapshot.measured_progress.projection.arc_length_m =
+      source.measured_projection_arc_m;
+  snapshot.measured_progress.projection.lateral_error_m =
+      source.measured_lateral_error_m;
+  if ((!snapshot.segments.empty() &&
+       source.measured_segment_index >= snapshot.segments.size()) ||
+      (snapshot.segments.empty() && source.measured_segment_index != 0U) ||
+      !std::isfinite(source.measured_progress_arc_m) ||
+      !std::isfinite(source.measured_projection_arc_m) ||
+      !std::isfinite(source.measured_lateral_error_m)) {
+    return std::nullopt;
+  }
+  const auto progress_point = route.pointAtArc(source.measured_projection_arc_m);
+  if (!progress_point.has_value()) return std::nullopt;
+  snapshot.measured_progress.projection.point = *progress_point;
+  snapshot.measured_progress.projection.tangent = snapshot.segments.empty()
+      ? Eigen::Vector3d::Zero()
+      : snapshot.segments[snapshot.measured_progress.projection.segment_index].tangent;
+  return snapshot.valid()
+             ? std::optional<navigation_mission::ImmutableRouteSnapshot>{
+                   std::move(snapshot)}
+             : std::nullopt;
+}
+
+bool routeSnapshotMatchesGoalMirrors(
+    const navigation_mission::ImmutableRouteSnapshot& route,
+    const navigation_contracts::msg::NavigationGoal& goal) noexcept {
+  if (!route.valid() || route.active_waypoint_index >= route.waypoints.size()) {
+    return false;
+  }
+  const auto point_matches = [](const geometry_msgs::msg::Point& message,
+                                const Eigen::Vector3d& expected) {
+    return std::isfinite(message.x) && std::isfinite(message.y) &&
+           std::isfinite(message.z) &&
+           (Eigen::Vector3d{message.x, message.y, message.z} - expected).norm() <=
+               1.0e-6;
+  };
+  const auto& active = route.waypoints[route.active_waypoint_index];
+  const std::uint8_t expected_behavior =
+      active.behavior == navigation_mission::MissionWaypoint::Behavior::Stop
+          ? navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+          : navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  if (!point_matches(goal.target, active.position_enu) ||
+      !std::isfinite(goal.acceptance_radius_m) ||
+      std::abs(goal.acceptance_radius_m - active.acceptance_radius_m) > 1.0e-9 ||
+      goal.behavior != expected_behavior) {
+    return false;
+  }
+  const std::size_t next_index = route.active_waypoint_index + 1U;
+  const bool expected_next = next_index < route.waypoints.size();
+  return goal.has_next_target == expected_next &&
+         (!expected_next ||
+          point_matches(goal.next_target, route.waypoints[next_index].position_enu));
 }
 
 void addObservationAccountingValues(
@@ -1049,6 +1164,17 @@ void NavigationRuntimeNode::onPropagatedOdometry(
 }
 
 void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message) {
+  const auto route = decodeRouteSnapshot(*message);
+  if (!route.has_value() || !routeSnapshotMatchesGoalMirrors(*route, *message)) {
+    planner_->cancelActiveSolve();
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    safety_suffix_active_.store(false);
+    RCLCPP_ERROR(get_logger(),
+                 "rejected navigation goal: immutable route identity or mirrors are invalid");
+    return;
+  }
   std::lock_guard<std::mutex> lock(input_mutex_);
   // A planner backend plan is owned by the mission waypoint identity.  The
   // continuation point is only look-ahead metadata; treating it as the
@@ -1361,6 +1487,12 @@ void NavigationRuntimeNode::runCycle() {
     item.value = std::to_string(std::max<std::int64_t>(0, value));
     status.values.push_back(std::move(item));
   };
+  const auto add_double_value = [&status](const std::string& key, double value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::isfinite(value) ? std::to_string(value) : "invalid";
+    status.values.push_back(std::move(item));
+  };
   const auto& map_diagnostics = mapping.map;
   const auto accounting = observation_accounting_.snapshot();
   addObservationAccountingValues(status, accounting);
@@ -1437,6 +1569,20 @@ void NavigationRuntimeNode::runCycle() {
   add_duration("command_transport_publish_us",
                last_publish_us_.load(std::memory_order_acquire));
   add_duration("planning_scheduling_gap_us", last_planning_scheduling_gap_us_);
+  if (goal.has_value()) {
+    const auto diagnostic_route = decodeRouteSnapshot(*goal);
+    const bool diagnostic_route_valid = diagnostic_route.has_value() &&
+        routeSnapshotMatchesGoalMirrors(*diagnostic_route, *goal);
+    add_value("route_snapshot_valid", diagnostic_route_valid ? 1U : 0U);
+    add_value("route_revision", goal->route.route_revision);
+    add_value("route_active_waypoint_index", goal->route.active_waypoint_index);
+    add_double_value("route_measured_progress_arc_m",
+                     goal->route.measured_progress_arc_m);
+    add_double_value("route_measured_projection_arc_m",
+                     goal->route.measured_projection_arc_m);
+    add_double_value("route_measured_lateral_error_m",
+                     goal->route.measured_lateral_error_m);
+  }
   diagnostics.status.push_back(std::move(status));
   diagnostics_publisher_->publish(diagnostics);
 
@@ -1558,6 +1704,19 @@ void NavigationRuntimeNode::runCycle() {
   }
 
   if (!goal) return;
+  const auto route_snapshot = decodeRouteSnapshot(*goal);
+  if (!route_snapshot.has_value() ||
+      !routeSnapshotMatchesGoalMirrors(*route_snapshot, *goal)) {
+    planner_->cancelActiveSolve();
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    safety_suffix_active_.store(false);
+    RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "planner cycle rejected an invalid immutable route snapshot");
+    return;
+  }
   // A terminal bundle already observed by the command publisher is a bounded
   // endpoint hold, not a frontier trajectory.  Do not start another
   // PlanFromRest while that exact bundle is waiting for mission acceptance.
@@ -1591,11 +1750,9 @@ void NavigationRuntimeNode::runCycle() {
   // Always retain the current mission checkpoint as planner backend's geometric target.
   // PASS_THROUGH additionally supplies next_target as a bounded terminal
   // tangent; it is never used as a replacement geometric endpoint.
-  const auto& planner_target = plannerTarget(*goal);
-  const Eigen::Vector3d target{
-      pointFromMessage(planner_target, 0),
-      pointFromMessage(planner_target, 1),
-      pointFromMessage(planner_target, 2)};
+  const auto& active_route_waypoint =
+      route_snapshot->waypoints[route_snapshot->active_waypoint_index];
+  const Eigen::Vector3d target = active_route_waypoint.position_enu;
   const auto planner_started = std::chrono::steady_clock::now();
   // This is the internal planner backend FSM boundary: each mission waypoint enters
   // PlanFromRest once, then every subsequent planning tick is ReplanOnce.
@@ -1644,17 +1801,15 @@ void NavigationRuntimeNode::runCycle() {
     return;
   }
   planner_->setWorldModelView(pinned_world.view);
-  planner_->setGoalAcceptanceRadius(goalCompletionTolerance(*goal));
-  std::optional<Eigen::Vector3d> pass_through_next_target;
-  if (goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH &&
-      goal->has_next_target) {
-    const Eigen::Vector3d candidate_next_target{
-        goal->next_target.x, goal->next_target.y, goal->next_target.z};
-    if (candidate_next_target.allFinite()) {
-      pass_through_next_target = candidate_next_target;
-    }
+  planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
+  if (!planner_->setRouteSnapshot(*route_snapshot)) {
+    planner_->cancelActiveSolve();
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    RCLCPP_ERROR(get_logger(), "planner rejected the immutable route snapshot");
+    return;
   }
-  planner_->setPassThroughNextTarget(pass_through_next_target);
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP

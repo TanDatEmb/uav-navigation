@@ -17,6 +17,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SampleOdometryAtTime.srv"
   "msg/NavigationGoal.msg"
+  "msg/RouteSnapshot.msg"
   "msg/NavigationModeStatus.msg"
   "msg/RegisteredScan.msg"
   "msg/PropagatedOdometry.msg"

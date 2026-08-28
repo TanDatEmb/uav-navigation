@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -46,6 +48,25 @@ struct RouteProgressState {
   double progress_arc_m{0.0};
 };
 
+struct ImmutableRouteSnapshot {
+  std::string mission_id;
+  std::string frame;
+  std::uint64_t route_revision{0U};
+  std::uint64_t request_id{0U};
+  std::size_t active_waypoint_index{0U};
+  std::vector<MissionWaypoint> waypoints;
+  std::vector<RouteSegment> segments;
+  std::vector<double> waypoint_arc_lengths_m;
+  RouteProgressState measured_progress{};
+  double total_length_m{0.0};
+
+  [[nodiscard]] bool valid() const noexcept;
+  [[nodiscard]] std::optional<Eigen::Vector3d> pointAtArc(
+      double arc_length_m) const noexcept;
+  [[nodiscard]] std::optional<Eigen::Vector3d> routeLookaheadPoint(
+      double lookahead_m) const noexcept;
+};
+
 // Pure route geometry/progress owner shared by mission and planner-facing
 // adapters. It never accepts a waypoint; acceptance remains a measured-state
 // policy owned by MissionController.
@@ -79,6 +100,10 @@ class RouteProgress final {
       std::size_t waypoint_index, const Eigen::Vector3d& current_position,
       const std::optional<Eigen::Vector3d>& previous_position,
       double sample_gap_s, double maximum_sample_gap_s) const noexcept;
+  [[nodiscard]] ImmutableRouteSnapshot snapshot(
+      const std::string& mission_id, const std::string& frame,
+      std::uint64_t route_revision, std::uint64_t request_id,
+      std::size_t active_waypoint_index) const;
 
  private:
   [[nodiscard]] std::size_t segmentForArc(double arc_length_m) const noexcept;

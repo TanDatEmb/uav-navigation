@@ -102,4 +102,34 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
   EXPECT_EQ(diagnostics.module_time_us[0], 0.0);
 }
 
+TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
+
+  navigation_mission::ImmutableRouteSnapshot invalid;
+  EXPECT_FALSE(facade.setRouteSnapshot(invalid));
+
+  navigation_mission::Mission mission;
+  mission.id = "route-contract";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint first;
+  first.id = "wp-0";
+  first.position_enu = Eigen::Vector3d{0.0, 0.0, 2.0};
+  first.acceptance_radius_m = 1.0;
+  navigation_mission::MissionWaypoint second;
+  second.id = "wp-1";
+  second.position_enu = Eigen::Vector3d{10.0, 0.0, 2.0};
+  second.acceptance_radius_m = 1.0;
+  mission.waypoints = {first, second};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(Eigen::Vector3d{1.0, 0.0, 2.0}).valid);
+  const auto snapshot = progress.snapshot(
+      mission.id, mission.frame, 1U, 4U, 0U);
+
+  ASSERT_TRUE(snapshot.valid());
+  EXPECT_TRUE(facade.setRouteSnapshot(snapshot));
+}
+
 }  // namespace
