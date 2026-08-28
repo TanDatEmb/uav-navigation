@@ -632,6 +632,12 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
 }
 
 bool BackupTrajOpt::checkTrajMagnitudeBound(Trajectory &out_traj) {
+    if (out_traj.empty() || !std::isfinite(out_traj.getTotalDuration()) ||
+        out_traj.getTotalDuration() <= 0.0) {
+        std::cout << YELLOW << " -- [TrajOpt] Minco backup produced an empty or invalid trajectory."
+                  << RESET << std::endl;
+        return false;
+    }
     const double maximum_jerk = out_traj.getMaxJerRate();
     const double jerk_gate = cfg_.max_jerk;
     if (!navigation_planning::withinNumericalDynamicLimit(
@@ -730,7 +736,10 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     }
     out_ts = opt_vars.ts;
 
-    if (!checkTrajMagnitudeBound(out_traj)) {
+    // Preserve the first causal failure.  When setup/optimization already
+    // failed, out_traj is intentionally empty and its extrema are -inf;
+    // reporting a dynamic-gate failure would hide the corridor/root cause.
+    if (success && !checkTrajMagnitudeBound(out_traj)) {
         success = false;
     }
     if (success && !navigation_planning_backend::refinementDurationRespectsCertifiedFloor(
@@ -839,7 +848,9 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     }
     out_ts = opt_vars.ts;
 
-    if (!checkTrajMagnitudeBound(out_traj)) {
+    // Preserve the first causal failure; do not evaluate extrema on an empty
+    // output after corridor preprocessing or optimization has failed.
+    if (success && !checkTrajMagnitudeBound(out_traj)) {
         success = false;
     }
     if (success && !navigation_planning_backend::refinementDurationRespectsCertifiedFloor(
