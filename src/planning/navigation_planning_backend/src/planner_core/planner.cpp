@@ -1344,6 +1344,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // advance the checkpoint while the same command is still live.
         bool route_lookahead_active = false;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
+        if (gi_.new_goal && pass_through_next_target_.has_value()) {
+            planner_context_->info(
+                " -- [planner] pass-through lookahead input active goal=({}, {}, {}) "
+                "next=({}, {}, {}) guide_end=({}, {}, {}) guide_error={}",
+                gi_.goal_p.x(), gi_.goal_p.y(), gi_.goal_p.z(),
+                pass_through_next_target_->x(), pass_through_next_target_->y(),
+                pass_through_next_target_->z(), guide_path.back().x(),
+                guide_path.back().y(), guide_path.back().z(),
+                (guide_path.back() - gi_.goal_p).norm());
+        }
         if (pass_through_next_target_.has_value() && guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
             (guide_path.back() - gi_.goal_p).norm() <=

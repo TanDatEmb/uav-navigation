@@ -642,8 +642,18 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     }
     publishStatus(navigation_contracts::msg::NavigationModeStatus::ACTIVE,
                   navigation_contracts::msg::NavigationModeStatus::NONE, &event);
-    RCLCPP_DEBUG(node().get_logger(), "Published mission waypoint %zu (%s)",
-                 event.waypoint_index, waypoint.id.c_str());
+    if (next_waypoint.has_value()) {
+      RCLCPP_INFO(node().get_logger(),
+                  "Published mission waypoint %zu (%s) behavior=%u next_target=(%.3f,%.3f,%.3f)",
+                  event.waypoint_index, waypoint.id.c_str(),
+                  static_cast<unsigned>(goal.behavior), next_waypoint->position_enu.x(),
+                  next_waypoint->position_enu.y(), next_waypoint->position_enu.z());
+    } else {
+      RCLCPP_INFO(node().get_logger(),
+                  "Published mission waypoint %zu (%s) behavior=%u terminal=true",
+                  event.waypoint_index, waypoint.id.c_str(),
+                  static_cast<unsigned>(goal.behavior));
+    }
     return;
   }
   if (event.type == MissionControllerEvent::Type::Complete) {
