@@ -18,6 +18,7 @@
 #include "planner_core/ciri.h"
 #include "planner_core/corridor_generator.h"
 #include "planner_core/guide_endpoint.hpp"
+#include "planner_core/kinematic_state_boundary.hpp"
 #include "planner_core/replan_contract.hpp"
 #include "planner_core/planning_stage.hpp"
 #include "planner_core/trajectory_world_validator.hpp"
@@ -312,6 +313,37 @@ TEST(PlannerTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemanti
   const auto finished = navigation_planning_backend::commandTrajectoryTime(12.1, 10.0, 2.0);
   EXPECT_TRUE(finished.finished);
   EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
+}
+
+TEST(PlannerTrajectory, StateTransitionPiecePreservesCompletePvajBoundary) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) = Eigen::Vector3d(1.0, -2.0, 3.0);
+  initial.col(1) = Eigen::Vector3d(2.0, 0.5, -0.25);
+  initial.col(2) = Eigen::Vector3d(-0.4, 0.2, 0.3);
+  initial.col(3) = Eigen::Vector3d(0.1, -0.2, 0.05);
+
+  navigation_math::StatePVAJ terminal = navigation_math::StatePVAJ::Zero();
+  terminal.col(0) = Eigen::Vector3d(2.5, -1.0, 2.8);
+  terminal.col(1) = Eigen::Vector3d(1.1, 0.8, 0.0);
+  terminal.col(2) = Eigen::Vector3d(0.2, -0.1, -0.15);
+  terminal.col(3) = Eigen::Vector3d(-0.05, 0.1, 0.02);
+
+  const auto piece = navigation_planning_backend::minimumSnapStateTransitionPiece(
+      initial, terminal, 0.8);
+  ASSERT_TRUE(piece.has_value());
+  EXPECT_TRUE(piece->getState(0.0).isApprox(initial, 1.0e-9));
+  EXPECT_TRUE(piece->getState(0.8).isApprox(terminal, 1.0e-8));
+}
+
+TEST(PlannerTrajectory, StateTransitionPieceRejectsInvalidBoundary) {
+  navigation_math::StatePVAJ finite = navigation_math::StatePVAJ::Zero();
+  EXPECT_FALSE(navigation_planning_backend::minimumSnapStateTransitionPiece(
+      finite, finite, 0.0).has_value());
+
+  auto non_finite = finite;
+  non_finite(0, 0) = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::minimumSnapStateTransitionPiece(
+      non_finite, finite, 0.8).has_value());
 }
 
 TEST(PlannerTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {

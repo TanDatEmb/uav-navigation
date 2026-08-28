@@ -1,8 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include <Eigen/Core>
+#include <Eigen/LU>
+
+#include <data_structure/base/piece.h>
 
 namespace navigation_planning_backend {
 
@@ -20,6 +25,75 @@ inline Eigen::Vector3d boundEstimatedDerivative(
   const double norm = derivative.norm();
   if (!std::isfinite(norm) || norm <= maximum_norm) return derivative;
   return derivative * (maximum_norm / norm);
+}
+
+// Construct a seventh-order C3 connector between two complete PVAJ states.
+// This is a handoff primitive only: the caller must still run the normal
+// dynamic, flatness, corridor, and immutable-world certificates on the
+// resulting trajectory before publication.
+inline std::optional<geometry_utils::Piece> minimumSnapStateTransitionPiece(
+    const geometry_utils::StatePVAJ& initial_state,
+    const geometry_utils::StatePVAJ& terminal_state,
+    const double duration_s) {
+  if (!initial_state.allFinite() || !terminal_state.allFinite() ||
+      !std::isfinite(duration_s) || duration_s <= 1.0e-6) {
+    return std::nullopt;
+  }
+
+  const double t2 = duration_s * duration_s;
+  const double t3 = t2 * duration_s;
+  const double t4 = t3 * duration_s;
+  const double t5 = t4 * duration_s;
+  const double t6 = t5 * duration_s;
+  const double t7 = t6 * duration_s;
+  if (!std::isfinite(t2) || !std::isfinite(t3) || !std::isfinite(t4) ||
+      !std::isfinite(t5) || !std::isfinite(t6) || !std::isfinite(t7)) {
+    return std::nullopt;
+  }
+
+  // Solve for ascending powers a4..a7 after the initial PVAJ terms have
+  // already been fixed. The returned Piece stores the same polynomial in
+  // descending powers [t^7 ... 1] as the rest of the trajectory stack.
+  Eigen::Matrix4d boundary_matrix;
+  boundary_matrix <<
+      t4,        t5,         t6,          t7,
+      4.0 * t3,  5.0 * t4,   6.0 * t5,    7.0 * t6,
+      12.0 * t2, 20.0 * t3, 30.0 * t4,   42.0 * t5,
+      24.0 * duration_s, 60.0 * t2, 120.0 * t3, 210.0 * t4;
+  if (!boundary_matrix.allFinite()) return std::nullopt;
+
+  Eigen::Matrix<double, 4, 3> rhs;
+  rhs.row(0) = terminal_state.col(0).transpose() -
+      (initial_state.col(0) + duration_s * initial_state.col(1) +
+       0.5 * t2 * initial_state.col(2) +
+       (t3 / 6.0) * initial_state.col(3)).transpose();
+  rhs.row(1) = terminal_state.col(1).transpose() -
+      (initial_state.col(1) + duration_s * initial_state.col(2) +
+       0.5 * t2 * initial_state.col(3)).transpose();
+  rhs.row(2) = terminal_state.col(2).transpose() -
+      (initial_state.col(2) + duration_s * initial_state.col(3)).transpose();
+  rhs.row(3) = terminal_state.col(3).transpose() - initial_state.col(3).transpose();
+  if (!rhs.allFinite()) return std::nullopt;
+
+  const Eigen::Matrix<double, 4, 3> high_order =
+      boundary_matrix.fullPivLu().solve(rhs);
+  if (!high_order.allFinite() ||
+      (boundary_matrix * high_order - rhs).norm() >
+          1.0e-8 * std::max(1.0, rhs.norm())) {
+    return std::nullopt;
+  }
+
+  Eigen::Matrix<double, 3, 8> coefficients;
+  coefficients.setZero();
+  coefficients.col(7) = initial_state.col(0);
+  coefficients.col(6) = initial_state.col(1);
+  coefficients.col(5) = 0.5 * initial_state.col(2);
+  coefficients.col(4) = initial_state.col(3) / 6.0;
+  coefficients.col(3) = high_order.row(0).transpose();
+  coefficients.col(2) = high_order.row(1).transpose();
+  coefficients.col(1) = high_order.row(2).transpose();
+  coefficients.col(0) = high_order.row(3).transpose();
+  return geometry_utils::Piece(duration_s, coefficients);
 }
 
 }  // namespace navigation_planning_backend

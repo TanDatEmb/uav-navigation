@@ -1043,6 +1043,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // record the wall time (WT) and the trajectory time (TT) at the start of the replan.
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
+        std::optional<StatePVAJ> rebase_source_state;
+        std::optional<StatePVAJ> rebase_source_yaw_state;
 
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
@@ -1060,6 +1062,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     replan_process_start_WT - committed_start_WT,
                     0.0, std::max(0.0, committed_duration));
             const StatePVAJ committed_state = cmd_traj_info_.posTraj().getState(committed_tt);
+            StatePVAJ committed_yaw_state;
+            const bool committed_yaw_state_valid =
+                    cmd_traj_info_.yawTraj().getState(committed_tt, committed_yaw_state);
             cmd_traj_info_.unlock();
             const double command_anchor_error =
                     (committed_state.col(0) - solve_state_.p).norm();
@@ -1078,6 +1083,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                             "measured start is not traversable error={} budget={}",
                             command_anchor_error, cfg_.tracking_error_budget_m);
                     return FAILED;
+                }
+                if (committed_state.allFinite() && committed_yaw_state_valid &&
+                    committed_yaw_state.allFinite()) {
+                    rebase_source_state = committed_state;
+                    rebase_source_yaw_state = committed_yaw_state;
                 }
                 last_exp_traj_info.setEmpty();
                 local_start_p_ = solve_state_.p;
@@ -1834,7 +1844,99 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
-        const auto temp_yaw_traj = old_traj + new_traj;
+        auto temp_yaw_traj = old_traj + new_traj;
+
+        // A measured-state rebase intentionally changes the optimizer's start
+        // state when tracking has fallen behind the committed command.  Do not
+        // expose that state change as a command jump: bridge the old committed
+        // PVAJ to the new measured-state trajectory with one bounded C3 piece.
+        // The bridge is still a normal nominal trajectory segment and must pass
+        // the same dynamic/flatness/world certificates as every other piece.
+        if (rebase_source_state.has_value() && rebase_source_yaw_state.has_value()) {
+            const StatePVAJ target_state = temp_exp_traj.getState(0.0);
+            const StatePVAJ target_yaw_state = temp_yaw_traj.getState(0.0);
+            const StatePVAJ& source_state = *rebase_source_state;
+            const StatePVAJ& source_yaw_state = *rebase_source_yaw_state;
+            if (!target_state.allFinite() || !target_yaw_state.allFinite()) {
+                planner_context_->warn(
+                        " -- [planner] measured-state rebase handoff has non-finite target state");
+                return FAILED;
+            }
+
+            const bool handoff_needed = !source_state.isApprox(target_state, 1.0e-9) ||
+                    !source_yaw_state.isApprox(target_yaw_state, 1.0e-9);
+            if (handoff_needed) {
+                const double maximum_velocity = cfg_.exp_traj_cfg.max_vel;
+                const double maximum_acceleration = cfg_.exp_traj_cfg.max_acc;
+                const double maximum_jerk = cfg_.exp_traj_cfg.max_jerk;
+                const double position_delta =
+                        (target_state.col(0) - source_state.col(0)).norm();
+                const double velocity_delta =
+                        (target_state.col(1) - source_state.col(1)).norm();
+                const double acceleration_delta =
+                        (target_state.col(2) - source_state.col(2)).norm();
+                double handoff_duration = std::max({
+                        4.0 * cfg_.sample_traj_dt_s,
+                        2.0 * position_delta / maximum_velocity,
+                        std::sqrt(2.0 * position_delta / maximum_acceleration),
+                        velocity_delta / maximum_acceleration,
+                        acceleration_delta / maximum_jerk});
+                geometry_utils::Trajectory handoff_position;
+                geometry_utils::Trajectory handoff_yaw;
+                bool handoff_ready = false;
+                for (int attempt = 0; attempt < 24 && !handoff_ready; ++attempt) {
+                    const auto position_piece = minimumSnapStateTransitionPiece(
+                            source_state, target_state, handoff_duration);
+                    const auto yaw_piece = minimumSnapStateTransitionPiece(
+                            source_yaw_state, target_yaw_state, handoff_duration);
+                    if (position_piece.has_value() && yaw_piece.has_value()) {
+                        const double maximum_handoff_velocity =
+                                position_piece->getMaxVelRate();
+                        const double maximum_handoff_acceleration =
+                                position_piece->getMaxAccRate();
+                        const double maximum_handoff_jerk =
+                                position_piece->getMaxJerRate();
+                        const bool pvaj_within_limits =
+                                std::isfinite(maximum_handoff_velocity) &&
+                                std::isfinite(maximum_handoff_acceleration) &&
+                                std::isfinite(maximum_handoff_jerk) &&
+                                navigation_planning::withinNumericalDynamicLimit(
+                                        maximum_handoff_velocity, maximum_velocity) &&
+                                navigation_planning::withinNumericalDynamicLimit(
+                                        maximum_handoff_acceleration, maximum_acceleration) &&
+                                navigation_planning::withinNumericalDynamicLimit(
+                                        maximum_handoff_jerk, maximum_jerk);
+                        if (pvaj_within_limits) {
+                            handoff_position.emplace_back(*position_piece);
+                            handoff_yaw.emplace_back(*yaw_piece);
+                            handoff_position.start_WT = new_traj_WT;
+                            handoff_yaw.start_WT = new_traj_WT;
+                            traj_opt::TrajectoryDynamicReport handoff_dynamic_report;
+                            handoff_ready = traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                                    handoff_position, cfg_.exp_traj_cfg,
+                                    &handoff_dynamic_report, 0.01, &handoff_yaw);
+                            if (!handoff_ready) {
+                                handoff_position.clear();
+                                handoff_yaw.clear();
+                            }
+                        }
+                    }
+                    if (!handoff_ready) handoff_duration *= 1.2;
+                }
+                if (!handoff_ready) {
+                    planner_context_->warn(
+                            " -- [planner] measured-state rebase handoff has no certified "
+                            "duration; retaining the previous command");
+                    return FAILED;
+                }
+                temp_exp_traj = handoff_position + temp_exp_traj;
+                temp_yaw_traj = handoff_yaw + temp_yaw_traj;
+                planner_context_->info(
+                        " -- [planner] inserted measured-state rebase handoff duration={} "
+                        "position_delta={} velocity_delta={}",
+                        handoff_duration, position_delta, velocity_delta);
+            }
+        }
         traj_opt::TrajectoryDynamicReport exp_dynamic_report;
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
                 temp_exp_traj, cfg_.exp_traj_cfg, &exp_dynamic_report,

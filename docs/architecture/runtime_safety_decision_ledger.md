@@ -7492,3 +7492,48 @@ release profiles must not use the former allowance.
   external-mode-check`, inspecting bounded seed diagnostics, waypoint order,
   speed recovery, altitude, clearance, strict backup, and p50/p95/p99 planning
   latency.
+
+### 2026-08-28 - Bridge measured-state rebases with a certified C3 handoff
+
+- **Owner:** Navigation planning hot-replan and runtime execution maintainers.
+  **Scope:** When a hot replan must rebase from the committed command to the
+  fresh propagated state because the existing tracking-error budget has been
+  exceeded, prepend one seventh-order PVAJ connector between the old command
+  state and the new measured-state trajectory. The connector is used only for
+  a valid finite source/target pair; if no duration passes the existing
+  nominal dynamic and flatness certificates, the rebase solve fails closed and
+  the previously certified command remains the only fallback.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This removes the
+  observed cross-generation command jump without enlarging the PX4 0.75 m
+  command-anchor envelope, changing waypoint acceptance, permitting UNKNOWN,
+  or altering corridor, swept-world, backup, freshness, identity, or deadline
+  gates. The complete connector plus nominal/backup candidate is still
+  authorized by the immutable WorldModel; an invalid connector is never
+  published.
+- **Derivation and cost:** The connector solves exact P/V/A/J endpoint
+  constraints and increases its duration only while the existing V/A/J and
+  flatness limits reject the candidate, with a bounded 24-attempt search.
+  Initial duration is derived from displacement, velocity/acceleration delta,
+  current dynamic limits, and the existing sample period. This adds work only
+  on measured-state rebase events; normal hot replans and the map certificate
+  are unchanged. No new tunable safety threshold is introduced.
+- **Evidence:** The exact-head artifact
+  `.artifacts/runtime/external-mode-check-20260828T020340-574857` recorded
+  rebase transitions with 0.25--0.29 m position and 0.27--0.67 m/s velocity
+  jumps before the change, while trajectory failures were zero after the
+  backup-corridor ownership fix. The new state-transition characterization
+  tests must pass, followed by a rebuilt authoritative manifest and repeated
+  3-column SITL checking inter-generation P/V/A/J continuity, speed recovery,
+  altitude, clearance, strict backup, waypoint order, and latency tails. This
+  entry does not claim mission completion from the pre-change artifact.
+- **Removal/review condition:** Revisit if the connector increases command
+  gaps, causes repeated rebase failure, worsens altitude/clearance, consumes
+  the planning budget, or hides an estimator/PX4 tracking defect. Replace it
+  only after an explicit controller-owned time-scaling or piecewise route
+  handoff has repeated SITL, recorded-data, sanitizer, and hardware evidence.
+- **Verification:** `make build`; source `install/setup.bash` and run the
+  planner backend, execution, runtime, and PX4 contract tests; then repeat
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check`, inspecting command-generation boundaries, P/V/A/J
+  residuals, speed, altitude, clearance, strict backup evidence, and
+  p50/p95/p99 planning latency.
