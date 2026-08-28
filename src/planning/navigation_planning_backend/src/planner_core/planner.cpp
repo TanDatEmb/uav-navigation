@@ -1498,6 +1498,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         bool route_lookahead_is_corner = false;
         double route_terminal_speed_cap_mps =
             cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
+        std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
         if (gi_.new_goal && pass_through_next_target_.has_value()) {
             planner_context_->info(
                 " -- [planner] pass-through lookahead input active goal=({}, {}, {}) "
@@ -1643,6 +1644,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                 route_lookahead_is_corner = genuine_corner;
                                 certified_lookahead_m_ = allocation.path_length_m;
                                 lookahead_complete_ = complete;
+                                // Every outgoing lookahead must still cross
+                                // the controller-owned acceptance region. The
+                                // optimizer may choose any dynamically smooth
+                                // junction inside this ball; it is no longer
+                                // pinned to the exact waypoint centre.
+                                route_boundary_gate = CorridorGenerator::RouteBoundaryGate{
+                                    current_endpoint, goal_acceptance_radius_m_};
                                 planner_context_->info(
                                     " -- [planner] pass-through route lookahead distance={:.3f} "
                                     "required={:.3f} complete={} terminal_speed_cap={:.3f} "
@@ -1791,7 +1799,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         solve_stage_.store(3);
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(
             guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut,
-            &solve_deadline, std::nullopt);
+            &solve_deadline, route_boundary_gate);
 
         if (!bool_ret_code) {
             planner_context_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");

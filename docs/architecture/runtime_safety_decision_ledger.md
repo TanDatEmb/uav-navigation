@@ -67,6 +67,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position or yaw exceeds its existing tracking-error budget; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag and yaw error. Require zero generated reverse-rebase connectors, bounded command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
 | HG-022 | Acceptance-region pass-through fillet (`SAFETY_INVARIANT`) | switch route-progress ownership at the closest trajectory junction inside the configured waypoint acceptance ball; do not pin nonzero-speed C3 turns to the exact corner centre | PROVISIONAL | Removes an impossible exact-tangent-change constraint at genuine corners while retaining the mission acceptance radius, continuous corridor/dynamics/flatness gates, analytic regression checks on each route leg, measured waypoint acceptance and latest-world authorization. Stop waypoints do not receive the phase switch. | Repeat 90-degree and arbitrary-bearing missions. Require the measured vehicle to enter the acceptance ball, no admitted fold on either leg, bounded corner speed/clearance, stable yaw, and higher nominal commit availability across more than one run. |
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
+| HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
 
 ## Temporary-bypass register
 
@@ -9093,3 +9094,34 @@ release profiles must not use the former allowance.
   inject replacement failures before/after backup switch and after expiry;
   require no premature mode exit while validation passes and deterministic
   emergency-stop/fail-closed behavior once it does not.
+
+### 2026-08-28 - Optimize pass-through junctions inside the acceptance ball
+
+- **Owner:** Route-lookahead corridor generation and nominal MINCO optimizer.
+- **Scope:** Restore one route-boundary corridor cell for every pass-through
+  lookahead. Initialize its junction at the active waypoint, then allow MINCO
+  to move that junction within the corridor and configured acceptance ball.
+  Keep the existing outside-ball objective and independent post-solve hard
+  check; do not overwrite the variable with the exact waypoint or clear its
+  gradient during optimization.
+- **Safety impact:** `MISSION_PROGRESS_INVARIANT` preservation. A long smooth
+  command can no longer cut outside the region that the measured mission gate
+  requires. This does not enlarge the radius or infer acceptance from a
+  planner endpoint. Corridor containment, immutable-world sweep, route
+  regression, V/A/J, flatness, backup and PX4 tracking gates are unchanged.
+- **Evidence:** In artifact
+  `.artifacts/runtime/external-mode-check-20260828T111725-1010293`, the active
+  waypoint was `(20,5,3)` with radius `0.9 m`, while measured closest approach
+  was about `1.35 m` and the reference passed near `y=3.9`. The planner then
+  continued to a `7.2 m` outgoing lookahead, leaving the mission on the old
+  waypoint until the certified stop expired. The previous exact-junction gate
+  made nonzero-speed corner tangent changes infeasible; disabling the gate
+  removed the mission-boundary guarantee entirely.
+- **Removal/review condition:** Replace only with an equal or stronger
+  continuous acceptance-region certificate shared by planner and mission.
+  Never restore exact-centre pinning for pass-through corners, enlarge the
+  mission radius to hide a miss, or accept a waypoint from command geometry.
+- **Verification:** Build and run planner/backend trajectory tests, then repeat
+  shallow, 90-degree and arbitrary-bearing SITL. Require ordered measured
+  acceptance, an in-ball committed junction, bounded speed/clearance/yaw and
+  no optimizer starvation or reverse route regression.

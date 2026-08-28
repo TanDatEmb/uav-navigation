@@ -35,40 +35,6 @@ using Mat83f = Eigen::Matrix<double, 8, 3>;
 
 namespace {
 
-bool applyRouteBoundaryJunctionPositions(
-    Mat3Df& points,
-    const std::vector<unsigned char>& route_boundary_gates,
-    const std::vector<Vec3f>& route_boundary_points) {
-    if (route_boundary_gates.size() != route_boundary_points.size()) {
-        return false;
-    }
-    for (std::size_t gate_index = 0;
-         gate_index < route_boundary_gates.size(); ++gate_index) {
-        if (route_boundary_gates[gate_index] == 0U) continue;
-        if (gate_index == 0U || gate_index - 1U >=
-                static_cast<std::size_t>(points.cols()) ||
-            !route_boundary_points[gate_index].allFinite()) {
-            return false;
-        }
-        points.col(static_cast<Eigen::Index>(gate_index - 1U)) =
-                route_boundary_points[gate_index];
-    }
-    return true;
-}
-
-void clearRouteBoundaryJunctionGradients(
-    Mat3Df& grad_by_points,
-    const std::vector<unsigned char>& route_boundary_gates) {
-    for (std::size_t gate_index = 0;
-         gate_index < route_boundary_gates.size(); ++gate_index) {
-        if (route_boundary_gates[gate_index] == 0U || gate_index == 0U ||
-            gate_index - 1U >= static_cast<std::size_t>(grad_by_points.cols())) {
-            continue;
-        }
-        grad_by_points.col(static_cast<Eigen::Index>(gate_index - 1U)).setZero();
-    }
-}
-
 }  // namespace
 
 int ExpTrajOpt::monitorProgress(void *instance,
@@ -467,9 +433,12 @@ double ExpTrajOpt::costFunctional(void *ptr,
             break;
         }
     }
-    if (!points.allFinite() ||
-        !applyRouteBoundaryJunctionPositions(
-            points, obj.route_boundary_gates, obj.route_boundary_points)) {
+    // Route-boundary junctions are initialized at the measured mission
+    // waypoint, but remain optimization variables inside the corridor. The
+    // acceptance ball penalty below and the independent post-solve check own
+    // the boundary. Re-pinning every evaluation to the ball centre makes a
+    // non-zero-speed C3 corner geometrically identical to a point turn.
+    if (!points.allFinite()) {
         recordNonFinite(3, 1, std::numeric_limits<double>::quiet_NaN(),
                         std::numeric_limits<double>::quiet_NaN(), &times);
         return INFINITY;
@@ -530,8 +499,6 @@ double ExpTrajOpt::costFunctional(void *ptr,
     VecDf gradByTimes;
     obj.minco.propogateGrad(partialGradByCoeffs, partialGradByTimes,
                             gradByPoints, gradByTimes);
-    clearRouteBoundaryJunctionGradients(
-        gradByPoints, obj.route_boundary_gates);
     cost += weightT * times.sum();
     gradByTimes.array() += weightT;
 
@@ -1065,9 +1032,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 break;
             }
         }
-        if (!applyRouteBoundaryJunctionPositions(
-                opt_vars.points, opt_vars.route_boundary_gates,
-                opt_vars.route_boundary_points)) {
+        if (!opt_vars.points.allFinite()) {
             traj.clear();
             return;
         }

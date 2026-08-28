@@ -207,6 +207,50 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   }
 }
 
+TEST(ExpOptimizer, PassThroughJunctionRemainsInsideAcceptanceBall) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 4.0;
+  config.max_jerk = 12.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makeMovingPositionState(0.0, 2.0);
+  auto tail = makePositionState(8.0);
+  tail.col(0).y() = 4.0;
+  tail.col(1) << 1.0, 1.0, 0.0;
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(4.0, 0.0, 1.0));
+  guide_path.emplace_back(navigation_math::Vec3f(5.0, 1.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 2.0, 3.0, 6.0};
+
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 4.5, -1.0, 1.0, 0.0, 2.0),
+      makeBox(3.0, 5.5, -1.0, 2.5, 0.0, 2.0),
+      makeBox(4.0, 9.0, 0.0, 5.0, 0.0, 2.0)};
+  const Eigen::Vector3d waypoint{4.0, 0.0, 1.0};
+  constexpr double kAcceptanceRadiusM = 1.0;
+  corridors[1].SetRouteBoundaryContract(
+      waypoint, kAcceptanceRadiusM);
+  geometry_utils::Trajectory trajectory;
+
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, corridors, trajectory));
+  ASSERT_GE(trajectory.getPieceNum(), 2);
+  double closest_junction_distance_m =
+      std::numeric_limits<double>::infinity();
+  for (int junction = 0; junction < trajectory.getPieceNum() - 1; ++junction) {
+    closest_junction_distance_m = std::min(
+        closest_junction_distance_m,
+        (trajectory.getJuncPos(junction) - waypoint).norm());
+  }
+  EXPECT_LE(closest_junction_distance_m, kAcceptanceRadiusM + 1.0e-6);
+}
+
 TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;
