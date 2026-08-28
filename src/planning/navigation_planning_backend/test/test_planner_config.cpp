@@ -7,7 +7,6 @@
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
-#include <planner_core/bounded_time_stretch.hpp>
 #include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
@@ -200,20 +199,6 @@ TEST(PlannerDurationParameterization, RoundTripsFreeDurationSeed) {
   optimization_utils::Gcopter<MappedVector>::forwardMapTauToT(
       tau, reconstructed_free_duration_s);
   EXPECT_TRUE(reconstructed_free_duration_s.isApprox(free_duration_s, 1.0e-12));
-}
-
-TEST(PlannerDurationParameterization, SearchesBetweenRequiredAndCoarseReserve) {
-  const auto scales =
-      navigation_planning_backend::boundedTimeStretchReserveScales(1.10);
-  ASSERT_EQ(scales.size(), 5U);
-  EXPECT_DOUBLE_EQ(scales[0], 1.10);
-  EXPECT_DOUBLE_EQ(scales[1], 1.21);
-  EXPECT_DOUBLE_EQ(scales[2], 1.375);
-  EXPECT_DOUBLE_EQ(scales[3], 1.65);
-  EXPECT_DOUBLE_EQ(scales[4], 4.0);
-  EXPECT_TRUE(std::is_sorted(scales.begin(), scales.end()));
-  EXPECT_TRUE(
-      navigation_planning_backend::boundedTimeStretchReserveScales(1.0).empty());
 }
 
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {

@@ -25,9 +25,6 @@ struct OptimizationDiagnostics {
   int retry_stop_reason{0};
   int first_lbfgs_return_code{-1};
   int last_lbfgs_return_code{-1};
-  int bounded_time_stretch_attempt_count{0};
-  double bounded_time_stretch_selected_reserve_scale{
-      std::numeric_limits<double>::quiet_NaN()};
   bool cancelled{false};
   bool valid{false};
   bool used_certified_seed{false};

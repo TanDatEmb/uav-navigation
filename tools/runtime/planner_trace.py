@@ -115,12 +115,6 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_retry_stop_reason": ("exp_retry_stop_reason",),
     "exp_lbfgs_first_return_code": ("exp_lbfgs_first_return_code",),
     "exp_lbfgs_last_return_code": ("exp_lbfgs_last_return_code",),
-    "exp_bounded_time_stretch_attempt_count": (
-        "exp_bounded_time_stretch_attempt_count",
-    ),
-    "exp_bounded_time_stretch_selected_reserve_scale": (
-        "exp_bounded_time_stretch_selected_reserve_scale",
-    ),
     "exp_lbfgs_cancelled": ("exp_lbfgs_cancelled",),
     "exp_initial_normalized_dynamic_violation": (
         "exp_initial_normalized_dynamic_violation",
@@ -453,12 +447,6 @@ def normalize_planner_trace_record(
         ),
         "exp_lbfgs_last_return_code": _signed_int(
             values["exp_lbfgs_last_return_code"]
-        ),
-        "exp_bounded_time_stretch_attempt_count": _int(
-            values["exp_bounded_time_stretch_attempt_count"]
-        ),
-        "exp_bounded_time_stretch_selected_reserve_scale": _float(
-            values["exp_bounded_time_stretch_selected_reserve_scale"]
         ),
         "exp_lbfgs_cancelled": _bool(values["exp_lbfgs_cancelled"]),
         "exp_initial_normalized_dynamic_violation": _float(

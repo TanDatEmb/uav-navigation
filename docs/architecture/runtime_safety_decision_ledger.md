@@ -9740,35 +9740,3 @@ release profiles must not use the former allowance.
   workspace tests, Release build, then one unchanged three-column screening
   run and verify successful and failed solve records expose finite extrema
   whenever the corresponding candidate was evaluated.
-
-### 2026-08-28 - Search the bounded temporal gap before MINCO retry
-
-- **Owner:** Nominal feasibility projection before bounded L-BFGS retries.
-- **Scope:** Replace the three-point temporal reserve set `{required,
-  1.5*required, 4}` with the finite monotonic set `{required, 1.10*required,
-  1.25*required, 1.50*required, 4}`, capped and deduplicated at 4. Each proposal
-  preserves the selected corridor-valid spatial variables and is rebuilt with
-  exact endpoint PVAJ before certification. Attempt count and selected reserve
-  are published per solve.
-- **Safety impact:** No limit, corridor tolerance, unknown-space policy,
-  deadline, optimizer iteration budget or command-admission gate changes. A
-  temporal proposal is executable only after the existing continuous corridor,
-  route-boundary, velocity, acceleration, jerk and flatness certificates pass.
-  Failure falls through to the unchanged bounded optimizer path.
-- **Evidence:** Exact-HEAD artifact
-  `.artifacts/runtime/external-mode-check-20260828T142323-1223796` contains 91
-  EXP failures. Of 65 failed solves with a finite final candidate, 43 exceed
-  jerk, 27 acceleration and 11 velocity. Logs repeatedly show the required
-  reserve still slightly outside V/A/J while the next 1.5x reserve is already
-  outside the corridor. Successful candidates remain inside all limits, while
-  the deterministic fallback seed is orders of magnitude infeasible (median
-  jerk 553.6 m/s^3). This experiment searches only the untested bounded gap.
-- **Removal/review condition:** Revert if focused tests fail or repeated
-  unchanged-profile evidence does not improve EXP commit reliability and
-  MAIN continuity without worsening planning p95/p99, clearance, collision,
-  splice residuals or mission completion. Do not retain solely because one
-  numerical metric improves.
-- **Verification:** Run planner duration-schedule and trace-parser tests, full
-  workspace tests and Release build. Compare repeated three-column runs against
-  artifact `external-mode-check-20260828T142323-1223796` for selected scales,
-  EXP failures, commits, role transitions, low-speed episodes and latency.
