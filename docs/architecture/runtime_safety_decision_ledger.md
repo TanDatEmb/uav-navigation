@@ -9820,3 +9820,30 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 879d62e`, `git show 073ad23`, focused tests,
   authoritative Release build and the cited A/B artifacts preserve the
   implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Rejected experiment: three-column 5/3/8 mission envelope
+
+- **Owner:** Three-column mission dynamics experiment, reverted by `e3c4200`.
+- **Scope:** Commit `c9f18bb` retained the 5 m/s mission speed while raising
+  acceleration/jerk ceilings from 2/4 to 3/8 for the two-waypoint and
+  multi-waypoint profiles. Product limits and all geometric, flatness, world,
+  route, yaw, splice and PX4 tracking gates remained unchanged.
+- **Safety impact:** No hard gate was bypassed and both trials failed closed
+  without collision. The higher acceleration authority reduced optimizer
+  failures and latency but produced BACKUP commands that PX4 could not track
+  inside the unchanged 0.75 m envelope. The calibration was reverted in full.
+- **Evidence:** Exact-HEAD runs
+  `.artifacts/runtime/external-mode-check-20260828T145255-1249697` and
+  `.artifacts/runtime/external-mode-check-20260828T145453-1251318` both ended
+  `PAUSED_SAFETY_STOP`. The first reached about 136 m then exceeded lateral
+  error at 0.775 m; the second reached about 53 m then exceeded longitudinal
+  error at 0.780 m. EXP failures fell to 28/190 and 27/111 records and planner
+  p95 to 49.999 and 45.104 ms, but neither completed. Cross-track p95 rose to
+  7.317 and 7.652 m. Clearance remained 4.077/4.396 m with zero collision.
+- **Removal/review condition:** Historical rejected-experiment record. Do not
+  raise mission acceleration above 2 m/s^2 merely to make planner candidates
+  feasible. Treat optimizer feasibility and PX4 tracking authority as
+  separate contracts; test jerk-only conditioning independently.
+- **Verification:** `git show c9f18bb`, `git show e3c4200`, mission contract
+  tests, authoritative Release build and both cited artifacts preserve the
+  implementation, rollback and repeated evidence.
