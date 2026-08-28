@@ -9790,3 +9790,33 @@ release profiles must not use the former allowance.
 - **Verification:** Run trace parser, planner/runtime tests and Release build;
   then verify an unchanged three-column screening run publishes finite ranges
   and correlate minimum duration with seed dynamics and EXP outcome.
+
+### 2026-08-28 - Rejected experiment: preserve the longer absolute MAIN horizon
+
+- **Owner:** Receding-horizon command-admission experiment, reverted by
+  `073ad23`.
+- **Scope:** Commit `879d62e` retained the current same-mission bundle when its
+  absolute MAIN-to-BACKUP switch time was later than a newly solved candidate.
+  Retention required the current role schedule to pass yaw, route-regression
+  and swept-volume validation against the latest immutable world.
+- **Safety impact:** No hard gate was relaxed and the vehicle failed closed
+  without collision. The experiment nevertheless retained a geometrically
+  safe command whose tracking anchor progressively diverged from the vehicle;
+  PX4 External Mode rejected it when longitudinal error reached 0.772 m against
+  the unchanged 0.750 m envelope. The behavior was reverted in full.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T144627-1244562` recorded ten
+  horizon-retention events, stopped at about 12 m with
+  `PAUSED_SAFETY_STOP`, completed only waypoint 0, and handed over to PX4 Hold
+  in 24 ms. Measured speed p95 was 3.073 m/s versus 4.641 m/s in predecessor
+  artifact `.artifacts/runtime/external-mode-check-20260828T143719-1237126`,
+  which completed the 140 m mission. Minimum clearance was 4.075 m with zero
+  collision; planner p95 was 75.357 ms. This proves horizon length alone is not
+  a valid dominance metric for a rolling trajectory.
+- **Removal/review condition:** Historical rejected-experiment record. A
+  future admission policy must jointly certify splice tracking error,
+  progress, remaining nominal time and expected replanning latency. Do not
+  retain an older polynomial solely because its nominal endpoint is later.
+- **Verification:** `git show 879d62e`, `git show 073ad23`, focused tests,
+  authoritative Release build and the cited A/B artifacts preserve the
+  implementation, rollback and runtime evidence.
