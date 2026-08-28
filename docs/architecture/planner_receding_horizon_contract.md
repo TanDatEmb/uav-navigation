@@ -17,21 +17,19 @@ At each planning tick:
    velocity. Otherwise it removes the command and fails closed.
 5. The active mission waypoint remains the mission-identity target. A
    `PASS_THROUGH` goal carries `next_target` as route metadata; when the
-   certified map horizon permits and the outgoing tangent is a genuine corner,
-   the planner extends the executable guide through a bounded prefix of that
-   outgoing segment. The corridor generator inserts a route-boundary junction
-   contract at the active waypoint and preserves its marker through SFC
-   simplification. The adjacent MINCO junction is held at the recorded waypoint
-   while optimizing, then independently hard-checked against the waypoint
-   acceptance ball; the surrounding collision-certified corridor remains wide
-   enough for a smooth fillet. The
-   MINCO hot seed assigns the overlap after that boundary to the first
-   post-waypoint guide timestamp (or splits the remaining interval when the
-   look-ahead endpoint is that only post-waypoint sample), so the hard boundary
-   does not create a near-zero-duration turn piece.
-   Shallow/straight legs
-   terminate at the active waypoint so the nominal curve cannot trade away its
-   measured acceptance boundary for a soft look-ahead endpoint. The
+   certified map horizon permits, the planner extends the executable guide
+   through a bounded prefix of the outgoing segment for straight, shallow, and
+   genuine-corner legs. The corridor generator inserts a route-boundary
+   junction contract at the active waypoint and preserves its marker through
+   SFC simplification. The adjacent MINCO junction is held at the recorded
+   waypoint while optimizing, then independently hard-checked against the
+   waypoint acceptance ball; the surrounding collision-certified corridor
+   remains wide enough for a smooth fillet. The MINCO hot seed assigns the
+   overlap after that boundary to the first post-waypoint guide timestamp (or
+   splits the remaining interval when the look-ahead endpoint is that only
+   post-waypoint sample), so the hard boundary does not create a near-zero-
+   duration turn piece. A corner uses an acceptance-room terminal speed cap;
+   straight/shallow legs retain the outgoing tangent for continuity. The
    MissionController still accepts the current waypoint only from measured
    position inside its configured acceptance radius.
 
@@ -43,10 +41,17 @@ The relevant runtime bounds are:
 | Command sampling | 50 Hz |
 | Input pair maximum skew | 0.1 s |
 | Input maximum age | 0.5 s |
-| Planner solve timeout | 1.0 s |
+| Planner solve timeout | 0.18 s |
 | Replan-forward interval | 0.2 s |
 | Receding distance | 3.0 m |
 | Planning horizon | 45.0 m |
+
+The current ROG-Map geometry is an axis-aligned ENU AABB. Its local window
+translates with the map origin and has no yaw/orientation field. The planned
+route-oriented window is therefore a planner query/selection frame; it must
+project selected ENU points into the existing ROG evidence contract rather
+than rotate voxel storage or snapshot indices. Replay may draw a rotated
+window only from validated runtime frame metadata.
 
 This contract is implemented by `navigation_runtime_node`,
 `planner.yaml`, and the PX4 External Mode command boundary. It does not

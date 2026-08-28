@@ -2,9 +2,11 @@
 
 **Status:** implementation in staged checkpoints; route/progress, command
 continuity, explicit visibility evidence, native 3D visibility production,
-adaptive pass-through look-ahead on certified outgoing legs, and bounded
-pass-through corner route-window endpoint are implemented. Full
-multiwaypoint SITL and dataset evidence remain open.
+adaptive pass-through look-ahead on certified outgoing legs, bounded
+pass-through corner route-window endpoint, and omnidirectional visibility
+support validation are implemented. The ROG evidence grid is still an
+axis-aligned ENU store; the route-oriented planner window, full multiwaypoint
+SITL, and dataset evidence remain open.
 
 This document is the implementation plan for the high-speed, multi-waypoint
 navigation behavior. It is intentionally broader than a parameter-tuning
@@ -166,6 +168,49 @@ The route altitude profile is planned as part of the same piecewise trajectory;
 avoidance-induced altitude deviation is recovered with bounded vertical
 acceleration/jerk rather than a separate z snap or an unvalidated shortcut.
 
+### 3.6 Route-oriented planning window without rotating evidence storage
+
+The ROG-Map local grid and immutable `WorldSnapshot` remain fixed in ENU. A
+planner window must not be implemented by changing voxel axes when UAV yaw
+changes: that would require resampling occupancy, invalidating cell indices,
+rewriting changed-region history, and re-proving every snapshot/certificate.
+
+The planner instead owns a separate `PlanningWindowFrame` with:
+
+- ENU center and timestamped identity;
+- horizontal forward and lateral unit vectors, vertical axis, and yaw;
+- half-length, half-width, and vertical support;
+- source and age of the orientation (`route_tangent`, measured horizontal
+  velocity, or yaw fallback);
+- the route/mission identity and world snapshot identity used to derive it.
+
+The orientation policy is route tangent first, measured horizontal velocity
+second, and vehicle yaw only as an explicit fallback. Yaw is not equivalent to
+flight direction during sideslip, braking, or camera-first turns. A zero or
+stale vector is rejected rather than normalized or silently replaced.
+
+The oriented frame is used to select route samples, corridor seeds, and
+look-ahead endpoints. Every selected point is converted back to ENU before
+ROG queries, collision checks, A*, immutable snapshot certification, or PX4
+publication. `UNKNOWN` and `OUT_OF_MAP` remain non-traversable for the
+certified backup. The current `110 x 30 x 6 m` AABB now covers the configured
+visibility safety horizon in every horizontal direction, but it does not
+claim to provide a 45 m planning horizon in every direction; that distinction
+must stay visible in diagnostics.
+
+The implementation order is:
+
+1. add the immutable frame contract and finite/age/frame tests;
+2. integrate it into route-window selection while preserving AABB map queries;
+3. export frame source, yaw, support, clipping, and fallback reason in planner
+   diagnostics and rotate the replay overlay from recorded metadata only;
+4. measure map footprint, snapshot export, slide, A*, corridor, and optimizer
+   tails before considering a wider or sparse/chunked evidence store.
+
+No report overlay may imply that the backend grid rotated unless the runtime
+has emitted and validated the frame metadata for that exact command/world
+identity.
+
 ## 4. Staged implementation and commit boundaries
 
 Each phase ends with focused tests, a clean build/provenance check, and one
@@ -230,6 +275,22 @@ Validate speed recovery, reduced hot-replan churn, continuous velocity, and no
 regression in measured waypoint acceptance.
 
 **Commit:** `feat: use adaptive route lookahead for pass-through planning`.
+
+### Phase 3.5 — oriented route-window contract
+
+Add the planner-owned `PlanningWindowFrame` described in section 3.6. Start
+with route-tangent selection and a conservative AABB support/clipping result;
+do not alter ROG voxel indexing or unknown-space semantics. Integrate the
+frame into straight, diagonal, and corner look-ahead selection, then expose
+the exact source, age, yaw, requested support, and clipped support in
+diagnostics and replay.
+
+Acceptance requires the same mission geometry at 0°, 45°, and 90°, long Y and
+diagonal routes, and cases where vehicle yaw intentionally differs from
+velocity. Compare available-path length, `OUT_OF_MAP`/backup events, speed
+recovery, altitude, waypoint order, and mapping/snapshot/planning p50/p95/p99.
+
+**Commit:** `feat: add route-oriented planning window contract`.
 
 ### Phase 4 — explicit free-space ray evidence
 
