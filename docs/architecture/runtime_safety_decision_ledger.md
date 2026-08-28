@@ -7704,6 +7704,47 @@ release profiles must not use the former allowance.
   degree route scenarios. Inspect support/clipping reason, waypoint order,
   speed, altitude, backup, clearance, and p50/p95/p99 latency.
 
+### 2026-08-28 - Restore lateral support for the measured three-column route
+
+- **Owner:** Navigation runtime map-geometry and planner route-query
+  maintainers.
+- **Scope:** Change the product ROG-Map sliding evidence window from an
+  axis-aligned `110 x 15 x 6 m` ENU footprint to `110 x 30 x 6 m`. Keep voxel
+  storage axis-aligned and keep route-direction support, UNKNOWN,
+  OUT_OF_MAP, corridor, swept-world, dynamic, freshness, backup, lease, and
+  command-identity gates unchanged. This supersedes the preceding decision's
+  choice to retain `110 x 15` after the new exact-head route evidence exposed
+  an unsupported lateral waypoint.
+- **Safety impact:** `SAFETY_INVARIANT` preservation with an explicit
+  performance risk. The change supplies physical map support for lateral
+  route progress; it does not rotate evidence by yaw, clip an endpoint, or
+  relax a gate. The doubled Y voxel population may increase memory,
+  snapshot-export, callback, and planner tails; any resulting freshness or
+  deadline failure remains fail-closed.
+- **Derivation and evidence:** In
+  `.artifacts/runtime/external-mode-check-20260828T053849-764780`, after
+  waypoint `(50, 5, 3)` was accepted, the next target `(50, -5, 3)` was
+  reported as `target_grid=2` (`OUT_OF_MAP`) while the measured vehicle was
+  near `y=+5`. With the centered 15 m Y window, the half-extent was 7.5 m,
+  so the 10 m lateral leg could not be represented with the required support
+  margin. A 30 m Y extent gives a 15 m half-extent while retaining the
+  axis-aligned storage contract; it is a candidate geometry correction, not
+  acceptance evidence.
+- **Removal/review condition:** Revisit if repeated representative runs show
+  higher mapping/snapshot p95 or p99, memory exhaustion, stale-world rejects,
+  command exhaustion, worse speed/altitude/clearance, or no improvement in
+  lateral waypoint completion. Replace with a measured sparse/chunked or
+  route-oriented support design only after equivalent fail-closed evidence is
+  demonstrated; do not shrink the map or lower visibility/acceptance gates to
+  hide an unsupported route.
+- **Verification:** `make build`; source the clean install and run planner,
+  mapping, runtime, mission, and PX4 contract tests. Repeat the structured
+  three-column route and the 0/45/90 degree matrix, comparing map memory,
+  mapping update/callback/export p50/p95/p99, planner/EXP tails, target grid
+  states, waypoint order, speed recovery, altitude, clearance, backup,
+  command age, and fail-closed outcome. Run dataset shadow planning only
+  after the runtime geometry comparison is complete.
+
 ### 2026-08-28 - Stabilize free-yaw continuity and PX4 hold heading
 
 - **Owner:** Navigation trajectory-yaw and PX4 external-mode maintainers.

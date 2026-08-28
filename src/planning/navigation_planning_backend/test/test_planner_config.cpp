@@ -67,12 +67,20 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_EQ(planner.unknown_space_policy,
             navigation_world_model::UnknownPolicy::kRequireKnownFree);
   const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
+  // ROG-Map rounds each dimension up to an odd voxel count after inflation;
+  // assert the product contract without depending on the one-cell padding.
+  EXPECT_GE(map.map_size_d.x(), 110.0);
+  EXPECT_GE(map.map_size_d.y(), 30.0);
+  EXPECT_GE(map.map_size_d.z(), 6.0);
+  EXPECT_LE(map.map_size_d.x(), 110.0 + map.resolution + 1.0e-9);
+  EXPECT_LE(map.map_size_d.y(), 30.0 + map.resolution + 1.0e-9);
+  EXPECT_LE(map.map_size_d.z(), 6.0 + map.resolution + 1.0e-9);
   navigation_world_model::WorldGeometry world_geometry;
   world_geometry.evidence_resolution_m = map.resolution;
   world_geometry.inflated_resolution_m = map.inflation_resolution;
   world_geometry.occupied_inflation_radius_m =
       map.inflation_resolution * map.inflation_step;
-  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.local_size_m = map.map_size_d.cast<double>();
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);
@@ -313,11 +321,12 @@ TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
+  const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
   navigation_world_model::WorldGeometry world_geometry;
   world_geometry.evidence_resolution_m = 0.2;
   world_geometry.inflated_resolution_m = 0.2;
   world_geometry.occupied_inflation_radius_m = 1.0;
-  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.local_size_m = map.map_size_d.cast<double>();
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);

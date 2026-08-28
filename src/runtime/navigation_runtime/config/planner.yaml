@@ -198,12 +198,14 @@ rog_map:
   # explicitly; increasing inflation must not be used as a substitute for
   # resolving an oracle/quantization mismatch.
   inflation_step: 4
-  # ROG-Map storage remains an axis-aligned ENU evidence grid.  Keep enough
-  # ROG-Map storage remains an axis-aligned ENU evidence grid.  The baseline
-  # footprint is intentionally anisotropic for measured memory/latency.  The
-  # planner checks route-direction support at runtime; a route that cannot be
-  # supported by this AABB fails closed until a wider/sparse map is certified.
-  map_size: [110, 15, 6]
+  # ROG-Map storage remains an axis-aligned ENU evidence grid; it is not
+  # rotated with vehicle yaw.  The 30 m lateral extent gives a centered
+  # sliding window enough Y support for the current 14 m visibility horizon,
+  # the 5 m/s braking/replan envelope, and the measured three-column route.
+  # Route-direction support is still checked at runtime and an unsupported
+  # AABB request fails closed.  A wider/sparse map remains a future
+  # optimization after memory, snapshot, and mapping-tail measurements.
+  map_size: [110, 30, 6]
   fix_map_origin: [0, 0, 1.5]
   # lio_odom is initialized from the estimator trajectory, so zero is not a
   # physical ground datum and a valid mission may descend below it.  Keep the
