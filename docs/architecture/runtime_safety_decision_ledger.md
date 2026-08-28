@@ -8402,3 +8402,35 @@ release profiles must not use the former allowance.
   `test_exp_optimizer_seed` and the package CTest set. Runtime integration must
   be a separate commit followed by repeated recorded-data and three-pillar SITL
   evidence.
+
+### 2026-08-28 - Retain the certified pre-L-BFGS trajectory on corridor regression
+
+- **Owner:** Nominal MINCO optimizer candidate selection.
+- **Scope:** Freeze and certify the complete MINCO initialization immediately
+  before the first L-BFGS call. If an otherwise successful optimized iterate is
+  rejected by the independent continuous corridor gate, select a direct copy
+  of that frozen object only when its precomputed certificate is valid.
+- **Safety impact:** This is a bounded same-solve fallback, not permission to
+  execute an uncertified guide. Cancellation still fails immediately; an
+  invalid seed still fails closed. The selected seed already satisfies exact
+  PVAJ/C3, piece/SFC provenance, route-boundary, V/A/J, flatness, and corridor
+  contracts, and remains subject to downstream yaw/flatness, backup,
+  latest-world, deadline/goal identity, complete-bundle, and atomic command
+  authorization. The `0.01 m` corridor tolerance is unchanged.
+- **Evidence:** The three-pillar artifact
+  `.artifacts/runtime/external-mode-check-20260828T074424-843700` reached
+  waypoint 4 and then failed three PlanFromRest attempts because L-BFGS moved
+  the candidate to corridor violations of `0.016697`, `0.016714`, `0.051317`,
+  and `0.018787 m`. Unit coverage proves candidate selection copies the exact
+  seed coefficients/duration and rejects fallback when its certificate is
+  invalid. Runtime logs report both rejected-candidate and certified-seed
+  violations when the path is exercised.
+- **Removal/review condition:** Remove when the optimizer itself guarantees
+  hard-feasible iterates or a replacement planner provides an equal or stronger
+  certified-candidate ownership model. Never replace the immutable copy with
+  `rebuildInitialCandidate()` or any reconstruction after optimizer mutation.
+- **Verification:** Build and test `navigation_planning_backend`, rebuild the
+  clean release manifest, and repeat
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.
+  If blocked, re-review planner, mapping, PX4, mission, and report artifacts at
+  the first causal boundary; do not tune the corridor gate from one run.

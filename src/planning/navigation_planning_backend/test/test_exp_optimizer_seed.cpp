@@ -304,4 +304,41 @@ TEST(DeterministicNominalSeed, RejectsAnyCorridorExcessWithoutToleranceRelaxatio
             config.corridor_plane_tolerance_m);
 }
 
+TEST(DeterministicNominalSeed, FallbackCopiesExactPreOptimizerTrajectory) {
+  const auto initial = makePositionState(0.0);
+  const auto terminal = makePositionState(2.0);
+  const auto seed_piece =
+      navigation_planning_backend::minimumSnapStateTransitionPiece(
+          initial, terminal, 3.0);
+  ASSERT_TRUE(seed_piece.has_value());
+  geometry_utils::Trajectory immutable_seed;
+  immutable_seed.emplace_back(*seed_piece);
+
+  auto altered_terminal = terminal;
+  altered_terminal(1, 0) = 0.25;
+  const auto optimized_piece =
+      navigation_planning_backend::minimumSnapStateTransitionPiece(
+          initial, altered_terminal, 3.0);
+  ASSERT_TRUE(optimized_piece.has_value());
+  geometry_utils::Trajectory optimized;
+  optimized.emplace_back(*optimized_piece);
+
+  navigation_planning_backend::DeterministicNominalSeedCertificate certificate;
+  certificate.valid = true;
+  geometry_utils::Trajectory selected;
+  EXPECT_EQ(navigation_planning_backend::selectNominalCandidate(
+                optimized, false, immutable_seed, certificate, selected),
+            navigation_planning_backend::NominalCandidateSelection::kCertifiedSeed);
+  ASSERT_EQ(selected.getPieceNum(), immutable_seed.getPieceNum());
+  EXPECT_DOUBLE_EQ(selected[0].getDuration(), immutable_seed[0].getDuration());
+  EXPECT_TRUE(selected[0].getCoeffMat().isApprox(
+      immutable_seed[0].getCoeffMat(), 0.0));
+
+  certificate.valid = false;
+  EXPECT_EQ(navigation_planning_backend::selectNominalCandidate(
+                optimized, false, immutable_seed, certificate, selected),
+            navigation_planning_backend::NominalCandidateSelection::kRejected);
+  EXPECT_TRUE(selected.empty());
+}
+
 }  // namespace

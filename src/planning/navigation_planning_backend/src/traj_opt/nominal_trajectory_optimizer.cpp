@@ -10,6 +10,7 @@
 #include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
+#include <planner_core/deterministic_nominal_seed.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <planner_runtime_context/planner_runtime_context.hpp>
 #include <planner_core/route_boundary_timing.hpp>
@@ -964,6 +965,24 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         truncateToSixDecimals(opt_vars.waypoint_attractor(2, i));
     }
 
+    // Freeze the complete seed before L-BFGS can mutate x, MINCO parameters,
+    // durations, or spatial points. A later fallback may copy only this exact
+    // object and only when this independent certificate already passed.
+    Trajectory immutable_nominal_seed;
+    opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
+    opt_vars.minco.getTrajectory(immutable_nominal_seed);
+    const auto immutable_seed_certificate =
+            navigation_planning_backend::certifyDeterministicNominalSeed(
+                immutable_nominal_seed,
+                opt_vars.hPolytopes,
+                opt_vars.hPolyIdx,
+                opt_vars.route_boundary_gates,
+                opt_vars.route_boundary_points,
+                opt_vars.route_boundary_radii,
+                opt_vars.headPVAJ,
+                opt_vars.tailPVAJ,
+                cfg_);
+
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
         opt_vars.solver_attempt = diagnostics_.lbfgs_attempt_count;
@@ -1212,11 +1231,28 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     print_optimizer_result();
 
     if (ret >= 0 && !position_constraint_satisfied()) {
+        const double rejected_candidate_violation = corridor_plane_violation();
         planner_context_->warn(
                 " -- [ExpOpt] hard corridor gate rejected trajectory: cost={} limit={} lbfgs_ret={}",
-                corridor_plane_violation(),
+                rejected_candidate_violation,
                 cfg_.corridor_plane_tolerance_m, ret);
-        ret = -1;
+        const auto selection = navigation_planning_backend::selectNominalCandidate(
+                traj, false, immutable_nominal_seed,
+                immutable_seed_certificate, traj);
+        if (selection == navigation_planning_backend::
+                NominalCandidateSelection::kCertifiedSeed) {
+            update_dynamic_extrema();
+            planner_context_->warn(
+                    " -- [ExpOpt] selected exact pre-LBFGS certified seed: "
+                    "optimized_corridor_violation={} seed_corridor_violation={} "
+                    "seed_boundary_residual={}",
+                    rejected_candidate_violation,
+                    immutable_seed_certificate.maximum_corridor_violation_m,
+                    immutable_seed_certificate.maximum_boundary_residual);
+            ret = lbfgs::LBFGS_STOP;
+        } else {
+            ret = -1;
+        }
     }
 
     // A fixed-point MINCO rebuild is not a valid time projection when the

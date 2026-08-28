@@ -22,6 +22,32 @@ struct DeterministicNominalSeedCertificate {
       std::numeric_limits<double>::infinity()};
 };
 
+enum class NominalCandidateSelection {
+  kOptimized,
+  kCertifiedSeed,
+  kRejected,
+};
+
+// Selection copies the already-certified immutable object. It must never
+// reconstruct a fallback from optimizer state after L-BFGS has started.
+inline NominalCandidateSelection selectNominalCandidate(
+    const geometry_utils::Trajectory& optimized_candidate,
+    const bool optimized_candidate_certified,
+    const geometry_utils::Trajectory& immutable_seed,
+    const DeterministicNominalSeedCertificate& seed_certificate,
+    geometry_utils::Trajectory& selected_candidate) {
+  if (optimized_candidate_certified && !optimized_candidate.empty()) {
+    selected_candidate = optimized_candidate;
+    return NominalCandidateSelection::kOptimized;
+  }
+  if (seed_certificate.valid && !immutable_seed.empty()) {
+    selected_candidate = immutable_seed;
+    return NominalCandidateSelection::kCertifiedSeed;
+  }
+  selected_candidate.clear();
+  return NominalCandidateSelection::kRejected;
+}
+
 inline navigation_math::StatePVAJ pieceState(
     const geometry_utils::Piece& piece, const double time_s) {
   navigation_math::StatePVAJ state;
