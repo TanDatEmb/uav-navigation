@@ -14,10 +14,12 @@ mission:
       hold_s: 0.5
   planning:
     max_velocity_mps: 5.0
-    # Conservative calibration baseline retained until repeated speed-ladder
-    # evidence proves a larger PX4 tracking envelope.
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 4.0
+    # Repeated same-profile traces showed that the former 2/4 envelope
+    # rejected otherwise bounded hot-replan candidates while the vehicle was
+    # already entering its certified braking suffix. Keep this well below the
+    # 12/30 product envelope and the requested non-high-dynamic regime.
+    max_acceleration_mps2: 3.0
+    max_jerk_mps3: 8.0
     unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15
