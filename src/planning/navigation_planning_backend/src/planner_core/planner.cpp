@@ -1348,38 +1348,74 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     break;
                 }
             }
-            const auto route_window = passThroughRouteWindowEndpoint(
+            const auto route_window = passThroughRouteWindow(
                 requested_goal_p_.cast<double>(), *pass_through_next_target_,
                 incoming_tangent, goal_acceptance_radius_m_,
                 navigation_world_model::kGoalConnectionToleranceM);
-            if (route_window.has_value() && map_ptr_->contains(*route_window) &&
-                navigation_world_model::isCellTraversable(
-                    map_ptr_->classify(
-                        *route_window, navigation_world_model::GridLayer::kInflated),
-                    unknownPolicy()) &&
-                map_ptr_->isSegmentTraversable(
-                    guide_path[guide_path.size() - 2U].cast<double>(), *route_window,
-                    navigation_world_model::GridLayer::kInflated, unknownPolicy())) {
-                const double route_segment_length =
-                    (*route_window - guide_path[guide_path.size() - 2U].cast<double>()).norm();
+            const auto point_is_traversable = [this](const Eigen::Vector3d& point) {
+                return point.allFinite() && map_ptr_->contains(point) &&
+                    navigation_world_model::isCellTraversable(
+                        map_ptr_->classify(
+                            point, navigation_world_model::GridLayer::kInflated),
+                        unknownPolicy());
+            };
+            const auto segment_is_traversable = [this](
+                    const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
+                return map_ptr_->isSegmentTraversable(
+                    start, end, navigation_world_model::GridLayer::kInflated,
+                    unknownPolicy());
+            };
+            const Eigen::Vector3d predecessor =
+                guide_path[guide_path.size() - 2U].cast<double>();
+            if (route_window.has_value() &&
+                point_is_traversable(route_window->entry) &&
+                point_is_traversable(route_window->outgoing_blend) &&
+                point_is_traversable(route_window->endpoint) &&
+                segment_is_traversable(predecessor, route_window->entry) &&
+                segment_is_traversable(route_window->entry,
+                                       route_window->outgoing_blend) &&
+                segment_is_traversable(route_window->outgoing_blend,
+                                       route_window->endpoint) &&
+                guide_path.size() >= 2U) {
+                const double first_segment_length =
+                    (route_window->entry - predecessor).norm();
+                const double blend_segment_length =
+                    (route_window->outgoing_blend - route_window->entry).norm();
+                const double final_segment_length =
+                    (route_window->endpoint - route_window->outgoing_blend).norm();
                 const double previous_stamp = guide_stamp.size() >= 2U
                     ? guide_stamp[guide_stamp.size() - 2U] : 0.0;
-                const double route_segment_duration =
-                    route_segment_length / cfg_.exp_traj_cfg.max_vel;
-                if (std::isfinite(route_segment_length) && route_segment_length > 1.0e-6 &&
-                    std::isfinite(route_segment_duration) && route_segment_duration > 0.0 &&
+                const double first_segment_duration =
+                    first_segment_length / cfg_.exp_traj_cfg.max_vel;
+                const double blend_segment_duration =
+                    blend_segment_length / cfg_.exp_traj_cfg.max_vel;
+                const double final_segment_duration =
+                    final_segment_length / cfg_.exp_traj_cfg.max_vel;
+                if (std::isfinite(first_segment_length) && first_segment_length > 1.0e-6 &&
+                    std::isfinite(blend_segment_length) && blend_segment_length > 1.0e-6 &&
+                    std::isfinite(final_segment_length) && final_segment_length > 1.0e-6 &&
+                    std::isfinite(first_segment_duration) && first_segment_duration > 0.0 &&
+                    std::isfinite(blend_segment_duration) && blend_segment_duration > 0.0 &&
+                    std::isfinite(final_segment_duration) && final_segment_duration > 0.0 &&
                     std::isfinite(previous_stamp)) {
-                    guide_path.back() = route_window->cast<double>();
-                    guide_stamp.back() = previous_stamp + route_segment_duration;
-                    gi_.goal_p = guide_path.back();
+                    guide_path.back() = route_window->entry;
+                    guide_path.emplace_back(route_window->outgoing_blend);
+                    guide_path.emplace_back(route_window->endpoint);
+                    guide_stamp.back() = previous_stamp + first_segment_duration;
+                    guide_stamp.emplace_back(
+                        guide_stamp.back() + blend_segment_duration);
+                    guide_stamp.emplace_back(
+                        guide_stamp.back() + final_segment_duration);
+                    const double route_window_offset =
+                        (route_window->endpoint - requested_goal_p_.cast<double>()).norm();
+                    gi_.goal_p = route_window->endpoint;
                     planning_goal_p_ = gi_.goal_p;
                     goal_endpoint_adjusted_ = true;
                     route_window_endpoint = true;
                     planner_context_->info(
-                        " -- [planner] pass-through route window endpoint offset={:.3f} "
+                        " -- [planner] pass-through route window fillet offset={:.3f} "
                         "acceptance_radius={:.3f}",
-                        (route_window->cast<double>() - requested_goal_p_.cast<double>()).norm(),
-                        goal_acceptance_radius_m_);
+                        route_window_offset, goal_acceptance_radius_m_);
                 }
             }
         }

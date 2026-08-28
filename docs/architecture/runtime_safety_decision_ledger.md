@@ -7213,15 +7213,15 @@ release profiles must not use the former allowance.
 - **Owner:** Navigation planning, runtime execution, and mission-controller
   maintainers.
 - **Scope:** When the current pass-through guide reaches the active waypoint,
-  its final geometric point may move along the outgoing route tangent by 75%
-  of the mission acceptance radius for a genuine corner. The endpoint remains
-  inside the current waypoint acceptance ball, is required to be traversable,
-  and is accepted only after the measured mission state enters that ball. The
-  final segment from the existing A* predecessor to the route-window endpoint
-  is checked against the configured inflated-layer policy before corridor and
-  trajectory generation. Shallow bends, small acceptance balls, adjusted
-  occupied/out-of-map goals, and failed segment checks retain the exact-goal
-  path.
+  a genuine corner may use a bounded three-point route-window fillet inside
+  the mission acceptance ball: an incoming-tangent entry point, an outgoing
+  tangent blend point, and an outgoing-tangent endpoint at 75% of the
+  acceptance radius. Every point and each predecessor/fillet segment is
+  required to be traversable before corridor and trajectory generation. The
+  endpoint is accepted only after the measured mission state enters the
+  requested waypoint's acceptance ball. Shallow bends, small acceptance
+  balls, adjusted occupied/out-of-map goals, and failed point/segment checks
+  retain the exact-goal path.
 - **Safety impact:** `SAFETY_INVARIANT` preservation, not a gate relaxation.
   This removes the zero-geometric-room boundary condition that forced a
   second solve to turn a nonzero incoming velocity at the exact corner. The
@@ -7230,24 +7230,22 @@ release profiles must not use the former allowance.
   waypoint. The candidate still requires the existing dynamic, corridor,
   strict-backup, swept-world, identity, and lease certificates. No UNKNOWN,
   OUT_OF_MAP, clearance, speed, acceleration, jerk, or deadline gate changes.
-- **Derivation and cost:** The endpoint is a bounded interior point on the
-  mission-owned outgoing tangent, leaving margin from the planner's smaller
-  endpoint-connection tolerance. The predecessor-to-endpoint segment is
-  checked once and the existing MINCO/corridor/backup path is reused; no
-  second planner or optimizer pass is added. The ratio is geometric endpoint
-  placement, not a tuned acceptance or safety threshold, and must be revisited
-  only with route/acceptance distributions.
+- **Derivation and cost:** The fillet uses a fixed interior ratio and three
+  route-window points so the corridor sees the incoming, blend, and outgoing
+  geometry explicitly. Each of the three short segments is checked once and
+  the existing MINCO/corridor/backup path is reused; no second planner or
+  optimizer pass is added. The ratio is geometric point placement, not a tuned
+  acceptance or safety threshold, and must be revisited only with
+  route/acceptance distributions.
 - **Evidence:** The route-window helper tests and planner configuration suite
   pass (28/28). A post-change structured SITL run is required to verify all
   nine waypoint transitions, speed continuity, altitude, clearance, and
   latency; this entry does not claim mission completion until that evidence is
   repeated.
 - **Removal/review condition:** Revert or redesign if measured acceptance
-  skips a waypoint, the endpoint is outside the requested ball, command/world
-  identity or PVA continuity breaks, clearance/altitude worsens, or the
+  skips a waypoint, any fillet point is outside the requested ball, command/
+  world identity or PVA continuity breaks, clearance/altitude worsens, or the
   route-window solve increases planner tail latency or optimizer failures.
-  Replace it with a certified multi-piece fillet only after that representation
-  preserves the same measured acceptance and fail-closed contracts.
 - **Verification:** `make build`; sourced planner, mission, and trajectory
   tests; then repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
   make external-mode-check` and the declared speed ladder, checking route

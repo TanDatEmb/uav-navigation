@@ -205,6 +205,16 @@ TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
   EXPECT_NEAR(endpoint->x(), 50.0, 1.0e-12);
   EXPECT_NEAR(endpoint->y(), 4.325, 1.0e-12);
   EXPECT_NEAR((*endpoint - Eigen::Vector3d{50.0, 5.0, 3.0}).norm(), 0.675, 1.0e-12);
+
+  const auto window = navigation_planning_backend::passThroughRouteWindow(
+      Eigen::Vector3d{50.0, 5.0, 3.0}, Eigen::Vector3d{50.0, -5.0, 3.0},
+      Eigen::Vector3d{30.0, 0.0, 0.0}, 0.9, 0.2);
+  ASSERT_TRUE(window.has_value());
+  EXPECT_NEAR(window->entry.x(), 49.325, 1.0e-12);
+  EXPECT_NEAR(window->entry.y(), 5.0, 1.0e-12);
+  EXPECT_NEAR(window->outgoing_blend.x(), 50.0, 1.0e-12);
+  EXPECT_NEAR(window->outgoing_blend.y(), 4.6625, 1.0e-12);
+  EXPECT_NEAR(window->endpoint.y(), 4.325, 1.0e-12);
 }
 
 TEST(PlannerPassThrough, RouteWindowDoesNotChangeShallowBendOrTinyAcceptanceBall) {

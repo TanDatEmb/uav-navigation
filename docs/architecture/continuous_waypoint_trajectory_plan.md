@@ -109,7 +109,10 @@ The executable nominal trajectory is a sequence of certified pieces:
 measured PVAJ -> active waypoint -> route look-ahead -> terminal/renewal point
 ```
 
-The active waypoint is an exact piece boundary. The handoff contract requires
+The active waypoint is an exact mission-identity boundary. For a genuine
+pass-through corner, the planner may represent that boundary with a bounded
+three-point fillet entirely inside the mission acceptance ball: incoming entry,
+outgoing blend, and outgoing endpoint. The handoff contract requires
 continuous P/V/A, bounded J, and an explicit corner velocity policy. Each
 piece has its own corridor and world swept certificate; the complete candidate
 also has one atomic validity interval and route identity.

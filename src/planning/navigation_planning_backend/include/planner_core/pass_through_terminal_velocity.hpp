@@ -156,7 +156,13 @@ inline std::optional<Eigen::Vector3d> frontierContinuationVelocity(
 // leaves no geometric room for the next leg to rotate the velocity vector.
 // The endpoint remains inside the mission-owned acceptance ball; it is not a
 // waypoint skip and it never changes the collision or dynamic certificates.
-inline std::optional<Eigen::Vector3d> passThroughRouteWindowEndpoint(
+struct PassThroughRouteWindow {
+  Eigen::Vector3d entry;
+  Eigen::Vector3d outgoing_blend;
+  Eigen::Vector3d endpoint;
+};
+
+inline std::optional<PassThroughRouteWindow> passThroughRouteWindow(
     const Eigen::Vector3d& waypoint,
     const Eigen::Vector3d& next_target,
     const Eigen::Vector3d& incoming_tangent,
@@ -195,11 +201,30 @@ inline std::optional<Eigen::Vector3d> passThroughRouteWindowEndpoint(
   }
   const Eigen::Vector3d endpoint = waypoint +
       (outgoing_delta / outgoing_length) * offset_m;
-  if (!endpoint.allFinite() ||
+  const Eigen::Vector3d entry = waypoint -
+      incoming_tangent.normalized() * offset_m;
+  const Eigen::Vector3d outgoing_blend = waypoint +
+      (outgoing_delta / outgoing_length) * (0.5 * offset_m);
+  if (!entry.allFinite() || !outgoing_blend.allFinite() || !endpoint.allFinite() ||
+      (entry - waypoint).norm() > acceptance_radius_m + 1.0e-6 ||
+      (outgoing_blend - waypoint).norm() > acceptance_radius_m + 1.0e-6 ||
       (endpoint - waypoint).norm() > acceptance_radius_m + 1.0e-6) {
     return std::nullopt;
   }
-  return endpoint;
+  return PassThroughRouteWindow{entry, outgoing_blend, endpoint};
+}
+
+inline std::optional<Eigen::Vector3d> passThroughRouteWindowEndpoint(
+    const Eigen::Vector3d& waypoint,
+    const Eigen::Vector3d& next_target,
+    const Eigen::Vector3d& incoming_tangent,
+    const double acceptance_radius_m,
+    const double connection_tolerance_m) noexcept {
+  const auto window = passThroughRouteWindow(
+      waypoint, next_target, incoming_tangent, acceptance_radius_m,
+      connection_tolerance_m);
+  return window.has_value()
+      ? std::optional<Eigen::Vector3d>{window->endpoint} : std::nullopt;
 }
 
 }  // namespace navigation_planning_backend
