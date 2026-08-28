@@ -9847,3 +9847,28 @@ release profiles must not use the former allowance.
 - **Verification:** `git show c9f18bb`, `git show e3c4200`, mission contract
   tests, authoritative Release build and both cited artifacts preserve the
   implementation, rollback and repeated evidence.
+
+### 2026-08-28 - Rejected experiment: jerk-only 5/2/8 mission envelope
+
+- **Owner:** Two-waypoint three-column jerk calibration, reverted by
+  `207b433`.
+- **Scope:** Commit `a3dd36d` kept velocity/acceleration at 5/2 and raised only
+  mission jerk from 4 to 8 m/s^3. Product limits and all safety gates remained
+  unchanged; the multi-waypoint profile was not modified.
+- **Safety impact:** No gate was bypassed and PX4 failed closed without
+  collision. The admitted reference still exceeded the unchanged tracking
+  envelope while executing BACKUP, so the jerk calibration was reverted.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T145723-1255145` stopped near
+  x=21 m with longitudinal error 0.773 m against the 0.750 m gate. Command
+  acceleration was only 1.318 m/s^2 and jerk magnitude remained below the new
+  ceiling at the failure sample, showing that merely holding acceleration at
+  2 does not make the higher-jerk trajectory family trackable. Clearance was
+  4.403 m with zero collision; mission completion was not observed.
+- **Removal/review condition:** Historical rejected-experiment record. Do not
+  address rolling planner infeasibility by raising mission V/A/J ceilings.
+  Replace or condition the nominal trajectory parameterization and explicitly
+  account for PX4 tracking dynamics before reconsidering limits.
+- **Verification:** `git show a3dd36d`, `git show 207b433`, mission contract
+  test, authoritative Release build and the cited artifact preserve the
+  implementation, rollback and runtime evidence.
