@@ -23,6 +23,7 @@ set(NAVIGATION_PLANNING_BACKEND_SOURCES
   src/planner_core/ciri.cpp
   src/planner_core/corridor_generator.cpp
   src/planner_core/planner.cpp
+  src/planner_core/route_yaw_reference.cpp
   src/planner_facade.cpp
   src/traj_opt/backup_trajectory_optimizer.cpp
   src/traj_opt/nominal_trajectory_optimizer.cpp
@@ -137,6 +138,14 @@ if(BUILD_TESTING)
     ORIGIN_AT_CORNER)
   target_link_libraries(test_planner_runtime_context ${PROJECT_NAME})
   configure_backend_test(test_planner_runtime_context)
+
+  ament_add_gtest(test_route_yaw_reference
+    test/test_route_yaw_reference.cpp)
+  target_compile_definitions(test_route_yaw_reference PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER)
+  target_link_libraries(test_route_yaw_reference ${PROJECT_NAME})
+  configure_backend_test(test_route_yaw_reference)
 
   ament_add_gtest(test_exp_optimizer_seed
     test/test_exp_optimizer_seed.cpp)

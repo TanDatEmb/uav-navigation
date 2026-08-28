@@ -8463,3 +8463,30 @@ release profiles must not use the former allowance.
   `navigation_contracts`, `navigation_planning_backend`,
   `navigation_runtime`, and `px4_navigation_external_mode`. M2 must consume this
   route in yaw policy before claiming complete shared-route behavior.
+
+### 2026-08-28 - Define semantic route-lookahead yaw independently of MINCO
+
+- **Owner:** Planner route-yaw reference policy; runtime integration remains a
+  separate M2 behavior change.
+- **Scope:** Add a pure `FaceRouteLookahead` policy driven only by immutable
+  mission-route geometry and measured P/V/yaw. Lookahead scales with horizontal
+  speed, progress cannot jump beyond the active waypoint at crossing geometry,
+  and reversal lookahead is capped at the STOP-TURN-GO boundary. Standstill,
+  pure vertical motion, invalid route support, or a vanishing horizontal
+  bearing holds measured yaw.
+- **Safety impact:** This checkpoint does not yet select executable yaw and does
+  not alter map, position trajectory, PX4 setpoint, waypoint acceptance, rate
+  limit, or acceleration limit. It removes MINCO/path-shape ownership from the
+  semantic target definition so a later integration cannot silently use local
+  path loops as mission heading commands.
+- **Evidence:** Unit tests cover eight horizontal bearings, shortest-angle
+  unwrap, standstill, pure vertical motion, generation-independent straight
+  flight, outgoing-corner lookahead, 180-degree reversal, and self-crossing
+  geometry bounded by active waypoint identity.
+- **Removal/review condition:** Replace only with an equal or stronger explicit
+  mission yaw mode. Never restore implicit bearing from each optimized local
+  trajectory as the default mission-yaw source.
+- **Verification:** Build `navigation_planning_backend` in Release mode and run
+  `test_route_yaw_reference` plus the complete backend CTest set. Runtime MAIN
+  and BACKUP integration, PX4-limit capture, and open-map SITL are required in
+  later M2 commits.
