@@ -166,6 +166,50 @@ TEST(HotReplanTrackingRecovery, NeverBuildsAReverseConnectorToMeasuredHistory) {
             HotReplanTrackingRecovery::kFailClosed);
 }
 
+TEST(HotReplanTrackingRecovery, RejectsSpliceOutsideNecessaryKinematicEnvelope) {
+  using navigation_planning_backend::assessHotReplanSpliceCompatibility;
+
+  // Runtime artifact generation 246 was inside the current 0.25 m position
+  // budget but its command and measured Y velocities differed by about
+  // 0.737 m/s. A 2 m/s^2 vehicle cannot close that mismatch over the 0.2 s
+  // splice prefix.
+  const auto artifact_failure = assessHotReplanSpliceCompatibility(
+      0.236, 0.383, 0.737, 0.2, 2.0, 0.25);
+  EXPECT_TRUE(artifact_failure.finite);
+  EXPECT_TRUE(artifact_failure.current_position_within_budget);
+  EXPECT_FALSE(artifact_failure.future_position_within_envelope);
+  EXPECT_FALSE(artifact_failure.future_velocity_within_envelope);
+  EXPECT_TRUE(artifact_failure.requiresMeasuredStateRestart());
+  EXPECT_DOUBLE_EQ(artifact_failure.future_position_allowance_m, 0.29);
+  EXPECT_DOUBLE_EQ(artifact_failure.future_velocity_allowance_mps, 0.4);
+}
+
+TEST(HotReplanTrackingRecovery, KeepsSpliceInsideNecessaryKinematicEnvelope) {
+  using navigation_planning_backend::assessHotReplanSpliceCompatibility;
+
+  // Passing these two scalar projections only means that this guard has no
+  // reason to force a restart. It is not a joint P/V reachability proof: the
+  // same bounded acceleration history must produce both boundary conditions,
+  // which remains owned by the downstream continuous dynamics certificate.
+  const auto compatible = assessHotReplanSpliceCompatibility(
+      0.25, 0.29, 0.4, 0.2, 2.0, 0.25);
+  EXPECT_TRUE(compatible.finite);
+  EXPECT_TRUE(compatible.current_position_within_budget);
+  EXPECT_TRUE(compatible.future_position_within_envelope);
+  EXPECT_TRUE(compatible.future_velocity_within_envelope);
+  EXPECT_FALSE(compatible.requiresMeasuredStateRestart());
+}
+
+TEST(HotReplanTrackingRecovery, FailsClosedOnInvalidCompatibilityInputs) {
+  using navigation_planning_backend::assessHotReplanSpliceCompatibility;
+
+  const auto invalid = assessHotReplanSpliceCompatibility(
+      0.0, std::numeric_limits<double>::quiet_NaN(), 0.0,
+      0.2, 2.0, 0.25);
+  EXPECT_FALSE(invalid.finite);
+  EXPECT_TRUE(invalid.requiresMeasuredStateRestart());
+}
+
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
   navigation_math::VecDf tau(5);
   tau << -3.0, -0.25, 0.0, 0.5, 2.0;

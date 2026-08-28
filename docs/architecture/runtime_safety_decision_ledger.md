@@ -64,7 +64,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
 | HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
 | HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
-| HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position or yaw exceeds its existing tracking-error budget; waypoint hot-retarget uses the shared 0.75 m execution-anchor limit before solve; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag and yaw error. Require zero generated reverse-rebase connectors, bounded command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
+| HG-021 | Tracking-divergence recovery without reverse connector (`SAFETY_INVARIANT`) | end hot stitching when position/yaw exceeds its existing budget or the future splice violates a necessary acceleration-derived P/V envelope; waypoint hot-retarget uses the shared 0.75 m execution-anchor limit before solve; restart from a fresh measured state only when that pose is traversable | PROVISIONAL | A command state ahead of the vehicle is no longer joined back to a historical measured state by a long nominal polynomial, including the observed low-position-error/opposing-velocity case. Passing the separate P/V envelopes is not a proof of joint boundary-value reachability; continuous candidate dynamics and world certificates remain authoritative. The current command remains finite/world-certified until the runtime restart boundary; a non-traversable measured pose fails closed. No dynamic, route, world or anchor gate is relaxed. | Repeat missions with injected command lag, velocity mismatch and yaw error. Require zero generated reverse-rebase connectors, bounded P/V command handover residuals, successful measured-state restart or certified stop, and no stale-state commit. |
 | HG-022 | Acceptance-region pass-through fillet (`SAFETY_INVARIANT`) | switch route-progress ownership at the closest trajectory junction inside the configured waypoint acceptance ball; do not pin nonzero-speed C3 turns to the exact corner centre | PROVISIONAL | Removes an impossible exact-tangent-change constraint at genuine corners while retaining the mission acceptance radius, continuous corridor/dynamics/flatness gates, analytic regression checks on each route leg, measured waypoint acceptance and latest-world authorization. Stop waypoints do not receive the phase switch. | Repeat 90-degree and arbitrary-bearing missions. Require the measured vehicle to enter the acceptance ball, no admitted fold on either leg, bounded corner speed/clearance, stable yaw, and higher nominal commit availability across more than one run. |
 | HG-023 | Retain certified command during measured-state restart (`SAFETY_INVARIANT`) | a failed PlanFromRest replacement uses the same latest-world/anchor/suffix validation as a failed hot replan whenever a current command exists; the consecutive rest failure budget applies only without a command | PROVISIONAL | Prevents optimizer failures from revoking an unexpired certified MAIN/BACKUP bundle during tracking recovery. The bundle is not trusted blindly: current-world sweep, finite duration, exact goal identity and command-anchor limits remain mandatory; failure still creates a measured emergency brake or fails closed. | Inject repeated replacement failures while a finite suffix is active and after it expires. Require retention only while all existing certificates pass, no failure-budget mode exit during valid execution, and fail-closed behavior once the bundle is unusable. |
 | HG-024 | Acceptance-ball route junction (`MISSION_PROGRESS_INVARIANT`) | every pass-through outgoing-lookahead corridor contains one optimizable junction that must remain inside the configured waypoint acceptance ball; the junction is initialized at but not pinned to the waypoint centre | PROVISIONAL | Prevents a smooth long-horizon trajectory from cutting outside the mission acceptance region while avoiding the dynamically impossible requirement to change tangent at one exact point. Corridor, continuous world, V/A/J, flatness, measured acceptance and route-regression gates remain authoritative. | Repeat shallow, 90-degree and arbitrary-bearing missions. Require every committed pass-through MAIN to contain an in-ball junction, measured waypoint acceptance in order, no exact-point optimizer starvation, and no admitted reverse fold. |
@@ -10275,3 +10275,51 @@ release profiles must not use the former allowance.
 - **Evidence:** Added direct invalid-input regression coverage to the planning trajectory suite; the previous valid switching-boundary and guide-time tests remain in the same suite.
 - **Removal/review condition:** Keep the input guard and unit-bearing names. Any future profile extension must define its domain and terminal-speed semantics before accepting new inputs.
 - **Verification:** `cmake --build build/navigation_planning_backend --target test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
+### 2026-08-29 - Reject hot-replan splices outside a necessary kinematic envelope
+
+- **Owner/status:** Planner hot-replan continuity boundary, safety invariant;
+  extends HG-021 without adding a configurable threshold.
+- **Scope:** The current command position must remain inside the existing
+  tracking budget. In addition, the exact committed state at the configured
+  future splice horizon must satisfy separate necessary acceleration-bounded
+  position and velocity envelopes from measured state. The future position
+  allowance is
+  `tracking_budget + 0.5 * max_acceleration * horizon^2`; the future velocity
+  allowance is `max_acceleration * horizon`. A violation ends hot
+  stitching and enters the existing measured-state PlanFromRest recovery; a
+  non-traversable measured pose remains fail-closed.
+- **Safety impact:** Positive and fail-closed. Position proximity alone can
+  admit a command whose velocity is already opposite the vehicle, causing the
+  command anchor to detach before the next splice. This change does not raise
+  the 0.25 m planner budget, the 0.75 m PX4 envelope, V/A/J limits, waypoint
+  radius, freshness, UNKNOWN/OUT_OF_MAP, collision or deadline gates. It uses
+  the mission acceleration limit and existing replan horizon as the only
+  compatibility parameters. Passing both scalar envelopes does not prove joint
+  position/velocity reachability; downstream continuous dynamics and world
+  certificates remain authoritative.
+- **Evidence:** In square-map A/B artifact
+  `.artifacts/runtime/external-mode-check-20260828T170632-1360692`, generation
+  246 was committed with only about 0.236 m position error, but measured
+  `vy=-0.594 m/s` while its candidate start had `vy=+0.143 m/s`. The velocity
+  mismatch was about 0.737 m/s, outside the necessary acceleration envelope
+  `2.0 m/s^2 * 0.2 s = 0.4 m/s`; the command then crossed the unchanged PX4
+  envelope at 0.769 m. This guard specifically rejects that generation-246
+  boundary. It does not
+  close the distinct generation-341 failure in original-map artifact
+  `.artifacts/runtime/external-mode-check-20260828T165809-1348078`: that command
+  began from matching measured P/V and crossed at 0.753 m about 1.36 s into a
+  retained BACKUP after replacement-plan failures. Runtime commit-time state
+  freshness and retained-BACKUP tracking remain open owners for that case.
+- **Removal/review condition:** Replace only with a controller-owned tracking
+  tube or time-scaling contract that proves an equivalent future-state
+  compatibility boundary. Revert if repeated evidence shows command
+  discontinuity,
+  reverse connectors, loss of safe recovery or a higher tracking-envelope
+  rejection rate.
+- **Verification:** Run focused planner tests, full Release build, then repeat
+  the generation-246 scenario and the ±X/±Y mission matrix. Diagnose the
+  generation-341 retained-BACKUP case separately. Require explicit
+  measured-state restart before an envelope violation, bounded P/V handoff,
+  zero collision, no tracking-envelope exit, complete waypoint order and
+  planner/mapping p50/p95/p99 evidence.

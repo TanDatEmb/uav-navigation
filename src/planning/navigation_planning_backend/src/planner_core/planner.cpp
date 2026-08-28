@@ -1143,12 +1143,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     replan_process_start_WT - committed_start_WT,
                     0.0, std::max(0.0, committed_duration));
             const StatePVAJ committed_state = cmd_traj_info_.posTraj().getState(committed_tt);
+            const double committed_future_tt = std::clamp(
+                    committed_tt + cfg_.replan_forward_dt_s,
+                    committed_tt, std::max(committed_tt, committed_duration));
+            const StatePVAJ committed_future_state =
+                    cmd_traj_info_.posTraj().getState(committed_future_tt);
             StatePVAJ committed_yaw_state;
             const bool committed_yaw_state_valid =
                     cmd_traj_info_.yawTraj().getState(committed_tt, committed_yaw_state);
             cmd_traj_info_.unlock();
             const double command_anchor_error =
                     (committed_state.col(0) - solve_state_.p).norm();
+            const double splice_horizon_s = committed_future_tt - committed_tt;
+            const Vec3f measured_constant_velocity_future =
+                    solve_state_.p + splice_horizon_s * solve_state_.v;
+            const double future_position_error =
+                    (committed_future_state.col(0) -
+                     measured_constant_velocity_future).norm();
+            const double future_velocity_error =
+                    (committed_future_state.col(1) - solve_state_.v).norm();
+            const auto splice_compatibility = assessHotReplanSpliceCompatibility(
+                    command_anchor_error, future_position_error,
+                    future_velocity_error, splice_horizon_s,
+                    cfg_.exp_traj_cfg.max_acc, cfg_.tracking_error_budget_m);
             const bool measured_yaw_valid = std::isfinite(solve_state_.yaw);
             const bool committed_yaw_valid = committed_yaw_state_valid &&
                     committed_yaw_state.allFinite() &&
@@ -1158,8 +1175,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                           solve_state_.yaw - committed_yaw_state(0, 0), 2.0 * M_PI))
                     : std::numeric_limits<double>::infinity();
             const bool position_rebase_required =
-                    !committed_state.allFinite() || !std::isfinite(command_anchor_error) ||
-                    command_anchor_error > cfg_.tracking_error_budget_m;
+                    !committed_state.allFinite() ||
+                    !committed_future_state.allFinite() ||
+                    splice_compatibility.requiresMeasuredStateRestart();
             const bool yaw_rebase_required =
                     !measured_yaw_valid || !committed_yaw_valid ||
                     !std::isfinite(yaw_anchor_error) ||
@@ -1179,18 +1197,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 if (recovery == HotReplanTrackingRecovery::kFailClosed) {
                     planner_context_->warn(
                             " -- [planner] cannot restart hot replan from measured state: "
-                            "measured start is not traversable position_error={} yaw_error={} "
-                            "position_budget={} yaw_budget={}",
-                            command_anchor_error, yaw_anchor_error,
+                            "measured start is not traversable position_error={} "
+                            "future_position_error={} future_velocity_error={} yaw_error={} "
+                            "position_budget={} future_position_allowance={} "
+                            "future_velocity_allowance={} yaw_budget={}",
+                            command_anchor_error, future_position_error,
+                            future_velocity_error, yaw_anchor_error,
                             cfg_.tracking_error_budget_m,
+                            splice_compatibility.future_position_allowance_m,
+                            splice_compatibility.future_velocity_allowance_mps,
                             cfg_.yaw_tracking_error_budget_rad);
                     return FAILED;
                 }
                 planner_context_->warn(
                         " -- [planner] ending hot stitch and restarting from fresh measured state: "
-                        "position_error={} yaw_error={} position_budget={} yaw_budget={}",
-                        command_anchor_error, yaw_anchor_error,
+                        "position_error={} future_position_error={} "
+                        "future_velocity_error={} yaw_error={} position_budget={} "
+                        "future_position_allowance={} future_velocity_allowance={} "
+                        "yaw_budget={}",
+                        command_anchor_error, future_position_error,
+                        future_velocity_error, yaw_anchor_error,
                         cfg_.tracking_error_budget_m,
+                        splice_compatibility.future_position_allowance_m,
+                        splice_compatibility.future_velocity_allowance_mps,
                         cfg_.yaw_tracking_error_budget_rad);
                 return NEW_TRAJ;
             }
