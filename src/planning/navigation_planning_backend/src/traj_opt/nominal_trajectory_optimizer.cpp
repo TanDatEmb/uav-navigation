@@ -11,6 +11,7 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/boundary_velocity_recovery.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <planner_runtime_context/planner_runtime_context.hpp>
 #include <planner_core/route_boundary_timing.hpp>
@@ -1170,16 +1171,27 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             !std::isfinite(maximum_jerk)) {
             return std::numeric_limits<double>::infinity();
         }
-        return std::max({maximum_velocity / cfg_.max_vel,
+        const auto velocity_recovery =
+                navigation_planning_backend::certifyBoundaryVelocityRecovery(
+                    traj, cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk);
+        const double peak_velocity_ratio = velocity_recovery.finite
+                ? maximum_velocity / velocity_recovery.allowed_peak_speed_mps
+                : std::numeric_limits<double>::infinity();
+        const double recovered_velocity_ratio = velocity_recovery.initial_overspeed
+                ? velocity_recovery.suffix_maximum_speed_mps / cfg_.max_vel
+                : maximum_velocity / cfg_.max_vel;
+        return std::max({peak_velocity_ratio, recovered_velocity_ratio,
                          maximum_acceleration / cfg_.max_acc,
                          maximum_jerk / cfg_.max_jerk});
     };
     const auto dynamic_gate_satisfied = [&]() {
-        return std::isfinite(maximum_velocity) &&
+        const auto velocity_recovery =
+                navigation_planning_backend::certifyBoundaryVelocityRecovery(
+                    traj, cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk);
+        return velocity_recovery.satisfied &&
+               std::isfinite(maximum_velocity) &&
                std::isfinite(maximum_acceleration) &&
                std::isfinite(maximum_jerk) &&
-               navigation_planning::withinNumericalDynamicLimit(
-                   maximum_velocity, cfg_.max_vel) &&
                navigation_planning::withinNumericalDynamicLimit(
                    maximum_acceleration, cfg_.max_acc) &&
                navigation_planning::withinNumericalDynamicLimit(
@@ -1648,18 +1660,25 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     if (ret >= 0) {
         // Mission V/A/J values are command limits, not soft optimizer
         // penalties. The hard gate is the physical mission/product envelope.
-        if (!std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
+        const auto velocity_recovery =
+                navigation_planning_backend::certifyBoundaryVelocityRecovery(
+                    traj, cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk);
+        if (!velocity_recovery.satisfied ||
+            !std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
             !std::isfinite(maximum_jerk) ||
-            !navigation_planning::withinNumericalDynamicLimit(
-                maximum_velocity, cfg_.max_vel) ||
             !navigation_planning::withinNumericalDynamicLimit(
                 maximum_acceleration, cfg_.max_acc) ||
             !navigation_planning::withinNumericalDynamicLimit(
                 maximum_jerk, cfg_.max_jerk)) {
             planner_context_->warn(
                     " -- [ExpOpt] physical hard gate rejected trajectory: "
-                    "vel={}/{} acc={}/{} jerk={}/{}",
+                    "vel={}/{} initial_vel={} allowed_peak={} recovery_deadline={} "
+                    "recovery_suffix_max={} acc={}/{} jerk={}/{}",
                     maximum_velocity, cfg_.max_vel,
+                    velocity_recovery.initial_speed_mps,
+                    velocity_recovery.allowed_peak_speed_mps,
+                    velocity_recovery.recovery_deadline_s,
+                    velocity_recovery.suffix_maximum_speed_mps,
                     maximum_acceleration, cfg_.max_acc,
                     maximum_jerk, cfg_.max_jerk);
             traj.clear();

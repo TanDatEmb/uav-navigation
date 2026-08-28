@@ -6,6 +6,7 @@
 
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
+#include <planner_core/boundary_velocity_recovery.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
@@ -98,6 +99,58 @@ TEST(GuideVerticalEnvelope, RejectsInvalidScaleOrGuide) {
   EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.0).valid);
   guide.front().z() = std::numeric_limits<double>::quiet_NaN();
   EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2).valid);
+}
+
+namespace {
+
+geometry_utils::Trajectory makeLinearSpeedTrajectory(
+    const double initial_speed_mps, const double acceleration_mps2,
+    const double duration_s) {
+  Eigen::Matrix<double, 3, 6> coefficients =
+      Eigen::Matrix<double, 3, 6>::Zero();
+  coefficients(0, 3) = 0.5 * acceleration_mps2;
+  coefficients(0, 4) = initial_speed_mps;
+  geometry_utils::Trajectory trajectory;
+  trajectory.emplace_back(duration_s, coefficients);
+  return trajectory;
+}
+
+}  // namespace
+
+TEST(BoundaryVelocityRecovery, KeepsNormalStartsUnderMissionCap) {
+  const auto report =
+      navigation_planning_backend::certifyBoundaryVelocityRecovery(
+          makeLinearSpeedTrajectory(2.9, 0.0, 1.0), 3.0, 2.0, 4.0);
+  EXPECT_FALSE(report.initial_overspeed);
+  EXPECT_TRUE(report.satisfied);
+  EXPECT_DOUBLE_EQ(report.allowed_peak_speed_mps, 3.0);
+}
+
+TEST(BoundaryVelocityRecovery, AcceptsBoundedJerkLimitedRecovery) {
+  const auto report =
+      navigation_planning_backend::certifyBoundaryVelocityRecovery(
+          makeLinearSpeedTrajectory(3.1, -0.5, 1.0), 3.0, 2.0, 4.0);
+  EXPECT_TRUE(report.initial_overspeed);
+  EXPECT_TRUE(report.peak_bounded);
+  EXPECT_TRUE(report.recovered_by_deadline);
+  EXPECT_TRUE(report.satisfied);
+  EXPECT_DOUBLE_EQ(report.allowed_peak_speed_mps, 3.1);
+  EXPECT_LE(report.suffix_maximum_speed_mps, 3.0);
+}
+
+TEST(BoundaryVelocityRecovery, RejectsWorseningOrLateOverspeed) {
+  const auto worsening =
+      navigation_planning_backend::certifyBoundaryVelocityRecovery(
+          makeLinearSpeedTrajectory(3.1, 0.1, 1.0), 3.0, 2.0, 4.0);
+  EXPECT_FALSE(worsening.peak_bounded);
+  EXPECT_FALSE(worsening.satisfied);
+
+  const auto late =
+      navigation_planning_backend::certifyBoundaryVelocityRecovery(
+          makeLinearSpeedTrajectory(3.1, -0.05, 1.0), 3.0, 2.0, 4.0);
+  EXPECT_TRUE(late.peak_bounded);
+  EXPECT_FALSE(late.recovered_by_deadline);
+  EXPECT_FALSE(late.satisfied);
 }
 
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
