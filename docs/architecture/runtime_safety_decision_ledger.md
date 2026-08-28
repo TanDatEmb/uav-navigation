@@ -8805,3 +8805,34 @@ release profiles must not use the former allowance.
   runtime tests, then repeat the three-column run and require explicit seed-use
   evidence, unchanged hard limits, route-regression/world authorization, and
   no worse connector/tracking continuity before acceptance.
+
+### 2026-08-28 - Keep mission-route yaw invariant during cross-track and terminal correction
+
+- **Owner:** planner semantic-yaw reference. **Scope:** derive moving yaw from
+  the immutable route chord rather than the vector from measured vehicle
+  position to the lookahead point. At the terminal route arc, use the incoming
+  chord so a bounded correction after overshoot does not reverse heading.
+- **Safety impact:** position planning, collision certificates, waypoint
+  acceptance, and yaw rate/acceleration limits are unchanged. The change
+  removes cross-track and overshoot error from the heading reference; explicit
+  mission reversals still use the existing stop-turn-go boundary and outgoing
+  route chord. Invalid or purely vertical support continues to hold yaw.
+- **Derivation and cost:** artifact
+  `.artifacts/runtime/external-mode-check-20260828T100206-949033` completed all
+  waypoints at 3 m/s, but the final correction from just beyond waypoint 8
+  changed route yaw from the incoming-leg heading (about `0.245 rad`) toward
+  `2.5 rad`. Source inspection showed the reference used
+  `target_point - measured_position`, which necessarily points backward after
+  overshoot. The replacement is constant-time and uses the already immutable
+  route geometry.
+- **Evidence:** focused route-yaw tests cover cross-track displacement,
+  terminal overshoot, arbitrary bearings, corner lookahead, and explicit
+  reversal. Then run backend/runtime tests, Release build, and repeated
+  long-three-pillars SITL while checking yaw continuity and mission completion.
+- **Removal/review condition:** replace only if route heading becomes an
+  explicit versioned mission field with equivalent overshoot and reversal
+  semantics; never restore raw waypoint-vector yaw for terminal recovery.
+- **Verification command:** source `/opt/ros/jazzy/setup.bash` and
+  `install/setup.bash`; run the focused `test_route_yaw_reference`, backend and
+  runtime suites, `make build`, then
+  `MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=3 make external-mode-check`.

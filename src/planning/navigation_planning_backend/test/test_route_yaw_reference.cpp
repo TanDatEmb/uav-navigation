@@ -85,6 +85,40 @@ TEST(RouteYawReference, StraightLegTargetDoesNotDependOnTrajectoryGeneration) {
   EXPECT_DOUBLE_EQ(first.progress_arc_m, replan.progress_arc_m);
 }
 
+TEST(RouteYawReference, CrossTrackCorrectionDoesNotSteerYawAwayFromRouteTangent) {
+  const auto route = makeSnapshot({
+      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{50.0, 0.0, 3.0}});
+  const auto reference = navigation_planning_backend::computeRouteYawReference(
+      route, Eigen::Vector3d{8.0, 4.0, 3.0},
+      Eigen::Vector3d{3.0, -1.0, 0.0}, 0.4);
+  ASSERT_TRUE(reference.valid);
+  EXPECT_EQ(reference.source,
+            navigation_planning_backend::RouteYawSource::kRouteLookahead);
+  EXPECT_NEAR(reference.target_yaw_rad, 0.0, 1.0e-9);
+}
+
+TEST(RouteYawReference, TerminalOvershootKeepsIncomingRouteHeading) {
+  auto route = makeSnapshot({
+      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 5.0, 3.0}}, 1U);
+  route.measured_progress.progress_arc_m = route.total_length_m;
+  route.measured_progress.projection.valid = true;
+  route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.arc_length_m = route.total_length_m;
+  route.measured_progress.projection.point = route.waypoints.back().position_enu;
+  route.measured_progress.projection.tangent = route.segments.back().tangent;
+
+  const Eigen::Vector3d incoming =
+      route.waypoints.back().position_enu - route.waypoints.front().position_enu;
+  const double incoming_yaw = std::atan2(incoming.y(), incoming.x());
+  const auto reference = navigation_planning_backend::computeRouteYawReference(
+      route, Eigen::Vector3d{20.8, 5.2, 3.0},
+      Eigen::Vector3d{-0.8, -0.2, 0.0}, 0.2);
+  ASSERT_TRUE(reference.valid);
+  EXPECT_EQ(reference.source,
+            navigation_planning_backend::RouteYawSource::kRouteLookahead);
+  EXPECT_NEAR(reference.target_yaw_rad, incoming_yaw, 1.0e-9);
+}
+
 TEST(RouteYawReference, LooksIntoOutgoingCornerBeforeWaypointAcceptance) {
   auto route = makeSnapshot({
       Eigen::Vector3d{0.0, 0.0, 3.0},

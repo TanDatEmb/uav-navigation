@@ -152,8 +152,20 @@ RouteYawReference computeRouteYawReference(
     return holdReference(measured_yaw_rad, progress, *progress_point,
                          RouteYawSource::kInvalidRoute);
   }
+  // Heading is a property of the mission route, not of the cross-track
+  // correction.  Using measured_position -> target_point makes yaw point back
+  // at the waypoint after a small overshoot, producing a near-180 degree turn
+  // while the position controller performs a short terminal correction.
+  // Follow the route chord instead.  At the terminal arc there is no forward
+  // chord, so use the incoming chord and preserve the final-leg heading.
+  Eigen::Vector3d direction_origin = *progress_point;
+  if (target_arc <= progress + config.minimum_horizontal_support_m) {
+    const auto trailing_point = route.pointAtArc(
+        std::max(0.0, target_arc - lookahead));
+    if (trailing_point.has_value()) direction_origin = *trailing_point;
+  }
   const Eigen::Vector2d direction =
-      (target_point->head<2>() - measured_position.head<2>()).eval();
+      (target_point->head<2>() - direction_origin.head<2>()).eval();
   if (!direction.allFinite() ||
       direction.norm() < config.minimum_horizontal_support_m) {
     return holdReference(measured_yaw_rad, progress, *target_point,
