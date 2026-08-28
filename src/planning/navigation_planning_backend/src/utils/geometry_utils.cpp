@@ -250,21 +250,19 @@ Vec4f geometry_utils::translatePlane(const Vec4f& plane, const Vec3f& translatio
 }
 
 void geometry_utils::normalizeNextYaw(const double& last_yaw, double& yaw) {
-    double diff = last_yaw - yaw;
-    if (isnan(yaw)) {
+    if (!std::isfinite(last_yaw)) {
+        yaw = 0.0;
+        return;
+    }
+    if (!std::isfinite(yaw)) {
         yaw = last_yaw;
         return;
     }
 
-    while (fabs(diff) > M_PI) {
-        if (diff > 0) {
-            yaw += 2 * M_PI;
-        }
-        else {
-            yaw -= 2 * M_PI;
-        }
-        diff = last_yaw - yaw;
-    }
+    // `remainder` gives the nearest 2*pi branch in one bounded operation.
+    // The previous unbounded loop could never recover from +/-infinity and
+    // would leave a non-finite yaw in the command path.
+    yaw = last_yaw + std::remainder(yaw - last_yaw, 2.0 * M_PI);
 }
 
 ///============ 2023-3-12: add by Yunfan ============///

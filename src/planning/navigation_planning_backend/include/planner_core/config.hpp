@@ -70,6 +70,10 @@ namespace navigation_planning_backend {
         int iris_iter_num{0};
 
         double yaw_rate_max_rad_s{0.0};
+        // Recovery trigger for a committed yaw state that the vehicle did
+        // not track. This is a continuity/rebase envelope, not a waypoint or
+        // safety acceptance gate.
+        double yaw_tracking_error_budget_rad{0.0};
 
         navigation_math::vec_E<navigation_math::Vec3i> seed_line_neighbour;
 
@@ -147,6 +151,8 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/planning_margin_m", planning_margin_m, 0.05);
             loader.LoadParam("planner/iris_iter_num", iris_iter_num, 1);
             loader.LoadParam("planner/yaw_rate_max_rad_s", yaw_rate_max_rad_s, 3.14);
+            loader.LoadParam("planner/yaw_tracking_error_budget_rad",
+                             yaw_tracking_error_budget_rad, 0.35);
 
             // The collision radius is a derived safety envelope. There is no
             // independent YAML value that can silently drift from its owners.
@@ -208,7 +214,10 @@ namespace navigation_planning_backend {
                 !std::isfinite(corridor_segment_max_length_m) ||
                 corridor_segment_max_length_m <= 0.0 ||
                 iris_iter_num <= 0 || !std::isfinite(yaw_rate_max_rad_s) ||
-                yaw_rate_max_rad_s <= 0.0) {
+                yaw_rate_max_rad_s <= 0.0 ||
+                !std::isfinite(yaw_tracking_error_budget_rad) ||
+                yaw_tracking_error_budget_rad <= 0.0 ||
+                yaw_tracking_error_budget_rad > M_PI) {
                 throw std::invalid_argument(
                     "planner geometric horizon, corridor, IRIS, and yaw parameters are invalid");
             }

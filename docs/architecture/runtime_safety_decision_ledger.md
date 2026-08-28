@@ -7703,3 +7703,46 @@ release profiles must not use the former allowance.
   tests, then repeat straight, Y, diagonal, yaw-versus-velocity, and 0/45/90
   degree route scenarios. Inspect support/clipping reason, waypoint order,
   speed, altitude, backup, clearance, and p50/p95/p99 latency.
+
+### 2026-08-28 - Stabilize free-yaw continuity and PX4 hold heading
+
+- **Owner:** Navigation trajectory-yaw and PX4 external-mode maintainers.
+- **Scope:** Derive free yaw only from finite horizontal motion, retain the
+  incoming heading for stationary or pure-vertical trajectory tails, and make
+  yaw normalization finite and bounded. A hot replan now compares measured yaw
+  with the committed yaw anchor and rebases when the configured
+  `yaw_tracking_error_budget_rad` is exceeded. PX4 stationary, position-hold,
+  and planner-recovery setpoints explicitly carry the latest valid odometry
+  heading and zero yaw-rate.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This closes arbitrary
+  `atan2(0,0)` heading selection, non-finite normalization, and stale committed
+  yaw reuse. It does not relax waypoint, obstacle, UNKNOWN/OUT_OF_MAP, backup,
+  dynamic, freshness, command-anchor, lease, or deadline gates. If the measured
+  heading is unavailable, the setpoint omits yaw and the existing freshness
+  contract remains authoritative.
+- **Derivation and cost:** The horizontal direction threshold is the existing
+  free-yaw/waypoint direction scale; vertical displacement no longer counts as
+  heading evidence. The initial `0.35 rad` yaw rebase value is a continuity
+  recovery envelope only, bounded below pi and deliberately not a certification
+  threshold. Rebase reuses the existing measured-state connector and adds no
+  optimizer pass. Hold setpoints add only quaternion normalization and one yaw
+  calculation per 50 Hz setpoint.
+- **Evidence:** The reviewed external-mode artifact showed cumulative yaw
+  changes while the vehicle was moving through replans, while contiguous
+  near-zero-speed intervals were mostly stable; it did not directly prove a
+  stationary >180-degree spin because raw command yaw was not recorded. The
+  artifact nevertheless exposed the missing yaw fields in stationary/hold
+  publication and the planner's zero-horizontal terminal-direction risk.
+  Focused pure yaw tests and rebuilt contract tests are required; SITL
+  acceptance remains open until command yaw, measured yaw, yaw-rate, rebase
+  count, and stationary intervals are logged together.
+- **Removal/review condition:** Revisit if repeated yaw-versus-velocity cases
+  show heading chatter, excessive yaw-rate, slower route progress, altitude or
+  clearance regression, or increased solve tails. Do not increase the yaw
+  envelope or suppress yaw response to make a single run pass; calibrate from a
+  distribution of measured tracking error and route curvature.
+- **Verification:** `make build`; run planner trajectory/config tests and PX4
+  navigation contract tests; then repeat the 0/45/90-degree and
+  yaw-different-from-velocity scenarios while inspecting yaw continuity,
+  yaw-rate, position/velocity/altitude, waypoint order, handover reason,
+  freshness, and p50/p95/p99 planner latency.

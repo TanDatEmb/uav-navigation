@@ -906,6 +906,20 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       setpoint.withPosition(enuToNed(*position_enu)).withVelocity(Eigen::Vector3f::Zero());
       setpoint.withAcceleration(Eigen::Vector3f::Zero());
     }
+    if (odometry.has_value()) {
+      const auto& q = odometry->pose.pose.orientation;
+      const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
+      if (orientation.coeffs().allFinite() && orientation.squaredNorm() > 1.0e-12) {
+        const Eigen::Quaterniond normalized = orientation.normalized();
+        const double yaw_enu = std::atan2(
+            2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
+            1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
+        if (std::isfinite(yaw_enu)) {
+          setpoint.withYaw(px4_ros2::yawEnuToNed(static_cast<float>(yaw_enu)))
+              .withYawRate(0.0F);
+        }
+      }
+    }
     trajectory_setpoint_->update(setpoint);
   };
   const auto publishPositionHold = [&](const Eigen::Vector3d& position_enu) {
@@ -916,6 +930,20 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     // use PX4's position controller for this short, latched terminal hold.
     px4_ros2::TrajectorySetpoint setpoint;
     setpoint.withPosition(enuToNed(position_enu)).withVelocity(Eigen::Vector3f::Zero());
+    if (odometry.has_value()) {
+      const auto& q = odometry->pose.pose.orientation;
+      const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
+      if (orientation.coeffs().allFinite() && orientation.squaredNorm() > 1.0e-12) {
+        const Eigen::Quaterniond normalized = orientation.normalized();
+        const double yaw_enu = std::atan2(
+            2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
+            1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
+        if (std::isfinite(yaw_enu)) {
+          setpoint.withYaw(px4_ros2::yawEnuToNed(static_cast<float>(yaw_enu)))
+              .withYawRate(0.0F);
+        }
+      }
+    }
     trajectory_setpoint_->update(setpoint);
   };
   {

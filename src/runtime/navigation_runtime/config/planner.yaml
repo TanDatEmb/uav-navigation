@@ -61,6 +61,10 @@ planner:
   mapping_error_budget_m: 0.10
   planning_margin_m: 0.05
   yaw_rate_max_rad_s: 3.0
+  # Rebase a hot trajectory when measured yaw no longer follows its committed
+  # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
+  # acceptance threshold; calibrate it from repeated tracking distributions.
+  yaw_tracking_error_budget_rad: 0.35
 
 traj_opt:
   switch:

@@ -214,6 +214,17 @@ No report overlay may imply that the backend grid rotated unless the runtime
 has emitted and validated the frame metadata for that exact command/world
 identity.
 
+The yaw continuity contract is part of this same boundary. Free yaw follows a
+finite horizontal trajectory tangent; pure vertical motion and a stationary
+terminal segment retain the incoming heading. A hot replan compares measured
+yaw with the committed yaw state using the shortest angular distance. When the
+configured continuity envelope is exceeded, the planner rebases on the fresh
+measured state and retains the existing certified connector rules. PX4
+stationary, terminal-hold, and recovery setpoints carry the latest valid
+odometry heading with zero yaw-rate, so a missing yaw field cannot delegate
+heading selection to PX4. The yaw envelope is a recovery trigger, not a
+waypoint acceptance or obstacle-clearance relaxation.
+
 ## 4. Staged implementation and commit boundaries
 
 Each phase ends with focused tests, a clean build/provenance check, and one

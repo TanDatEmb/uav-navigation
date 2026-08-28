@@ -1129,6 +1129,49 @@ TEST(PlannerTrajectory, FreeYawIsProjectedIntoRateEnvelopeWithoutChangingDuratio
                                   rejected_fixed_yaw, 3, false, false));
 }
 
+TEST(PlannerTrajectory, FreeYawHoldsIncomingHeadingWithoutHorizontalMotion) {
+  const std::vector<double> durations{1.0};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  coefficients.col(5) = Eigen::Vector3d{0.0, 0.0, 3.0};
+  geometry_utils::Trajectory stationary(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{1.2, 0.0, 0.0, 0.0};
+  const navigation_math::Vec4f free_goal_yaw{0.0, 0.0, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimize(initial_yaw, free_goal_yaw, stationary, yaw,
+                                 3, false, true));
+  EXPECT_NEAR(yaw.getState(0.0)(0), initial_yaw(0), 1.0e-9);
+  EXPECT_NEAR(yaw.getState(yaw.getTotalDuration())(0), initial_yaw(0), 1.0e-9);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0e-9);
+}
+
+TEST(PlannerTrajectory, FreeYawIgnoresPureVerticalTerminalMotion) {
+  const std::vector<double> durations{1.0};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  coefficients.col(4) = Eigen::Vector3d{0.0, 0.0, 1.0};
+  coefficients.col(5) = Eigen::Vector3d{0.0, 0.0, 3.0};
+  geometry_utils::Trajectory vertical(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{1.2, 0.0, 0.0, 0.0};
+  const navigation_math::Vec4f free_goal_yaw{0.0, 0.0, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimize(initial_yaw, free_goal_yaw, vertical, yaw,
+                                 3, false, true));
+  EXPECT_NEAR(yaw.getState(yaw.getTotalDuration())(0), initial_yaw(0), 1.0e-9);
+}
+
+TEST(PlannerTrajectory, YawNormalizationRecoversNonFiniteTarget) {
+  double yaw = std::numeric_limits<double>::infinity();
+  geometry_utils::normalizeNextYaw(1.2, yaw);
+  EXPECT_DOUBLE_EQ(yaw, 1.2);
+
+  yaw = -std::numeric_limits<double>::infinity();
+  geometry_utils::normalizeNextYaw(std::numeric_limits<double>::quiet_NaN(), yaw);
+  EXPECT_DOUBLE_EQ(yaw, 0.0);
+}
+
 TEST(PlannerTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
   const navigation_planning_backend::AbsoluteDeadline deadline(100.0, 0.04);
   EXPECT_NEAR(deadline.remaining(100.01), 0.03, 1.0e-12);

@@ -1068,8 +1068,22 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             cmd_traj_info_.unlock();
             const double command_anchor_error =
                     (committed_state.col(0) - solve_state_.p).norm();
-            if (!committed_state.allFinite() || !std::isfinite(command_anchor_error) ||
-                command_anchor_error > cfg_.tracking_error_budget_m) {
+            const bool measured_yaw_valid = std::isfinite(solve_state_.yaw);
+            const bool committed_yaw_valid = committed_yaw_state_valid &&
+                    committed_yaw_state.allFinite() &&
+                    std::isfinite(committed_yaw_state(0, 0));
+            const double yaw_anchor_error = measured_yaw_valid && committed_yaw_valid
+                    ? std::abs(std::remainder(
+                          solve_state_.yaw - committed_yaw_state(0, 0), 2.0 * M_PI))
+                    : std::numeric_limits<double>::infinity();
+            const bool position_rebase_required =
+                    !committed_state.allFinite() || !std::isfinite(command_anchor_error) ||
+                    command_anchor_error > cfg_.tracking_error_budget_m;
+            const bool yaw_rebase_required =
+                    !measured_yaw_valid || !committed_yaw_valid ||
+                    !std::isfinite(yaw_anchor_error) ||
+                    yaw_anchor_error > cfg_.yaw_tracking_error_budget_rad;
+            if (position_rebase_required || yaw_rebase_required) {
                 const bool measured_start_traversable =
                         solve_state_.p.allFinite() && map_ptr_->contains(solve_state_.p) &&
                         navigation_world_model::isCellTraversable(
@@ -1080,8 +1094,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 if (!measured_start_traversable) {
                     planner_context_->warn(
                             " -- [planner] cannot rebase hot replan on measured state: "
-                            "measured start is not traversable error={} budget={}",
-                            command_anchor_error, cfg_.tracking_error_budget_m);
+                            "measured start is not traversable position_error={} yaw_error={} "
+                            "position_budget={} yaw_budget={}",
+                            command_anchor_error, yaw_anchor_error,
+                            cfg_.tracking_error_budget_m,
+                            cfg_.yaw_tracking_error_budget_rad);
                     return FAILED;
                 }
                 if (committed_state.allFinite() && committed_yaw_state_valid &&
@@ -1093,8 +1110,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 local_start_p_ = solve_state_.p;
                 planner_context_->warn(
                         " -- [planner] rebasing hot replan on measured state: "
-                        "command_anchor_error={} budget={}",
-                        command_anchor_error, cfg_.tracking_error_budget_m);
+                        "position_error={} yaw_error={} position_budget={} yaw_budget={}",
+                        command_anchor_error, yaw_anchor_error,
+                        cfg_.tracking_error_budget_m,
+                        cfg_.yaw_tracking_error_budget_rad);
             }
         }
 

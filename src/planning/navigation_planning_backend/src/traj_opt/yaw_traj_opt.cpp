@@ -6,9 +6,32 @@
 
 #include "traj_opt/yaw_traj_opt.h"
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <utils/optimization/polynomial_interpolation.h>
 using namespace geometry_utils;
 namespace traj_opt {
+namespace {
+
+constexpr double kMinimumHorizontalDirectionM = 0.1;
+constexpr double kFreeYawDirectionM = 0.5;
+
+std::optional<double> horizontalYaw(const Vec3f& direction,
+                                    const double minimum_distance_m) {
+    const double horizontal_distance =
+        std::hypot(static_cast<double>(direction.x()),
+                   static_cast<double>(direction.y()));
+    if (!std::isfinite(horizontal_distance) ||
+        horizontal_distance < minimum_distance_m || !direction.allFinite()) {
+        return std::nullopt;
+    }
+    const double yaw = std::atan2(static_cast<double>(direction.y()),
+                                  static_cast<double>(direction.x()));
+    return std::isfinite(yaw) ? std::optional<double>{yaw} : std::nullopt;
+}
+
+}  // namespace
+
     using namespace color_text;
     void YawTrajOpt::getYawTimeAllocation(const double &duration, VecDf &times) const {
         double interp_dt = M_PI / yaw_rate_max_rad_s_;
@@ -55,8 +78,10 @@ namespace traj_opt {
 
 
             Vec3f dir = pt_g - pt_i;
-            if (dir.norm() > 0.1) {
-                cur_yaw = atan2(dir.y(), dir.x());
+            if (const auto direction_yaw =
+                    horizontalYaw(dir, kMinimumHorizontalDirectionM);
+                direction_yaw.has_value()) {
+                cur_yaw = *direction_yaw;
                 normalizeNextYaw(last_yaw, cur_yaw);
             } else {
 //                    print(fg(color::indian_red),
@@ -106,7 +131,11 @@ namespace traj_opt {
                 pt_g = pos_traj.getPos(t_g);
                 dir = pt_g - pt_i;
             }
-            init_state(0) = atan2(dir.y(), dir.x());
+            if (const auto direction_yaw = horizontalYaw(dir, kFreeYawDirectionM);
+                direction_yaw.has_value()) {
+                init_state(0) = *direction_yaw;
+                normalizeNextYaw(istate_in(0), init_state(0));
+            }
         }
         if (free_goal_) {
             Vec3f pt_g = pos_traj.getPos(pos_traj_dur);
@@ -118,7 +147,17 @@ namespace traj_opt {
                 pt_i = pos_traj.getPos(t_i);
                 dir = pt_g - pt_i;
             }
-            goal_state(0) = atan2(dir.y(), dir.x());
+            if (const auto direction_yaw = horizontalYaw(dir, kFreeYawDirectionM);
+                direction_yaw.has_value()) {
+                goal_state(0) = *direction_yaw;
+                normalizeNextYaw(init_state(0), goal_state(0));
+            } else {
+                // A stationary or vertical terminal segment has no heading
+                // information. Holding the incoming yaw is safer than
+                // atan2(0, 0), which previously injected an arbitrary
+                // 0-radian target and could trigger a large replan turn.
+                goal_state(0) = init_state(0);
+            }
         }
 
         VecDf times;
