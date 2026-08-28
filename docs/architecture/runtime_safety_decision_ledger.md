@@ -9899,3 +9899,32 @@ release profiles must not use the former allowance.
 - **Verification:** `git show 7c068a8`, `git show 1c38274`, 168 backend and 52
   runtime tests, authoritative Release build and the three cited artifacts
   preserve implementation, rollback and repeated evidence.
+
+### 2026-08-28 - Rejected experiment: zero estimated cold-plan jerk
+
+- **Owner:** Cold PlanFromRest boundary experiment, introduced by `e5c4c4b`
+  and reverted by `0d0dabe`.
+- **Scope:** Estimated finite-difference jerk was changed from a norm-bounded
+  exact PlanFromRest boundary to zero. Hot replans retained exact committed
+  PVAJ continuity and all V/A/J, corridor, world, anchor and PX4 tracking gates
+  were unchanged.
+- **Safety impact:** Both trials remained collision-free and the first nominal
+  path no longer had a negative X projection. The change did not improve the
+  recurring planner-boundary cycle and consistently worsened mission-route
+  tracking, so it was reverted rather than retained as a local visual fix.
+- **Evidence:** Exact-HEAD artifacts
+  `.artifacts/runtime/external-mode-check-20260828T151802-1270037` and
+  `.artifacts/runtime/external-mode-check-20260828T152026-1272002` had 21/20
+  local-boundary restarts and 43/44 failed PlanFromRest attempts. Cross-track
+  p95 was 6.514/6.552 m, versus 4.328/3.947 m in immediate baseline artifacts
+  `external-mode-check-20260828T142323-1223796` and
+  `external-mode-check-20260828T143719-1237126`. Only the second trial finished
+  within the waypoint radius; both still failed the declared speed-p95 gate.
+- **Removal/review condition:** Historical rejected-experiment record. Do not
+  independently zero or clamp away acceleration/jerk boundary state to repair
+  the rolling path. Replace the coupled geometric/time parameterization with a
+  controller-conditioned boundary and deterministic feasible timing contract,
+  then compare route tracking and restart distributions before adoption.
+- **Verification:** `git show e5c4c4b`, `git show 0d0dabe`, focused 8/8 backend
+  tests, Release build and the two cited exact-HEAD SITL artifacts preserve the
+  implementation, rollback and runtime evidence.
