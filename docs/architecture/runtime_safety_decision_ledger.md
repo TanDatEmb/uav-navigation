@@ -9648,3 +9648,29 @@ release profiles must not use the former allowance.
   and can safely derive a lower solve cadence from measured success tails.
 - **Verification:** `git show 5158bd4`, `git show 016caa0`, and the cited
   artifact preserve the implementation, rollback and runtime evidence.
+
+### 2026-08-28 - Give jerk-failed nominal retries a non-zero jerk objective
+
+- **Owner:** Nominal MINCO bounded feasibility retry.
+- **Scope:** Keep the initial nominal jerk objective disabled, but when its
+  candidate fails the strict jerk certificate, activate an explicit
+  `5.0e5` jerk penalty during the existing maximum-two feasibility retries.
+- **Safety impact:** Mission/product jerk, acceleration, velocity, flatness,
+  corridor and world hard gates are unchanged. Retry count, iteration bound
+  and solve deadline are unchanged. This can only change the search direction
+  of a candidate that was already hard-infeasible; it cannot authorize an
+  over-limit trajectory.
+- **Evidence:** Repeated exact-head logs in artifact
+  `.artifacts/runtime/external-mode-check-20260828T134232-1181253` show nominal
+  feasibility retries triggered by jerk violations but retaining zero jerk
+  penalty. Examples ended at jerk 4.405, 5.823, 6.520 and 8.574 m/s^3 against
+  the unchanged 4.000 m/s^3 limit before rejection. The same artifact had 24
+  stage-4 EXP failures and later scheduling A/B proved replacement reliability
+  must improve before solve cadence can be reduced.
+- **Removal/review condition:** Revert if focused optimizer tests, repeated
+  SITL or recorded-data distributions show non-finite gradients, increased
+  latency tails, worse commit continuity or no reduction in jerk-stage rejects.
+- **Verification:** Run optimizer/config/workspace tests and Release build.
+  Compare repeated three-column artifacts for retry outcomes, non-finite
+  evaluations, stage-4 failures, planning latency, speed dips, clearance and
+  mission completion without changing any hard gate.

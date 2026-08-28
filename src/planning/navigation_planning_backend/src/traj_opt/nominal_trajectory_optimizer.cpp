@@ -1618,9 +1618,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         diagnostics_.retry_free_duration_seed_max_s =
                 free_duration_seed_s.maxCoeff();
         gcopter::backwardMapTToTau(free_duration_seed_s, tau);
-        // Continue the soft solve toward the hard-feasible set. Disabled
-        // penalties (notably the EXP jerk objective) remain disabled; only
-        // configured dynamic penalties grow within this bounded retry.
+        // Continue the soft solve toward the hard-feasible set. The initial
+        // EXP jerk objective may remain disabled for hot-replan conditioning,
+        // but a retry triggered by the strict jerk gate must not repeat a
+        // zero-jerk-penalty solve. Its separate configured retry weight is
+        // bounded by the same finite attempt count and the independent hard
+        // certificate remains authoritative.
         // The first retry is primarily a bounded time/point re-optimization.
         // Preserve the nominal objective so a tiny hard-gate violation does
         // not immediately turn into a much slower trajectory.  Only the
@@ -1633,6 +1636,10 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 nominal_penalty_weights(index) > 0.0) {
                 opt_vars.penaltyWeights(index) =
                         nominal_penalty_weights(index) * penalty_scale;
+            } else if (index == 3 && jerk_violated &&
+                       cfg_.feasibility_jerk_penalty_weight > 0.0) {
+                opt_vars.penaltyWeights(index) =
+                        cfg_.feasibility_jerk_penalty_weight * penalty_scale;
             } else {
                 opt_vars.penaltyWeights(index) = nominal_penalty_weights(index);
             }

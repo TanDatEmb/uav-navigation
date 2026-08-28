@@ -140,6 +140,12 @@ traj_opt:
       # Zero disables the optional high-order jerk objective; the analytic
       # jerk certificate remains authoritative.
       jerk_penalty_weight: 0.0
+      # Initial hot replans keep the high-order jerk objective disabled. If
+      # that candidate fails the strict jerk certificate, the already bounded
+      # feasibility retry activates this explicit weight so the retry actually
+      # moves toward the hard-feasible set instead of repeating a zero-jerk-
+      # penalty solve. The hard  mission jerk limit remains unchanged.
+      feasibility_jerk_penalty_weight: 5.0e+5
       # Zero disables the corridor-center attraction term.
       waypoint_attraction_weight: 0.0
       angular_rate_penalty_weight: 1.0e+5

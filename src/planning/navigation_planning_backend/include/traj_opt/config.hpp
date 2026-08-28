@@ -85,6 +85,10 @@ namespace traj_opt {
         // physical mission envelope. This is a search reserve only; the
         // independent V/A/J certificate still uses max_vel/max_acc/max_jerk.
         double optimization_dynamic_reserve_ratio{1.0};
+        // Optional jerk penalty used only by the bounded nominal feasibility
+        // retry after the independent hard jerk gate has already failed. The
+        // initial MINCO objective remains controlled by jerk_penalty_weight.
+        double feasibility_jerk_penalty_weight{0.0};
         // Retained as a compatibility field so stale YAML fails explicitly at
         // validation instead of silently changing the physical certificate.
         // Product behavior is strict: this value must be exactly zero.
@@ -179,6 +183,12 @@ namespace traj_opt {
             loader.LoadParam("traj_opt" + ns + "objective/jerk_penalty_weight",
                              jerk_penalty_weight, 0.0);
             if (nominal_profile) {
+                loader.LoadParam(
+                    "traj_opt" + ns +
+                        "objective/feasibility_jerk_penalty_weight",
+                    feasibility_jerk_penalty_weight, 0.0);
+            }
+            if (nominal_profile) {
                 loader.LoadParam("traj_opt" + ns + "objective/waypoint_attraction_weight",
                                  waypoint_attraction_weight, 0.0);
             }
@@ -214,6 +224,8 @@ namespace traj_opt {
                 !std::isfinite(optimization_dynamic_reserve_ratio) ||
                 optimization_dynamic_reserve_ratio <= 0.0 ||
                 optimization_dynamic_reserve_ratio > 1.0 ||
+                !std::isfinite(feasibility_jerk_penalty_weight) ||
+                feasibility_jerk_penalty_weight < 0.0 ||
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||
