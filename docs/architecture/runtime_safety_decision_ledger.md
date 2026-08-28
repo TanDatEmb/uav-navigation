@@ -10367,3 +10367,37 @@ release profiles must not use the former allowance.
   rejection of malformed pieces at every execution boundary.
 - **Verification:** Repeat the focused commands above after any future change
   to `Piece` evaluation, coefficient normalization or rate certificates.
+
+### 2026-08-29 - Reject invalid RootFinder domains and polynomial inputs
+
+- **Owner/status:** `math_utils::RootFinder` numerical utility boundary,
+  implementation fix; no new motion or safety threshold.
+- **Scope:** Polynomial convolution and squaring return an empty vector for an
+  empty operand. Root counting rejects non-finite coefficients, non-finite or
+  reversed bounds, and coefficient vectors above the supported order. Solving
+  returns no roots for those invalid domains, non-finite coefficients,
+  non-positive/non-finite tolerances, or unsupported order.
+- **Physical meaning and unsafe outcome:** Bounds are the finite time/domain
+  interval supplied by trajectory certification; coefficients are polynomial
+  terms. Before this fix, empty operands could produce negative Eigen sizes,
+  and NaN/reversed/unsupported inputs could reach root isolation and produce
+  undefined extrema or ambiguous root-count results. `countRoots` returns
+  `-1` for invalid input so callers cannot confuse invalid data with a valid
+  zero-root interval.
+- **False-accept/false-reject consequences:** Invalid numerical input now
+  fails closed. Valid supported-order polynomials and finite ordered domains
+  retain the existing solver behavior; no tolerance, root-order or planner
+  threshold was changed.
+- **Runtime cost:** Validation adds finite scans and constant-time domain/order
+  checks before the existing root isolation work. It is bounded by the input
+  coefficient vector and does not change the solver algorithm for valid input.
+- **Evidence:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2` and `./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no` passed 87/87, including empty operands, NaN
+  coefficients and reversed bounds. Full build, sanitizer, dataset, SITL and
+  hardware evidence are not implied by this focused result.
+- **Removal/review condition:** Retain fail-closed rejection. Revisit only if
+  the public API gains typed numerical-error results while preserving explicit
+  invalid-input handling and the supported-order contract.
+- **Verification:** Repeat the focused commands above after changes to
+  `RootFinder`, polynomial extrema certification or trajectory-rate tests.
