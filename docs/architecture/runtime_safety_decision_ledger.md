@@ -7883,3 +7883,34 @@ release profiles must not use the former allowance.
   run the planner trace tests; then inspect a fresh 3-column trace and compare
   required/certified look-ahead, terminal speed, planner latency, command gaps,
   waypoint outcome, and safety decisions.
+
+### 2026-08-28 - Bound partial directional pass-through frontiers
+
+- **Owner:** Navigation planner route-query and A* maintainers.
+- **Scope:** Permit only the pass-through outgoing query to receive a bounded
+  map-frontier result when the current anisotropic ENU AABB cannot provide the
+  full route window. Ordinary active-goal searches still fail closed. The
+  caller records the prefix as incomplete and applies the certified-distance
+  terminal-speed cap; A* keeps its endpoint inside a two-cell margin derived
+  from the active grid resolution instead of a fixed 2.5 m offset.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This does not make
+  UNKNOWN or OUT_OF_MAP traversable and does not turn a clipped endpoint into
+  a mission-goal acceptance. The partial prefix remains subject to continuous
+  corridor, dynamic, flatness, swept-world, backup, freshness, and command
+  identity gates. If the frontier has no useful positive support, the query
+  fails closed. The ROG grid remains fixed ENU and is not rotated or resampled.
+- **Evidence:** The exact `90d9148` audit identified 110 x 15 x 6 m geometry
+  and the A* 2.5 m endpoint projection as causes of short lateral prefixes.
+  Existing route-support validation correctly rejects unsupported ordinary
+  goals, but pass-through needs an explicit incomplete-frontier path so F01's
+  certified-length speed bound can operate without hiding the clipping.
+- **Removal/review condition:** Revisit if partial-frontier runs produce a
+  complete flag with insufficient certified length, terminal speed above its
+  bound, endpoint outside the AABB margin, or any clearance, waypoint,
+  altitude, handover, command-exhaustion, or fail-closed regression. Do not
+  broaden the opt-in to ordinary goals or replace the support check with a
+  larger map-margin constant.
+- **Verification:** `make build`; run planner/world-model/mapping, runtime,
+  mission, and PX4 contract tests; then repeat Y, diagonal, 0/45/90-degree,
+  and yaw-versus-velocity route cases and inspect required/certified look-ahead,
+  support, clipping, terminal speed, world identity, latency, and outcome.

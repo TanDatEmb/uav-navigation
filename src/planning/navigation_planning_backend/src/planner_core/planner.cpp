@@ -1424,7 +1424,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 vec_Vec3f next_path;
                 solve_stage_.store(2);
                 if (PathSearch(guide_path.back(), next_target, search_distance,
-                               next_path, solve_deadline) && next_path.size() >= 2U) {
+                               next_path, solve_deadline, true) && next_path.size() >= 2U) {
                     vec_Vec3f lookahead_points;
                     double accumulated_distance = 0.0;
                     Vec3f previous_point = guide_path.back();
@@ -2825,7 +2825,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
     Planner::PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                              const double &searching_horizon,
                              vec_Vec3f &path,
-                             const AbsoluteDeadline &solve_deadline) {
+                             const AbsoluteDeadline &solve_deadline,
+                             const bool allow_partial_route) {
         using namespace path_search;
         if (searching_horizon <= 0.0) {
             planner_context_->error(" -- [planner] Goal waypoints empty or searching horizon negative, force return.");
@@ -2838,11 +2839,14 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
         // ROG-Map storage is an axis-aligned ENU AABB.  Do not let A* project
         // a long route onto the nearest map face and report that shortened
-        // path as if the requested route had enough support.  The requirement
-        // is bounded by the requested route distance and the safety horizon:
-        // short in-map goals remain valid, while an unsupported Y/diagonal
-        // route fails closed with an explicit reason.  The two-cell margin
-        // matches the inward endpoint margin in A* below.
+        // path as if the requested route had enough support. The requirement
+        // is bounded by the requested route distance and the safety horizon.
+        // Ordinary goal searches fail closed when the current AABB cannot
+        // support the requested route. A pass-through look-ahead may opt into
+        // an explicitly partial frontier: A* can return the certified map
+        // boundary, and the caller must record incompleteness and lower the
+        // terminal speed from that prefix. The two-cell margin matches the
+        // inward endpoint margin in A* below.
         const Eigen::Vector3d route_delta =
             goal.cast<double>() - start_pt.cast<double>();
         const double route_distance = route_delta.norm();
@@ -2852,15 +2856,28 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const double required_support =
                 std::min({route_distance, searching_horizon, cfg_.visibility_horizon_m}) +
                 2.0 * cfg_.resolution;
+            const double minimum_partial_support = 2.0 * cfg_.resolution;
+            const bool support_is_partial = support.has_value() &&
+                std::isfinite(*support) &&
+                *support > minimum_partial_support + 1.0e-9;
             if (!support.has_value() || !std::isfinite(required_support) ||
-                *support + 1.0e-9 < required_support) {
+                (*support + 1.0e-9 < required_support &&
+                 (!allow_partial_route || !support_is_partial))) {
                 planner_context_->error(
                     " -- [planner] route direction lacks AABB support: "
-                    "available={:.3f} required={:.3f} route_distance={:.3f} "
+                    "available={:.3f} required={:.3f} partial_allowed={} "
+                    "route_distance={:.3f} "
                     "start=({:.3f},{:.3f},{:.3f}) goal=({:.3f},{:.3f},{:.3f})",
-                    support.value_or(0.0), required_support, route_distance,
+                    support.value_or(0.0), required_support, allow_partial_route,
+                    route_distance,
                     start_pt.x(), start_pt.y(), start_pt.z(), goal.x(), goal.y(), goal.z());
                 return false;
+            }
+            if (*support + 1.0e-9 < required_support) {
+                planner_context_->warn(
+                    " -- [planner] using partial route frontier: "
+                    "available={:.3f} required={:.3f} route_distance={:.3f}",
+                    *support, required_support, route_distance);
             }
         }
 

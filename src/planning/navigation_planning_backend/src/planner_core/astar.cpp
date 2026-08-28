@@ -287,6 +287,11 @@ namespace path_search {
         rog_map::Vec3f local_start_pt, local_end_pt;
         bool start_pt_out_local_map = false;
         bool end_pt_out_local_map = false;
+        // Keep the endpoint inside the same two-cell AABB margin used by the
+        // planner route-support contract. This is derived from the active
+        // grid resolution; a fixed metre offset can erase most of a narrow
+        // lateral window or create inconsistent support accounting.
+        const double endpoint_inset_m = 2.0 * md_.resolution;
 
         local_start_pt = start_pt;
         local_end_pt = end_pt;
@@ -323,7 +328,7 @@ namespace path_search {
                                           hit_pt)) {
                 rog_map::Vec3f dir = (hit_pt - end_pt).normalized();
                 double dis = (hit_pt - end_pt).norm();
-                local_end_pt = end_pt + dir * (dis + 2.5);
+                local_end_pt = end_pt + dir * (dis + endpoint_inset_m);
                 end_pt_out_local_map = true;
 
                 const auto nearest = map_ptr_->nearestNotOccupied(
@@ -364,7 +369,7 @@ namespace path_search {
                 return INIT_ERROR;
             }
             const Vec3f inward = (local_start_pt - hit_pt).normalized();
-            local_end_pt = hit_pt + inward * (2.0 * md_.resolution);
+            local_end_pt = hit_pt + inward * endpoint_inset_m;
             end_pt_out_local_map = true;
         }
 

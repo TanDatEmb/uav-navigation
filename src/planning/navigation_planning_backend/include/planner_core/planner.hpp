@@ -415,7 +415,8 @@ namespace navigation_planning_backend {
         bool PathSearch(const Vec3f &start_pt, const Vec3f &goal,
                         const double &searching_horizon,
                         vec_Vec3f &path,
-                        const AbsoluteDeadline &solve_deadline);
+                        const AbsoluteDeadline &solve_deadline,
+                        bool allow_partial_route = false);
 
 
     public:
