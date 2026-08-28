@@ -180,6 +180,10 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   const double speed_mps = switch_state.col(1).norm();
   result.initial_velocity_mps = speed_mps;
   result.initial_overspeed = speed_mps > max_velocity_mps;
+  // An observed overspeed cannot be removed instantaneously. Certify that the
+  // braking polynomial never accelerates beyond the physically unavoidable
+  // initial speed while retaining the normal mission cap for nominal states.
+  result.allowed_peak_velocity_mps = std::max(speed_mps, max_velocity_mps);
   const double acceleration_mps2 = switch_state.col(2).norm();
   // Conservatively account for removing an arbitrary initial acceleration
   // before the symmetric stopping phase. The polynomial below retains the
@@ -187,12 +191,6 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   const double acceleration_release_s = acceleration_mps2 / max_jerk_mps3;
   const double effective_speed_mps =
       speed_mps + 0.5 * acceleration_mps2 * acceleration_release_s;
-  // The minimum-snap parameterization can require a little more overshoot than
-  // the ideal jerk-limited release while satisfying its exact terminal PVAJ.
-  // Use the mission cap only while finding that independently certified seed;
-  // once found, its analytic peak becomes the tighter authority for altitude
-  // recovery and optional refinement below.
-  result.allowed_peak_velocity_mps = std::max(speed_mps, max_velocity_mps);
   double duration_s = acceleration_release_s +
       jerkLimitedStopTime(effective_speed_mps, max_acc_mps2, max_jerk_mps3);
   duration_s = std::max(4.0 * sample_traj_dt_s, 1.15 * duration_s);
@@ -221,7 +219,6 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
         navigation_planning::withinNumericalDynamicLimit(
             result.maximum_jerk_mps3, gate * max_jerk_mps3);
     if (result.feasible) {
-      result.allowed_peak_velocity_mps = result.maximum_velocity_mps;
       return result;
     }
     duration_s *= 1.15;

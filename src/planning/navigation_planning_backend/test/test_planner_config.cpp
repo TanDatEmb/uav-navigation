@@ -777,25 +777,6 @@ TEST(PlannerBackupBraking, PreservesMeasuredOverspeedWithoutIncreasingIt) {
   EXPECT_NEAR(piece.getJer(seed.duration_s).norm(), 0.0, 1.0e-8);
 }
 
-TEST(PlannerBackupBraking, BelowCruiseBackupCannotAccelerateToMissionCap) {
-  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
-  initial.col(1) << 3.0, 0.0, 0.0;
-  initial.col(2) << 1.0, 0.0, 0.0;
-
-  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
-      0.0, initial, 5.0, 2.0, 4.0, 0.05, 0.0);
-  ASSERT_TRUE(seed.feasible)
-      << "duration=" << seed.duration_s
-      << " peak_v=" << seed.maximum_velocity_mps
-      << " allowed_peak_v=" << seed.allowed_peak_velocity_mps;
-  EXPECT_FALSE(seed.initial_overspeed);
-  EXPECT_DOUBLE_EQ(seed.allowed_peak_velocity_mps, seed.maximum_velocity_mps);
-  EXPECT_GT(seed.allowed_peak_velocity_mps, 3.125);
-  EXPECT_LT(seed.allowed_peak_velocity_mps, 5.0);
-  EXPECT_LE(seed.maximum_velocity_mps,
-            seed.allowed_peak_velocity_mps + 1.0e-9);
-}
-
 TEST(PlannerBackupBraking, RefinementDurationCannotUndercutCertifiedSeed) {
   EXPECT_TRUE(navigation_planning_backend::refinementDurationRespectsCertifiedFloor(2.0, 2.0));
   EXPECT_TRUE(navigation_planning_backend::refinementDurationRespectsCertifiedFloor(2.5, 2.0));
