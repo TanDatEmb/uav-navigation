@@ -190,6 +190,11 @@ TEST(CorridorBezierSeed, BoundedDurationRetryCanRecoverDynamicCertificate) {
   const auto scales = navigation_planning_backend::
       boundedDynamicDurationRetryScales(initial_certificate, config);
   ASSERT_FALSE(scales.empty());
+  const auto piece_scales = navigation_planning_backend::
+      boundedPieceDurationRetryScales(initial.trajectory, config);
+  ASSERT_EQ(piece_scales.size(), 1);
+  EXPECT_GT(piece_scales(0), 1.0);
+  EXPECT_LE(piece_scales(0), 4.0);
   bool recovered = false;
   navigation_planning_backend::DeterministicNominalSeedCertificate
       last_certificate = initial_certificate;
@@ -213,6 +218,29 @@ TEST(CorridorBezierSeed, BoundedDurationRetryCanRecoverDynamicCertificate) {
       << " acc=" << last_certificate.maximum_acceleration_mps2
       << " jerk=" << last_certificate.maximum_jerk_mps3
       << " corridor=" << last_certificate.maximum_corridor_violation_m;
+}
+
+TEST(CorridorBezierSeed, PieceDurationRetryDoesNotSlowCertifiedStraightPiece) {
+  Eigen::MatrixXd straight_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  straight_coefficients.row(0) << 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0;
+  Eigen::MatrixXd braking_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  braking_coefficients.row(0) <<
+      0.0, 0.0, 0.0, 50.0, -20.0, 0.0, 0.8, 1.0;
+  geometry_utils::Trajectory trajectory;
+  trajectory.emplace_back(1.0, straight_coefficients);
+  trajectory.emplace_back(0.2, braking_coefficients);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 1.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto scales = navigation_planning_backend::
+      boundedPieceDurationRetryScales(trajectory, config);
+
+  ASSERT_EQ(scales.size(), 2);
+  EXPECT_DOUBLE_EQ(scales(0), 1.0);
+  EXPECT_GT(scales(1), 1.0);
+  EXPECT_LE(scales(1), 4.0);
 }
 
 TEST(CorridorBezierSeed, RejectsImmutableBoundaryDerivativeOutsideCorridor) {

@@ -9431,3 +9431,38 @@ release profiles must not use the former allowance.
   explicit fallback use and failure-stage distributions on repeated
   three-column SITL and recorded data, requiring no clearance, route, altitude,
   anchor, dynamics or latency regression.
+
+### 2026-08-28 - Prefer piece-local duration allocation for nominal fallback
+
+- **Owner:** Deterministic fallback time allocation.
+- **Scope:** Before uniform duration retry, derive one bounded multiplier per
+  polynomial piece from its exact extrema using
+  `max(v/v_max, sqrt(a/a_max), cbrt(j/j_max))` plus the existing 5 percent
+  reserve. Rebuild shared junction states with those nonuniform times and
+  require the complete trajectory certificate. Uniform retries remain finite
+  secondary candidates if local allocation cannot be certified.
+- **Safety impact:** No trajectory is retimed in place and no per-piece extrema
+  authorizes publication. Retiming is only an input to a fresh convex-hull
+  construction followed by corridor, boundary, route, V/A/J and flatness
+  certification. Multipliers remain bounded by 4.0 and mission limits are
+  unchanged.
+- **Evidence:** Two exact-HEAD runs of `943d08a` completed the mission without
+  collision but did not reproduce fallback availability: artifact
+  `.artifacts/runtime/external-mode-check-20260828T125931-1129631` selected
+  three fallbacks and committed `149/213` solves, while artifact
+  `.artifacts/runtime/external-mode-check-20260828T130210-1131201` selected zero
+  and committed `130/220`. The three selected uniform fallbacks lasted
+  `15.08--21.13 s` and peaked at only `1.86--2.59 m/s`, showing that one local
+  corner violation was slowing every straight piece. Unit evidence constructs
+  an already-certified straight piece followed by a high-jerk piece and proves
+  the allocator leaves the straight multiplier at 1.0 while increasing only
+  the violating piece.
+- **Removal/review condition:** Replace with a jointly optimized convex time
+  allocation that provides equal-or-stronger per-piece dynamic and corridor
+  guarantees. Do not restore global slowdown as the first response to one
+  local derivative peak.
+- **Verification:** Run focused baseline and optimizer tests, all workspace and
+  runtime-contract tests, Release build, then repeated three-column SITL and
+  recorded data. Require shorter certified fallback duration, repeatable
+  fallback availability, lower dynamics-stage rejection and no latency,
+  clearance, route, altitude, anchor or speed regression.

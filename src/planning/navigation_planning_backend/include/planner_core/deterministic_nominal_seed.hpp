@@ -71,6 +71,38 @@ inline std::vector<double> boundedDynamicDurationRetryScales(
   return scales;
 }
 
+// Prefer local time allocation before uniformly slowing an entire path.  Each
+// multiplier is derived from the exact polynomial piece extrema and remains a
+// proposal only; rebuilding changes shared junction derivatives, so the caller
+// must repeat the complete trajectory certificate.
+inline navigation_math::VecDf boundedPieceDurationRetryScales(
+    const geometry_utils::Trajectory& trajectory,
+    const traj_opt::Config& config,
+    const double maximum_scale = 4.0) {
+  const int piece_count = trajectory.getPieceNum();
+  if (piece_count <= 0 || !std::isfinite(maximum_scale) || maximum_scale <= 1.0 ||
+      !std::isfinite(config.max_vel) || config.max_vel <= 0.0 ||
+      !std::isfinite(config.max_acc) || config.max_acc <= 0.0 ||
+      !std::isfinite(config.max_jerk) || config.max_jerk <= 0.0) {
+    return {};
+  }
+  navigation_math::VecDf scales(piece_count);
+  for (int piece = 0; piece < piece_count; ++piece) {
+    const double velocity = trajectory[piece].getMaxVelRate();
+    const double acceleration = trajectory[piece].getMaxAccRate();
+    const double jerk = trajectory[piece].getMaxJerRate();
+    const double required = std::max({
+        1.0, velocity / config.max_vel,
+        std::sqrt(acceleration / config.max_acc),
+        std::cbrt(jerk / config.max_jerk)});
+    if (!std::isfinite(required)) return {};
+    scales(piece) = required > 1.0
+        ? std::min(maximum_scale, required * 1.05)
+        : 1.0;
+  }
+  return scales;
+}
+
 enum class NominalCandidateSelection {
   kOptimized,
   kCertifiedSeed,

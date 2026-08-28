@@ -971,11 +971,23 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             // only failure is V/A/J, rebuild it with a finite set of uniform
             // duration reserves.  Endpoint P/V/A/J remain immutable, so every
             // rebuilt candidate still requires the complete certificate.
+            std::vector<VecDf> retry_duration_candidates;
+            const VecDf piece_scales = navigation_planning_backend::
+                    boundedPieceDurationRetryScales(
+                        corridor_seed_result.trajectory, cfg_);
+            if (piece_scales.size() == opt_vars.times.size() &&
+                piece_scales.allFinite() && piece_scales.maxCoeff() > 1.0) {
+                retry_duration_candidates.emplace_back(
+                    opt_vars.times.cwiseProduct(piece_scales));
+            }
             const auto retry_scales = navigation_planning_backend::
                     boundedDynamicDurationRetryScales(
                         deterministic_seed_certificate, cfg_);
             for (const double duration_scale : retry_scales) {
-                const VecDf retry_times = opt_vars.times * duration_scale;
+                retry_duration_candidates.emplace_back(
+                    opt_vars.times * duration_scale);
+            }
+            for (const VecDf& retry_times : retry_duration_candidates) {
                 auto retry_seed = navigation_planning_backend::
                         buildCorridorContainedBezierSeed(
                             opt_vars.headPVAJ, opt_vars.tailPVAJ,
@@ -1001,7 +1013,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 deterministic_nominal_seed = corridor_seed_result.trajectory;
                 deterministic_seed_certificate = retry_certificate;
                 deterministic_seed_uses_corridor_bezier = true;
-                deterministic_seed_duration_scale = duration_scale;
+                deterministic_seed_duration_scale =
+                    (retry_times.array() / opt_vars.times.array()).maxCoeff();
                 break;
             }
         }
