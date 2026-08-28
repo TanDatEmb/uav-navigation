@@ -9163,3 +9163,36 @@ release profiles must not use the former allowance.
   through the vertical-envelope stage; run all backend tests/build and
   repeated three-column SITL with ordered measured acceptance and bounded
   planner/corridor latency.
+
+### 2026-08-28 - Bound remote-goal A* by the executable visibility horizon
+
+- **Owner:** Initial route search, receding-horizon guide construction and
+  immutable-world route certification.
+- **Scope:** Before A* expansion, cap its search horizon to the smaller of the
+  remaining planning horizon and effective visibility horizon. Preserve the
+  remote mission goal as the heuristic direction and controller-owned progress
+  target; continue truncating and re-certifying the returned local prefix.
+- **Safety impact:** This does not treat UNKNOWN as free under a stricter
+  mission policy, extend map support, weaken collision checks, or accept a
+  planner endpoint as mission progress. It prevents solver time being spent on
+  geometry that cannot enter the current executable certificate. The same
+  inflated-map, continuous-corridor, dynamic, backup and latest-world gates
+  remain authoritative.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T113212-1029572` received the
+  140 m goal from rest with a 14 m visibility floor and 45 m planning horizon.
+  Four consecutive solves exhausted the A* stage at `84.483--89.139 ms`,
+  committed no command, and failed closed. The old order asked A* to expand to
+  45 m toward/around the first pillar and only afterwards truncated the result
+  to 14 m, so work outside the executable prefix consumed the complete search
+  budget.
+- **Removal/review condition:** Replace only with a route-search hierarchy that
+  separately represents global mission progress and a locally executable
+  certified prefix with an equal or smaller search bound. Do not compensate by
+  increasing A* timeout, reducing supervisor cadence, or enlarging the map from
+  a single run.
+- **Verification:** Unit-test finite/invalid and planning-vs-visibility bounds,
+  run all backend tests and Release build, then repeat the 140 m three-column
+  profile. Require A* to return a local prefix within budget, no no-command
+  safety stop, continued measured mission progress, and latency distributions
+  over repeated SITL plus representative recorded data.

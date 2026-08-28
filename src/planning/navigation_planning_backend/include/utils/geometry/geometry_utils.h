@@ -160,6 +160,21 @@ namespace geometry_utils {
         double terminal_velocity_mps{0.0};
     };
 
+    // A remote mission goal is a direction/progress contract, not a request
+    // to expand A* beyond the route that can be certified and executed in the
+    // current visibility window. Bound graph expansion before search; the
+    // returned path is still truncated and re-certified by the caller.
+    inline double localRouteSearchHorizon(
+            const double remaining_planning_horizon,
+            const double visibility_horizon) {
+        if (!std::isfinite(remaining_planning_horizon) ||
+            !std::isfinite(visibility_horizon) ||
+            remaining_planning_horizon <= 0.0 || visibility_horizon <= 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        return std::min(remaining_planning_horizon, visibility_horizon);
+    }
+
     // Corridor generation has a bounded line-seed contract.  A* may return a
     // sparse path whose final direct edge is longer than that contract even
     // though the complete polyline is collision-free.  Preserve every source

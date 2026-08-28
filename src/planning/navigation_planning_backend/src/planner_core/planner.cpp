@@ -1395,7 +1395,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             } else {
                 vec_Vec3f new_path;
                 solve_stage_.store(2);
-                if (!PathSearch(guide_path.back(), gi_.goal_p, temp_horizon,
+                const double local_search_horizon =
+                    geometry_utils::localRouteSearchHorizon(
+                        temp_horizon, cfg_.visibility_horizon_m);
+                if (!std::isfinite(local_search_horizon) ||
+                    !PathSearch(guide_path.back(), gi_.goal_p,
+                                local_search_horizon,
                                 new_path, solve_deadline)) {
                     planner_context_->warn(" -- [planner] PathSearch for new path failed");
                     return FAILED;
@@ -1415,8 +1420,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 // goal and advances this prefix from fresh measured state.
                 const double route_distance =
                     (gi_.goal_p - guide_path.back()).norm();
-                const double local_prefix_limit = std::min(
-                    temp_horizon, cfg_.visibility_horizon_m);
+                const double local_prefix_limit = local_search_horizon;
                 if (std::isfinite(route_distance) &&
                     std::isfinite(local_prefix_limit) &&
                     local_prefix_limit > cfg_.resolution * 2.0 &&

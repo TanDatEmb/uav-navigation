@@ -1578,6 +1578,16 @@ TEST(PlannerTrajectory, TruncatesRemoteRouteToBoundedCertifiedPrefix) {
       7.0, 1.0e-6);
 }
 
+TEST(PlannerTrajectory, BoundsRemoteAstarBeforeExpandingPastVisibility) {
+  EXPECT_DOUBLE_EQ(geometry_utils::localRouteSearchHorizon(45.0, 14.0), 14.0);
+  EXPECT_DOUBLE_EQ(geometry_utils::localRouteSearchHorizon(8.0, 14.0), 8.0);
+  EXPECT_TRUE(std::isnan(
+      geometry_utils::localRouteSearchHorizon(45.0, 0.0)));
+  EXPECT_TRUE(std::isnan(
+      geometry_utils::localRouteSearchHorizon(
+          std::numeric_limits<double>::infinity(), 14.0)));
+}
+
 TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {
   const navigation_math::vec_Vec3f path{
       navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
