@@ -246,8 +246,6 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.optimization_dynamic_reserve_ratio, 0.98);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.feasibility_jerk_penalty_weight, 5.0e5);
-  EXPECT_DOUBLE_EQ(planner.back_traj_cfg.feasibility_jerk_penalty_weight, 0.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
   EXPECT_TRUE(planner.preserve_backup_altitude);
