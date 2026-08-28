@@ -6,6 +6,7 @@
 
 #include <planner_core/planner.hpp>
 #include <planner_core/route_regression_certificate.hpp>
+#include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/command_time.hpp>
@@ -1815,6 +1816,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
         if (!bool_ret_code) {
             planner_context_->warn(" -- [planner] SearchPolytopeOnPath for new path failed");
+            return FAILED;
+        }
+        const auto guide_vertical_envelope = deriveGuideVerticalEnvelope(
+            guide_path, map_ptr_->geometry().inflated_resolution_m);
+        if (!applyGuideVerticalEnvelope(sfc, guide_vertical_envelope)) {
+            planner_context_->warn(
+                " -- [planner] failed to bind SFC to scale-aware guide vertical envelope");
             return FAILED;
         }
         {

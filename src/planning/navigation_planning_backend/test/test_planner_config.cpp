@@ -8,6 +8,7 @@
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/config.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
+#include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/pass_through_terminal_velocity.hpp>
 #include <planner_core/route_boundary_timing.hpp>
@@ -24,6 +25,79 @@ TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
       limit + 1.0e-9, limit));
   EXPECT_FALSE(navigation_planning::withinNumericalDynamicLimit(
       std::numeric_limits<double>::infinity(), limit));
+}
+
+TEST(GuideVerticalEnvelope, UsesOneInflatedVoxelAroundCertifiedGuide) {
+  navigation_math::vec_Vec3f guide{
+      navigation_math::Vec3f{0.0, 0.0, 3.0},
+      navigation_math::Vec3f{5.0, 0.0, 3.4}};
+  const auto envelope =
+      navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2);
+  ASSERT_TRUE(envelope.valid);
+  EXPECT_DOUBLE_EQ(envelope.lower_z_m, 2.8);
+  EXPECT_DOUBLE_EQ(envelope.upper_z_m, 3.6);
+  EXPECT_DOUBLE_EQ(envelope.slack_m, 0.2);
+
+  navigation_math::MatD4f wide_box(6, 4);
+  wide_box << 1.0, 0.0, 0.0, -10.0,
+             -1.0, 0.0, 0.0, -10.0,
+              0.0, 1.0, 0.0, -10.0,
+              0.0,-1.0, 0.0, -10.0,
+              0.0, 0.0, 1.0, -10.0,
+              0.0, 0.0,-1.0, -10.0;
+  geometry_utils::Polytope polytope(wide_box);
+  polytope.SetSeedLine({guide.front(), guide.back()});
+  geometry_utils::PolytopeVec corridor{polytope};
+  ASSERT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      corridor, envelope));
+  const auto bounded = corridor.front().GetPlanes();
+  ASSERT_EQ(bounded.rows(), 8);
+  EXPECT_DOUBLE_EQ(bounded(6, 2), 1.0);
+  EXPECT_DOUBLE_EQ(bounded(6, 3), -3.6);
+  EXPECT_DOUBLE_EQ(bounded(7, 2), -1.0);
+  EXPECT_DOUBLE_EQ(bounded(7, 3), 2.8);
+}
+
+TEST(GuideVerticalEnvelope, FollowsEachGuideSegmentAndPreservesOverlap) {
+  navigation_math::vec_Vec3f guide{
+      navigation_math::Vec3f{0.0, 0.0, 3.0},
+      navigation_math::Vec3f{5.0, 0.0, 3.0},
+      navigation_math::Vec3f{10.0, 0.0, 4.0}};
+  const auto envelope =
+      navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2);
+  ASSERT_TRUE(envelope.valid);
+
+  navigation_math::MatD4f wide_box(6, 4);
+  wide_box << 1.0, 0.0, 0.0, -20.0,
+             -1.0, 0.0, 0.0, -20.0,
+              0.0, 1.0, 0.0, -20.0,
+              0.0,-1.0, 0.0, -20.0,
+              0.0, 0.0, 1.0, -20.0,
+              0.0, 0.0,-1.0, -20.0;
+  geometry_utils::Polytope flat(wide_box);
+  flat.SetSeedLine({guide[0], guide[1]});
+  geometry_utils::Polytope climbing(wide_box);
+  climbing.SetSeedLine({guide[1], guide[2]});
+  geometry_utils::PolytopeVec corridor{flat, climbing};
+  ASSERT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      corridor, envelope));
+
+  const auto flat_planes = corridor[0].GetPlanes();
+  const auto climbing_planes = corridor[1].GetPlanes();
+  EXPECT_DOUBLE_EQ(flat_planes(6, 3), -3.2);
+  EXPECT_DOUBLE_EQ(flat_planes(7, 3), 2.8);
+  EXPECT_DOUBLE_EQ(climbing_planes(6, 3), -4.2);
+  EXPECT_DOUBLE_EQ(climbing_planes(7, 3), 2.8);
+  EXPECT_GT(corridor[1].overlap_depth_with_last_one, 0.0);
+  EXPECT_TRUE(corridor[1].interior_pt_with_last_one.allFinite());
+}
+
+TEST(GuideVerticalEnvelope, RejectsInvalidScaleOrGuide) {
+  EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope({}, 0.2).valid);
+  navigation_math::vec_Vec3f guide{navigation_math::Vec3f::Zero()};
+  EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.0).valid);
+  guide.front().z() = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2).valid);
 }
 
 TEST(PlannerDurationParameterization, KeepsFreeDurationAboveLowerBound) {
