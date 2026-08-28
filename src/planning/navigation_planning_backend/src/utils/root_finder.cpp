@@ -629,16 +629,20 @@ int math_utils::RootFinder::countRoots(const Eigen::VectorXd &coeffs, double l, 
     int nRoots = 0;
 
     int originalSize = coeffs.size();
+    const double coefficientScale = originalSize > 0
+            ? coeffs.cwiseAbs().maxCoeff() : 0.0;
+    const double zeroTolerance = 64.0 * DBL_EPSILON *
+            static_cast<double>(std::max(1, originalSize)) * coefficientScale;
     int valid = originalSize;
     for (int i = 0; i < originalSize; i++) {
-        if (fabs(coeffs(i)) < DBL_EPSILON) {
+        if (fabs(coeffs(i)) <= zeroTolerance) {
             valid--;
         } else {
             break;
         }
     }
 
-    if (valid > 0 && fabs(coeffs(originalSize - 1)) > DBL_EPSILON) {
+    if (valid > 0 && fabs(coeffs(originalSize - 1)) > zeroTolerance) {
         Eigen::VectorXd monicCoeffs(valid);
         monicCoeffs << 1.0, coeffs.segment(originalSize - valid + 1, valid - 1) / coeffs(originalSize - valid);
 
@@ -701,9 +705,14 @@ math_utils::RootFinder::solvePolynomial(const Eigen::VectorXd &coeffs, double lb
                                         bool isolation)    {
     std::set<double> rts;
 
+    const double coefficientScale = coeffs.size() > 0
+            ? coeffs.cwiseAbs().maxCoeff() : 0.0;
+    const double zeroTolerance = 64.0 * DBL_EPSILON *
+            static_cast<double>(std::max<Eigen::Index>(1, coeffs.size())) *
+            coefficientScale;
     int valid = coeffs.size();
     for (int i = 0; i < coeffs.size(); i++) {
-        if (fabs(coeffs(i)) < DBL_EPSILON) {
+        if (fabs(coeffs(i)) <= zeroTolerance) {
             valid--;
         } else {
             break;
@@ -714,7 +723,7 @@ math_utils::RootFinder::solvePolynomial(const Eigen::VectorXd &coeffs, double lb
     int nonzeros = valid;
     if (valid > 0) {
         for (int i = 0; i < valid; i++) {
-            if (fabs(coeffs(coeffs.size() - i - 1)) < DBL_EPSILON) {
+            if (fabs(coeffs(coeffs.size() - i - 1)) <= zeroTolerance) {
                 nonzeros--;
                 offset++;
             } else {
@@ -731,7 +740,9 @@ math_utils::RootFinder::solvePolynomial(const Eigen::VectorXd &coeffs, double lb
     } else {
         Eigen::VectorXd ncoeffs(std::max(5, nonzeros));
         ncoeffs.setZero();
-        ncoeffs.tail(nonzeros) << coeffs.segment(coeffs.size() - valid, nonzeros);
+        ncoeffs.tail(nonzeros) <<
+                coeffs.segment(coeffs.size() - valid, nonzeros) /
+                coefficientScale;
 
         if (nonzeros <= 5) {
             rts = RootFinderPriv::solveQuart(ncoeffs(0), ncoeffs(1), ncoeffs(2), ncoeffs(3), ncoeffs(4));

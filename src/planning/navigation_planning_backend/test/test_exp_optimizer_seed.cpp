@@ -68,6 +68,22 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   EXPECT_FALSE(trajectory.empty());
 }
 
+TEST(PieceCertificate, IgnoresRoundoffOnlyLeadingPolynomialTerms) {
+  constexpr double duration_s = 0.2;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  // The leading t^5 term is LU roundoff from an analytically quartic stop.
+  // It must not turn the extrema equation into an ill-conditioned higher-
+  // degree polynomial and hide the 6 m/s2 interior acceleration peak.
+  coefficients.row(0) << -6.6613381477509625e-13,
+      50.000000000000327, -20.000000000000039, 0.0, 0.8, 0.0;
+  const geometry_utils::Piece piece(duration_s, coefficients);
+
+  EXPECT_NEAR(piece.getMaxVelRate(), 0.8, 1.0e-9);
+  EXPECT_NEAR(piece.getMaxAccRate(), 6.0, 1.0e-8);
+  EXPECT_NEAR(piece.getMaxJerRate(), 120.0, 1.0e-7);
+  EXPECT_FALSE(piece.checkMaxAccRate(0.3));
+}
+
 TEST(ExpOptimizer, HighSpeedCorridorSolveKeepsContinuousCertificate) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;

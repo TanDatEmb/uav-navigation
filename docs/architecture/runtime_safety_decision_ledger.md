@@ -8699,3 +8699,26 @@ release profiles must not use the former allowance.
 - **Verification:** Unit-test an infeasible short same-heading stop; build and
   run all planner backend tests; repeat representative SITL and use the numeric
   failure state to derive a bounded yaw-stop or duration policy.
+
+### 2026-08-28 - Remove roundoff-only degree from extrema polynomials
+
+- **Owner:** Shared continuous polynomial root and trajectory certificates.
+- **Scope:** Classify leading and trailing coefficients relative to the
+  polynomial's own scale before root solving/counting, and normalize the retained
+  coefficients before solving. The relative threshold is bounded by floating-
+  point roundoff (`64 * epsilon * coefficient_count`); no dynamics limit or
+  root interval is relaxed.
+- **Safety impact:** Prevents LU roundoff from promoting an analytically lower-
+  degree extrema equation into an ill-conditioned higher-degree solve that can
+  miss an interior velocity/acceleration/jerk maximum. Candidate values remain
+  evaluated from the original trajectory at all certified roots and endpoints.
+- **Evidence:** A 0.2 s minimum-jerk stop should have coefficients
+  `[0, 50, -20, 0, 0.8, 0]`, but interpolation produced a harmless leading
+  `-6.66e-13`. The old root solve then reported 3.83 rad/s2—or nearly zero in a
+  repeated construction—instead of the analytic 6 rad/s2 peak.
+- **Removal/review condition:** Replace only with an equal or stronger scaled
+  root-isolation or interval certificate. Do not use sampled maxima or increase
+  dynamic limits to compensate for missed roots.
+- **Verification:** Unit-test the perturbed analytic piece for physical V/A/J
+  maxima and fail-closed limit checking; run all backend tests and repeat
+  representative SITL after the dependent yaw behavior is separately committed.
