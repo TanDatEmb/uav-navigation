@@ -769,6 +769,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_three_pillars_speed": 5.0,
             "long_three_pillars_multiwaypoint": 5.0,
             "long_open_featured_speed": 5.0,
+            "navigation_generalization": 5.0,
             "single_pillar_speed": 8.0,
             "no_path": 1.0,
             "occlusion_featured": 1.0,
@@ -798,7 +799,7 @@ class RuntimeContractTest(unittest.TestCase):
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
-            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "no_path",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
             self.assertTrue(obstacles, profile)
@@ -810,7 +811,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -943,6 +944,62 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(runner._world_name_for_profile("speed"), "open")
         self.assertEqual(runner._world_name_for_profile("smoke"), "px4_lio_smoke")
+
+    def test_navigation_generalization_contract_covers_axes_and_behaviors(self) -> None:
+        descriptor = runner._map_registry()["navigation_generalization"]
+        benchmark = descriptor["benchmark"]
+        self.assertEqual(
+            benchmark["required_axes"],
+            ["positive_x", "positive_y", "negative_x", "negative_y"],
+        )
+        self.assertEqual(descriptor["route_segment_waypoints"], [0, 10])
+        self.assertEqual(len(descriptor["collision_truth"]), 17)
+        self.assertTrue(set(descriptor["route_obstacles"]).issubset(descriptor["collision_truth"]))
+        scenarios = {item["id"]: item for item in benchmark["scenario_matrix"]}
+        self.assertEqual(
+            set(scenarios),
+            {
+                "collinear_velocity",
+                "sudden_high_speed_avoidance",
+                "positive_y_axis",
+                "local_narrow_gap",
+                "negative_x_small_obstacles",
+                "lane_change",
+                "hairpin_uturn",
+                "negative_y_terminal_recovery",
+            },
+        )
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/navigation_generalization.yaml").read_text()
+        )["mission"]
+        self.assertEqual(len(mission["waypoints"]), 11)
+        self.assertTrue(all(
+            waypoint["behavior"] == "pass_through"
+            for waypoint in mission["waypoints"][:-1]
+        ))
+        self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
+        legs = [
+            (
+                right["position"][0] - left["position"][0],
+                right["position"][1] - left["position"][1],
+            )
+            for left, right in zip(mission["waypoints"], mission["waypoints"][1:])
+        ]
+        self.assertTrue(any(dx > 0.0 and dy == 0.0 for dx, dy in legs))
+        self.assertTrue(any(dx < 0.0 and dy == 0.0 for dx, dy in legs))
+        self.assertTrue(any(dy > 0.0 and dx == 0.0 for dx, dy in legs))
+        self.assertTrue(any(dy < 0.0 and dx == 0.0 for dx, dy in legs))
+        self.assertAlmostEqual(
+            sum(math.hypot(dx, dy) for dx, dy in legs),
+            benchmark["route_length_m"],
+        )
+
+    def test_navigation_generalization_scene_resolves_comprehensive_variant(self) -> None:
+        profile, metadata = runner._resolve_scene_profile(
+            "navigation_generalization", "comprehensive", "nominal", None
+        )
+        self.assertEqual(profile, "navigation_generalization")
+        self.assertEqual(metadata["scene"], "navigation_generalization")
 
     def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
         self.assertEqual(

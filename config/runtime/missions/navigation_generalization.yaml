@@ -1,0 +1,27 @@
+mission:
+  version: 1
+  id: external_mode_navigation_generalization
+  frame: lio_odom
+  # One closed, two-dimensional route exercises both signs of both ENU axes.
+  # Only the terminal waypoint requests a stop; every internal checkpoint must
+  # preserve mission progress and permit continuous velocity.
+  waypoints:
+    - {id: start, position: [0.0, 0.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: x_collinear_mid, position: [45.0, 0.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: x_obstacle_end, position: [105.0, 0.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: y_mid, position: [105.0, 45.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: y_gap_end, position: [105.0, 90.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: negative_x_end, position: [15.0, 90.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: lane_one, position: [15.0, 72.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: lane_two, position: [35.0, 72.0, 3.0], acceptance_radius_m: 1.2, behavior: pass_through}
+    - {id: hairpin_entry, position: [35.0, 50.0, 3.0], acceptance_radius_m: 1.5, behavior: pass_through}
+    - {id: hairpin_exit, position: [15.0, 50.0, 3.0], acceptance_radius_m: 1.5, behavior: pass_through}
+    - {id: negative_y_finish, position: [15.0, 20.0, 3.0], acceptance_radius_m: 1.0, behavior: stop, hold_s: 0.5}
+  planning:
+    max_velocity_mps: 5.0
+    max_acceleration_mps2: 2.0
+    max_jerk_mps3: 4.0
+    unknown_policy: allow_unknown
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

@@ -199,6 +199,32 @@ profiles:
       open_zone_min_m: 15.0
       bypass_zone_expected_m: 1.0
       max_cross_track_m: 4.5
+  navigation_generalization:
+    family: navigation_generalization
+    world: navigation_generalization
+    mission: navigation_generalization
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [gen_sudden_pillar, gen_small_post, gen_cross_wall_x, gen_long_wall_x, gen_cross_wall_y, gen_long_wall_y, gen_gap_west, gen_gap_east, gen_small_post_west, gen_small_box_west, gen_lane_divider, gen_uturn_island, gen_landmark_sw, gen_landmark_se, gen_landmark_ne, gen_landmark_nw, gen_landmark_mid]
+    route_obstacles: [gen_sudden_pillar, gen_small_post, gen_cross_wall_x, gen_cross_wall_y, gen_gap_west, gen_gap_east, gen_small_post_west, gen_small_box_west, gen_lane_divider, gen_uturn_island]
+    route_segment_waypoints: [0, 10]
+    benchmark:
+      objective: two_dimensional_navigation_generalization
+      waypoint_count: 11
+      route_length_m: 395.0
+      speed_sweep_mps: [2.0, 3.0, 4.0, 5.0]
+      max_cross_track_m: 8.0
+      required_axes: [positive_x, positive_y, negative_x, negative_y]
+      scenario_matrix:
+        - {id: collinear_velocity, waypoint_range: [0, 2], requires: [ordered_acceptance, continuous_velocity, no_reverse_progress, stable_yaw]}
+        - {id: sudden_high_speed_avoidance, waypoint_range: [1, 2], requires: [clearance, speed_recovery, bounded_command_gap, bounded_planner_latency]}
+        - {id: positive_y_axis, waypoint_range: [2, 3], requires: [positive_y_progress, stable_yaw, no_mode_exit]}
+        - {id: local_narrow_gap, waypoint_range: [3, 4], requires: [known_free_clearance, no_out_of_map_acceptance]}
+        - {id: negative_x_small_obstacles, waypoint_range: [4, 5], requires: [negative_x_progress, small_obstacle_truth, speed_recovery]}
+        - {id: lane_change, waypoint_range: [5, 7], requires: [ordered_acceptance, continuous_command]}
+        - {id: hairpin_uturn, waypoint_range: [7, 9], requires: [no_route_fold, bounded_yaw_rate, no_spurious_heading_reversal]}
+        - {id: negative_y_terminal_recovery, waypoint_range: [9, 10], requires: [negative_y_progress, altitude_recovery, terminal_position_and_speed]}
   no_path:
     family: planner_negative
     world: no_path
@@ -240,3 +266,6 @@ scenes:
   planner_negative:
     variants:
       no_path: no_path
+  navigation_generalization:
+    variants:
+      comprehensive: navigation_generalization
