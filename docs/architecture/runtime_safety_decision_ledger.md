@@ -9243,12 +9243,14 @@ release profiles must not use the former allowance.
 
 - **Owner:** Mission-route geometry, local A* target selection and receding-
   horizon planner integration.
-- **Scope:** Select a deterministic target on the active route segment from the
-  larger of measured progress and planning-start projection. Bound that target
-  by the current executable visibility radius and active waypoint boundary.
-  Continue to let A* deform the local prefix around sensed obstacles, followed
-  by the existing inflated-map, corridor, dynamics, backup and latest-world
-  certification gates.
+- **Scope:** Select a deterministic guidance target on the active route segment
+  from the larger of measured progress and planning-start projection. Keep a
+  remote guidance point beyond the executable horizon, bounded to two current
+  visibility horizons and the active waypoint boundary. This distinction lets
+  A* terminate at `REACH_HORIZON` after a local obstacle detour instead of
+  treating the horizon-edge spine point as an exact endpoint. Continue to
+  truncate output to one executable horizon and apply the existing inflated-
+  map, corridor, dynamics, backup and latest-world certification gates.
 - **Safety impact:** This does not create a remote executable trajectory through
   UNKNOWN space, rotate the ROG-Map voxel grid, skip A*, weaken collision
   semantics, enlarge waypoint acceptance or accept planned state as mission
@@ -9267,6 +9269,15 @@ release profiles must not use the former allowance.
   and an External Mode exit near 57 m, despite complete mapping observation
   accounting. A stable route-spine target is therefore separated from local
   obstacle deformation instead of tuning planner frequency or safety limits.
+  The first exact-horizon implementation at commit `1b64eff` was intentionally
+  retained as a rollback/audit checkpoint. SITL artifact
+  `.artifacts/runtime/external-mode-check-20260828T121836-1074658` reduced route
+  cross-track p95 from `8.530 m` to `1.996 m`, but failed at the first pillar:
+  the spine target was exactly 14 m away, so an obstacle detour longer than 14 m
+  could neither reach that exact endpoint nor report horizon progress. Eighteen
+  consecutive `PathSearch` failures expired the command lease near x=20.7 m.
+  Keeping guidance beyond the executable radius corrects that semantic error;
+  it does not increase the certified prefix or its safety horizon.
 - **Removal/review condition:** Replace only with an explicit global-route/local-
   deformation hierarchy that preserves monotonic measured progress, active
   waypoint boundaries and equal-or-stronger local certification. Do not replace

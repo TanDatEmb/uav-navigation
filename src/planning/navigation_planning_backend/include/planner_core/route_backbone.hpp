@@ -20,9 +20,11 @@ struct RouteBackboneTarget {
 
 // Select a deterministic local-search target on the active mission leg.  The
 // target advances from the larger of measured route progress and the planning
-// start projection, never crosses the active waypoint boundary, and remains
-// inside the local executable radius.  A* may deform the path around sensed
-// obstacles, while repeated solves keep aiming back at the same route spine.
+// start projection and never crosses the active waypoint boundary.  It is a
+// guidance point, not an executable endpoint: when the active waypoint is
+// remote, keep it beyond the local search horizon so A* can return REACH_HORIZON
+// after a detour instead of being forced to reach a horizon-edge point exactly.
+// The caller still truncates and certifies the executable prefix at one horizon.
 inline RouteBackboneTarget selectRouteBackboneTarget(
     const navigation_mission::ImmutableRouteSnapshot& route,
     const Eigen::Vector3d& planning_start,
@@ -61,7 +63,10 @@ inline RouteBackboneTarget selectRouteBackboneTarget(
 
   const double lateral_distance_squared =
       (planning_start - *projected_point).squaredNorm();
-  const double radius_squared = maximum_distance_m * maximum_distance_m;
+  constexpr double kGuidanceHorizonMultiplier = 2.0;
+  const double guidance_distance_m =
+      kGuidanceHorizonMultiplier * maximum_distance_m;
+  const double radius_squared = guidance_distance_m * guidance_distance_m;
   if (!std::isfinite(lateral_distance_squared) ||
       lateral_distance_squared > radius_squared) {
     return output;

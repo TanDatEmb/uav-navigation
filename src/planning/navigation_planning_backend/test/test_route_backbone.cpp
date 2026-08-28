@@ -32,7 +32,7 @@ navigation_mission::ImmutableRouteSnapshot makeSnapshot(
 
 }  // namespace
 
-TEST(RouteBackbone, SelectsVisibilityBoundedPointOnStraightMissionLeg) {
+TEST(RouteBackbone, SelectsGuidanceBeyondExecutableHorizonOnStraightLeg) {
   const auto route = makeSnapshot(
       {{0.0, 0.0, 3.0}, {140.0, 0.0, 3.0}}, 1U,
       {10.0, 0.0, 3.0});
@@ -40,10 +40,11 @@ TEST(RouteBackbone, SelectsVisibilityBoundedPointOnStraightMissionLeg) {
       route, {10.0, 0.0, 3.0}, 23.0);
   ASSERT_TRUE(target.valid);
   EXPECT_NEAR(target.start_arc_m, 10.0, 1.0e-9);
-  EXPECT_NEAR(target.target_arc_m, 33.0, 1.0e-9);
-  EXPECT_NEAR(target.point.x(), 33.0, 1.0e-9);
+  EXPECT_NEAR(target.target_arc_m, 56.0, 1.0e-9);
+  EXPECT_NEAR(target.point.x(), 56.0, 1.0e-9);
   EXPECT_NEAR(target.point.y(), 0.0, 1.0e-9);
   EXPECT_FALSE(target.reaches_active_waypoint);
+  EXPECT_GT((target.point - Eigen::Vector3d{10.0, 0.0, 3.0}).norm(), 23.0);
 }
 
 TEST(RouteBackbone, AccountsForCrossTrackDistanceWithoutChangingRouteSpine) {
@@ -54,7 +55,7 @@ TEST(RouteBackbone, AccountsForCrossTrackDistanceWithoutChangingRouteSpine) {
       route, {10.0, 8.0, 3.0}, 23.0);
   ASSERT_TRUE(target.valid);
   EXPECT_NEAR(target.target_arc_m,
-              10.0 + std::sqrt(23.0 * 23.0 - 8.0 * 8.0), 1.0e-9);
+              10.0 + std::sqrt(46.0 * 46.0 - 8.0 * 8.0), 1.0e-9);
   EXPECT_DOUBLE_EQ(target.point.y(), 0.0);
 }
 
@@ -79,9 +80,9 @@ TEST(RouteBackbone, UsesPlanningStartProjectionButNeverRegressesHighWater) {
       route, {35.0, 0.0, 3.0}, 23.0);
   ASSERT_TRUE(behind.valid);
   EXPECT_NEAR(behind.start_arc_m, 40.0, 1.0e-9);
-  EXPECT_NEAR(behind.target_arc_m, 58.0, 1.0e-9);
+  EXPECT_NEAR(behind.target_arc_m, 81.0, 1.0e-9);
   EXPECT_LE((behind.point - Eigen::Vector3d{35.0, 0.0, 3.0}).norm(),
-            23.0 + 1.0e-9);
+            46.0 + 1.0e-9);
 
   const auto ahead = navigation_planning_backend::selectRouteBackboneTarget(
       route, {46.0, 0.0, 3.0}, 23.0);
