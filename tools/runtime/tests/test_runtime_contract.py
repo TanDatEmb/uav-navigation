@@ -995,6 +995,8 @@ class RuntimeContractTest(unittest.TestCase):
         )
 
     def test_navigation_generalization_scene_resolves_comprehensive_variant(self) -> None:
+        self.assertIn("navigation_generalization", runner.CANONICAL_SCENES)
+        self.assertIn("comprehensive", runner.TEST_CASES)
         profile, metadata = runner._resolve_scene_profile(
             "navigation_generalization", "comprehensive", "nominal", None
         )

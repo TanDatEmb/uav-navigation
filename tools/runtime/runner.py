@@ -97,9 +97,9 @@ PX4_INTERACTIVE_COM_RC_IN_MODE = "1"
 
 CANONICAL_SCENES = (
     "sanity_open", "structured_obstacle", "long_route", "tunnel", "clutter",
-    "planner_negative",
+    "planner_negative", "navigation_generalization",
 )
-TEST_CASES = ("positive", "degenerate", "detour", "no_path")
+TEST_CASES = ("positive", "degenerate", "detour", "no_path", "comprehensive")
 MOTION_PRESETS = ("nominal", "slow", "fast")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
@@ -1640,6 +1640,7 @@ def _run_sim_unlocked(
             "long_open_featured_core_60_pv": -1,
             "single_pillar_speed": 1,
             "single_pillar_speed_pv": 1,
+            "navigation_generalization": -1,
             "corridor": -1,
             "pillar": 3,
             "occlusion": 2,
@@ -1687,9 +1688,9 @@ def _run_sim_unlocked(
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv"}:
+        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
-        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "single_pillar_speed", "single_pillar_speed_pv"}:
+        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
@@ -2389,7 +2390,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -2437,7 +2438,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
