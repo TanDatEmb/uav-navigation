@@ -1379,13 +1379,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             planner_context_->warn(
                     " -- [ExpOpt] immutable pre-LBFGS seed unavailable: "
                     "stage={} corridor_violation={} boundary_residual={} "
-                    "boundary_roundoff_bound={} "
+                    "boundary_roundoff_bound={} boundary_failure={}/{}/{}/{} "
+                    "boundary_value={}/{} "
                     "vel={}/{} acc={}/{} jerk={}/{} flatness_finite={} "
                     "body_rate={}/{} thrust=[{},{}]/[{},{}]",
                     static_cast<int>(deterministic_seed_certificate.failure_stage),
                     deterministic_seed_certificate.maximum_corridor_violation_m,
                     deterministic_seed_certificate.maximum_boundary_residual,
                     deterministic_seed_certificate.maximum_boundary_roundoff_bound,
+                    deterministic_seed_certificate.boundary_failure_location,
+                    deterministic_seed_certificate.boundary_failure_piece_index,
+                    deterministic_seed_certificate.boundary_failure_axis,
+                    deterministic_seed_certificate.boundary_failure_derivative,
+                    deterministic_seed_certificate.boundary_failure_residual,
+                    deterministic_seed_certificate.boundary_failure_roundoff_bound,
                     deterministic_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
                     deterministic_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
                     deterministic_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
@@ -1868,6 +1875,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 " -- [ExpOpt] MINCO and immutable seed unavailable: "
                 "solver={} seed_stage={} corridor_violation={} "
                 "boundary_residual={} boundary_roundoff_bound={} "
+                "boundary_failure={}/{}/{}/{} boundary_value={}/{} "
                 "vel={}/{} acc={}/{} jerk={}/{} "
                 "flatness_finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
                 ret,
@@ -1875,6 +1883,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 deterministic_seed_certificate.maximum_corridor_violation_m,
                 deterministic_seed_certificate.maximum_boundary_residual,
                 deterministic_seed_certificate.maximum_boundary_roundoff_bound,
+                deterministic_seed_certificate.boundary_failure_location,
+                deterministic_seed_certificate.boundary_failure_piece_index,
+                deterministic_seed_certificate.boundary_failure_axis,
+                deterministic_seed_certificate.boundary_failure_derivative,
+                deterministic_seed_certificate.boundary_failure_residual,
+                deterministic_seed_certificate.boundary_failure_roundoff_bound,
                 deterministic_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
                 deterministic_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
                 deterministic_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,

@@ -385,6 +385,12 @@ TEST(DeterministicNominalSeed, RequiresExactPieceCorridorMappingAndPvajContinuit
   EXPECT_EQ(physical_mismatch.failure_stage,
             navigation_planning_backend::
                 DeterministicNominalSeedFailureStage::kBoundary);
+  EXPECT_EQ(physical_mismatch.boundary_failure_location, 2);
+  EXPECT_EQ(physical_mismatch.boundary_failure_piece_index, 1);
+  EXPECT_EQ(physical_mismatch.boundary_failure_axis, 0);
+  EXPECT_EQ(physical_mismatch.boundary_failure_derivative, 0);
+  EXPECT_GT(physical_mismatch.boundary_failure_residual,
+            physical_mismatch.boundary_failure_roundoff_bound);
 }
 
 TEST(DeterministicNominalSeed, BoundaryRoundoffTracksPowerBasisConditioning) {

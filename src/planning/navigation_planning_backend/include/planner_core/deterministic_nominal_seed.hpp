@@ -35,6 +35,14 @@ struct DeterministicNominalSeedCertificate {
       std::numeric_limits<double>::infinity()};
   double maximum_boundary_roundoff_bound{
       std::numeric_limits<double>::infinity()};
+  int boundary_failure_location{0};  // 0=none, 1=initial, 2=terminal, 3=junction
+  int boundary_failure_piece_index{-1};
+  int boundary_failure_axis{-1};
+  int boundary_failure_derivative{-1};
+  double boundary_failure_residual{
+      std::numeric_limits<double>::quiet_NaN()};
+  double boundary_failure_roundoff_bound{
+      std::numeric_limits<double>::quiet_NaN()};
   double maximum_velocity_mps{std::numeric_limits<double>::infinity()};
   double maximum_acceleration_mps2{std::numeric_limits<double>::infinity()};
   double maximum_jerk_mps3{std::numeric_limits<double>::infinity()};
@@ -193,10 +201,41 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
       initial_residual.maxCoeff(), terminal_residual.maxCoeff());
   result.maximum_boundary_roundoff_bound = std::max(
       initial_roundoff.maxCoeff(), terminal_roundoff.maxCoeff());
+  const auto record_boundary_failure =
+      [&result](const int location, const int piece_index,
+                const navigation_math::StatePVAJ& residual,
+                const navigation_math::StatePVAJ& roundoff) {
+        double maximum_excess = -std::numeric_limits<double>::infinity();
+        for (Eigen::Index axis = 0; axis < residual.rows(); ++axis) {
+          for (Eigen::Index derivative = 0;
+               derivative < residual.cols(); ++derivative) {
+            const double excess =
+                residual(axis, derivative) - roundoff(axis, derivative);
+            if (excess > maximum_excess) {
+              maximum_excess = excess;
+              result.boundary_failure_location = location;
+              result.boundary_failure_piece_index = piece_index;
+              result.boundary_failure_axis = static_cast<int>(axis);
+              result.boundary_failure_derivative =
+                  static_cast<int>(derivative);
+              result.boundary_failure_residual = residual(axis, derivative);
+              result.boundary_failure_roundoff_bound =
+                  roundoff(axis, derivative);
+            }
+          }
+        }
+      };
   if (!initial_residual.allFinite() || !terminal_residual.allFinite() ||
-      !initial_roundoff.allFinite() || !terminal_roundoff.allFinite() ||
-      (initial_residual.array() > initial_roundoff.array()).any() ||
-      (terminal_residual.array() > terminal_roundoff.array()).any()) {
+      !initial_roundoff.allFinite() || !terminal_roundoff.allFinite()) {
+    return result;
+  }
+  if ((initial_residual.array() > initial_roundoff.array()).any()) {
+    record_boundary_failure(1, 0, initial_residual, initial_roundoff);
+    return result;
+  }
+  if ((terminal_residual.array() > terminal_roundoff.array()).any()) {
+    record_boundary_failure(
+        2, piece_count - 1, terminal_residual, terminal_roundoff);
     return result;
   }
   for (int piece_index = 0; piece_index + 1 < piece_count; ++piece_index) {
@@ -218,6 +257,10 @@ inline DeterministicNominalSeedCertificate certifyDeterministicNominalSeed(
         junction_roundoff.maxCoeff());
     if (!junction_residual.allFinite() || !junction_roundoff.allFinite() ||
         (junction_residual.array() > junction_roundoff.array()).any()) {
+      if (junction_residual.allFinite() && junction_roundoff.allFinite()) {
+        record_boundary_failure(
+            3, piece_index, junction_residual, junction_roundoff);
+      }
       return result;
     }
   }
