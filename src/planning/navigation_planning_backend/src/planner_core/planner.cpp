@@ -1345,16 +1345,30 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             const double planning_speed = std::min(
                 cfg_.exp_traj_cfg.max_vel,
                 std::max(solve_state_.v.norm(), guide_path_end_vel));
-            const double desired_lookahead = passThroughLookaheadDistance(
-                planning_speed, cfg_.exp_traj_cfg.max_vel,
-                cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
-                cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
-                outgoing_distance);
+            Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
+            for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                const Eigen::Vector3d delta =
+                    (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
+                if (delta.norm() > 1.0e-6) {
+                    incoming_tangent = delta;
+                    break;
+                }
+            }
+            const bool genuine_corner = passThroughGenuineCorner(
+                current_endpoint, next_target, incoming_tangent);
+            const double desired_lookahead = genuine_corner
+                ? passThroughLookaheadDistance(
+                    planning_speed, cfg_.exp_traj_cfg.max_vel,
+                    cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
+                    cfg_.replan_forward_dt_s, cfg_.receding_distance_m,
+                    outgoing_distance)
+                : 0.0;
             // The A* query must be allowed to reach the next mission target;
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             const double search_distance = remaining_horizon;
-            if (std::isfinite(outgoing_distance) && outgoing_distance > 1.0e-6 &&
+            if (genuine_corner && std::isfinite(outgoing_distance) &&
+                outgoing_distance > 1.0e-6 &&
                 std::isfinite(search_distance) && search_distance > cfg_.resolution * 2.0) {
                 vec_Vec3f next_path;
                 solve_stage_.store(2);

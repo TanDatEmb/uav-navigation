@@ -218,6 +218,12 @@ TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
 }
 
 TEST(PlannerPassThrough, RouteWindowDoesNotChangeShallowBendOrTinyAcceptanceBall) {
+  EXPECT_FALSE(navigation_planning_backend::passThroughGenuineCorner(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{10.0, 1.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}));
+  EXPECT_TRUE(navigation_planning_backend::passThroughGenuineCorner(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{0.0, 10.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}));
   EXPECT_FALSE(navigation_planning_backend::passThroughRouteWindowEndpoint(
       Eigen::Vector3d::Zero(), Eigen::Vector3d{10.0, 1.0, 0.0},
       Eigen::Vector3d{1.0, 0.0, 0.0}, 0.9, 0.2));

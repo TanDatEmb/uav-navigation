@@ -17,10 +17,12 @@ At each planning tick:
    velocity. Otherwise it removes the command and fails closed.
 5. The active mission waypoint remains the mission-identity target. A
    `PASS_THROUGH` goal carries `next_target` as route metadata; when the
-   certified map horizon permits, the planner extends the executable guide
-   through a bounded prefix of that outgoing segment. The MissionController
-   still accepts the current waypoint only from measured position inside its
-   configured acceptance radius.
+   certified map horizon permits and the outgoing tangent is a genuine corner,
+   the planner extends the executable guide through a bounded prefix of that
+   outgoing segment. Shallow/straight legs terminate at the active waypoint so
+   the nominal curve cannot trade away its measured acceptance boundary for a
+   soft look-ahead endpoint. The MissionController still accepts the current
+   waypoint only from measured position inside its configured acceptance radius.
 
 The relevant runtime bounds are:
 

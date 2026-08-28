@@ -7294,3 +7294,30 @@ release profiles must not use the former allowance.
   `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
   external-mode-check`, checking waypoint order, endpoint error, route length,
   speed, altitude, clearance, strict backup evidence, and planning p50/p95/p99.
+
+### 2026-08-28 - Keep shallow pass-through legs anchored at their measured waypoint
+
+- **Owner:** Navigation planning and mission-controller maintainers.
+- **Scope:** The long certified route look-ahead is enabled only when the
+  outgoing tangent forms a genuine corner (`dot <= 0.7`). Straight or shallow
+  pass-through legs keep the active waypoint as the executable endpoint while
+  preserving the outgoing tangent in the terminal velocity state.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This prevents a soft
+  look-ahead endpoint from allowing the nominal polynomial to bow outside the
+  active waypoint acceptance ball before measured handoff. No waypoint
+  acceptance, UNKNOWN, OUT_OF_MAP, clearance, speed, acceleration, jerk, or
+  deadline gate is relaxed; all existing corridor, dynamic, swept-world,
+  identity, and lease certificates remain authoritative.
+- **Evidence:** The shared corner classifier and planner configuration tests
+  cover shallow and genuine turns. The latest 3 m/s run showed the previous
+  all-leg look-ahead still missed the first waypoint (`min measured error just
+  above the 0.9 m acceptance radius`) and later stopped at its soft endpoint;
+  repeated SITL and recorded-data evidence remain required after this change.
+- **Removal/review condition:** Revisit if straight legs still miss measured
+  acceptance, if corner look-ahead increases optimizer failure tails, or if
+  route length, PVA continuity, altitude, clearance, or waypoint order
+  regresses.
+- **Verification:** `make build`; sourced planner/mission/trajectory tests;
+  then repeated `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint
+  make external-mode-check` with waypoint, speed, altitude, clearance, strict
+  backup, and p50/p95/p99 latency evidence.
