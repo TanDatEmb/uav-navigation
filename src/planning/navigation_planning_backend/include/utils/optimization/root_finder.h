@@ -122,6 +122,9 @@ namespace math_utils {
         static Eigen::VectorXd polyConv(const Eigen::VectorXd &lCoef, const Eigen::VectorXd &rCoef)
 // Calculate the convolution of lCoef(x) and rCoef(x)
         {
+            if (lCoef.size() == 0 || rCoef.size() == 0) {
+                return Eigen::VectorXd();
+            }
             Eigen::VectorXd result(lCoef.size() + rCoef.size() - 1);
             result.setZero();
             for (int i = 0; i < result.size(); i++) {

@@ -566,6 +566,9 @@ math_utils::RootFinderPriv::isolateRealRoots(const Eigen::VectorXd &coeffs, doub
 
 
 Eigen::VectorXd math_utils::RootFinder::polySqr(const Eigen::VectorXd &coef)       {
+    if (coef.size() == 0) {
+        return Eigen::VectorXd();
+    }
     int coefSize = coef.size();
     int resultSize = coefSize * 2 - 1;
     int lbound, rbound;
@@ -629,6 +632,13 @@ int math_utils::RootFinder::countRoots(const Eigen::VectorXd &coeffs, double l, 
     int nRoots = 0;
 
     int originalSize = coeffs.size();
+    if (!std::isfinite(l) || !std::isfinite(r) || l >= r ||
+        !coeffs.allFinite()) {
+        return -1;
+    }
+    if (originalSize > static_cast<int>(RootFinderParam::highestOrder + 1)) {
+        return -1;
+    }
     const double coefficientScale = originalSize > 0
             ? coeffs.cwiseAbs().maxCoeff() : 0.0;
     const double zeroTolerance = 64.0 * DBL_EPSILON *
@@ -704,6 +714,12 @@ std::set<double>
 math_utils::RootFinder::solvePolynomial(const Eigen::VectorXd &coeffs, double lbound, double ubound, double tol,
                                         bool isolation)    {
     std::set<double> rts;
+
+    if (!std::isfinite(lbound) || !std::isfinite(ubound) || lbound >= ubound ||
+        !std::isfinite(tol) || tol <= 0.0 || !coeffs.allFinite() ||
+        coeffs.size() > static_cast<Eigen::Index>(RootFinderParam::highestOrder + 1)) {
+        return rts;
+    }
 
     const double coefficientScale = coeffs.size() > 0
             ? coeffs.cwiseAbs().maxCoeff() : 0.0;

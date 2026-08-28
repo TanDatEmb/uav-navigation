@@ -30,6 +30,7 @@
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
 #include "utils/optimization/polynomial_interpolation.h"
+#include "utils/optimization/root_finder.h"
 
 namespace navigation_planning_backend {
 
@@ -418,6 +419,22 @@ TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
   EXPECT_FALSE(constant_piece.checkMaxVelRate(
       std::numeric_limits<double>::quiet_NaN()));
   EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
+}
+
+TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
+  const Eigen::VectorXd empty;
+  EXPECT_EQ(math_utils::RootFinder::polyConv(empty, Eigen::VectorXd::Ones(1)).size(), 0);
+  EXPECT_EQ(math_utils::RootFinder::polySqr(empty).size(), 0);
+
+  const Eigen::VectorXd non_finite = Eigen::VectorXd::Constant(
+      2, std::numeric_limits<double>::quiet_NaN());
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      non_finite, 0.0, 1.0, 1.0e-6).empty());
+  EXPECT_EQ(math_utils::RootFinder::countRoots(non_finite, 0.0, 1.0), -1);
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      Eigen::VectorXd::Ones(2), 1.0, 0.0, 1.0e-6).empty());
+  EXPECT_EQ(math_utils::RootFinder::countRoots(
+      Eigen::VectorXd::Ones(2), 1.0, 0.0), -1);
 }
 
 TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
