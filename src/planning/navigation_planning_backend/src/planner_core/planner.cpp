@@ -426,12 +426,18 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         candidate.duration_s = command.position.getTotalDuration();
         candidate.backup_start_time_s = command.backup_start_tt;
         candidate.backup_available = command.backup_suffix_available;
+        const bool emergency_candidate =
+            command.backup_disposition == BackupDisposition::EMERGENCY;
+        candidate.role = emergency_candidate
+            ? navigation_planning::CandidateRole::kEmergency
+            : navigation_planning::CandidateRole::kMain;
         candidate.valid_from_ns = std::max(valid_from_ns, *start_ns);
         candidate.valid_until_ns = std::min(valid_until_ns, *end_ns);
         if (candidate.valid_until_ns < candidate.valid_from_ns) return std::nullopt;
         candidate.evaluator = [position = command.position,
                                yaw = command.yaw,
                                roles = command.roles,
+                               emergency_candidate,
                                start_wall_time_s] (
                                   const std::int64_t stamp_ns,
                                   navigation_planning::TrajectoryPoint& point) {
@@ -450,7 +456,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             point.yaw_rate = yaw_state(0, 1);
             point.finished = command_time.finished;
             point.trajectory_time_s = command_time.trajectory_time_s;
-            point.role = navigation_planning::CandidateRole::kMain;
+            point.role = emergency_candidate
+                ? navigation_planning::CandidateRole::kEmergency
+                : navigation_planning::CandidateRole::kMain;
+            if (emergency_candidate) return true;
             for (const auto& interval : roles) {
                 if (command_time.trajectory_time_s >= interval.begin_tt &&
                     command_time.trajectory_time_s <= interval.end_tt &&

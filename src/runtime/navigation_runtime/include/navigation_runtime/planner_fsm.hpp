@@ -7,6 +7,7 @@
 #include <limits>
 #include <stdexcept>
 
+#include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planner_status.hpp>
 
 namespace navigation_runtime {
@@ -83,6 +84,22 @@ enum class RetainedValidationTransition {
 inline RetainedValidationTransition retainedValidationTransition(bool usable) noexcept {
   return usable ? RetainedValidationTransition::PreserveExistingState
                 : RetainedValidationTransition::FailClosed;
+}
+
+// A measured-state emergency brake is a one-way transition for one recovery
+// episode. If PX4 diverges far enough that this exact brake loses its tracking
+// certificate, constructing another brake from the newly drifting state every
+// planner tick resets deceleration indefinitely. A later certified MAIN may
+// start a new episode; an unusable emergency must fail closed to PX4 Hold.
+inline bool measuredStateEmergencyMayReplaceCommittedCommand(
+    bool validate_without_new_commit, bool committed_suffix_usable,
+    bool fresh_vehicle_state, bool committed_command_available,
+    bool command_anchor_valid,
+    navigation_planning::CandidateRole committed_role) noexcept {
+  return !validate_without_new_commit && !committed_suffix_usable &&
+         fresh_vehicle_state && committed_command_available &&
+         command_anchor_valid &&
+         committed_role != navigation_planning::CandidateRole::kEmergency;
 }
 
 // Only a STOP waypoint owns a terminal endpoint hold.  A PASS_THROUGH endpoint

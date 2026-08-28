@@ -28,6 +28,21 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
             RetainedValidationTransition::FailClosed);
 }
 
+TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true,
+      navigation_planning::CandidateRole::kMain));
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true,
+      navigation_planning::CandidateRole::kBackup));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true,
+      navigation_planning::CandidateRole::kEmergency));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, true, true, true, true,
+      navigation_planning::CandidateRole::kMain));
+}
+
 TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
   EXPECT_TRUE(terminalHoldIsPending(true, true, true, 17U));
   EXPECT_FALSE(terminalHoldIsPending(false, true, true, 17U));

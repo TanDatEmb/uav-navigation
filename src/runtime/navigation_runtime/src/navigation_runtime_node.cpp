@@ -2187,8 +2187,12 @@ void NavigationRuntimeNode::runCycle() {
         safety_transition_s,
         projected_anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
     bool emergency_brake_committed = false;
-    if (!validate_without_new_commit && !use_safety_suffix && fresh_vehicle_state &&
-        committed && command_anchor_valid) {
+    if (measuredStateEmergencyMayReplaceCommittedCommand(
+            validate_without_new_commit, use_safety_suffix,
+            fresh_vehicle_state, committed, command_anchor_valid,
+            committed_bundle
+                ? committed_bundle->role
+                : navigation_planning::CandidateRole::kEmergency)) {
       // Position and velocity are measured at the newest propagated odometry
       // sample. Acceleration/jerk and yaw-rate are not measured by the LIO
       // interface, so retain their continuous values from the command that
